@@ -409,6 +409,7 @@ test("Windows: one PowerShell start, by absolute path, from System32, encoded, w
 	const call = r.calls[0]!;
 	assert.equal(call.file, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
 	assert.equal(call.options.cwd, "C:\\Windows\\System32");
+	assert.equal(call.options.env.SB_FW_NODE, "node.exe", "the file name of node reaches the script by the environment");
 	assert.deepEqual(call.args.slice(0, 4), ["-NoProfile", "-NonInteractive", "-OutputFormat", "Text"]);
 	assert.equal(call.args[4], "-EncodedCommand");
 	assert.equal(Buffer.from(call.args[5]!, "base64").toString("utf16le"), WINDOWS_SCRIPT);
@@ -505,9 +506,10 @@ test("VM F1: the port, address, and interface-type filters are read through the 
 		assert.equal(calls.length, 1, kind);
 		assert.match(calls[0]!, /\$fr \| Get-/, `${kind} is piped the rules`);
 	}
-	assert.match(WINDOWS_SCRIPT, /\$er = @\(Get-NetFirewallRule -Direction Inbound -Enabled True\)/, "the rules are asked for once, enabled and inbound");
-	assert.match(WINDOWS_SCRIPT, /foreach \(\$r in \$er\)/, "and the same rules are walked");
-	assert.match(WINDOWS_SCRIPT, /\$fr = @\(\$er \| Where-Object \{ -not \$_\.Owner -and -not \$_\.PackageFamilyName \}\)/, "a packaged app's rules are not piped");
+	assert.match(WINDOWS_SCRIPT, /\$fr = @\(Get-NetFirewallRule -Direction Inbound -Enabled True \| Where-Object \{/, "the rules are asked for once, enabled and inbound, and cut down before any is piped");
+	assert.match(WINDOWS_SCRIPT, /\$_\.Owner -or \$_\.PackageFamilyName/, "a packaged app's rules are not piped");
+	assert.match(WINDOWS_SCRIPT, /\$leaves -contains/, "nor are rules for another program");
+	assert.match(WINDOWS_SCRIPT, /foreach \(\$r in \$fr\)/, "and the same rules are walked");
 	assert.equal((WINDOWS_SCRIPT.match(/\$fr\.Count -gt 0/g) ?? []).length, 3, "no rule: no pipeline (the bare call would be the refusal)");
 	assert.match(WINDOWS_SCRIPT, /owner = \[string\]\$r\.Owner/);
 	assert.match(WINDOWS_SCRIPT, /family = \[string\]\$r\.PackageFamilyName/);
@@ -521,6 +523,14 @@ const promptBlocks = (): Raw[] => ["TCP", "UDP"].map((p) => rule(`${p} Query Use
 const VM_WIFI: FirewallInput = { port: 8445, served: [{ address: "192.168.64.2", iface: "Ethernet" }] };
 const VM_NODE = "C:\\Users\\x\\node.exe";
 const vmNotes = (rules: Raw[], category = "Public") => windowsCoded(parseWindows(win(rules, { networks: [{ alias: "Ethernet", category }] })), VM_WIFI, VM_NODE).map((n) => n.code);
+
+test("VM F1: the file names of node go to the script by the environment, not into its text", () => {
+	const none = windowsCommand({ SystemRoot: "C:\\Windows" }), some = windowsCommand({ SystemRoot: "C:\\Windows" }, ["C:\\Users\\Me\\nvm\\v22\\Node.exe", "C:/Program Files/nodejs/node.exe", "D:\\tools\\node-real.exe"]);
+	assert.equal(none.options.env.SB_FW_NODE, "");
+	assert.equal(some.options.env.SB_FW_NODE, "node.exe|node-real.exe", "file names, lower case, once each");
+	assert.equal(some.options.env.SystemRoot, "C:\\Windows");
+	assert.deepEqual(some.args, none.args, "the script is the same");
+});
 
 test("VM F2: a packaged app's rule (Owner or PackageFamilyName, Program Any, ports Any) is no allow rule for node; a plain Any rule still is", () => {
 	assert.deepEqual(vmNotes(STOCK, "Private"), ["fw_win_noallow"], "22 of them on a stock machine hid the note");

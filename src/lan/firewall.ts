@@ -115,22 +115,25 @@ export const WINDOWS_STEPS = [
 	"$profiles = @(); try { $profiles = @(Get-NetFirewallProfile | ForEach-Object { [ordered]@{ name = [string]$_.Name; enabled = [string]$_.Enabled } }) } catch { }",
 	// The filters of every rule at once (a filter's InstanceID is its rule's Name): a call per rule takes minutes on a machine with hundreds of rules. The program is never matched by `Get-NetFirewallApplicationFilter -Program`,
 	// which compares the stored text exactly (RVLAN2-F015); each stored program is expanded here and compared in JavaScript after full-path normalisation and case folding.
-	// The port, address, and interface-type filters are asked for through the enabled inbound rules (one pipeline each): called with no rule piped in, a filtered (non-elevated) token is answered "Access is denied" (VM 1, F1).
-	// With no rule there is nothing to pipe, and the bare call would be that same refusal. A rule of a packaged app (an Owner or a PackageFamilyName) counts for nothing here, so its filters are not asked for: each rule costs a call of its own (a fifth of the
-	// rules on a stock Windows 11).
-	"$er = @(Get-NetFirewallRule -Direction Inbound -Enabled True); $fr = @($er | Where-Object { -not $_.Owner -and -not $_.PackageFamilyName })",
+	// The port, address, and interface-type filters are asked for through the rules (one pipeline each): called with no rule piped in, a filtered (non-elevated) token is answered "Access is denied" (VM 1, F1), and each piped rule
+	// costs a call of its own (40 to 170 s for the 112 enabled inbound rules of a stock Windows 11 under load). So only the rules that can matter are piped (VM recheck): a rule of a packaged app (an Owner or a PackageFamilyName) applies
+	// to that package alone, and a rule for another program than this node (its file name is in `SB_FW_NODE`, the names of `process.execPath` and its real path joined by `|`) is never a rule for node; the application filters, which are read
+	// at once in 0.3 s, say which is which. The rules left out are not in the answer. With no rule to pipe the bare call would be that same refusal.
+	"$leaves = @(([string]$env:SB_FW_NODE).ToLower().Split('|') | Where-Object { $_ })",
 	"$apps = @{}; foreach ($f in Get-NetFirewallApplicationFilter) { $apps[[string]$f.InstanceID] = $f }",
+	"$fr = @(Get-NetFirewallRule -Direction Inbound -Enabled True | Where-Object { if ($_.Owner -or $_.PackageFamilyName) { $false } else { $a = $apps[[string]$_.Name]; $p = $(if ($a) { ([string]$a.Program).Trim().Trim('\"') } else { '' }); $p -eq '' -or $p -eq 'Any' -or $leaves -contains $p.Split('\\', '/')[-1].ToLower() } })",
 	"$ports = @{}; if ($fr.Count -gt 0) { foreach ($f in ($fr | Get-NetFirewallPortFilter)) { $ports[[string]$f.InstanceID] = $f } }",
 	"$addrs = @{}; if ($fr.Count -gt 0) { foreach ($f in ($fr | Get-NetFirewallAddressFilter)) { $addrs[[string]$f.InstanceID] = $f } }",
 	"$types = @{}; if ($fr.Count -gt 0) { foreach ($f in ($fr | Get-NetFirewallInterfaceTypeFilter)) { $types[[string]$f.InstanceID] = $f } }",
 	// `owner` and `family` (the rule's Owner and PackageFamilyName) are set on a packaged app's rule, which applies to that package only (VM 1, F2).
-	"$rules = @(foreach ($r in $er) { $a = $apps[[string]$r.Name]; $p = $ports[[string]$r.Name]; $ad = $addrs[[string]$r.Name]; $ty = $types[[string]$r.Name]; $prog = 'Any'; $svc = 'Any'; $pkg = 'Any'; if ($a) { $prog = [string]$a.Program; $svc = [string]$a.Service; $pkg = [string]$a.Package }; [ordered]@{ name = [string]$r.Name; display = [string]$r.DisplayName; owner = [string]$r.Owner; family = [string]$r.PackageFamilyName; action = [string]$r.Action; direction = [string]$r.Direction; enabled = [string]$r.Enabled; profile = [string]$r.Profile; program = $prog; expanded = [Environment]::ExpandEnvironmentVariables($prog); service = $svc; package = $pkg; protocol = $(if ($p) { [string]$p.Protocol } else { 'Any' }); localPort = $(if ($p) { @($p.LocalPort | ForEach-Object { [string]$_ }) } else { @('Any') }); remote = $(if ($ad) { @($ad.RemoteAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); local = $(if ($ad) { @($ad.LocalAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); ifType = $(if ($ty) { @($ty.InterfaceType | ForEach-Object { [string]$_ }) } else { @('Any') }) } })",
+	"$rules = @(foreach ($r in $fr) { $a = $apps[[string]$r.Name]; $p = $ports[[string]$r.Name]; $ad = $addrs[[string]$r.Name]; $ty = $types[[string]$r.Name]; $prog = 'Any'; $svc = 'Any'; $pkg = 'Any'; if ($a) { $prog = [string]$a.Program; $svc = [string]$a.Service; $pkg = [string]$a.Package }; [ordered]@{ name = [string]$r.Name; display = [string]$r.DisplayName; owner = [string]$r.Owner; family = [string]$r.PackageFamilyName; action = [string]$r.Action; direction = [string]$r.Direction; enabled = [string]$r.Enabled; profile = [string]$r.Profile; program = $prog; expanded = [Environment]::ExpandEnvironmentVariables($prog); service = $svc; package = $pkg; protocol = $(if ($p) { [string]$p.Protocol } else { 'Any' }); localPort = $(if ($p) { @($p.LocalPort | ForEach-Object { [string]$_ }) } else { @('Any') }); remote = $(if ($ad) { @($ad.RemoteAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); local = $(if ($ad) { @($ad.LocalAddress | ForEach-Object { [string]$_ }) } else { @('Any') }); ifType = $(if ($ty) { @($ty.InterfaceType | ForEach-Object { [string]$_ }) } else { @('Any') }) } })",
 	"$out = [ordered]@{ networks = $networks; profiles = $profiles; rules = $rules }",
 ];
 export const WINDOWS_SCRIPT = [UTF8_OUT, PROGRESS_OFF, CLM_CHECK, "$ErrorActionPreference = 'Stop'", ...WINDOWS_STEPS, "$json = $out | ConvertTo-Json -Compress -Depth 5", asciiJson("$json")].join("\n");
 /** The PowerShell call: `-EncodedCommand` so no quoting of the script can go wrong; no elevation is asked for. */
-export function windowsCommand(env: NodeJS.ProcessEnv = process.env) {
-	return { file: powershellPath(env), args: [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(WINDOWS_SCRIPT, "utf16le").toString("base64")], options: { timeout: READ_MS, env, cwd: system32(env) } };
+export function windowsCommand(env: NodeJS.ProcessEnv = process.env, nodePaths: string[] = []) {
+	const leaves = [...new Set(nodePaths.map((p) => win32.basename(p.replace(/\//g, "\\")).toLowerCase()).filter(Boolean))].join("|");
+	return { file: powershellPath(env), args: [...POWERSHELL_FLAGS, "-EncodedCommand", Buffer.from(WINDOWS_SCRIPT, "utf16le").toString("base64")], options: { timeout: READ_MS, env: { ...env, SB_FW_NODE: leaves } as NodeJS.ProcessEnv, cwd: system32(env) } };
 }
 
 const asList = (value: unknown): unknown[] => (Array.isArray(value) ? value : value === undefined || value === null || value === "" ? [] : [value]);
@@ -318,12 +321,12 @@ export const windowsUnknown = (port: number, why: string) =>
 
 async function readWindows(input: FirewallInput, execPath: string, exec: FirewallExec, env: NodeJS.ProcessEnv, realpath: (path: string) => string): Promise<FirewallRead> {
 	if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) throw new Error(`not a port: ${input.port}`);
-	const { file, args, options } = windowsCommand(env);
+	let real: string | undefined;
+	try { real = realpath(execPath); } catch { /* a path that cannot be resolved is compared as it is */ }
+	const { file, args, options } = windowsCommand(env, real ? [execPath, real] : [execPath]);
 	try {
-		let real: string | undefined;
-		try { real = realpath(execPath); } catch { /* a path that cannot be resolved is compared as it is */ }
 		const read = parseWindows(await exec(file, args, options)), coded = windowsCoded(read, input, execPath, real), notes = texts(coded);
-		return { notes, coded, summary: `Windows Firewall: ${read.rules.length} enabled inbound rules read, ${notes.length} note${notes.length === 1 ? "" : "s"}` };
+		return { notes, coded, summary: `Windows Firewall: ${read.rules.length} inbound rules read, ${notes.length} note${notes.length === 1 ? "" : "s"}` };
 	} catch (error) {
 		const e = error as Error & { stderr?: string };
 		// Our own parse failure has a plain message; a failed run is told by `execFailure`, and Constrained Language Mode by its sentence.
