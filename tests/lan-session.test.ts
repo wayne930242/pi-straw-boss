@@ -21,7 +21,7 @@ function rig(over: { handler?: Handler; start?: LanStart; paired?: boolean; cert
 		switch (r.cmd) {
 			case "gui-lan-face": return r.open === true ? { ok: true, face: `face-${nextFace++}` } : { ok: true, closed: true };
 			case "gui-lan-pending": return { ok: true, ...FACTS, pending: [], events: [] };
-			case "gui-lan-pair": return r.form === "typed" ? { ok: true, code: "ABCD-EFGH", entry: FACTS.url } : { ok: true, url: `https://weis-mbp.local:8445/sb-app/pair/code-${++minted}`, rows: [minted.toString(2).padStart(6, "0"), "000000", minted.toString(2).padStart(6, "0"), "111111"] };
+			case "gui-lan-pair": return r.form === "typed" ? { ok: true, code: "ABCD EFGH", entry: FACTS.url } : { ok: true, url: `https://weis-mbp.local:8445/sb-app/pair/code-${++minted}`, rows: [minted.toString(2).padStart(6, "0"), "000000", minted.toString(2).padStart(6, "0"), "111111"] };
 			case "gui-lan-files": return { ok: true, dir: "/d", files: ["/d/straw-boss.mobileconfig", "/d/straw-boss-lan-ca.crt"] };
 			default: return { ok: true };
 		}
@@ -277,12 +277,12 @@ test("a code is minted only by a press: a redraw, a resize, a renewal, and a key
 	const first = shown();
 	await r.key("k");
 	assert.deepEqual(r.cmds("gui-lan-pair").at(-1), { cmd: "gui-lan-pair", face: "face-1", surface: r.cmds("gui-lan-pair")[0]!.surface, form: "typed" });
-	assert.match(r.screen(), /Or in an installed app, type this code \(it works once, within ten minutes\):\nABCD-EFGH/);
+	assert.match(r.screen(), /Or in an installed app, type these 8 characters \(no hyphen; it works once, within ten minutes\):\nABCD EFGH/);
 	assert.doesNotMatch(r.screen(), /[▀▄█]{4}/, "the typed code replaces the QR: one code on the screen");
 	assert.match(r.screen(), /p {2}a new QR/);
 	await r.key("p");
 	assert.notEqual(shown(), first, "p draws a new QR");
-	assert.doesNotMatch(r.screen(), /ABCD-EFGH/);
+	assert.doesNotMatch(r.screen(), /ABCD EFGH/);
 	await r.key("c");
 	assert.equal(r.copied.length, 1);
 	assert.equal(r.copied[0], `https://weis-mbp.local:8445/sb-app/pair/code-${r.cmds("gui-lan-pair").filter((c) => c.form !== "typed").length}`, "the clipboard holds the link of the last code made");

@@ -1,6 +1,6 @@
 # Planning work
 
-Plan before your first dispatch, and plan again when the work's shape changes.
+Plan before your first dispatch, and again when the work's shape changes.
 
 ## 1. Choose the graph
 
@@ -10,7 +10,7 @@ Take the first case that matches:
 - **fan-out/fan-in**: independent branches run in subagents, and you integrate their results.
 - **orchestrator-worker**: several workers, each owning one app's task end to end, with dependency edges or more ready tasks than the concurrency cap.
 
-An independent review is a checkpoint, not a change of graph.
+An independent review is a checkpoint, not a graph.
 
 ## 2. Write the plan as todos
 
@@ -26,12 +26,14 @@ For fan-out and orchestrator-worker, create one todo per task. A task is the lar
 
 Each anchor is the lightest check that can fail before the change and still reach what changed:
 
-- **testing**: the default for code changes. Use the smallest test that goes red first. Repo-wide suites, lint, and type checks run once, at the shared checkpoint or before merge, never inside each task.
+- **testing**: the default for code changes. Use the smallest test that goes red first. Repo-wide suites, lint, and type checks run once, at the shared checkpoint or before merge, never inside each task. In an `integration` app, see below.
 - **pseudo-human**: a browser or computer operates the real interface and records screenshots and measurements.
 - **human**: the boss operates or judges the delivered result. Use it where the boss's judgment is the real check: UI feel, wording, a business rule.
 - **adversarial-review**: a fresh-context agent challenges the result against the requirement. Use it for read-only work that has no executable checkpoint.
 
 Tasks that share one anchor share one checkpoint. Do not verify the same thing separately in each branch. Give each such group one checkpoint todo, `blockedBy` every task it covers, and tell those workers to hand their evidence to it instead of running it themselves. A task whose check is distinct, or plainly cheaper in place, keeps its own.
+
+In an app that declares `integration`, the coordinator's anchor before handoff is its review (P0 and P1 clear) plus behaviour tests aimed at its own change, plus the project skill's `Light checks`. Format, lint, build, full type-check, full suites, publish, and similar quality gates run once, by the integrator, on the integrated pre-dev head (its skill's `Full gates`); the skill may name exceptions. The train replaces your merge-time checkpoint, not the fresh reviewer below.
 
 A change-set that touches a shared contract, authorization or permission data, or a migration gets one fresh-context reviewer after its anchor passes. Other change-sets take the author's own read of the diff against the brief.
 
@@ -41,4 +43,4 @@ Dispatch without asking the boss to confirm the plan, and change the graph, an e
 
 ## 5. Run it
 
-Dispatch each ready task. When a result arrives, check it against its brief and its anchor, mark the todo `completed`, then dispatch whatever it unblocked. A failed or cancelled task leaves its dependents blocked: report them, and resolve the next step with the boss. Only a completed task satisfies a dependency.
+Dispatch each ready task. When a result arrives, check it against its brief and anchor, mark the todo `completed`, then dispatch what it unblocked. A failed or cancelled task leaves its dependents blocked: report them, and resolve the next step with the boss. Only a completed task satisfies a dependency.

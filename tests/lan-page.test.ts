@@ -105,7 +105,7 @@ function world(over: { ca?: boolean; on?: boolean; pending?: Body[]; events?: (s
 			case "lan/pair": {
 				minted++;
 				const address = body.address as string | undefined, fell = s.nameFallback && body.form === "name", host = fell ? "192.168.1.5" : address ?? (s.name ? `${s.name}.local` : "192.168.1.5");
-				return body.form === "typed" ? ans({ form: "name", host, port: 8445, code: "ABCD-EFGH", entry: `https://${host}:8445/sb-app/` }) : ans({ form: address || fell ? "address" : "name", host, port: 8445, url: `https://${host}:8445/sb-app/pair/CODE${minted}`, rows: ["101", "010", "101"] });
+				return body.form === "typed" ? ans({ form: "name", host, port: 8445, code: "ABCD EFGH", entry: `https://${host}:8445/sb-app/` }) : ans({ form: address || fell ? "address" : "name", host, port: 8445, url: `https://${host}:8445/sb-app/pair/CODE${minted}`, rows: ["101", "010", "101"] });
 			}
 			case "lan/approve": {
 				if (typeof body.number === "string") {
@@ -197,15 +197,15 @@ test("pairing: every code goes out under the tab's own surface id, a typed code 
 	await w.settle();
 	const pairs = () => w.post("lan/pair").map((c) => c.body);
 	assert.deepEqual(pairs(), [{ surface: "tile-abc123", form: "name" }], "opening the tab on a running Wi-Fi access mints one QR, and no typed code");
-	assert.equal(w.root.shows("ABCD-EFGH"), false);
+	assert.equal(w.root.shows("ABCD EFGH"), false);
 	w.root.button(m.lan_show_code()).click();
 	await w.settle();
 	assert.deepEqual(pairs().at(-1), { surface: "tile-abc123", form: "typed" });
-	assert.ok(w.root.shows("ABCD-EFGH"));
+	assert.ok(w.root.shows("ABCD EFGH"));
 	w.root.button(m.new_code()).click();
 	await w.settle();
 	assert.deepEqual(pairs().at(-1), { surface: "tile-abc123", form: "name" });
-	assert.equal(w.root.shows("ABCD-EFGH"), false, "the new QR voided the typed code and the screen no longer shows it");
+	assert.equal(w.root.shows("ABCD EFGH"), false, "the new QR voided the typed code and the screen no longer shows it");
 	assert.equal(pairs().length, 3);
 	assert.ok(pairs().every((b) => b?.surface === "tile-abc123"));
 });

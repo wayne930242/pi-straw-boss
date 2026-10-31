@@ -214,9 +214,9 @@ test("/boss gui remote turns remote access on in the server and draws the pairin
 	const overlay = a.overlays[0]!, screen = overlay.render(120);
 	assert.ok(screen.some((line) => line.includes("█")), "the QR shows in an overlay");
 	assert.deepEqual(screen.slice(-3), ["c  copy a new one-time link", "o  open one in this computer's browser", "Esc or q  close"], "with its keys under it");
-	const codeAt = screen.findIndex((line) => /installed app, type this code/.test(line));
-	assert.match(screen[codeAt + 1]!, /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/, "the code to type in an installed app, under the QR");
-	assert.ok(overlay.render(40).some((line) => /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/.test(line)), "and still in a pane too narrow for the QR");
+	const codeAt = screen.findIndex((line) => /installed app, type these 8 characters/.test(line));
+	assert.match(screen[codeAt + 1]!, /^[0-9A-HJKMNP-TV-Z]{4} [0-9A-HJKMNP-TV-Z]{4}$/, "the code to type in an installed app, under the QR");
+	assert.ok(overlay.render(40).some((line) => /^[0-9A-HJKMNP-TV-Z]{4} [0-9A-HJKMNP-TV-Z]{4}$/.test(line)), "and still in a pane too narrow for the QR");
 	assert.deepEqual(blocked, [true], "the session reads as waiting while the overlay takes its keys");
 	overlay.handleInput!("c");
 	await until(() => copied.length === 1, "the copy");
@@ -226,7 +226,7 @@ test("/boss gui remote turns remote access on in the server and draws the pairin
 	const gui = hosted.gui(), pair = new RegExp(`^https://box\\.tail1\\.ts\\.net:8443/${gui.token}/pair/([\\w-]{22})$`);
 	const shownQr = decode(fromLines(screen.slice(0, screen.indexOf("")))), codes = [shownQr?.data ?? "", ...copied, ...shown].map((url) => pair.exec(url)?.[1]);
 	assert.ok(codes.every(Boolean) && new Set(codes).size === 3, "the QR, c, and o each carry their own one-time code, so neither key spends the QR's");
-	assert.match(overlay.render(24).join(" "), /^This pane is 24 columns wide; the QR code needs \d+\. Widen it, or use Phone in the GUI\. {2}Or in an installed app, type this code \(it works once, within ten minutes\): [0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4} c {2}copy/, "a narrow pane says how wide the QR needs it, wrapped, and still gives the code to type and the keys");
+	assert.match(overlay.render(24).join(" "), /^This pane is 24 columns wide; the QR code needs \d+\. Widen it, or use Phone in the GUI\. {2}Or in an installed app, type these 8 characters \(no hyphen; it works once, within ten minutes\): [0-9A-HJKMNP-TV-Z]{4} [0-9A-HJKMNP-TV-Z]{4} c {2}copy/, "a narrow pane says how wide the QR needs it, wrapped, and still gives the code to type and the keys");
 	assert.ok(overlay.render(24).every((line) => [...line].length <= 24));
 	overlay.handleInput!("q");
 	await command;

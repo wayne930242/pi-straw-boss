@@ -1,15 +1,18 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
 
 // The short pairing code a person types into the installed app's entry (appentry.ts), beside the QR's long one-time link (remote.ts). 8 characters of 5 bits (40 bits) from an
-// alphabet without I, L, O, and U, shown as ABCD-EFGH. Only a hash is kept. Five wrong codes void every waiting code and lock the typing until `issue` runs again, which only this computer's
+// alphabet without I, L, O, and U, shown as ABCD EFGH (two groups of four with a space: a hyphen made people wonder whether to type it). Only a hash is kept. Five wrong codes void every waiting code and lock the typing until `issue` runs again, which only this computer's
 // own commands do, so a device on the tailnet gets five guesses per code the boss asks for and cannot grind through the space.
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ", LENGTH = 8, MAX_MISSES = 5;
 const hash = (code: string) => createHash("sha256").update(code).digest("hex");
 export type Typed = "ok" | "wrong" | "locked";
-/** The typed code as compared: case, spaces, a hyphen, and the look-alikes O, I, and L are forgiven. */
-const normal = (text: string) => text.toUpperCase().replace(/[\s-]/g, "").replace(/[IL]/g, "1").replace(/O/g, "0");
 const SHAPE = new RegExp(`^[${ALPHABET}]{${LENGTH}}$`);
+
+/** What was typed, as the 8 characters it stands for: NFKC (full-width letters and digits, an ideographic space), every space, dash, and invisible mark dropped (a phone keyboard offers －, –, —, ‐), and the look-alikes I, L, O read as 1, 1, 0. */
+export const cleaned = (text: string) => text.normalize("NFKC").toUpperCase().replace(/[\p{White_Space}\p{Pd}\p{Cf}\u2212]/gu, "").replace(/[IL]/g, "1").replace(/O/g, "0");
+/** The typed text of a form post: the single `code` field, or the entry's eight boxes `c1` to `c8` joined (a page without script posts those). */
+export const typedText = (form: URLSearchParams) => form.get("code") || Array.from({ length: LENGTH }, (_, i) => form.get(`c${i + 1}`) ?? "").join("");
 
 /** `ms` is how long a code works, `max` how many wait at once (the oldest goes first). */
 export function createTypedCodes(ms: number, max: number) {
@@ -23,12 +26,12 @@ export function createTypedCodes(ms: number, max: number) {
 			codes.set(hash(code), now + ms);
 			for (const old of codes.keys()) if (codes.size > max) codes.delete(old);
 			misses = 0;
-			return `${code.slice(0, 4)}-${code.slice(4)}`;
+			return `${code.slice(0, 4)} ${code.slice(4)}`;
 		},
-		/** Uses `text` up if it is a waiting code (case, spaces, a hyphen, and the look-alikes O, I, and L are forgiven); a wrong one counts, and the fifth voids them all. */
+		/** Uses `text` up if it is a waiting code (case, width, spaces, any dash, and the look-alikes O, I, and L are forgiven); a wrong one counts, and the fifth voids them all. */
 		take(text: string): Typed {
 			if (misses >= MAX_MISSES) return "locked";
-			const code = normal(text), key = hash(code), until = SHAPE.test(code) ? (codes.get(key) ?? 0) : 0;
+			const code = cleaned(text), key = hash(code), until = SHAPE.test(code) ? (codes.get(key) ?? 0) : 0;
 			codes.delete(key);
 			if (until >= Date.now()) return "ok";
 			if (++misses >= MAX_MISSES) codes.clear();
@@ -40,7 +43,7 @@ export function createTypedCodes(ms: number, max: number) {
 
 /** Wrong typed tries one peer address may make, and in all per issued code, on the LAN (docs/specs/2026-10-30-sb-gui-lan.md, "Codes and limits"). */
 export const LAN_PEER_MISSES = 5, LAN_CODE_MISSES = 200;
-/** A LAN code's two kinds are told apart by length: the QR's is 22 characters, the typed code at most 9 (with its hyphen). */
+/** A LAN code's two kinds are told apart by length: the QR's is 22 characters, the typed code at most 9 (with a hyphen if one is typed). */
 const QR_MIN = 20;
 export interface LanTaken { result: Typed; /** This peer's wrong tries so far, after a wrong one. */ misses?: number; /** Set when this wrong try was the one that voided every typed code: the number of peer addresses that guessed. */ voided?: number }
 
@@ -83,7 +86,7 @@ export function createLanCodes(ms: number, max: number, now: () => number = Date
 		typed(surface: string): string {
 			const code = Array.from({ length: LENGTH }, () => ALPHABET[randomInt(ALPHABET.length)]).join("");
 			mint("typed", surface, code);
-			return `${code.slice(0, 4)}-${code.slice(4)}`;
+			return `${code.slice(0, 4)} ${code.slice(4)}`;
 		},
 		/** Which kind `text` is by its length, so a form post can carry either. */
 		kindOf: (text: string): "qr" | "typed" => (text.replace(/\s/g, "").length >= QR_MIN ? "qr" : "typed"),
@@ -92,7 +95,7 @@ export function createLanCodes(ms: number, max: number, now: () => number = Date
 		takeTyped(text: string, peer: string): LanTaken {
 			const live = [...kinds.typed.entries()].filter(([, v]) => v.until >= now());
 			if (live.some(([, v]) => (v.misses!.get(peer) ?? 0) >= LAN_PEER_MISSES)) return { result: "locked" };
-			const code = normal(text);
+			const code = cleaned(text);
 			if (SHAPE.test(code) && spend("typed", hash(code))) return { result: "ok" };
 			let worst = 1, voided: number | undefined;
 			for (const [key, v] of live) {

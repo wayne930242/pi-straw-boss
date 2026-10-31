@@ -256,7 +256,7 @@ test("one live code per surface: a face's new QR voids its old one, and the type
 	const old = await redeem0(h, String(first.url));
 	assert.match(old.body, /That code did not work/);
 	const typed = await h.ask("gui-lan-pair", { face: f, form: "typed" });
-	assert.match(String(typed.code), /^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+	assert.match(String(typed.code), /^[0-9A-Z]{4} [0-9A-Z]{4}$/);
 	assert.equal(typed.url, undefined, "a typed code is not a link");
 	assert.match((await redeem0(h, String(second.url))).body, /That code did not work/, "and the QR before it is void");
 	assert.equal((await h.ask("gui-lan-pair", { face: f, form: "elsewhere" })).error, "bad_request");

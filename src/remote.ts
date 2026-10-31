@@ -5,7 +5,7 @@ import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { createDevices, SESSION_MS, labelOf, type Listed } from "./devices.ts";
 import { APP, createLanAccess, type LanAccessDeps, type LanAt } from "./lan/access.ts";
-import { createTypedCodes } from "./paircode.ts";
+import { createTypedCodes, typedText } from "./paircode.ts";
 import { qr, qrLines } from "./qr.ts";
 import { forgetStart, startedLater, startOf } from "./startof.ts";
 
@@ -181,7 +181,7 @@ export function createAccess(token: string, ended: (device?: string, net?: Net) 
 		redeem(req: IncomingMessage, text: string): Redeemed {
 			const h = req.headers;
 			if (!admitted(h) || req.method !== "POST" || h.origin !== `https://${remote!.host}` || (h["sec-fetch-site"] ?? "same-origin") !== "same-origin" || !String(h["content-type"] ?? "").toLowerCase().startsWith("application/x-www-form-urlencoded")) return { status: 403 };
-			const got = typed.take(new URLSearchParams(text).get("code") ?? "");
+			const got = typed.take(typedText(new URLSearchParams(text)));
 			if (got !== "ok") return got === "locked" ? { status: 429 } : { wrong: true };
 			const cookie = randomBytes(32).toString("hex");
 			devices.add(hash(cookie), labelOf(String(h["user-agent"] ?? "")));
@@ -277,7 +277,7 @@ export async function switchRemote(gui: { port: number; remotePort: number; toke
 	// Every link is a new one-time pairing URL: the QR's own, and one per press of c or o in the overlay.
 	const link = () => `https://${id.host}/${gui.token}/pair/${gui.access.pair()}`;
 	const code = gui.access.pairCode();
-	const lines = [...qrLines(qr(link())), "", "Scan with a device signed in to Tailscale as", id.login, "", "Or in an installed app, type this code (it works once, within ten minutes):", code!, "", "c  copy a new one-time link", OPEN_LINE, "Esc or q  close"];
+	const lines = [...qrLines(qr(link())), "", "Scan with a device signed in to Tailscale as", id.login, "", "Or in an installed app, type these 8 characters (no hyphen; it works once, within ten minutes):", code!, "", "c  copy a new one-time link", OPEN_LINE, "Esc or q  close"];
 	const plain = `Remote access is on for ${id.login}, tailnet only: https://${id.host}/${gui.token}/`; // `plain`: for a server that starts again, where no QR is shown
 	return { text: `${plain} (scan the QR; it works once, within ten minutes)`, plain, lines, link, changed: true };
 }

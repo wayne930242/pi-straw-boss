@@ -14,7 +14,8 @@ import { PROMPT_DIR } from "./fakes.ts";
 // Board auto-fill: main 335 to 350 (the board fills itself from the todo list and the name; board_set overrides it, `auto: true` hands it back).
 // Tower comms: tower 360 to 380 for never forwarding a main's board items or todo text to an ally (T2 review F009).
 // Merge of call timing (D19) and board auto-fill: main 458 (three call_tower points beside the board line), tower 380.
-const BUDGETS: Record<string, number> = { "main.md": 458, "tower.md": 380, "member.md": 140, "member-no-main.md": 150 };
+// Board clearing: main 458 to 484 (clear the board before stopping when work ends or is shelved; `board_set { clear: true }`; Done-when includes it).
+const BUDGETS: Record<string, number> = { "main.md": 484, "tower.md": 380, "member.md": 140, "member-no-main.md": 150 };
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 
@@ -70,4 +71,35 @@ test("D19: the main calls the tower at three points only, routine progress stays
 test("D19: the tower run reads why= from the header: milestone updates obligations, shared is answered go or wait with the owner named, blocked is routed, and nobody is asked for progress", () => {
 	const run = readFileSync(`${PROMPT_DIR}/tower-run.md`, "utf8");
 	for (const term of ["`why=`", "`milestone`", "`shared`", "`blocked`", "go or wait", "owner", "Never ask mains for progress", "board_read"]) assert.ok(run.includes(term), `tower-run.md names ${term}`);
+});
+
+// Merge train, phase 1 (docs/specs/2026-10-30-merge-train.md): prompt-only. Budgets are unchanged; the new text displaced other words.
+test("merge train: apps-config names the integration fields and the skill headings; the integrator refuses to depart without the three required ones", () => {
+	const cfg = readFileSync(`${PROMPT_DIR}/apps-config.md`, "utf8");
+	for (const term of ["`integration`", "`maxCars`", "`maxWaitMin`", "`base`", "## Light checks", "## Train assembly", "## Full gates", "## Merge", "## Post-merge", "## Urgent lane", "## Load", "Format, lint, build, full type-check, full suites, publish"]) assert.ok(cfg.includes(term), `apps-config.md names ${term}`);
+	const integrator = readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8");
+	assert.match(integrator, /^# Integrator/);
+	for (const term of ["`Light checks`, `Full gates`, or `Merge`", "`why=blocked`", "car:", "auth:", "`train/<code>`", "nothing is force pushed", "`maxCars`", "`maxWaitMin`", "`why=milestone`", "(applied to a DB: no|<which>)", "coordinator: <session id>", "apps-config.md beside this file", "~/.pi/agent/straw-boss/trains/<project>/<app>.json", "integ <project>", "never rename again", "reviewer rechecks it (delta brief)"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
+	assert.ok(!integrator.includes("{{dir}}") && !integrator.includes("<state dir>") && !integrator.includes("reserve"), "integrator.md has no placeholder, undefined path, or reserve");
+	assert.ok(words(integrator) <= 600, `integrator.md has ${words(integrator)} words`);
+});
+
+test("merge train: main hands integration cars over with why shared, planning states the principle, and the tower forwards a shared merge request to the one integrator", () => {
+	const main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
+	for (const term of ["`integration`", "{{dir}}/integrator.md", "never merge to its base or claim a pre-dev branch, unless you are the project's integrator", "`why: shared`", "waits for the integrator's train answer", "the done report still goes to whoever asked", "paths outside the project"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	const plan = readFileSync(`${PROMPT_DIR}/planning.md`, "utf8");
+	for (const term of ["`Light checks`", "once, by the integrator", "may name exceptions"]) assert.ok(plan.includes(term), `planning.md names ${term}`);
+	for (const file of ["tower.md", "tower-run.md"]) {
+		const text = readFileSync(`${PROMPT_DIR}/${file}`, "utf8");
+		for (const term of ["`integration`", "integrator", "boss_open_main", "integrator.md"]) assert.ok(text.includes(term), `${file} names ${term}`);
+	}
+	assert.ok(words(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8")) <= 380);
+	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("finding with evidence"));
+});
+
+test("merge train: the integrator needs no shared call for its own merges, and the tower answers its shared request instead of forwarding it back", () => {
+	const integrator = readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8");
+	assert.ok(integrator.includes("Your own merges and pushes need no `shared` call: the slips' auth covers them"));
+	assert.ok(readFileSync(`${PROMPT_DIR}/tower-run.md`, "utf8").includes("from the integrator itself, answer go or wait"));
+	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("the integrator's own: go/wait"));
 });

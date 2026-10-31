@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { createLanDevices, labelOf, SESSION_MS, type Event } from "../devices.ts";
-import { createLanCodes } from "../paircode.ts";
+import { createLanCodes, typedText } from "../paircode.ts";
 
 // Who is let in over Wi-Fi access (docs/specs/2026-10-30-sb-gui-lan.md, "Pairing and identity on the LAN"), the LAN's half of `createAccess` (remote.ts). On the tailnet a Tailscale identity stands behind a request; here nothing does, so a
 // device gets in only with a cookie of an allowed device, and becomes one only by a code this computer minted and then the boss's number: a redeemed code makes a pending device (in memory, a cookie scoped to the app entry alone, no token
@@ -187,7 +187,7 @@ export function createLanAccess({ token, ended, file, notify = () => {}, log = (
 			if (c.kind !== "allowed" && isLimited(peer ?? "?")) return { status: 429 };
 			if (!peer || !hostOk(req, at) || req.method !== "POST" || h.origin !== at.origin || (h["sec-fetch-site"] ?? "same-origin") !== "same-origin" || !String(h["content-type"] ?? "").toLowerCase().startsWith("application/x-www-form-urlencoded")) return deny(peer ?? "?", 403);
 			if (pending.size >= MAX_PENDING || [...pending.values()].some((p) => p.peer === peer)) return { busy: true };
-			const code = new URLSearchParams(text).get("code") ?? "";
+			const code = typedText(new URLSearchParams(text));
 			if (codes.kindOf(code) === "qr") {
 				if (!codes.takeQr(code)) return (refused(peer, 403), { wrong: true });
 			} else {

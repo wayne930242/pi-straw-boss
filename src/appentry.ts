@@ -1,49 +1,26 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { askPage, noticePage, page, SCRIPT, waitPage, wordsOf } from "./entryform.ts";
 import { lanAppCookieFor, lanCookieFor, type LanAt } from "./lan/access.ts";
 import { APP, type Access, appCookieFor, cookieFor } from "./remote.ts";
 
 // The installed app's fixed entry on the remote listener (docs/specs/2026-10-26-sb-backend.md, Remote app entry): `/sb-app/` holds no token and no secret, because the token changes with every
 // listener and an installed app (on iOS with a cookie jar of its own) cannot follow it. A device with a pairing is sent on to the current page; one without gets a field for the short pairing
-// code (paircode.ts), whose POST pairs it as a scanned QR does (remote.ts `entry` and `redeem` decide; this file only speaks HTTP and draws the pages).
+// code (paircode.ts), whose POST pairs it as a scanned QR does (remote.ts `entry` and `redeem` decide; this file only speaks HTTP, entryform.ts draws the pages).
 // On a Wi-Fi access (LAN) listener the same entry takes an `at` and speaks the LAN's pairing (docs/specs/2026-10-30-sb-gui-lan.md, "Approval on this computer"): the QR's link carries a code and no token, and its GET only shows a Pair button;
 // a posted code makes a pending device that is given the entry's cookie and nothing else, with a waiting page that shows the number to type on the computer; the token-bearing redirect comes only once the device is allowed.
 
 const HTML = "text/html; charset=utf-8";
-const TEXT = {
-	en: { title: "Straw Net", lead: "This device is not paired. On the computer that runs Straw Boss, run /boss gui remote (or open Phone in the page) and type the code it shows beside the QR.", label: "Pairing code", go: "Pair", paired: "Already paired on this device? Open the straw net", wrong: "That code did not work. Check it, or ask for a new one on the computer.", locked: "Too many wrong codes. Ask for a new code on the computer (/boss gui remote).", done: "Paired. Opening the straw net…" },
-	zh: { title: "Straw Net", lead: "這個裝置還沒配對。在執行 Straw Boss 的電腦上執行 /boss gui remote（或在頁面開啟「手機」視窗），輸入 QR code 旁邊顯示的配對碼。", label: "配對碼", go: "配對", paired: "這個裝置已經配對過？開啟 straw net", wrong: "這個配對碼無效。請確認輸入無誤，或在電腦上取得新的配對碼。", locked: "錯誤次數過多。請在電腦上取得新的配對碼（/boss gui remote）。", done: "已配對。正在開啟 straw net…" },
-};
-const LAN = {
-	en: { lead: "This device is not paired. On the computer that runs Straw Boss, run /boss gui lan (or open Phone, Same Wi-Fi, in the page) and type the code it shows beside the QR.", locked: "Too many wrong codes from this device. Ask for a new code on the computer (/boss gui lan).", ask: "Pair this device with Straw Boss on", pair: "Pair", wait: "Waiting for the computer to allow this device.", number: "Number", type: "On the computer, type this number.", denied: "The computer did not allow this device.", timeout: "Not allowed in time. Ask the computer for a new code.", busy: "The computer is busy with other pair requests; try again in a minute.", limited: "Too many requests from this device; try again in ten minutes.", again: "Back to the pairing page" },
-	zh: { lead: "這個裝置還沒配對。在執行 Straw Boss 的電腦上執行 /boss gui lan（或在頁面開啟「手機」>「同一個 Wi-Fi」），輸入 QR code 旁邊顯示的配對碼。", locked: "這個裝置輸入錯誤的配對碼太多次。請在電腦上取得新的配對碼（/boss gui lan）。", ask: "要把這個裝置與以下電腦上的 Straw Boss 配對嗎？", pair: "配對", wait: "等待電腦允許這個裝置。", number: "數字", type: "請在電腦上輸入這組數字。", denied: "電腦沒有允許這個裝置。", timeout: "沒有及時允許。請在電腦上取得新的配對碼。", busy: "電腦正在處理其他配對要求，請一分鐘後再試。", limited: "這個裝置的要求太多，請十分鐘後再試。", again: "回到配對頁" },
-};
 /** Whether the first language the browser asks for is Traditional Chinese: only then does a page speak it. */
 export const zhOf = (req: IncomingMessage) => /^\s*zh-(?:tw|hk|mo|hant)\b/i.test(String(req.headers["accept-language"] ?? ""));
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-const shell = (zh: boolean, body: string, head = "") => `<!doctype html><html lang="${zh ? "zh-Hant" : "en"}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark">${head}<title>Straw Net</title><style>body{font:16px system-ui,sans-serif;background:#16161e;color:#c0caf5;margin:0;padding:2rem 1.25rem;max-width:30rem}input,button{font:inherit;padding:.6rem .8rem;border-radius:.4rem;border:1px solid #565f89;background:#1a1b26;color:inherit}input{letter-spacing:.15em;text-transform:uppercase;width:11em}button{background:#7aa2f7;color:#16161e;border-color:#7aa2f7;margin-left:.5rem}.note{color:#f7768e}.number{font-size:2.5rem;letter-spacing:.2em;margin:.5rem 0}a{color:#7aa2f7}</style></head><body><h1>Straw Net</h1>${body}</body></html>`;
-const page = (zh: boolean, note?: "wrong" | "locked", lan = false) => {
-	const t = TEXT[zh ? "zh" : "en"], l = LAN[zh ? "zh" : "en"];
-	return shell(zh, `<p>${lan ? l.lead : t.lead}</p>${note ? `<p class="note" role="alert">${note === "locked" && lan ? l.locked : t[note]}</p>` : ""}${note === "locked" ? "" : `<form method="post" action="${APP}pair"><label>${t.label}<br><input name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="16" required autofocus></label><button type="submit">${t.go}</button></form>`}<p><a href="${APP}">${t.paired}</a></p>`);
-};
-/** The QR's page: a link preview or prefetcher that fetches the URL gets this and uses nothing up; the code is posted by the button. */
-const askPage = (zh: boolean, host: string, code: string) => {
-	const l = LAN[zh ? "zh" : "en"];
-	return shell(zh, `<p>${l.ask} ${esc(host)}${zh ? "" : "?"}</p><form method="post" action="${APP}pair"><input type="hidden" name="code" value="${esc(code)}"><button type="submit">${l.pair}</button></form>`);
-};
-/** Where a pending device waits (no script: it reloads itself); the number is the one to type on the computer. */
-const waitPage = (zh: boolean, w: { state: "pending"; number: string } | { state: "denied" | "timeout" | "none" }) => {
-	const l = LAN[zh ? "zh" : "en"];
-	if (w.state === "pending") return shell(zh, `<p>${l.wait}</p><p>${l.number}</p><p class="number">${esc(w.number)}</p><p>${l.type}</p>`, `<meta http-equiv="refresh" content="2;url=${APP}pair/wait">`);
-	return shell(zh, `<p class="note" role="alert">${w.state === "denied" ? l.denied : w.state === "timeout" ? l.timeout : l.lead}</p><p><a href="${APP}">${l.again}</a></p>`);
-};
 
 /** The handler of every request under `/sb-app/`; `headers` are the page's security headers (a form needs `form-action` as well, which `default-src 'none'` does not cover). `at` is set for a request that came in on a LAN listener. */
 export function createEntry(access: Access, token: string, headers: Record<string, string>) {
-	const base = { ...headers, "content-security-policy": `${headers["content-security-policy"]}; form-action 'self'` };
+	// `same-origin`, not the pages' `no-referrer`: a form post under no-referrer carries `Origin: null` (Fetch, "append a request Origin header"), and `redeem` takes only the entry's own origin (on the LAN too).
+	const base = { ...headers, "content-security-policy": `${headers["content-security-policy"]}; form-action 'self'`, "referrer-policy": "same-origin" };
 	/** The entry on a LAN listener (see the header). The device's cookie decides: allowed, it goes on to the page; pending, to the waiting page; neither, it is asked for a code. */
 	const lan = (req: IncomingMessage, res: ServerResponse, path: string[], at: LanAt) => {
 		const send = (code: number, type: string, body: string, more: Record<string, string | string[]> = {}) => void res.writeHead(code, { ...base, "content-type": type, ...more }).end(body);
-		const zh = zhOf(req), l = LAN[zh ? "zh" : "en"], refuse = (status: 403 | 429 = 403) => (status === 429 ? send(429, HTML, shell(zh, `<p class="note" role="alert">${l.limited}</p>`)) : send(403, "text/plain", "forbidden"));
+		const zh = zhOf(req), refuse = (status: 403 | 429 = 403) => (status === 429 ? send(429, HTML, noticePage(zh, "limited")) : send(403, "text/plain", "forbidden"));
 		if (req.method === "GET" && path.length === 0) return void (access.lan.admits(req, at) ? res.writeHead(308, { ...base, location: APP }).end() : refuse());
 		if (req.method === "GET" && path.length === 1 && path[0] === "") {
 			const who = access.lan.entry(req, at), site = req.headers["sec-fetch-site"], mode = req.headers["sec-fetch-mode"], dest = req.headers["sec-fetch-dest"];
@@ -54,6 +31,7 @@ export function createEntry(access: Access, token: string, headers: Record<strin
 			if (dest === "document" && typeof site === "string" && site !== "same-origin") return void send(200, HTML, `<!doctype html><meta http-equiv="refresh" content="0"><p><a href="">Open the straw net</a></p>`);
 			return void send(200, HTML, page(zh, undefined, true));
 		}
+		if (req.method === "GET" && path.length === 1 && path[0] === "entry.js") return void (access.lan.admits(req, at) ? send(200, "text/javascript; charset=utf-8", SCRIPT) : refuse());
 		if (req.method === "GET" && path.length === 2 && path[0] === "pair") {
 			if (path[1] === "wait") {
 				const w = access.lan.waiting(req, at);
@@ -78,7 +56,7 @@ export function createEntry(access: Access, token: string, headers: Record<strin
 				// The device is given the entry's cookie and nothing more: no token in the body, a header, or a path, until the boss allows it.
 				if ("cookie" in who) return send(200, HTML, waitPage(zh, { state: "pending", number: who.number }), { "set-cookie": [lanAppCookieFor(who.cookie)] });
 				if ("wrong" in who) return send(403, HTML, page(zh, "wrong", true));
-				if ("busy" in who) return send(503, HTML, shell(zh, `<p class="note" role="alert">${l.busy}</p><p><a href="${APP}">${l.again}</a></p>`, ""));
+				if ("busy" in who) return send(503, HTML, noticePage(zh, "busy"));
 				return who.status === 429 ? send(429, HTML, page(zh, "locked", true)) : refuse();
 			}).on("error", () => {});
 			return;
@@ -101,6 +79,7 @@ export function createEntry(access: Access, token: string, headers: Record<strin
 			if (req.headers["sec-fetch-dest"] === "document" && typeof site === "string" && site !== "same-origin") return void send(200, HTML, `<!doctype html><meta http-equiv="refresh" content="0"><p><a href="">Open the straw net</a></p>`);
 			return void send(200, HTML, page(zh));
 		}
+		if (req.method === "GET" && path.length === 1 && path[0] === "entry.js") return void (access.admits(req) ? send(200, "text/javascript; charset=utf-8", SCRIPT) : refuse());
 		if (req.method === "POST" && path.length === 1 && path[0] === "pair") {
 			if (!access.admits(req)) return void refuse(); // nothing is read from a request that is not this machine's user
 			let text = "", big = false;
@@ -113,7 +92,7 @@ export function createEntry(access: Access, token: string, headers: Record<strin
 			}).on("end", () => {
 				if (big) return;
 				const who = access.redeem(req, text);
-				if ("cookie" in who) return send(200, HTML, `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${APP}"><p>${TEXT[zh ? "zh" : "en"].done}</p>`, cookies(who.cookie));
+				if ("cookie" in who) return send(200, HTML, `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${APP}"><p>${wordsOf(zh).done}</p>`, cookies(who.cookie));
 				if ("wrong" in who) return send(403, HTML, page(zh, "wrong"));
 				return who.status === 429 ? send(429, HTML, page(zh, "locked")) : refuse();
 			}).on("error", () => {});

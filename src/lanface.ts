@@ -200,7 +200,7 @@ export async function showLan(ui: ExtensionContext["ui"], d: LanDeps, start: Lan
 	function pairingFace(): Part[] {
 		const out: Part[] = [];
 		if (code && "qr" in code) out.push({ qr: code.qr }, "", "Scan with a phone on this network that trusts this computer's certificate, tap Pair,", "then allow it here (its number shows on the phone).", "If the phone warns that the connection is not private, do not go on: press t and install the certificate.");
-		else if (code) out.push("Or in an installed app, type this code (it works once, within ten minutes):", code.typed, "");
+		else if (code) out.push("Or in an installed app, type these 8 characters (no hyphen; it works once, within ten minutes):", code.typed, "");
 		else out.push("No pairing code is on the screen: press p for a new QR.");
 		out.push("", ["t  certificate (step 1, once per phone)", toggle()].filter(Boolean).join("    "), [code && "typed" in code ? "p  a new QR" : "k  code for the installed app", "c  copy a new one-time link", "Esc or q  close"].join("    "));
 		return out;

@@ -229,7 +229,7 @@ test("typed codes: five wrong tries lock one peer address only; 200 in all void 
 	for (let i = 1; i <= LAN_PEER_MISSES; i++) assert.deepEqual(try_(asA, "ZZZZ-ZZZ" + i), { wrong: true }, `try ${i}`);
 	assert.deepEqual(w.events.filter((e) => e.type === "wrong").map((e) => (e as { count: number }).count), [1, 2, 3, 4, 5], "the computer hears a count, not the codes");
 	assert.deepEqual(try_(asA, typed), { status: 429 }, "locked out of the code: even the right one");
-	assert.deepEqual(try_(asA, "ABCD-EFGH"), { status: 429 });
+	assert.deepEqual(try_(asA, "ABCD EFGH"), { status: 429 });
 	const b = try_(asB, typed.toLowerCase().replace("-", " "));
 	assert.ok("cookie" in b, "another peer is not locked, and case, spaces, and the hyphen are forgiven");
 	// A QR code is never locked.

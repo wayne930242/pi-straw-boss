@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { forAllies, readEntries, writeEntry } from "../src/board.ts";
+import { ENDED_MS, type Entry, forAllies, joinLocal, purge, readEntries, STALE_MS, writeEntry } from "../src/board.ts";
 import { readBoard } from "../src/boardread.ts";
 import { deriveBoard, scrubBoard } from "../src/boardauto.ts";
 import type { Todo } from "../src/items.ts";
@@ -22,8 +22,8 @@ test("now: the task in progress, else the first pending as next, else done (n/n)
 	assert.equal(deriveBoard({ name: "MP-1 cost", todos: [todo(2, "Fix rounding", "in_progress"), todo(3, "Ship", "pending")] })!.text.now, "MP-1 cost: Fix rounding", "else its subject");
 	assert.equal(deriveBoard({ name: "MP-1 cost", todos: [todo(1, "A", "completed"), todo(5, "Later", "pending"), todo(3, "Ship", "pending")] })!.text.now, "MP-1 cost: next Ship", "the first pending in id order");
 	assert.equal(deriveBoard({ name: "MP-1 cost", todos: [todo(1, "A", "completed"), todo(2, "B", "completed")] })!.text.now, "MP-1 cost: done (2/2)");
-	assert.deepEqual(deriveBoard({ name: "MP-1 cost", todos: [] }), { text: { now: "MP-1 cost", items: [] }, who: "MP-1 cost" }, "no list: the name alone, and no count");
-	assert.deepEqual(deriveBoard({ name: "MP-1 cost", todos: undefined }), { text: { now: "MP-1 cost", items: [] }, who: "MP-1 cost" });
+	assert.equal(deriveBoard({ name: "MP-1 cost", todos: [] }), undefined, "no list: a name alone is not work, so no entry");
+	assert.equal(deriveBoard({ name: "MP-1 cost", todos: undefined }), undefined);
 	assert.equal(deriveBoard({ name: "", todos: l })!.text.now, "Fixing rounding", "pi's default name is none, so the line has no prefix");
 	assert.equal(deriveBoard({ name: "", todos: [] }), undefined, "no name and no list: no entry");
 	assert.equal(deriveBoard({ name: "  ", todos: undefined }), undefined);
@@ -42,7 +42,7 @@ test("the board's caps hold by cutting, after the scrub: now at 120, an item at 
 	const d = deriveBoard({ name: "n".repeat(30), todos: [todo(1, "x".repeat(200), "in_progress", "y".repeat(200))] })!;
 	assert.equal(Array.from(d.text.now).length, 120);
 	assert.equal(Array.from(d.text.items[0]!.t).length, 80);
-	assert.equal(Array.from(deriveBoard({ name: "n".repeat(200), todos: undefined })!.text.now).length, 40, "a name is cut to the board's label length");
+	assert.equal(Array.from(deriveBoard({ name: "n".repeat(200), todos: [todo(1, "x", "completed")] })!.who!).length, 40, "a name is cut to the board's label length");
 });
 
 test("the scrub: paths inside the project are relative, every other path is hidden", () => {
@@ -228,7 +228,7 @@ test("a main's board fills from its todo list and name at the turn's end, once p
 test("boss_rename changes the line at once", async () => {
 	const a = await main();
 	await a.tool("boss_rename", { name: "MP-9 export" });
-	assert.equal(entryOf("a1")!.now, "MP-9 export", "the name alone");
+	assert.equal(entryOf("a1"), undefined, "a name alone is not work: no entry");
 	setTodos(a, LIST);
 	await a.fire("turn_end");
 	await a.tool("boss_rename", { name: "MP-9 csv" });
@@ -244,20 +244,20 @@ test("pi's default name (the session id) makes no prefix, and no name with no li
 	assert.equal(entryOf("b1")!.now, "Writing the CSV writer");
 });
 
-test("a stale auto entry goes when the todo list empties and the session has no name; a name keeps a name-only entry; a board_set entry stays", async () => {
+test("a stale auto entry goes when the todo list empties, named or not; a board_set entry stays", async () => {
 	const b = await main("b1", "b1");
 	setTodos(b, LIST);
 	await b.fire("turn_end");
 	assert.ok(entryOf("b1"));
 	setTodos(b, []);
 	await b.fire("turn_end");
-	assert.equal(entryOf("b1"), undefined, "no name, no list: the old line is removed");
+	assert.equal(entryOf("b1"), undefined, "no list: the old line is removed");
 	const c = await main("named", "c1", 2);
 	setTodos(c, LIST);
 	await c.fire("turn_end");
 	setTodos(c, []);
 	await c.fire("turn_end");
-	assert.deepEqual([entryOf("c1")!.now, entryOf("c1")!.who, entryOf("c1")!.count], ["named", "named", undefined]);
+	assert.equal(entryOf("c1"), undefined, "a name no longer keeps a name-only line");
 	const d = await main("b3", "b3", 3);
 	setTodos(d, LIST);
 	await d.fire("turn_end");
@@ -292,7 +292,7 @@ test("board_set overrides until the todo list or the name moves, and auto: true 
 test("board_set auto: true takes no text, board_set without auto needs one, and a session with nothing to show loses its entry", async () => {
 	const a = await main();
 	await assert.rejects(a.tool("board_set", { auto: true, now: "x" }), /takes no now or items/);
-	await assert.rejects(a.tool("board_set", {}), /now is required unless auto is true/);
+	await assert.rejects(a.tool("board_set", {}), /now is required unless auto or clear is true/);
 	await a.tool("board_set", { now: "manual" });
 	assert.ok(entryOf("a1"));
 	const a2 = world.agent({ id: "n2", name: "n2", pane: "wA:p2", tab: "wA:t2", deps: { now } });
@@ -301,6 +301,93 @@ test("board_set auto: true takes no text, board_set without auto needs one, and 
 	await a2.tool("board_set", { now: "manual" });
 	assert.match(textOf(await a2.tool("board_set", { auto: true })), /nothing to show yet/);
 	assert.equal(entryOf("n2"), undefined);
+});
+
+test("board_set clear: true deletes the entry, takes no text, and auto-fill leaves it off until the todo list or the name moves", async () => {
+	const a = await main();
+	setTodos(a, LIST);
+	await a.fire("turn_end");
+	assert.ok(entryOf("a1"));
+	await assert.rejects(a.tool("board_set", { clear: true, now: "x" }), /clear: true takes no now, items, or auto/);
+	await assert.rejects(a.tool("board_set", { clear: true, auto: true }), /clear: true takes no now, items, or auto/);
+	assert.ok(entryOf("a1"), "a refused call changes nothing");
+	assert.match(textOf(await a.tool("board_set", { clear: true })), /Board entry cleared/);
+	assert.equal(entryOf("a1"), undefined);
+	await a.fire("turn_end");
+	await a.fire("tool_execution_end", { toolCallId: "c", toolName: "bash" });
+	assert.equal(entryOf("a1"), undefined, "the same list and name: auto-fill does not write it back");
+	await a.tool("board_set", { now: "manual" });
+	await a.tool("board_set", { clear: true });
+	assert.equal(entryOf("a1"), undefined, "a board_set entry clears too");
+	setTodos(a, [todo(1, "Write schema", "completed"), todo(2, "Write the CSV writer", "completed"), todo(3, "Ship", "in_progress")]);
+	await a.fire("turn_end");
+	assert.equal(entryOf("a1")!.now, "api-main: Ship", "a move in the list writes it again");
+	await a.tool("board_set", { clear: true });
+	await a.tool("boss_rename", { name: "renamed" });
+	assert.equal(entryOf("a1")!.now, "renamed: Ship", "so does a new name");
+	const member = world.agent({ id: "m1", name: "helper", pane: "wA:p2", tab: "wA:t1", deps: { now } });
+	await member.start();
+	await assert.rejects(member.tool("board_set", { clear: true }), /Only the main agent of a tab writes/);
+});
+
+test("a finished todo list is written once as done (n/n) and goes 30 minutes later, without a second write", async () => {
+	const a = await main();
+	setTodos(a, [todo(1, "Write schema", "completed"), todo(2, "Ship", "completed")]);
+	await a.fire("turn_end");
+	const e = entryOf("a1")!;
+	assert.deepEqual([e.src, e.now, e.count], ["todo", "api-main: done (2/2)", { done: 2, total: 2 }]);
+	await a.fire("turn_end");
+	assert.equal(entryOf("a1")!.updated, e.updated, "written once");
+	clock += ENDED_MS - 5000;
+	await a.fire("turn_end");
+	assert.ok(entryOf("a1"), "still there before 30 minutes");
+	clock += 10_000;
+	await a.fire("turn_end");
+	assert.equal(entryOf("a1"), undefined, "gone after 30 minutes");
+	await a.fire("turn_end");
+	assert.equal(entryOf("a1"), undefined, "and not written back");
+	setTodos(a, [todo(1, "Write schema", "completed"), todo(2, "Ship", "completed"), todo(3, "More", "in_progress")]);
+	await a.fire("turn_end");
+	assert.equal(entryOf("a1")!.now, "api-main: More", "new work writes again");
+});
+
+test("a finished auto entry is hidden from a live main's row after 30 minutes and purged; an unfinished one is not", () => {
+	const mains = [{ session: "m", name: "main", workspaceId: "wA", workspace: "Alpha", tab: "t", state: "idle" }];
+	const entry = (count: { done: number; total: number }, updated: number): Entry => ({ v: 1, session: "m", now: "main: x", items: [], updated, src: "todo", count });
+	const T = 1_800_000_000_000;
+	assert.equal(joinLocal([entry({ done: 2, total: 2 }, T - ENDED_MS)], mains, T)[0]!.now, "main: x", "exactly 30 minutes is still shown");
+	assert.equal(joinLocal([entry({ done: 2, total: 2 }, T - ENDED_MS - 1)], mains, T)[0]!.now, undefined, "past 30 minutes the done line is not shown");
+	assert.equal(joinLocal([entry({ done: 1, total: 2 }, T - ENDED_MS - 1)], mains, T)[0]!.now, "main: x", "an unfinished list stays");
+	writeEntry(dir, "m", { now: "main: done (2/2)", items: [] }, T - ENDED_MS - 1, { src: "todo", count: { done: 2, total: 2 } });
+	writeEntry(dir, "n", { now: "main: Ship", items: [] }, T - ENDED_MS - 1, { src: "todo", count: { done: 1, total: 2 } });
+	purge(dir, new Set(["m", "n"]), T);
+	assert.deepEqual(readEntries(dir).map((e) => e.session), ["n"], "purge removes a finished auto entry of a live main, and keeps an unfinished one");
+});
+
+test("a live idle main's entry shows as stale after 2 hours; a working main's and a fresh one's does not", () => {
+	const T = 1_800_000_000_000, e = (updated: number): Entry => ({ v: 1, session: "m", now: "x", items: [], updated, src: "set" });
+	const main = (state: string) => [{ session: "m", name: "main", workspaceId: "wA", workspace: "Alpha", tab: "t", state }];
+	assert.equal(joinLocal([e(T - STALE_MS - 1000)], main("idle"), T)[0]!.stale, true);
+	assert.equal(joinLocal([e(T - STALE_MS)], main("idle"), T)[0]!.stale, undefined, "exactly 2 hours is not yet stale");
+	assert.equal(joinLocal([e(T - STALE_MS - 1000)], main("working"), T)[0]!.stale, undefined, "a working main is not idle");
+	assert.equal(joinLocal([e(T - 5 * 60_000)], main("idle"), T)[0]!.stale, undefined);
+	assert.equal(joinLocal([], main("idle"), T)[0]!.stale, undefined, "no entry, nothing to be stale");
+	// RV-F002: an idle main that commands work (subagents, monitors) is not stale
+	assert.equal(joinLocal([e(T - STALE_MS - 1000)], [{ ...main("idle")[0]!, commanding: true }], T)[0]!.stale, undefined, "a commanding main is never stale");
+});
+
+test("board_read marks a stale entry of an idle live main, and a tower's brief says so", async () => {
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
+	const a = await main();
+	await tower.start();
+	await a.tool("board_set", { now: "old news" });
+	const read = async () => (JSON.parse(textOf(await tower.tool("board_read", {}))) as { local: { main: string; stale?: boolean }[] }).local.find((r) => r.main === "api-main")!;
+	assert.equal((await read()).stale, undefined, "fresh");
+	writeEntry(boardDir(), "a1", { now: "old news", items: [] }, Date.now() - STALE_MS - 60_000);
+	assert.equal((await read()).stale, true, "idle and over 2 hours old");
+	const run = world.herdr.runFor("wA:p1");
+	const g = await gatherMains({ run, now: Date.now, sessions: () => world.broker.sessionList(), boardDir: boardDir(), workspace: { workspace_id: "wA", label: "Alpha" } as never, ledger: [] });
+	assert.equal(g.rows.find((r) => r.main?.name === "api-main")!.main!.stale, true);
 });
 
 test("a member and a demoted main write nothing, and a member's board_set auto is refused", async () => {
@@ -340,6 +427,24 @@ test("a board_set entry that outlived a reload stands until the todo list moves;
 	setTodos(tower, LIST);
 	await tower.fire("turn_end");
 	assert.equal(entryOf("tower-wA"), undefined);
+});
+
+test("a board_set entry that outlived a reload is deleted when the reloaded session quits, even if it wrote nothing itself", async () => {
+	mkdirSync(boardDir(), { recursive: true });
+	writeEntry(boardDir(), "a1", { now: "left by the old instance", items: [] }, 5);
+	const a = await main();
+	await a.fire("turn_end");
+	assert.ok(entryOf("a1"), "the first reading keeps it");
+	await a.stop("quit");
+	assert.equal(entryOf("a1"), undefined, "quit deletes it");
+});
+
+test("a stale auto line left by a reload with no todo list is removed at the first reading", async () => {
+	mkdirSync(boardDir(), { recursive: true });
+	writeEntry(boardDir(), "a1", { now: "api-main", items: [] }, 5, { src: "todo", who: "api-main" });
+	const a = await main();
+	await a.fire("turn_end");
+	assert.equal(entryOf("a1"), undefined);
 });
 
 test("the entry holds nothing scrubbed away: a path outside the project, a URL with credentials, a token, an email", async () => {

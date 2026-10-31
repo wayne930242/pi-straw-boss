@@ -222,6 +222,13 @@ test("board: a sidecar main writes its entry as its own session id, a member is 
 	const file = join(world.stateDir, "board", `${sidecar.id}.json`);
 	assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).items, [{ t: "schema", done: true }, { t: "writer", done: false }, { t: "plain step", done: false }]);
 	assert.equal(((await sidecar.request({ cmd: "board", now: "bad\u001b[31m" })) as { error: string }).error.includes("control or format"), true);
+	// RV-F007: a sidecar main clears its own line
+	const cleared = (await sidecar.request({ cmd: "board", clear: "true" })) as { ok: boolean; text: string };
+	assert.equal(cleared.ok, true);
+	assert.match(cleared.text, /cleared/);
+	assert.equal(existsSync(file), false, "board --clear deletes the entry");
+	await sidecar.request({ cmd: "board", now: "again" });
+	assert.equal(existsSync(file), true);
 	assert.equal((await sidecar.request({ cmd: "stop" })).ok, true);
 	await sidecar.done;
 	assert.equal(existsSync(file), false, "the session is done, so is its entry");

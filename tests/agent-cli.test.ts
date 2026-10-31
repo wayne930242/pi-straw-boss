@@ -62,7 +62,11 @@ test("arguments: each command takes its own flags, the pane defaults to the one 
 	assert.deepEqual(parseArgs(["board", "--now", "MP-1 export", "--item", "[x] schema", "--item", "[ ] writer"], { HERDR_PANE_ID: PANE }), { command: "board", pane: PANE, now: "MP-1 export", item: ["[x] schema", "[ ] writer"] });
 	assert.deepEqual(parseArgs(["board", "--now", "no items"], { HERDR_PANE_ID: PANE }), { command: "board", pane: PANE, now: "no items" });
 	assert.throws(() => parseArgs(["board"], { HERDR_PANE_ID: PANE }), /--now is required/);
+	assert.deepEqual(parseArgs(["board", "--clear"], { HERDR_PANE_ID: PANE }), { command: "board", pane: PANE, clear: "true" });
+	assert.deepEqual(parseArgs(["board", "--clear", "--pane", "wA:p9"], { HERDR_PANE_ID: PANE }), { command: "board", pane: "wA:p9", clear: "true" });
+	assert.throws(() => parseArgs(["board", "--clear", "--now", "x"], { HERDR_PANE_ID: PANE }), /--clear takes no/);
 	assert.throws(() => parseArgs(["rename", "--name", "n", "--item", "[x] a"], { HERDR_PANE_ID: PANE }), /--item belongs to the board command/);
+	assert.throws(() => parseArgs(["rename", "--name", "n", "--clear"], { HERDR_PANE_ID: PANE }), /unknown option --clear|--clear belongs to the board command/);
 	assert.deepEqual(parseArgs(["promote"], { HERDR_PANE_ID: PANE }), { command: "promote", pane: PANE });
 	assert.deepEqual(parseArgs(["stop"], { HERDR_PANE_ID: PANE }), { command: "stop", pane: PANE });
 	const env = { HERDR_PANE_ID: PANE };

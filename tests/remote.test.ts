@@ -325,8 +325,8 @@ test("switchRemote turns the entry on with a QR and records it, and off removes 
 	const on = await switchRemote(gui, true, dir, ts.run);
 	assert.match(on.text, /Remote access is on for me@example.com, tailnet only/);
 	assert.ok(on.lines!.length > 20 && on.lines!.some((l) => l.includes("█")), "a QR to scan");
-	const at = on.lines!.findIndex((l) => /installed app, type this code/.test(l));
-	assert.match(on.lines![at + 1]!, /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/, "the code to type, beside the QR");
+	const at = on.lines!.findIndex((l) => /installed app, type these 8 characters/.test(l));
+	assert.match(on.lines![at + 1]!, /^[0-9A-HJKMNP-TV-Z]{4} [0-9A-HJKMNP-TV-Z]{4}$/, "the code to type, beside the QR");
 	assert.ok(!on.text.includes(on.lines![at + 1]!) && !on.plain.includes(on.lines![at + 1]!), "and not in the text the conversation shows");
 	assert.deepEqual(JSON.parse(readFileSync(join(dir, "remote.json"), "utf8")), { target: "http://127.0.0.1:6000", pid: process.pid, started: startOf(process.pid) });
 	assert.deepEqual(gui.access.remote, { host: HOST, login: LOGIN });
@@ -711,7 +711,7 @@ test("a typed pairing code pairs like a scanned one: once, within ten minutes, f
 	assert.equal(access.pairCode(), undefined, "no codes while remote is off");
 	access.enable(ID);
 	const code = access.pairCode()!;
-	assert.match(code, /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/, "8 characters of 5 bits, none that read as another");
+	assert.match(code, /^[0-9A-HJKMNP-TV-Z]{4} [0-9A-HJKMNP-TV-Z]{4}$/, "8 characters of 5 bits, none that read as another");
 	const body = `code=${encodeURIComponent(code)}`;
 	assert.deepEqual(access.redeem(reqOf({ "tailscale-user-login": "other@example.com" }), body), { status: 403 }, "another user's device is refused and does not use the code up");
 	assert.deepEqual(access.redeem(reqOf({ "tailscale-funnel-request": "?1" }), body), { status: 403 });
@@ -723,12 +723,12 @@ test("a typed pairing code pairs like a scanned one: once, within ten minutes, f
 	assert.deepEqual(via(access, "", { cookie: `sb_remote=${first.cookie}` }), IN(first.cookie), "the cookie is a pairing like a scanned one's");
 	assert.equal(access.devices.list()[0]!.label, "iPhone · Safari");
 	assert.deepEqual(access.redeem(reqOf(), body), { wrong: true }, "used up");
-	// Case, spaces, a missing hyphen, and look-alikes (O, I, L) are forgiven.
+	// Case, a hyphen or no gap, and look-alikes (O, I, L) are forgiven.
 	for (let i = 0, found = false; i < 400 && !found; i++) {
 		const next = access.pairCode()!;
 		if (!/[01]/.test(next)) continue;
 		found = true;
-		const typed = next.toLowerCase().replace("-", " ").replace(/0/g, "o").replace(/1/g, "l");
+		const typed = next.toLowerCase().replace(" ", "-").replace(/0/g, "o").replace(/1/g, "l");
 		assert.ok("cookie" in access.redeem(reqOf(), `code=${encodeURIComponent(typed)}`), typed);
 	}
 	// The count of wrong codes: four are forgiven; the fifth voids every waiting code and nothing is tried until the boss asks this computer for a new one.
@@ -770,6 +770,33 @@ test("a typed pairing code pairs like a scanned one: once, within ten minutes, f
 	assert.deepEqual(access.redeem(reqOf(), `code=${oldest}`), { wrong: true });
 });
 
+/** The Origin a browser puts on a same-origin form post from a page sent with this Referrer-Policy (Fetch, "append a request Origin header": under no-referrer it is the string null). */
+const browserOrigin = (policy: string | string[] | undefined) => (policy === "no-referrer" ? "null" : `https://${HOST}`);
+
+test("a typed code pairs from a real browser's form post: the entry's Referrer-Policy must not make its Origin null, and the eight boxes join (live Chrome 2026-10-31: every typed code got 'forbidden')", async () => {
+	const gui = await startGui({ read: async () => ({ bases: [] }), dir: join(scratch, "bundle"), pollMs: 50, pingMs: 1000 });
+	running.push(gui);
+	gui.access.enable(ID);
+	const entry = "/sb-app/", doc = { "sec-fetch-dest": "document", "sec-fetch-site": "same-origin" };
+	const page = await remoteGet(gui, entry, doc);
+	assert.equal(page.headers["referrer-policy"], "same-origin", "the page the form is on lets its own origin through");
+	const post = async (text: string, from = page) => remoteGet(gui, `${entry}pair`, form({ origin: browserOrigin(from.headers["referrer-policy"]) }), "POST", text);
+	const boxes = (code: string) => [...code.replace(/\W/g, "")].map((c, i) => `c${i + 1}=${c}`).join("&");
+	const first = gui.access.pairCode()!;
+	assert.equal((await post(boxes(first))).status, 200, "eight boxes, no `code` field: what a page without script posts");
+	const wrong = await post("code=AAAA-AAAA");
+	assert.equal(wrong.headers["referrer-policy"], "same-origin", "the page drawn after a wrong code posts the same way again");
+	assert.equal((await post(`code=${encodeURIComponent(gui.access.pairCode()!)}`)).status, 200, "the single code field is still taken");
+	assert.equal((await post(`code=&${boxes(gui.access.pairCode()!)}`)).status, 200, "an empty code field gives way to the boxes");
+	const short = gui.access.pairCode()!;
+	assert.equal((await post(boxes(short).split("&").slice(0, 7).join("&"))).status, 403, "seven boxes are no code");
+	assert.equal((await remoteGet(gui, `${entry}pair`, form({ origin: "null" }), "POST", `code=${gui.access.pairCode()}`)).status, 403, "an opaque origin is still refused");
+	const script = await remoteGet(gui, `${entry}entry.js`, doc);
+	assert.deepEqual([script.status, script.headers["content-type"], script.headers["cache-control"]], [200, "text/javascript; charset=utf-8", "no-store"]);
+	assert.ok(!script.body.includes(gui.token) && !script.body.includes(gui.csrf));
+	assert.equal((await remoteGet(gui, `${entry}entry.js`, { ...doc, "tailscale-user-login": "other@example.com" })).status, 403, "the script is for this machine's user only");
+});
+
 test("the fixed entry (/sb-app/) is on the remote listener only, holds no token or secret, sends a paired device on, and takes a typed code from an unpaired one", async () => {
 	const gui = await startGui({ read: async () => ({ bases: [] }), dir: join(scratch, "bundle"), pollMs: 50, pingMs: 1000 });
 	running.push(gui);
@@ -790,11 +817,12 @@ test("the fixed entry (/sb-app/) is on the remote listener only, holds no token 
 	const open = await remoteGet(gui, entry, { ...doc, "accept-language": "en-US" });
 	assert.deepEqual([open.status, open.headers["content-type"], open.headers["set-cookie"], open.headers["cache-control"]], [200, "text/html; charset=utf-8", undefined, "no-store"]);
 	assert.match(open.body, /<form method="post" action="\/sb-app\/pair">/);
-	assert.match(open.body, /name="code"/);
+	assert.deepEqual([...open.body.matchAll(/<input name="(c\d)"/g)].map((m) => m[1]), ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"], "eight boxes the server joins");
 	assert.ok(!secrets(open.body), "no token and no CSRF secret on the entry's page");
 	assert.match(String(open.headers["content-security-policy"]), /form-action 'self'/);
 	assert.match(String(open.headers["content-security-policy"]), /script-src 'self'/);
-	assert.ok(!/<script/.test(open.body), "the page runs no script");
+	assert.ok(!/<script(?![^>]* src=)/.test(open.body), "no inline script");
+	assert.equal(String(open.headers["content-security-policy"]).split("; ").find((d) => d.startsWith("script-src")), "script-src 'self'", "and the script-src stays strict");
 	assert.match((await remoteGet(gui, entry, { ...doc, "accept-language": "zh-TW,zh;q=0.9" })).body, /配對碼/);
 	for (const site of ["none", "cross-site", "same-site"]) {
 		const launch = await remoteGet(gui, entry, { "sec-fetch-dest": "document", "sec-fetch-site": site });
@@ -810,7 +838,7 @@ test("the fixed entry (/sb-app/) is on the remote listener only, holds no token 
 	// Typing a code.
 	const post = (text: string, headers: Record<string, string | undefined> = {}) => remoteGet(gui, `${entry}pair`, { ...form(), ...headers }, "POST", text);
 	const code = gui.access.pairCode()!;
-	for (const headers of [{ origin: undefined }, { origin: "https://evil.example" }, { origin: `http://${HOST}` }, { "sec-fetch-site": "cross-site" }, { "content-type": "application/json" }, { "content-type": undefined }]) {
+	for (const headers of [{ origin: undefined }, { origin: "null" }, { origin: "https://evil.example" }, { origin: `http://${HOST}` }, { "sec-fetch-site": "cross-site" }, { "content-type": "application/json" }, { "content-type": undefined }]) {
 		const r = await post(`code=${code}`, headers);
 		assert.deepEqual([r.status, r.headers["set-cookie"]], [403, undefined], `${JSON.stringify(headers)}: not the entry's own form`);
 	}
@@ -884,5 +912,5 @@ test("an installed app's old address leads to the fixed entry; the remote manife
 	// The control endpoint hands the page the code beside the QR.
 	const pairing = await remoteGet(gui, `/${gui.token}/api/remote/pair`, { host: `127.0.0.1:${gui.port}`, ...bare, origin: `http://127.0.0.1:${gui.port}`, "sec-fetch-site": "same-origin", "content-type": "application/json", "x-sb-csrf": gui.csrf }, "POST", "{}", gui.port);
 	assert.equal(pairing.status, 200);
-	assert.match(JSON.parse(pairing.body).code, /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
+	assert.match(JSON.parse(pairing.body).code, /^[0-9A-HJKMNP-TV-Z]{4} [0-9A-HJKMNP-TV-Z]{4}$/);
 });

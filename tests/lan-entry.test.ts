@@ -201,3 +201,76 @@ test("every route refuses a Host that is not on the listener's allow-list", asyn
 	assert.equal((await w.send("/sb-app/", { headers: { host: `${NAME}.local` } })).status, 403, "no port");
 	assert.equal((await w.send("/sb-app/", { headers: { host: `192.168.1.5:${PORT}` } })).status, 200, "the listener's own address is allowed");
 });
+
+// Found live 2026-10-31 on the Tailscale entry, and reproduced on the Wi-Fi one in headless Chrome against a scratch server (a QR's Pair button and a typed code were both refused 403): the pages' `no-referrer` makes a form post carry
+// `Origin: null` (Fetch, "append a request Origin header"), and `redeem` takes only the entry's own origin. The entry says `same-origin` on every response it sends.
+test("the Wi-Fi entry sends Referrer-Policy same-origin on every response, so its form posts carry the entry's Origin (not null under no-referrer)", async () => {
+	const w = await world(), code = w.access.pair("lan", "r1")!;
+	const nav = { "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" };
+	const res = [
+		await w.send("/sb-app/", { headers: nav }),
+		await w.send(`/sb-app/pair/${code}`, { headers: nav }),
+		await w.send("/sb-app/pair/wait"),
+		await w.send("/sb-app/entry.js"),
+		await w.send("/sb-app/", { headers: { "sec-fetch-dest": "document", "sec-fetch-site": "cross-site" } }),
+		await w.send("/sb-app/", { headers: { host: "evil.example:8445" } }),
+		await w.redeem("ZZZZ-ZZZZ"),
+		await w.redeem(code),
+	];
+	for (const r of res) assert.equal(r.headers["referrer-policy"], "same-origin", `${r.status}: ${r.body.slice(0, 40)}`);
+	const wait = await w.send("/sb-app/pair/wait", { headers: { cookie: `${LAN_COOKIE}=${w.cookieOf(res[7]!)}` } });
+	assert.equal(wait.headers["referrer-policy"], "same-origin");
+	assert.equal((await w.send("/sb-app/", { headers: { cookie: `${LAN_COOKIE}=${w.cookieOf(res[7]!)}` } })).headers["referrer-policy"], "same-origin", "the redirect to the waiting page too");
+});
+
+test("the Wi-Fi entry takes the same eight boxes as the Tailscale one, draws its script, and serves the script only to an allowed host", async () => {
+	const w = await world();
+	for (const [zh, headers] of [[false, {}], [true, { "accept-language": "zh-TW,zh;q=0.9" }]] as const) {
+		const page = await w.send("/sb-app/", { headers });
+		const boxes = [...page.body.matchAll(/<input [^>]*>/g)].map((m) => m[0]);
+		assert.equal(boxes.length, 8, "eight boxes and no hyphen box");
+		boxes.forEach((box, i) => assert.match(box, new RegExp(`name="c${i + 1}" maxlength="1"`)));
+		assert.match(page.body, zh ? /輸入 8 個字元/ : /type the 8 characters it shows beside the QR/);
+		assert.match(page.body, zh ? /不需要輸入連字號/ : /No hyphen needed/);
+		assert.match(page.body, /<script src="\/sb-app\/entry\.js"><\/script>/);
+		assert.ok(!/<script(?![^>]* src=)/.test(page.body) && !/ on[a-z]+=/.test(page.body), "no inline script or handler");
+	}
+	const js = await w.send("/sb-app/entry.js");
+	assert.deepEqual([js.status, js.headers["content-type"]], [200, "text/javascript; charset=utf-8"]);
+	assert.match(js.body, /querySelectorAll\("\.boxes input"\)/);
+	assert.equal((await w.send("/sb-app/entry.js", { headers: { host: "evil.example:8445" } })).status, 403);
+	assert.equal((await w.send("/sb-app/entry.js", { method: "POST" })).status, 404);
+	// A locked address gets no boxes, as before.
+	const typed = w.access.pairCode("lan", "t")!;
+	for (let i = 0; i < 5; i++) await w.redeem("ZZZZ-ZZZZ");
+	const locked = await w.redeem(typed);
+	assert.equal(locked.status, 429);
+	assert.ok(!/<input/.test(locked.body) && /role="alert"/.test(locked.body));
+});
+
+test("a Wi-Fi typed code is shown as ABCD EFGH and is taken as the boxes post it, or as one field with any case, width, space, or dash", async () => {
+	const w = await world();
+	const post = (body: string, peer: string) => w.send("/sb-app/pair", { method: "POST", headers: { origin: AT.origin, "content-type": "application/x-www-form-urlencoded", "sec-fetch-site": "same-origin", "x-peer": peer }, body });
+	const shown = w.access.pairCode("lan", "c")!;
+	assert.match(shown, /^[0-9A-HJKMNP-TV-Z]{4} [0-9A-HJKMNP-TV-Z]{4}$/, "two groups of four, a space between");
+	const raw = shown.replace(" ", ""), at = (i: number) => `c${i + 1}=${raw[i]}`;
+	// The page without its script posts c1 to c8 and no `code`.
+	const boxes = await post([0, 1, 2, 3, 4, 5, 6, 7].map(at).join("&"), "192.168.1.41");
+	assert.equal(boxes.status, 200);
+	assert.match(boxes.body, /class="number"/);
+	w.access.lan.deny("all");
+	// One field, in forms a phone keyboard makes: lower case, full width, a space, a hyphen, an en dash, an ideographic space, and a zero-width space.
+	const fullWidth = [...raw].map((c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0)).join("");
+	const variants = [raw.toLowerCase(), shown, `${raw.slice(0, 4)}-${raw.slice(4)}`, `${raw.slice(0, 4)}\u2013${raw.slice(4)}`, `${raw.slice(0, 4)}\u3000${raw.slice(4)}`, `${raw.slice(0, 4)}\u200b${raw.slice(4)}`, fullWidth];
+	let n = 50;
+	for (const text of variants) {
+		const code = w.access.pairCode("lan", "v")!, plain = code.replace(" ", "");
+		const typed = text === raw.toLowerCase() ? plain.toLowerCase() : text === shown ? code : text === fullWidth ? [...plain].map((c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0)).join("") : text.replace(raw.slice(0, 4), plain.slice(0, 4)).replace(raw.slice(4), plain.slice(4));
+		const res = await post(`code=${encodeURIComponent(typed)}`, `192.168.1.${n++}`);
+		assert.equal(res.status, 200, JSON.stringify(typed));
+		w.access.lan.deny("all");
+	}
+	assert.equal((await post("code=ZZZZ%20ZZZZ", "192.168.1.99")).status, 403, "a wrong one still counts as wrong");
+	// The QR's hidden `code` field still redeems: a QR code is 22 characters and is told from a typed one by length.
+	assert.equal((await post(`code=${w.access.pair("lan", "q")!}`, "192.168.1.98")).status, 200);
+});
