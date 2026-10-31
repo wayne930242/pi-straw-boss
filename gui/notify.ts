@@ -47,6 +47,9 @@ export function mountNotify(open: (a: Alert) => void): Notifier {
 		remindBtn.dataset.state = !remind ? "off" : perm === "granted" ? "on" : perm === "denied" ? "blocked" : "ask";
 		remindBtn.title = !can ? m.remind_unsupported() : !remind ? m.remind_off() : perm === "granted" ? m.remind_on() : perm === "denied" ? m.remind_blocked() : m.remind_ask();
 		soundBtn.dataset.state = sound ? "on" : "off";
+		// The state in a word too (the Geek view shows it, style.css `.tog::before`), where the Standard view shows it by a dot's colour.
+		remindBtn.dataset.word = { off: m.state_off, on: m.state_on, blocked: m.state_blocked, ask: m.state_ask }[remindBtn.dataset.state as "off"]();
+		soundBtn.dataset.word = sound ? m.state_on() : m.state_off();
 		soundBtn.setAttribute("aria-label", sound ? m.sound_on() : m.sound_off());
 		onBox.checked = sound;
 		vol.value = volOut.value = String(volume);
