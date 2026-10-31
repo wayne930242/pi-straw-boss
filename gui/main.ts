@@ -1,4 +1,5 @@
 import "./style.css";
+import { mountPick, mountView } from "./view.ts";
 import { startI18n } from "./i18n.ts";
 import { m } from "./paraglide/messages.js";
 import type { Net } from "../src/net.ts";
@@ -18,7 +19,10 @@ import { createStream, type Source, type Status } from "./stream.ts";
 import { mountTimeline } from "./timeline.ts";
 import type { mountFocus } from "./views.ts";
 
+// The view goes first, before anything is drawn: `data-view` on <html> picks the palette, so no frame is painted in the other one (view.ts).
+const view = mountView();
 startI18n();
+mountPick(document.getElementById("view-pick")!, view);
 const page = mountPage(), timeline = mountTimeline(document.getElementById("timeline") as HTMLDetailsElement);
 const el = (id: string) => document.getElementById(id)!;
 const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour12: false }) : m.never());

@@ -579,7 +579,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Review RVL7 (F001 to F011) to 2103: lan.ts 232, lanwait.ts 23, and the tabs' keys and panels in pair.ts.
 	// Merge of the page with the firewall reads to 2120: lan.ts 249 (the notes' style, the firewall words, the refused events collapsed per peer).
 	// Final review RVLF-F004/F006 to 2122: the two notes worded in zh-TW and the unknown certificate file left out.
-	assert.ok(page <= 2122, `the page's TypeScript has ${page} lines`);
+	// The Geek view, per device (step 2) to 2216: gui/view.ts (84: the choice and its resolving, the mount that sets data-view and theme-color, the settings' three-way control) is new, and calm.ts, main.ts, notify.ts (the switches' words), and i18n.ts grew by 14.
+	assert.ok(page <= 2216, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -665,7 +666,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Start notices with Retry (sb server B6, RV13-F003, the nested-shell notice, RV14-F004) to 74,000 bytes / 25.8 KB gzipped: the empty-pane, could-not-check, types-nothing and not-at-its-own-shell notices in both languages.
 	// Wi-Fi access, the page (L7) to 74,100 bytes: the Same Wi-Fi tab's, the device network labels', and the tabs' messages in both languages (the map chunk carries every message).
 	// Review RVL7 to 74,400 bytes / 25.85 KB gzipped: the page's words for the server's notes and events, the ages, the download links, and the waiting notice in both languages.
-	assert.ok(size(entry).length <= 74_400 && gz(entry) <= 25_850, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// The Geek view, per device (step 2) to 76,500 bytes / 26.6 KB gzipped: gui/view.ts (the choice, its resolving, the three-way control) and its words in both languages (the map chunk carries every message), and the switches' state words (notify.ts).
+	assert.ok(size(entry).length <= 76_500 && gz(entry) <= 26_600, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -810,5 +812,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Wi-Fi access, the page (L7) to 86,900 bytes / 18.6 KB gzipped: the tabs, the waiting requests with the number field, the certificate step, and the Wi-Fi pairing (.lan).
 	// Review RVL7 to 87,100 bytes / 18.65 KB gzipped: the Deny that keeps its width, the Wi-Fi buttons that are not uppercased, and the header's waiting-request notice that wraps on a narrow screen.
 	// GUI quick fixes (step 1) to 88,100 bytes / 18.85 KB gzipped: the themed text boxes and menus, the server facts grid, the filled selected pair tab, and the padded conversation bar.
-	assert.ok(total(css, (n) => size(n).length) <= 88_100 && total(css, gz) <= 18_850, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// The Geek view, per device (step 2) to 93,200 bytes / 20.1 KB gzipped: its token block (the whole palette again), the rules that turn off motion, gradients, and glow, the state tags, the switches' words, the inverse-video choices, the forced-colors block, and the settings' three-way control.
+	assert.ok(total(css, (n) => size(n).length) <= 93_200 && total(css, gz) <= 20_100, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });

@@ -90,7 +90,7 @@ svg { display: block; }
 .prefs-btn { margin-left: auto; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; } .prefs-btn svg { width: 18px; height: 18px; fill: currentColor; }
 .prefs-btn:hover, .prefs-btn[aria-expanded="true"] { color: var(--text); }
 .prefs-btn:has(+ .prefs-pop #remind[data-state="blocked"]) { color: var(--err-soft); } /* a reminder the browser blocks shows on the closed button too */
-.prefs-pop { width: 210px; } .prefs-pop:popover-open { display: grid; gap: 6px; } .prefs-pop > .pair-btn { width: 100%; justify-content: flex-start; text-align: left; }
+.prefs-pop { width: 240px; } .prefs-pop:popover-open { display: grid; gap: 6px; } .prefs-pop > .pair-btn { width: 100%; justify-content: flex-start; text-align: left; }
 /* The header's popovers (the sound panel, the finished list) hang under their button; hang() in render.ts places them. */
 .hud-pop { position: fixed; inset: auto; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--raised); color: var(--text); font: 13px/1.4 var(--sans); box-shadow: 0 12px 32px color-mix(in srgb, var(--shadow) 60%, transparent); }
 .sound-pop { width: 240px; gap: 12px; } .sound-pop:popover-open { display: grid; } /* a display of its own would show it closed */ .sound-pop label { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -101,6 +101,10 @@ svg { display: block; }
 .done-go .plate { --s: 30px; flex: none; } .done-go .badge { display: none; } .done-go span { display: grid; min-width: 0; } .done-go .name { font-weight: 600; }
 .done-go .name, .done-go small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .done-go small { color: var(--dim); }
 #done-clear, #sound-try { width: 100%; }
+/* The view (view.ts): Auto, Standard, or Geek, three words in a row; the chosen one is filled and bold (not colour alone). */
+.view-pick { display: grid; gap: 4px; } .view-pick > span { color: var(--dim); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.view-pick > div { display: flex; gap: 4px; } .view-pick button { flex: 1 1 0; justify-content: center; padding-inline: 4px; text-align: center; text-transform: none; letter-spacing: 0; }
+.view-pick button[aria-pressed="true"] { color: var(--text); font-weight: 700; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .lang { text-transform: none; } .lang option { background: var(--bg); color: var(--text); }
 .pair { display: grid; justify-items: center; gap: 12px; text-align: center; color: var(--dim); font-size: 13px; }
 .pair-code { color: var(--text); font: 600 22px var(--mono); letter-spacing: 0.12em; user-select: all; }
@@ -450,14 +454,14 @@ svg { display: block; }
 @keyframes come-in { from { opacity: 0; transform: translateX(-14px) scale(0.98); } }
 @keyframes go-out { from { opacity: 0; transform: translateX(14px) scale(0.98); } }
 .tx.fresh { animation: come-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both; } .tx.you.fresh { animation-name: go-out; }
-/* Calm (calm.ts): after a while without input, each infinite animation gives way to a still sign of the same state. */
-[data-calm] :is(.link i, .sweep, .pulse, .ring, .badge, .term-typing), [data-calm] :is(.plate, .badge)::after { animation: none !important; }
-[data-calm] .tower[data-mark="waiting"] .pulse { opacity: 0.55; }
-[data-calm] .plate[data-mark="waiting"]::after { opacity: 0.55; transform: scale(1.25); }
-[data-calm] .packet { animation-play-state: paused !important; opacity: 0; }
-[data-calm] .subs::before, [data-calm] .subs > .unit > .card::before { animation: none !important; }
+/* Calm (calm.ts): after a while without input, each infinite animation gives way to a still sign of the same state. The Geek view keeps these signs always (nothing moves there). */
+:is([data-calm], [data-view="geek"]) :is(.link i, .sweep, .pulse, .ring, .badge, .term-typing), :is([data-calm], [data-view="geek"]) :is(.plate, .badge)::after { animation: none !important; }
+:is([data-calm], [data-view="geek"]) .tower[data-mark="waiting"] .pulse { opacity: 0.55; }
+:is([data-calm], [data-view="geek"]) .plate[data-mark="waiting"]::after { opacity: 0.55; transform: scale(1.25); }
+:is([data-calm], [data-view="geek"]) .packet { animation-play-state: paused !important; opacity: 0; }
+:is([data-calm], [data-view="geek"]) .subs::before, :is([data-calm], [data-view="geek"]) .subs > .unit > .card::before { animation: none !important; }
 @media (prefers-reduced-motion: reduce), (hover: none) and (prefers-reduced-motion: reduce) { .plate[data-mark="commanding"]::before, .tower[data-mark="commanding"]::after { box-shadow: 0 0 12px 3px var(--c4); } .stats [data-mark="commanding"][data-on], .comms-head[data-mark="commanding"] .logo { box-shadow: 0 0 12px 2px var(--c4); } }
-[data-calm] :is(.plate, .tower)[data-mark="commanding"]::before, [data-calm] .tower[data-mark="commanding"]::after { animation: none !important; box-shadow: 0 0 12px 3px var(--c4); }
+:is([data-calm], [data-view="geek"]) :is(.plate, .tower)[data-mark="commanding"]::before, :is([data-calm], [data-view="geek"]) .tower[data-mark="commanding"]::after { animation: none !important; box-shadow: 0 0 12px 3px var(--c4); }
 [hidden] { display: none !important; }
 a { color: inherit; }
 /* Small capitals labels and one-line ellipses, shared by every route. */
@@ -930,6 +934,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .link-args { margin: 0; max-height: 180px; overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
 .link-note { color: var(--dim); }
 .teams-tile { display: grid; gap: 14px; padding: 4px 2px 12px; font-size: 13px; }
+.teams-tile .go { --c: var(--accent); } /* Create team and Join: a Go button fills with --c, which only a state or a tile that sets it has */
 .teams-tile h3 { font-size: 15px; } .teams-tile h4 { font-size: 13px; margin: 0 0 4px; }
 .link-status { min-height: 1.2em; color: var(--amber); margin: 0; }
 .link-short { color: var(--dim); font-family: ui-monospace, monospace; }
@@ -983,3 +988,102 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .term-bar .term-kb { padding: 4px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-0); font-weight: 600; }
 .term-bar .term-kb[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface-0)); }
 @media (max-width: 640px) { .term-typing { display: none; } }
+
+/* The Geek view (view.ts sets data-view="geek" on <html>): a terminal. Black surfaces, one monospace face, every text token at least 7 : 1 on every surface and every border at least 3 : 1
+   (tests/geek-contrast.test.ts reads this block), nothing moves, glows, or fades, and each state also reads as a text tag before the unit's name, so colour is never the only sign.
+   A theme is one block: the tokens below; the rules after it only turn off what a token cannot (motion, gradients, glow, the colour-only dots) and mark the chosen and the state in words. */
+[data-view="geek"] {
+	color-scheme: dark;
+	--bg: #000000;
+	--bg-2: #000000;
+	--surface-0: #0d0d0d;
+	--surface-1: #161616;
+	--raised: #0d0d0d;
+	--sunken: #000000;
+	--well: #000000;
+	--panel: #0d0d0d;
+	--plate: #000000;
+	--plate-hi: #1f1f1f;
+	--term-bg: #000000;
+	--term-fg: #f2f2f2;
+	--line-c: #8a8a8a;
+	--line: #8a8a8a;
+	--hi: #ffffff;
+	--shadow: #000000;
+	--text: #f2f2f2;
+	--dim: #bdbdbd;
+	--ink: #000000;
+	--accent: #5fd7ff;
+	--accent-hi: #a8e8ff;
+	--working: #5fd7ff;
+	--gold: #ffd75f;
+	--amber: #ffd75f;
+	--ok: #87e087;
+	--err: #ffa0a0;
+	--err-soft: #ffb4b4;
+	--violet: #d7afff;
+	--idle: #c0c0c0;
+	--unknown: #bababa;
+	--paper-hi: #f6e6b8;
+	--paper: #d8bd78;
+	--paper-ink: #3b2a06;
+	--paper-edge: #8a6f33;
+	--aura-1: transparent;
+	--aura-2: transparent;
+	--grid: none;
+	--sans: var(--mono);
+}
+[data-view="geek"] body { font-size: 13px; }
+/* A state's tint stays at 12 percent or less so text on it keeps 7 : 1, and its ring is the plain line, never a coloured border. */
+[data-view="geek"] [data-mark] { --c1: color-mix(in srgb, var(--c) 12%, transparent); --c4: var(--line); }
+/* No motion, glow, blur, or press-in: the calm still signs (above) are always on, and the rest stops here. */
+[data-view="geek"] *, [data-view="geek"] *::before, [data-view="geek"] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; box-shadow: none !important; text-shadow: none !important; }
+[data-view="geek"] :is(.logo svg, .deploy-title svg, .tower svg) { filter: none; }
+[data-view="geek"] .hud { backdrop-filter: none; }
+[data-view="geek"] .card:hover { transform: none !important; }
+[data-view="geek"] :is(.pair-btn, .tab-add, .quit-btn, .go, .later, .cmp-send, .cmp-alt, .ask-send, .sheet-yes, .new-base, .modes button, .pitem, .d-doc, .thought, .more, .tab-btn, .pad-key):active:not(:disabled) { transform: none !important; }
+[data-view="geek"] .pad-key { border-bottom-width: 1px; }
+/* One plain border on all four sides everywhere (the tokens' own stay clear): state is told by the tag and the words, not by a coloured edge. The rings that are the state's own sign (a plate's, a tower's pulse) keep it. */
+[data-view="geek"] :where(*:not(.token, .stats > div, .pulse)) { border-color: var(--line) !important; }
+[data-view="geek"] *:not(.plate, .tower)::before, [data-view="geek"] *:not(.plate, .tower)::after { border-color: var(--line) !important; }
+[data-view="geek"] .drawer .unit.current > .card { border-color: var(--text) !important; }
+/* Flat surfaces: no gradient, no tint behind a base, a dialog, a plate, or a portrait. */
+[data-view="geek"] :is(.base, .base.head, .base.ally, .dialog, .squad, .squad[data-mark="waiting"]) { background: var(--surface-0); }
+[data-view="geek"] :is(.plate, .logo, .ava, .tower::before) { background: var(--plate); }
+[data-view="geek"] :is(.plate, .ava) { border: 1px solid var(--line); }
+[data-view="geek"] .portrait { background: none; }
+[data-view="geek"] .deploy-fill { background: var(--accent); }
+[data-view="geek"] .tower::before { border-color: var(--line); }
+/* Nothing is dimmed to a state: an idle unit, a tower with no base, an offline teammate, and a stale page read at full strength (the banner and the link's words say it is stale). */
+[data-view="geek"] :is(.unit[data-mark="idle"] > .card, .tower.ghost, .base.ally.offline, .stage[data-stale="true"] .map, body[data-stale="true"] .stats, body[data-stale="true"] .work) { opacity: 1; }
+[data-view="geek"] :is(.line .age, .todo span, .tower-conv .conv-now, .tower-conv .conv-cap, .bubble .boss-flag, .notice > .boss-flag, .tmem-empty, .tmem-note, .tmem-counts, .tmem-body li small, .tmem-body h4 small, .foot .credit, .tmem-ended .tmem-text) { opacity: 1; }
+/* The link says its state in words, not by the dot's colour alone. */
+[data-view="geek"] .link span { position: static; width: auto; height: auto; overflow: visible; clip-path: none; display: inline; }
+/* Each state as a text tag before the unit's name (the name's ::before takes the nearest data-mark's --tag). */
+[data-view="geek"] [data-mark="working"] { --tag: "[WORK]"; }
+[data-view="geek"] [data-mark="waiting"] { --tag: "[WAIT?]"; }
+[data-view="geek"] [data-mark="commanding"] { --tag: "[CMD◈]"; }
+[data-view="geek"] [data-mark="idle"] { --tag: "[IDLE]"; }
+[data-view="geek"] [data-mark="done"] { --tag: "[DONE✓]"; }
+[data-view="geek"] [data-mark="error"] { --tag: "[ERR!]"; }
+[data-view="geek"] [data-mark="unknown"] { --tag: "[UNKN]"; }
+[data-view="geek"] :is(.card, .token) .name::before { content: var(--tag); margin-right: 1ch; color: var(--c); font-weight: 400; }
+[data-view="geek"] .token .name::before { display: block; margin-right: 0; } /* a token is a column: the tag over the name keeps the name's width */
+/* The switches as words: [On] and [Off] (set by notify.ts as data-word), where they were a dot lit by colour. */
+[data-view="geek"] .tog::before { content: "[" attr(data-word) "]"; width: auto; height: auto; border-radius: 0; background: none; color: inherit; font: inherit; }
+[data-view="geek"] .tog:not([data-word])::before { display: none; }
+/* What is chosen is inverse video and bold, as well as aria-pressed: the segmented control, the pair tabs, the mode switch, a picked folder. */
+[data-view="geek"] :is(.modes button[aria-pressed="true"], .term-bar .term-kb[aria-pressed="true"], .pair-tabs .later.on, .pair-tabs .later[aria-selected="true"], .tab-btn.active, .view-pick button[aria-pressed="true"], .pcol[data-focus="true"] .pitem[aria-selected="true"]) { background: var(--text); color: var(--ink); font-weight: 700; }
+[data-view="geek"] .pitem[aria-selected="true"] { background: var(--surface-1); color: var(--text); font-weight: 700; }
+[data-view="geek"] .ask-opt[aria-checked="true"] { background: var(--text); color: var(--ink); font-weight: 700; }
+[data-view="geek"] :is(.ask-opt[aria-checked="true"] small, .ask-opt[aria-checked="true"] b::before) { color: var(--ink); }
+[data-view="geek"] .ask-head { background: none; }
+[data-view="geek"] ::selection { background: var(--text); color: var(--ink); }
+[data-view="geek"] a.ally-chip:hover { background: var(--surface-1); }
+[data-view="geek"] .banner { background: var(--surface-1); }
+
+/* Forced colors (Windows High Contrast and the like): the system's colours replace ours, so shapes that were a colour's fill get an outline, and the QR and the terminal keep their own colours. */
+@media (forced-colors: active) {
+	.badge, .link i, .tog::before, .flag, .tl-mark::before { border: 1px solid CanvasText; }
+	.qr, .term-scroll { forced-color-adjust: none; }
+}

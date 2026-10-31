@@ -53,6 +53,11 @@
     <button class="pair-btn prefs-btn" id="prefs" type="button" popovertarget="prefs-pop" aria-haspopup="dialog" aria-label="Settings" data-m-label="settings" data-m-title="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg></button>
     <!-- Settings a person sets once: the reminder and sound switches, pairing a phone, the language. The sound panel hangs under the last row. -->
     <div class="hud-pop prefs-pop" id="prefs-pop" popover>
+      <div class="view-pick" id="view-pick" role="group" aria-labelledby="view-label" data-m-title="view_title"><span id="view-label" data-m="view_label">View</span><div>
+        <button class="pair-btn" type="button" data-choice="auto" aria-pressed="true" data-m="view_auto">Auto</button>
+        <button class="pair-btn" type="button" data-choice="standard" aria-pressed="false" data-m="view_standard">Standard</button>
+        <button class="pair-btn" type="button" data-choice="geek" aria-pressed="false" data-m="view_geek">Geek</button>
+      </div></div>
       <button class="pair-btn tog" id="remind" type="button" aria-pressed="true"></button>
       <button class="pair-btn" id="teams" type="button" title="Straw Link: teams across computers" data-m="link_button" data-m-title="link_button_title">Teams</button>
       <button class="pair-btn" id="pair" type="button" title="Pair a phone" data-m="pair_button" data-m-title="pair_title">Phone</button>
