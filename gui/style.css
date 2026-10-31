@@ -107,8 +107,13 @@ svg { display: block; }
 .qr { width: min(100%, 300px); border-radius: 12px; shape-rendering: crispEdges; }
 .devices { display: grid; gap: 8px; width: 100%; text-align: left; border-top: 1px solid var(--line); padding-top: 12px; } .devices h4 { margin: 0; font: 600 12px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; }
 .devices ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; } .devices li { display: flex; align-items: center; justify-content: space-between; gap: 10px; } .devices li span { display: grid; min-width: 0; } .devices li b { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.server-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0 0 12px; } .server-facts dt { color: var(--dim); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; } .server-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+/* Text boxes and menus follow the page's palette (zero specificity: any rule of a box's own wins). */
+:where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="hidden"], [type="color"]), select) { box-sizing: border-box; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-0); color: var(--text); font: 14px var(--sans); }
+:where(input, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:where(input, select):disabled { opacity: 0.5; }
 .devices-acts { display: flex; flex-wrap: wrap; gap: 8px; } .devices small, .devices .chat-empty { color: var(--dim); }
-.pair-tabs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; } .pair-tabs .later.on { color: var(--text); border-color: var(--accent); }
+.pair-tabs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; } .pair-tabs .later.on, .pair-tabs .later[aria-selected="true"] { color: var(--text); font-weight: 700; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); } /* the selected tab: fill and weight, not the outline colour alone */
 .pair .lan { display: grid; gap: 10px; width: 100%; text-align: left; justify-items: start; } .lan p, .lan h4, .lan ul { margin: 0; } .lan h4 { color: var(--text); font: 600 13px var(--sans); } .lan > *, .lan-main, .lan-board, .lan-pair { min-width: 0; max-width: 100%; } .lan-main, .lan-board, .lan-pair { display: grid; gap: 10px; justify-items: start; width: 100%; }
 .lan button, .lan a.go { text-transform: none; } #lan-wait { text-transform: none; letter-spacing: normal; white-space: normal; text-align: left; flex: 1 1 100%; } .alert-row:has(#lan-wait:not([hidden])) { flex-wrap: wrap; }
 .lan .go { --c: var(--accent); border: 0; text-align: left; white-space: normal; } .lan .pair-btn { white-space: normal; text-align: left; max-width: 100%; } .lan .qr { justify-self: center; } .lan-pair { justify-items: center; text-align: center; } .lan-pair .devices-acts { justify-content: center; } .lan code { overflow-wrap: anywhere; }
@@ -581,6 +586,7 @@ a.tower:hover::before { border-color: var(--c); }
 .cmp-link { border: 0; padding: 0; background: none; color: var(--accent); font: 12px var(--sans); cursor: pointer; }
 /* The `/` menu above the box: the session's matching commands, the chosen one lit. */
 .slash { position: absolute; left: 18px; right: 18px; bottom: calc(100% - 6px); z-index: 5; max-height: 260px; overflow-y: auto; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-0); box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow) 53%, transparent); }
+.slash[hidden] { display: none; } /* the menu is shown only by slash.ts, on a match */
 .slash li { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
 .slash li[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .slash b { color: var(--accent); font: 600 13px var(--mono); white-space: nowrap; }
@@ -965,8 +971,8 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .tmem-body input { flex: 1 1 12em; min-width: 0; } .tmem-add { display: flex; gap: 6px; margin-top: 4px; } .tmem-empty, .tmem-note { margin: 0; opacity: 0.7; } .tmem-body .tnote-fail { color: var(--err-soft); } .tmem-body .tnote-fail:empty { display: none; }
 
 /* The boss conversation in a tower's comms (towerconv.ts): how it began and when it ends, Leave and New, the event-run chips; and the divider that opens each run in the log (chat.ts). */
-.tower-conv { display: grid; gap: 4px; min-width: 0; margin-bottom: 6px; font-size: 0.85em; } .tower-conv[hidden] { display: none; }
-.tower-conv p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.tower-conv { display: grid; gap: 4px; min-width: 0; margin-bottom: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 0.85em; } .tower-conv[hidden] { display: none; }
+.tower-conv p { margin: 0; min-width: 0; overflow-wrap: anywhere; } .tower-conv .conv-line > span { display: inline-block; max-width: 100%; } /* the line breaks between its phrases, not inside one */
 .tower-conv .conv-line b { color: var(--accent); } .tower-conv .conv-now, .tower-conv .conv-cap { opacity: 0.85; }
 .tower-conv .conv-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .tower-conv .conv-acts button:disabled { opacity: 0.6; cursor: progress; }

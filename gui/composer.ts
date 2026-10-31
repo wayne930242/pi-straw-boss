@@ -218,9 +218,9 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		void call("input", { text, as, confirmed }, text);
 	}
 	function draw() {
-		const line = barOf(unit), parts = [menu, form.querySelector(".cmp-row"), form.querySelector(".cmp-foot")] as HTMLElement[];
+		const line = barOf(unit), parts = [form.querySelector(".cmp-row"), form.querySelector(".cmp-foot")] as HTMLElement[];
 		bar.hidden = line === undefined, bar.textContent = line ?? "", form.classList.toggle("ended", line !== undefined);
-		for (const part of parts) part.hidden = line !== undefined;
+		for (const part of parts) part.hidden = line !== undefined; menu.hidden ||= line !== undefined; // slash.ts alone shows the menu
 		const why = blocked(unit), working = unit.mark === "working";
 		box.placeholder = why ?? placeholderOf(unit);
 		box.disabled = attach.disabled = !typable(unit); // a closed channel (the session left the net, or a finished subagent's pi exited) takes no typing at all, as it takes no sending

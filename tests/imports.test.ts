@@ -809,5 +809,6 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Phone terminal keyboard (sb server B6) to 84.8 KB / 18.25 KB gzipped: the Keyboard button, the hidden sink, and the typing state of the mirror.
 	// Wi-Fi access, the page (L7) to 86,900 bytes / 18.6 KB gzipped: the tabs, the waiting requests with the number field, the certificate step, and the Wi-Fi pairing (.lan).
 	// Review RVL7 to 87,100 bytes / 18.65 KB gzipped: the Deny that keeps its width, the Wi-Fi buttons that are not uppercased, and the header's waiting-request notice that wraps on a narrow screen.
-	assert.ok(total(css, (n) => size(n).length) <= 87_200 && total(css, gz) <= 18_700, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// GUI quick fixes (step 1) to 88,100 bytes / 18.85 KB gzipped: the themed text boxes and menus, the server facts grid, the filled selected pair tab, and the padded conversation bar.
+	assert.ok(total(css, (n) => size(n).length) <= 88_100 && total(css, gz) <= 18_850, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });
