@@ -93,7 +93,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Keep the token (D27) to 442: gui.ts takes the stored token and CSRF secret as `keep` and keeps them when it binds both of their ports (`kept` on the Gui).
 	// Wi-Fi access (L5) to 466 (the RVL4 merge adds the documents' device and their revoke): gui.ts hands the LAN listeners the handler of kind "lan" (the entry, the verdict, the cookies, the documents' ticket, the streams keyed by network) and routes the `lan/*` reads and writes to this computer's page only.
 	// Merge fix (MM-F001) to 468: gui.ts answers a LAN listener's favicon and touch-icon requests with an uncounted 404 before the verdict.
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 468, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// The server's default view (Geek step 3) to 478: gui.ts writes `sb-view` into the page it serves (the page is built per request now), puts `view` in the hello, sends the `view` event, and has `view()` and `setView()` on the Gui.
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 478, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
@@ -580,7 +581,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Merge of the page with the firewall reads to 2120: lan.ts 249 (the notes' style, the firewall words, the refused events collapsed per peer).
 	// Final review RVLF-F004/F006 to 2122: the two notes worded in zh-TW and the unknown certificate file left out.
 	// The Geek view, per device (step 2) to 2216: gui/view.ts (84: the choice and its resolving, the mount that sets data-view and theme-color, the settings' three-way control) is new, and calm.ts, main.ts, notify.ts (the switches' words), and i18n.ts grew by 14.
-	assert.ok(page <= 2216, `the page's TypeScript has ${page} lines`);
+	// The server's default view (Geek step 3) to 2251: view.ts takes the server's default (the meta, `setServer`, `onServer`, the Auto button's label and its own row) and main.ts feeds it from the hello and the `view` event.
+	assert.ok(page <= 2251, `the page's TypeScript has ${page} lines`);
 });
 
 test("the built page is small, self-contained (no remote URLs, fonts, or imports), and carries no demo fixture", { skip: !existsSync(join(root, "dist/gui/index.html")) && "run npm run gui:build first" }, () => {
@@ -667,7 +669,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Wi-Fi access, the page (L7) to 74,100 bytes: the Same Wi-Fi tab's, the device network labels', and the tabs' messages in both languages (the map chunk carries every message).
 	// Review RVL7 to 74,400 bytes / 25.85 KB gzipped: the page's words for the server's notes and events, the ages, the download links, and the waiting notice in both languages.
 	// The Geek view, per device (step 2) to 76,500 bytes / 26.6 KB gzipped: gui/view.ts (the choice, its resolving, the three-way control) and its words in both languages (the map chunk carries every message), and the switches' state words (notify.ts).
-	assert.ok(size(entry).length <= 76_500 && gz(entry) <= 26_600, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
+	// The server's default view (Geek step 3) to 77,400 bytes / 26.9 KB gzipped: view.ts's server default (the meta, `setServer`, the Auto button's label) and main.ts's hello and `view` event handling, with the Follow server message in both languages.
+	assert.ok(size(entry).length <= 77_400 && gz(entry) <= 26_900, `the map chunk is ${size(entry).length} bytes (${gz(entry)} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).

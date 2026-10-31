@@ -30,7 +30,7 @@ after(async () => {
 });
 
 const net = (label: string): Net => ({ bases: [{ id: "w", label, mark: "idle", head: true, tower: null, tabs: [], outposts: [], outside: [] }] });
-async function serve(read: () => Promise<Net>, options: { pollMs?: number; idleMs?: number; pingMs?: number; port?: number; remotePort?: number; bindWaitMs?: number; keep?: { token: string; csrf: string; port: number; remotePort: number }; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void; onRemote?(): Promise<void> } = {}, bundle = dir) {
+async function serve(read: () => Promise<Net>, options: { view?: "auto" | "standard" | "geek"; pollMs?: number; idleMs?: number; pingMs?: number; port?: number; remotePort?: number; bindWaitMs?: number; keep?: { token: string; csrf: string; port: number; remotePort: number }; net?: { lookup(key: string): Found | undefined; workspace(id: string): Ref[] }; call?: (method: string, params: Record<string, unknown>) => Promise<unknown>; onStop?(asked: Asked): void; onRemote?(): Promise<void> } = {}, bundle = dir) {
 	const gui = await startGui({ read, dir: bundle, pollMs: 20, pingMs: 50, ...options });
 	running.push(gui);
 	return gui;
@@ -116,6 +116,30 @@ test("the page and each stream's hello name the bundle's build, so a page from a
 	await until(() => s.events.some((e) => e.event === "hello"), "hello");
 	s.close();
 	assert.equal(JSON.parse(s.events.find((e) => e.event === "hello")!.data).build, build);
+});
+
+test("the page carries the server's default view in <meta name=\"sb-view\"> and each hello says it; setView changes both for the pages and streams from then on, and tells the open ones with a view event", async () => {
+	const meta = (body: string) => /<meta name="sb-view" content="([^"]*)">/.exec(body)?.[1];
+	const plain = await serve(async () => net("a"));
+	assert.equal(meta((await raw(plain, `/${plain.token}/`)).body), "auto", "a GUI started with no default says auto");
+	assert.equal(plain.view(), "auto");
+	const gui = await serve(async () => net("a"), { view: "geek" });
+	const page = await raw(gui, `/${gui.token}/`);
+	assert.ok(page.body.includes(`<meta name="sb-csrf" content="${gui.csrf}">\n<meta name="sb-view" content="geek">\n<meta name="sb-build" content="`), page.body);
+	assert.equal(meta((await raw(gui, `/${gui.token}/w/wA`)).body), "geek", "every route that answers the page carries it");
+	const first = listen(gui);
+	await until(() => first.events.some((e) => e.event === "hello"), "hello");
+	assert.equal(JSON.parse(first.events.find((e) => e.event === "hello")!.data).view, "geek");
+	assert.equal(gui.setView("geek"), false, "the same default is no change");
+	assert.equal(gui.setView("standard"), true);
+	await until(() => first.events.some((e) => e.event === "view"), "view event");
+	assert.deepEqual(first.events.filter((e) => e.event === "view").map((e) => JSON.parse(e.data)), ["standard"]);
+	assert.equal(meta((await raw(gui, `/${gui.token}/`)).body), "standard");
+	const second = listen(gui);
+	await until(() => second.events.some((e) => e.event === "hello"), "second hello");
+	assert.equal(JSON.parse(second.events.find((e) => e.event === "hello")!.data).view, "standard");
+	first.close();
+	second.close();
 });
 
 test("the page turns remote access on through onRemote and gets a pairing code at once; a failure says why; a paired device cannot ask", async () => {

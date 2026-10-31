@@ -23,6 +23,7 @@ import { createTrustServe } from "../trust/serve.ts";
 import type { Kit } from "../state.ts";
 import { type Log, tailLog } from "./log.ts";
 import { createLanHost, type LanHost, type LanSeams } from "./lanhost.ts";
+import { isView, readView, type ServerView, writeView } from "./guiprefs.ts";
 import { dropSecrets, keepSecrets, type Lost, readSecrets } from "./guisecrets.ts";
 import { fileOf, readRecord, type ServerRecord, type Slot, updateRecord, writeJson } from "./record.ts";
 import type { Reply, Request } from "./socket.ts";
@@ -43,6 +44,7 @@ import type { Reply, Request } from "./socket.ts";
 //   gui-remote {on}       turns remote access on (answers the lines of the pairing QR) or off; the boss's own, so it starts a stopped GUI
 //   gui-pair              a new one-time pairing link while remote access is on
 //   gui-rotate            a new token and CSRF secret, every paired device unpaired; the boss's own, so it starts a stopped GUI (answers like `gui`)
+//   gui-view {view?}      the server's default view (`/boss gui view`): tells it, or stores `auto`, `standard`, or `geek` in gui-prefs.json and tells the open pages; it does not start a stopped GUI. Only this request writes it (the page has no route for it)
 // and what the page asks of the server panel (this computer's page only): status, restart, and the log (control.ts `server`).
 
 /** Binding the recorded ports: a restart's old server is still letting go of them for a moment. */
@@ -107,6 +109,8 @@ export function createGuiHost(o: GuiHostOptions) {
 	const { slot, kit, log, pid } = o, { cfg } = kit, id = kit.me(), dir = slot.dir, ts = o.tailscale ?? tailscale;
 	const owner = `sb server (pid ${pid})`;
 	let gui: Gui | undefined, hub: Hub | undefined, opening: Promise<Gui> | undefined, closing = false;
+	/** The default view devices that follow the server get (guiprefs.ts); gui.json carries it for a shell unless it is `auto`. */
+	let view: ServerView = readView(dir);
 	/** Wi-Fi access of the GUI that runs (lanhost.ts): its listeners, CA, marks, and the control requests that concern them. */
 	let lan: LanHost | undefined;
 	/** Why remote access is off though the boss wanted it on, told by `up` and the panel. */
@@ -139,7 +143,7 @@ export function createGuiHost(o: GuiHostOptions) {
 	});
 	/** gui.json under the unchanged contract: pid and start time name this server. */
 	const writeGuiJson = (running: Pick<Gui, "port" | "remotePort" | "token" | "csrf">, stopped = false) => {
-		const started = o.started(), record: GuiRecord = { pid, ...(started ? { started } : {}), port: running.port, remotePort: running.remotePort, token: running.token, csrf: running.csrf, owner, ownerSession: id, version: o.version, herdr: slot.herdr, trust: 1, ...(stopped ? { stopped: true } : {}) };
+		const started = o.started(), record: GuiRecord = { pid, ...(started ? { started } : {}), port: running.port, remotePort: running.remotePort, token: running.token, csrf: running.csrf, owner, ownerSession: id, version: o.version, herdr: slot.herdr, trust: 1, ...(view !== "auto" ? { view } : {}), ...(stopped ? { stopped: true } : {}) };
 		writeRecordFile(dir, record);
 	};
 	const guiJsonStopped = (on: boolean) => {
@@ -147,6 +151,11 @@ export function createGuiHost(o: GuiHostOptions) {
 		if (seen) writeRecordFile(dir, { ...seen, pid, ...(o.started() ? { started: o.started() } : {}), owner, ownerSession: id, version: o.version, ...(on ? { stopped: true } : { stopped: undefined }) });
 	};
 
+	/** gui.json says the default view too, while this server owns the record (a record of another process is not ours to change). */
+	const guiJsonView = () => {
+		const seen = readGuiJson(dir);
+		if (seen?.pid === pid) writeRecordFile(dir, (({ view: _was, ...rest }) => ({ ...rest, ...(view !== "auto" ? { view } : {}) }))(seen));
+	};
 	const unstarted = () => {
 		const seen = readGuiJson(dir);
 		if (seen?.pid === pid && seen.started) writeRecordFile(dir, (({ started: _started, ...rest }) => rest)(seen));
@@ -215,7 +224,7 @@ export function createGuiHost(o: GuiHostOptions) {
 				const next = await net.read(), summary = await o.link.summary();
 				return summary && (summary.allies.length || summary.alerts.length || summary.confirms.length) ? { ...next, link: summary } : next;
 			},
-			net, call: cfg.call, hub, dir: o.bundle ?? BUNDLE, paired: join(dir, "paired.json"), port: prefer.port, remotePort: prefer.remotePort, ...(prefer.keep ? { keep: prefer.keep } : {}), bindWaitMs: wait, desk: cfg.env.STRAW_BOSS_DESK === "1",
+			net, call: cfg.call, hub, dir: o.bundle ?? BUNDLE, paired: join(dir, "paired.json"), port: prefer.port, remotePort: prefer.remotePort, ...(prefer.keep ? { keep: prefer.keep } : {}), bindWaitMs: wait, desk: cfg.env.STRAW_BOSS_DESK === "1", view,
 			lan: { panel: host.panel, overlay: host.faces, ...(slot.primary ? { file: join(dir, "lan.json") } : {}), notify: host.event, log: (event, fields) => log.line(event, Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? v : JSON.stringify(v)]))) },
 			link: { call: (name, args) => o.link.call(name, args), enable: () => o.link.enable() }, ...(o.tower ? { tower: o.tower } : {}), trust: { answer: trust.answer, watch: trust.watch },
 			server: { status: () => o.status(), log: (lines) => tailLog(fileOf(slot, "log"), lines), restart: async (reason) => (o.restart ? o.restart(reason) : { status: 501, body: { error: "unavailable", reason: "This server cannot restart itself." } }) },
@@ -388,12 +397,32 @@ export function createGuiHost(o: GuiHostOptions) {
 		},
 		/** The control requests that concern the GUI; undefined for any other. */
 		async handle(request: Request): Promise<Reply | undefined> {
-			if (o.listen === false || !["gui", "gui-stop", "gui-remote", "gui-pair", "gui-rotate", ...LAN_CMDS].includes(request.cmd)) return undefined;
+			if (o.listen === false || !["gui", "gui-stop", "gui-remote", "gui-pair", "gui-rotate", "gui-view", ...LAN_CMDS].includes(request.cmd)) return undefined;
 			if (closing) return { ok: false, error: "restarting" };
 			// A rotation in flight is finished first: a start meanwhile would bind the ports before the old listener let go, or read the secrets that are being dropped.
 			while (rotating) {
 				o.waiting?.();
 				await rotating.catch(() => {});
+			}
+			if (request.cmd === "gui-view") {
+				if (request.view === undefined) return { ok: true, view };
+				if (!isView(request.view)) return { ok: false, error: "The default view is auto, standard, or geek" };
+				if (request.view === view) return { ok: true, view, changed: false };
+				// The file first: a default that could not be stored changes nothing, in the page or in the record.
+				try {
+					writeView(dir, request.view);
+				} catch (error) {
+					return gone(new Error(`gui-prefs.json could not be written (${phrase((error as Error).message, 200)}); the default view stays ${view}`));
+				}
+				view = request.view;
+				gui?.setView(view);
+				try {
+					guiJsonView();
+				} catch (error) {
+					log.line("error", { code: "gui-json-view", text: phrase((error as Error).message, 200) });
+				}
+				log.line("gui-view", { view });
+				return { ok: true, view, changed: true };
 			}
 			if (request.cmd === "gui-rotate") {
 				const done = (rotating = rotate().finally(() => (rotating = undefined)));

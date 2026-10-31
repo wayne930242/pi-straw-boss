@@ -15,7 +15,7 @@ import { startedLater } from "./startof.ts";
  * follow it to the server's dialog channel. `herdr` is the socket of the Herdr server the server's net is read from. `stopped` marks a GUI stopped on purpose (`/boss gui stop`) or the whole server stopped on purpose.
  * `trust: 1` says the server reads project trust requests (trust/serve.ts): a pi relays its trust question only to a server that has it. `reload` and `remote` were written by builds up to 0.45.0 and are no longer.
  */
-export interface GuiRecord { pid: number; started?: string; port: number; remotePort?: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; herdr?: string; reload?: boolean; stopped?: boolean; remote?: boolean; trust?: 1 }
+export interface GuiRecord { pid: number; started?: string; port: number; remotePort?: number; token: string; csrf?: string; owner: string; ownerSession?: string; version?: string; herdr?: string; reload?: boolean; stopped?: boolean; remote?: boolean; trust?: 1; /** The server's default view when the boss set one (`/boss gui view`): a shell paints its window in it before the page loads. Absent for Auto. */ view?: "standard" | "geek" }
 
 export const urlOf = (r: GuiRecord) => `http://127.0.0.1:${r.port}/${r.token}/`;
 

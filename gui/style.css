@@ -104,6 +104,7 @@ svg { display: block; }
 /* The view (view.ts): Auto, Standard, or Geek, three words in a row; the chosen one is filled and bold (not colour alone). */
 .view-pick { display: grid; gap: 4px; } .view-pick > span { color: var(--dim); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
 .view-pick > div { display: flex; gap: 4px; } .view-pick button { flex: 1 1 0; justify-content: center; padding-inline: 4px; text-align: center; text-transform: none; letter-spacing: 0; }
+.view-pick > div { flex-wrap: wrap; } .view-pick[data-following] button[data-choice="auto"] { flex-basis: 100%; } /* "Follow server (geek)" does not fit beside the other two in 240 px: it takes the first row */
 .view-pick button[aria-pressed="true"] { color: var(--text); font-weight: 700; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .lang { text-transform: none; } .lang option { background: var(--bg); color: var(--text); }
 .pair { display: grid; justify-items: center; gap: 12px; text-align: center; color: var(--dim); font-size: 13px; }
