@@ -509,6 +509,8 @@ test("VM F1: the port, address, and interface-type filters are read through the 
 	assert.match(WINDOWS_SCRIPT, /\$fr = @\(Get-NetFirewallRule -Direction Inbound -Enabled True \| Where-Object \{/, "the rules are asked for once, enabled and inbound, and cut down before any is piped");
 	assert.match(WINDOWS_SCRIPT, /\$_\.Owner -or \$_\.PackageFamilyName/, "a packaged app's rules are not piped");
 	assert.match(WINDOWS_SCRIPT, /\$leaves -contains/, "nor are rules for another program");
+	assert.ok(WINDOWS_SCRIPT.includes("($p -split '[\\\\/]')[-1]"), "the file name is cut with -split (PowerShell 5.1 reads .Split('\\', '/') as a separator and a count, which fails on the VM)");
+	assert.ok(!/\.Split\([^)]*,/.test(WINDOWS_SCRIPT));
 	assert.match(WINDOWS_SCRIPT, /foreach \(\$r in \$fr\)/, "and the same rules are walked");
 	assert.equal((WINDOWS_SCRIPT.match(/\$fr\.Count -gt 0/g) ?? []).length, 3, "no rule: no pipeline (the bare call would be the refusal)");
 	assert.match(WINDOWS_SCRIPT, /owner = \[string\]\$r\.Owner/);

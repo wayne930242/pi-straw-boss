@@ -121,7 +121,7 @@ export const WINDOWS_STEPS = [
 	// at once in 0.3 s, say which is which. The rules left out are not in the answer. With no rule to pipe the bare call would be that same refusal.
 	"$leaves = @(([string]$env:SB_FW_NODE).ToLower().Split('|') | Where-Object { $_ })",
 	"$apps = @{}; foreach ($f in Get-NetFirewallApplicationFilter) { $apps[[string]$f.InstanceID] = $f }",
-	"$fr = @(Get-NetFirewallRule -Direction Inbound -Enabled True | Where-Object { if ($_.Owner -or $_.PackageFamilyName) { $false } else { $a = $apps[[string]$_.Name]; $p = $(if ($a) { ([string]$a.Program).Trim().Trim('\"') } else { '' }); $p -eq '' -or $p -eq 'Any' -or $leaves -contains $p.Split('\\', '/')[-1].ToLower() } })",
+	"$fr = @(Get-NetFirewallRule -Direction Inbound -Enabled True | Where-Object { if ($_.Owner -or $_.PackageFamilyName) { $false } else { $a = $apps[[string]$_.Name]; $p = $(if ($a) { ([string]$a.Program).Trim().Trim('\"') } else { '' }); $p -eq '' -or $p -eq 'Any' -or $leaves -contains ($p -split '[\\\\/]')[-1].ToLower() } })",
 	"$ports = @{}; if ($fr.Count -gt 0) { foreach ($f in ($fr | Get-NetFirewallPortFilter)) { $ports[[string]$f.InstanceID] = $f } }",
 	"$addrs = @{}; if ($fr.Count -gt 0) { foreach ($f in ($fr | Get-NetFirewallAddressFilter)) { $addrs[[string]$f.InstanceID] = $f } }",
 	"$types = @{}; if ($fr.Count -gt 0) { foreach ($f in ($fr | Get-NetFirewallInterfaceTypeFilter)) { $types[[string]$f.InstanceID] = $f } }",
