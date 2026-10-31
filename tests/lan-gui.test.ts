@@ -92,6 +92,28 @@ test("the installed app's entry answers on a LAN listener; a Wi-Fi 401 and a dea
 	assert.equal((await w.send(`/${w.token}/`, { headers: { "x-peer": "192.168.1.99" } })).status, 429, "a noisy peer is told 429, in plain text");
 });
 
+test("a waiting phone's own favicon and touch-icon fetches are not refusals: 60 s of polling stays 200, while the same paths on a host off the allow-list still count", async () => {
+	const clock = fakeClock(Date.now());
+	mock.method(Date, "now", clock.now);
+	const w = await world();
+	const res = await w.send("/sb-app/pair", { method: "POST", headers: { origin: AT.origin, "content-type": "application/x-www-form-urlencoded", "sec-fetch-site": "same-origin" }, body: `code=${w.gui.access.pair("lan", "wait")}` });
+	const jar = { cookie: `${LAN_COOKIE}=${new RegExp(`${LAN_COOKIE}=([0-9a-f]{64})`).exec(String(res.headers["set-cookie"]))![1]}` };
+	for (let t = 0; t < 30; t++) {
+		clock.advance(2000);
+		for (const icon of ["/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/apple-touch-icon-120x120.png"]) {
+			const r = await w.send(icon, { headers: jar });
+			assert.equal(r.status, 404, icon);
+			assert.equal(r.headers["content-type"], "text/plain");
+		}
+		assert.equal((await w.send("/favicon.ico", { method: "HEAD", headers: jar })).status, 404);
+		assert.equal((await w.send("/sb-app/pair/wait", { headers: jar })).status, 200, `poll ${t}`);
+	}
+	assert.match((await w.send("/sb-app/", { headers: jar })).headers.location ?? "", /pair\/wait/);
+	// Off the allow-list the icon is just another refused path, and it counts.
+	for (let i = 0; i < 20; i++) assert.equal((await w.send("/favicon.ico", { headers: { host: "evil.example:8445" } })).status, 403);
+	assert.equal((await w.send("/favicon.ico", { headers: { host: "evil.example:8445" } })).status, 429);
+});
+
 test("a request without the LAN cookie is never let in on the strength of a Tailscale cookie, and an allowed device's page, manifest, and stream are served with the entry as the app's start URL", async () => {
 	const w = await world(), ph = await w.pair();
 	assert.equal((await w.send(`/${w.token}/`, { headers: { cookie: `sb_remote=${"a".repeat(64)}`, "x-peer": "192.168.1.60" } })).status, 401);

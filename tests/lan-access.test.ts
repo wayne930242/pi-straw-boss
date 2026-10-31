@@ -222,6 +222,15 @@ test("a redemption is the entry's own form post: method, Origin, Sec-Fetch-Site,
 	assert.deepEqual(w.access.lan.redeem(post(), body, atOf({ peer: undefined })), { status: 403 }, "a peer that is not known");
 });
 
+test("one guess per POST: a mixed `code` + c1..c8 body and a repeated `code` field spend one miss each, never a second try", () => {
+	const w = world("onepost");
+	const typed = w.access.pairCode("lan", "tile-1")!, as = atOf({ peer: "192.168.1.40" }), boxes = typed.replace(" ", "").split("").map((c, i) => `c${i + 1}=${c}`).join("&");
+	const try_ = (body: string) => w.access.lan.redeem(post({}, as), body, as);
+	for (const body of [`code=ZZZZ-ZZZZ&${boxes}`, `code=ZZZZ-ZZZZ&code=${encodeURIComponent(typed)}`, `code=ZZZZ-ZZZZ&${boxes}`, `code=ZZZZ-ZZZZ&code=${encodeURIComponent(typed)}`]) assert.deepEqual(try_(body), { wrong: true }, body);
+	assert.deepEqual(w.events.filter((e) => e.type === "wrong").map((e) => (e as { count: number }).count), [1, 2, 3, 4], "four posts, four misses");
+	assert.ok("cookie" in try_(`code=&${boxes}`), "the peer is not locked (a second try per POST would have used up its five); an empty `code` falls to the boxes");
+});
+
 test("typed codes: five wrong tries lock one peer address only; 200 in all void the code; a new code clears the counts; the QR is never locked", () => {
 	const w = world("typed");
 	const typed = w.access.pairCode("lan", "tile-1")!, asA = atOf({ peer: "192.168.1.40" }), asB = atOf({ peer: "192.168.1.41" });
@@ -230,7 +239,7 @@ test("typed codes: five wrong tries lock one peer address only; 200 in all void 
 	assert.deepEqual(w.events.filter((e) => e.type === "wrong").map((e) => (e as { count: number }).count), [1, 2, 3, 4, 5], "the computer hears a count, not the codes");
 	assert.deepEqual(try_(asA, typed), { status: 429 }, "locked out of the code: even the right one");
 	assert.deepEqual(try_(asA, "ABCD EFGH"), { status: 429 });
-	const b = try_(asB, typed.toLowerCase().replace("-", " "));
+	const b = try_(asB, typed.toLowerCase().replace(" ", "-"));
 	assert.ok("cookie" in b, "another peer is not locked, and case, spaces, and the hyphen are forgiven");
 	// A QR code is never locked.
 	const qr = w.access.pair("lan", "tile-2")!;

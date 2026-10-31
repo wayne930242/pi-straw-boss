@@ -59,6 +59,7 @@ test("the QR's link carries a code and no token, and its GET shows a Pair button
 	const page = await w.send(`/sb-app/pair/${code}`, { headers: { "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" } });
 	assert.equal(page.status, 200);
 	assert.match(page.body, /Pair this device with Straw Boss on weis-mbp\.local\?/);
+	assert.match(page.body, /<link rel="icon" href="data:,">/, "the page asks for no favicon of its own");
 	assert.match(page.body, new RegExp(`<form method="post" action="/sb-app/pair"><input type="hidden" name="code" value="${code}">`));
 	assert.ok(!page.text.includes(T), "no token on the page");
 	assert.equal(page.headers["set-cookie"], undefined, "and no cookie");
@@ -102,6 +103,7 @@ test("a redeemed code gives the device the entry's cookie alone and a waiting pa
 	const wait = await w.send("/sb-app/pair/wait", { headers: jar });
 	assert.equal(wait.status, 200);
 	assert.match(wait.body, new RegExp(`class="number">${number}<`));
+	assert.match(wait.body, /<link rel="icon" href="data:,">/, "nor does the waiting page, which reloads every 2 s");
 	assert.ok(!wait.text.includes(T));
 	// The page's other reaches stay shut: the page itself is not served by this handler, and a GET to the token path is not the entry's.
 	assert.equal((await w.send(`/sb-app/${T}/`, { headers: jar })).status, 404);

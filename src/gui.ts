@@ -192,6 +192,8 @@ export async function startGui({ read, net, call, hub, dir = BUNDLE, paired, por
 		const answer = ({ status, body }: Reply) => res.writeHead(status, { ...HEADERS, "content-type": TYPES[".json"] }).end(JSON.stringify(body));
 		// The installed app's fixed entry exists on the remote and the LAN listeners only; on the local one `sb-app` is just a wrong token.
 		if (kind !== "local" && given === APP.slice(1, -1)) return void entry(req, res, path, kind === "lan" ? at : undefined);
+		// A browser asks for an icon on its own: on the LAN listener the entry's pages are the only thing it loads, and an icon request must not count toward the 20 refusals that lock a waiting phone out. The pages declare an empty icon; a browser that asks anyway gets a plain 404.
+		if (kind === "lan" && (req.method === "GET" || req.method === "HEAD") && /^\/(favicon\.ico|apple-touch-icon(-precomposed|-\d+x\d+)*\.png)$/.test(pathname) && access.lan.admits(req, at)) return void res.writeHead(404, { ...HEADERS, "content-type": "text/plain" }).end(req.method === "HEAD" ? undefined : "not found");
 		const who = access.check(req, kind, kind === "lan" ? at!.port : (own().address() as AddressInfo).port, given, path, at);
 		const wifi = kind === "lan", command = wifi ? "/boss gui lan" : "/boss gui remote";
 		if ("status" in who) {

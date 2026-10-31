@@ -773,6 +773,15 @@ test("a typed pairing code pairs like a scanned one: once, within ten minutes, f
 /** The Origin a browser puts on a same-origin form post from a page sent with this Referrer-Policy (Fetch, "append a request Origin header": under no-referrer it is the string null). */
 const browserOrigin = (policy: string | string[] | undefined) => (policy === "no-referrer" ? "null" : `https://${HOST}`);
 
+test("one guess per POST: a mixed `code` + c1..c8 body and a repeated `code` field spend one miss each, never a second try", () => {
+	const access = createAccess(T);
+	access.enable(ID);
+	const right = access.pairCode()!, boxes = right.replace(" ", "").split("").map((c, i) => `c${i + 1}=${c}`).join("&");
+	// `code` wins over the boxes, and the first `code` wins over the second: each of these is a wrong guess although the right code rides along.
+	for (const body of [`code=AAAA-AAAA&${boxes}`, `code=AAAA-AAAA&code=${encodeURIComponent(right)}`, `code=AAAA-AAAA&${boxes}`, `code=AAAA-AAAA&code=${encodeURIComponent(right)}`]) assert.deepEqual(access.redeem(reqOf(), body), { wrong: true }, body);
+	assert.ok("cookie" in access.redeem(reqOf(), `code=&${boxes}`), "four misses are forgiven (a second try per POST would have locked at the third); an empty `code` falls to the boxes");
+});
+
 test("a typed code pairs from a real browser's form post: the entry's Referrer-Policy must not make its Origin null, and the eight boxes join (live Chrome 2026-10-31: every typed code got 'forbidden')", async () => {
 	const gui = await startGui({ read: async () => ({ bases: [] }), dir: join(scratch, "bundle"), pollMs: 50, pingMs: 1000 });
 	running.push(gui);
