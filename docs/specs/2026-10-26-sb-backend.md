@@ -1484,14 +1484,14 @@ how an installed app pairs, which it still does after `/boss gui rotate`, a lost
 
 - **Entry.** `GET /sb-app/` passes the identity checks of a remote page (remote on, exact MagicDNS host, no Funnel marker, this machine's
   `Tailscale-User-Login`), else 403. With a device cookie (`sb_remote`, `Path=/sb-app/`) that is a live pairing it answers 302 to the current
-  `/<token>/` and sets both cookies again, but only to a navigation (`Sec-Fetch-Mode` navigate and `Sec-Fetch-Dest` document, or neither sent): a script's fetch gets 403 and no token (RR-F001); without one it answers a page with a code field (no token, no secret, no script, CSP `form-action 'self'`);
+  `/<token>/` and sets both cookies again, but only to a navigation (`Sec-Fetch-Mode` navigate and `Sec-Fetch-Dest` document, or neither sent): a script's fetch gets 403 and no token (RR-F001); without one it answers a page with the code as eight boxes of one character each (no token, no secret, no inline script, CSP `script-src 'self'; form-action 'self'`, `Referrer-Policy: same-origin`; the script is `GET /sb-app/entry.js`; the boxes are fields `c1` to `c8` that the server joins, so the page works without it);
   a document load whose `Sec-Fetch-Site` is not `same-origin` gets the one-time self-reload of a tokened page first, because Android launching the
   app leaves the SameSite=Strict cookie behind.
 - **Manifest.** A remote page's `manifest.webmanifest` has `start_url` `/sb-app/` and `scope` `/` (the page it leads to must be in scope); the local one is unchanged.
 - **Code.** `access.pairCode()`: 8 characters of a 32-symbol alphabet without I, L, O, U (40 bits), once, 10 minutes, at most 16 waiting, void with remote off or
   another identity. Shown beside the QR on this computer's page (`remote/pair` and `remote/on` answer `code`) and in the `/boss gui remote` overlay, not in the text
-  the conversation shows. `POST /sb-app/pair` (`application/x-www-form-urlencoded`, 1 KB) is a form post from the entry's own page: `Origin` is the https name and
-  `Sec-Fetch-Site` is `same-origin` when sent, else 403 and nothing counted. Five wrong codes void every waiting code and the entry answers 429 until `pairCode()` is
+  the conversation shows. Shown as two groups of four with a space (`ABCD EFGH`), never a hyphen; what is typed is read after NFKC, upper case, and dropping every space, dash, and invisible mark, with I, L, O forgiven. `POST /sb-app/pair` (`application/x-www-form-urlencoded`, 1 KB) is a form post from the entry's own page: `Origin` is the https name and
+  `Sec-Fetch-Site` is `same-origin` when sent, else 403 and nothing counted. The entry sets `Referrer-Policy: same-origin` itself: under the pages' `no-referrer` a browser's form post carries `Origin: null` (Fetch, "append a request Origin header"), which this check refuses, so no typed code ever paired (found live, 2026-10-31). Five wrong codes void every waiting code and the entry answers 429 until `pairCode()` is
   asked again, which only this computer can do (the Phone tile, `/boss gui remote`).
 - **Cookies.** A pairing, by QR or code, and each renewal set the cookie twice: `Path=/<token>/` and `Path=/sb-app/`, never `Path=/`, so the pairing is not
   sent to other paths on the host (a cookie has no port).
