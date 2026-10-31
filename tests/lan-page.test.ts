@@ -133,9 +133,10 @@ test("Wi-Fi access off with no certificate: the risk and the hotspot advice abov
 	w.tab.start();
 	await w.settle();
 	assert.ok(w.root.shows(m.lan_off_ask()));
-	assert.ok(w.root.shows(m.lan_risk({ name: "weis-mbp", expiry_note: "" })), "the warning names the computer");
+	assert.ok(w.root.shows(m.lan_risk({ name: "weis-mbp" })), "the warning names the computer");
 	assert.ok(w.root.shows(m.lan_hotspot()));
-	assert.match(m.lan_risk({ name: "weis-mbp", expiry_note: "" }), /weis-mbp\.local/);
+	assert.ok(w.root.shows(m.lan_unverified()), "the strong warning: whether a phone limits the certificate is not verified yet");
+	assert.match(m.lan_risk({ name: "weis-mbp" }), /weis-mbp\.local/);
 	assert.deepEqual(w.post("lan/on"), [], "the computer's name comes with the no_ca answer: the page posts nothing that could turn Wi-Fi access on");
 	const turn = w.root.button(m.lan_turn_on());
 	turn.click();
@@ -153,7 +154,7 @@ test("with a certificate already made, the off state offers Turn on Wi-Fi access
 	const none = world({ ca: false, on: false, name: null });
 	none.tab.start();
 	await none.settle();
-	assert.ok(none.root.shows(m.lan_risk_noname({ expiry_note: "" })), "a computer with no usable name gets the risk without the name");
+	assert.ok(none.root.shows(m.lan_risk_noname()), "a computer with no usable name gets the risk without the name");
 });
 
 test("RVL7-F001: a lan/ca that fails while a certificate exists posts no lan/on at all; only the press of the button turns Wi-Fi access on", async () => {
@@ -180,7 +181,8 @@ test("on: the certificate step has a link for each public file, and the fingerpr
 	assert.ok(w.root.shows(m.lan_risk_short()));
 	const details = w.root.byTag("details")[0]!;
 	assert.equal(details.byTag("summary")[0]!.text, m.lan_risk_details());
-	assert.ok(details.shows(m.lan_risk({ name: "weis-mbp", expiry_note: "" })) && details.shows(m.lan_hotspot()), "Details holds the full warning");
+	assert.ok(details.shows(m.lan_risk({ name: "weis-mbp" })) && details.shows(m.lan_hotspot()), "Details holds the full warning");
+	assert.ok(details.shows(m.lan_unverified()), "and the not-verified sentence");
 	assert.ok(w.root.shows(m.lan_share_ca()));
 	const links = w.root.byTag("a");
 	assert.deepEqual(links.map((a) => [a.attrs.get("href"), a.attrs.get("download"), a.text, a.clicked]), [["api/lan/ca/straw-boss.mobileconfig", "straw-boss.mobileconfig", m.lan_share_profile(), 0], ["api/lan/ca/straw-boss-lan-ca.crt", "straw-boss-lan-ca.crt", m.lan_share_crt(), 0]], "RVL7-F009: one link for each public file, which the boss presses; nothing starts two downloads from one click");

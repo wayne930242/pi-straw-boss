@@ -580,7 +580,8 @@ const notChrome = (ua: string) => /Firefox\/|SamsungBrowser|OPR\/|DuckDuckGo/.te
 const TEXT = {
 	en: {
 		title: "Trust this computer's certificate",
-		lead: (name: string | null) => `Straw Boss on ${name ?? "this computer"} made its own certificate so this phone can open its page over this network with HTTPS. Install it once. It covers ${name ? `${name}.local and ` : ""}private network addresses (10.x, 172.16–31.x, 192.168.x): if its key is ever copied, it could be used to pose as those to this phone until you remove it.`,
+		lead: (name: string | null) => `Straw Boss on ${name ?? "this computer"} made its own certificate so this phone can open its page over this network with HTTPS. Install it once. It is meant to cover only ${name ? `${name}.local and ` : ""}private network addresses (10.x, 172.16–31.x, 192.168.x).`,
+		unverified: "Not verified yet: whether this phone limits the certificate to those names has not been checked. Until it has, assume that a copy of its key could pose as any website to this phone, until you remove the certificate. Use Tailscale instead if you can.",
 		check: "Nothing on this page can prove the certificate is real. The computer's screen tells you where to check it on this phone, and that it must be exactly one certificate. A certificate sent from the computer by AirDrop or Quick Share needs no check, unless the phone asked you to accept it from an unknown sender.",
 		platforms: { ios: "iPhone", android: "Android", desktop: "Computer" },
 		downloadProfile: "Download profile", downloadCert: "Download certificate",
@@ -599,7 +600,8 @@ const TEXT = {
 	},
 	zh: {
 		title: "信任這台電腦的憑證",
-		lead: (name: string | null) => `${name ?? "這台電腦"} 上的 Straw Boss 自建了一張憑證，讓這支手機能在這個網路上用 HTTPS 開啟它的頁面。只要安裝一次。它涵蓋 ${name ? `${name}.local 和` : ""}私人網路位址（10.x、172.16–31.x、192.168.x）：如果金鑰被複製，就可能被用來向這支手機冒充這些位址，直到你移除它。`,
+		lead: (name: string | null) => `${name ?? "這台電腦"} 上的 Straw Boss 自建了一張憑證，讓這支手機能在這個網路上用 HTTPS 開啟它的頁面。只要安裝一次。它原本只應涵蓋 ${name ? `${name}.local 和` : ""}私人網路位址（10.x、172.16–31.x、192.168.x）。`,
+		unverified: "尚未驗證：這支手機會不會把憑證限制在這些名稱上，目前還沒有查證過。在查證之前，請當作金鑰一旦被複製，就可能被用來向這支手機冒充任何網站，直到你移除這張憑證。可以的話，請改用 Tailscale。",
 		check: "這個頁面上的任何內容都無法證明憑證是真的。電腦螢幕會告訴你要在手機的哪裡核對，而且必須剛好只有一張憑證。從電腦用 AirDrop 或快速分享傳來的憑證不必核對，除非手機要你接受來自不明傳送者的檔案。",
 		platforms: { ios: "iPhone", android: "Android", desktop: "電腦" },
 		downloadProfile: "下載描述檔", downloadCert: "下載憑證",
@@ -627,7 +629,7 @@ export function certificatePage(ca: Pick<LanCa, "name">, zh: boolean, userAgent:
 	const file = platform === "ios" ? `<a class="button" href="/sb-ca/${CA_FILES.profile}">${t.downloadProfile}</a>` : `<a class="button" href="/sb-ca/${CA_FILES.crt}">${t.downloadCert}</a>`;
 	const notes = [platform === "ios" && notSafari(userAgent) ? t.iosSafari : "", platform === "android" ? t.androidChrome : "", platform === "android" && notChrome(userAgent) ? t.androidBrowser : ""].filter(Boolean);
 	const nav = (["ios", "android", "desktop"] as const).map((p) => (p === platform ? `<strong>${t.platforms[p]}</strong>` : `<a href="/sb-ca/?p=${p}">${t.platforms[p]}</a>`)).join(" ");
-	return shell(zh, t.title, `<h1>${t.title}</h1><p>${esc(t.lead(ca.name))}</p><p>${t.check}</p><nav>${nav}</nav>${notes.map((n) => `<p><strong>${esc(n)}</strong></p>`).join("")}<p>${file}</p><ol>${steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol><p>${t.remove} ${esc(t.removal[platform])}</p><p><a href="/sb-ca/check">${t.checkLink}</a></p>`);
+	return shell(zh, t.title, `<h1>${t.title}</h1><p>${esc(t.lead(ca.name))}</p><p><strong>${esc(t.unverified)}</strong></p><p>${t.check}</p><nav>${nav}</nav>${notes.map((n) => `<p><strong>${esc(n)}</strong></p>`).join("")}<p>${file}</p><ol>${steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol><p>${t.remove} ${esc(t.removal[platform])}</p><p><a href="/sb-ca/check">${t.checkLink}</a></p>`);
 }
 /** `/sb-ca/check`: an image from the HTTPS side of this listener. It draws "Trusted" when the phone trusts a certificate for the host; when TLS fails the browser shows the alt text. */
 export function checkPage(ca: Pick<LanCa, "name">, zh: boolean, host: string, port: number): string {

@@ -274,6 +274,10 @@ test("the certificate pages: the page is for the platform in the browser's langu
 	assert.ok(android.body.includes(`href="/sb-ca/${CA_FILES.crt}"`) && !android.body.includes(`/sb-ca/${CA_FILES.profile}`), "Android is offered the certificate");
 	assert.ok(android.body.includes("not secure") && !ios.body.includes("not secure"));
 	assert.ok(zh.body.includes("信任這台電腦的憑證") && ios.body.includes("Trust this computer's certificate"));
+	for (const [html, said] of [[ios.body, "Not verified yet"], [android.body, "Not verified yet"], [zh.body, "尚未驗證"]] as const) {
+		assert.ok(html.includes(said) && /(any website|任何網站)/.test(html), "nothing is measured yet: every platform's page says the limit is not verified and a copy of the key could pose as any website");
+		assert.ok(!/It covers|它涵蓋/.test(html), "and does not claim what the certificate covers");
+	}
 	assert.ok((await page(IOS.replace("Version/18.0 Mobile/15E148 Safari/604.1", "CriOS/130 Mobile/15E148 Safari/604.1"))).body.includes("Open this page in Safari"));
 	assert.ok(!ios.body.includes("Open this page in Safari"));
 	assert.ok((await page(ANDROID.replace("Chrome/130.0.0.0", "Firefox/130"))).body.includes("Use Chrome"));

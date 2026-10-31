@@ -180,6 +180,8 @@ test("the warning names the computer and the risk; y accepts it from this face o
 	await r.ready();
 	assert.match(r.screen(), /as weis-mbp\.local and as any private-network address/);
 	assert.match(r.screen(), /phone's hotspot/);
+	assert.match(r.screen(), /Not verified yet:/, "nothing is measured yet: the warning says whether a phone limits the certificate was not checked");
+	assert.match(r.screen().replace(/\s+/g, " "), /a copy of the key could pose as any website to your phone/);
 	assert.match(r.screen(), /y {2}make the certificate and turn Wi-Fi access on/);
 	r.overlay.handleInput!(ESC);
 	await r.settled;
@@ -197,6 +199,7 @@ test("the warning names the computer and the risk; y accepts it from this face o
 	await y.settle();
 	await y.key("y");
 	await until(() => /Step 1, once per phone/.test(y.screen()), "the certificate face");
+	assert.match(y.screen().replace(/\s+/g, " "), /Not verified yet: whether a phone limits this certificate .* could pose as any website to it/, "the certificate face says the limit is not verified");
 	assert.deepEqual(y.cmds("gui-lan").map((c) => [c.on, c.accept_risk, c.face]), [[true, true, "face-1"]]);
 	assert.match(y.told.at(-1)![0], /^Wi-Fi access is on: https:\/\/weis-mbp\.local:8445\/sb-app\/ \(served: 192\.168\.1\.5 \(en0\), 10\.0\.0\.5 \(en1\)\)\. Pair in the overlay; you allow each new device here by typing the number its screen shows\.$/);
 	y.overlay.handleInput!(ESC);

@@ -151,7 +151,7 @@ export function lanTab(deps: LanDeps) {
 
 	// The off state: what Wi-Fi access is, its risk, and the button. The warning is the one `/boss gui lan` shows before the first certificate. Only a press of the button turns it on: the page asks nothing that could (the computer's name
 	// comes with the "no certificate" answer), and a certificate read that fails shows why and is read again at the next poll.
-	const riskOf = (name: string | null | undefined) => (name ? m.lan_risk({ name, expiry_note: "" }) : m.lan_risk_noname({ expiry_note: "" }));
+	const riskOf = (name: string | null | undefined) => (name ? m.lan_risk({ name }) : m.lan_risk_noname());
 	async function drawOff(id: number) {
 		const have = await deps.post("lan/ca", {}).catch(() => undefined);
 		if (id !== turn) return;
@@ -162,7 +162,7 @@ export function lanTab(deps: LanDeps) {
 		const out = h("p", { class: "lan-no", role: "status" });
 		if (have.ok && certOf(have.body).ended) out.append(m.lan_ca_ended());
 		on.onclick = () => ((on.disabled = true), out.replaceChildren(m.lan_turning_on()), void deps.post("lan/on", { accept_risk: true }).then((r) => (r.ok ? poll() : (out.replaceChildren(r.body.error === "lan_ca_ended" ? m.lan_ca_ended() : why(r)), void (on.disabled = false))), () => (out.replaceChildren(m.no_answer()), void (on.disabled = false))));
-		main.replaceChildren(h("p", null, m.lan_off_ask()), h("p", null, riskOf(name)), h("p", null, m.lan_hotspot()), on, out);
+		main.replaceChildren(h("p", null, m.lan_off_ask()), h("p", null, riskOf(name)), h("p", { class: "lan-risk" }, m.lan_unverified()), h("p", null, m.lan_hotspot()), on, out);
 	}
 
 	// The on state: the certificate step, then the pairing.
@@ -204,7 +204,7 @@ export function lanTab(deps: LanDeps) {
 		const print = [m.lan_fp_ios(), m.lan_fp_android(), m.lan_fp_mac(), m.lan_fp_windows({ sha1: cert.sha1 })];
 		main.replaceChildren(
 			h("p", { class: "lan-risk" }, m.lan_risk_short()),
-			h("details", null, h("summary", null, m.lan_risk_details()), h("p", null, riskOf(cert.name)), h("p", null, m.lan_hotspot())),
+			h("details", null, h("summary", null, m.lan_risk_details()), h("p", null, riskOf(cert.name)), h("p", { class: "lan-risk" }, m.lan_unverified()), h("p", null, m.lan_hotspot())),
 			h("h4", null, m.lan_step_ca()), h("p", null, m.lan_share_ca()), h("div", { class: "devices-acts" }, ...links),
 			...(cert.url && cert.rows ? [h("p", null, m.lan_scan_ca()), square(cert.rows.map(String), m.lan_ca_qr()), h("p", null, h("code", null, cert.url))] : []),
 			h("p", null, m.lan_fp_lead()), h("p", null, h("code", { class: "pair-code lan-fp" }, cert.sha256)), h("ul", { class: "lan-fps" }, ...print.map((t) => h("li", null, t))),

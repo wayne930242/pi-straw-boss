@@ -45,3 +45,13 @@ test("outside a browser the messages read English, with Chinese on request", () 
 	assert.equal(m.unit_count({ count: 3 }, { locale: "zh-TW" }), "3 個單位");
 	assert.equal(m.locale_name({}, { locale: "zh-TW" }), "正體中文");
 });
+
+test("the Wi-Fi access warning says the limit is not verified in both languages, with no expiry placeholder left over", () => {
+	for (const file of ["en.json", "zh-TW.json"]) {
+		const messages = read(file);
+		assert.match(String(messages.lan_unverified), file === "en.json" ? /Not verified yet.*any website/ : /尚未驗證.*任何網站/, file);
+		assert.match(String(messages.lan_risk_short), file === "en.json" ? /not been verified.*any website/ : /沒有驗證過.*任何網站/, file);
+		for (const key of ["lan_risk", "lan_risk_noname"]) assert.ok(!String(messages[key]).includes("{expiry_note}"), `${file} ${key}`);
+	}
+	assert.match(m.lan_unverified({}, { locale: "zh-TW" }), /尚未驗證/);
+});

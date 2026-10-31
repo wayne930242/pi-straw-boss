@@ -70,6 +70,7 @@ const STEP_ANSWER = "Could not reach the sb server";
 const warning = (name: string | null | undefined): Part[] => [
 	"Wi-Fi access needs a certificate this computer makes for itself, which each phone then trusts.", "",
 	`Risk: anyone who copies that certificate's key from this computer (a backup, a program running as you, an agent you run) can pose to your phones, and to any computer that installed it, as ${name ? `${name}.local and as ` : ""}any private-network address, such as your router's or NAS's 192.168.x.x page, on any Wi-Fi they join, until you remove the certificate from each of them.`, "",
+	"Not verified yet: whether your phone limits this certificate to this computer's name and private addresses has not been checked. Until it has, assume that a copy of the key could pose as any website to your phone. Use Tailscale instead if you can.", "",
 	"We recommend using Wi-Fi access on your phone's hotspot, or on a Wi-Fi that connects the phone directly to this computer, so no one else is on the network.", "",
 	"y  make the certificate and turn Wi-Fi access on", "n or Esc  cancel",
 ];
@@ -183,7 +184,8 @@ export async function showLan(ui: ExtensionContext["ui"], d: LanDeps, start: Lan
 	function certificateFace(): Part[] {
 		const at = chosen(), port = facts.port, on = facts.on === true && at && typeof port === "number";
 		const out: Part[] = [on ? `Wi-Fi access is on: https://${at.host}:${port}${Array.isArray(facts.addresses) && facts.addresses.length ? ` (served: ${(facts.addresses as { address: string; interface: string }[]).map((a) => `${a.address} (${a.interface})`).join(", ")})` : ""}` : "Wi-Fi access is off: run /boss gui lan to turn it on.", "Step 1, once per phone: give it this computer's certificate.",
-			"  Best: f shows the certificate files; send them by AirDrop (iPhone) or Quick Share (Android).", "  No check needed unless the phone asks you to accept a file from an unknown sender."];
+			"  Best: f shows the certificate files; send them by AirDrop (iPhone) or Quick Share (Android).", "  No check needed unless the phone asks you to accept a file from an unknown sender.",
+			"Not verified yet: whether a phone limits this certificate to this computer's name and private addresses has not been checked, so a copy of its key could pose as any website to it."];
 		if (on) {
 			out.push("  Or scan this QR on the phone (on a network you trust; a hotspot or direct Wi-Fi is best):", "");
 			out.push({ qr: qrLines(qr(`http://${at.host}:${port}/sb-ca/`)) }, "");
