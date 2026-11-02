@@ -723,10 +723,13 @@ export function createRuns(o: RunsOptions) {
 		return { programs: programProcs({ foreground_processes: found }), shells: found.filter(isShell), prompt };
 	};
 	const pidsOf = async (pane: string): Promise<number[] | undefined> => (await foreground(pane))?.flatMap((p) => (typeof p.pid === "number" ? [p.pid] : []));
-	/** The process Herdr lists for the run: the one whose command line holds the run id, else the one named pi. It may be a wrapper that started pi (`resolve`). */
+	/**
+	 * The process Herdr lists for the run: the one whose command line holds the run id, else the one named pi, by its argv0 or, where Herdr lists only a name and a PID (0.9.5 on Linux, where pi's title makes
+	 * the name `pi`), by its name. It may be a wrapper that started pi (`resolve`).
+	 */
 	const procOf = async (pane: string, runId?: string): Promise<number | undefined> => {
 		const info = await foreground(pane);
-		const pick = (info ?? []).find((p) => runId && p.cmdline?.includes(runId)) ?? (info ?? []).find((p) => p.argv0 === "pi") ?? (info ?? []).filter((p) => p.name === "node")[0];
+		const pick = (info ?? []).find((p) => runId && p.cmdline?.includes(runId)) ?? (info ?? []).find((p) => p.argv0 === "pi") ?? (info ?? []).find((p) => p.name === "pi") ?? (info ?? []).filter((p) => p.name === "node")[0];
 		return typeof pick?.pid === "number" ? pick.pid : undefined;
 	};
 	/**

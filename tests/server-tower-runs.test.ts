@@ -657,6 +657,27 @@ test("B5R-F003: a pid-less run whose process is found by its run id is taken bac
 	assert.equal(String(ensured.pane), rest.pane);
 });
 
+test("#2: a pid-less run whose pi Herdr lists by its name alone (no argv0, no cmdline) is taken back after a restart, and its pi claims it", async () => {
+	const { s } = await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const id = await nthRun();
+	await s.handle.shutdown(0);
+	await s.handle.done;
+	world.clients.length = 0;
+	const rec = readRun(world.slot, "wA", id)!;
+	const { pid: _pid, started: _started, ...rest } = rec;
+	writeRun(world.slot, rest);
+	const pi = world.pis.get(id)!;
+	world.herdr.pane(pi.pane).processes = [{ name: "pi", pid: pi.pid }];
+	const second = await started();
+	// The first server's start still waits for the claim and ends the run as crashed when that wait is over: the pid must be found before that, by the second server.
+	await until(() => readRun(world.slot, "wA", id)?.pid || readRun(world.slot, "wA", id)?.outcome, "the pid to be found again");
+	const found = readRun(world.slot, "wA", id)!;
+	assert.equal(found.outcome, undefined, String(found.detail));
+	assert.equal(found.pid, pi.pid);
+	assert.equal((await claim(second, id)).ok, true);
+});
+
 test("B5R-F002: a claim that comes before the server has its tower identity, or has loaded its runs, is told to wait, not refused", async () => {
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "one"));
