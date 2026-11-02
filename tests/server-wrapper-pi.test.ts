@@ -136,6 +136,40 @@ test("a pi that Herdr lists itself needs no wrapper: one table read, no via", as
 	assert.equal((await ask(s, { cmd: "claim", runId: id, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` })).ok, true);
 });
 
+test("#2: a pi that Herdr lists by its name and PID alone (Herdr 0.9.5 on Linux: no argv0, no cmdline; pi's title hides the run id from ps too) is the run's: the PID is recorded and the claim holds", async () => {
+	const base = world.herdr.onAgentStart!;
+	world.herdr.onAgentStart = (pane, args) => {
+		base(pane, args);
+		const pi = world.pis.get(args[args.indexOf("--sb-run") + 1]!)!.pid;
+		pane.processes = [{ name: "pi", pid: pi }];
+		world.procTable = [proc(pi, 100, "pi", false, `T-${pi}`)];
+	};
+	const s = await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const id = await runOf();
+	await until(() => readRun(world.slot, "wA", id)?.pid || readRun(world.slot, "wA", id)?.outcome, "the pid to be recorded or the run to end");
+	const rec = readRun(world.slot, "wA", id)!;
+	assert.equal(rec.outcome, undefined, String(rec.detail));
+	assert.equal(rec.pid, world.pis.get(id)!.pid);
+	assert.equal(rec.via, undefined);
+	assert.equal((await claim(s, id)).ok, true);
+});
+
+test("#2: a pi listed by its name alone does not displace one Herdr lists by its argv0", async () => {
+	const base = world.herdr.onAgentStart!;
+	world.herdr.onAgentStart = (pane, args) => {
+		base(pane, args);
+		const pi = world.pis.get(args[args.indexOf("--sb-run") + 1]!)!.pid;
+		pane.processes = [{ name: "pi", pid: 9001 }, { argv0: "pi", name: "node", pid: pi }];
+		world.procTable = [proc(9001, 100, "pi", false, PI_AT), proc(pi, 100, "node", false, `T-${pi}`)];
+	};
+	await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const id = await runOf();
+	await until(() => readRun(world.slot, "wA", id)?.pid, "the pid to be recorded");
+	assert.equal(readRun(world.slot, "wA", id)?.pid, world.pis.get(id)!.pid);
+});
+
 test("a stop ends the run's pi and then the wrapper Herdr lists (the wrapper does not take its child with it)", async () => {
 	wrapped();
 	const s = await setup();
