@@ -332,7 +332,7 @@ export interface RunsOptions {
 	max(): number;
 	/** `<state dir>/trust`, where a pi that waits on a trust question leaves its request. */
 	trustDir?: string;
-	model(): string | undefined;
+	model(workspace: string): string | undefined;
 	/** The head tower's model (`headModel`, else the tower model); the head's runs use it in place of `model`. */
 	headModel?(): string | undefined;
 	timers?: Partial<Timers>;
@@ -555,7 +555,8 @@ export function createRuns(o: RunsOptions) {
 					return void (await finish(active, "herdr-restart", "the standing pane is no longer proven to be the tower's"));
 				}
 				// A local run (the boss conversation included, whose resumed session may still have had a shell) names its tools: the tower tools and read-only files, no shell or edit (runallow.ts). An ally run keeps its sender's gate.
-				await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...extra, ...(rec.kind === "local" ? ["--tools", (isHeadSvc(svc) ? HEAD_RUN_TOOLS : LOCAL_RUN_TOOLS).join(",")] : []), ...((isHeadSvc(svc) && o.headModel ? o.headModel() : o.model()) ? ["--model", (isHeadSvc(svc) && o.headModel ? o.headModel() : o.model())!] : [])], () => (rec.kind === "ally" ? allyPaneHeld(active) : svc.ref.proven()));
+				const model = isHeadSvc(svc) && o.headModel ? o.headModel() : o.model(rec.workspace);
+				await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...extra, ...(rec.kind === "local" ? ["--tools", (isHeadSvc(svc) ? HEAD_RUN_TOOLS : LOCAL_RUN_TOOLS).join(",")] : []), ...(model ? ["--model", model] : [])], () => (rec.kind === "ally" ? allyPaneHeld(active) : svc.ref.proven()));
 				started = true;
 				const found = await procOf(rec.pane, id);
 				if (!found) throw new Error("pi's process was not found in the pane");

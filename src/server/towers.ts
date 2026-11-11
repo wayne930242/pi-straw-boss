@@ -337,7 +337,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const rows = notes.map((n) => `- ${ageOf(now() - Date.parse(n.at))} ago${spoke(n.run) ? ` (the boss spoke in this run ${ageOf(now() - Date.parse(spoke(n.run)!))} ago, so what they said is in that run's session, not in yours)` : ""}: that run's own handoff note, not the boss's words: «${phrase(n.note.split("\n")[0], 340).replace(/[«»]/g, "")}»`);
 		return { line, since: rows };
 	};
-	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), headModel: () => headModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), ...o.runs });
+	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: (workspace) => towerModel(slot.stateDir, "towerModel", workspace), headModel: () => headModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), ...o.runs });
 
 	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.standingWait ? { wait: o.standingWait } : {}), ...(o.runs?.platform ? { platform: o.runs.platform } : {}), ...(o.runs?.alive ? { alive: o.runs.alive } : {}) });
 	const place = (l: Live): Place => ({ paneId: l.record.pane, tabId: l.record.tab, workspaceId: l.record.workspace });

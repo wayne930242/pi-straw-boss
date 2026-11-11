@@ -116,7 +116,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 			return { target, routed: target !== asked ? asked : undefined, id: got.id, opened: got.opened };
 		}
 		const moveFirst = (tabId: string) => api("tab.move", { tab_id: tabId, insert_index: 0 }).catch((error: Error) => tell(`Straw Boss: could not move the tower tab first: ${error.message}`, "warning"));
-		return { target, routed: target !== asked ? asked : undefined, ...(await ensureTower({ run, sleep, live, moveFirst, model: towerModel(guiDir), trustDir: trustDir(guiDir) }, target, process.cwd())) };
+		return { target, routed: target !== asked ? asked : undefined, ...(await ensureTower({ run, sleep, live, moveFirst, model: towerModel(guiDir, "towerModel", target.workspace_id), trustDir: trustDir(guiDir) }, target, process.cwd())) };
 	};
 	/** What an ally may see of the net: in a remote turn or an ally run only the workspaces with a pane inside the project the senders' teams bind (none when they bind several), and in them only the sessions whose pane is inside it. */
 	const scopeOf = (within: { project: string | undefined } | undefined, ps: Pane[]) => ({

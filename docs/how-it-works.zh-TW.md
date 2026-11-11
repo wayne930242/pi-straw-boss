@@ -219,6 +219,26 @@ pi 修掉 #11421 之後，這道防護就可以移除。pi 比 1.4.0 新的時�
 
 Straw Boss 每次啟動塔台時，都會把它當作 `--model` 傳給 pi，並在每次啟動時讀這個檔案，所以更改會套用到下一座塔台，不必 reload。已在執行的塔台保留它的模型；要改那一座，就重新啟動它（或在它的 pane 裡用 `/model` 切換）。
 
+用 `workspaceModels` 為單一工作區選擇塔台模型，不改動其他工作區：
+
+```json
+{
+  "towerModel": "claude-bridge/claude-sonnet-5-5",
+  "workspaceModels": { "wA": "openai-codex/gpt-6-luna" }
+}
+```
+
+鍵名必須是 `/boss status` 顯示的 Herdr 工作區 id，不是標籤；改名後仍沿用原選擇，重新建立的工作區則要填入新的 id。
+這項選擇在下次啟動時套用到本機執行、盟友執行與常駐塔台。
+未列出的工作區沿用全域 `towerModel`；主塔台仍用 `headModel`，未設定時才用全域 `towerModel`。
+明確指定的值無效或設定檔格式損壞時，有工作區範圍的啟動會拒絕，不會默默改用另一個供應商；設定檔不存在時仍用 pi 的預設值。
+這是模型偏好，不是允許清單：主智慧體、子智慧體、手動啟動的 pi 與其他擴充功能的模型切換仍須各自設定。
+
+**角色上下文。** 角色與種類改變時，仍會立即 steer 正在進行的執行。
+下一次執行重建完整角色區段後，Straw Boss 不再把自己標記過、已被取代的角色 steer 傳給供應商，但 session 檔與畫面歷史都保留原文。
+同次執行的增量 graph 變更、使用者訊息、工具結果、其他來源與舊版訊息，以及所有 system／工具 patch 都保留。
+減少的是重複角色文字，不是任務歷史；移除舊訊息可能讓其後的快取失效一次，所以較少的上下文字元不代表已量測到帳單 token 減少。
+
 ### 合併火車
 
 專案可以替每個 app 設一列合併火車：由一位整合者主智慧體合併協調者的工作，而不是每位協調者各自合併。它是選用的。程序只是 prompt，不在 Straw Boss 裡，但自 0.65.0 起，擴充和伺服器會為它讀寫一些檔案（trainboard 和車廂檔案、車廂通知、`landed` 的 git 檢查、掃描、`apps.json` 的 `integration.accept` 和 `stages`；見[火車作為它們自己的工作者](#火車作為它們自己的工作者自-0650-起)）。自 0.60.0 起，這個程序不在 Straw Boss 裡：它是 pi-anchorloop 的 `integrating`（合併）和 `deploying`（部署）skill，而 Straw Boss 綁定那些 skill 留白的地方。[`prompts/apps-config.md`](../prompts/apps-config.md) 放 `apps.json` 的欄位，[`prompts/integrator.md`](../prompts/integrator.md) 放整合者的角色，設計紀錄是 [`docs/specs/2026-10-30-merge-train.md`](specs/2026-10-30-merge-train.md)、[`docs/specs/2026-11-05-train-stages.md`](specs/2026-11-05-train-stages.md) 和 [`docs/specs/2026-11-06-seam-bindings.md`](specs/2026-11-06-seam-bindings.md)（它把舊整合者 prompt 的每一行，對應到它在 skill 裡的位置）。

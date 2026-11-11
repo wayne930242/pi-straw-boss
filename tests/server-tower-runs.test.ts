@@ -91,6 +91,34 @@ test("an event wakes a run in the standing pane after a short wait that coalesce
 	assert.equal(((await ask(s, { cmd: "status" })).towers as { service: { state: string; run: { id: string } } }[])[0]!.service.run.id, id);
 });
 
+test("server runs select a workspace model at each launch without changing other workspaces", async () => {
+	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: true }, towerModel: "global/model", workspaceModels: { wA: "openai-codex/gpt-6-luna" } }));
+	const { s } = await setup();
+	await ask(s, { cmd: "ensure-tower", workspace: "wB" });
+	tower().incoming(from, msg("m1", "scoped workspace"));
+	const a = await nthRun();
+	const token = await claimed(s, a);
+	await drain(s, token);
+	const modelOf = (id: string) => {
+		const args = world.pis.get(id)!.args;
+		return args[args.indexOf("--model") + 1];
+	};
+	assert.equal(modelOf(a), "openai-codex/gpt-6-luna");
+	tower("wb").incoming(from, msg("m2", "other workspace"));
+	const b = await nthRun(2, "wB");
+	await claimed(s, b);
+	assert.equal(modelOf(b), "global/model");
+
+	await ask(s, { cmd: "run-done", token, note: "done" });
+	exit(a);
+	await until(() => readRun(world.slot, "wA", a)?.outcome === "done", "first run ended");
+	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: true }, towerModel: "global/model", workspaceModels: { wA: "openai-codex/gpt-6-astra" } }));
+	tower().incoming(from, msg("m3", "updated preference"));
+	const next = await nthRun(3);
+	await claimed(s, next);
+	assert.equal(modelOf(next), "openai-codex/gpt-6-astra", "the next launch rereads the scoped preference");
+});
+
 test("a claim: held until the server has recorded the run's pid; refused for another pane, pid, or start time, for an unknown run, and the second time; the answer has a token and the brief", async () => {
 	const { s } = await setup();
 	tower().incoming(from, msg("m1", "one"));

@@ -50,10 +50,27 @@ export async function result(run: HerdrRun, args: string[], timeoutMs?: number) 
 	}
 }
 
-/** The user's `towerModel` from `config.json` in the state directory, read at each tower start; anything unreadable means pi's default model. */
-export function towerModel(stateDir: string, key: "towerModel" | "headModel" = "towerModel"): string | undefined {
-	let model: unknown;
-	try { model = (JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8")) as Record<string, unknown>)[key]; } catch { /* pi's default */ }
+/** A workspace's explicit tower model, else the global model. Read at each start; an invalid explicit preference refuses instead of selecting another provider silently. */
+export function towerModel(stateDir: string, key: "towerModel" | "headModel" = "towerModel", workspace?: string): string | undefined {
+	let config: Record<string, unknown>;
+	try { config = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8")) as Record<string, unknown>; } catch (error) {
+		if (workspace && (error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`Cannot read model configuration for workspace ${JSON.stringify(workspace)}`);
+		return undefined;
+	}
+	if (!config || typeof config !== "object" || Array.isArray(config)) {
+		if (workspace) throw new Error(`Invalid model configuration for workspace ${JSON.stringify(workspace)}`);
+		return undefined;
+	}
+	if (workspace && key === "towerModel" && Object.hasOwn(config, "workspaceModels")) {
+		const scoped = config.workspaceModels;
+		if (!scoped || typeof scoped !== "object" || Array.isArray(scoped)) throw new Error("workspaceModels must be an object mapping workspace ids to provider/model references");
+		if (Object.hasOwn(scoped, workspace)) {
+			const model: unknown = (scoped as Record<string, unknown>)[workspace];
+			if (typeof model !== "string" || !/^[^\s/,]+\/[^\s,]+$/.test(model.trim())) throw new Error(`workspaceModels[${JSON.stringify(workspace)}] must be a non-empty provider/model reference`);
+			return model.trim();
+		}
+	}
+	const model = config[key];
 	return typeof model === "string" && model.trim() ? model.trim() : undefined;
 }
 /** The head tower's model: `headModel` in `config.json`, else the tower model, else pi's default; read at each start. */

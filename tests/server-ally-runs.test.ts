@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { TowerWorld } from "./tower-world.ts";
@@ -85,6 +85,17 @@ test("a message that waits for the tower identity gets an ally run in a pane spl
 	assert.deepEqual(status.allyRuns.map((a) => a.device), [DEV1]);
 	assert.equal(status.state, "standing", "an ally run leaves the service's own state alone");
 	assert.deepEqual(status.allyRuns.map((a) => [a.id, a.label]), [[id, `label-${DEV1}`]], "the GUI names a run by its id and its device's label");
+});
+
+test("ally runs use their hosting workspace's model preference too", async () => {
+	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: true }, towerModel: "global/model", workspaceModels: { wA: "openai-codex/gpt-6-luna" } }));
+	const { s } = await setup();
+	world.ally.add("m1", DEV1, "hello");
+	world.expose?.allyWaiting("sb-tower-wa");
+	const id = await nthRun();
+	await claimed(s, id);
+	const args = world.pis.get(id)!.args;
+	assert.equal(args[args.indexOf("--model") + 1], "openai-codex/gpt-6-luna");
 });
 
 test("the tower's view carries the session file of a live ally run by run id, once the run reported it bound to its pi session, and the status never carries a path", async () => {

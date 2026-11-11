@@ -1,3 +1,4 @@
+import { createRoleContext } from "./rolecontext.ts";
 import type { Graph } from "./duty.ts";
 import type { MainDuty } from "./mainduty.ts";
 import { cliCommand } from "./server/version.ts";
@@ -13,8 +14,8 @@ interface Briefed { role: Role | undefined; duty: string; graph: Graph | "" }
 
 /** The role prompt: a system prompt section, set when a run starts, and a steer when the role, the kind, or a coordinator's plan changes during one. */
 export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty: MainDuty) {
+	const context = createRoleContext(pi);
 	let prompts: Record<string, string> = {}, files: PromptSet | undefined;
-	// A train has a prompt of its own (docs/specs/2026-11-07-train-workers.md §13.1): the main's would tell it to plan, dispatch and ask the boss.
 	const nameOf = (current = role()) => (current === "member" && !s.mainId ? "member-no-main" : current);
 	/** The files of a role's prompt, in order: a main's is `main.md`, then its kind's addendum, then the dispatch rules and the graph's addendum (§2a). */
 	const partsOf = (name: string, duty: string, graph: Graph | ""): string[] => {
@@ -27,19 +28,17 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 		const duty = role() === "main" ? mainDuty.now() : "";
 		return { role: role(), duty, graph: duty === "coordinator" ? (mainDuty.graph() ?? "") : "" };
 	};
-	// The role's prompt is a system prompt section, set when a run starts. A role that changes during a run (a member promoted as it
-	// dispatches a subagent, mains demoted as their tower quits), a kind that switches, or a plan that names a graph reaches the agent at its next step as a steer; an idle session gets it with its next run.
+	// Each run gets the whole role section; role, kind, and graph changes during it steer at the next step.
 	let briefed: Briefed | undefined, running = false;
 	// `dir` is the folder of the files the prompt points to (the switch of trainswitch.ts may give a copy), `state` the state folder, whose `trains` folder holds an integrator's ledgers, `cli` the command that runs cli.mjs (`train check`).
 	const render = (text = "", duty = "") => text.replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ dir: files ? files.dir : cfg.promptDir, state: guiDir, cli: cliCommand(), ...s.info, duty })[key] || "none yet");
 	const compose = (parts: string[], duty: string) => render(parts.map((part) => prompts[part]).join("\n\n"), duty);
-	const steer = (text: string) => pi.sendMessage({ customType: ENTRY, content: `<straw-boss>\n${text}\n</straw-boss>`, display: true }, { deliverAs: "steer" });
+	const steer = (text: string) => pi.sendMessage({ customType: ENTRY, content: `<straw-boss>\n${text}\n</straw-boss>`, display: true, details: context.details() }, { deliverAs: "steer" });
 	return {
 		load() {
 			files = promptSet({ promptDir: cfg.promptDir, stateDir: guiDir, env: cfg.env, warn: (text) => tell(text, "warning") });
 			prompts = Object.fromEntries(PROMPTS.map((name) => [name, files!.read(name)]));
 		},
-		/** Whether the loaded prompts have integration off; before they are loaded, the switch is read as `promptSet` will read it. */
 		off: () => files?.off,
 		/** The folder of the files the prompts point to. */
 		dir: () => (files ? files.dir : cfg.promptDir),
@@ -63,6 +62,7 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 			const now = stateOf(), name = nameOf(now.role);
 			if (name) sections[ENTRY] = compose(partsOf(name, now.duty, now.graph), now.duty);
 			else delete sections[ENTRY];
+			context.begin(Boolean(name));
 			[briefed, running] = [now, true];
 		},
 		settled: () => void (running = false),

@@ -219,6 +219,26 @@ The tower runs pi's default model unless you set one for it in `~/.pi/agent/stra
 
 Straw Boss passes it to pi as `--model` whenever it starts a tower, and reads the file at each start, so a change applies to the next tower without a reload. A tower already running keeps its model; restart it (or switch with `/model` in its pane) to change that one.
 
+Set `workspaceModels` to choose a tower model for one workspace without changing the others:
+
+```json
+{
+  "towerModel": "claude-bridge/claude-sonnet-5-5",
+  "workspaceModels": { "wA": "openai-codex/gpt-6-luna" }
+}
+```
+
+Keys are exact Herdr workspace ids from `/boss status`, not labels; a renamed workspace keeps its choice, but a newly created workspace needs its new id.
+The preference applies to local and ally runs, and to resident towers, at their next start.
+A workspace with no entry uses the global `towerModel`; the head keeps `headModel`, else the global `towerModel`.
+An invalid explicit entry or malformed configuration refuses a scoped launch rather than silently choosing another provider; a missing file still means pi's default.
+This is a model preference, not an allowlist: mains, subagents, manually started pi sessions, and other extensions' model changes need their own configuration.
+
+**Role context.** Role and kind changes still steer the current run immediately.
+Once a later run has rebuilt its full role section, Straw Boss leaves its own marked, superseded role steers out of provider context while keeping them in the saved session and visible history.
+Current-run incremental graph changes, user messages, tool results, foreign and legacy messages, and every system/tool patch stay intact.
+This reduces repeated role text, not task history; removing an old message may invalidate the cached suffix after it once, so fewer context characters are not a measured reduction in billed tokens.
+
 ### Merge train
 
 A project may give each app a merge train: one integrator main merges the coordinators' work instead of each coordinator merging for itself. It is opt-in. The procedure is prompt-only and not in Straw Boss, but since 0.65.0 the extension and the server do read and write some files for it (the trainboards and car files, the car notices, the `landed` git check, the sweep, `apps.json`'s `integration.accept` and `stages`; see [Trains as their own workers](#trains-as-their-own-workers-since-0650)). Since 0.60.0 the procedure is not in Straw Boss: it is pi-anchorloop's `integrating` (merge) and `deploying` (deploy) skills, and Straw Boss binds the places those skills leave open. [`prompts/apps-config.md`](../prompts/apps-config.md) holds the `apps.json` fields, [`prompts/integrator.md`](../prompts/integrator.md) the integrator's role, and the design records are [`docs/specs/2026-10-30-merge-train.md`](specs/2026-10-30-merge-train.md), [`docs/specs/2026-11-05-train-stages.md`](specs/2026-11-05-train-stages.md), and [`docs/specs/2026-11-06-seam-bindings.md`](specs/2026-11-06-seam-bindings.md) (which maps every line of the old integrator prompt to its skill location).

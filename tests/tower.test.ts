@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, mock, test } from "node:test";
-import { towerModel } from "../src/herdr.ts";
+import { headModel, towerModel } from "../src/herdr.ts";
 import { bare, settle, until, World } from "./fakes.ts";
 
 let world = new World();
@@ -57,6 +57,48 @@ test("the tower starts with the user's towerModel from config.json, and with pi'
 	assert.equal(towerModel(join(world.stateDir, "missing")), undefined, "no config file means pi's default");
 	writeFileSync(join(world.stateDir, "config.json"), "{ not json");
 	assert.equal(towerModel(world.stateDir), undefined, "an unreadable file means pi's default");
+});
+
+test("workspace tower models use exact ids and leave other towers and the head unchanged", async () => {
+	world.autoTowers();
+	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({
+		towerRuns: { enabled: false }, towerModel: "global/model", headModel: "head/model",
+		workspaceModels: { wA: " openai-codex/gpt-6-luna ", Alpha: "wrong/label" },
+	}));
+	const a = await main();
+	await a.tool("call_tower", { message: "need scoped GPT tower" });
+	assert.deepEqual(world.herdr.commands("agent", "start")[0]?.slice(-2), ["--model", "openai-codex/gpt-6-luna"]);
+	assert.equal(towerModel(world.stateDir, "towerModel", "wB"), "global/model");
+	assert.equal(towerModel(world.stateDir), "global/model");
+	assert.equal(headModel(world.stateDir), "head/model");
+	writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerModel: "global/model", workspaceModels: { wA: "openai-codex/gpt-6-luna" } }));
+	assert.equal(headModel(world.stateDir), "global/model", "head fallback is global, not a workspace preference");
+});
+
+test("an invalid explicit workspace model refuses instead of silently selecting a global model", () => {
+	for (const model of ["", "   ", "gpt-6-luna", "provider/model,other/model", "provider/model extra", 42, null, {}, []]) {
+		writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerModel: "global/model", workspaceModels: { wA: model } }));
+		assert.throws(() => towerModel(world.stateDir, "towerModel", "wA"), /workspaceModels.*wA/);
+		assert.equal(towerModel(world.stateDir, "towerModel", "wB"), "global/model", "another workspace is unaffected");
+	}
+});
+
+test("a malformed workspace model map refuses scoped lookups, not unrelated global or head lookups", () => {
+	for (const workspaceModels of [null, "model", [], 42]) {
+		writeFileSync(join(world.stateDir, "config.json"), JSON.stringify({ towerModel: "global/model", workspaceModels }));
+		assert.throws(() => towerModel(world.stateDir, "towerModel", "wA"), /workspaceModels/);
+		assert.equal(towerModel(world.stateDir), "global/model");
+		assert.equal(headModel(world.stateDir), "global/model");
+	}
+});
+
+test("a scoped model lookup refuses unreadable or malformed config rather than losing its provider choice", () => {
+	assert.equal(towerModel(join(world.stateDir, "missing"), "towerModel", "wA"), undefined, "no config remains a supported default");
+	for (const text of ["{ broken", "null", "[]", "42", '"model"']) {
+		writeFileSync(join(world.stateDir, "config.json"), text);
+		assert.throws(() => towerModel(world.stateDir, "towerModel", "wA"), /model configuration.*wA/);
+		assert.equal(towerModel(world.stateDir), undefined, "legacy unscoped lookup keeps its default behavior");
+	}
 });
 
 test("a leftover tower tab with a shell prompt is reused: pi starts in its pane and no new tab opens", async () => {
