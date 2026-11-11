@@ -327,3 +327,17 @@ function existsAndIsPrivate(dir: string) {
 	return existsSync(dir);
 }
 void writeFileSync;
+
+test("a slip over the bound of a car is forwarded but refused at received and returned, with train check's word, and no car file is written", async () => {
+	const cases: [string, string][] = [
+		[Array.from({ length: 70 }, (_, i) => `MP-${3600 + i}`).join(", "), "70 tickets, and a car carries at most 64"],
+		[`MP-3600, ${"x".repeat(200)}`, "is longer than 64 characters"],
+	];
+	for (const [tickets, word] of cases) for (const state of ["received", "returned"] as const) {
+		const w = world(), text = slipBlock({ tickets });
+		w.book.noteForward({ fwd: "e".repeat(16), from: COORD, to: [INTEG], text });
+		const params = state === "received" ? { car: "MP-3600", state, train: CODE, departs: "next train", project: "acme" } : { car: "MP-3600", state, reason: "sb: no", project: "acme" };
+		await assert.rejects(trainCar(integratorDeps(w), params, integratorCtx(forwardEntry(COORD, text))), (e: Error) => e.message.includes(word));
+		assert.equal(w.book.read("acme").length, 0, "nothing is held");
+	}
+});

@@ -164,3 +164,10 @@ test("`integration.accept`: a list of kind names, default empty; a stage list ha
 	assert.match(checkStages(["merge", "deploy", "deploy"]).join("\n"), /stage "deploy" twice/);
 	assert.match(checkStages("merge").join("\n"), /stages must be a list/);
 });
+
+test("an evidence file whose car names more than MAX_CAR_TICKETS tickets is refused", () => {
+	const ok = evidence() as { car: { tickets: string[] } };
+	const many = { ...ok, car: { ...ok.car, tickets: Array.from({ length: MAX_CAR_TICKETS + 1 }, (_, i) => `MP-${i}`) } };
+	assert.match(run(many).join("\n"), new RegExp(`evidence.car.tickets must be a list of 1 to ${MAX_CAR_TICKETS} tickets`));
+	assert.doesNotMatch(run({ ...ok, car: { ...ok.car, tickets: Array.from({ length: MAX_CAR_TICKETS }, (_, i) => `MP-${i}`) } }).join("\n"), /car.tickets/);
+});

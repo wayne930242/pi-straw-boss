@@ -143,14 +143,21 @@ const namesCheckpoints = (path: string) => base(path).toLowerCase().split(/[^a-z
 
 export interface SlipOptions { appAccept: readonly string[] }
 
+/** The refusals of a slip's ticket list over the bound of a car: too many tickets, or a ticket too long. */
+export function ticketBound(tickets: readonly string[]): string[] {
+	const out: string[] = [];
+	if (tickets.length > MAX_CAR_TICKETS) out.push(`sb: slip tickets names ${tickets.length} tickets, and a car carries at most ${MAX_CAR_TICKETS}: split the car into two or more slips`);
+	const long = tickets.find((t) => t.length > MAX_TICKET_CHARS);
+	if (long !== undefined) out.push(`sb: slip ticket ${shown(long)} is longer than ${MAX_TICKET_CHARS} characters: name the ticket by its id`);
+	return out;
+}
+
 /** The refusals of the slip itself: how it parses, its head and tickets, `departs`, `accept`, an old `uat:` line, and free text that asks the train for acceptance. */
 export function checkSlip(slip: string, { appAccept }: SlipOptions): string[] {
 	const { fields, tickets, entries, problems } = parseSlip(slip), out: string[] = [...problems], car = tickets[0] ?? fields.branch ?? "unknown";
 	if (!SHA_RE.test(fields.head ?? "")) out.push("sb: slip head must be 40 hex");
 	if (tickets.length === 0) out.push("sb: slip tickets is empty");
-	if (tickets.length > MAX_CAR_TICKETS) out.push(`sb: slip tickets names ${tickets.length} tickets, and a car carries at most ${MAX_CAR_TICKETS}: split the car into two or more slips`);
-	const long = tickets.find((t) => t.length > MAX_TICKET_CHARS);
-	if (long !== undefined) out.push(`sb: slip ticket ${shown(long)} is longer than ${MAX_TICKET_CHARS} characters: name the ticket by its id`);
+	out.push(...ticketBound(tickets));
 	if (present(fields.uat)) {
 		if (fields.uat!.toLowerCase() === "none") out.push("sb: the slip's uat: line is gone; send accept: <evidence file> | none");
 		else out.push(acceptanceWord({ car, what: `UAT (${fields.uat})`, where: "slip line uat:" }));

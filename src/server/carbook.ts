@@ -380,6 +380,7 @@ export class CarBook {
 			const sent = this.forwardOf(head, setter.session);
 			if (!sent) throw refusal(`sb: no forward by a tower carries head ${head.slice(0, 12)} to this session: a car slip reaches the integrator only as the tower's tower_send or tower_reply with forward: (the code stamps fwd-from).${this.restartWord()}`);
 			const slip = sent.slip;
+			if (slip.over) throw refusal(slip.over);
 			name = carFileName(slip.app, head);
 			held = this.cars.get(project)?.get(name);
 			file = held?.file;

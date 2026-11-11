@@ -158,7 +158,7 @@ async function forwardOf(host: ToolHost, args: Record<string, unknown>, to?: str
 	const id = opt(args, "forward");
 	if (id === undefined) return undefined;
 	const event = host.forwardEvent?.(id);
-	if (!event) throw new Error(`forward ${id.slice(0, 40)} is no call_tower event (why=shared) that this run took: forward a car slip with the id its event header shows`);
+	if (!event) throw new Error(`forward ${id.slice(0, 40)} is no call_tower event (why=shared) that this run took: forward a car slip with the id its event header shows. A slip's event is held only while the run that took it lives and for 24 h: ask its sender to send the slip to the tower again (call_tower why=shared) and forward the new event's id`);
 	const net = await host.reach.read(), peers = (session: string) => deviceToken(net, session) !== undefined || (host.openedAnywhere ?? host.openedFor)?.(session) !== undefined;
 	if (peers(event.from)) throw new Error(PEERS_SLIP(event.from, event.from));
 	if (to !== undefined && !namedFor.get(`${host.identity} ${event.id}`)?.includes(to)) throw new Error(`forward ${event.id} goes only to an integrator the door named for this slip: call boss_open_main with role "integrator", the slip as the request, and its sender, and forward to one of the sessions its answer names.${restartWord(host, event.at)}`);

@@ -1,4 +1,4 @@
-import { parseSlip, slipBlocks } from "./accept.ts";
+import { parseSlip, slipBlocks, ticketBound } from "./accept.ts";
 import { isCode, isObject, isName, isoTime, MAX_CAR_TICKETS, MAX_TICKET_CHARS, SHA_RE, shortCode } from "./spec.ts";
 
 // A car's states and notices (docs/specs/2026-11-07-train-workers.md §5.5, D14), as data: which states a car has, the fields each carries, the car file they are appended to, the text of each notice, and when a notice counts as told.
@@ -280,7 +280,7 @@ export const forwardsFor = (forwards: readonly Forward[], head: string): Forward
 export const headsIn = (text: string): string[] => [...new Set([...text.matchAll(/(?:^|[\s|])head:\s*([0-9a-f]{40})(?![0-9a-f])/gim)].map((m) => m[1]!))];
 
 /** One slip of a forwarded text, as the server reads it: the car's app, tickets, branch and head, and the coordinator the slip names. */
-export interface SlipFacts { app: string; tickets: string[]; branch: string; head: string; coordinator?: string }
+export interface SlipFacts { app: string; tickets: string[]; branch: string; head: string; coordinator?: string; /** The refusal when the slip is over the bound of a car; its tickets are then kept only up to the bound, for the word, and the slip is never received. */ over?: string }
 
 /** The slips a forwarded text carries: a `car: <app> | tickets: …` that follows the tower's own words starts a block of its own line. Only a slip that parses and names app, tickets, branch and a 40-hex head is returned. */
 export function slipsInText(body: string): SlipFacts[] {
@@ -288,7 +288,8 @@ export function slipsInText(body: string): SlipFacts[] {
 	return slipBlocks(lines).blocks.flatMap((block) => {
 		const parsed = parseSlip(block), f = parsed.fields;
 		if (!f.car || !isName(f.car) || !parsed.tickets.length || !f.branch || !SHA_RE.test(f.head ?? "")) return [];
-		return [{ app: f.car, tickets: parsed.tickets, branch: f.branch, head: f.head!, ...(f.coordinator ? { coordinator: f.coordinator } : {}) }];
+		const over = ticketBound(parsed.tickets).join("; "), tickets = over ? parsed.tickets.slice(0, MAX_CAR_TICKETS).map((t) => t.slice(0, MAX_TICKET_CHARS)) : parsed.tickets;
+		return [{ app: f.car, tickets, ...(over ? { over } : {}), branch: f.branch, head: f.head!, ...(f.coordinator ? { coordinator: f.coordinator } : {}) }];
 	});
 }
 
