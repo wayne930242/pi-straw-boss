@@ -10,6 +10,7 @@ import { startedLater, startOf } from "../startof.ts";
 import type { Kit } from "../state.ts";
 import { answerFile, answerOf, ensureDir, MAX_FILE, readJson, remove, requestFile, resultFile, sweep, trustDir, writeAtomic } from "./files.ts";
 import { canonical, digestOf, foundIn } from "./found.ts";
+import { intended } from "./intent.ts";
 import type { TrustChoice, TrustRequest, TrustResult } from "./types.ts";
 
 // pi's own question "Trust project folder?" is drawn only in the pane's terminal, before this extension has joined any net. The `project_trust` handler asks the running GUI
@@ -51,6 +52,8 @@ export interface AskDeps {
 	uuid(): string;
 	/** Auto mode (auto.ts): read from the files, synchronously, because pi asks before any session has started. */
 	auto?: { on(): { on: boolean; foreign: boolean }; note(gist: string): void };
+	/** Whether the sb server started this pane's pi for the page's open/base that is still joining (intent.ts): under auto mode such a question is asked as usual, since a person opened the project. */
+	opened?(cwd: string): boolean;
 }
 
 /** pi asks only in its interactive mode: not under `-p`/`--print`, `--mode json|rpc`, or an explicit `-a`/`--approve`/`-na`/`--no-approve` (pi's own parser: `--mode text` alone stays interactive, and every word after `--` is the message). */
@@ -82,13 +85,15 @@ export function createAsk(d: AskDeps) {
 		if (ctx.mode !== "tui" || !ctx.hasUI || !d.first()) return false; // a replacement runtime (/new, /resume into another folder) is pi's own prompt (D10)
 		return asks(d, cwd) && d.up();
 	};
+	const opened = (cwd: string) => { try { return d.opened?.(cwd) === true; } catch { return false; } }; // what cannot be read says no: the answer stays D3's
 	return async function decide(cwd: string, ctx: { mode: string; hasUI: boolean }): Promise<Decision> {
 		try {
 			// Under auto mode the boss is away: pi's question would wait for hours, so it is answered "not trusted for this session" at once and listed (D3). A file that is not the server's own write asks as usual and is noted (AM2-F009).
+			// Except in a pane the sb server started for the page's open/base (its own record, intent.ts): a person asked for that project, so it is asked as usual (desk #51).
 			if (d.auto && asks(d, cwd)) {
 				const state = d.auto.on();
 				if (state.foreign) d.auto.note("auto.json is not the server's own write: asked as usual");
-				if (state.on) return (d.auto.note(`not trusted for this session: ${plain(cwd)}`), { trusted: "no" });
+				if (state.on && !opened(cwd)) return (d.auto.note(`not trusted for this session: ${plain(cwd)}`), { trusted: "no" });
 			}
 			if (!(await relays(cwd, ctx)) || !ensureDir(d.dir)) return UNDECIDED;
 			return await ask(cwd);
@@ -228,6 +233,7 @@ export function registerTrust(pi: ExtensionAPI, { cfg, guiDir }: Pick<Kit, "cfg"
 		saved, defaultTrust,
 		up: guiUp(guiDir, env, startRead),
 		first: () => !state[STARTED], now: cfg.now, sleep: cfg.sleep, startOf, uuid: randomUUID, ...(auto ? { auto } : {}),
+		opened: (cwd) => intended(guiDir, env, cwd, cfg.now()),
 		watch: (dir, wake) => {
 			try {
 				const w = fsWatch(dir, wake);
