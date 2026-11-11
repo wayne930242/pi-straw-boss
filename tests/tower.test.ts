@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, mock, test } from "node:test";
-import { towerModel } from "../src/herdr.ts";
+import { TOWER_LABEL, towerModel } from "../src/herdr.ts";
 import { bare, settle, until, World } from "./fakes.ts";
 
 let world = new World();
@@ -215,7 +215,7 @@ test("the tower registers its tab channel as not owner-eligible, writes both tok
 	assert.deepEqual(tower.entries, [{ customType: "straw-boss", data: { tower: true, workspaceId: "wA" } }]);
 	assert.match((await tower.run())["straw-boss"]!, /^You are the tower of Herdr workspace Alpha;/);
 
-	world.herdr.addTab("wB:t7", "tower", "wB:p7");
+	world.herdr.addTab("wB:t7", TOWER_LABEL, "wB:p7"); // a tower tab as the opener labels it: since todo #131 the entry claims the role and this label proves it (tests/role-proof.test.ts has the tabs that do not)
 	const resumed = world.agent({ id: "tower-wB", pane: "wB:p7", entries: [{ customType: "straw-boss", data: { tower: true, workspaceId: "wB" } }] });
 	await resumed.start();
 	assert.equal(world.herdr.workspace("wB").tokens.tower, "tower-wB");

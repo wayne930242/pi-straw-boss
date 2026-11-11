@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { TOWER_LABEL } from "./herdr.ts";
 import type { Kit } from "./state.ts";
-import { TRAIN, type TrainId, trainFromToken, trainToken } from "./trainrole.ts";
+import { TRAIN, type TrainId, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
 
 // What a Herdr restore cannot keep. After `herdr server stop` and a new server, Herdr resumes each pi pane into its session file, but a role lives in
 // things the restore drops: STRAW_BOSS_ROLE in the pane's environment, the pane and workspace tokens, and, for a session without a conversation yet, the
@@ -16,11 +17,15 @@ import { TRAIN, type TrainId, trainFromToken, trainToken } from "./trainrole.ts"
 // main, whose record would race the new one at a restore). And a main takes the role back only in a pane whose terminal is not the one it recorded: Herdr starts
 // a new terminal for a pane it restores, while a `/resume` in the same shell after a /quit finds the old one, and that is no restore. (A tower needs no such
 // check: it closes its pane when it quits, and its record is dropped then.)
+// A record is a claim, never a proof: the session's own shell can write this folder (and its session file), so a record that says `tower` or `train` gives the
+// role back only in the tab Herdr labels as that role's (the tower glyph, a train's `train <MMDDx>`), which a restore keeps and no file holds. The caller reads the
+// label from Herdr (`Here.tabLabel`). A main has no such tab (its label is its own free name), so its record stands on the checks above
+// (docs/specs/2026-11-07-train-workers.md §29).
 
 const KEEP_MS = 90 * 24 * 3600_000;
 export interface RoleRecord { role: "tower" | "main" | "train"; pane: string; tab: string; workspace: string; terminal?: string; file?: string; openedBy?: string; /** A train's project and code (docs/specs/2026-11-07-train-workers.md §3.3). */ train?: TrainId; at: number }
-/** Where a session runs now: the pane, tab, and workspace of the record must all be these. */
-export interface Here { paneId?: string; tabId?: string; workspaceId?: string; terminalId?: string }
+/** Where a session runs now: the pane, tab, and workspace of the record must all be these. `tabLabel` is the label Herdr lists for the tab now, the proof of a tower's or a train's tab; left out, neither role is given back. */
+export interface Here { paneId?: string; tabId?: string; workspaceId?: string; terminalId?: string; tabLabel?: string }
 
 const keyOf = (file: string) => createHash("sha256").update(file).digest("hex").slice(0, 32);
 
@@ -65,14 +70,19 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 		/**
 		 * The role this session recorded for the pane, tab, and workspace it is in now; undefined when it recorded none there, or when `here` lacks one of the
 		 * three. A main also needs proof of a restart (a terminal other than the one it recorded) and the newest main record of its tab: a tab has one main.
+		 * A tower and a train need the tab Herdr labels as theirs (`here.tabLabel`): the record alone gives neither role.
 		 */
 		held(here: Here): RoleRecord["role"] | undefined {
 			const record = within(here);
-			if (record?.role === "tower") return "tower";
+			if (record?.role === "tower") return here.tabLabel === TOWER_LABEL ? "tower" : undefined;
 			if (!record || !record.terminal || !here.terminalId || record.terminal === here.terminalId) return undefined;
-			// A train takes its role back on the same proof as a main (a new terminal for the same pane, tab, and workspace); a tab has no "newest train" to check, since no one else is crowned beside it.
-			if (record.role === TRAIN) return TRAIN;
+			// A train takes its role back on the same proof as a main (a new terminal for the same pane, tab, and workspace), in the tab that carries its code; a tab has no "newest train" to check, since no one else is crowned beside it.
+			if (record.role === TRAIN) return record.train && here.tabLabel === trainLabel(record.train.code) ? TRAIN : undefined;
 			return mainOf(record.tab, record.workspace)?.at === record.at ? "main" : undefined;
+		},
+		/** The role the record names for the pane, tab, and workspace the session is in, proven or not: what tells the start to ask Herdr for the tab's label, and what a refusal names. */
+		claimed(here: Here): RoleRecord["role"] | undefined {
+			return within(here)?.role;
 		},
 		/** Whether the record is a main's from this very terminal: a pi started in the shell that outlived the session, which no restore brought. */
 		sameShell(here: Here): boolean {

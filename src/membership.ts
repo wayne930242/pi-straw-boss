@@ -99,6 +99,10 @@ export function createMembership({ pi, cfg, s, me, tell }: Kit, { presence, elec
 			if (s.joined) return;
 			await s.recheck?.(); // a session whose sub workspace check failed (or is still running) asks Herdr again, or shares the ask in flight, before it is refused
 			if (s.barred) throw new Error(s.barred);
+			if (s.isTower) throw fatal("This session is the tower of its workspace, not a member of a tab's net"); // the check may have just proven a restored tower (session.ts `towerProof`), and a caller that waited for it joins nothing
+			// A session with a sign of a train (trainguard.ts `signsOfTrain`) whose start has not settled the role yet (Herdr did not list its pane or tab) joins nothing early: /boss or a subagent call
+			// would publish it as a member, and a promotion would make a train's pane its tab's main. The start's own join comes after it has settled (session.ts `proceed`).
+			if (s.trainSign && !s.trainSettled) throw new Error("This session's train role is not settled yet: Herdr has not answered for its pane and tab; it is asked again");
 			s.at = await place(run);
 			connect(true);
 			await connected();

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type HerdrRun, panes } from "./herdr.ts";
+import { HEAD_LABEL, type HerdrRun, panes, TOWER_LABEL } from "./herdr.ts";
 import { appsFile } from "./train/appsconfig.ts";
 import { isCode, isName, shortCode } from "./train/spec.ts";
 
@@ -34,6 +34,12 @@ export function trainFromToken(token: unknown): TrainId | undefined {
 }
 /** The name of a train's tab and session, set by the open and never changed: `train 1106m`. */
 export const trainLabel = (code: string): string => `train ${shortCode(code)}`;
+
+/**
+ * Whether a label is one only Straw Boss gives a tab: the tower's and the head tower's glyph, and a train's `train <MMDDx>`. Such a tab is what proves a tower or a train after a restore
+ * (roles.ts), so a session's `boss_rename` and a tower's `boss_open_main` never name a tab into one.
+ */
+export const isRoleLabel = (label: string): boolean => label === TOWER_LABEL || label === HEAD_LABEL || /^train \d{4}[a-z]{1,2}$/.test(label);
 
 /** The first `project:` and `code:` of the manifest the tower passes verbatim as the open's request (§5.3): `key: value` lines or JSON members, the manifest's own header first. */
 export function trainFromRequest(request: string): TrainId | { refusal: string } {

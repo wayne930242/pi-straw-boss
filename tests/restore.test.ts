@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
+import { TOWER_LABEL } from "../src/herdr.ts";
 import { until, World, type Agent } from "./fakes.ts";
 
 // Herdr's restore (`herdr server stop`, then a new server with resume_agents_on_restore): every pane comes back with its pi resumed into the same session
@@ -25,9 +26,9 @@ async function pi(options: Parameters<World["agent"]>[0], file: string): Promise
 	return agent;
 }
 
-/** The net as the PM left it: a tower, a main, and a member in workspace wA. */
+/** The net as the PM left it: a tower, a main, and a member in workspace wA. The tower's tab carries the glyph, as every tab the opener or the sb server makes does: it is what proves the tower after the restore (todo #131; tests/role-proof.test.ts has the tabs that do not). */
 async function net() {
-	world.herdr.addTab("wA:t7", "tower", "wA:p7");
+	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7");
 	const tower = await pi({ id: "tower-1", pane: "wA:p7", tab: "wA:t7", env: { STRAW_BOSS_ROLE: "tower" } }, FILES.tower);
 	const main = await pi({ id: "main-1", pane: "wA:p1", tab: "wA:t1" }, FILES.main);
 	assert.match(await main.promote(), /the main agent of tab/);
@@ -169,7 +170,7 @@ test("a tower comes back only in the pane, tab, and workspace it recorded", asyn
 });
 
 test("a main that quit and is resumed in the same shell takes no role from its record, which a later restore does not honor either", async () => {
-	world.herdr.addTab("wA:t7", "tower", "wA:p7");
+	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7");
 	await pi({ id: "tower-1", pane: "wA:p7", tab: "wA:t7", env: { STRAW_BOSS_ROLE: "tower" } }, FILES.tower);
 	const deps = { couple: false }; // the guard would crown the one member of a tab anyway
 	const main = await pi({ id: "main-1", pane: "wA:p1", tab: "wA:t1", deps }, FILES.main);
@@ -217,7 +218,7 @@ test("a restored main opens no tower, and opens one the next time it becomes the
 test("a record directory entry that vanishes during the sweep does not make the write look failed", async () => {
 	mkdirSync(roles(), { recursive: true });
 	symlinkSync(join(world.stateDir, "nowhere"), join(roles(), "dangling.json")); // statSync of it fails with ENOENT, as a file removed between readdir and stat does
-	world.herdr.addTab("wA:t7", "tower", "wA:p7");
+	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7");
 	const main = await pi({ id: "main-1", pane: "wA:p1", tab: "wA:t1" }, FILES.main);
 	await main.promote();
 	assert.ok(records().some((r) => r.pane === "wA:p1"), "the record was written");

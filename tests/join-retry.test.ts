@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
+import { TOWER_LABEL } from "../src/herdr.ts";
 import { settle, until, World } from "./fakes.ts";
 
 // The retry timers are the test's own (`heldTimers`): none runs by itself, so nothing here sleeps to let a timer pass, a start's `world.quiet()` cannot be kept busy by a retry, and
@@ -319,7 +320,9 @@ test("a check that fails after the shutdown arms no retry", async () => {
 
 test("a /resume into a tower's session file does not keep the unplaced member's bar: a subagent call is blocked as a tower's (D2)", async () => {
 	const down = flaky("workspace list");
-	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", deps: HELD });
+	// In the tower's own tab: since todo #131 the entry only claims the role, and the glyph tab Herdr lists proves it (in an ordinary tab the resume is a member's, tests/role-proof.test.ts).
+	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7");
+	const a = world.agent({ id: "a", pane: "wA:p7", tab: "wA:t7", deps: HELD });
 	await a.start();
 	assert.equal(down.failures, 1);
 	down.on = false;
@@ -331,6 +334,48 @@ test("a /resume into a tower's session file does not keep the unplaced member's 
 	const verdict = await a.fireResult("tool_call", { toolName: "subagent", toolCallId: "call", input: {} });
 	assert.equal((verdict as { block?: boolean } | undefined)?.block, true, "a tower dispatches no subagents");
 	assert.equal(asked("workspace list"), lists, "and the old start's check is not asked again for it");
+});
+
+// todo #131: the proof of a tower's and a train's tab is one more thing Herdr is asked (`tab list`), so it is one more answer that can fail. A failure proves nothing either way.
+test("a claimed tower whose tabs Herdr cannot list is neither a tower nor a member: the check is asked again, and the tab then proves it", async () => {
+	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7");
+	const down = flaky("tab list");
+	const a = world.agent({ id: "a", pane: "wA:p7", tab: "wA:t7", deps: HELD, entries: [{ customType: "straw-boss", data: { tower: true, workspaceId: "wA" } }] });
+	await a.start();
+	assert.equal(down.failures, 1);
+	assert.equal(a.tokens.sb_role, undefined, "no role on a claim Herdr did not answer for");
+	assert.equal(world.herdr.workspace("wA").tokens.tower, undefined);
+	assert.ok(a.notices.some((n) => /could not tell whether this is a sub workspace: .*tab list failed/.test(n.text)), "the boss is told the start is unplaced");
+	assert.equal(a.notices.some((n) => /starts as a member/.test(n.text)), false, "and nothing was decided against the claim");
+	assert.deepEqual(timers.delays, [SCHEDULE[0]]);
+	down.on = false;
+	await timers.fire();
+	await until(() => a.tokens.sb_role === "tower" && world.herdr.workspace("wA").tokens.tower === "a", "the tower start once Herdr listed the tab");
+});
+
+test("a reloaded train whose tabs Herdr cannot list is not settled: a subagent call meanwhile joins nothing as a member, and the retry makes it the train again", async () => {
+	world.herdr.addTab("wA:t9", "train 1106m", "wA:p9");
+	Object.assign(world.herdr.pane("wA:p9").tokens, { sb_open_main: "1", sb_train: "acme/2026-11-06-m", sb_opened_by: "tower-x" }); // as the tower's open leaves the pane
+	const first = world.agent({ id: "t", pane: "wA:p9", tab: "wA:t9", env: { STRAW_BOSS_ROLE: "train" }, deps: HELD });
+	await first.start();
+	assert.equal(first.tokens.sb_role, "train");
+	await first.stop("reload");
+	const down = flaky("tab list");
+	const again = world.agent({ id: "t", pane: "wA:p9", env: { STRAW_BOSS_ROLE: "train" }, entries: first.entries, deps: HELD });
+	await again.fire("session_start", { reason: "reload" });
+	await world.quiet();
+	assert.ok(down.failures >= 1);
+	const roleWrites = () => world.herdr.calls.filter((c) => c[0] === "pane" && c[1] === "report-metadata" && c.join(" ").includes("sb_role")).map((c) => c.join(" "));
+	const before = roleWrites().length;
+	await again.toolCall("subagent"); // the model dispatches while its own role is not settled
+	assert.deepEqual(roleWrites().slice(before), [], "nothing published a role for it: not a member's, and never one that takes the train's tokens off its pane");
+	assert.equal(again.tokens.sb_train, "acme/2026-11-06-m", "the pane keeps the tokens the /reload left it");
+	assert.equal(again.tools.has("boss_promote"), false, "and it joined nothing");
+	down.on = false;
+	await timers.fire();
+	await until(() => again.tools.has("train_car") || again.regs.size > 0, "the join once Herdr listed the tab");
+	assert.equal(again.tokens.sb_role, "train");
+	assert.equal(again.tokens.sb_train, "acme/2026-11-06-m");
 });
 
 test("the Herdr server watch of a joined session is in place: a takeover makes it publish its tokens again at once", async () => {

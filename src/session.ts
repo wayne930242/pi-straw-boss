@@ -5,7 +5,7 @@ import type { Briefing } from "./briefing.ts";
 import type { Control } from "./closemain.ts";
 import type { Digest } from "./digest.ts";
 import type { Guard } from "./guard.ts";
-import { isHead, isSub, type Place, panes, place, report, waitFor, workspaces } from "./herdr.ts";
+import { isHead, isSub, type Place, panes, place, report, tabs, TOWER_LABEL, waitFor, workspaces } from "./herdr.ts";
 import type { createHost } from "./host.ts";
 import type { IntegrationWatch } from "./integration.ts";
 import { CONNECT_MS, type Membership } from "./membership.ts";
@@ -19,7 +19,7 @@ import type { Presence } from "./presence.ts";
 import type { Reach } from "./reach.ts";
 import type { Roles } from "./roles.ts";
 import { ENTRY, type Kit } from "./state.ts";
-import { isSessionRole, TRAIN, TRAIN_EVENT, trainFromToken, trainToken } from "./trainrole.ts";
+import { isSessionRole, TRAIN, TRAIN_EVENT, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
 
 /** The custom message that asks the launcher to resume the subagents a Herdr restore brought back plain. */
 const RESUME = "straw-boss-resume";
@@ -48,12 +48,25 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	// A session in a sub workspace (a linked git worktree) acts like a subagent: it never joins. Only a definitive answer bars it for good;
 	// a Herdr that could not answer (it is slow under load) leaves the session unplaced, and the check is asked again (`begin`).
 	let placed: Place | undefined; // where Herdr says this session runs, as the sub workspace check found it
-	type Verdict = { bar?: { text: string; level: "info" } } | { failed: string };
+	type Verdict = { bar?: { text: string; level: "info" } } | { failed: string } | { tower: true };
 	type Once = (what: string, text: string, level: "info" | "warning" | "error") => void;
 	/** `tell`, each `what` once per start: a check that is asked again does not repeat its warning. */
 	const onceOf = (): Once => {
 		const seen = new Set<string>();
 		return (what, text, level) => void (seen.has(what) || (seen.add(what), tell(text, level)));
+	};
+	/** The label Herdr lists for the tab now: the proof of a tower's or a train's tab (roles.ts). A list that fails throws, and proves nothing. */
+	const labelOf = async (here: Place) => (await tabs(run, here.workspaceId)).find((t) => t.tab_id === here.tabId)?.label;
+	const shown = (label: string | undefined) => (label === undefined ? "no tab" : JSON.stringify(Array.from(label).slice(0, 40).join("")));
+	// Whether the tower role this session claims is proven. Its saved entry and its role record are files its own shell can write, so they only claim; the proof is Herdr's:
+	// the pane sits in a tab labelled with the tower glyph, which a restore keeps and no file holds (docs/specs/2026-11-07-train-workers.md §29). No proof is a member, told once.
+	const towerProof = async (here: Place, once: Once): Promise<boolean> => {
+		const entry = Boolean(s.saved.tower);
+		if (!entry && roles.claimed(here) !== "tower") return false;
+		const label = await labelOf(here);
+		if ((entry && label === TOWER_LABEL) || roles.held({ ...here, tabLabel: label }) === "tower") return true;
+		once("tower-claim", `Straw Boss: this session's ${entry ? "saved entry" : "role record"} says it was a tower, but Herdr lists its pane in ${shown(label)}, not in a tower tab, so it starts as a member: a file alone gives no role`, "warning");
+		return false;
 	};
 	const barReason = async (once: Once): Promise<Verdict> => {
 		try {
@@ -62,7 +75,8 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			const all = await workspaces(run);
 			const sub = all.find((w) => w.workspace_id === workspaceId);
 			if (sub && isHead(sub)) return { bar: { text: "This is the head tower's workspace, so a session typed here cannot join the net; the head tower is its own", level: "info" } };
-			return sub && isSub(sub) ? { bar: { text: `${sub.label} is a sub workspace, so this session cannot join the net; the main agent of its parent workspace represents it`, level: "info" } } : {};
+			if (sub && isSub(sub)) return { bar: { text: `${sub.label} is a sub workspace, so this session cannot join the net; the main agent of its parent workspace represents it`, level: "info" } };
+			return (await towerProof(here, once)) ? { tower: true } : {};
 		} catch (error) {
 			return { failed: (error as Error).message };
 		}
@@ -98,9 +112,8 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		s.duty = isCoordinatorDuty(s.saved.duty) ? s.saved.duty : undefined; // the migration's guard is this live value (docs/specs/2026-11-09-agent-kinds.md §2)
 		s.branch = () => ctx.sessionManager.getBranch();
 		s.file = ctx.sessionManager.getSessionFile();
-		// A Herdr restore resumes the pane into this session file without STRAW_BOSS_ROLE and, when pi had not yet written the file, without its entries: the record decides (roles.ts).
-		// The pane, tab, and workspace must all be the recorded ones; a tower needs no more, since it closes its pane when it quits (roles.ts).
-		s.isTower ||= Boolean(s.saved.tower) || roles.held({ paneId: env.HERDR_PANE_ID, tabId: env.HERDR_TAB_ID, workspaceId: env.HERDR_WORKSPACE_ID }) === "tower";
+		// A tower here is one by its process: started with STRAW_BOSS_ROLE=tower (state.ts), or a tower already in an earlier start of this process. A Herdr restore resumes the pane into this session
+		// file without the variable: the saved entry or the role record then claims the role, and the claim is proven against Herdr with the workspace check below (`towerProof`), never taken from the file.
 		const log = ctx.sessionManager;
 		stopWatching();
 		nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
@@ -108,13 +121,13 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		restores = restored({ run, sleep: cfg.sleep, file: () => log.getSessionFile(), entries: () => log.getEntries(), active: () => !s.isTower, launcher: () => (me() ? { id: me(), name: who() } : undefined), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), resume: (text, details) => pi.sendMessage({ customType: RESUME, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
 		nudgeTimer = setInterval(() => void Promise.allSettled([nudges?.poll(), restores?.poll()]), cfg.nudgeMs).unref();
 		// Starting runs in the background: pi awaits session_start handlers in turn, and pi-intercom connects in its own, after this one.
-		if (s.isTower) {
+		const asTower = () => {
 			s.trainSettled = true; // a tower is no train
 			s.barred = s.recheck = undefined; // what an earlier start of this process left (a member's unplaced check) is not a tower's: it dispatches no subagents, and a bar would let its call through
-			unwatch = cfg.watch(presence.restore);
+			unwatch ??= cfg.watch(presence.restore);
 			startTower().catch((error: Error) => tell(`Straw Boss: ${error.message}`, "error"));
-			return;
-		}
+		};
+		if (s.isTower) return asTower();
 		// Asking Herdr whether this is a sub workspace waits in the background too: on a loaded machine a Herdr call takes seconds, and pi-intercom
 		// connects only after this handler returns. Until the answer comes the session counts as barred: a join waits for the answer first (`s.recheck`, membership.ts), and a promotion needs the join, so nothing joins or promotes early.
 		s.barred = CHECKING;
@@ -138,14 +151,19 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			const mine = opensAsTrain ? (await panes(run, placed.workspaceId).catch((error) => { throw Object.assign(error as Error, { joining: true }); })).find((p) => p.pane_id === placed!.paneId) : undefined;
 			const token = trainFromToken(mine?.tokens?.sb_train);
 			const saved = trainFromToken(s.saved.train && trainToken(s.saved.train));
-			if (mine?.tokens?.sb_open_main === "1" && token) {
-				[s.isTrain, s.train, s.openedBy, trainHow] = [true, token, mine.tokens.sb_opened_by, "claim"];
-			} else if (event.reason !== "startup" && saved && s.saved.openedPane === placed.paneId) {
-				[s.isTrain, s.train, s.openedBy, trainHow] = [true, saved, s.saved.openedBy ?? undefined, "reload"];
-			} else if (roles.held(placed) === TRAIN) {
+			if (mine?.tokens?.sb_open_main === "1" && token) return void ([s.isTrain, s.train, s.openedBy, trainHow] = [true, token, mine.tokens.sb_opened_by, "claim"]);
+			// The saved entry and the role record are files the session's own shell can write: they name the train it claims to be, and Herdr proves it, by the tab that carries the train's code
+			// (`train <MMDDx>`, set by the open and kept by a restore; docs/specs/2026-11-07-train-workers.md §29). A tab list that fails is no answer, as the pane list above.
+			const entry = event.reason !== "startup" && saved && s.saved.openedPane === placed.paneId ? saved : undefined;
+			const named = entry ?? (roles.claimed(placed) === TRAIN ? roles.trainOf(placed) : undefined);
+			if (!named) return;
+			const label = await labelOf(placed).catch((error) => { throw Object.assign(error as Error, { joining: true }); });
+			if (entry && label === trainLabel(entry.code)) {
+				[s.isTrain, s.train, s.openedBy, trainHow] = [true, entry, s.saved.openedBy ?? undefined, "reload"];
+			} else if (roles.held({ ...placed, tabLabel: label }) === TRAIN) {
 				const record = roles.trainOf(placed);
 				if (record) [s.isTrain, s.train, s.openedBy, trainHow] = [true, record, roles.openerOf(placed), "restore"];
-			}
+			} else if (label !== trainLabel(named.code)) once("train-claim", `Straw Boss: this session's ${entry ? "saved entry" : "role record"} names ${trainLabel(named.code)}, but Herdr lists its pane in ${shown(label)}, not in that train's tab, so it is no train: a file alone gives no role`, "warning");
 		};
 		const proceed = async () => {
 			if (!s.stopped && !unwatch) unwatch = cfg.watch(presence.restore); // a shutdown that came while Herdr was asked about the workspace has stopped nothing yet
@@ -224,6 +242,8 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 						return false;
 					}
 					clearTimeout(retryTimer);
+					// The claim is proven: the tower starts now, as one started with the variable does at once. It never joins (membership.ts refuses a tower's join).
+					if ("tower" in verdict) return ((s.isTower = true), asTower(), false);
 					s.recheck = undefined;
 					s.barred = verdict.bar?.text;
 					if (verdict.bar) return (tell(verdict.bar.text, verdict.bar.level), (s.trainSettled = true), false); // a session that never joins is no train
