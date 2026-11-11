@@ -190,3 +190,11 @@ test("SB4R-F001: the signs are taken once at the start: moving the role record a
 	for (const [from, to] of moved) renameSync(from, to);
 	assert.match((await call(again, "todo", { action: "create", subject: "x" }))?.reason ?? "", UNSETTLED, "still refused with the record gone");
 });
+
+test("a manifest row keeps every ticket of a slip with 24 tickets", async () => {
+	const { parseManifest } = await import("../src/trainguard.ts");
+	const { MANIFEST_HEADER, slipBlock } = await import("./train-guard-rig.ts");
+	const tickets = Array.from({ length: 24 }, (_, i) => `MP-${3600 + i}`);
+	const m = parseManifest(`${MANIFEST_HEADER}  base: develop\n${slipBlock({ tickets: tickets.join(", ") })}\n`, () => undefined, { config: () => ({ ok: true, accept: [] }), exists: () => true, isAncestor: () => false });
+	assert.deepEqual(m.cars[0]?.row?.tickets, tickets);
+});

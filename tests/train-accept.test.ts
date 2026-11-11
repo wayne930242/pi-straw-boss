@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkAcceptRef, checkCar, checkEvidence, checkStages, MAX_EVIDENCE_BYTES, parseAppAccept, parseDeparts, parseSlip } from "../src/train/accept.ts";
+import { checkAcceptRef, checkCar, checkEvidence, checkSlip, checkStages, MAX_EVIDENCE_BYTES, parseAppAccept, parseDeparts, parseSlip } from "../src/train/accept.ts";
+import { MAX_CAR_TICKETS, MAX_TICKET_CHARS } from "../src/train/spec.ts";
 import { evidence, type Json, SHA_A, SHA_B, SHA_C, slip } from "./train-fixtures.ts";
 
 // §5.1 to §5.2: the slip's `departs` and `accept` lines, `integration.accept`, and what `train check --accept` proves (and does not).
@@ -137,6 +138,14 @@ test("the whole car: slip and evidence together, with the slip's head, the app's
 	assert.match(good(slip({ tickets: undefined }), evidence()).join("\n"), /slip tickets/);
 });
 
+test("a slip over the bound of a car's tickets is refused with the word to split the car; the bound itself passes", () => {
+	const ids = (n: number) => Array.from({ length: n }, (_, i) => `MP-${1000 + i}`).join(", ");
+	assert.deepEqual(checkSlip(slip({ tickets: ids(MAX_CAR_TICKETS) }), { appAccept: [] }), []);
+	const over = checkSlip(slip({ tickets: ids(MAX_CAR_TICKETS + 1) }), { appAccept: [] }).join("\n");
+	assert.match(over, new RegExp(`slip tickets names ${MAX_CAR_TICKETS + 1} tickets, and a car carries at most ${MAX_CAR_TICKETS}: split the car`));
+	assert.match(checkSlip(slip({ tickets: `MP-1, ${"x".repeat(MAX_TICKET_CHARS + 1)}` }), { appAccept: [] }).join("\n"), /longer than 64 characters/);
+});
+
 test("`integration.accept`: a list of kind names, default empty; a stage list has merge first and no uat", () => {
 	assert.deepEqual(parseAppAccept(undefined), { ok: true, accept: [] });
 	assert.deepEqual(parseAppAccept([]), { ok: true, accept: [] });
@@ -154,4 +163,11 @@ test("`integration.accept`: a list of kind names, default empty; a stage list ha
 	assert.match(checkStages(["merge", "build"]).join("\n"), /stage "build" is not one of merge, deploy/);
 	assert.match(checkStages(["merge", "deploy", "deploy"]).join("\n"), /stage "deploy" twice/);
 	assert.match(checkStages("merge").join("\n"), /stages must be a list/);
+});
+
+test("an evidence file whose car names more than MAX_CAR_TICKETS tickets is refused", () => {
+	const ok = evidence() as { car: { tickets: string[] } };
+	const many = { ...ok, car: { ...ok.car, tickets: Array.from({ length: MAX_CAR_TICKETS + 1 }, (_, i) => `MP-${i}`) } };
+	assert.match(run(many).join("\n"), new RegExp(`evidence.car.tickets must be a list of 1 to ${MAX_CAR_TICKETS} tickets`));
+	assert.doesNotMatch(run({ ...ok, car: { ...ok.car, tickets: Array.from({ length: MAX_CAR_TICKETS }, (_, i) => `MP-${i}`) } }).join("\n"), /car.tickets/);
 });

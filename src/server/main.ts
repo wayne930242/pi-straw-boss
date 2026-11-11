@@ -613,7 +613,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		if (read.problem !== toldConfig) (toldConfig = read.problem ?? "", read.problem && recordError("config", read.problem));
 		return read;
 	};
-	cars = startCars({ slot, run: cfg.run, now, client: () => (client?.isConnected() ? client : undefined), startOf, log: (event, facts) => log.line(event, facts), stops });
+	cars = startCars({ slot, run: cfg.run, now, startedAt, client: () => (client?.isConnected() ? client : undefined), startOf, log: (event, facts) => log.line(event, facts), stops });
 	towers = createTowers({
 		ally: allyPort(() => link), allows, asks, cars: cars.book,
 		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => towerRuns().enabled, server: serverTools,

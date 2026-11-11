@@ -72,7 +72,7 @@ export interface ToolHost {
 	/** Whether an ask of the head tower to this tower's workspace is open (headasks.ts): a tower answers with `tower_send {head: true, inReplyTo}` only to one. */
 	headAsked?(id: string): boolean;
 	/** The `call_tower` event (why=shared) this run took, by its id: the code stamps its sender into a forwarded car slip (docs/specs/2026-11-07-train-workers.md §5.5). Undefined when the run took no such event. */
-	forwardEvent?(id: string): { id: string; from: string; text: string } | undefined;
+	forwardEvent?(id: string): { id: string; from: string; text: string; /** When the event came in. */ at?: number } | undefined;
 	/**
 	 * The `call_tower` messages (why=shared) this run took, oldest first, each with the sender the broker named, its own text, and the 16-hex id its forward is stamped with: a local run's events, and for an ally run
 	 * what local sessions said to the tower for its device (allyroute.ts). The door of an integrator's open.
@@ -87,6 +87,8 @@ export interface ToolHost {
 	/** `tower_memory` of a local run (towermemory.ts): it proposes, and the boss confirms elsewhere. */
 	memory(args: Record<string, unknown>): Promise<ToolResult>;
 	now(): number;
+	/** When this server started: the refusal of a forward whose slip came in before it says what a restart lost (todo #154). */
+	startedAt?: number;
 }
 
 export interface SlipEvent { fwd: string; from: { id: string; name?: string }; text: string }
@@ -140,6 +142,11 @@ const ASK = /^[0-9a-f]{32}$/;
 
 /** The kept integrators the door named for a slip (`ForwardAsBefore`), by the tower and the slip's event id: a forward of that slip goes to one of them and to no other session. Kept for the server's life; the door is asked again after a restart. */
 const namedFor = new Map<string, readonly string[]>();
+/**
+ * What the refusal of a forward the door did not name adds when the slip came in before this server started (todo #154): a run that outlived a restart holds the slip's event (the queue is on disk) but the door's answer is gone, and it is
+ * not read back from anywhere (a file here is one a train can write). The way back is the door again, which is the same call.
+ */
+const restartWord = (host: ToolHost, at: number | undefined) => (host.startedAt !== undefined && at !== undefined && at < host.startedAt ? ` The sb server started at ${new Date(host.startedAt).toISOString()}, after this slip came in, and keeps the door's answer in memory only: if the door named this slip's integrators before that, its answer is gone with the restart, so ask the door again the same way and forward then.` : "");
 const PEERS_SLIP = (name: string, id: string) => `${clean(name, 40)} (session ${id}) was opened for a teammate's device, so its slip is a peer's: it reaches the integrator through the ally run of its device, which marks it origin=remote and asks the boss below dispatch, and never through a local run. Forward nothing of it; it sends the slip again to the tower that opened it.`;
 
 /**
@@ -151,10 +158,10 @@ async function forwardOf(host: ToolHost, args: Record<string, unknown>, to?: str
 	const id = opt(args, "forward");
 	if (id === undefined) return undefined;
 	const event = host.forwardEvent?.(id);
-	if (!event) throw new Error(`forward ${id.slice(0, 40)} is no call_tower event (why=shared) that this run took: forward a car slip with the id its event header shows`);
+	if (!event) throw new Error(`forward ${id.slice(0, 40)} is no call_tower event (why=shared) that this run took: forward a car slip with the id its event header shows. A slip's event is held only while the run that took it lives and for 24 h: ask its sender to send the slip to the tower again (call_tower why=shared) and forward the new event's id`);
 	const net = await host.reach.read(), peers = (session: string) => deviceToken(net, session) !== undefined || (host.openedAnywhere ?? host.openedFor)?.(session) !== undefined;
 	if (peers(event.from)) throw new Error(PEERS_SLIP(event.from, event.from));
-	if (to !== undefined && !namedFor.get(`${host.identity} ${event.id}`)?.includes(to)) throw new Error(`forward ${event.id} goes only to an integrator the door named for this slip: call boss_open_main with role "integrator", the slip as the request, and its sender, and forward to one of the sessions its answer names.`);
+	if (to !== undefined && !namedFor.get(`${host.identity} ${event.id}`)?.includes(to)) throw new Error(`forward ${event.id} goes only to an integrator the door named for this slip: call boss_open_main with role "integrator", the slip as the request, and its sender, and forward to one of the sessions its answer names.${restartWord(host, event.at)}`);
 	if (to !== undefined && peers(to)) throw new Error(`Session ${to} was opened for a teammate's device, so no slip is forwarded to it. The boss closes it or renames it.`);
 	return { fwd: event.id, fwdFrom: event.from, body: bodyOf(event.text) };
 }

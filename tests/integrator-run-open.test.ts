@@ -45,8 +45,8 @@ const COORD1 = { id: "main-1", name: "docs-main" }, COORD2 = { id: "main-2", nam
 const slipA = slip({ coordinator: "main-1", accept: "none" }), slipB = slip({ coordinator: "main-2", head: SHA_B, tickets: "T-16", branch: "fix/t-16", accept: "none" });
 
 /** A server whose tower opens tabs the way Herdr and pi would: the pi of a new tab joins under the name `--name` gave it, as a main, and as an integrator when that name is an integrator's. */
-async function started() {
-	const s = await world.start({ towers: { ...world.options().options.towers, cars: { noteForward: (f: never) => void noted.push(f), noteTrain() {}, remoteOf: async () => undefined } as never } });
+async function started(over: { startedAt?: number } = {}) {
+	const s = await world.start({ towers: { ...world.options().options.towers, ...over, cars: { noteForward: (f: never) => void noted.push(f), noteTrain() {}, remoteOf: async () => undefined } as never } });
 	await s.handle.ready;
 	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
 	const orig = world.herdr.onAgentStart!;
@@ -445,7 +445,9 @@ test("a project that already runs integrators of its own, one per app (integ FE2
 	towerClient().incoming(COORD1, { id: "m1", content: { text: callTower(COORD1, slipFE) } } as never);
 	const run = await claimed(s, 1);
 	// Before the door named them, the event's id forwards to nobody (RR151-F002).
-	assert.match(String((await run.tool("tower_reply", { to: "integ FE2", message: slipFE, forward: run.ids[0] })).error), /goes only to an integrator the door named for this slip: call boss_open_main with role "integrator"/);
+	const early = String((await run.tool("tower_reply", { to: "integ FE2", message: slipFE, forward: run.ids[0] })).error);
+	assert.match(early, /goes only to an integrator the door named for this slip: call boss_open_main with role "integrator"/);
+	assert.doesNotMatch(early, /sb server started|memory only/, "the slip came in after this server started: no restart is told");
 	const door = await run.tool("boss_open_main", { role: "integrator", request: slipFE, sender: "docs-main" });
 	assert.equal(door.ok, false, JSON.stringify(door));
 	assert.match(String(door.error), /Project moldplan-center already runs 2 integrators of its own, opened before this door and not by it: integ FE2 \(session integ-fe2\), integ v3 \(session integ-v3\)\. Nothing opens beside them and the door picks none: the slip of app moldplan-frontend-2 goes to the one that runs that app's trains, forwarded as before\./);
@@ -466,6 +468,27 @@ test("a project that already runs integrators of its own, one per app (integ FE2
 	// Called again, the door still opens nothing: the boss's integrators count against no limit and are never taken for two of one project.
 	assert.match(String((await run.tool("boss_open_main", { role: "integrator", project: "moldplan-center", request: slipFE, sender: "main-1" })).error), /already runs 2 integrators of its own/);
 	assert.deepEqual(tabs(), []);
+});
+
+test("todo #154: a slip that came in before this sb server started: the forward's refusal names the start and says the door's answer is kept in memory only, and the door asked again names the integrators again", async () => {
+	// The server's start is after the slip's event: what a run that outlived a restart holds (the queue is on disk, the door's answer was not).
+	const later = Date.now() + 3600_000;
+	const s = await started({ startedAt: later });
+	const slipFE = slip({ car: "moldplan-frontend-2", coordinator: "main-1", accept: "none" });
+	mpCenter();
+	world.sessions = [{ ...COORD1, herdrLocation: loc("wA:p1") as never }];
+	bossIntegrator("integ-fe2", "integ FE2", "wA:p31", dir);
+	// A message id of this test's own: the door's answers live in the module for the process's life, and an event's id follows from its message's.
+	towerClient().incoming(COORD1, { id: "m154", content: { text: callTower(COORD1, slipFE) } } as never);
+	const run = await claimed(s, 1);
+	const refusal = String((await run.tool("tower_reply", { to: "integ FE2", message: slipFE, forward: run.ids[0] })).error);
+	assert.match(refusal, /goes only to an integrator the door named for this slip: call boss_open_main with role "integrator"/);
+	assert.ok(refusal.includes(`The sb server started at ${new Date(later).toISOString()}, after this slip came in, and keeps the door's answer in memory only: if the door named this slip's integrators before that, its answer is gone with the restart, so ask the door again the same way and forward then.`), refusal);
+	assert.deepEqual([sentTo("integ-fe2"), noted], [[], []], "nothing was forwarded");
+	// Asked again, the door names the kept integrator and the forward goes through.
+	assert.match(String((await run.tool("boss_open_main", { role: "integrator", request: slipFE, sender: "docs-main" })).error), /forwarded as before/);
+	assert.equal((await run.tool("tower_reply", { to: "integ FE2", message: slipFE, forward: run.ids[0] })).ok, true);
+	assert.deepEqual(noted.map((n) => [n.fwd, n.to]), [[run.ids[0], ["integ-fe2"]]]);
 });
 
 test("a box-like checkout of the same shape with no integrator yet still opens one, named after its folder, and the slip is forwarded to it by the door", async () => {

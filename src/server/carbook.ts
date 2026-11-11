@@ -16,7 +16,8 @@ import { writePrivate } from "../trainboard.ts";
 //     process that claims a role it is not can, at worst, end the rides of the cars of the train it registered as (it must be that train's session by Herdr's pane record and the server's own open), or put those words in the notice of a car the tower
 //     forwarded to the integrator it registered as.
 //   - A per-session secret that `register` hands the pi process, once. It is defense in depth, not proof: a registration is not replaced while its process lives, the start time of the process is required, and nothing above depends on it.
-// The car files and notice records on disk are a display journal for the yard (they are written here, never read here). A restart starts with an empty book: what the disk holds, a train could have written.
+// The car files and notice records on disk are a display journal for the yard (they are written here, never read here). A restart starts with an empty book: what the disk holds, a train could have written. So a forward made before a restart is gone, and the
+// integrator's refusal says so (todo #154): for as long as such a forward would have been kept, it names the server's start and the way back, which is the fact again (the coordinator sends the slip, the tower forwards it).
 
 const KEEP_MS = 24 * 3600_000, MAX_FORWARDS = 512, MAX_FILES = 256;
 const BASE_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
@@ -68,6 +69,8 @@ export interface BookDeps {
 	/** The user's known_hosts as the server read it when it started: each check writes it for ssh to use (RR2-F002). Absent, ssh knows no host and an ssh remote cannot be checked. */
 	knownHosts?: string;
 	now(): number;
+	/** When this server started, as the refusal of a forward it does not hold tells it (todo #154); the moment the book was made when absent. */
+	startedAt?: number;
 	look(session: string): Promise<Look | undefined>;
 	/** The start time of a process, in the form `register` is given; undefined when it cannot be told. */
 	startOf(pid: number): string | undefined;
@@ -196,8 +199,10 @@ export class CarBook {
 	private readonly failures = new Map<string, number[]>();
 	private chain: Promise<unknown> = Promise.resolve();
 	private readonly d: BookDeps;
+	/** Since when this book holds forwards: none made before it is here, whatever the disk holds. */
+	private readonly since: number;
 
-	constructor(deps: BookDeps) { this.d = deps; }
+	constructor(deps: BookDeps) { this.d = deps; this.since = deps.startedAt ?? deps.now(); }
 
 	// ---- the display journal: written here, read by the yard, never read back (CR-F003)
 
@@ -238,6 +243,14 @@ export class CarBook {
 		if (t.url && !this.remotes.has(t.project)) this.remotes.set(t.project, t.url);
 	}
 	trainOf(project: string, code: string): TrainRecord | undefined { return this.trains.get(`${project}/${code}`); }
+	/**
+	 * What the refusal of a forward this book does not hold adds while a forward made before the server's start would still be kept (todo #154; live, 0.75.0: a slip forwarded 8 minutes before an install restarted the server could be neither received nor
+	 * returned, and the refusal named no cause). Nothing is restored: the tower's forward to this server is the fact, so the way back is that forward again. After `KEEP_MS` no earlier forward would count, and nothing is added.
+	 */
+	private restartWord(): string {
+		if (this.d.now() - this.since >= KEEP_MS) return "";
+		return ` The sb server started at ${iso(this.since)} and keeps a tower's forwards in memory only, so a forward made before that is gone with the restart: ask the car's coordinator to send its slip to the tower again (call_tower why=shared); the tower forwards it again, and then the state is set.`;
+	}
 
 	// ---- the registration: defense in depth
 
@@ -365,8 +378,9 @@ export class CarBook {
 		if (setter.role === "main") {
 			// The integrator's: the slip arrived as a tower's forward to this session; the car is what that slip says, and the session that sent it to the tower is the coordinator. Nothing of the car comes from the caller.
 			const sent = this.forwardOf(head, setter.session);
-			if (!sent) throw refusal(`sb: no forward by a tower carries head ${head.slice(0, 12)} to this session: a car slip reaches the integrator only as the tower's tower_send or tower_reply with forward: (the code stamps fwd-from)`);
+			if (!sent) throw refusal(`sb: no forward by a tower carries head ${head.slice(0, 12)} to this session: a car slip reaches the integrator only as the tower's tower_send or tower_reply with forward: (the code stamps fwd-from).${this.restartWord()}`);
 			const slip = sent.slip;
+			if (slip.over) throw refusal(slip.over);
 			name = carFileName(slip.app, head);
 			held = this.cars.get(project)?.get(name);
 			file = held?.file;

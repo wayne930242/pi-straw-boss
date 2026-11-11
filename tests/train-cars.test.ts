@@ -73,7 +73,7 @@ test("a car file validates and names its file after the app and the first 12 hex
 		[{ ...car(), states: [{ state: "landed", at: AT, by, version: "1", commit: SHA_B }, { state: "dropped", at: AT, by, round: 1, reason: "x", evidence: "/e" }] }, /states\[1\]: car T-15 is already landed/],
 		[{ ...car(), extra: 1 }, /car\.extra is not a field/], ["x", /car file must be an object/],
 		[{ ...car(), project: ".." }, /car\.project must be a path-safe name/], [{ ...car(), app: "a/b" }, /car\.app must be a path-safe name/], [{ ...car(), states: "x" }, /car\.states must be an array/],
-		[{ ...car(), car: { tickets: [], branch: "b", head: SHA_A } }, /car\.car\.tickets must be a non-empty list/], [{ ...car(), car: { tickets: ["T-15"], branch: "", head: SHA_A } }, /car\.car\.branch/], [{ ...car(), car: { tickets: ["T-15"], branch: "b", head: "x" } }, /car\.car\.head must be 40 hex/],
+		[{ ...car(), car: { tickets: [], branch: "b", head: SHA_A } }, /car\.car\.tickets must be a list of 1 to 64 tickets/], [{ ...car(), car: { tickets: Array.from({ length: 65 }, (_, i) => `T-${i}`), branch: "b", head: SHA_A } }, /car\.car\.tickets must be a list of 1 to 64/], [{ ...car(), car: { tickets: ["T-15"], branch: "", head: SHA_A } }, /car\.car\.branch/], [{ ...car(), car: { tickets: ["T-15"], branch: "b", head: "x" } }, /car\.car\.head must be 40 hex/],
 		[{ ...car(), states: ["x"] }, /states\[0\] must be an object/], [{ ...car(), states: [{ state: "returned", at: AT, reason: "r" }] }, /states\[0\]\.by must name the session that set it/],
 	];
 	for (const [value, pattern] of bad) assert.ok(validateCarFile(value).some((r) => pattern.test(r)), `${pattern}: ${JSON.stringify(validateCarFile(value))}`);
