@@ -350,7 +350,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Pane balance is a separate extension entry with its plain-JavaScript helper.
 	// after-close ends when Herdr is gone (desk U13, BG-F001): balance.mjs 178 to 185, the locale-free `os error` set and its note.
 	// Herdr's CLI with no server (desk U13 on macOS and Windows): balance.mjs 185 to 186 for `server_not_running` and its note.
-	assert.ok(count("src/balance.ts") + count("src/balance.mjs") <= 223, "src/balance.ts and src/balance.mjs stay small");
+	// The deadline holds (todo #155; measured): balance.mjs 186 to 188, `HERDR_MS` and its note; the helper's herdr calls had no time limit at all.
+	assert.ok(count("src/balance.ts") + count("src/balance.mjs") <= 225, "src/balance.ts and src/balance.mjs stay small");
 	// The blocked relay (rpiv-ask-user-question, and pi's own dialog prompts) is its own extension entry too. It was 25 lines for the rpiv relay alone;
 	// the dialog relay raised it to 42 for the label of a dialog's title and the signed count that keeps the pairs balanced when pi delivers an end ahead of its start, and the guard for an end that reaches a retired runtime.
 	assert.ok(count("src/blocked.ts") <= 42, "src/blocked.ts stays small");
@@ -488,7 +489,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The tower opens the integrator (todo #151; measured) 3364 to 3425 (+61): integrator.ts (new: the role's word, the marker `integ:<project>`, the cap of two per workspace, the projects that keep an app's ledger, the handoff, and the finder of a project's one live integrator). train/appsconfig.ts's `noTrainRefusal` is not in this sum. Cap = measured.
 	// The integrators a project already runs stay (todo #151, compatibility with 0.73; measured) 3425 to 3446 (+21): integrator.ts 61 to 82 (`keptIntegrators`, the unmarked integrator mains a project runs under names of their own, and `ForwardAsBefore`, the door's refusal that names them). Cap = measured.
 	// Role proof (todo #131; measured) 3453 to 3459 (+6): trainrole.ts 79 to 85 (`isRoleLabel`, the labels only Straw Boss gives a tab: the tower's and the head's glyph and a train's `train <MMDDx>`). Cap = measured.
-	assert.ok(rest <= 3459, `the rest of src has ${rest} lines`);
+	// The deadline holds (todo #155; measured) 3459 to 3462 (+3): herdr.ts, `herdrRun`'s `deadline` in place of execFile's `timeout` (one comment line; the work is in exe.mjs, which is not TypeScript) and `herdrCall`'s deadline for the whole answer in place of the socket's idle timeout. Cap = measured.
+	assert.ok(rest <= 3462, `the rest of src has ${rest} lines`);
 	// Unreleased (settings check, probe): settings.ts is the lstat gate, the child's program (refuses a link it cannot follow, stats before opening; review SR5), and its runner (160); it no longer walks links. settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
 	// Unreleased raised trust/ask.ts from 182 to 183 (RC3-F001): the recorded server's start time is read when the handler registers.
 	// Unreleased raised trust/ask.ts from 183 to 201 (RC4-F001, F002): `warmServerStart` (the early read only for a live server that reads trust requests) and `guiUp` (what the handler's `up` asks) are exported for their tests, and `registerTrust` takes the terminal it answers on.

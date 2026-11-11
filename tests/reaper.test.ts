@@ -10,8 +10,10 @@ import {
 	CONFIRM_MS, PIN_GLYPH, PIN_TOKEN, SWEEP_INTERVAL_MS,
 	applyOps, decideRemoval, emptyState, findCheckoutUser, findProcessHolder, findRetainer, isPinned, migratePins, noteParents, noteWorkspaces, onRename, planSweep, prunePanes, prunePins, set, shellIsIdle, togglePin,
 } from "../herdr-reaper/decide.mjs";
-import { createStore, gitClient, gitReason, managedClient, processClient, sessionLocator, withLock } from "../herdr-reaper/io.mjs";
+import { createStore, gitClient, gitReason, herdrClient, managedClient, processClient, sessionLocator, withLock } from "../herdr-reaper/io.mjs";
 import { SOURCE, runEvent, runPinToggle, runSweep } from "../herdr-reaper/sweep.mjs";
+import { stallWatch, until } from "./server-world.ts";
+import { gone, standIn, STUBBORN } from "./standin.ts";
 
 const NOW = 1_000_000_000;
 const worktree = (path, linked = true, repoRoot = "/repo") => ({ checkout_path: path, is_linked_worktree: linked, repo_root: repoRoot });
@@ -1681,4 +1683,20 @@ test("the reaper plugin's exe.mjs is the package's: the plugin may be installed 
 	assert.match(io, /run\(resolveExe\(bin\)/);
 	assert.doesNotMatch(reaper, /spawn\(bin/);
 	assert.match(reaper, /spawn\(file, \["plugin", "action", "invoke"/);
+});
+
+test("todo #155: the reaper's programs (herdr, git, lsof: one runner) have a deadline that holds: a herdr that ignores SIGTERM fails the call in time, so the sweep lock is not held for it, and is killed after the grace", { skip: process.platform === "win32" }, async () => {
+	const fake = standIn({ herdr: STUBBORN }), stalls = stallWatch(), began = Date.now();
+	try {
+		await assert.rejects(herdrClient(fake.bin, { timeoutMs: 1500 }).call([fake.dir]), /failed: no answer within 1\.5s$/);
+		const took = Date.now() - began;
+		stalls.stop();
+		assert.ok(took < 2500 + stalls.worst(), `the call ended at its deadline: ${took} ms (this process stood still for ${stalls.worst()} ms)`);
+		assert.ok(!gone(fake.pid("pid")) && !fake.has("outlived"), "the call did not wait for the program to end");
+		await until(() => gone(fake.pid("pid")), "the program that ignores SIGTERM to be gone", 15_000);
+		assert.ok(!fake.has("outlived"), "it was killed, not left to end by itself");
+	} finally {
+		stalls.stop();
+		fake.close();
+	}
 });

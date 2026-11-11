@@ -28,7 +28,7 @@ export function runGit(cwd: string, args: string[], extra: Record<string, string
 	// git looks for no repository above the root of the file system: the `ls-remote` of `landed` runs at that root with none to find, so no repository configuration is read.
 	Object.assign(env, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", GIT_CEILING_DIRECTORIES: parse(resolve(cwd)).root, ...extra });
 	const isolation = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never", "-c", "submodule.recurse=false", "--no-replace-objects"];
-	return new Promise((resolvePromise, reject) => execFileExe("git", [...isolation, "-C", cwd, ...args], { encoding: "utf8", timeout: 60_000, env, windowsHide: true }, (error, stdout, stderr) => (error ? reject(Object.assign(error, { stderr })) : resolvePromise(String(stdout).trim()))));
+	return new Promise((resolvePromise, reject) => execFileExe("git", [...isolation, "-C", cwd, ...args], { encoding: "utf8", deadline: 60_000, env, windowsHide: true }, (error, stdout, stderr) => (error ? reject(Object.assign(error, { stderr })) : resolvePromise(String(stdout).trim()))));
 }
 
 const reply = (error: unknown): Reply => ({ ok: false, error: (error as Error).message });

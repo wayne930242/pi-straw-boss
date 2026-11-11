@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, test } from "node:test";
 import { execFileExe, execFileSyncExe, ExeNotFound, forgetExe, resolveExe, searchPath } from "../src/exe.mjs";
+import { createStartOf } from "../src/startof.ts";
+import { stallWatch, until } from "./server-world.ts";
+import { type Cut, cutOff, gone, LINGER, standIn } from "./standin.ts";
 
 // A bare program name is searched in the current folder first on Windows (nodejs/node#46264), and a pi session's folder is a project. Every program the package starts by name is
 // found by a PATH search that never looks in the current folder, and spawned by the path it found.
@@ -126,25 +129,100 @@ test("no source file starts a program by a bare name: every child_process call i
 	const walk = (dir: string) => { for (const e of readdirSync(join(root, dir), { withFileTypes: true })) e.isDirectory() ? walk(join(dir, e.name)) : /\.(ts|mjs)$/.test(e.name) && files.push(join(dir, e.name)); };
 	walk("src");
 	const allowed = new Set(["src/exe.mjs"]);
+	// A name that stands for the program, in the files that start one themselves, each read for where the value comes from (todo #155: hygiene.ts passed a `file` that was the bare word "git"). A file not
+	// listed passes no name: it starts programs through exe.mjs. closing.ts: `resolveExe`. hidden.ts, winprep.ts: `system32Path`. acl.ts, breakaway.ts, lineage.ts, startof.ts: `powershellPath`.
+	// client.ts: the spec's `ctx.node`. traingate.ts: the literal "/bin/sh". trust/settings.ts: `process.execPath`.
+	const passes: Record<string, RegExp> = {
+		"src/closing.ts": /^cmd$/, "src/hidden.ts": /^file$/, "src/server/acl.ts": /^file$/, "src/server/breakaway.ts": /^file$/, "src/server/client.ts": /^(spec: SpawnSpec|spec\.command)$/,
+		"src/server/lineage.ts": /^file$/, "src/server/traingate.ts": /^file$/, "src/server/winprep.ts": /^file$/, "src/startof.ts": /^file$/, "src/trust/settings.ts": /^node$/,
+	};
 	const offenders: string[] = [];
 	for (const file of files) {
 		if (allowed.has(file)) continue;
 		const text = readFileSync(join(root, file), "utf8");
+		if (!/from "node:child_process"/.test(text)) continue;
 		for (const m of text.matchAll(/(?<![.\w])(execFile|execFileSync|spawn|spawnSync|execSync|exec|fork)\(\s*([^,)]*)/g)) {
 			const first = m[2]!.trim();
-			if (/^(spec: SpawnSpec|spec\.command|file|cmd!?|cmd|process\.execPath|node|bin|herdr|command)$/.test(first) || /^["'`]\//.test(first)) continue;
-			if (/\bchild_process\b|\bimport\b/.test(text) && /from "node:child_process"/.test(text)) offenders.push(`${file}: ${m[0]}`);
+			if (first === "process.execPath" || /^["'`]\//.test(first) || passes[file]?.test(first)) continue;
+			offenders.push(`${file}: ${m[0]}`);
 		}
-		if (/from "node:child_process"/.test(text)) {
-			for (const m of text.matchAll(/\b(?:execFile|execFileSync|spawn)\(\s*["'`]([^"'`]+)["'`]/g)) offenders.push(`${file}: a literal program name ${m[1]}`);
+		for (const m of text.matchAll(/\b(?:execFile|execFileSync|spawn)\(\s*["'`]([^"'`]+)["'`]/g)) offenders.push(`${file}: a literal program name ${m[1]}`);
+		// A function of the file whose first parameter is the program must not be called with a bare word: `const run = (file, ...) => execFile(file, ...)` and `run("git", ...)` is a bare name one step away.
+		for (const [, wrapper] of text.matchAll(/\b(?:const|function)\s+(\w+)[^\n=(]*=?\s*\(\s*(?:file|cmd|command|bin|program)\b/g)) {
+			for (const m of text.matchAll(new RegExp(`(?<![.\\w])${wrapper}\\(\\s*["'\`]([^"'\`/\\\\]+)["'\`]`, "g"))) offenders.push(`${file}: ${wrapper}("${m[1]}") starts a program by a bare name`);
 		}
 	}
 	assert.deepEqual(offenders, []);
-	for (const [file, name] of [["src/herdr.ts", "herdr"], ["src/balance.mjs", "herdr"], ["src/remote.ts", "tailscale"], ["src/link/allow.ts", "git"], ["src/startof.ts", "ps"]] as const) {
+	assert.doesNotMatch(readFileSync(join(root, "src/hygiene.ts"), "utf8"), /node:child_process/, "hygiene.ts starts git through exe.mjs");
+	for (const [file, name] of [["src/herdr.ts", "herdr"], ["src/balance.mjs", "herdr"], ["src/remote.ts", "tailscale"], ["src/link/allow.ts", "git"], ["src/startof.ts", "ps"], ["src/hygiene.ts", "git"]] as const) {
 		const text = readFileSync(join(root, file), "utf8");
 		assert.match(text, new RegExp(`execFile(Sync)?Exe\\(\\s*(process\\.env\\.HERDR_BIN_PATH \\|\\| )?"${name}"`), `${file} starts ${name} through the resolver`);
 		assert.doesNotMatch(text, /from "node:child_process"[^\n]*\n[^]*\bexecFile(Sync)?\("(herdr|tailscale|git|ps)"/, file);
 	}
 	for (const file of ["src/closing.ts"]) assert.match(readFileSync(join(root, file), "utf8"), /resolveExe\(process\.env\.HERDR_BIN_PATH \|\| "herdr"\)[^]*resolveExe\("sh"\)/);
 	for (const file of ["src/gui.ts", "src/pairing.ts"]) assert.match(readFileSync(join(root, file), "utf8"), /execFileExe\(/);
+});
+
+// --- todo #155: a time limit that holds ---
+
+test("todo #155: every program started with a time limit through execFileExe gets one that holds: none passes execFile's `timeout`, and each of these passes `deadline`", () => {
+	const root = new URL("..", import.meta.url).pathname, files: string[] = [];
+	const walk = (dir: string) => { for (const e of readdirSync(join(root, dir), { withFileTypes: true })) e.isDirectory() ? walk(join(dir, e.name)) : /\.(ts|mjs)$/.test(e.name) && files.push(join(dir, e.name)); };
+	walk("src");
+	walk("herdr-reaper");
+	const offenders = files.filter((file) => !/(^|\/)exe\.mjs$/.test(file)).flatMap((file) => readFileSync(join(root, file), "utf8").split("\n").filter((line) => /\bexecFileExe\(/.test(line) && /\btimeout:/.test(line)).map((line) => `${file}: ${line.trim().slice(0, 120)}`));
+	assert.deepEqual(offenders, []);
+	for (const file of ["src/herdr.ts", "src/balance.mjs", "src/pairing.ts", "src/lanface.ts", "src/remote.ts", "src/procs/table.ts", "src/server/lineage.ts", "src/server/carops.ts", "src/lan/firewall.ts", "src/hygiene.ts", "herdr-reaper/io.mjs"]) {
+		assert.match(readFileSync(join(root, file), "utf8"), /\bexecFileExe\([^\n]*\bdeadline\b/, `${file} gives its program a deadline`);
+	}
+	// The reaper's programs go through one runner, and none of its calls is left without a time.
+	const io = readFileSync(join(root, "herdr-reaper/io.mjs"), "utf8");
+	assert.doesNotMatch(io, /promisify\(execFile\)/);
+	for (const call of io.split("\n").filter((line) => /\brun\(resolveExe\(/.test(line))) assert.match(call, /\btimeout\b/, call.trim().slice(0, 120));
+});
+
+test("todo #155: with `group: false` a program cut off at its deadline is ended alone, by SIGTERM and then SIGKILL, and what it started stays (the file manager an opener started)", { skip: process.platform === "win32" }, async () => {
+	// The program ignores SIGTERM, so its end is the SIGKILL's doing; it is no leader of a group (its group is the caller's), so a signal to a group of its own would reach nothing.
+	const fake = standIn({
+		herdr: `trap '' TERM\n"$1/holder" "$1" &\nwhile [ ! -s "$1/held" ]; do sleep 0.05; done\nps -o pgid= -p $$ | tr -d ' ' > "$1/pgid"\necho $$ > "$1/pid"\n${LINGER}`,
+		holder: `echo $$ > "$1/held"\n${LINGER}`,
+	});
+	try {
+		const error = await new Promise<Cut | null>((resolve) => execFileExe(fake.bin, [fake.dir], { deadline: 1500, grace: 300, group: false }, (e) => resolve(e)));
+		assert.ok(error && cutOff(error), "cut off at the deadline");
+		assert.notEqual(fake.pid("pgid"), fake.pid("pid"), "the program runs in the caller's process group");
+		await until(() => gone(fake.pid("pid")), "the program that ignores SIGTERM to be gone", 15_000);
+		assert.ok(!gone(fake.pid("held")) && !fake.has("outlived"), "what it started was not signalled");
+	} finally {
+		fake.close();
+	}
+});
+
+test("todo #155: a program run synchronously with a time limit is killed at it: each execFileSyncExe call with a `timeout` carries `killSignal: \"SIGKILL\"`", () => {
+	const root = new URL("..", import.meta.url).pathname, files: string[] = [];
+	const walk = (dir: string) => { for (const e of readdirSync(join(root, dir), { withFileTypes: true })) e.isDirectory() ? walk(join(dir, e.name)) : /\.(ts|mjs)$/.test(e.name) && files.push(join(dir, e.name)); };
+	walk("src");
+	const timed = files.flatMap((file) => readFileSync(join(root, file), "utf8").split("\n").filter((line) => /\bexecFileSyncExe\(/.test(line) && /\btimeout:/.test(line)).map((line) => ({ file, line })));
+	assert.deepEqual(timed.filter(({ line }) => !/killSignal: "SIGKILL"/.test(line)).map(({ file, line }) => `${file}: ${line.trim().slice(0, 120)}`), []);
+	assert.deepEqual(timed.map(({ file }) => file).sort(), ["src/lan/ca.ts", "src/lan/ca.ts", "src/link/allow.ts", "src/procs/killguard.ts", "src/server/traincmds.ts", "src/startof.ts", "src/trainguard.ts"]);
+});
+
+test("todo #155: a `ps` that ignores SIGTERM does not hold the start-time reading past its 2 s: execFileSync's timeout sends its signal and waits for the program to end, and the signal is SIGKILL", { skip: process.platform === "win32" }, () => {
+	// The stand-in is the first `ps` on PATH; it leaves its pid beside itself and lingers for 20 s.
+	const fake = standIn({ ps: `trap '' TERM\necho $$ > "$(dirname "$0")/pid"\ni=0\nwhile [ $i -lt 200 ]; do sleep 0.1; i=$((i + 1)); done` });
+	const before = process.env.PATH, stalls = stallWatch();
+	process.env.PATH = `${fake.dir}:${before ?? ""}`;
+	try {
+		const began = Date.now();
+		assert.equal(createStartOf().startOf(process.pid), undefined, "a reading cut off is no reading");
+		const took = Date.now() - began;
+		stalls.stop();
+		assert.ok(fake.has("pid"), "the stand-in was the ps that ran");
+		assert.ok(took < 2000 + 1500 + stalls.worst(), `the reading ended at its time limit: ${took} ms (this process stood still for ${stalls.worst()} ms)`);
+		assert.ok(gone(fake.pid("pid")), "the program is gone when the call returns");
+	} finally {
+		stalls.stop();
+		process.env.PATH = before;
+		fake.close();
+	}
 });

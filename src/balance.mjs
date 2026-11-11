@@ -23,6 +23,8 @@ const LOCK_STALE_MS = 30_000;
 // pi-herdr-agents closes a worker's pane once its lead has taken the result.
 const CLOSE_WAIT_MS = 30_000;
 const POLL_MS = 250;
+// One herdr command: a reading or one resize, which Herdr answers at once. Ten seconds is past a CLI start on a loaded machine and well inside LOCK_STALE_MS, after which another helper takes the tab's lock from this one.
+const HERDR_MS = 10_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -92,10 +94,10 @@ export function planBalance(layout) {
 	return resizes;
 }
 
-/** @type {Run} */
-export const herdr = (args) =>
+/** With a deadline that holds (exe.mjs): the helper runs detached with nobody to end it, so a herdr that never ends must not keep it, or the tab's lock. @type {Run} */
+export const herdr = (args, deadline = HERDR_MS) =>
 	new Promise((resolve, reject) => {
-		execFileExe(process.env.HERDR_BIN_PATH || "herdr", args, { encoding: "utf8" }, (error, stdout, stderr) =>
+		execFileExe(process.env.HERDR_BIN_PATH || "herdr", args, { encoding: "utf8", deadline }, (error, stdout, stderr) =>
 			error ? reject(Object.assign(error, { stderr })) : resolve(stdout));
 	});
 

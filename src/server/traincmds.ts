@@ -105,7 +105,7 @@ function check(flags: Record<string, string | true>, io: TrainIo): number {
 			const exists = io.exists ?? ((path: string) => existsSync(resolve(cwd, path)));
 			const isAncestor = io.isAncestor ?? ((older: string, newer: string) => {
 				try {
-					execFileSyncExe("git", ["merge-base", "--is-ancestor", older, newer], { cwd, stdio: "ignore", timeout: 15_000 });
+					execFileSyncExe("git", ["merge-base", "--is-ancestor", older, newer], { cwd, stdio: "ignore", timeout: 15_000, killSignal: "SIGKILL" });
 					return true;
 				} catch {
 					return false;

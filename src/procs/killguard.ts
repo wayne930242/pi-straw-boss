@@ -24,7 +24,7 @@ export interface GuardDeps {
 const cwdOfSync = (pid: number): string | undefined => {
 	try {
 		if (process.platform === "linux") return readlinkSync(`/proc/${pid}/cwd`).replace(/ \(deleted\)$/, "");
-		return parseLsofCwd(String(execFileSyncExe("lsof", ["-a", "-d", "cwd", "-Fpfn", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }))).get(pid)?.path;
+		return parseLsofCwd(String(execFileSyncExe("lsof", ["-a", "-d", "cwd", "-Fpfn", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000, killSignal: "SIGKILL" }))).get(pid)?.path;
 	} catch {
 		return undefined;
 	}

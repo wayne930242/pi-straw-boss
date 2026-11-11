@@ -37,8 +37,8 @@ export const revealCommand = (paths: string[], platform: NodeJS.Platform = proce
 export const revealFiles = (paths: string[]) =>
 	new Promise<void>((done, fail) => {
 		const [cmd, args] = revealCommand(paths);
-		// Explorer exits 1 after it showed the file; a missing command is the only failure worth telling.
-		execFileExe(cmd, args, { timeout: 10_000 }, (error) => (error && (error as NodeJS.ErrnoException).code === "ENOENT" ? fail(new Error(`Could not show the files with ${cmd}`)) : done()));
+		// Explorer exits 1 after it showed the file; a missing command is the only failure worth telling. An opener still there after 10 s is ended alone (`group: false`): the file manager it started stays.
+		execFileExe(cmd, args, { deadline: 10_000, group: false }, (error) => (error && (error as NodeJS.ErrnoException).code === "ENOENT" ? fail(new Error(`Could not show the files with ${cmd}`)) : done()));
 	});
 
 /** The server's CA as the overlay shows it: `pairedUnder` says a device was allowed over Wi-Fi under this very certificate. */
