@@ -167,7 +167,8 @@ export function execFileExe(name, args, options, done) {
 	return start(true);
 }
 /**
- * `execFileSync` of a program found by `resolveExe`, with the same second search. Returns what execFileSync does.
+ * `execFileSync` of a program found by `resolveExe`, with the same second search. Returns what execFileSync does. A call with a `timeout` passes `killSignal: "SIGKILL"`: execFileSync sends the signal at
+ * the timeout and then waits for the program to end, so one that does not end on the default SIGTERM blocks this process for as long as it lives (todo #155).
  * @param {string} name
  * @param {string[]} args
  * @param {import("node:child_process").ExecFileSyncOptions} [options]

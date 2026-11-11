@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileExe } from "./exe.mjs";
 import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -60,7 +60,7 @@ export interface HygieneDeps {
 	track?: (done: Promise<unknown>) => void;
 }
 
-const run = (file: string, args: string[], cwd: string) => new Promise<string>((resolveRun, reject) => execFile(file, args, { cwd, encoding: "utf8", timeout: 5000, maxBuffer: 1 << 24 }, (error, stdout) => (error ? reject(error) : resolveRun(stdout))));
+const runGit = (cwd: string, args: string[]) => new Promise<string>((resolveRun, reject) => execFileExe("git", args, { cwd, encoding: "utf8", deadline: 5000, maxBuffer: 1 << 24 }, (error, stdout) => (error ? reject(error) : resolveRun(stdout))));
 const sanitize = (text: string) => text.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 
 /** The owner id of a pi: its pid, with the pi-herdr-agents subagent id in front for a worker (`<id>-<pid>` is unique while the pid lives; a pid reused later has another start time). */
@@ -85,7 +85,7 @@ export function createHygiene(deps: HygieneDeps = {}) {
 	const env = deps.env ?? process.env, platform = deps.platform ?? process.platform, argv = deps.argv ?? process.argv, pid = deps.pid ?? process.pid;
 	const call = deps.call ?? ((request) => callServer(env, request)), now = deps.now ?? Date.now, exists = deps.exists ?? existsSync, real = deps.real ?? physical;
 	const table = deps.table ?? (() => readTable()), cwdsOf = deps.cwds ?? ((pids) => readCwds(pids)), markersOf = deps.markers ?? ((pids) => readOwners(pids));
-	const git = deps.git ?? ((cwd, args) => run("git", args, cwd)), cli = deps.cli ?? cliCommand;
+	const git = deps.git ?? runGit, cli = deps.cli ?? cliCommand;
 	const herdr: HerdrRun = herdrRun;
 	const idleShells = deps.idleShells ?? (async (workspace: string) => {
 		const out: number[] = [];

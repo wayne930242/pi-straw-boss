@@ -35,7 +35,7 @@ export function localName(deps: { platform?: NodeJS.Platform; run?: (program: st
 	let raw: string;
 	try {
 		raw = platform === "darwin"
-			? (deps.run ?? ((program, args) => String(execFileSyncExe(program, args, { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }))))("/usr/sbin/scutil", ["--get", "LocalHostName"])
+			? (deps.run ?? ((program, args) => String(execFileSyncExe(program, args, { encoding: "utf8", timeout: 3000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"] }))))("/usr/sbin/scutil", ["--get", "LocalHostName"])
 			: (deps.hostname ?? hostname)();
 	} catch (error) {
 		return { unreadable: error instanceof Error ? error.message : String(error) };
@@ -206,7 +206,7 @@ function shaped(value: unknown): { ca: LanCa } | { lost: CaLost } {
 
 /** Keeps the CA out of Time Machine: `tmutil addexclusion` marks the file itself, so the mark survives the rename. Only macOS has Time Machine. */
 export function timeMachineExclude(path: string, platform: NodeJS.Platform = process.platform) {
-	if (platform === "darwin") execFileSyncExe("/usr/bin/tmutil", ["addexclusion", path], { stdio: "ignore", timeout: 10_000 });
+	if (platform === "darwin") execFileSyncExe("/usr/bin/tmutil", ["addexclusion", path], { stdio: "ignore", timeout: 10_000, killSignal: "SIGKILL" });
 }
 export interface WriteDeps {
 	/** Called on the new temporary file after it exists (empty, mode 600) and before the key is written into it; a throw is logged and the file is still written. Default: `timeMachineExclude`. */

@@ -102,7 +102,7 @@ export function inProject(abs: string, s: Scope): string | undefined {
 export function readTracked(project: string): Tracked {
 	const files = new Set<string>(), dirs = new Set<string>([""]);
 	try {
-		const out = execFileSyncExe("git", ["-c", "core.fsmonitor=false", "-C", project, "ls-files", "-z"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, timeout: 20_000 });
+		const out = execFileSyncExe("git", ["-c", "core.fsmonitor=false", "-C", project, "ls-files", "-z"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" }, timeout: 20_000, killSignal: "SIGKILL" });
 		for (const f of String(out).split("\0")) {
 			if (!f) continue;
 			files.add(f);
