@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { herdrCall, HerdrError, herdrRun, herdrWorld, panes, place, report, socketRun, tabs, waitFor, workspaces, worldOf } from "../src/herdr.ts";
+import { stallWatch, until } from "./server-world.ts";
 
 test("report puts the positional id first, adds a TTL only when it sets a token, and clears with --clear-token", async () => {
 	const calls: string[][] = [];
@@ -52,6 +53,86 @@ test("RV8-F001: a herdr command cut off by the timeout rejects as killed with it
 	}
 });
 
+// --- todo #155: the deadline holds ---
+
+const DEADLINE = 1500;
+/** Twenty seconds of a shell's own, then the mark that it was left to end by itself. */
+const LINGER = `i=0\nwhile [ $i -lt 200 ]; do sleep 0.1; i=$((i + 1)); done\n: > "$1/outlived"`;
+const gone = (pid: number) => { try { process.kill(pid, 0); return false; } catch { return true; } };
+interface Cut { killed?: boolean; signal?: unknown; code?: unknown }
+const cutOff = (error: Cut) => error.killed === true && error.signal === "SIGTERM" && typeof error.code !== "number";
+/** A stand-in herdr on HERDR_BIN_PATH: shell scripts in a folder of their own, which the first argument of a call names, so a script leaves its pid and its mark there. */
+function standIn(scripts: Record<string, string>) {
+	const dir = mkdtempSync(join(tmpdir(), "psb-herdr-")), before = process.env.HERDR_BIN_PATH;
+	for (const [name, body] of Object.entries(scripts)) writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+	process.env.HERDR_BIN_PATH = join(dir, "herdr");
+	const has = (name: string) => existsSync(join(dir, name)), pid = (name: string) => Number(readFileSync(join(dir, name), "utf8"));
+	return {
+		dir, has, pid,
+		close: () => {
+			if (before === undefined) delete process.env.HERDR_BIN_PATH;
+			else process.env.HERDR_BIN_PATH = before;
+			for (const name of ["pid", "held"]) try { process.kill(pid(name), "SIGKILL"); } catch { /* gone, or never written */ }
+			rmSync(dir, { recursive: true, force: true });
+		},
+	};
+}
+
+test("todo #155: a herdr that ignores SIGTERM and keeps its stdout open is given up at the deadline, as cut off, and is killed after the grace", { skip: process.platform === "win32" }, async () => {
+	const fake = standIn({ herdr: `trap '' TERM\necho started\necho $$ > "$1/pid"\n${LINGER}` });
+	const stalls = stallWatch(), began = Date.now();
+	try {
+		await assert.rejects(herdrRun([fake.dir], DEADLINE), cutOff);
+		const took = Date.now() - began;
+		stalls.stop();
+		assert.ok(took < DEADLINE + 1000 + stalls.worst(), `the call ended at its deadline: ${took} ms (this process stood still for ${stalls.worst()} ms)`);
+		assert.ok(fake.has("pid"), "the stand-in had started before the deadline");
+		assert.ok(!gone(fake.pid("pid")) && !fake.has("outlived"), "the call did not wait for the program to end");
+		await until(() => gone(fake.pid("pid")), "the program that ignores SIGTERM to be gone", 15_000);
+		assert.ok(!fake.has("outlived"), "it was killed, not left to end by itself");
+	} finally {
+		stalls.stop();
+		fake.close();
+	}
+});
+
+/** A stand-in that starts a child with its own stdout and stderr, which ignores SIGTERM and lingers; the stand-in itself waits for it, or (`leave`) says a word and exits. */
+const withChild = () => standIn({
+	herdr: `"$1/holder" "$1" &\nwhile [ ! -s "$1/held" ]; do sleep 0.05; done\necho $$ > "$1/pid"\nif [ "$2" = leave ]; then echo left; exit 0; fi\nwait`,
+	holder: `trap '' TERM\necho $$ > "$1/held"\n${LINGER}`,
+});
+
+test("todo #155: what a herdr cut off at the deadline had started is ended with it: the SIGTERM and the SIGKILL go to its group", { skip: process.platform === "win32" }, async () => {
+	const fake = withChild(), stalls = stallWatch(), began = Date.now();
+	try {
+		await assert.rejects(herdrRun([fake.dir, "stay"], DEADLINE), cutOff);
+		const took = Date.now() - began;
+		stalls.stop();
+		assert.ok(took < DEADLINE + 1000 + stalls.worst(), `the call ended at its deadline: ${took} ms (this process stood still for ${stalls.worst()} ms)`);
+		assert.ok(fake.has("held") && fake.has("pid"), "the stand-in and its child had started before the deadline");
+		assert.ok(!gone(fake.pid("held")) && !fake.has("outlived"), "the call did not wait for the child to end");
+		await until(() => gone(fake.pid("held")) && gone(fake.pid("pid")), "herdr and the child that ignores SIGTERM to be gone", 15_000);
+		assert.ok(!fake.has("outlived"), "the child was killed, not left to end by itself");
+	} finally {
+		stalls.stop();
+		fake.close();
+	}
+});
+
+test("todo #155: a herdr that exited with 0 and left a child holding its stdout is not a failure: the call ends at the deadline with what herdr wrote, as it did before", { skip: process.platform === "win32" }, async () => {
+	const fake = withChild(), stalls = stallWatch(), began = Date.now();
+	try {
+		assert.equal(await herdrRun([fake.dir, "leave"], DEADLINE), "left\n");
+		const took = Date.now() - began;
+		stalls.stop();
+		assert.ok(took < DEADLINE + 1000 + stalls.worst(), `the call ended at its deadline: ${took} ms (this process stood still for ${stalls.worst()} ms)`);
+		assert.ok(!gone(fake.pid("held")) && !fake.has("outlived"), "the call did not wait for the child to end");
+	} finally {
+		stalls.stop();
+		fake.close();
+	}
+});
+
 /** A fake Herdr socket: each connection gets `answer` with the request it read. */
 async function socket(answer: (request: { id: string; method: string; params: unknown }, reply: (chunk: Buffer | string) => void, end: () => void) => void) {
 	const dir = mkdtempSync(join(tmpdir(), "psb-sock-")), path = join(dir, "herdr.sock");
@@ -89,6 +170,22 @@ test("herdrCall returns Herdr's result, even split mid-character across reads, a
 		await assert.rejects(herdrCall(join(tmpdir(), "psb-no-such.sock"))("ping", {}), (e: HerdrError) => e.code === "socket_error");
 		assert.deepEqual(seen, ["pane.get", "agent.prompt", "pane.close", "bad", "pane.read"]);
 	} finally {
+		fake.close();
+	}
+});
+
+test("todo #155: herdrCall's timeout is a deadline for the whole answer: a Herdr that keeps sending pieces of a frame it does not end cannot renew it", async () => {
+	const timers: NodeJS.Timeout[] = [];
+	// One piece every 20 ms and the frame's end after a hundred of them: a timeout that each piece renewed would let the call resolve with the answer two seconds later.
+	const fake = await socket((request, reply) => {
+		let pieces = 0;
+		const timer = setInterval(() => (++pieces <= 100 ? reply(" ") : (clearInterval(timer), reply(`${JSON.stringify({ id: request.id, result: { late: true } })}\n`))), 20);
+		timers.push(timer);
+	});
+	try {
+		await assert.rejects(herdrCall(fake.path)("pane.read", {}, 100), (e: HerdrError) => e instanceof HerdrError && e.code === "timeout" && /no answer within 100 ms/.test(e.message));
+	} finally {
+		timers.forEach((timer) => clearInterval(timer));
 		fake.close();
 	}
 });

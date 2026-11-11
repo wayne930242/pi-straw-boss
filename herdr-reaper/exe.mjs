@@ -2,7 +2,7 @@
 // planted in a repository would run with the user's rights. Every program the package starts by name (herdr, git, tailscale, sh, ps, the clipboard and browser openers) is found here
 // instead, by a search of PATH that skips what is not an absolute folder (empty, ".", and relative entries) and never looks in the current folder, and is spawned by the path it found.
 // Plain JavaScript on purpose: balance.mjs, which Node runs from node_modules without stripping types, uses it too.
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { posix, win32 } from "node:path";
 
@@ -69,16 +69,75 @@ export function resolveExe(name, deps = {}) {
 /** Forgets what was found for `name` (all names without one): the next call searches again. @param {string} [name] */
 export const forgetExe = (name) => void (name === undefined ? cache.clear() : cache.delete(name));
 
+const GRACE_MS = 2000;
+/** Signals the process group `pid` leads; false when no process of it is left. @param {number} pid @param {NodeJS.Signals | 0} signal */
+const signalGroup = (pid, signal) => {
+	try {
+		return process.kill(-pid, signal);
+	} catch {
+		return false;
+	}
+};
+/**
+ * `execFile` with a deadline that holds (`options.deadline`, in ms). execFile's own `timeout` sends one SIGTERM and calls back when the program has ended, so a program that does not end on SIGTERM holds the
+ * callback for as long as it lives (todo #155: a `herdr agent start` given 35 s called back 61 minutes later). Here `done` is called at the deadline at the latest. A program that had ended by then, with a copy
+ * of its stdout or stderr still open somewhere, is told by its own exit status, as execFile tells it. One still running is cut off: the error is marked as execFile marks a timeout (`killed`, `signal: "SIGTERM"`,
+ * no exit code), with what was read so far, and the program is ended behind the call by SIGTERM, then SIGKILL after `options.grace` (2 s). Where there are process groups it starts as the leader of its own
+ * (`detached`) and both signals go to the group, so what it started ends with it; on Windows they end the program alone. Output is read as UTF-8 text, and more than `maxBuffer` of it cuts the program off too.
+ * @param {string} file
+ * @param {string[]} args
+ * @param {import("node:child_process").ExecFileOptions & { deadline: number, grace?: number }} options
+ * @param {(error: (Error & { code?: string | number | null }) | null, stdout: string, stderr: string) => void} done
+ */
+function execFileByDeadline(file, args, options, done) {
+	const win = process.platform === "win32", limit = options.maxBuffer ?? 1024 * 1024, cmd = [file, ...args].join(" ");
+	const child = spawn(file, args, { cwd: options.cwd, env: options.env, windowsHide: options.windowsHide, detached: !win });
+	let stdout = "", stderr = "", settled = false;
+	/** @type {{ code: number | null, signal: NodeJS.Signals | null } | undefined} */
+	let ended;
+	/** @param {Error | null} error */
+	const settle = (error) => {
+		if (settled) return;
+		settled = true;
+		clearTimeout(timer);
+		for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy();
+		done(error, stdout, stderr);
+	};
+	/** @param {string} what @param {Record<string, unknown>} marks */
+	const failure = (what, marks) => Object.assign(new Error(`${what}: ${cmd}${stderr ? `\n${stderr}` : ""}`), { cmd, ...marks });
+	/** @param {{ code: number | null, signal: NodeJS.Signals | null }} status */
+	const byStatus = ({ code, signal }) => settle(code === 0 ? null : failure("Command failed", { code, killed: false, signal }));
+	/** @param {string} what @param {string | null} code */
+	const cutOff = (what, code) => {
+		if (settled) return;
+		settle(failure(what, { code, killed: true, signal: "SIGTERM" }));
+		if (ended) return; // it left by itself: what it left behind is not signalled, and its group's id may be another program's by now
+		/** @param {NodeJS.Signals} signal */
+		const send = (signal) => (win || child.pid === undefined ? child.kill(signal) : signalGroup(child.pid, signal));
+		send("SIGTERM");
+		const hard = setTimeout(() => (send("SIGKILL"), child.unref()), options.grace ?? GRACE_MS);
+		// The leader gone and nothing left in its group: there is nothing to kill at the grace.
+		child.once("exit", () => (win || child.pid === undefined || !signalGroup(child.pid, 0)) && clearTimeout(hard));
+	};
+	const timer = setTimeout(() => (ended ? byStatus(ended) : cutOff(`Command timed out after ${options.deadline} ms`, null)), options.deadline);
+	child.stdout?.setEncoding("utf8").on("data", (chunk) => (stdout += chunk).length > limit && cutOff("stdout maxBuffer length exceeded", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"));
+	child.stderr?.setEncoding("utf8").on("data", (chunk) => (stderr += chunk).length > limit && cutOff("stderr maxBuffer length exceeded", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"));
+	child.on("error", settle); // the program could not be started; after the call has ended, a signal that could not be sent
+	child.once("exit", (code, signal) => (ended = { code, signal }));
+	child.once("close", (code, signal) => byStatus({ code, signal }));
+	return child;
+}
+
 /**
  * `execFile` of a program found by `resolveExe`. A program that is gone when it is started (ENOENT: it was uninstalled or moved since the search) is searched for again once.
- * A program that is not found at all calls back with ExeNotFound.
+ * A program that is not found at all calls back with ExeNotFound. With `options.deadline` the call ends by that many ms whatever the program does (`execFileByDeadline`), which `options.timeout` does not promise.
  * @param {string} name
  * @param {string[]} args
- * @param {import("node:child_process").ExecFileOptions} options
- * @param {(error: (Error & { code?: string | number }) | null, stdout: string, stderr: string) => void} done
+ * @param {import("node:child_process").ExecFileOptions & { deadline?: number, grace?: number }} options
+ * @param {(error: (Error & { code?: string | number | null }) | null, stdout: string, stderr: string) => void} done
  */
 export function execFileExe(name, args, options, done) {
-	const env = options.env ?? process.env;
+	const env = options.env ?? process.env, { deadline } = options;
 	/** @param {boolean} again */
 	const start = (again) => {
 		let file;
@@ -88,8 +147,9 @@ export function execFileExe(name, args, options, done) {
 			process.nextTick(done, /** @type {Error} */ (error), "", "");
 			return undefined;
 		}
-		return execFile(file, args, options, (error, stdout, stderr) => {
-			if (error && /** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT" && again) {
+		/** @param {(Error & { code?: string | number | null }) | null} error @param {string | Buffer} stdout @param {string | Buffer} stderr */
+		const finish = (error, stdout, stderr) => {
+			if (error && error.code === "ENOENT" && again) {
 				forgetExe(name);
 				let next;
 				try {
@@ -100,7 +160,8 @@ export function execFileExe(name, args, options, done) {
 				if (next !== file) return void start(false);
 			}
 			done(error, String(stdout), String(stderr));
-		});
+		};
+		return deadline === undefined ? execFile(file, args, options, finish) : execFileByDeadline(file, args, { ...options, deadline }, finish);
 	};
 	return start(true);
 }

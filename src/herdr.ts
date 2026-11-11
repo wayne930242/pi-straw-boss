@@ -33,7 +33,8 @@ const START_ATTEMPTS = 20;
 
 export const herdrRun: HerdrRun = (args, timeoutMs = 5000) =>
 	new Promise((resolve, reject) => {
-		execFileExe(process.env.HERDR_BIN_PATH || "herdr", args, { timeout: timeoutMs }, (error, stdout, stderr) => {
+		// `deadline`, not execFile's `timeout`: the call ends by then whatever the CLI does, and a CLI cut off is ended behind it with what it started (exe.mjs; todo #155).
+		execFileExe(process.env.HERDR_BIN_PATH || "herdr", args, { deadline: timeoutMs }, (error, stdout, stderr) => {
 			// `stderr` is what Herdr itself said (its error code first), apart from the command line the message repeats. `killed` and `signal` say the command was cut off (the timeout) before it ended: what it was doing is unknown.
 			if (error) reject(Object.assign(new Error(`herdr ${args.join(" ")} failed: ${stderr.trim() || error.message}`), { stderr: stderr.trim(), code: (error as { code?: unknown }).code, killed: (error as { killed?: unknown }).killed === true, signal: (error as { signal?: unknown }).signal ?? undefined }));
 			else resolve(stdout);
@@ -121,13 +122,16 @@ export async function panes(run: HerdrRun, workspace?: string): Promise<Pane[]> 
 // Herdr answers one request per connection with one newline-ended frame, which may arrive in pieces (split anywhere, even inside a character).
 export const herdrCall = (socketPath = herdrSocket()): HerdrCall => (method, params, timeoutMs = 5000) =>
 	new Promise((resolve, reject) => {
-		const socket = createConnection(localEndpoint(socketPath)).setTimeout(timeoutMs), text = new StringDecoder("utf8");
+		const socket = createConnection(localEndpoint(socketPath)), text = new StringDecoder("utf8");
 		let reply = "";
-		const fail = (code: string, message: string) => (socket.destroy(), reject(new HerdrError(code, `herdr ${method} failed: ${code} ${message}`.trim())));
+		const fail = (code: string, message: string) => (clearTimeout(timer), socket.destroy(), reject(new HerdrError(code, `herdr ${method} failed: ${code} ${message}`.trim())));
+		// A deadline for the whole answer, not the socket's idle timeout, which every piece of a frame that never ends would renew.
+		const timer = setTimeout(() => fail("timeout", `no answer within ${timeoutMs} ms`), timeoutMs);
 		socket.on("connect", () => socket.write(`${JSON.stringify({ id: `straw-boss-${Date.now()}`, method, params })}\n`));
 		socket.on("data", (chunk) => {
 			reply += text.write(chunk);
 			if (!reply.includes("\n")) return;
+			clearTimeout(timer);
 			socket.destroy();
 			try {
 				const { result, error } = JSON.parse(reply.split("\n")[0]!) as { result?: unknown; error?: { code?: string; message?: string } };
@@ -137,7 +141,6 @@ export const herdrCall = (socketPath = herdrSocket()): HerdrCall => (method, par
 				fail("bad_frame", reply.slice(0, 200));
 			}
 		});
-		socket.on("timeout", () => fail("timeout", `no answer within ${timeoutMs} ms`));
 		socket.on("error", (error) => fail("socket_error", error.message));
 		socket.on("close", () => fail("closed", "the connection closed before an answer"));
 	});
