@@ -6,6 +6,7 @@ import { checkText, type Reply } from "./control.ts";
 import { createDeploys, type Delivery as Said, type Deploy, type StepId } from "./deploy.ts";
 import { createOpenings, type Delivery, type Opening, type Openings } from "./openings.ts";
 import { clean, cleanGroup } from "./trust/found.ts";
+import type { Intents } from "./trust/intent.ts";
 import { assertSettingsSafe, type SettingsRefusal, SettingsRefused } from "./trust/settings.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 import { type Hidden, HiddenError, hasHidden, platformHidden } from "./hidden.ts";
@@ -39,7 +40,7 @@ const MAX_DIRS = 500, MAX_LABEL = 64;
 
 /** `live` says whether a session is still on the net, so a tower token its tower left behind does not count; `sessionAt` names the session in a pane, so the page can go to it. */
 /** `lock` is the one-open-at-a-time flag: the host owns it, as it owns `deploys` and `openings`, so the spawns of one host (a GUI that stops and starts in the process) never open at once. */
-export interface SpawnDeps { lock?: { busy: boolean }; run: HerdrRun; sleep: Sleep; call?: HerdrCall; live(sessionId: string): Promise<boolean>; sessionAt?(paneId: string): Promise<string | undefined>; home?: string; hidden?: Hidden; deploys?: ReturnType<typeof createDeploys>; trustDir?: string; openings?: Openings; note?(event: string, facts: Record<string, string>): void }
+export interface SpawnDeps { lock?: { busy: boolean }; run: HerdrRun; sleep: Sleep; call?: HerdrCall; live(sessionId: string): Promise<boolean>; sessionAt?(paneId: string): Promise<string | undefined>; home?: string; hidden?: Hidden; deploys?: ReturnType<typeof createDeploys>; trustDir?: string; openings?: Openings; intents?: Intents; note?(event: string, facts: Record<string, string>): void }
 
 const no = (status: number, error: string, reason: string): Reply => ({ status, body: { error, reason } });
 const OUTSIDE = no(400, "not_allowed", "Only folders in your home folder, outside hidden folders, can be picked.");
@@ -94,7 +95,7 @@ export async function makeDir(parent: unknown, name: unknown, home = homedir(), 
 	return real ? { status: 200, body: { path: real, created: made } } : no(409, "not_a_folder", `${clean} exists here and is not a folder you can pick.`);
 }
 
-export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(), hidden = platformHidden, deploys = createDeploys(), trustDir, openings = createOpenings(), note, lock = { busy: false } }: SpawnDeps) {
+export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(), hidden = platformHidden, deploys = createDeploys(), trustDir, openings = createOpenings(), intents, note, lock = { busy: false } }: SpawnDeps) {
 	const pick = (path: unknown) => pickable(path, home, hidden);
 	/** Records an opening; a file system's cause (it has the path) goes to the log, and the reply says only that the record could not be kept. */
 	const keep = (id: string, opening: Opening) => {
@@ -166,11 +167,17 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 			track?.("sent");
 		} catch {} // typed already: a record left at `sending` keeps a repeat from typing it again, which is the safe side
 	}
-	async function boot(d: Deploy, paneId: string, name: string, prompt: string | undefined, role?: string, joinWaitMs = JOIN_WAIT_MS, track?: (state: Delivery) => void): Promise<Reply | undefined> {
+	/** `intent` is the folder of an open/base: a person's act, so under auto mode its pi's trust question is asked as usual. The pane is listed before pi starts and taken off when the join ends, however it ends (trust/intent.ts). */
+	async function boot(d: Deploy, paneId: string, name: string, prompt: string | undefined, role?: string, joinWaitMs = JOIN_WAIT_MS, track?: (state: Delivery) => void, intent?: string): Promise<Reply | undefined> {
 		d.go("start");
 		d.pane = paneId; // before pi starts: its trust question can be there before `agent start` returns
-		await startPi(run, sleep, `${role ?? "member"}-${randomUUID().slice(0, 8)}`, paneId, ["--name", name]);
-		await awaitJoin(d, paneId, joinWaitMs, role);
+		const release = intent ? intents?.grant(paneId, intent) : undefined;
+		try {
+			await startPi(run, sleep, `${role ?? "member"}-${randomUUID().slice(0, 8)}`, paneId, ["--name", name]);
+			await awaitJoin(d, paneId, joinWaitMs, role);
+		} finally {
+			release?.();
+		}
 		if (prompt) return deliver(d, paneId, prompt, track);
 	}
 	/** Runs `open` on what was just created, and closes it again when the open fails: nothing was typed into it yet, so nothing is lost with it. */
@@ -265,7 +272,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 			if (id) {
 				keep(id, { ...record, delivery }); // before pi starts: a restart in the join wait leaves the id known
 			}
-			return boot(d, paneId, `member · ${basename(dir) || dir}`, prompt, undefined, joinWaitMs, id ? (state) => void keep(id, { ...record, delivery: (delivery = state) }) : (state) => void (delivery = state));
+			return boot(d, paneId, `member · ${basename(dir) || dir}`, prompt, undefined, joinWaitMs, id ? (state) => void keep(id, { ...record, delivery: (delivery = state) }) : (state) => void (delivery = state), dir);
 		}).catch((error) => {
 			if (id) try { openings.drop(id); } catch {} // the workspace is closed with the throw: the id is free again, and the failure that is reported is the first
 			return Promise.reject(error);

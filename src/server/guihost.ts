@@ -21,6 +21,7 @@ import type { TowerEnd } from "./towerpanel.ts";
 import { identity, type Run, switchRemote, tailscale } from "../remote.ts";
 import { createLanDevices } from "../devices.ts";
 import { createOpenings } from "../openings.ts";
+import { createIntents } from "../trust/intent.ts";
 import { createSpawn } from "../spawn.ts";
 import { popBase, stashedList } from "../stash.ts";
 import { trustDir } from "../trust/files.ts";
@@ -141,7 +142,7 @@ export function createGuiHost(o: GuiHostOptions) {
 	/** Set while the boss's rotation runs: the GUI commands wait for it, and the start it makes says why its token is new. */
 	let rotating: Promise<unknown> | undefined;
 	// Built once for this process (`lock`: one opening at a time, for every GUI this process starts): pi-intercom has no unregister, so a channel the hub registered stays, and the same hub serves the GUI again after a stop.
-	const deploys = createDeploys(), openings = createOpenings(join(slot.stateDir, "openings.json")), lock = { busy: false }, trust = createTrustServe({ dir: trustDir(slot.stateDir), herdr: slot.herdr, world: () => cfg.world(), opening: deploys.openingOf });
+	const deploys = createDeploys(), openings = createOpenings(join(slot.stateDir, "openings.json")), intents = createIntents(), lock = { busy: false }, trust = createTrustServe({ dir: trustDir(slot.stateDir), herdr: slot.herdr, world: () => cfg.world(), opening: deploys.openingOf });
 	// The record of answered blocks (answered.ts): one file beside paired.json, mode 600, shared by every page of this server and read again by the next.
 	const answered = createAnswered(answeredFileDeps(join(dir, "answered.json")));
 	const live = async (session: string) => (await o.sessions()).some((x) => x.id === session);
@@ -262,7 +263,7 @@ export function createGuiHost(o: GuiHostOptions) {
 			onSaveFailed: (reason) => log.line("error", { code: "paired", text: phrase(reason, 200) }),
 			onRemote: async () => void (await switchRemote(running, true, dir, ts), (remoteNote = undefined), log.line("remote-on", { how: "page" })),
 			onRemoteOff: async () => void (await switchRemote(running, false, dir, ts), (remoteNote = undefined), log.line("remote-off", { why: "page" })),
-			spawn: createSpawn({ run: cfg.run, sleep: cfg.sleep, call: cfg.call, deploys, lock, trustDir: trustDir(slot.stateDir), openings, note: (event, facts) => log.line(event, facts), live, sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }),
+			spawn: createSpawn({ run: cfg.run, sleep: cfg.sleep, call: cfg.call, deploys, lock, trustDir: trustDir(slot.stateDir), openings, intents, note: (event, facts) => log.line(event, facts), live, sessionAt: async (pane) => (await sessions()).find((x) => x.herdrLocation?.paneId === pane)?.id }),
 			close: createCloser({
 				run: cfg.run, sleep: cfg.sleep, me: () => id, sessions, ask: async (key, keepPane, ifStashable) => hub?.close(key, keepPane, ifStashable), check: async (key) => hub?.stashCheck(key), stateDir: slot.stateDir,
 				// The tower the server runs has no pi to ask: the unit the net shows for it (a service, not a waiting one) is closed by ending the service.
@@ -437,6 +438,8 @@ export function createGuiHost(o: GuiHostOptions) {
 		},
 		/** The control requests that concern the GUI; undefined for any other. */
 		async handle(request: Request): Promise<Reply | undefined> {
+			// A pane's pi asks whether this server started it for an open/base that is still starting (trust/intent.ts): answered from this process's memory, with or without a GUI.
+			if (request.cmd === "open-intent") return { ok: true, opened: intents.has(request.pane, request.cwd) };
 			if (o.listen === false || !["gui", "gui-stop", "gui-remote", "gui-pair", "gui-rotate", "gui-view", ...LAN_CMDS].includes(request.cmd)) return undefined;
 			if (closing) return { ok: false, error: "restarting" };
 			// A rotation in flight is finished first: a start meanwhile would bind the ports before the old listener let go, or read the secrets that are being dropped.
