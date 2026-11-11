@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Reply } from "./control.ts";
-import { createTab, type HerdrRun, isHead, isStandin, isSub, type Pane, panes, parentOf, report, result, type Session, type Sleep, startPi, tabs, workspaces } from "./herdr.ts";
+import { createTab, type HerdrRun, isHead, isStandin, isSub, type Pane, panes, parentOf, report, result, type Session, type Sleep, startPi, tabs, TOWER_LABEL, workspaces } from "./herdr.ts";
 import { isSessionRole } from "./trainrole.ts";
 import { assertSettingsSafe } from "./trust/settings.ts";
 import { waitPastTrust } from "./trust/wait.ts";
@@ -250,7 +250,7 @@ async function resume({ run, sleep, live, trustDir }: PopDeps, ws: string, paneI
  * Opens the stash `name` in a new workspace; on any failure the new workspace closes and the manifest goes back, so popping again starts over.
  * The manifest is claimed first by moving it into stash/.popping/ (one rename, which only one session wins), so two pops never run one session file twice.
  */
-export async function popBase(d: PopDeps, name: string): Promise<{ workspace: string; label: string; sessions: number }> {
+export async function popBase(d: PopDeps, name: string): Promise<{ workspace: string; label: string; sessions: number; warning?: string }> {
 	if (!nameOk(name)) throw new Error(`"${name}" is not a stash name`);
 	const claimed = join(dirOf(d.stateDir), ".popping", `${name}.json`);
 	mkdirSync(dirname(claimed), { recursive: true, mode: 0o700 });
@@ -273,7 +273,14 @@ export async function popBase(d: PopDeps, name: string): Promise<{ workspace: st
 	}
 }
 async function open(d: PopDeps, name: string, file: string) {
-	const { run } = d, st = readStash(d.stateDir, name, file), all = st.tabs.flatMap((t) => t.panes);
+	const { run } = d, st = readStash(d.stateDir, name, file), refused: string[] = [];
+	// The manifest is a file a session's shell can write, so the tower it names is a claim, as a role record's is (docs/specs/2026-11-07-train-workers.md §29): a pop starts a tower
+	// only where the stash made one, alone in a tab labelled with the tower glyph. Anywhere else the pi comes back a member, told once.
+	for (const tab of st.tabs) {
+		const alone = tab.label === TOWER_LABEL && tab.panes.filter((p) => p.kind !== "shell").length === 1;
+		tab.panes = tab.panes.map((p) => (p.kind !== "tower" || alone ? p : (refused.push(p.name ?? p.session ?? "a session"), { ...p, kind: "member" })));
+	}
+	const all = st.tabs.flatMap((t) => t.panes);
 	const envOf = (kind: StashPane["kind"]) => [...roleEnv(kind), ...(d.agentDir ? [`PI_CODING_AGENT_DIR=${d.agentDir}`] : [])];
 	const gone = [...new Set([...all.filter((p) => p.session && !existsSync(p.session)).map((p) => p.session!), ...all.map((p) => p.cwd).filter((c) => !statSync(c, { throwIfNoEntry: false })?.isDirectory())])];
 	if (gone.length) throw new Error(`Nothing was opened: ${gone.join(", ")} no longer exist${gone.length > 1 ? "" : "s"}`);
@@ -295,7 +302,7 @@ async function open(d: PopDeps, name: string, file: string) {
 			const starts = tab.panes.map((p, j) => ({ p, pane: ids[j]! })).filter(({ p }) => p.kind !== "shell").sort((a, b) => RANK[a.p.kind] - RANK[b.p.kind]);
 			for (const { p, pane } of starts) (await resume(d, ws, pane, p), sessions++);
 		}
-		return { workspace: ws, label: st.label, sessions };
+		return { workspace: ws, label: st.label, sessions, ...(refused.length ? { warning: `Straw Boss: the stash names ${refused.join(", ")} a tower, but not alone in a tower tab, so it came back as a member: a file alone gives no role` } : {}) };
 	} catch (error) {
 		await run(["workspace", "close", ws]).catch(() => {});
 		throw error;

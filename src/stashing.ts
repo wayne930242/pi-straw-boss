@@ -58,6 +58,7 @@ export function createStashing({ cfg, s, guiDir, tell, me }: Kit, { host }: { ho
 			const live = async (id: string) => (await host.sessions()).some((x) => x.id === id);
 			const r = await popBase({ run, sleep, stateDir: guiDir, live, agentDir: cfg.env.PI_CODING_AGENT_DIR, trustDir: trustDir(guiDir) }, name);
 			tell(`Popped "${name}": ${r.sessions} sessions are back in ${r.label}`);
+			if (r.warning) tell(r.warning, "warning");
 		},
 	};
 }

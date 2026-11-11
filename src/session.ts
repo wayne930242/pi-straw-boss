@@ -59,13 +59,16 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	const labelOf = async (here: Place) => (await tabs(run, here.workspaceId)).find((t) => t.tab_id === here.tabId)?.label;
 	const shown = (label: string | undefined) => (label === undefined ? "no tab" : JSON.stringify(Array.from(label).slice(0, 40).join("")));
 	// Whether the tower role this session claims is proven. Its saved entry and its role record are files its own shell can write, so they only claim; the proof is Herdr's:
-	// the pane sits in a tab labelled with the tower glyph, which a restore keeps and no file holds (docs/specs/2026-11-07-train-workers.md §29). No proof is a member, told once.
+	// the pane sits in a tab labelled with the tower glyph, which a restore keeps and no file holds (docs/specs/2026-11-07-train-workers.md §29), and no other pane of that tab runs an
+	// agent: the label proves the tab, not the pane, and a tower that starts beside a live one yields by closing the tab (RP131-F001). No proof is a member, told once.
 	const towerProof = async (here: Place, once: Once): Promise<boolean> => {
 		const entry = Boolean(s.saved.tower);
 		if (!entry && roles.claimed(here) !== "tower") return false;
 		const label = await labelOf(here);
-		if ((entry && label === TOWER_LABEL) || roles.held({ ...here, tabLabel: label }) === "tower") return true;
-		once("tower-claim", `Straw Boss: this session's ${entry ? "saved entry" : "role record"} says it was a tower, but Herdr lists its pane in ${shown(label)}, not in a tower tab, so it starts as a member: a file alone gives no role`, "warning");
+		const inTab = (entry && label === TOWER_LABEL) || roles.held({ ...here, tabLabel: label }) === "tower";
+		const shared = inTab && (await panes(run, here.workspaceId)).some((p) => p.tab_id === here.tabId && p.pane_id !== here.paneId && (p.agent || p.tokens?.sb_role));
+		if (inTab && !shared) return true;
+		once("tower-claim", `Straw Boss: this session's ${entry ? "saved entry" : "role record"} says it was a tower, but ${shared ? "its pane shares the tower tab with another agent's pane" : `Herdr lists its pane in ${shown(label)}, not in a tower tab`}, so it starts as a member: a file alone gives no role`, "warning");
 		return false;
 	};
 	const barReason = async (once: Once): Promise<Verdict> => {
@@ -155,15 +158,20 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			// The saved entry and the role record are files the session's own shell can write: they name the train it claims to be, and Herdr proves it, by the tab that carries the train's code
 			// (`train <MMDDx>`, set by the open and kept by a restore; docs/specs/2026-11-07-train-workers.md §29). A tab list that fails is no answer, as the pane list above.
 			const entry = event.reason !== "startup" && saved && s.saved.openedPane === placed.paneId ? saved : undefined;
+			// The label carries the short code only. At a /reload the pane still carries the train's own `sb_train` (presence.ts keeps it over the gap), which says the project and the year:
+			// an entry that names another train is not taken (RP131-F003). After a restore, or another start in this process, the token is gone and only the label is left.
+			const kept = entry && event.reason === "reload" ? (mine ?? (await panes(run, placed.workspaceId).catch((error) => { throw Object.assign(error as Error, { joining: true }); })).find((p) => p.pane_id === placed!.paneId))?.tokens?.sb_train : undefined;
+			const other = entry && event.reason === "reload" && kept !== trainToken(entry);
 			const named = entry ?? (roles.claimed(placed) === TRAIN ? roles.trainOf(placed) : undefined);
 			if (!named) return;
 			const label = await labelOf(placed).catch((error) => { throw Object.assign(error as Error, { joining: true }); });
-			if (entry && label === trainLabel(entry.code)) {
+			if (entry && !other && label === trainLabel(entry.code)) {
 				[s.isTrain, s.train, s.openedBy, trainHow] = [true, entry, s.saved.openedBy ?? undefined, "reload"];
 			} else if (roles.held({ ...placed, tabLabel: label }) === TRAIN) {
 				const record = roles.trainOf(placed);
 				if (record) [s.isTrain, s.train, s.openedBy, trainHow] = [true, record, roles.openerOf(placed), "restore"];
 			} else if (label !== trainLabel(named.code)) once("train-claim", `Straw Boss: this session's ${entry ? "saved entry" : "role record"} names ${trainLabel(named.code)}, but Herdr lists its pane in ${shown(label)}, not in that train's tab, so it is no train: a file alone gives no role`, "warning");
+			else if (other) once("train-claim", `Straw Boss: this session's saved entry names ${trainToken(entry!)}, but its pane carries ${kept ?? "no train's mark"}, so it is no train: a file alone gives no role`, "warning");
 		};
 		const proceed = async () => {
 			if (!s.stopped && !unwatch) unwatch = cfg.watch(presence.restore); // a shutdown that came while Herdr was asked about the workspace has stopped nothing yet

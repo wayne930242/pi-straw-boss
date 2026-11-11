@@ -86,6 +86,24 @@ for (const reason of ["reload", "resume", "startup"] as const) {
 	});
 }
 
+// RP131-F001: the glyph proves the tab, not the pane. A session in a second pane of the tower's own tab (the boss split it) forges the same claim;
+// beside a live tower a tower that starts yields by closing its tab, which here is the real tower's.
+for (const how of ["entry", "record"] as const) {
+	test(`a session in a second pane of the tower's tab is no tower by its ${how}, and closes nothing: the tab has another agent's pane`, async () => {
+		await net();
+		const guest = await pi({ id: "guest-1", pane: "wA:p9", tab: "wA:t7" }, "/s/guest.jsonl");
+		if (how === "record") forge("/s/guest.jsonl", { role: "tower", pane: "wA:p9", tab: "wA:t7", workspace: "wA" });
+		await guest.stop("reload");
+		const again = await pi({ id: "guest-2", pane: "wA:p9", entries: [...guest.entries, ...(how === "entry" ? [TOWER_ENTRY] : [])] }, "/s/guest.jsonl", "reload");
+		assert.equal(world.herdr.commands("tab", "close").length, 0, "the shared tab is not closed");
+		assert.ok(world.herdr.panes.some((p) => p.pane_id === "wA:p7"), "the real tower's pane stays");
+		assert.equal(world.herdr.workspace("wA").tokens.tower, "tower-1", "the workspace's tower is untouched");
+		assert.notEqual(again.tokens.sb_role, "tower", "it joins the net as any session in that tab would");
+		assert.equal(again.tools.has("boss_open_main"), false);
+		assert.ok(told(again, new RegExp(`${how === "entry" ? "saved entry" : "role record"} says it was a tower.*shares the tower tab with another agent's pane.*starts as a member`)), "the refusal is told");
+	});
+}
+
 test("a forged tower record proves nothing in a tab that is only named like a tower's: the glyph is the proof, not the word", async () => {
 	world.herdr.addTab("wA:t8", "tower", "wA:p8");
 	const first = await pi({ id: "plain-1", pane: "wA:p8", tab: "wA:t8" }, "/s/plain.jsonl");
@@ -217,6 +235,21 @@ test("a real train comes back after a Herdr restore and after a /reload, in the 
 	assert.ok(told(renamed, /not in that train's tab/));
 });
 
+// RP131-F003: the tab's label carries the short code only (`train 1106m`), not the project or the year. At a /reload the pane still carries the train's own `sb_train` (presence.ts keeps it),
+// so an entry that names another train of the same short code is not taken.
+test("a train that rewrites its saved entry to another project and year of the same short code is not that train at its /reload: the pane's kept sb_train says which it was", async () => {
+	const { tower } = await net();
+	await openTrain(tower);
+	const train = world.agents.find((a) => a.file === TRAIN.file)!;
+	await train.stop("reload");
+	assert.equal(tokens(TRAIN.pane).sb_train, "acme/2026-11-06-m", "the reload keeps the pane's train token");
+	const forged = { customType: "straw-boss", data: { openedBy: "tower-1", openedPane: TRAIN.pane, train: { project: "other", code: "2025-11-06-m" } } };
+	const again = await pi({ id: "train-1", pane: TRAIN.pane, entries: [...train.entries, forged], deps: { couple: false } }, TRAIN.file, "reload");
+	assert.notEqual(tokens(TRAIN.pane).sb_train, "other/2025-11-06-m", "the forged train is not published");
+	assert.notEqual(tokens(TRAIN.pane).sb_role, "train");
+	assert.ok(told(again, /saved entry names other\/2025-11-06-m, but its pane carries acme\/2026-11-06-m.*no train/), "the refusal is told");
+});
+
 // --- the labels are Straw Boss's own -----------------------------------------------------------------------------------------------------------------------------------
 
 test("no session names its tab into a tower's or a train's: boss_rename refuses the tower glyph, the head glyph, and a train's label", async () => {
@@ -231,7 +264,7 @@ test("no session names its tab into a tower's or a train's: boss_rename refuses 
 
 test("a tower's boss_open_main gives a main's tab no tower's or train's label, while a train's own label is its code's", async () => {
 	const { tower } = await net();
-	for (const label of [TOWER_LABEL, "train 1106m"]) {
+	for (const label of [TOWER_LABEL, "train 1106m", ` ${TOWER_LABEL} `, "train 1106m\n"]) { // padded: Herdr shows the trimmed label
 		await assert.rejects(tower.tool("boss_open_main", { request: "Fix the export button.", sender: "member-1", label }), /label of a tower's or a train's tab/, label);
 	}
 	assert.equal(world.herdr.commands("tab", "create").length, 0, "nothing was opened");
