@@ -22,9 +22,9 @@ export interface FirewallDeps { platform?: NodeJS.Platform; execPath?: string; e
 
 const READ_MS = 60_000;
 const MAX_BUFFER = 32 * 1024 * 1024;
-const run: FirewallExec = (file, args, options) =>
+const run: FirewallExec = (file, args, { timeout, ...options }) =>
 	new Promise((resolve, reject) => {
-		execFileExe(file, args, { ...options, encoding: "utf8", windowsHide: true, maxBuffer: MAX_BUFFER }, (error, stdout, stderr) => {
+		execFileExe(file, args, { ...options, deadline: timeout, encoding: "utf8", windowsHide: true, maxBuffer: MAX_BUFFER }, (error, stdout, stderr) => {
 			if (!error) return resolve(stdout);
 			reject(Object.assign(error, { stderr, stdout }));
 		});

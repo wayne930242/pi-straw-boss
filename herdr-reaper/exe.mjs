@@ -84,14 +84,15 @@ const signalGroup = (pid, signal) => {
  * of its stdout or stderr still open somewhere, is told by its own exit status, as execFile tells it. One still running is cut off: the error is marked as execFile marks a timeout (`killed`, `signal: "SIGTERM"`,
  * no exit code), with what was read so far, and the program is ended behind the call by SIGTERM, then SIGKILL after `options.grace` (2 s). Where there are process groups it starts as the leader of its own
  * (`detached`) and both signals go to the group, so what it started ends with it; on Windows they end the program alone. Output is read as UTF-8 text, and more than `maxBuffer` of it cuts the program off too.
+ * `options.group: false` is for a program whose children are meant to stay (an opener and the file manager it started): it runs in the caller's group, and the signals end it alone.
  * @param {string} file
  * @param {string[]} args
- * @param {import("node:child_process").ExecFileOptions & { deadline: number, grace?: number }} options
+ * @param {import("node:child_process").ExecFileOptions & { deadline: number, grace?: number, group?: boolean }} options
  * @param {(error: (Error & { code?: string | number | null }) | null, stdout: string, stderr: string) => void} done
  */
 function execFileByDeadline(file, args, options, done) {
-	const win = process.platform === "win32", limit = options.maxBuffer ?? 1024 * 1024, cmd = [file, ...args].join(" ");
-	const child = spawn(file, args, { cwd: options.cwd, env: options.env, windowsHide: options.windowsHide, detached: !win });
+	const alone = process.platform === "win32" || options.group === false, limit = options.maxBuffer ?? 1024 * 1024, cmd = [file, ...args].join(" ");
+	const child = spawn(file, args, { cwd: options.cwd, env: options.env, windowsHide: options.windowsHide, detached: !alone });
 	let stdout = "", stderr = "", settled = false;
 	/** @type {{ code: number | null, signal: NodeJS.Signals | null } | undefined} */
 	let ended;
@@ -113,11 +114,11 @@ function execFileByDeadline(file, args, options, done) {
 		settle(failure(what, { code, killed: true, signal: "SIGTERM" }));
 		if (ended) return; // it left by itself: what it left behind is not signalled, and its group's id may be another program's by now
 		/** @param {NodeJS.Signals} signal */
-		const send = (signal) => (win || child.pid === undefined ? child.kill(signal) : signalGroup(child.pid, signal));
+		const send = (signal) => (alone || child.pid === undefined ? child.kill(signal) : signalGroup(child.pid, signal));
 		send("SIGTERM");
 		const hard = setTimeout(() => (send("SIGKILL"), child.unref()), options.grace ?? GRACE_MS);
 		// The leader gone and nothing left in its group: there is nothing to kill at the grace.
-		child.once("exit", () => (win || child.pid === undefined || !signalGroup(child.pid, 0)) && clearTimeout(hard));
+		child.once("exit", () => (alone || child.pid === undefined || !signalGroup(child.pid, 0)) && clearTimeout(hard));
 	};
 	const timer = setTimeout(() => (ended ? byStatus(ended) : cutOff(`Command timed out after ${options.deadline} ms`, null)), options.deadline);
 	child.stdout?.setEncoding("utf8").on("data", (chunk) => (stdout += chunk).length > limit && cutOff("stdout maxBuffer length exceeded", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"));
@@ -133,7 +134,7 @@ function execFileByDeadline(file, args, options, done) {
  * A program that is not found at all calls back with ExeNotFound. With `options.deadline` the call ends by that many ms whatever the program does (`execFileByDeadline`), which `options.timeout` does not promise.
  * @param {string} name
  * @param {string[]} args
- * @param {import("node:child_process").ExecFileOptions & { deadline?: number, grace?: number }} options
+ * @param {import("node:child_process").ExecFileOptions & { deadline?: number, grace?: number, group?: boolean }} options
  * @param {(error: (Error & { code?: string | number | null }) | null, stdout: string, stderr: string) => void} done
  */
 export function execFileExe(name, args, options, done) {

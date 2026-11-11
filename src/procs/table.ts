@@ -57,7 +57,7 @@ export function parsePs(text: string): Proc[] {
 /** Runs a program and gives its output; a program that exits non-zero still gives what it printed (lsof does when a pid is gone), one that prints nothing and fails throws. */
 export type Run = (file: string, args: string[]) => Promise<string>;
 export const run: Run = (file, args) => new Promise((resolve, reject) => {
-	execFileExe(file, args, { encoding: "utf8", maxBuffer: 1 << 26, timeout: 15_000, env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }, (error, stdout) => (error && !stdout ? reject(error) : resolve(stdout)));
+	execFileExe(file, args, { encoding: "utf8", maxBuffer: 1 << 26, deadline: 15_000, env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }, (error, stdout) => (error && !stdout ? reject(error) : resolve(stdout)));
 });
 
 /** The file name behind a `/proc/<pid>/exe` link (a replaced file reads ` (deleted)`); undefined for a name with a control character, which no output may carry. */

@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, test } from "node:test";
 import { execFileExe, execFileSyncExe, ExeNotFound, forgetExe, resolveExe, searchPath } from "../src/exe.mjs";
+import { until } from "./server-world.ts";
+import { type Cut, cutOff, gone, LINGER, standIn } from "./standin.ts";
 
 // A bare program name is searched in the current folder first on Windows (nodejs/node#46264), and a pi session's folder is a project. Every program the package starts by name is
 // found by a PATH search that never looks in the current folder, and spawned by the path it found.
@@ -147,4 +149,39 @@ test("no source file starts a program by a bare name: every child_process call i
 	}
 	for (const file of ["src/closing.ts"]) assert.match(readFileSync(join(root, file), "utf8"), /resolveExe\(process\.env\.HERDR_BIN_PATH \|\| "herdr"\)[^]*resolveExe\("sh"\)/);
 	for (const file of ["src/gui.ts", "src/pairing.ts"]) assert.match(readFileSync(join(root, file), "utf8"), /execFileExe\(/);
+});
+
+// --- todo #155: a time limit that holds ---
+
+test("todo #155: every program started with a time limit through execFileExe gets one that holds: none passes execFile's `timeout`, and each of these passes `deadline`", () => {
+	const root = new URL("..", import.meta.url).pathname, files: string[] = [];
+	const walk = (dir: string) => { for (const e of readdirSync(join(root, dir), { withFileTypes: true })) e.isDirectory() ? walk(join(dir, e.name)) : /\.(ts|mjs)$/.test(e.name) && files.push(join(dir, e.name)); };
+	walk("src");
+	walk("herdr-reaper");
+	const offenders = files.filter((file) => !/(^|\/)exe\.mjs$/.test(file)).flatMap((file) => readFileSync(join(root, file), "utf8").split("\n").filter((line) => /\bexecFileExe\(/.test(line) && /\btimeout:/.test(line)).map((line) => `${file}: ${line.trim().slice(0, 120)}`));
+	assert.deepEqual(offenders, []);
+	for (const file of ["src/herdr.ts", "src/balance.mjs", "src/pairing.ts", "src/lanface.ts", "src/remote.ts", "src/procs/table.ts", "src/server/lineage.ts", "src/server/carops.ts", "src/lan/firewall.ts", "herdr-reaper/io.mjs"]) {
+		assert.match(readFileSync(join(root, file), "utf8"), /\bexecFileExe\([^\n]*\bdeadline\b/, `${file} gives its program a deadline`);
+	}
+	// The reaper's programs go through one runner, and none of its calls is left without a time.
+	const io = readFileSync(join(root, "herdr-reaper/io.mjs"), "utf8");
+	assert.doesNotMatch(io, /promisify\(execFile\)/);
+	for (const call of io.split("\n").filter((line) => /\brun\(resolveExe\(/.test(line))) assert.match(call, /\btimeout\b/, call.trim().slice(0, 120));
+});
+
+test("todo #155: with `group: false` a program cut off at its deadline is ended alone, by SIGTERM and then SIGKILL, and what it started stays (the file manager an opener started)", { skip: process.platform === "win32" }, async () => {
+	// The program ignores SIGTERM, so its end is the SIGKILL's doing; it is no leader of a group (its group is the caller's), so a signal to a group of its own would reach nothing.
+	const fake = standIn({
+		herdr: `trap '' TERM\n"$1/holder" "$1" &\nwhile [ ! -s "$1/held" ]; do sleep 0.05; done\nps -o pgid= -p $$ | tr -d ' ' > "$1/pgid"\necho $$ > "$1/pid"\n${LINGER}`,
+		holder: `echo $$ > "$1/held"\n${LINGER}`,
+	});
+	try {
+		const error = await new Promise<Cut | null>((resolve) => execFileExe(fake.bin, [fake.dir], { deadline: 1500, grace: 300, group: false }, (e) => resolve(e)));
+		assert.ok(error && cutOff(error), "cut off at the deadline");
+		assert.notEqual(fake.pid("pgid"), fake.pid("pid"), "the program runs in the caller's process group");
+		await until(() => gone(fake.pid("pid")), "the program that ignores SIGTERM to be gone", 15_000);
+		assert.ok(!gone(fake.pid("held")) && !fake.has("outlived"), "what it started was not signalled");
+	} finally {
+		fake.close();
+	}
 });

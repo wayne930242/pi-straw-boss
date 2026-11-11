@@ -19,7 +19,7 @@ const CLIPBOARD = clipboardCommand();
 /** Puts text on the system clipboard (`command` is for tests). */
 export const copyText = (text: string, [cmd, ...args] = CLIPBOARD) =>
 	new Promise<void>((done, fail) => {
-		const child = execFileExe(cmd!, args, { timeout: 5_000, ...(process.platform === "win32" && cmd === CLIPBOARD[0] ? { cwd: system32() } : {}) }, (error) => (error ? fail(new Error(`Could not copy with ${cmd}: ${error.message}`)) : done()));
+		const child = execFileExe(cmd!, args, { deadline: 5_000, ...(process.platform === "win32" && cmd === CLIPBOARD[0] ? { cwd: system32() } : {}) }, (error) => (error ? fail(new Error(`Could not copy with ${cmd}: ${error.message}`)) : done()));
 		// A missing command fails the child; its stdin then errors too (EPIPE), which unhandled would take the host pi down.
 		child?.stdin?.on("error", () => {}).end(text);
 	});

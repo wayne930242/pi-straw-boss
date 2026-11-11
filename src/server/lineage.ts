@@ -114,7 +114,7 @@ export const readProcs = (platform: NodeJS.Platform = process.platform): Procs =
 				const { file, args, options } = cimCommand(runId);
 				execFile(file, args, options, (error, stdout) => done(error ? undefined : parseCim(String(stdout))));
 			} else {
-				execFileExe("ps", ["-A", "-ww", "-o", "pid=,ppid=,lstart=,command="], { encoding: "utf8", timeout: 5000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }, (error, stdout) => done(error ? undefined : parsePs(String(stdout), runId)));
+				execFileExe("ps", ["-A", "-ww", "-o", "pid=,ppid=,lstart=,command="], { encoding: "utf8", deadline: 5000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }, (error, stdout) => done(error ? undefined : parsePs(String(stdout), runId)));
 			}
 		} catch {
 			done(undefined);

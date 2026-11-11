@@ -43,7 +43,7 @@ export type Verdict = { origin: string; remote: boolean; device?: string; reissu
 export type Net = "tailnet" | "lan";
 
 export const tailscale: Run = (args) =>
-	new Promise((done, fail) => execFileExe("tailscale", args, { timeout: 15_000 }, (error, out, err) => (error ? fail(new Error((error as NodeJS.ErrnoException).code === "ENOENT" ? "Tailscale is not installed (no tailscale command on PATH)" : `tailscale ${args.join(" ")} failed: ${err.trim() || error.message}`)) : done(out))));
+	new Promise((done, fail) => execFileExe("tailscale", args, { deadline: 15_000 }, (error, out, err) => (error ? fail(new Error((error as NodeJS.ErrnoException).code === "ENOENT" ? "Tailscale is not installed (no tailscale command on PATH)" : `tailscale ${args.join(" ")} failed: ${err.trim() || error.message}`)) : done(out))));
 interface Status { BackendState?: string; Self?: { DNSName?: string; UserID?: number; Tags?: string[] }; User?: Record<string, { LoginName?: string }> }
 interface Serve { TCP?: Record<string, { HTTPS?: boolean }>; Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>; AllowFunnel?: Record<string, boolean>; Foreground?: Record<string, Serve> }
 function parse<T>(text: string, what: string): T {

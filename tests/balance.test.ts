@@ -4,9 +4,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { balanceAfterClose, balanceTab, planBalance } from "../src/balance.mjs";
+import { balanceAfterClose, balanceTab, herdr, planBalance } from "../src/balance.mjs";
 import paneBalance, { runHelper } from "../src/balance.ts";
 import { markRun } from "../src/runmark.ts";
+import { stallWatch, until } from "./server-world.ts";
+import { cutOff, gone, standIn, STUBBORN } from "./standin.ts";
 
 const rect = (x, y, width, height) => ({ x, y, width, height });
 
@@ -240,5 +242,21 @@ test("VM: a tower run's pi (flag or claim) never spawns after-close: its pane st
 	} finally {
 		delete globalThis[Symbol.for("pi-straw-boss.run.mark")];
 		delete globalThis[started];
+	}
+});
+
+test("todo #155: the balance helper's herdr call has a deadline that holds: a herdr that ignores SIGTERM fails the call as cut off, so the helper goes on and ends, and is killed after the grace", { skip: process.platform === "win32" }, async () => {
+	const fake = standIn({ herdr: STUBBORN }), stalls = stallWatch(), began = Date.now();
+	try {
+		await assert.rejects(herdr([fake.dir], 1500), cutOff);
+		const took = Date.now() - began;
+		stalls.stop();
+		assert.ok(took < 2500 + stalls.worst(), `the call ended at its deadline: ${took} ms (this process stood still for ${stalls.worst()} ms)`);
+		assert.ok(!gone(fake.pid("pid")) && !fake.has("outlived"), "the call did not wait for the program to end");
+		await until(() => gone(fake.pid("pid")), "the program that ignores SIGTERM to be gone", 15_000);
+		assert.ok(!fake.has("outlived"), "it was killed, not left to end by itself");
+	} finally {
+		stalls.stop();
+		fake.close();
 	}
 });

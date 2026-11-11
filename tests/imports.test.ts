@@ -350,7 +350,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Pane balance is a separate extension entry with its plain-JavaScript helper.
 	// after-close ends when Herdr is gone (desk U13, BG-F001): balance.mjs 178 to 185, the locale-free `os error` set and its note.
 	// Herdr's CLI with no server (desk U13 on macOS and Windows): balance.mjs 185 to 186 for `server_not_running` and its note.
-	assert.ok(count("src/balance.ts") + count("src/balance.mjs") <= 223, "src/balance.ts and src/balance.mjs stay small");
+	// The deadline holds (todo #155; measured): balance.mjs 186 to 188, `HERDR_MS` and its note; the helper's herdr calls had no time limit at all.
+	assert.ok(count("src/balance.ts") + count("src/balance.mjs") <= 225, "src/balance.ts and src/balance.mjs stay small");
 	// The blocked relay (rpiv-ask-user-question, and pi's own dialog prompts) is its own extension entry too. It was 25 lines for the rpiv relay alone;
 	// the dialog relay raised it to 42 for the label of a dialog's title and the signed count that keeps the pairs balanced when pi delivers an end ahead of its start, and the guard for an end that reaches a retired runtime.
 	assert.ok(count("src/blocked.ts") <= 42, "src/blocked.ts stays small");

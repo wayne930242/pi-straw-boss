@@ -6,6 +6,6 @@ export interface Resize { pane: string; direction: "left" | "right" | "up" | "do
 export type Run = (args: string[]) => Promise<string>;
 
 export function planBalance(layout: Layout): Resize[];
-export const herdr: Run;
+export const herdr: (args: string[], deadline?: number) => Promise<string>;
 export function balanceTab(paneId: string, options?: { run?: Run; lockRoot?: string }): Promise<void>;
 export function balanceAfterClose(paneId: string, tabId: string | undefined, options?: { run?: Run; lockRoot?: string; pollMs?: number; waitMs?: number }): Promise<void>;

@@ -1,17 +1,17 @@
 // What the reaper reaches outside itself with: its state file and locks, the herdr CLI, and git.
-import { execFile } from "node:child_process";
-import { resolveExe } from "./exe.mjs";
+import { execFileExe, resolveExe } from "./exe.mjs";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, readlink, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { getuid } from "node:process";
-import { promisify } from "node:util";
 import { applyOps, emptyState } from "./decide.mjs";
 
-const run = promisify(execFile);
-// A hung herdr or git call must not hold the sweep lock for good; a call that outlasts its timeout is killed and fails.
+// A hung herdr, git, or lsof call must not hold the sweep lock for good: `timeout` is a deadline that holds (exe.mjs `deadline`). The call fails then, marked `killed`, whatever the program does, and the
+// program is ended behind it with what it started. execFile's own timeout sent one SIGTERM and waited for the program to end.
+const run = (file, args, { timeout, maxBuffer }) =>
+	new Promise((done, fail) => execFileExe(file, args, { deadline: timeout, maxBuffer }, (error, stdout, stderr) => (error ? fail(Object.assign(error, { stdout, stderr })) : done({ stdout, stderr }))));
 const HERDR_TIMEOUT_MS = 30_000;
 const GIT_TIMEOUT_MS = 60_000;
 // Removing a checkout deletes every ignored file in it, `node_modules` among them.
@@ -333,13 +333,13 @@ export function processClient(platform = process.platform, { now = Date.now, max
 }
 
 /** The herdr CLI: every call prints one JSON line whose `result` is returned; an `error` or a failed exit throws. */
-export function herdrClient(bin = "herdr") {
+export function herdrClient(bin = "herdr", { timeoutMs = HERDR_TIMEOUT_MS } = {}) {
 	const call = async (args) => {
 		let stdout;
 		try {
-			({ stdout } = await run(resolveExe(bin), args, { maxBuffer: 16 * 1024 * 1024, timeout: HERDR_TIMEOUT_MS }));
+			({ stdout } = await run(resolveExe(bin), args, { maxBuffer: 16 * 1024 * 1024, timeout: timeoutMs }));
 		} catch (error) {
-			if (error.killed) throw new Error(`herdr ${args.join(" ")} failed: no answer within ${HERDR_TIMEOUT_MS / 1000}s`);
+			if (error.killed) throw new Error(`herdr ${args.join(" ")} failed: no answer within ${timeoutMs / 1000}s`);
 			throw new Error(`herdr ${args.join(" ")} failed: ${(error.stderr || error.stdout || error.message).toString().trim().slice(0, 300)}`);
 		}
 		const reply = stdout.trim() ? JSON.parse(stdout) : {};

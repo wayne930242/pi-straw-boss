@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { herdrCall, HerdrError, herdrRun, herdrWorld, panes, place, report, socketRun, tabs, waitFor, workspaces, worldOf } from "../src/herdr.ts";
 import { stallWatch, until } from "./server-world.ts";
+import { cutOff, gone, standIn, STUBBORN, withChild } from "./standin.ts";
 
 test("report puts the positional id first, adds a TTL only when it sets a token, and clears with --clear-token", async () => {
 	const calls: string[][] = [];
@@ -56,30 +57,8 @@ test("RV8-F001: a herdr command cut off by the timeout rejects as killed with it
 // --- todo #155: the deadline holds ---
 
 const DEADLINE = 1500;
-/** Twenty seconds of a shell's own, then the mark that it was left to end by itself. */
-const LINGER = `i=0\nwhile [ $i -lt 200 ]; do sleep 0.1; i=$((i + 1)); done\n: > "$1/outlived"`;
-const gone = (pid: number) => { try { process.kill(pid, 0); return false; } catch { return true; } };
-interface Cut { killed?: boolean; signal?: unknown; code?: unknown }
-const cutOff = (error: Cut) => error.killed === true && error.signal === "SIGTERM" && typeof error.code !== "number";
-/** A stand-in herdr on HERDR_BIN_PATH: shell scripts in a folder of their own, which the first argument of a call names, so a script leaves its pid and its mark there. */
-function standIn(scripts: Record<string, string>) {
-	const dir = mkdtempSync(join(tmpdir(), "psb-herdr-")), before = process.env.HERDR_BIN_PATH;
-	for (const [name, body] of Object.entries(scripts)) writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-	process.env.HERDR_BIN_PATH = join(dir, "herdr");
-	const has = (name: string) => existsSync(join(dir, name)), pid = (name: string) => Number(readFileSync(join(dir, name), "utf8"));
-	return {
-		dir, has, pid,
-		close: () => {
-			if (before === undefined) delete process.env.HERDR_BIN_PATH;
-			else process.env.HERDR_BIN_PATH = before;
-			for (const name of ["pid", "held"]) try { process.kill(pid(name), "SIGKILL"); } catch { /* gone, or never written */ }
-			rmSync(dir, { recursive: true, force: true });
-		},
-	};
-}
-
 test("todo #155: a herdr that ignores SIGTERM and keeps its stdout open is given up at the deadline, as cut off, and is killed after the grace", { skip: process.platform === "win32" }, async () => {
-	const fake = standIn({ herdr: `trap '' TERM\necho started\necho $$ > "$1/pid"\n${LINGER}` });
+	const fake = standIn({ herdr: STUBBORN });
 	const stalls = stallWatch(), began = Date.now();
 	try {
 		await assert.rejects(herdrRun([fake.dir], DEADLINE), cutOff);
@@ -94,12 +73,6 @@ test("todo #155: a herdr that ignores SIGTERM and keeps its stdout open is given
 		stalls.stop();
 		fake.close();
 	}
-});
-
-/** A stand-in that starts a child with its own stdout and stderr, which ignores SIGTERM and lingers; the stand-in itself waits for it, or (`leave`) says a word and exits. */
-const withChild = () => standIn({
-	herdr: `"$1/holder" "$1" &\nwhile [ ! -s "$1/held" ]; do sleep 0.05; done\necho $$ > "$1/pid"\nif [ "$2" = leave ]; then echo left; exit 0; fi\nwait`,
-	holder: `trap '' TERM\necho $$ > "$1/held"\n${LINGER}`,
 });
 
 test("todo #155: what a herdr cut off at the deadline had started is ended with it: the SIGTERM and the SIGKILL go to its group", { skip: process.platform === "win32" }, async () => {
