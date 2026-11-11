@@ -7,6 +7,8 @@ export type Kind = (typeof KINDS)[number];
 export const CHECK_TYPES = ["run", "git", "report", "notice"] as const;
 export type CheckType = (typeof CHECK_TYPES)[number];
 export const MAX_SB_BYTES = 8 * 1024;
+/** The most tickets one car carries and the longest ticket: the car's identity, so every place that keeps a car's tickets keeps them whole up to this bound, and a slip over it is refused (the sender splits the car). */
+export const MAX_CAR_TICKETS = 64, MAX_TICKET_CHARS = 64;
 
 export const SHA_RE = /^[0-9a-f]{40}$/;
 export const NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;

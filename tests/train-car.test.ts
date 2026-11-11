@@ -63,6 +63,19 @@ test("received needs the tool's own checks: a state's fields, a slip on the bran
 	}
 });
 
+test("a slip with 24 tickets is forwarded, then received or returned whole: the forward keeps every ticket and the integrator's full list matches it (v3 car, 0.74.0)", async () => {
+	const tickets = Array.from({ length: 24 }, (_, i) => `MP-${3600 + i}`);
+	const text = slipBlock({ tickets: tickets.join(", ") });
+	for (const state of ["received", "returned"] as const) {
+		const w = world();
+		w.book.noteForward({ fwd: "e".repeat(16), from: COORD, to: [INTEG], text });
+		const params = state === "received" ? { car: tickets[0]!, state, train: CODE, departs: "next train", project: "acme" } : { car: tickets[0]!, state, reason: "sb: the train runs no acceptance: car MP-3600 asks for UAT", project: "acme" };
+		const out = await trainCar(integratorDeps(w), params, integratorCtx(forwardEntry(COORD, text)));
+		assert.match(out.text, new RegExp(`^Car MP-3600 is ${state}\\.`));
+		assert.deepEqual(w.book.read("acme")[0]!.file.car.tickets, tickets, "the car's identity is the whole list, not its first 16");
+	}
+});
+
 test("returned at receipt: a slip whose coordinator is not its sender is returned to the sender, with the word; a good one is returned to its coordinator", async () => {
 	const w = world();
 	w.forwarded("sess-other");

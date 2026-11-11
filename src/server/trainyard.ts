@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { integrationOff } from "../trainswitch.ts";
 import { type BoardRead, type BoardStep, type CarRow, factsOf, readJsonFile, type ReadBudget, readTrainboards, readYard, trainboardDir, type Writer, yardPath } from "../train/board.ts";
 import { carFileName, type CarState, type CarView, noticeStatus } from "../train/cars.ts";
-import { isName, isObject, isoTime, SHA_RE } from "../train/spec.ts";
+import { isName, isObject, isoTime, MAX_TICKET_CHARS, SHA_RE } from "../train/spec.ts";
 import { type FactStep, holding, stepWaits, type TrainFacts, type Wait, waitingTrains } from "../train/waits.ts";
 import type { NetLoad, ProjectYard, ReasonKind, YardAccepted, YardCar, YardFormingRow, YardJoin, YardNotice, Yards, YardStep, YardTrainRow } from "../train/yardview.ts";
 import { carsFolderOk, readCar } from "../trainboard.ts";
@@ -157,7 +157,7 @@ export function readYards(deps: YardDeps, join_: YardJoin): Yards | undefined {
 		const carView = (row: CarRow, app: string, nods?: Map<string, Map<string, string>>): YardCar => {
 			const accepted = (row.accepted ?? []).slice(0, 8).map((kind): YardAccepted => ((nod) => (nod ? { kind: clean(kind, 32), nod } : { kind: clean(kind, 32) }))(nods?.get(row.head)?.get(kind)));
 			const notice = noticeOf(app, row.head);
-			return { tickets: row.tickets.slice(0, 16).map((t) => clean(t, 64)), branch: clean(row.branch, 255), head: row.head, departs: clean(row.departs, 300), ...(row.arrived ? { arrived: row.arrived } : {}), accepted, ...(row.unverified ? { unverified: true as const } : {}), ...(notice ? { notice } : {}) };
+			return { tickets: row.tickets.map((t) => clean(t, MAX_TICKET_CHARS)), branch: clean(row.branch, 255), head: row.head, departs: clean(row.departs, 300), ...(row.arrived ? { arrived: row.arrived } : {}), accepted, ...(row.unverified ? { unverified: true as const } : {}), ...(notice ? { notice } : {}) };
 		};
 		const trainRow = (read: BoardRead, fact: TrainFacts): YardTrainRow => {
 			if (!read.ok) {

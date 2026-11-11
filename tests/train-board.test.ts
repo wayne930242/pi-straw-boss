@@ -30,6 +30,14 @@ const yard = (over: Partial<Yard> = {}): Yard => ({
 	...over,
 });
 
+test("a car row keeps its whole ticket list up to the bound of a car (24 tickets pass, capBoard keeps them, 65 are refused)", () => {
+	const row = (n: number) => ({ ...board().cars[0]!, tickets: Array.from({ length: n }, (_, i) => `MP-${3600 + i}`) });
+	const b = { ...board(), cars: [row(24)] };
+	assert.deepEqual(validateBoard(b), []);
+	assert.deepEqual(capBoard(b).cars[0]!.tickets, row(24).tickets);
+	assert.match(validateBoard({ ...board(), cars: [row(65)] }).join("\n"), /cars\[0\]\.tickets must be a list of 1 to 64 tickets/);
+});
+
 test("a board validates, and a missing or foreign field is a refusal in the board's own words", () => {
 	assert.deepEqual(validateBoard(board()), []);
 	const bad: [unknown, RegExp][] = [

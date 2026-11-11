@@ -1,5 +1,5 @@
 import { parseSlip, slipBlocks } from "./accept.ts";
-import { isCode, isObject, isName, isoTime, SHA_RE, shortCode } from "./spec.ts";
+import { isCode, isObject, isName, isoTime, MAX_CAR_TICKETS, MAX_TICKET_CHARS, SHA_RE, shortCode } from "./spec.ts";
 
 // A car's states and notices (docs/specs/2026-11-07-train-workers.md §5.5, D14), as data: which states a car has, the fields each carries, the car file they are appended to, the text of each notice, and when a notice counts as told.
 // The train and the integrator only set a state; the sb server sends the intercom, records the broker's answer, and holds the step that depends on it (task 5a builds the tool and the sender). Pure: nothing here sends or writes.
@@ -96,7 +96,7 @@ export function validateCarFile(value: unknown): string[] {
 	const car = isObject(value.car) ? value.car : undefined;
 	if (!car) out.push("sb: car.car must be an object");
 	else {
-		if (!(Array.isArray(car.tickets) && car.tickets.length > 0 && car.tickets.every((t) => text(t, 64)))) out.push("sb: car.car.tickets must be a non-empty list of tickets");
+		if (!(Array.isArray(car.tickets) && car.tickets.length > 0 && car.tickets.length <= MAX_CAR_TICKETS && car.tickets.every((t) => text(t, MAX_TICKET_CHARS)))) out.push(`sb: car.car.tickets must be a list of 1 to ${MAX_CAR_TICKETS} tickets`);
 		if (!text(car.branch, 255)) out.push("sb: car.car.branch must be a non-empty string");
 		if (!SHA_RE.test(String(car.head))) out.push("sb: car.car.head must be 40 hex");
 	}
@@ -288,7 +288,7 @@ export function slipsInText(body: string): SlipFacts[] {
 	return slipBlocks(lines).blocks.flatMap((block) => {
 		const parsed = parseSlip(block), f = parsed.fields;
 		if (!f.car || !isName(f.car) || !parsed.tickets.length || !f.branch || !SHA_RE.test(f.head ?? "")) return [];
-		return [{ app: f.car, tickets: parsed.tickets.slice(0, 16), branch: f.branch, head: f.head!, ...(f.coordinator ? { coordinator: f.coordinator } : {}) }];
+		return [{ app: f.car, tickets: parsed.tickets, branch: f.branch, head: f.head!, ...(f.coordinator ? { coordinator: f.coordinator } : {}) }];
 	});
 }
 

@@ -88,7 +88,7 @@ export function parseManifest(text: string, read: (path: string) => string | und
 		const word = asked ?? (owed ? `sb: car ${ticket}: ${owed.replace(/^sb: /, "")}` : undefined);
 		const head = /^[0-9a-f]{40}$/.test(parsed.fields.head ?? "") ? parsed.fields.head! : undefined;
 		const shown: Acceptance = config.ok ? acceptanceOf(accept ?? "none", evidence, { appAccept, ...(head ? { head } : {}), exists: check.exists, isAncestor: check.isAncestor }) : { unverified: true };
-		const f = parsed.fields, row: CarRow = { tickets: parsed.tickets.slice(0, 16), branch: f.branch ?? "", head: head ?? "", coordinator: f.coordinator ?? "", departs: f.departs ?? "next", accept: accept ?? "none", ...shown };
+		const f = parsed.fields, row: CarRow = { tickets: parsed.tickets, branch: f.branch ?? "", head: head ?? "", coordinator: f.coordinator ?? "", departs: f.departs ?? "next", accept: accept ?? "none", ...shown };
 		cars.push({ ticket, slip, ...(head ? { head } : {}), ...(evidence ? { evidence } : {}), ...(row.tickets.length && row.branch && row.head && row.coordinator ? { row } : {}) });
 		if (word) leftOut.push({ ticket, head: head ?? "", word });
 	}

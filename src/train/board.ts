@@ -1,6 +1,6 @@
 import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { FOLDER_CODE_RE, compareCodes, isCode, isObject, isoTime, jsonBytes, KINDS, MAX_SB_BYTES, type Holds, type Kind, type LoadSpec, isName, SHA_RE, kb } from "./spec.ts";
+import { FOLDER_CODE_RE, compareCodes, MAX_CAR_TICKETS, MAX_TICKET_CHARS, isCode, isObject, isoTime, jsonBytes, KINDS, MAX_SB_BYTES, type Holds, type Kind, type LoadSpec, isName, SHA_RE, kb } from "./spec.ts";
 import type { Clear, FactStep, StepStatus, TrainFacts, TrainState, Wait } from "./waits.ts";
 
 // The trainboard (docs/specs/2026-11-07-train-workers.md §10, §11.1): Straw Boss's derived state, one file per writer. A train's extension writes `<state>/trainboard/<project>/<code>/board.json` from its todo list, the integrator's
@@ -32,7 +32,7 @@ const whole = (value: unknown, min: number, max = Number.MAX_SAFE_INTEGER) => ty
 const unknown = (value: Record<string, unknown>, allowed: string[], path: string) => Object.keys(value).filter((k) => present(value[k]) && !allowed.includes(k)).map((k) => `sb: ${path}.${k} is not a field`);
 
 const CAR_FIELDS = ["tickets", "branch", "head", "coordinator", "departs", "accept", "arrived", "accepted", "unverified"];
-const CAP = { session: 128, pane: 64, ticket: 64, tickets: 16, branch: 255, coordinator: 128, departs: 300, accept: 1024, name: 64, kind: 32, reason: 600, by: 128, label: 64 };
+const CAP = { session: 128, pane: 64, ticket: MAX_TICKET_CHARS, tickets: MAX_CAR_TICKETS, branch: 255, coordinator: 128, departs: 300, accept: 1024, name: 64, kind: 32, reason: 600, by: 128, label: 64 };
 
 function writerRefusals(w: unknown, path: string): string[] {
 	if (!isObject(w)) return [`sb: ${path} must be an object`];

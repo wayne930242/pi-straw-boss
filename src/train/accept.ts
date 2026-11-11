@@ -1,4 +1,4 @@
-import { acceptanceToken, acceptanceWord, isObject, isoTime, isName, kb, SHA_RE, spokenText } from "./spec.ts";
+import { acceptanceToken, acceptanceWord, isObject, isoTime, isName, kb, MAX_CAR_TICKETS, MAX_TICKET_CHARS, SHA_RE, spokenText } from "./spec.ts";
 
 // What a coordinator hands the train and what `train check --accept` proves about it (docs/specs/2026-11-07-train-workers.md §5.1 to §5.4): the slip's `departs` and `accept` lines, the acceptance evidence file, and
 // `integration.accept` and `stages` of apps.json. Acceptance happens before loading (D11), so a slip or evidence that asks the train for any is refused at once with `acceptanceWord` (D13). Pure: the files and git come in as functions.
@@ -148,6 +148,9 @@ export function checkSlip(slip: string, { appAccept }: SlipOptions): string[] {
 	const { fields, tickets, entries, problems } = parseSlip(slip), out: string[] = [...problems], car = tickets[0] ?? fields.branch ?? "unknown";
 	if (!SHA_RE.test(fields.head ?? "")) out.push("sb: slip head must be 40 hex");
 	if (tickets.length === 0) out.push("sb: slip tickets is empty");
+	if (tickets.length > MAX_CAR_TICKETS) out.push(`sb: slip tickets names ${tickets.length} tickets, and a car carries at most ${MAX_CAR_TICKETS}: split the car into two or more slips`);
+	const long = tickets.find((t) => t.length > MAX_TICKET_CHARS);
+	if (long !== undefined) out.push(`sb: slip ticket ${shown(long)} is longer than ${MAX_TICKET_CHARS} characters: name the ticket by its id`);
 	if (present(fields.uat)) {
 		if (fields.uat!.toLowerCase() === "none") out.push("sb: the slip's uat: line is gone; send accept: <evidence file> | none");
 		else out.push(acceptanceWord({ car, what: `UAT (${fields.uat})`, where: "slip line uat:" }));
@@ -235,7 +238,7 @@ export function checkEvidence(raw: string, o: EvidenceOptions): string[] {
 	else {
 		for (const key of Object.keys(car)) if (present(car[key]) && !["app", "tickets", "branch", "head"].includes(key)) out.push(`sb: evidence.car.${key} is not a field`);
 		if (!(isName(car.app))) out.push("sb: evidence.car.app must be a path-safe name");
-		if (!(Array.isArray(car.tickets) && car.tickets.length > 0 && car.tickets.every((t) => text(t, 64)))) out.push("sb: evidence.car.tickets must be a non-empty list of tickets");
+		if (!(Array.isArray(car.tickets) && car.tickets.length > 0 && car.tickets.length <= MAX_CAR_TICKETS && car.tickets.every((t) => text(t, MAX_TICKET_CHARS)))) out.push(`sb: evidence.car.tickets must be a list of 1 to ${MAX_CAR_TICKETS} tickets`);
 		if (!text(car.branch, 255)) out.push("sb: evidence.car.branch must be a non-empty string");
 		if (!SHA_RE.test(String(car.head))) out.push("sb: evidence.car.head must be 40 hex");
 		else if (o.head !== undefined && car.head !== o.head) out.push("sb: evidence.car.head is not the slip's head");

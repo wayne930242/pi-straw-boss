@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkAcceptRef, checkCar, checkEvidence, checkStages, MAX_EVIDENCE_BYTES, parseAppAccept, parseDeparts, parseSlip } from "../src/train/accept.ts";
+import { checkAcceptRef, checkCar, checkEvidence, checkSlip, checkStages, MAX_EVIDENCE_BYTES, parseAppAccept, parseDeparts, parseSlip } from "../src/train/accept.ts";
+import { MAX_CAR_TICKETS, MAX_TICKET_CHARS } from "../src/train/spec.ts";
 import { evidence, type Json, SHA_A, SHA_B, SHA_C, slip } from "./train-fixtures.ts";
 
 // §5.1 to §5.2: the slip's `departs` and `accept` lines, `integration.accept`, and what `train check --accept` proves (and does not).
@@ -135,6 +136,14 @@ test("the whole car: slip and evidence together, with the slip's head, the app's
 	assert.match(checkCar(slip({ head: undefined }), undefined, { appAccept: [], exists, isAncestor }).join("\n"), /slip head must be 40 hex/);
 	assert.match(checkCar(slip({ accept: "/r/evidence.json" }), undefined, { appAccept: ["e2e"], exists, isAncestor }).join("\n"), /evidence file, but it was not read/);
 	assert.match(good(slip({ tickets: undefined }), evidence()).join("\n"), /slip tickets/);
+});
+
+test("a slip over the bound of a car's tickets is refused with the word to split the car; the bound itself passes", () => {
+	const ids = (n: number) => Array.from({ length: n }, (_, i) => `MP-${1000 + i}`).join(", ");
+	assert.deepEqual(checkSlip(slip({ tickets: ids(MAX_CAR_TICKETS) }), { appAccept: [] }), []);
+	const over = checkSlip(slip({ tickets: ids(MAX_CAR_TICKETS + 1) }), { appAccept: [] }).join("\n");
+	assert.match(over, new RegExp(`slip tickets names ${MAX_CAR_TICKETS + 1} tickets, and a car carries at most ${MAX_CAR_TICKETS}: split the car`));
+	assert.match(checkSlip(slip({ tickets: `MP-1, ${"x".repeat(MAX_TICKET_CHARS + 1)}` }), { appAccept: [] }).join("\n"), /longer than 64 characters/);
 });
 
 test("`integration.accept`: a list of kind names, default empty; a stage list has merge first and no uat", () => {
