@@ -18,7 +18,7 @@ import type { Kit } from "./state.ts";
 import { snapshotOfBranch } from "./todo.ts";
 import { todosOf } from "./items.ts";
 import { integrationOff } from "./trainswitch.ts";
-import { ownsBoard, trainLabel } from "./trainrole.ts";
+import { isRoleLabel, ownsBoard, trainLabel } from "./trainrole.ts";
 import { trustDir } from "./trust/files.ts";
 
 /** The tab label for a name, cut at 16 characters as pi-auto-tab-name cuts it, so that extension takes the label as its own and keeps it. */
@@ -138,6 +138,8 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 					const phrase = name.replace(/\s+/g, " ").trim();
 					if (!phrase) throw new Error("The name is empty");
 					if (Array.from(phrase).length > 40) throw new Error(`The name has ${Array.from(phrase).length} characters; keep it a short phrase (at most 16 fit the tab)`);
+					// A main's tab takes the name as its label, and a tab labelled as a tower's or a train's is what proves that role after a restore (roles.ts).
+					if (isRoleLabel(tabLabel(phrase))) throw new Error("That name is the label of a tower's or a train's tab, which only Straw Boss gives; choose another");
 					const was = pi.getSessionName() || s.ownName || me().slice(0, 8);
 					const before = s.duty;
 					pi.setSessionName(phrase);

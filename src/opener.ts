@@ -9,7 +9,7 @@ import { assertSettingsSafe, SettingsRefused } from "./trust/settings.ts";
 import { inside } from "./link/routing.ts";
 import { checkoutProject, noTrainRefusal, openRefusal, repoRoot } from "./train/appsconfig.ts";
 import { slipsInText } from "./train/cars.ts";
-import { appFromRequest, readMaxTrains, TRAIN, type TrainId, trainFromRequest, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
+import { appFromRequest, isRoleLabel, readMaxTrains, TRAIN, type TrainId, trainFromRequest, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 
 // The one thing a tower does besides routing: when no session owns a request, it opens a main for it (docs/how-it-works.md, "Opening a main").
@@ -129,6 +129,8 @@ export function opener(env: OpenerEnv) {
 			train = found;
 			label = trainLabel(found.code);
 		}
+		// The label becomes the new tab's, and a tab labelled as a tower's or a train's is what proves that role after a restore (roles.ts): a main's tab is never given one (a train's is its code's, above).
+		if (!train && label !== undefined && isRoleLabel(label.trim())) throw new OpenLimitError("label is the label of a tower's or a train's tab, which only Straw Boss gives; choose another");
 		// An integrator is opened on a car slip a session of this computer sent, for the project of the workspace's checkout (read below); its tab and session carry the project's name, which makes the new pi an integrator from its first turn (mainduty.ts).
 		if (role === INTEGRATOR) {
 			if (peer) throw new OpenLimitError("An integrator is opened on a car slip a session of this computer sent, not for a teammate's device");

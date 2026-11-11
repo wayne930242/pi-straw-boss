@@ -787,11 +787,12 @@ export function createTowers(o: TowersOptions): Towers {
 			if (record?.role !== "tower" || typeof record.pane !== "string" || typeof record.workspace !== "string") continue;
 			const pane = ps.find((p) => p.pane_id === record!.pane && p.workspace_id === record!.workspace), workspace = all.find((w) => w.workspace_id === record!.workspace);
 			// A pane that is not in this Herdr belongs to another one (or to a tab that is gone): the record is left for the server that finds it. Herdr ids are short counters that repeat
-			// across Herdr servers and `roles/` is shared by them all, so the id alone proves nothing: the pane must also be in the recorded tab, and that tab a tower tab or the pane
-			// run the record's own session file.
+			// across Herdr servers and `roles/` is shared by them all, so the id alone proves nothing: the pane must also be in the recorded tab, and that tab a tower tab, or the pane
+			// run the record's own session file as a live tower (its `sb_role=tower` mark). The record and the session file are files the session's own shell can write, so they alone
+			// never make a seat: the glyph and the mark are Herdr's (docs/specs/2026-11-07-train-workers.md §29).
 			if (!pane || !workspace || isSub(workspace) || record.tab !== pane.tab_id) continue;
 			const glyph = (await tabs(run, workspace.workspace_id)).some((t) => t.tab_id === pane.tab_id && t.label === TOWER_LABEL);
-			if (!glyph && !(typeof (record as { file?: unknown }).file === "string" && pane.agent_session?.value === (record as { file?: string }).file)) continue;
+			if (!glyph && !(pane.tokens?.sb_role === "tower" && typeof (record as { file?: unknown }).file === "string" && pane.agent_session?.value === (record as { file?: string }).file)) continue;
 			if (!services.has(workspace.workspace_id) && !readService(slot, workspace.workspace_id)) {
 				const made: ServiceRecord = { workspace: workspace.workspace_id, label: workspace.label, id: towerId(slot, workspace.workspace_id), name: towerName(slot, workspace.label), pane: pane.pane_id, tab: pane.tab_id, created: new Date(now()).toISOString(), seq: 0 };
 				// A tab that is the tower's by its session file, not by the glyph, gets the glyph: it is what proves the seat after a Herdr restart (typegate.ts `seatGate`).

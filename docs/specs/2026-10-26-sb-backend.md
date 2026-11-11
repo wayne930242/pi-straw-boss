@@ -1687,11 +1687,11 @@ All of it is behind the flag `towerRuns.enabled` (**Build steps**). With the fla
 
 - When the server first runs with the flag on, a live resident tower (an older pi holding the workspace's `tower` token) keeps its
   workspace. The service waits and registers its identity only once that session leaves. Two towers never hold one workspace.
-- A new-code pi started as a resident tower (`STRAW_BOSS_ROLE=tower`, or `roles/` says tower), for example opened by an older session's
+- A new-code pi started as a resident tower (`STRAW_BOSS_ROLE=tower`, or `roles/` or its saved entry says tower and its tab carries the tower glyph: train-workers spec §29), for example opened by an older session's
   `ensureTower` or resumed by a Herdr restore, asks the server for `ensure-tower` on its workspace and quits once the server has written
   the `tower` token for the identity. Its tab becomes the standing pane's tab. A message sent to that pi's own id after it quit waits in
   the broker's mailbox for an id that never comes back, so the hand-over happens at the pi's start, before any agent learns its id.
-- `roles/` records with role `tower` are converted into `service.json` and then deleted. Main records are untouched.
+- `roles/` records with role `tower` are converted into `service.json` and then deleted, in a tab that carries the tower glyph, or for a pane that carries the live tower's `sb_role=tower` mark and runs the record's session file (train-workers spec §29: the record and the file alone prove nothing). Main records are untouched.
 - A tower tab left bare (the glyph, one pane, no agent) is reused as the standing pane and gets the prompt typed into its idle shell; a pane that shows only the stand-in agent `tower` of a service that has gone counts as bare too, and its prompt leaves at its next poll, since nothing answers it. With the flag off nothing is typed and no stand-in is reported.
 - The `straw-boss/link` channel keeps serving requests from sessions of the previous build, and carries the server holder's `offer`s
   to resident towers (`src/link/runtime.ts:154`, `:342`), for as long as `towerRuns.enabled` exists: with the flag off, towers are

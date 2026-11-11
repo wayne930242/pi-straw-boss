@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { Pane, Session } from "../src/herdr.ts";
+import { type Pane, type Session, TOWER_LABEL } from "../src/herdr.ts";
 import { createCloser } from "../src/closer.ts";
 import { requestFile, trustDir, writeAtomic } from "../src/trust/files.ts";
 import { digestOf } from "../src/trust/found.ts";
@@ -20,7 +20,7 @@ function world() {
 	const file = (n: string) => ((p) => (writeFileSync(p, "{}\n"), p))(join(dir, `${n}.jsonl`));
 	const pi = (id: string, tab: string, role: string, status = "idle"): Pane => ({ pane_id: id, tab_id: tab, workspace_id: "wA", agent: "pi", agent_status: status, agent_session: { value: file(id.replace(":", "-")) }, cwd: dir, tokens: { sb_role: role } });
 	const panes: Pane[] = [pi("wA:p2", "wA:t2", "main"), pi("wA:p3", "wA:t2", "member"), { pane_id: "wA:p4", tab_id: "wA:t2", workspace_id: "wA", cwd: dir }, pi("wA:p1", "wA:t1", "tower")];
-	const tabs = [{ tab_id: "wA:t2", workspace_id: "wA", label: "work" }, { tab_id: "wA:t1", workspace_id: "wA", label: "T" }];
+	const tabs = [{ tab_id: "wA:t2", workspace_id: "wA", label: "work" }, { tab_id: "wA:t1", workspace_id: "wA", label: TOWER_LABEL }];
 	const all = [{ workspace_id: "wA", label: "Base A" }] as { workspace_id: string; label: string; worktree?: Record<string, unknown> }[];
 	const fg: Record<string, string[]> = { "wA:p4": ["zsh"] };
 	const ran: string[][] = [];
@@ -52,7 +52,7 @@ test("a stash checks every session, records the base with its tower tab first, t
 	assert.deepEqual(s.closed, ["wA"]);
 	const st = JSON.parse(readFileSync(stashFile(w.dir, "A"), "utf8")) as Stash;
 	assert.equal(st.label, "Base A");
-	assert.deepEqual(st.tabs.map((t) => [t.label, t.panes.map((p) => p.kind)]), [["T", ["tower"]], ["work", ["main", "member", "shell"]]]);
+	assert.deepEqual(st.tabs.map((t) => [t.label, t.panes.map((p) => p.kind)]), [[TOWER_LABEL, ["tower"]], ["work", ["main", "member", "shell"]]]);
 	assert.equal(st.tabs[1]!.panes[0]!.name, "main · A");
 	assert.match(st.tabs[1]!.panes[0]!.session!, /wA-p2\.jsonl$/);
 	assert.deepEqual(listStashes(w.dir), ["A"]);
@@ -69,7 +69,7 @@ test("the stand-in agent of a tower the sb server runs is the standing pane's sh
 	assert.equal(r.status, 200, JSON.stringify(r.body));
 	assert.deepEqual(s.checked.sort(), ["b", "m"], "no session is asked for the tower");
 	const st = JSON.parse(readFileSync(stashFile(w.dir, "A"), "utf8")) as Stash;
-	assert.deepEqual(st.tabs.map((t) => [t.label, t.panes.map((p) => p.kind)]), [["work", ["main", "member", "shell"]], ["T", ["shell"]]]);
+	assert.deepEqual(st.tabs.map((t) => [t.label, t.panes.map((p) => p.kind)]), [["work", ["main", "member", "shell"]], [TOWER_LABEL, ["shell"]]]);
 });
 
 test("anything a resume would lose refuses the stash, names every reason, and closes nothing", async () => {
@@ -206,11 +206,39 @@ test("a pop resumes the tower first, then each tab's main before its members, an
 	assert.deepEqual(starts, [["tower", "wA-p1.jsonl", "tower · A"], ["main", "wA-p2.jsonl", "main · A"], ["member", "wA-p3.jsonl", "member · A"]]);
 	assert.deepEqual(p.ran.find((a) => a[0] === "workspace" && a[1] === "create")!.slice(-4), ["--env", "STRAW_BOSS_ROLE=tower", "--env", "PI_CODING_AGENT_DIR=/agent"]);
 	assert.ok(p.ran.filter((a) => a[1] === "split" || (a[0] === "tab" && a[1] === "create")).every((a) => a.includes("PI_CODING_AGENT_DIR=/agent")), "every pane runs under the same agent dir");
-	assert.ok(p.ran.some((a) => a.join(" ") === "tab rename wN:t0 T"), "the tower tab keeps its label");
+	assert.ok(p.ran.some((a) => a.join(" ") === `tab rename wN:t0 ${TOWER_LABEL}`), "the tower tab keeps its label");
 	assert.ok(p.ran.some((a) => a[1] === "report-metadata" && a.includes("sb_open_main=1")), "the main may promote itself");
 	assert.equal(p.made.filter((x) => !x.tokens?.env?.includes("STRAW_BOSS_ROLE")).length, 1, "the shell comes back without a role");
 	assert.deepEqual(listStashes(w.dir), []);
 	assert.deepEqual(readdirSync(join(w.dir, "stash", "popped")), ["A-2026-10-22T11-00-00-000Z.json"]);
+});
+
+// The manifest is a file a session's shell can write, like a role record (docs/specs/2026-11-07-train-workers.md §29): what it names a tower is one only in a tower tab of its own.
+for (const [what, forge] of [
+	["in an ordinary tab", (st: Stash) => { st.tabs[0]!.panes[0]!.kind = "member"; st.tabs[1]!.panes[1]!.kind = "tower"; }],
+	["in a tab only named like a tower's", (st: Stash) => { st.tabs[0]!.label = "tower"; }],
+	["beside another agent's pane in the tower tab", (st: Stash) => { st.tabs[0]!.panes.push({ ...st.tabs[1]!.panes[1]! }); }],
+] as const) {
+	test(`a pop starts no tower from a manifest that names one ${what}: it comes back a member, with one warning`, async () => {
+		const w = world();
+		await stasher(w).go();
+		const st = JSON.parse(readFileSync(stashFile(w.dir, "A"), "utf8")) as Stash;
+		forge(st);
+		writeFileSync(stashFile(w.dir, "A"), JSON.stringify(st));
+		const p = popper(w);
+		const r = await p.pop();
+		assert.equal(r.sessions, st.tabs.flatMap((t) => t.panes).filter((x) => x.kind !== "shell").length, "every pi is back");
+		assert.equal(p.made.some((x) => x.tokens?.env?.includes("STRAW_BOSS_ROLE=tower")), false, "no pane is started as a tower");
+		assert.equal(p.ran.some((a) => a[1] === "report-metadata" && a.includes("sb_role=tower")), false, "no pane is marked a tower");
+		assert.equal(p.ran.some((a) => a[0] === "agent" && a[2]!.startsWith("tower")), false, "no agent is started under a tower's name");
+		assert.match(r.warning ?? "", /^Straw Boss: the stash names .* a tower, but not alone in a tower tab, so it came back as a member: a file alone gives no role$/);
+	});
+}
+
+test("a pop of a real stash warns of nothing", async () => {
+	const w = world();
+	await stasher(w).go();
+	assert.equal("warning" in (await popper(w).pop()), false);
 });
 
 test("a pop that fails closes the new workspace and keeps the stash; a missing session file opens nothing", async () => {

@@ -275,9 +275,10 @@ test("resident towers: a record in roles/ whose pane is in this Herdr becomes se
 	assert.equal(s.client.connected, true);
 });
 
-test("resident towers: a record whose pane runs its own session file in a tab without the glyph becomes a service, and the tab gets the glyph that proves its seat after a Herdr restart", async () => {
+test("resident towers: a record whose pane runs its own session file as a live tower (its sb_role mark) in a tab without the glyph becomes a service, and the tab gets the glyph that proves its seat after a Herdr restart", async () => {
 	world.herdr.addTab("wA:t7", "my tower", "wA:p7", "pi");
 	pane("wA:p7").agent_session = { value: "/sessions/tower.jsonl" };
+	pane("wA:p7").tokens.sb_role = "tower"; // what a live resident tower's pane carries: Herdr's fact, which no file holds (todo #131)
 	const roles = join(world.stateDir, "roles");
 	mkdirSync(roles, { recursive: true });
 	writeFileSync(join(roles, "tower.json"), JSON.stringify({ role: "tower", pane: "wA:p7", tab: "wA:t7", workspace: "wA", file: "/sessions/tower.jsonl", at: 1 }));
@@ -696,15 +697,31 @@ test("B4R-F003: a roles/ record whose pane id only collides with a main here (an
 	assert.deepEqual(readdirSync(roles).sort(), ["other.json", "stale.json"]);
 });
 
-test("B4R-F003: a record whose pane runs its own session file converts even when the tab has no tower label", async () => {
+test("B4R-F003: a record whose pane runs its own session file as a live tower converts even when the tab has no tower label", async () => {
 	world.herdr.addTab("wA:t6", "renamed", "wA:p6", "pi");
 	pane("wA:p6").agent_session = { value: "/sessions/tower.jsonl" };
+	pane("wA:p6").tokens.sb_role = "tower"; // the live tower's own mark (todo #131: the record and the file alone no longer convert)
 	const roles = join(world.stateDir, "roles");
 	mkdirSync(roles, { recursive: true });
 	writeFileSync(join(roles, "mine.json"), JSON.stringify({ role: "tower", pane: "wA:p6", tab: "wA:t6", workspace: "wA", file: "/sessions/tower.jsonl", at: 1 }));
 	await started();
 	assert.equal(readService(world.slot, "wA")?.pane, "wA:p6");
 	assert.deepEqual(readdirSync(roles), []);
+});
+
+for (const role of [undefined, "member", "main"] as const) test(`todo #131: a tower record a session wrote for its own pane and session file makes no seat (${role ?? "no mark"}): without the glyph or the tower's mark the record is left and the pane is not touched`, async () => {
+	world.herdr.addTab("wA:t6", "work", "wA:p6", "pi");
+	pane("wA:p6").agent_session = { value: "/sessions/member.jsonl" };
+	if (role) pane("wA:p6").tokens.sb_role = role;
+	const roles = join(world.stateDir, "roles");
+	mkdirSync(roles, { recursive: true });
+	writeFileSync(join(roles, "forged.json"), JSON.stringify({ role: "tower", pane: "wA:p6", tab: "wA:t6", workspace: "wA", file: "/sessions/member.jsonl", at: 1 }));
+	await started();
+	await sleep(120);
+	assert.equal(readService(world.slot, "wA"), undefined, "no service");
+	assert.equal(pane("wA:p6").tokens.sb_role, role, "the pane keeps what it carried");
+	assert.equal(world.herdr.tabs.find((t) => t.tab_id === "wA:t6")?.label, "work", "and the tab keeps its label");
+	assert.deepEqual(readdirSync(roles), ["forged.json"], "the record is left for a Herdr that proves it");
 });
 
 for (const order of ["events first", "takeover first"] as const) {
