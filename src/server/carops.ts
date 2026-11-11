@@ -55,6 +55,8 @@ export interface StartCars {
 	slot: Slot;
 	run: HerdrRun;
 	now(): number;
+	/** When the server started: the book's refusal of a forward made before it names it (todo #154). */
+	startedAt?: number;
 	/** The server's own intercom connection, when it is connected. */
 	client(): IntercomLike | undefined;
 	startOf(pid: number): string | undefined;
@@ -92,7 +94,7 @@ function knownHostsOfUser(): string {
 export function startCars(o: StartCars): Cars {
 	let notices: CarNotices | undefined;
 	const book = new CarBook({
-		stateDir: o.slot.stateDir, dir: o.slot.dir, now: o.now, look: (session) => look(o, session), git: runGit, knownHosts: knownHostsOfUser(), exists: existsSync, log: o.log,
+		stateDir: o.slot.stateDir, dir: o.slot.dir, now: o.now, ...(o.startedAt !== undefined ? { startedAt: o.startedAt } : {}), look: (session) => look(o, session), git: runGit, knownHosts: knownHostsOfUser(), exists: existsSync, log: o.log,
 		startOf: o.startOf, onChange: () => notices?.kick(), ...o.over,
 	});
 	notices = new CarNotices({ book, now: o.now, intercom: () => o.client(), tower: (workspace) => towerId(o.slot, workspace), log: o.log });

@@ -363,6 +363,37 @@ test("CR-F003: after a restart the train is unknown to the server until the towe
 	await assert.rejects(book.set({ secret: shell.secret, state: "landed", car: { app: "web", head: SHA_A }, fields: { version: "1", commit: pushed } }), /this server did not open train/);
 });
 
+// ---- todo #154: a restart is told, not undone
+
+test("todo #154: after a restart the integrator's refusal names the server's start, says forwards are kept in memory only and names the way back; nothing on disk restores the forward, the tower's new forward does, and a server up longer than a forward is kept says none of it", async () => {
+	const w = world();
+	w.forwarded();
+	// The server starts again 8 minutes after the tower's forward (the live case: forwarded 06:33:46Z, restarted 06:41:25Z).
+	w.tick(8 * 60_000);
+	const started = new Date(w.now()).toISOString();
+	const again = new CarBook({ ...w.deps, secret: () => "secret-restart" } as never);
+	const integ = await again.register({ session: INTEG, pid: 111, started: startOf(111), pane: "wA:p1" });
+	const returned = (book: CarBook, head: string) => book.set({ secret: integ.secret, state: "returned", car: { project: "acme", head }, fields: { reason: "no accept" } });
+	w.tick(60_000);
+	const refusal = await returned(again, SHA_A).then(() => "", (e: Error) => e.message);
+	assert.ok(refusal.startsWith(`sb: no forward by a tower carries head ${SHA_A.slice(0, 12)} to this session`), refusal);
+	assert.ok(refusal.includes(`The sb server started at ${started} and keeps a tower's forwards in memory only, so a forward made before that is gone with the restart`), refusal);
+	assert.ok(refusal.includes("ask the car's coordinator to send its slip to the tower again (call_tower why=shared); the tower forwards it again, and then the state is set"), refusal);
+	assert.deepEqual(again.read("acme"), [], "the refusal set nothing");
+	// The way back is the fact itself: the tower's forward to this server.
+	again.noteForward({ fwd: "f".repeat(16), from: COORD, to: [INTEG], text: `car: web | tickets: T-15 | branch: fix/t-15 | head: ${SHA_A} | coordinator: ${COORD}` });
+	assert.equal((await returned(again, SHA_A)).state, "returned");
+	// The start the server itself gives the book (main.ts) is the one told, not the moment the book was made.
+	const given = new CarBook({ ...w.deps, secret: () => "secret-given", startedAt: Date.parse("2026-11-07T08:05:00Z") } as never);
+	const second = await given.register({ session: INTEG, pid: 111, started: startOf(111), pane: "wA:p1" });
+	await assert.rejects(given.set({ secret: second.secret, state: "returned", car: { project: "acme", head: SHA_A }, fields: { reason: "x" } }), /The sb server started at 2026-11-07T08:05:00\.000Z and keeps/);
+	// A day after the start no forward made before it would still count, so the refusal is the plain one.
+	w.tick(24 * 3600_000);
+	const late = await returned(again, SHA_B).then(() => "", (e: Error) => e.message);
+	assert.ok(late.startsWith(`sb: no forward by a tower carries head ${SHA_B.slice(0, 12)} to this session`), late);
+	assert.doesNotMatch(late, /sb server started|memory only/);
+});
+
 // ---- P2: cars-read is bounded
 
 test("CR-F004: cars-read takes a registered session and returns only its own: a raw client with no secret gets none, a train sees its manifest's cars, another integrator sees nothing", async () => {

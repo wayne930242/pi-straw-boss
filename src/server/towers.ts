@@ -1112,7 +1112,7 @@ export function createTowers(o: TowersOptions): Towers {
 			link: async (body: Record<string, unknown>) => ((await o.link?.(body, l.record.id)) ?? { ok: false, code: "no_holder", error: "The link holder is not running in the sb server" }) as { ok: boolean; error?: string },
 			server: o.server ?? { status: () => ({}), logs: () => [], restart: () => Promise.reject(new Error("The server cannot restart itself here")) },
 			expect: (to: string, name: string, text: string) => { if (peer) return route(to, phrase(name, 40), "expect"); try { addExpect(slot, ws, { to, name, at: now(), first: phrase(text, 80) }, now()); } catch (cause) { error("expects", (cause as Error).message); } },
-			who, identity: l.record.id, requests: l.requests,
+			who, identity: l.record.id, requests: l.requests, startedAt: o.startedAt,
 			allow: (q: { toolCallId: string; tool: string; args: unknown }) => (o.allows ? o.allows.take({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),
 			allowRequest: (q: { toolCallId: string; lines: string[] }) => (o.allows ? o.allows.takeRequest({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),
 			asks: o.asks ?? { open: () => { throw new Error("this server keeps no asks"); } },
@@ -1120,7 +1120,7 @@ export function createTowers(o: TowersOptions): Towers {
 			forwardEvent: (id: string) => {
 				const event = readQueue(slot, ws).find((e) => e.id === id && e.taken?.run === who.id && e.kind === "intercom" && e.from);
 				const fields = event && fieldsOf(event.text);
-				return event && fields?.kind === "call_tower" && fields.why === "shared" ? { id: event.id, from: event.from!.id, text: event.text } : undefined;
+				return event && fields?.kind === "call_tower" && fields.why === "shared" ? { id: event.id, from: event.from!.id, text: event.text, at: Date.parse(event.at) } : undefined;
 			},
 			// A reply that settles a blocked call_tower this run took, while auto mode is on, is listed for the return list with the basis it names (autotower.ts `basisOf`) or `none`.
 			decided: (to: string, gist: string, basis: unknown) => {
