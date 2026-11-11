@@ -176,8 +176,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.15.0 raised control.ts to 176 for sessions/<key>/upload, a file's bytes under the same origin and CSRF checks, handed to upload.ts (50 at most).
 	// Unreleased raised spawn.ts to 225 for the folder picker's new folder (makeDir: a plain visible name made inside a pickable folder) and its places (home, Desktop, Documents, the bases' folders), and added deploy.ts (63): an opening reports its steps (create, start, join, deliver) for the page to poll, and a refusal names its failed step.
 	// Unreleased raised spawn.ts to 227: a folder made by a swapped link is taken back, and Windows-reserved names are refused.
-	// 0.75.2 raised trust/ask.ts from 243 to 249: under auto mode a pane the server started for open/base is asked as usual (its `opened` dep).
-	// 0.75.2 raised spawn.ts from 336 to 343: an open/base lists its pane for the trust question while pi starts (trust/intent.ts).
+	// 0.75.2 raised trust/ask.ts from 243 to 250: under auto mode a pane the server started for open/base is asked as usual (its `opened` dep, which asks the sb server over the control socket; todo #156 and its review R156; measured).
+	// 0.75.2 raised spawn.ts from 336 to 343: an open/base lists its pane in the server's memory for the trust question while pi starts (trust/intent.ts; measured, unchanged by the review round).
 	// 0.15.0 raised spawn.ts from 123 to 168: a base opens with a member and no tower, a base without a tower takes members (split into a squad or in
 	// a new tab), only one with a tower takes mains, and every opening shares the start, join wait, first message, and close-on-failure.
 	// Unreleased raised remote.ts to 203: paired devices saved (hashed) for the server a /reload starts again, and the disable that keeps them; host.ts to 88 for `restore`, which turns remote back on after a /reload.
@@ -496,7 +496,7 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased raised trust/ask.ts from 183 to 201 (RC4-F001, F002): `warmServerStart` (the early read only for a live server that reads trust requests) and `guiUp` (what the handler's `up` asks) are exported for their tests, and `registerTrust` takes the terminal it answers on.
 	// Unreleased raised trust/ask.ts from 201 to 209 (sbir6-F004): the early read asks the same predicate (`asks`) as the handler, plus pi's resource check; dashboard.ts 162 to 175 (sbir6-F005): rows render before the GUI read settles.
 	// Unreleased raised trust/ask.ts from 209 to 235 (sbir7-F001, F002): the early read and the handler degrade on older pi's missing trust exports, and no relay under -p, another --mode, or --approve.
-	for (const [name, max] of [["found.ts", 103], ["settings.ts", 160], ["files.ts", 160], ["ask.ts", 249], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
+	for (const [name, max] of [["found.ts", 103], ["settings.ts", 160], ["files.ts", 160], ["ask.ts", 250], ["serve.ts", 110], ["wait.ts", 28], ["types.ts", 15]] as const) assert.ok(count(`src/trust/${name}`) <= max, `src/trust/${name} has ${count(`src/trust/${name}`)} lines`);
 	// Unreleased (sb server B1, docs/specs/2026-10-26-sb-backend.md): the server's own directory, src/server/, has no figure in the spec; the files each hold one concern:
 	// record.ts (server.json, server.lock, start-error.json, slots), log.ts (server.log, rotated), version.ts (the version rules), acl.ts (the Windows folder ACL by SID), socket.ts (the control socket or pipe and its hello secret),
 	// After the re-check: log.ts 135 (the stale lock removed under a marker), client.ts 412 (the stop's scope check, the wait for a supervisor's serve as one function).

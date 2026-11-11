@@ -6,7 +6,7 @@ import { checkText, type Reply } from "./control.ts";
 import { createDeploys, type Delivery as Said, type Deploy, type StepId } from "./deploy.ts";
 import { createOpenings, type Delivery, type Opening, type Openings } from "./openings.ts";
 import { clean, cleanGroup } from "./trust/found.ts";
-import { type Intents, listed } from "./trust/intent.ts";
+import type { Intents } from "./trust/intent.ts";
 import { assertSettingsSafe, type SettingsRefusal, SettingsRefused } from "./trust/settings.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 import { type Hidden, HiddenError, hasHidden, platformHidden } from "./hidden.ts";
@@ -171,7 +171,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 	async function boot(d: Deploy, paneId: string, name: string, prompt: string | undefined, role?: string, joinWaitMs = JOIN_WAIT_MS, track?: (state: Delivery) => void, intent?: string): Promise<Reply | undefined> {
 		d.go("start");
 		d.pane = paneId; // before pi starts: its trust question can be there before `agent start` returns
-		const release = intent ? listed(intents, note, paneId, intent, joinWaitMs) : undefined;
+		const release = intent ? intents?.grant(paneId, intent) : undefined;
 		try {
 			await startPi(run, sleep, `${role ?? "member"}-${randomUUID().slice(0, 8)}`, paneId, ["--name", name]);
 			await awaitJoin(d, paneId, joinWaitMs, role);
