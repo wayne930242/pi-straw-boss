@@ -12,20 +12,12 @@ description: 四個步驟，看網運作起來。
 
 ## 塔台自己運作
 
-sb server 的塔台服務預設是開的。
-塔台是一次執行：它因收到的事件而醒來，結束時留下一份交接筆記；`/boss tower <prompt>` 會寫給它。
-隊友的 [Straw Link](/pi-straw-boss/docs/zh-tw/guide/straw-link/) 訊息會得到自己的一次盟友執行。
-
-每次執行都從頭開始。
-執行結束後還要留著的內容，放在一份小小的記憶裡：你的長期指示、你的決定，以及塔台對你還開著的等待事項。
-用 `/boss memory` 讀取與修改，或在 GUI 裡塔台的通訊畫面中操作。
-塔台只能提出長期指示或決定的提案；要等你確認才會生效。
-見[塔台記憶](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#塔台記憶)。
-
-塔台只負責轉送與協調，所以可以用比較輕量的模型：在[設定](/pi-straw-boss/docs/zh-tw/reference/configuration/)裡設定 `towerModel`。
+sb server 的塔台服務預設是開的：它為事件醒來，並保管一份小小的記憶，所以你不必對它說話。
+`/boss tower <prompt>` 會寫給它，`/boss memory` 會顯示它的記憶，在[設定](/pi-straw-boss/docs/zh-tw/reference/configuration/)裡設定 `towerModel` 可以給它較輕量的模型。
+run 怎麼運作、交接筆記是什麼，見[塔台怎麼運作](/pi-straw-boss/docs/zh-tw/guide/concepts/#塔台怎麼運作)。
 
 ## 下一步
 
-- [概念](/pi-straw-boss/docs/zh-tw/guide/concepts/)：誰是成員、主智慧體、塔台與主塔台。
+- [概念](/pi-straw-boss/docs/zh-tw/guide/concepts/)：誰是成員、主智慧體、塔台與主塔台，以及每一種智慧體與 run。
 - [瀏覽器檢視](/pi-straw-boss/docs/zh-tw/guide/browser-view/)：地圖、通訊畫面、警示與禪檢視。
 - [指令](/pi-straw-boss/docs/zh-tw/reference/commands/)：每個工具與 `/boss` 指令。

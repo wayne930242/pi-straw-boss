@@ -24,11 +24,24 @@ The code is 8 characters, works once within ten minutes, and is void after five 
 `/boss gui lan` reaches the page from a phone on the same Wi-Fi, without Tailscale.
 It is off until you turn it on.
 
-This computer makes its own certificate, after showing you the risk: anyone who copies its key from this computer could pose to your phones as private-network sites (your router's page, a NAS) until you remove the certificate from each phone.
-So use it on your phone's hotspot, or on a Wi-Fi that connects the phone directly to this computer.
-Each phone installs the certificate once, then pairs by QR code or typed code, and you allow each new phone on this computer by typing the number it shows.
+This computer makes its own certificate, after showing you the risk.
+
+:::caution
+Anyone who copies the certificate's key from this computer could pose to your phones as private-network sites (your router's page, a NAS) until you remove the certificate from each phone.
+Use it on your phone's hotspot, or on a Wi-Fi that connects the phone directly to this computer.
+:::
+
+1. Each phone installs the certificate once.
+2. It pairs by QR code or typed code.
+3. You allow each new phone on this computer by typing the number it shows.
+
 `/boss gui lan off` turns it off; paired phones stay paired.
-`/boss gui lan reset` makes a new certificate, and asks whether to keep the pairings (the old certificate is ending, or the computer was renamed) or unpair every Wi-Fi device (the key or a phone may have been stolen); either way each phone removes the old certificate and installs the new one.
+`/boss gui lan reset` makes a new certificate and asks what to do with the pairings; either way each phone removes the old certificate and installs the new one:
+
+| Choice | When |
+| --- | --- |
+| Keep the pairings | The old certificate is ending, or the computer was renamed |
+| Unpair every Wi-Fi device | The key or a phone may have been stolen |
 
 ## Pairing and the token
 

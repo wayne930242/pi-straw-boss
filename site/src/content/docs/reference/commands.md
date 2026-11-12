@@ -7,6 +7,12 @@ Agents call the **tools**; you type the **`/boss` commands** in any pi session i
 `/boss` commands are the boss's typed input only: a tower run, an ally run, or a paired device's composer cannot type them, except where a row says otherwise.
 `/boss` and `boss_promote` are unavailable in a sub workspace.
 
+"Who has it" names the kind of session, as [Concepts](/pi-straw-boss/docs/guide/concepts/) defines them:
+
+- **Joined sessions**: every pi that joined its tab's net (members and mains).
+- **Towers**: the tower's runs, and the head tower's where a row says so.
+- **Local tower runs**: the tower's [runs](/pi-straw-boss/docs/guide/concepts/#how-a-tower-runs) on this computer, not a teammate's *ally run*.
+
 ## Tools
 
 | Tool | Who has it | What it does |
@@ -14,18 +20,20 @@ Agents call the **tools**; you type the **`/boss` commands** in any pi session i
 | `boss_promote` | joined sessions | Become this tab's main agent; refused while the tab has a live main. |
 | `boss_status` | joined sessions and towers | The main agent of each tab, this workspace's tower, the head tower, and the other towers. |
 | `boss_duty` | a tab's main | Set its kind with a reason: `coordinator`, `integrator`, or `standing`. The kind is the prompt it runs and shows on the page. |
-| `boss_rename` | joined sessions | Name the session with a short phrase for its current work; the net and the GUI show it, and a main's tab takes it as its label. A name that is a role label (the tower's or the head tower's glyph, `train <MMDDx>`) is refused: only Straw Boss gives a tab those. |
+| `boss_rename` | joined sessions | Name the session with a short phrase for its current work; a main's tab takes it as its label. A role label (a tower's glyph, `train <MMDDx>`) is refused. |
 | `call_tower` | joined sessions and towers | Message this workspace's tower, or another workspace's, under a header. `why` is `milestone`, `shared`, or `blocked`; `reply: false` for a notice. |
 | `boss_broadcast` | joined sessions and towers | Message a tab, a workspace, every tower, or every session, under a header naming every recipient. |
 | `board_set` | a tab's main | Override its own work board entry (one line and up to 8 checklist items); `auto: true` hands it back to the auto-fill, `clear: true` deletes it. |
 | `boss_server` | joined sessions | The sb server's `status` (also with it down), its `logs` (up to 200 lines), or `restart` with a reason. Refused while the boss stopped the server, at most once a minute, and never in a remote turn. |
 | `link_request` | every session on an attended computer, and a local tower run | Ask for a Straw Link action (create, invite, join, trust, leave, remove, role, rotate) with a reason. It never runs unasked: the boss approves it in a dialog. |
-| `boss_open_main` | towers | Open a tab with a new main agent for a request no session owns. `role: "train"` opens a train on an integrator's manifest; `role: "integrator"` (a run of the sb server) sends a car slip to the project's one integrator, opening it as the tower's own main when none runs; where the project already runs integrators of its own it opens none and names them, and the tower forwards the slip with `tower_reply` and `forward`. A main's `label` that is a role label (the tower's or the head tower's glyph, `train <MMDDx>`) is refused. |
+| `boss_open_main` | towers | Open a tab with a new main agent for a request no session owns. `role: "train"` opens a train; `role: "integrator"` sends a car slip to the project's one integrator, opening it when none runs. See [Merge train](/pi-straw-boss/docs/guide/merge-train/). |
 | `boss_close_main` | towers | Close a main this tower opened, once nothing runs in it. |
 | `tower_list` | towers | Every workspace's tower, who a message for it reaches, its state, and what its tabs work on. |
 | `tower_send` | towers | Message one other tower (by workspace id or label) or all of them; with `device`, the tower of a teammate's computer. |
 | `board_read` | towers | The work board: what each main is doing and how far it is, here and on teammates' computers. |
 | `tower_memory` | local tower runs | Keep what outlives the run: a standing instruction or a decision quoted from the boss's own message, and the tower's waits, including a wait on the boss as a card. |
+| `tower_reply` | tower runs, not the head tower's | Answer one local session (a main or a member) by its intercom name or session id, under the tower's header. `forward` carries a car slip's event id to an integrator. |
+| `tower_done` | tower runs | End this run with a handoff note (one item per line, up to 1,200 characters) for the next run; `wakeAfter` (5 to 240 minutes, local runs only) asks for a follow-up run. Refused while events are still waiting for the run. |
 | `boss_auto` | the head tower | Start or end [auto mode](/pi-straw-boss/docs/guide/auto-mode/) on the boss's own words in the turn it answers. |
 | `train_car` | the integrator and trains | Set a car's state (`received`, `returned`, `dropped`, `landed`); the sb server tells the car's coordinator. |
 
@@ -39,9 +47,13 @@ The full table, with every argument, is in [Tools](/pi-straw-boss/docs/reference
 | `/boss status` | Each tab's main agent and the towers. |
 | `/boss tower` | Open this workspace's tower if none runs, and focus its tab. |
 | `/boss tower <prompt>` | Write to this workspace's tower. |
-| `/boss tower -w <workspace\|head> [--answers W3] <status\|parked\|retry\|deliver <id>\|drop <id>\|leave\|new\|message>` | Act on another workspace's tower from any pi with a screen, as the tower's card and composer do. A write at another tower asks first. `--answers W3` marks a wait for you answered once the tower took the message. |
+| `/boss tower -w <workspace\|head> <subcommand>` | Act on another workspace's tower, as the tower's card and composer do. A write at another tower asks first. |
+| `/boss tower … status`, `parked`, `leave`, `new` | The tower's state, its parked events, end its conversation with a note, start a new conversation. |
+| `/boss tower … retry`, `deliver <id>`, `drop <id>` | Retry, deliver, or drop a parked event. |
+| `/boss tower … [--answers W3] <message>` | Write a message; `--answers W3` marks a wait for you answered once the tower took it. |
 | `/boss head [status\|leave\|new\|close\|<message>]` | Talk to the [head tower](/pi-straw-boss/docs/guide/head-tower/). A bare `/boss head` makes its workspace and focuses its tab. |
-| `/boss head retry`, `parked`, `deliver <id>`, `drop <id>`, `--answers W3 <message>` | The head tower's notices and parked events, and a message that answers a wait. |
+| `/boss head retry`, `parked`, `deliver <id>`, `drop <id>` | The head tower's notices and parked events. |
+| `/boss head --answers W3 <message>` | A message that answers a wait. |
 
 ## Talking to sessions
 
@@ -60,7 +72,7 @@ The full table, with every argument, is in [Tools](/pi-straw-boss/docs/reference
 | `/boss memory confirm P1`, `reject P1` | Confirm or reject a tower's proposal. |
 | `/boss memory add standing\|decision <text>`, `edit S1 <text>`, `delete D1`, `resolve W1` | Change the memory yourself. |
 | `/boss memory done\|choose\|decline W<n>` | Act on a wait, such as one parked by auto mode. |
-| `/boss wait [-w workspace \| label \| head]` | List the wait cards open for you in every tower and the head (this tower's first), and press one from dialogs: done, an option, skip (a reason, then a confirm), reply to the tower, or start entering a secret. It sends the page's own press, so nothing is pressed that the page could not press. The tower's standing pane takes the same as `/wait`, typed with numbers and `y/N`. |
+| `/boss wait [-w workspace \| label \| head]` | List the wait cards open for you, and press one: done, an option, skip, reply to the tower, or start entering a secret. It sends the page's own press. The tower's standing pane takes the same as `/wait`. |
 | `/boss auto` | Show the auto mode state and the last return list. |
 | `/boss auto on`, `/boss auto confirm`, `/boss auto off` | Ask for auto mode and confirm it in the terminal; confirm a request the head tower staged; end it and print the return list. |
 

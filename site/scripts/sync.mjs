@@ -1,7 +1,8 @@
 // Generates the site's reference pages from the repository's own Markdown, so docs/ stays the one source:
 // docs/how-it-works.md (and its zh-TW twin) split by H2, docs/unattended-device*.md, docs/releases/*.md, and the images.
 // Links are rewritten to absolute site paths (the links validator checks them) or to GitHub for files the site does not publish.
-// `--check` reports whether docs/how-it-works.zh-TW.md still matches the English file: heading structure (error) and drift (warning).
+// `--check` reports whether docs/how-it-works.zh-TW.md still matches the English file: heading structure (error) and drift (warning),
+// and every `**` that CommonMark would not turn into bold (CJK punctuation beside it): an error in the site's own pages, a warning in docs/.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
@@ -139,6 +140,56 @@ function sourceOf(zhText) {
 	return /<!-- source: docs\/how-it-works\.md @ ([0-9a-f]{7,40}) -->/.exec(zhText)?.[1];
 }
 
+const PUNCT = /[\p{P}\p{S}]/u;
+const SPACE = /\s/u;
+
+// The 1-based lines of `text` holding a `**` that is not bold under CommonMark's flanking rule. A delimiter that opens needs a
+// non-space after it, and a punctuation mark after it only when a space or punctuation lies before it; a delimiter that closes
+// is the mirror. Code fences are skipped, and inline code counts as its backticks (punctuation). `**` pairs are taken in order, as the parser pairs a line's runs.
+export function brokenBold(text) {
+	const out = [];
+	let fence = false;
+	text.split("\n").forEach((line, i) => {
+		if (/^\s*```/.test(line)) fence = !fence;
+		if (fence || !line.includes("**")) return;
+		const plainLine = line.replace(/`[^`]*`/g, (m) => "`".repeat(m.length));
+		const runs = [...plainLine.matchAll(/\*\*+/g)].filter((m) => m[0].length === 2);
+		let bad = false;
+		runs.forEach((m, n) => {
+			const before = m.index > 0 ? plainLine[m.index - 1] : " ";
+			const after = m.index + 2 < plainLine.length ? plainLine[m.index + 2] : " ";
+			const left = !SPACE.test(after) && (!PUNCT.test(after) || SPACE.test(before) || PUNCT.test(before));
+			const right = !SPACE.test(before) && (!PUNCT.test(before) || SPACE.test(after) || PUNCT.test(after));
+			if (n % 2 === 0 ? !left : !right) bad = true;
+		});
+		if (bad) out.push(i + 1);
+	});
+	return out;
+}
+
+function checkBold() {
+	let bad = 0;
+	const files = [];
+	const walk = (dir) => {
+		for (const f of readdirSync(dir)) {
+			const path = join(dir, f);
+			if (statSync(path).isDirectory()) walk(path);
+			else if (/\.mdx?$/.test(f)) files.push(path);
+		}
+	};
+	walk(join(CONTENT, "zh-tw"));
+	for (const path of files) {
+		if (GENERATED.some((g) => relative(join(CONTENT, "zh-tw"), path).startsWith(g))) continue;
+		const lines = brokenBold(read(path));
+		if (lines.length) console.log(`${relative(REPO, path)}: bold the page cannot show, at lines ${lines.join(", ")}`), (bad = 1);
+	}
+	for (const f of readdirSync(DOCS).filter((f) => /\.zh-TW\.md$/.test(f))) {
+		const lines = brokenBold(read(join(DOCS, f)));
+		if (lines.length) console.log(`docs/${f}: ${lines.length} lines with bold that does not render (warning; move the punctuation outside the ** or put a space after it): ${lines.slice(0, 12).join(", ")}${lines.length > 12 ? ", …" : ""}`);
+	}
+	return bad;
+}
+
 function check() {
 	const en = read(join(DOCS, "how-it-works.md"));
 	const zh = read(join(DOCS, "how-it-works.zh-TW.md"));
@@ -157,7 +208,7 @@ function check() {
 		if (log) console.log(`docs/how-it-works.md changed since the translation (${sha}); bring these into docs/how-it-works.zh-TW.md:\n${log}`);
 		else console.log(`docs/how-it-works.zh-TW.md matches docs/how-it-works.md at ${sha}`);
 	}
-	return bad;
+	return bad | checkBold();
 }
 
 function sync() {

@@ -37,7 +37,7 @@ description = "toggle the straw net view"
 `herdr plugin unlink wayne930242.straw-boss` 會移除外掛。
 
 pi-straw-boss 會寫入排序鍵（`sb_order`）、角色標籤（`sb_mark`），並在子智慧體上寫入樹狀分支（`sb_indent`）與子智慧體的名稱（`sb_name`），你自己的側邊欄列也可以用。
-`sb_mark` 每種類各有一個字符：協調者是舵輪，整合者是 code-fork，值守是燈塔，火車是火車頭，被派出的工作者、偵察、規劃、審查、監控者依序是扳手、望遠鏡、鉛筆加尺、放大鏡與狗，所以側邊欄看得出差別。
+`sb_mark` 每種[種類](/pi-straw-boss/docs/zh-tw/guide/concepts/#種類)各有一個字符，所以側邊欄看得出差別；整合員的是 code-fork，監控者的是狗。
 token 與 rows 範例見[側邊欄網檢視](/pi-straw-boss/docs/zh-tw/reference/how-it-works/sidebar-net-view/)。
 
 ## 殘留的 worktree pane

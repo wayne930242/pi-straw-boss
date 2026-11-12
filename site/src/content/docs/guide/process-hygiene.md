@@ -9,5 +9,5 @@ Every pi loads a small extension that marks its environment, so what a worker's 
 - **No worktree removal under a running process.** `worktree_remove` and a bash `git worktree remove` are refused while a process works in the checkout. The refusal names each holder's pid, program, CPU, and age, and the command that stops them: `node dist/server/cli.mjs procs reap --checkout <path>`.
 - **`cli.mjs procs`** lists the workers the server knows.
 
-Heavy-command slots, Linux cgroups, and a runaway-process watchdog are planned for a later release.
+Heavy-command slots, Linux cgroups, and a runaway-process guard are planned for a later release.
 See [Process hygiene and slots](/pi-straw-boss/docs/reference/how-it-works/process-hygiene-and-slots/) for the rules and the limits.

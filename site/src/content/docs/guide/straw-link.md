@@ -16,7 +16,14 @@ On each computer the sb server holds the link, so no pi session has to stay open
 3. **Invite** a teammate: the page shows the invite as a QR code and as text, valid for 10 minutes; in pi, `/boss link invite <team>` shows the text on a private screen.
 4. **Join** on the teammate's computer: paste the invite (or `/boss link join @file`) and pick the project folder. The page shows four safety words; the inviter picks the matching set among decoys to approve the join.
 
-Admins remove a device, change a role, and rotate the team key; anyone leaves the team. In pi the same acts are typed: `/boss link trust <device> <level>`, `/boss link role <team> <device> admin|member`, `/boss link remove <team> <device>` and `/boss link rotate <team>`, each asked on this computer first.
+Admins remove a device, change a role, and rotate the team key; anyone leaves the team. They are on the same Settings → Teams page, and typed in pi each is asked on this computer first:
+
+| Act | In pi |
+| --- | --- |
+| Change a device's trust | `/boss link trust <device> <level>` |
+| Change a role | `/boss link role <team> <device> admin\|member` |
+| Remove a device | `/boss link remove <team> <device>` |
+| Rotate the team key | `/boss link rotate <team>` |
 
 ## Trust
 
@@ -37,13 +44,12 @@ A teammate's message is never the boss's instruction: later local turns see it m
 ## Unattended devices
 
 An **unattended device** is a computer nobody sits at (a build box, a server) that takes work from teammates' computers over Straw Link.
-It runs the sb server as the link holder, with no boot pi session, and a controller invites it from the page.
+It runs the sb server, which holds the link, with no boot pi session, and a controller invites it from the page.
 On a box several developers share, a unit's questions and notices go only to the controller that dispatched it and to the team's admins.
 
 A controller can also **operate** a box: its towers, mains, and workers show as bases on the controller's page, with their live terminals, for typing, Escape, and stopping a main, as far as the box's own policy allows.
 
-A box's card names each of its mains by its kind (coordinator, integrator, standing, or train), in the words and with the icons the local page uses, when the box's build sends it; a box of an older build sends none, and its card reads as before.
-A box's tower wakes a short run for each message and stands by between runs, so its unit says *run in progress* while one lasts and *standing by* after it, and its finished runs are a closed fold, *Tower runs*, on the box's base, apart from the agents' *Earlier runs*.
+A box's card names each main by its kind and its tower's runs, in the words of the local page ([Concepts](/pi-straw-boss/docs/guide/concepts/#kinds)); its finished tower runs sit in a closed fold, *Tower runs*.
 
 See [Setting up an unattended device](/pi-straw-boss/docs/guide/unattended-device/).
 
