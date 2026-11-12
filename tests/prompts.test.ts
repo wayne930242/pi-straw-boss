@@ -111,7 +111,7 @@ test("merge train: apps-config names the integration fields and points to the sk
 	// The procedure (slip block, checks, departure, assembly, review, red handling, urgent lane, deploy, UAT) moved to pi-anchorloop's `integrating` and `deploying` skills (docs/specs/2026-11-06-seam-bindings.md maps every old line):
 	// integrator.md went from 1200 to 289 words, and a rule that is back here is duplication.
 	for (const gone of ["tested-on", "`train/<code>`", "nothing is force pushed", "`maxCars`", "fix-forward", "One train at a time per target", "a blank box means accepted", "(applied to a DB: no|<which>)"]) assert.ok(!integrator.includes(gone), `integrator.md no longer repeats ${gone}`);
-	// 0.75.3 raised 510 to 530 (measured): the rule that a forward with `origin=remote:` authorizes no `strict` target unless it quotes this computer's boss (R151-F006, boss 2026-11-12).
+	// 0.75.3 raised 510 to 530 (measured): the rule that a forward with `origin=remote:` covers only `strict` targets its device's boss granted, else blocked (R151-F006, boss 2026-11-12).
 	assert.ok(words(integrator) <= 530, `integrator.md has ${words(integrator)} words`);
 });
 
