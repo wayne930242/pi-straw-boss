@@ -3618,6 +3618,11 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 
 ## 工具
 
+Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`board_*`），也給老闆 `/boss` 斜線指令。哪個 session 可以呼叫哪個工具，取決於它的角色。表格列出每個工具適用於誰、做什麼，再列出每個 `/boss` 指令。
+
+<details>
+<summary>細節</summary>
+
 | 工具 | 誰可以用 | 做什麼 |
 |---|---|---|
 | `boss_promote` | 已加入且不是塔台的 session | 成為這個分頁的主智慧體；分頁已有存活的主智慧體時會被拒絕。 |
@@ -3668,9 +3673,23 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 
 `/boss` 與 `boss_promote` 在子工作區裡不可用。
 
+</details>
+
 ### 收起與接回
 
+```mermaid
+flowchart TD
+    s["/boss stash"] --> c{"每個 pi 都 idle 或 done、<br/>有 session 檔，<br/>而且沒有子智慧體？"}
+    c -->|"否"| r["拒絕，並說明原因"]
+    c -->|"是"| w["寫入 stash/name.json，<br/>關閉基地"]
+    w --> p["/boss pop"]
+    p --> o["開新工作區，每個 pi 用<br/>pi --session file 繼續"]
+```
+
 `/boss stash` 把整個基地收起，`/boss pop` 再把它打開（[規格](specs/2026-10-22-stash/spec.md)）。收起在 sb server 的 GUI 裡執行，`/boss stash` 要求它執行（不會開啟瀏覽器；刻意停止的 GUI 不會被啟動：指令會這樣說，而 `/boss gui` 會啟動它）：只有 server 能詢問每個 session 的橋接。
+
+<details>
+<summary>細節</summary>
 
 它先檢查，什麼都不關：Herdr 的檢視（每個 pi pane 都是塔台、主智慧體或成員，狀態是 `idle` 或 `done` 且有 session 檔案；基地或它的子工作區裡沒有子智慧體；沒有前景是 shell 以外東西的 shell；基地本身不是子工作區），以及每個 session 自己的，透過它橋接的 `stash-check`（沒有進行中的輪次、沒有排隊的訊息、沒有開啟的對話框、沒有執行中的 monitor）。三輪之內沒有回答的 session 算作拒絕，所以較舊的 pi-straw-boss 上的 session 絕不會被收起關閉。每個原因都列在一則拒絕裡。
 
@@ -3681,6 +3700,8 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 `/boss close all`（`POST close/all {by}`）關閉提出要求的 session 的基地，不收起（而且像收起一樣，它不會啟動刻意停止的 server）；其他基地、子工作區與網之外的工作區絕不會被動到。它使用收起的檢查，但不含只有接回才需要的（session 檔案、資料夾）；任何拒絕都不關閉任何東西，並列出每個原因。然後基地像基地上的**離開（Quit）** 那樣關閉，每個 session 只在仍然可以被收起時才 quit。基地在關閉前會再勘查一次，而當 server 自己的 session 在其中時，那個 session（它的批次不詢問它）也會再檢查一次。
 
 不在網上基地裡的 session 不會關閉任何東西；在 server 沒有回答時仍然活著的發起者，會被告知去檢查還有什麼是開著的。
+
+</details>
 
 ## 它寫入什麼
 

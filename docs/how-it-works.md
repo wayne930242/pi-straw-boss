@@ -3618,6 +3618,11 @@ An ally run claimed at `dispatch` is quit by the watcher when its device has lef
 
 ## Tools
 
+Straw Boss gives agents a set of tools (`boss_*`, `tower_*`, `call_tower`, `board_*`) and gives the boss the `/boss` slash commands. Which session may call which tool depends on its role. The tables list who each tool is available to and what it does, then every `/boss` command.
+
+<details>
+<summary>Details</summary>
+
 | Tool | Available to | What it does |
 |---|---|---|
 | `boss_promote` | joined sessions that are not the tower | Become this tab's main agent; refused while the tab has a live main. |
@@ -3668,9 +3673,23 @@ An ally run claimed at `dispatch` is quit by the watcher when its device has lef
 
 `/boss` and `boss_promote` are unavailable in a sub workspace.
 
+</details>
+
 ### Stash and pop
 
+```mermaid
+flowchart TD
+    s["/boss stash"] --> c{"Every pi idle or done,<br/>with a session file,<br/>and no subagent?"}
+    c -->|"no"| r["Refused, naming why"]
+    c -->|"yes"| w["Write stash/name.json,<br/>close the base"]
+    w --> p["/boss pop"]
+    p --> o["New workspace, each pi resumed<br/>with pi --session file"]
+```
+
 `/boss stash` puts a whole base away and `/boss pop` opens it again ([spec](specs/2026-10-22-stash/spec.md)). The stash runs in the sb server's GUI, which `/boss stash` asks to run (no browser opens; a GUI stopped on purpose is not started: the command says so, and `/boss gui` starts it): only the server can ask every session's bridge.
+
+<details>
+<summary>Details</summary>
 
 It first checks, closing nothing: Herdr's view (every pi pane is a tower, main, or member that is `idle` or `done` and has a session file; no subagent in the base or its sub workspaces; no shell with anything but the shell in its foreground; the base is not itself a sub workspace) and each session's own, through its bridge's `stash-check` (no running turn, no queued message, no open dialog, no running monitor). A session that does not answer within three rounds counts as a refusal, so a session on an older pi-straw-boss is never closed by a stash. Every reason is listed in one refusal.
 
@@ -3681,6 +3700,8 @@ Then it writes `stash/<name>.json` in the state directory (the label and folder,
 `/boss close all` (`POST close/all {by}`) closes the base of the session that asks, without stashing (and, like a stash, it does not start a server stopped on purpose); other bases, sub workspaces, and workspaces outside the net are never touched. It uses the stash check without what only a pop needs (session files, folders); any refusal closes nothing and lists every reason. Then the base closes as **Quit** on a base does, each session quitting only while it can still be stashed. The base is surveyed again just before it closes, and when the server's own session sits in it, that session (which its batch does not ask) is checked again too.
 
 A session that is not in a base on the net closes nothing; an invoker still alive when the server does not answer is told to check what is still open.
+
+</details>
 
 ## What it writes
 
