@@ -71,9 +71,37 @@ Integrators:
 
 - **`apps.json`**: a top-level `integration` (`skill`, `maxCars` 4, `maxWaitMin` 60, `maxTrains` 3) and a per-app `integration` (`base`, `skill`, `stages`, `accept`, `targets`). [`prompts/apps-config.md`](https://github.com/wayne930242/pi-straw-boss/blob/main/prompts/apps-config.md) describes every field.
 - **Stages.** `merge` always, then optionally `deploy`. An `auto` target takes every train on the config's standing word; a `strict` target (the default) takes a train only where every car's slip carries your authorization for it.
-- **The project skill.** Every concrete check lives there, under the headings of pi-anchorloop's Project skill contract: `## Light checks`, `## Train assembly`, `## Full gates`, `## Merge`, `## Post-merge`, and, as needed, `## Deploy`, `## Deploy verify`, and `## Acceptance`. Straw Boss sets the flow and names no environment.
+- **The project skill.** Every concrete check lives there, under the headings the `integrating` skill names in its Project skill contract: `## Light checks`, `## Train assembly`, `## Full gates`, `## Merge`, `## Post-merge`, and, as needed, `## Deploy`, `## Deploy verify`, and `## Acceptance`. Straw Boss sets the flow and names no environment.
 
-The procedure is pi-anchorloop's `integrating` and `deploying` skills (2.11.0 or newer); Straw Boss binds the places those skills leave open.
+## The merge-train contract
+
+The train's procedure is not in Straw Boss.
+It is two skills, `integrating` (merge) and `deploying` (deploy), and Straw Boss binds the places they leave open.
+Straw Boss asks for no particular package: the two skills pi loaded must each declare the **merge-train contract**, version 1, in their frontmatter.
+
+```yaml
+metadata:
+  merge-train-contract: "1"
+```
+
+Version 1 is what Straw Boss's prompts assume of the two skills:
+
+- They are named `integrating` and `deploying`, and the stages are `merge`, then optionally `deploy`.
+- They read one `## Seam bindings` block from the session's instructions, with the seams Handoff route, Batch owner, Approval, Record, Escalation route, Settings, and Step runner.
+- They find the project's checks under the Project skill headings above (also `## Urgent lane` and `## Load`), exactly as written.
+- A car's coordinator runs its acceptance before handoff, as `## Acceptance` says; no stage of the train waits on a person.
+- A car arrives as a `car:` slip that carries `auth`, `accept`, `deploy`, `departs`, and `coordinator`.
+- The settings are `base`, `skill`, `stages`, `accept`, `targets` (`auto` or `strict`), `maxCars`, and `maxWaitMin`.
+
+The version is a whole number, and it rises only when a host written for the version before would go wrong.
+A skill that still serves the older hosts lists both: `merge-train-contract: "1 2"`.
+
+Straw Boss checks the declaration itself, because a model cannot tell a stale procedure from a current one by reading it.
+Until both skills declare the contract, a train's and the integrator's `todo` and `MonitorCreate` calls that change something are refused with the reason, and nothing departs.
+
+[pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) is one implementation, and the one Straw Boss is developed with.
+Its skills implement version 1 since 2.11.0; the 2.15 releases and those before them carry no declaration yet.
+For those, Straw Boss accepts pi-anchorloop 2.11.0 or newer without the declaration; that exception goes once a release that declares the contract is the oldest in use.
 
 ## Turning it off on a computer
 

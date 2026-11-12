@@ -21,7 +21,7 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 2026-11-02 (a main edited prompts itself and stalled its chain): main dispatches work independent of its chain; +14 words, 13 cut from the board and rename lines (the tool states the 16-character limit), main stays 483 of 484.
 // 2026-11-04 (hand-made worktrees scattered under ~/.local/share and hung children on the trust prompt): main names the worktree root; 484 to 500.
 // 2026-11-05 (merge-train switch, src/trainswitch.ts): the budgets count the text a session gets, markers dropped, with the switch on and with it off. On, main gains the ledger folder ({{state}}/trains): 497 to 500; off it is 481.
-// 2026-11-06 (seam bindings, docs/specs/2026-11-06-seam-bindings.md): with the train on, main.md carries the `## Seam bindings` block for pi-anchorloop's `integrating` and `deploying` skills, 500 to 680 (off it stays 481);
+// 2026-11-06 (seam bindings, docs/specs/2026-11-06-seam-bindings.md): with the train on, main.md carries the `## Seam bindings` block for the `integrating` and `deploying` skills (then pi-anchorloop's by name, since 2026-11-12 whichever declare the merge-train contract), 500 to 680 (off it stays 481);
 // tower.md 380 to 390 for "the integrator answers the coordinator itself" (off it stays 371). A role that has its own on-budget is listed in ON_BUDGETS.
 // 2026-11-07 (wait cards, docs/specs/2026-11-07-wait-cards.md, Prompts; shortened in the GUI review, GR-F012): tower.md +31 for "the boss is not an agent: write a wait for them in plain full sentences" (off 371 to 402, on 393 to 424); main.md +20 for the `wait_card` message and `secret_drop` (off 481 to 501, on 695 to 715). Budgets = measured.
 const BUDGETS: Record<string, number> = { "main.md": 501, "tower.md": 402, "member.md": 140, "member-no-main.md": 150 };
@@ -100,15 +100,15 @@ test("D19: the tower run reads why= from the header: milestone updates obligatio
 });
 
 // Merge train, phase 1 (docs/specs/2026-10-30-merge-train.md): prompt-only. Budgets are unchanged; the new text displaced other words.
-test("merge train: apps-config names the integration fields and points to the skill contract; the integrator follows the anchorloop skills and keeps only what is Straw Boss's", () => {
+test("merge train: apps-config names the integration fields and points to the skill contract; the integrator follows the contract's skills and keeps only what is Straw Boss's", () => {
 	const cfg = readFileSync(`${PROMPT_DIR}/apps-config.md`, "utf8");
 	for (const term of ["`integration`", "`maxCars`", "`maxWaitMin`", "`base`", "`integrating`'s Project skill contract", "## Light checks", "## Load", "`why=blocked`"]) assert.ok(cfg.includes(term), `apps-config.md names ${term}`);
 	const integrator = readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8");
 	assert.match(integrator, /^# Integrator/);
-	for (const term of ["`integrating` skill", "`deploying` skill", "Seam bindings in your role prompt", "naming pi-anchorloop", "`why=blocked`", "`why=milestone`", "{{dir}}/apps-config.md", "`<project>/<app>.json` in the `trains` folder your role prompt names", "integ <project>", "never rename again", "`coordinator` is a session id", "`reviewer` role"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
+	for (const term of ["`integrating` skill", "`deploying` skill", "Seam bindings in your role prompt", "(the merge-train contract)", "quoting the refusal", "`why=blocked`", "`why=milestone`", "{{dir}}/apps-config.md", "`<project>/<app>.json` in the `trains` folder your role prompt names", "integ <project>", "never rename again", "`coordinator` is a session id", "`reviewer` role"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
 	assert.ok(!integrator.includes("<state dir>") && !integrator.includes("reserve") && !integrator.includes("~/.pi"), "integrator.md has no placeholder, undefined path, hard-coded agent folder, or reserve");
 	assert.match(readFileSync(`${PROMPT_DIR}/main.md`, "utf8"), /Record: `\{\{state\}\}\/trains\/<project>\/<app>\.json`/, "the role prompt names the ledger file");
-	// The procedure (slip block, checks, departure, assembly, review, red handling, urgent lane, deploy, UAT) moved to pi-anchorloop's `integrating` and `deploying` skills (docs/specs/2026-11-06-seam-bindings.md maps every old line):
+	// The procedure (slip block, checks, departure, assembly, review, red handling, urgent lane, deploy, UAT) moved to the `integrating` and `deploying` skills (docs/specs/2026-11-06-seam-bindings.md maps every old line):
 	// integrator.md went from 1200 to 289 words, and a rule that is back here is duplication.
 	for (const gone of ["tested-on", "`train/<code>`", "nothing is force pushed", "`maxCars`", "fix-forward", "One train at a time per target", "a blank box means accepted", "(applied to a DB: no|<which>)"]) assert.ok(!integrator.includes(gone), `integrator.md no longer repeats ${gone}`);
 	// 0.75.3 raised 510 to 530 (measured): the rule that a forward with `origin=remote:` covers only `strict` targets its device's boss granted, else blocked (R151-F006, boss 2026-11-12).
@@ -163,10 +163,10 @@ test("the main dispatches work independent of its chain to a subagent in paralle
 	}
 });
 
-// docs/specs/2026-11-06-seam-bindings.md: pi-anchorloop's `integrating` and `deploying` leave six seams open (references/seams.md) and read one `## Seam bindings` block from the session's instructions.
+// docs/specs/2026-11-06-seam-bindings.md: the `integrating` and `deploying` skills of the merge-train contract leave six seams open (references/seams.md) and read one `## Seam bindings` block from the session's instructions.
 // The block lives in main.md, the system prompt of every main (a coordinator and the integrator alike, so a session holds one block), inside the integration markers; the tower runs no skill and holds none.
 const SEAMS = ["Handoff route", "Batch owner", "Approval", "Record", "Escalation route", "Settings"];
-test("seam bindings: main.md binds all six seams of pi-anchorloop's integrating skill, in one block that only the train-on prompt carries", () => {
+test("seam bindings: main.md binds all six seams of the integrating skill, in one block that only the train-on prompt carries", () => {
 	const raw = readFileSync(`${PROMPT_DIR}/main.md`, "utf8"), on = strip(raw, false), off = strip(raw, true);
 	assert.equal(raw.match(/^## Seam bindings$/gm)?.length, 1, "main.md holds one Seam bindings heading");
 	const block = on.slice(on.indexOf("## Seam bindings")), lines = block.split("\n").filter((line) => line.startsWith("- "));
@@ -174,16 +174,17 @@ test("seam bindings: main.md binds all six seams of pi-anchorloop's integrating 
 	for (const [seam, mechanism] of [["Handoff route", "`call_tower` `why: shared`"], ["Batch owner", "~/.herdr/worktrees/<repo>/train-<code>"], ["Approval", "the boss"], ["Record", "{{state}}/trains/<project>/<app>.json"], ["Escalation route", "`why=blocked`"], ["Settings", "apps.json `integration`"]]) {
 		assert.ok(lines.find((line) => line.startsWith(`- ${seam}:`))?.includes(mechanism!), `${seam} names ${mechanism}`);
 	}
-	assert.ok(on.includes("`integrating` and `deploying` skills") && on.includes("naming pi-anchorloop"), "main.md names the skills and blocks without them");
-	assert.ok(!off.includes("Seam bindings") && !off.includes("pi-anchorloop") && !off.includes("train-<code>"), "with the train off no binding is left");
+	assert.ok(on.includes("`integrating` and `deploying` skills") && on.includes("naming the merge-train contract"), "main.md names the skills and blocks without them");
+	assert.ok(!off.includes("Seam bindings") && !off.includes("merge-train contract") && !off.includes("train-<code>"), "with the train off no binding is left");
 	// The block is the last text of the integration part: nothing of the always-on text may follow it inside the markers.
 	assert.match(raw, /## Seam bindings\n(?:- .*\n){6}<!-- \/integration -->/);
 	// Review SB-F001/F003: the coordinator quotes words already given and asks only when they are missing (an overnight train must not stall on a question); the integrator groups cars by the strict targets their auth covers and asks no one (TP-F008).
 	const approval = lines.find((line) => line.startsWith("- Approval:"))!;
 	assert.ok(approval.includes("lacking them, it asks") && approval.includes("groups cars by the `strict` targets their `auth` covers and asks no one") && !approval.includes("no car names"), "Approval asks only when the words are missing");
-	// SB-F002 is fixed upstream (pi-anchorloop 2.10.1, train step 4 gates `Merge` on the deploy steps), which the README requires; SB-F006: a subagent is briefed for one step.
+	// SB-F002 is fixed in the skill (train step 4 gates `Merge` on the deploy steps; part of merge-train contract 1); SB-F006: a subagent is briefed for one step.
 	assert.ok(readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8").includes("never the skill"), "integrator.md keeps the skill from subagents");
-	for (const readme of ["README.md", "README.zh-TW.md"]) assert.ok(readFileSync(readme, "utf8").includes("pi-anchorloop) 2.11.0"), `${readme} requires pi-anchorloop 2.11.0 (train workers; 2.10.1 already gated Merge on the deploy steps)`);
+	// 2026-11-12: Straw Boss requires the contract, not a package. The READMEs name the merge train's need as the contract and leave who implements it to the guide.
+	for (const readme of ["README.md", "README.zh-TW.md"]) assert.ok(/merge-train contract|合併火車契約/.test(readFileSync(readme, "utf8")) && !/needs \[pi-anchorloop\]|需要 \[pi-anchorloop\]/.test(readFileSync(readme, "utf8")), `${readme} names the contract and requires no skills package`);
 	// SB-F004: only the headings `integrating` requires stop a departure.
 	assert.ok(readFileSync(`${PROMPT_DIR}/apps-config.md`, "utf8").includes("When a required one is missing"), "apps-config.md requires only the required headings");
 	for (const file of ["tower.md", "tower-run.md", "planning.md", "integrator.md", "apps-config.md"]) assert.ok(!readFileSync(`${PROMPT_DIR}/${file}`, "utf8").includes("## Seam bindings"), `${file} holds no second block`);
@@ -245,7 +246,7 @@ test("train workers: train.md names every kind of the closed set, the checks bef
 	assert.match(train, /declares `holds` \(`lane: <app>` from `assemble` to `merge`; `target: <name>` from `deploy` to `deploy-verify`\) and, on a `run` check, `load` and `lock` as `## Load` says/, "a step declares holds, load and lock");
 	for (const key of ["`v`: 1", "`project`", "`app`", "`train`", "`round`", "`kind`", "`name`", "`spec`"]) assert.ok(train.includes(key), `train.md lists the metadata.sb key ${key}`);
 	for (const term of ["`blocked` with reply false for what needs a person, then end", "delivered or escalated", "{{state}}/trains/<project>/<app>/<code>.json", "`car-<n>.json`"]) assert.ok(train.includes(term), `train.md names ${term}`);
-	assert.ok(train.includes("2.11.0 or newer") && read("integrator.md").includes("2.11.0 or newer"), "both name pi-anchorloop 2.11.0 in their blocked line");
+	assert.ok(train.includes("quoting the refusal") && read("integrator.md").includes("quoting the refusal"), "both hand sb's refusal to the tower in their blocked line");
 });
 
 test("train workers: no uat stage and no UAT page in the integrator or the train; both state D13's refusal with its word; neither tells a coordinator a car's fate, both set it with train_car", () => {
@@ -332,7 +333,7 @@ test("train workers: every state a prompt names with fields names exactly the fi
 
 test("TB-F006, F008, F009: the prompts give the code's form, the todo order, absolute evidence paths, the version refusal and the car with no forward", () => {
 	const integrator = read("integrator.md"), train = read("train.md");
-	for (const term of ["`YYYY-MM-DD-<letters>`", "`in_progress` first", "(absolute paths)", "sb refuses your `train` todos when the installed pi-anchorloop is older than 2.11.0", "A slip with no tower forward (queued before 0.65.0) cannot be received"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
-	assert.ok(train.includes("sb refuses your `todo` and `MonitorCreate` calls when the installed pi-anchorloop is older than 2.11.0"), "train.md says the version is sb's check, not the model's");
+	for (const term of ["`YYYY-MM-DD-<letters>`", "`in_progress` first", "(absolute paths)", "sb refuses your `train` todos while either does not declare the contract", "A slip with no tower forward (queued before 0.65.0) cannot be received"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
+	assert.ok(train.includes("sb refuses your `todo` and `MonitorCreate` calls while either does not declare the contract"), "train.md says the contract is sb's check, not the model's");
 	assert.ok(strip(read("planning.md"), false).includes("absolute paths in `accept:` and `evidence`"), "the coordinator writes absolute paths");
 });

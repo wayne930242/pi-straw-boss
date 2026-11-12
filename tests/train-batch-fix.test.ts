@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { type Anchorloop, checkAnchorloop, compareVersions } from "../src/train/anchorloop.ts";
+import type { Contract } from "../src/train/contract.ts";
 import { readMaxTrains } from "../src/trainrole.ts";
 import { openRefusal, readAppIntegration } from "../src/train/appsconfig.ts";
 import { readYards } from "../src/server/trainyard.ts";
@@ -169,56 +169,29 @@ test("a board keeps the cars its round removed with their heads, so the yard can
 	assert.deepEqual(board.removed.map((c) => [c.ticket, c.head]), [["T-16", SHA_B]]);
 });
 
-// ---- the pi-anchorloop version gate (TB-F008)
+// ---- the merge-train contract gate (TB-F008; the check itself is tests/train-contract.test.ts)
 
-const planted = (agent: string, version: string | undefined, where = ["npm", "node_modules", "pi-anchorloop"]) => {
-	const dir = join(agent, ...where);
-	mkdirSync(dir, { recursive: true });
-	writeFileSync(join(dir, "package.json"), JSON.stringify(version === undefined ? { name: "pi-anchorloop" } : { name: "pi-anchorloop", version }));
-};
-
-test("checkAnchorloop reads the installed version and refuses what is older than 2.11.0, missing, or unreadable", () => {
-	const agent = scratch();
-	assert.match((checkAnchorloop({ agentDir: agent }) as { refusal: string }).refusal, /needs pi-anchorloop 2\.11\.0 or newer, and its version cannot be read/);
-	planted(agent, "2.10.1");
-	assert.match((checkAnchorloop({ agentDir: agent }) as { refusal: string }).refusal, /needs pi-anchorloop 2\.11\.0 or newer, and .*pi-anchorloop\/package\.json is 2\.10\.1/);
-	planted(agent, "2.11.0-rc.1");
-	assert.equal(checkAnchorloop({ agentDir: agent }).ok, false, "a pre-release of 2.11.0 is older than it");
-	planted(agent, "2.11.0");
-	assert.deepEqual(checkAnchorloop({ agentDir: agent }), { ok: true, version: "2.11.0" });
-	planted(agent, "2.9.0", ["git", "github.com", "someone", "pi-anchorloop"]);
-	assert.deepEqual(checkAnchorloop({ agentDir: agent }), { ok: true, version: "2.11.0" }, "the newest copy counts");
-	planted(agent, "12.0.1");
-	assert.equal(checkAnchorloop({ agentDir: agent }).ok, true);
-	const broken = scratch();
-	planted(broken, undefined);
-	assert.match((checkAnchorloop({ agentDir: broken }) as { refusal: string }).refusal, /has no version/);
-	writeFileSync(join(broken, "npm", "node_modules", "pi-anchorloop", "package.json"), "{");
-	assert.match((checkAnchorloop({ agentDir: broken }) as { refusal: string }).refusal, /cannot be parsed/);
-	const project = scratch();
-	planted(project, "2.12.0", [".pi", "npm", "node_modules", "pi-anchorloop"]);
-	assert.equal(checkAnchorloop({ agentDir: agent, cwd: project }).ok, true, "the project's own copy counts");
-	assert.equal(compareVersions("2.10.1", "2.11.0")! < 0, true);
-	assert.equal(compareVersions("2.11.0", "2.11.0"), 0);
-	assert.equal(compareVersions("x", "2.11.0"), undefined);
-});
-
-test("with an older pi-anchorloop the train's and the integrator's mutating calls are refused with the version, and reads and other tools pass", async () => {
-	const old: { ok: false; refusal: string } = { ok: false, refusal: "sb: the merge train needs pi-anchorloop 2.11.0 or newer, and /x/package.json is 2.10.1; update it and /reload, then try again" };
-	let installed: Anchorloop = { ok: true, version: "2.11.0" };
-	const train = rig({ anchorloop: () => installed });
+test("while the skills do not declare the contract the train's and the integrator's mutating calls are refused with the reason, and reads and other tools pass", async () => {
+	const stale: Contract = { ok: false, refusal: "sb: the merge train needs the skills `integrating` and `deploying` to declare merge-train contract 1, and /x/skills/integrating/SKILL.md declares none; update the package that ships it and /reload, then try again" };
+	let loaded: Contract = { ok: true, contract: 1 }, reads = 0;
+	const train = rig({ contract: () => (reads++, loaded) });
 	const step = sb({ kind: "full-check", name: "unit" }, { check: { type: "run", cwd: train.cwd, run: "true", log: join(train.cwd, "unit.log") }, on: { head: SHA_A } });
 	const id = await train.begin(step);
-	installed = old;
-	train.tick(61_000); // the guard reads the version at most once a minute
-	await refused(train.create(step), /pi-anchorloop 2\.11\.0 or newer, and \/x\/package\.json is 2\.10\.1/);
-	await refused(train.monitor({ description: train.describe(id), command: "true", timeout: 300_000 }), /pi-anchorloop 2\.11\.0 or newer/);
-	assert.equal(train.list.tasks.length, 1);
+	loaded = stale;
+	await ok(train.create(step));
+	assert.equal(reads, 1, "a passing answer is read at most once a minute");
+	train.tick(61_000);
+	await refused(train.create(step), /to declare merge-train contract 1, and \/x\/skills\/integrating\/SKILL\.md declares none/);
+	await refused(train.monitor({ description: train.describe(id), command: "true", timeout: 300_000 }), /to declare merge-train contract 1/);
+	assert.equal(train.list.tasks.length, 2);
 	assert.equal((await train.todo({ action: "list" })).ok, true, "a read is none of the gate's");
-	const integrator = rig({ main: true, train: false, anchorloop: old });
-	await refused(integrator.create(trainTodo()), /pi-anchorloop 2\.11\.0 or newer/);
+	loaded = { ok: true, contract: 1 };
+	await ok(train.create(step));
+	assert.equal(reads, 4, "a refusal is read again on every call, so an update and a /reload clear it at once");
+	const integrator = rig({ main: true, train: false, contract: stale });
+	await refused(integrator.create(trainTodo()), /to declare merge-train contract 1/);
 	assert.equal((await integrator.todo({ action: "create", subject: "plain note" })).ok, true, "a todo with no metadata.sb is none of the integrator's guard");
-	const fine = rig({ main: true, train: false, anchorloop: { ok: true, version: "2.11.0" } });
+	const fine = rig({ main: true, train: false, contract: { ok: true, contract: 1 } });
 	await ok(fine.create(trainTodo()));
 });
 
@@ -241,32 +214,4 @@ test("every apps.json reader takes .straw-boss first, then .claude/straw-boss, f
 	assert.deepEqual(readAppIntegration(dir, "web"), { ok: true, accept: ["human"] }, "both: .straw-boss wins");
 	assert.equal(openRefusal(dir, "web"), undefined);
 	assert.equal(readMaxTrains(dir), 5);
-});
-
-// ---- TB2-F002: the copy pi loads
-
-test("checkAnchorloop reads the copy settings.json packages names (TB2-F002)", () => {
-	const agent = scratch();
-	planted(agent, "2.10.1");
-	planted(agent, "2.12.0", ["git", "github.com", "someone", "pi-anchorloop"]);
-	assert.equal(checkAnchorloop({ agentDir: agent }).ok, true, "no settings: the newest copy");
-	writeFileSync(join(agent, "settings.json"), JSON.stringify({ packages: ["npm:other@1", "npm:pi-anchorloop@2.10.1"] }));
-	assert.match((checkAnchorloop({ agentDir: agent }) as { refusal: string }).refusal, /npm\/node_modules\/pi-anchorloop\/package\.json is 2\.10\.1/, "the npm pin is the loaded copy");
-	writeFileSync(join(agent, "settings.json"), JSON.stringify({ packages: ["git:github.com/someone/pi-anchorloop"] }));
-	assert.deepEqual(checkAnchorloop({ agentDir: agent }), { ok: true, version: "2.12.0" });
-	const local = scratch();
-	planted(local, "2.9.0", ["checkout"]);
-	writeFileSync(join(agent, "settings.json"), JSON.stringify({ packages: [join(local, "checkout")] }));
-	assert.equal(checkAnchorloop({ agentDir: agent }).ok, true, "a local path not named pi-anchorloop is not matched; the lookup stays");
-});
-
-test("checkAnchorloop refuses, never scans, when settings.json cannot be parsed or names pi-anchorloop in a form it cannot place (TB3-F001)", () => {
-	const agent = scratch();
-	planted(agent, "2.12.0", ["git", "github.com", "someone", "pi-anchorloop"]);
-	writeFileSync(join(agent, "settings.json"), "{ not json");
-	assert.match((checkAnchorloop({ agentDir: agent }) as { refusal: string }).refusal, /settings\.json cannot be parsed/, "a bad settings file refuses");
-	writeFileSync(join(agent, "settings.json"), JSON.stringify({ packages: ["git:gitlab.com/g/sub/pi-anchorloop"] }));
-	assert.match((checkAnchorloop({ agentDir: agent }) as { refusal: string }).refusal, /cannot tell which copy/, "an entry naming pi-anchorloop it cannot place refuses");
-	writeFileSync(join(agent, "settings.json"), JSON.stringify({ packages: ["npm:other@1"] }));
-	assert.equal(checkAnchorloop({ agentDir: agent }).ok, true, "settings that name no pi-anchorloop keep the lookup");
 });

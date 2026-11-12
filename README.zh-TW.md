@@ -29,7 +29,7 @@ pi-straw-boss 讓它們能找到彼此、互相協調，不需要排程器，也
 pi install npm:pi-straw-boss
 ```
 
-需要在 [Herdr](https://herdr.dev) 0.9.4 以上的版本裡執行 pi、安裝 Herdr 的 pi 整合（`herdr integration install pi`），以及 [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.18.1 以上。合併火車另外需要 [pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 2.11.0 以上。Windows 支援仍屬實驗性質。可搭配的選用套件見[安裝](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/install/)。
+需要在 [Herdr](https://herdr.dev) 0.9.4 以上的版本裡執行 pi、安裝 Herdr 的 pi 整合（`herdr integration install pi`），以及 [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.18.1 以上。合併火車另外需要宣告了[合併火車契約](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/merge-train/#合併火車契約)的 `integrating` 與 `deploying` skill。Windows 支援仍屬實驗性質。可搭配的選用套件見[安裝](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/install/)。
 
 ## 快速開始
 

@@ -866,7 +866,7 @@ Straw Boss 每次啟動塔台時，都會把它當作 `--model` 傳給 pi，並�
 
 ### 合併火車
 
-專案可以替每個 app 設一列合併火車：由一位整合員主智慧體合併協調者的工作，而不是每位協調者各自合併。它是選用的。程序只是 prompt，不在 Straw Boss 裡，但自 0.65.0 起，擴充和伺服器會為它讀寫一些檔案（trainboard 和車廂檔案、車廂通知、`landed` 的 git 檢查、掃描、`apps.json` 的 `integration.accept` 和 `stages`；見[火車作為它們自己的工作者](#火車作為它們自己的工作者)）。自 0.60.0 起，這個程序不在 Straw Boss 裡：它是 pi-anchorloop 的 `integrating`（合併）和 `deploying`（部署）skill，而 Straw Boss 綁定那些 skill 留白的地方。
+專案可以替每個 app 設一列合併火車：由一位整合員主智慧體合併協調者的工作，而不是每位協調者各自合併。它是選用的。程序只是 prompt，不在 Straw Boss 裡，但自 0.65.0 起，擴充和伺服器會為它讀寫一些檔案（trainboard 和車廂檔案、車廂通知、`landed` 的 git 檢查、掃描、`apps.json` 的 `integration.accept` 和 `stages`；見[火車作為它們自己的工作者](#火車作為它們自己的工作者)）。自 0.60.0 起，這個程序不在 Straw Boss 裡：它是 `integrating`（合併）和 `deploying`（部署）skill，由實作[合併火車契約](#需要宣告合併火車契約的-skill)的套件提供（pi-anchorloop 是其中之一），而 Straw Boss 綁定那些 skill 留白的地方。
 
 一節車廂怎麼從車廂單走到落地：
 
@@ -907,9 +907,9 @@ stateDiagram-v2
 
 [`prompts/apps-config.md`](../prompts/apps-config.md) 放 `apps.json` 的欄位，[`prompts/integrator.md`](../prompts/integrator.md) 放整合員的角色，設計紀錄是 [`docs/specs/2026-10-30-merge-train.md`](specs/2026-10-30-merge-train.md)、[`docs/specs/2026-11-05-train-stages.md`](specs/2026-11-05-train-stages.md) 和 [`docs/specs/2026-11-06-seam-bindings.md`](specs/2026-11-06-seam-bindings.md)（它把舊整合員 prompt 的每一行，對應到它在 skill 裡的位置）。
 
-#### 需要 pi-anchorloop 2.11.0 或更新的版本
+#### 需要宣告合併火車契約的 skill
 
-擴充會檢查：安裝的 `pi-anchorloop/package.json` 裡的 `version` 比 2.11.0 舊、讀不到，或找不到這個套件時（它會找 agent 資料夾的 `npm/node_modules` 和 `git/<host>/<owner>`，以及專案的 `.pi/npm/node_modules`；以最新的為準，最多每分鐘讀一次），火車和整合員會改變東西的 `todo` 和 `MonitorCreate` 呼叫都會被拒絕。無法載入 `integrating` 或 `deploying` 的主智慧體或整合員，會以 `why=blocked` 呼叫塔台並指名 pi-anchorloop，而且什麼都不派出。火車關閉時，這些都不會載入。
+Straw Boss 不指名任何 skill 套件。火車的 prompt 假設 `integrating` 和 `deploying` skill 符合合併火車契約第 1 版（[合併火車指南](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/merge-train/#合併火車契約)列出它的內容），而 skill 在 frontmatter 的 `metadata:` 底下以 `merge-train-contract: "1"` 宣告它實作的版本。擴充會檢查（`src/train/contract.ts`）：它問 pi 這個 session 載入了哪些 skill（`pi.getCommands()`，所以讀到的就是模型會讀的那份 `SKILL.md`，不論是哪個套件帶來的），再讀每一個的宣告。pi 沒有載入 `integrating` 或 `deploying`、檔案讀不到、skill 沒有宣告，或宣告的版本不含 1 時，火車和整合員會改變東西的 `todo` 和 `MonitorCreate` 呼叫都會被拒絕並附上原因；通過的結果最多每分鐘讀一次，被拒絕時則每次呼叫都重讀。有一項例外，涵蓋宣告出現之前發布的版本（`src/train/contract-legacy.ts`，唯一指名套件的地方）：pi-anchorloop 2.11.0 或更新版本裡沒有宣告的 skill 算作第 1 版。無法載入 `integrating` 或 `deploying` 的主智慧體或整合員，會以 `why=blocked` 呼叫塔台並指名合併火車契約，而且什麼都不派出。火車關閉時，這些都不會載入。
 
 #### 接縫綁定
 
@@ -985,7 +985,7 @@ app 的 `integration.stages` 列出整合員帶每列火車走過的階段：`me
 
 `{{dir}}`，也就是 prompt 指向 `apps-config.md` 和 `planning.md` 的資料夾，會變成狀態資料夾裡的一份副本（`prompts-off/`），在 session 第一次使用時，從同樣的檔案去掉整合區塊後做成，而且不含 `integrator.md`，所以沒有任何東西會載入整合員的 prompt。每次載入都會重寫文字和來源不同的副本檔案，移除沒有來源的檔案和遺留的暫存檔，而開關再度開啟時副本會被移除。副本寫不出來時，會有通知這樣說，這個輪次仍有它的 Straw Boss 區段，而 `{{dir}}` 讀作「none yet」。
 
-`main.md` 的 `## Seam bindings` 區塊在同樣的標記之內，所以火車關閉時套用 anchorloop 的預設（協調者在合併或部署之前問老闆）。prompt 檔案在一個地方標記文字：`<!-- integration -->…<!-- /integration -->` 在關閉時被去掉，`<!-- no-integration -->…<!-- /no-integration -->` 只有在關閉時才保留（`src/trainswitch.ts`）。標記必須完全照這樣拼，小寫，而且不能巢狀或交錯；任何其他情況都會讓 session 啟動失敗，不論開或關。預設是開，而 session 得到的角色 prompt 就是現在的，去掉標記；開著的主智慧體也會讀帶著標記的 `apps-config.md`，以及這個版本新增的幾行。
+`main.md` 的 `## Seam bindings` 區塊在同樣的標記之內，所以火車關閉時套用 skill 自己的預設（協調者在合併或部署之前問老闆）。prompt 檔案在一個地方標記文字：`<!-- integration -->…<!-- /integration -->` 在關閉時被去掉，`<!-- no-integration -->…<!-- /no-integration -->` 只有在關閉時才保留（`src/trainswitch.ts`）。標記必須完全照這樣拼，小寫，而且不能巢狀或交錯；任何其他情況都會讓 session 啟動失敗，不論開或關。預設是開，而 session 得到的角色 prompt 就是現在的，去掉標記；開著的主智慧體也會讀帶著標記的 `apps-config.md`，以及這個版本新增的幾行。
 
 這個開關是每台電腦各自的：書桌透過 Straw Link 送給火車開著的裝置的工作，跑的是那個裝置的火車。它只觸及 sb 自己的 prompt：專案的 skill（例如寫著「play the integrator yourself」的協調者 skill）不在它的範圍內。pane（主智慧體和塔台 run一樣）的環境來自 Herdr（`herdr agent start`），所以要把變數設在啟動 `herdr server` 的環境裡（`STRAW_BOSS_DESK=1` 也是這樣），或用每個 session 都會讀的 `config.json`。書桌什麼都不設：`STRAW_BOSS_DESK=1` 已經關掉火車，而它的 `config.json` 裡的 `"integration": "off"` 只是保險。
 
@@ -1061,7 +1061,7 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 #### 把專案遷移到 0.65.0
 
-1. 先安裝 pi-anchorloop 2.11.0 或更新的版本。
+1. 先安裝宣告合併火車契約的 skill（pi-anchorloop 2.11.0 或更新的版本）。
 2. 在 `apps.json` 裡，從每個 app 的 `integration.stages` 移除 `uat`（仍列著它的 app 是設定錯誤：塔台不為它開火車，整合員的 `train` todo 被拒絕，而且什麼都不出發）。為要求驗收的 app 加上 `integration.accept`，如果 3 不合適，再加上 `integration.maxTrains`。
 3. 在專案 skill 裡，把 `## UAT` 改名為 `## Acceptance`：它現在告訴協調者怎麼在它的分支上驗收。替 `## Load` 給一個數字，把 `## Full gates` 逐項列出，並用一行是 pipeline 結論或目標版本的文字，結束 `## Post-merge` 和 `## Deploy verify`。
 4. 協調者送出 `departs:` 和 `accept:` 行；有 `uat:` 而沒有 `accept:` 的車廂單會被退回。
