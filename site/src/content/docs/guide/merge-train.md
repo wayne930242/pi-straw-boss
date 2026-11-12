@@ -93,7 +93,7 @@ The version is a whole number, and it rises only when a host written for the ver
 A skill that still serves the older hosts lists both: `merge-train-contract: "1 2"`.
 
 Straw Boss checks the declaration itself, because a model cannot tell a stale procedure from a current one by reading it.
-Until both skills declare the contract, every call of a train or the integrator that changes something is refused with the reason, and nothing departs.
+Until both skills declare the contract, a train's and the integrator's `todo` and `MonitorCreate` calls that change something are refused with the reason, and nothing departs.
 
 [pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) is one implementation, and the one Straw Boss is developed with.
 Its skills implement version 1 since 2.11.0; the 2.15 releases and those before them carry no declaration yet.

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -90,6 +90,18 @@ test("transition: a skill with no declaration counts as contract 1 only inside t
 	assert.match(refusal(both(pkg, 'metadata:\n  merge-train-contract: "2"\n')), /declares "2"; update pi-straw-boss/, "a declaration always wins over the pass");
 	writeFileSync(join(pkg, "package.json"), "{");
 	assert.match(refusal(both(pkg, "")), /declares none/, "a package.json that cannot be parsed gives no pass");
+});
+
+test("transition: a skill folder reached through a symlink is judged by the package it really sits in", () => {
+	const pkg = scratch(), agent = scratch(), legacy = ["pi", "anchorloop"].join("-");
+	both(pkg, "");
+	packaged(pkg, legacy, "2.15.2");
+	mkdirSync(join(agent, "skills"), { recursive: true });
+	const linked = ["integrating", "deploying"].map((name): SkillCommand => {
+		symlinkSync(join(pkg, "skills", name), join(agent, "skills", name));
+		return { name: `skill:${name}`, source: "skill", sourceInfo: { path: join(agent, "skills", name, "SKILL.md") } };
+	});
+	assert.deepEqual(checkContract(linked), { ok: true, contract: 1 });
 });
 
 test("src and prompts name no skills package: the one that needs the transition is named in src/train/contract-legacy.ts alone, which only contract.ts imports", () => {

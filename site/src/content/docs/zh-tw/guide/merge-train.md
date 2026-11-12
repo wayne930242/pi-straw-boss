@@ -93,7 +93,7 @@ metadata:
 還能服務舊宿主的 skill 把兩版都列出來：`merge-train-contract: "1 2"`。
 
 Straw Boss 自己檢查這項宣告，因為模型讀 skill 分不出程序是舊的還是新的。
-兩個 skill 都宣告契約之前，火車和整合員每個會改變東西的呼叫都會被拒絕並附上原因，也不會有火車發車。
+兩個 skill 都宣告契約之前，火車和整合員會改變東西的 `todo` 與 `MonitorCreate` 呼叫都會被拒絕並附上原因，也不會有火車發車。
 
 [pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 是其中一個實作，Straw Boss 也是搭配它開發的。
 它的 skill 從 2.11.0 起實作第 1 版；2.15 各版和更早的版本還沒有這項宣告。
