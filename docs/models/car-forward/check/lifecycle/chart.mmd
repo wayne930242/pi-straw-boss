@@ -1,0 +1,34 @@
+---
+title: "a car's life while the sb server stays up"
+---
+stateDiagram-v2
+  s0: No slip yet
+  s1: Slip waits at the tower
+  s2: Slip with the integrator
+  s3: Slip with the integrator, but the server holds no forward of it
+  s4: Returned by the integrator, telling its coordinator
+  s5: Received, telling its coordinator
+  s6: The integrator handed the slip back
+  s7: Returned by the integrator, told
+  s8: Received, told
+  s9: On a train
+  s10: Dropped by the train, telling its coordinator
+  s11: On a train, merged to the base
+  s12: Dropped by the train, told
+  s13: Landed, telling its coordinator
+  s14: Landed, told
+  [*] --> s0
+  s0 --> s1: the coordinator sends the car's slip to the tower
+  s1 --> s2: the tower forwards the slip to the integrator
+  s2 --> s3: 512 newer forwards push this one out of the server
+  s2 --> s4: the integrator returns the car
+  s2 --> s5: the integrator sets the car received
+  s3 --> s6: sb refuses the integrator#59; the integrator asks the coordinator, or the tower, to have the slip sent again
+  s4 --> s7: the coordinator gets the notice, or the tower is told in its place
+  s5 --> s8: the coordinator gets the notice, or the tower is told in its place
+  s8 --> s9: the tower opens a train with the car
+  s9 --> s10: the train drops the car
+  s9 --> s11: the train merges the car to the base
+  s10 --> s12: the coordinator gets the notice, or the tower is told in its place
+  s11 --> s13: the train sets the car landed
+  s13 --> s14: the coordinator gets the notice, or the tower is told in its place

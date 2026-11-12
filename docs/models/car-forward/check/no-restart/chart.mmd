@@ -1,0 +1,50 @@
+---
+title: "one car, from its coordinator's slip to what the coordinator learns of it"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: start
+    lg1: slip
+    lg2: ended
+    lg3: Breaks NoCarLeftInTheDark
+    lg4: Path to the NoCarLeftInTheDark bug
+  }
+  class lg0 tan
+  class lg1 blue
+  class lg2 purple
+  class lg3 breaks
+  class lg4 bugPath
+  s0: No slip yet
+  s1: Slip waits at the tower#59; coordinator waits for an answer
+  s2: Slip with the integrator#59; coordinator waits for an answer
+  s3: Returned by the integrator, notice going out#59; coordinator waits for an answer
+  s4: Returned by the integrator#59; coordinator was told returned
+  s5: Returned by the integrator#59; another slip waits at the tower#59; coordinator waits for an answer
+  s6: Returned by the integrator#59; the integrator holds a new slip of it#59; coordinator waits for an answer
+  s7: Returned by the integrator#59; coordinator waits for an answer
+  [*] --> s0
+  s0 --> s1: the coordinator sends the car's slip to the tower
+  s1 --> s2: the tower forwards the slip to the integrator
+  s2 --> s3: the integrator returns the car
+  s3 --> s4: the coordinator gets the notice
+  s4 --> s5: the coordinator sends the same head again
+  s5 --> s6: the tower forwards the slip to the integrator
+  s6 --> s7: sb refuses the integrator: the car already ended#59; nothing is set, nobody is told
+  classDef breaks fill:#ffecee,stroke:#e72e3b,stroke-width:2.5px,color:#cd2834
+  class s0 tan
+  class s0 bugPath
+  class s1 blue
+  class s1 bugPath
+  class s2 blue
+  class s2 bugPath
+  class s3 purple
+  class s3 bugPath
+  class s4 purple
+  class s4 bugPath
+  class s5 purple
+  class s5 bugPath
+  class s6 purple
+  class s6 bugPath
+  class s7 purple
+  class s7 breaks
+  class s7 bugPath
