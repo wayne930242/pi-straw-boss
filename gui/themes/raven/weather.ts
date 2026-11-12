@@ -5,8 +5,8 @@ import { prefs } from "../../prefs.ts";
 // Both are synthesized on the page's one audio core (audio.ts; background sound: the Background switch and volume govern them, the sound effects' do not), no files: rain is a looped noise through a band-pass, thunder a low-passed brown noise that falls in pitch and rolls twice.
 // The flash is the stylesheet's own clock: raven.css runs a no-op `rk-clap` animation beside the strike on the same layer, 61 s long and delayed to the strike's instant (94.4 % of the cycle), so its `animationstart` / `animationiteration` is the flash itself, whichever page shows it.
 // Nothing sounds with Background off, on a hidden tab, before the browser let the page play (the first press), or off the backdrop; no thunder under prefers-reduced-motion either, where the lightning is off.
-// Calm (a page nobody touched for 30 s) stops the rain, the lightning, and its thunder on a coarse pointer (a phone: battery). On a fine pointer (boss, 2026-11-09: a boss who watches without touching never saw a flash; 2026-11-12: the rain went silent mid-play) the rain keeps playing and the stylesheet keeps the strike running under calm, and so the thunder sounds: the strike is
-// one animation of the strike's own layer, whose first flash is a few seconds after the backdrop shows and then every 61 s (raven.css), so under calm nothing else moves.
+// Calm (no input for 30 s) stops the rain, the lightning, and its thunder on a coarse pointer (a phone: battery). On a fine pointer (boss, 2026-11-09: a boss watching untouched never saw a flash; 2026-11-12: the rain stopped mid-play) the rain plays on and raven.css keeps the strike running, so the thunder sounds: the strike is
+// one animation of its own layer, first a few seconds after the backdrop shows and then every 61 s, so under calm nothing else moves.
 type Ctx = ReturnType<Audio["out"]>["c"];
 
 /** Rain: seconds of noise in the loop, the band-pass edges (Hz), the level at the master gain (the noise's RMS is about a quarter of it), and the fades in seconds. */

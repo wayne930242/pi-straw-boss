@@ -217,7 +217,8 @@ test("the docs name the command, the store, the meta, the event, and gui.json's 
 	const read = (f: string) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
 	const doc = read("docs/how-it-works.md");
 	for (const word of ["/boss gui view", "gui-prefs.json", '<meta name="sb-view"', "`view` event", "`gui-view`", "Follow server"]) assert.ok(doc.includes(word), word);
-	const contract = doc.split("\n").find((l) => l.startsWith("- **`gui.json` is a contract.**")) ?? "";
+	// the contract is its own section (principle paragraph, then the details folded): read it up to the next heading
+	const contract = doc.split("#### `gui.json` is a contract\n")[1]?.split(/\n#{1,4} /)[0] ?? "";
 	assert.match(contract, /`owner`, and `view`/);
 	assert.match(contract, /`view` \(optional, `standard`, `geek`, or `zen`, absent when the boss has set no default\)/);
 	for (const f of ["site/src/content/docs/reference/commands.md", "site/src/content/docs/zh-tw/reference/commands.md"]) assert.ok(read(f).includes("`/boss gui view`"), f);
