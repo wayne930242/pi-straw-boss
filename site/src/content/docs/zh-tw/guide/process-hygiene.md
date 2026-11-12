@@ -17,11 +17,11 @@ sb server 每分鐘檢查每個 pane 裡的 pi，看起來卡死時就告訴該�
 
 三個訊號，任何一個成立就通報：
 
-- **滿載。** 程序連續 5 分鐘占用一個核心的 75% 以上，同時 session 檔沒有寫入。短暫的尖峰、還在寫入的 session 都不通報。
+- **滿載。** 程序連續 5 分鐘平均占用一個核心的 75% 以上，其中沒有任何一分鐘平靜下來，同時 session 檔沒有寫入。短暫的尖峰、還在寫入的 session 都不通報。
 - **失聯。** 程序還活著，但 pi-intercom 已經 3 分鐘沒有列出這個 session。server 重啟後沒有回來的 session 也會被這個訊號抓到。
 - **沉默。** pane 顯示工作中，session 檔 30 分鐘沒有寫入，也沒有進行中的工具呼叫。長時間的指令、建置或 subagent 都是進行中的呼叫，所以不會通報。
 
-每個事件塔台只收到一則訊息，裡面有 pane、session、pid、CPU 分鐘數，以及處理步驟：先讀 pane，畫面不動才送 Esc，有交接檔或boss 同意才停掉程序。
+每個事件塔台只收到一則訊息，裡面有 pane、session、pid、CPU 分鐘數，以及處理步驟：先讀 pane，畫面不動才送 Esc，有交接檔或 boss 同意才停掉程序。
 有新的訊號成立、session 恢復，或過了一小時還沒解決時，塔台會再收到一次。
 
 門檻是 [`config.json`](/pi-straw-boss/docs/zh-tw/reference/configuration/#configjson) 裡的 `stallWatch`。

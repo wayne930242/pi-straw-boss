@@ -32,11 +32,11 @@ The settings file is `<agentDir>/straw-boss/config.json`, where `<agentDir>` is 
 | `towerRuns.max` | 4 | The most pi runs at once. |
 | `integration` | `on` (`off` under `STRAW_BOSS_DESK=1`) | `off` turns the [merge train](/pi-straw-boss/docs/guide/merge-train/) off on this computer. On is `on`, `true`, `1`, or `yes`; off is `off`, `false`, `0`, or `no`. Any other value, and a file that cannot be read, turns it off with a notice. |
 | `stallWatch.enabled` | `true` | The [stall watch](/pi-straw-boss/docs/guide/process-hygiene/#the-stall-watch): the sb server tells a workspace's tower when a pi session looks frozen. It never stops the session. `false` turns it off. Every `stallWatch` key is read once a minute, so a change needs no restart. |
-| `stallWatch.cpuPercent` | 75 | How much of one core counts as pegged, from 10 to 100. |
-| `stallWatch.cpuMinutes` | 5 | Minutes in a row a pi must stay pegged, with its session file not written, before it is told. `0` turns this signal off. |
-| `stallWatch.silentMinutes` | 30 | Minutes in a row a pane may say working with its session file not written and no tool call open. `0` turns this signal off. |
+| `stallWatch.cpuPercent` | 75 | How much of one core counts as pegged, from 10 to 100, as the average over `cpuMinutes`. A minute under half of it is calm and starts the count again. A healthy session with a long history can pass this for a minute while it works (two were measured at 73 and 83); what sets it apart is that it writes its session file, so a lower value buys little and risks false reports. |
+| `stallWatch.cpuMinutes` | 5 | Minutes in a row, none of them calm, over which a pi must average `cpuPercent` or more, with its session file not written, before it is told. One minute a little under the threshold does not start the count again. `0` turns this signal off. |
+| `stallWatch.silentMinutes` | 30 | Minutes in a row a pane may say working with its session file not written and no tool call open. A session that answers and opens a tool call has recovered. `0` turns this signal off. |
 | `stallWatch.missingMinutes` | 3 | Minutes in a row a live pi may be absent from pi-intercom's list; also the grace after a server restart. `0` turns this signal off. |
-| `stallWatch.remindMinutes` | 60 | How long after an incident was told the first reminder comes; each later one waits twice as long, up to 8 hours. `0` sends no reminder. |
+| `stallWatch.remindMinutes` | 60 | How long after an incident was told the first reminder comes; each later one waits twice as long, up to 8 hours. A reminder waits while the signals are gone. `0` sends no reminder. |
 | `link.relay` | none | The relay a new [Straw Link](/pi-straw-boss/docs/guide/straw-link/) team uses by default. |
 | `link.trust` | `reply` for every device | How far this computer trusts each teammate's device: `reply`, `forward`, or `dispatch`. |
 

@@ -17,7 +17,7 @@ It never stops the session and sends it no key.
 
 It tells on any of three signals:
 
-- **Pegged.** The process stayed at or above 75% of a core for 5 minutes in a row while its session file was not written. A short burst, and a session that still writes, are not told.
+- **Pegged.** The process averaged 75% of a core or more over 5 minutes in a row, none of them calm, while its session file was not written. A short burst, and a session that still writes, are not told.
 - **Missing.** The process is alive, but pi-intercom has not listed the session for 3 minutes. This also catches a session that did not come back after a server restart.
 - **Silent.** The pane says working, the session file was not written for 30 minutes, and no tool call is open. A long command, a build, or a subagent is an open call, so it is never told.
 

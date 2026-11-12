@@ -3,6 +3,7 @@ import { openCalls } from "../ask.ts";
 import { type HerdrRun, isSub, panes as herdrPanes, parentOf, type Session, type Workspace, workspaces as herdrWorkspaces } from "../herdr.ts";
 import { createStallWatch, type Flag, readStallWatch, type StallDeps, type StallWatch } from "./stallwatch.ts";
 import { inTestRun } from "./testguard.ts";
+import { towerRunsEnabled } from "./towerruns.ts";
 import type { Towers } from "./towers.ts";
 
 // The server's side of the stall watch (stallwatch.ts): what it reads of this machine (pi-intercom's list, Herdr's panes, the session files) and the tower it tells. Kept out of main.ts, which carries a line budget.
@@ -42,12 +43,15 @@ export async function tellTower(flag: Flag, run: HerdrRun, towers: ReturnType<St
 /** The watch of this server, or none: on Windows (there is no process table), and in a test run without seams. */
 export function startStall(o: StartStall): StallWatch | undefined {
 	if (o.platform === "win32" || (inTestRun() && !o.over)) return undefined;
+	let noTower = false;
 	return createStallWatch({
 		dir: o.dir, now: o.now, log: o.log, self: [o.pid], config: () => readStallWatch(o.stateDir),
 		sessions: async () => (await o.sessions()).flatMap((s) => {
 			// SAFETY: pi-intercom's list carries each session's pid (its `SessionInfo`); herdr.ts names only the fields the net reads.
 			const pid = (s as { pid?: unknown }).pid;
-			return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 1 ? [{ id: s.id, ...(s.name ? { name: s.name } : {}), pid, ...(s.herdrLocation?.paneId ? { pane: s.herdrLocation.paneId } : {}), ...(s.herdrLocation?.workspace?.id ? { workspace: s.herdrLocation.workspace.id } : {}) }] : [];
+			// The pane is the one the broker found the session in at this list (`current`). A location it could not resolve carries the pane the session was started in, which a move has renamed since: no pane then.
+			const at = s.herdrLocation?.status === "current" ? s.herdrLocation : undefined;
+			return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 1 ? [{ id: s.id, ...(s.name ? { name: s.name } : {}), pid, ...(at?.paneId ? { pane: at.paneId } : {}), ...(at?.workspace?.id ? { workspace: at.workspace.id } : {}) }] : [];
 		}),
 		panes: async () => (await herdrPanes(o.run)).map((p) => ({ pane: p.pane_id, ...(p.terminal_id ? { terminal: p.terminal_id } : {}), ...(p.workspace_id ? { workspace: p.workspace_id } : {}), pi: p.agent === "pi", working: p.agent_status === "working", ...(p.agent_session?.value ? { file: p.agent_session.value } : {}), ...(p.tokens?.sb_role ? { role: p.tokens.sb_role } : {}) })),
 		paneProcs: async (pane) => {
@@ -58,7 +62,12 @@ export function startStall(o: StartStall): StallWatch | undefined {
 		},
 		mtime: (file) => { try { return statSync(file).mtimeMs; } catch { return undefined; } },
 		openCalls: async (file) => { const found = await openCalls(file); return found === "cut" ? undefined : found.length; },
-		tell: (flag) => tellTower(flag, o.run, o.towers()),
+		// With `towerRuns.enabled: false` the towers are resident pi sessions and the server stands in for none, so nobody is told: the log says so once, and each incident is in it as `stall-untold`.
+		tell: async (flag) => {
+			if (towerRunsEnabled(o.stateDir)) return (noTower = false), tellTower(flag, o.run, o.towers());
+			if (!noTower) (noTower = true), o.log("stall-no-tower", { text: "towerRuns.enabled is off in config.json, so the server stands in for no tower: the stall watch tells nobody, and its incidents are in this log only" });
+			return false;
+		},
 		...o.over,
 	});
 }
