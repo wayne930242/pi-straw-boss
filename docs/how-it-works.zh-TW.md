@@ -2246,9 +2246,14 @@ stateDiagram-v2
 
 第二個擴充套件入口 `src/balance.ts` 讓 Herdr 的分頁保持均衡。當 pi 在分頁中啟動時（每個行程一次，所以 `/reload` 不算），以及 pi 結束而 Herdr 關閉它的 pane 之後，該分頁的 pane 會沿著每個分割得到相等的寬度，而堆疊的 pane 得到相等的高度。它在 Herdr 內的每個 pi 中執行，不論是否加入，並且不動被放大的分頁。比它的 pi 活得更久的 pane（你留著的 shell）不會改變任何東西。
 
+<details>
+<summary>細節</summary>
+
 這項工作在 `src/balance.mjs` 中以分離的 `node` 行程執行：啟動時是 `balance.mjs now <pane>`，結束時是 `balance.mjs after-close <pane> <tab>`，因為正在結束的 pi 會在 Herdr 關閉它的 pane 之前就離開。它以 `windowsHide` 啟動，所以在 Windows 上，分離的主控台子行程不會得到自己的主控台視窗。每次調整大小都根據剛讀取的版面來規劃，而系統暫存目錄下每個分頁一個的鎖（`pi-straw-boss-pane-balance/`）讓並行的 session 輪流進行，而不是把同一個變更套用兩次。
 
 本機塔台 run的 pi（以 `--sb-run` 啟動，或在 server 把常駐 pane 交給它時由執行模式標記，`src/runmark.ts`）絕不啟動 `after-close`：它的 pane 會留下，所以輔助程式只會空等它的 30 秒。在 Windows 上這個等待很要緊：Herdr 以 `Start-Process -Wait` 啟動 `pi.cmd`，它會等待整個行程樹，所以在輔助程式結束之前，pane 都不顯示提示，而那裡下一個 `herdr agent start` 就撞上自己的逾時。隊友 run 的 pane 會在 pi 一結束就由 server 關閉，所以它的 pi 保留 `after-close`，而塔台分頁就像任何 pane 那樣重新平衡（一旦聲明這麼說，執行模式就把行程標記為 `ally`）。
+
+</details>
 
 ## 被擋住的對話框
 
