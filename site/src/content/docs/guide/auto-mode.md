@@ -29,11 +29,21 @@ stateDiagram-v2
 - **Towers park what needs you.** A wait card a tower records for you is parked: it raises no notification, sound, or Zen cue. The session that raised it is told once.
 - **Agents keep working.** `call_tower`, monitors, loops, and subagents are not refused.
 
+## The head tower keeps watch
+
+While auto mode is on, the sb server wakes the head tower about every 15 minutes with what it sees in each workspace. Nothing polls: the timer is the server's, it stops when auto mode ends, and it goes on after a server restart.
+
+- **What the notice says.** The waits that were refused or parked, the mains that are idle with open work, a tower that takes no events, a train or a forward that has not moved for 30 minutes, a session the stall watch flagged, and the output since the last wake.
+- **Output, not activity.** Output is what the server can see: board lines written and cars landed. A workspace that shows none for 2 hours is flagged, even when its panes say working. The server sees no commit and no push.
+- **What the head tower does.** It has no new tool. It tells the owning tower to nudge a main that stays idle, answers a parked question only where your standing instructions or decisions in its memory cover it, or records it for the morning. It never decides past what you told it.
+- **Without a head tower** there is no watch: say 「我要睡了」 to the head tower, or open it once, before you leave.
+
 ## When you are back
 
 When auto mode ends, the parked waits become open waits again, and one list says what happened:
 
 - **On the page**, a return panel opens on the next load: the parked waits first, as cards you can press, then what was cancelled or refused, what a tower decided on its own, and what still waits.
 - **In pi**, `/boss auto off` prints the same list. Act on a parked wait with `/boss memory done|choose|decline W<n>`.
+- **The watch's part.** The list ends with how often the head tower was woken, the messages it sent on its own, and the workspaces that showed no output for 2 hours or more. `/boss auto off` prints it; the page's return panel does not show it yet.
 
 The rules are in [Auto mode](/pi-straw-boss/docs/reference/how-it-works/how-it-works/#auto-mode).

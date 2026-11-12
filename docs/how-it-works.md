@@ -742,9 +742,22 @@ When it turns on, a session that sees the server's `auto-check` cancels the wait
 
 Every tower and head brief gains one line while it is on. A boss wait recorded then is parked (`parked` on the memory entry), and so is every open one when it turns on; the card's raiser gets one `wait_parked` message. A `tower_reply` to a session whose `blocked` `call_tower` the run took is noted with its `basis` (a memory id or a boss event that is no press, else `none`). A secret card's start button is refused.
 
+#### The watch
+
+While auto mode is on, the primary server wakes the head tower about every 15 minutes with one notice, `Auto watch <n>` (`server/autowatch.ts`, `watchops.ts`; the design is `docs/specs/2026-11-12-auto-watch.md`). The timer is the server's own, not a model that polls: it looks every 30 s, sends the notice once 15 minutes have passed since the last one (`WATCH_MS`), stops when auto mode ends, and goes on after a restart, because its count and its last wake are kept with the period in `auto-period.json`. A server that was down past that time (the computer slept) wakes the head once, not once for each wake it missed. A wake that cannot reach the head (no head tower is open, it is held, or the net cannot be read) is skipped and counted. A secondary Herdr slot's server runs no watch.
+
+<details>
+<summary>Details</summary>
+
+The notice says, for each workspace, what the server's own reading of the net shows (`factsOf`): the waits auto mode refused or cancelled since the last wake, and the units that wait on a dialog now; the waits its tower holds parked for the boss; the mains that are idle with open work on their board line, and whether they were idle at the last wake too; a tower that is held, whose events wait with no run starting, or that holds a wait the boss answered and it has not resolved; a train whose board and gates have not moved for 30 minutes (`STUCK_MS`), or whose writer is gone; a forward of the head's that its tower has not taken or acted on for 30 minutes; the stall watch's open incidents; and the output since the last wake. Output is what the server can see: the board lines written and the cars told landed. It sees no commit and no push, so they are not counted, and a workspace that showed no output for 2 hours (`QUIET_MS`) is flagged whatever its panes say. A train or a stalled session the server cannot place in a workspace is listed apart.
+
+The notice is bounded: three items of a kind in a workspace, ten workspaces with something to look at (the calm ones are one line of names), and 6,000 characters, cut at a line with the cut counted. Every word a session wrote (a name, a board line, a wait's text) is cleaned, cut, quoted, and withheld when it looks like a secret; the notice says they are data. It ends with what the head does, which is never cut. The head gains no tool: with `tower_send`, `tower_memory`, `board_read`, and `tower_list` it tells the owning tower to nudge a main that stays idle with open work, answers a parked or refused question only where a standing instruction or decision in its memory covers it and the session's own recommendation agrees, or records it for the morning; it never decides past the boss's mandate. A forward the head makes with no boss instruction behind it (an ask with no `relay`) is counted as a message it sent on its own.
+
+</details>
+
 #### The return list
 
-When it ends by any door the server writes `<state>/auto-report.json` for that period (parked waits per tower and the head, cancels and refusals per session, replies a tower decided, waits that could not be cancelled, foreign writes), makes the parked cards ordinary again, and gives the head one event. `/boss auto off` prints it, `boss_status` shows its summary, and `/boss memory done|choose|decline W<n>` acts on a parked wait.
+When it ends by any door the server writes `<state>/auto-report.json` for that period (parked waits per tower and the head, cancels and refusals per session, replies a tower decided, waits that could not be cancelled, foreign writes, and what the watch saw and did: its wakes, the messages the head tower sent on its own, and the workspaces with no output for 2 hours or more), makes the parked cards ordinary again, and gives the head one event. `/boss auto off` prints it, `boss_status` shows its summary, and `/boss memory done|choose|decline W<n>` acts on a parked wait.
 
 #### What remains possible
 

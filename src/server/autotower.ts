@@ -1,6 +1,7 @@
 import type { Slot } from "./record.ts";
 import type { By } from "../autostate.ts";
 import type { Decided, Note, Period } from "./automode.ts";
+import { type WatchReport, watchLines } from "./autowatch.ts";
 import { type Entry, hhmm, readMemory, updateMemory } from "./towermemory.ts";
 
 // What auto mode adds for the towers (docs/specs/2026-11-09-auto-mode.md, §6 and §8): the line of a brief, the waits parked, the message to the raiser of a parked card, the check of a `basis`, and the return list the end of auto
@@ -70,6 +71,8 @@ export interface Report {
 	stillWaiting: Line[];
 	boxes: BoxAsk[];
 	foreign: { at: string; why: string }[];
+	/** What the head tower's watch saw and did (autowatch.ts); absent when it never came due, and in a list written before it existed. */
+	watch?: WatchReport;
 }
 const who = (by: By) => `${by.via}: ${by.name}`;
 const group = (notes: Note[]): Line[] => {
@@ -81,10 +84,10 @@ const group = (notes: Note[]): Line[] => {
 	}
 	return [...lines.values()];
 };
-export function buildReport(p: Period, on: By, off: By, until: string, parked: ParkedRow[], boxes: BoxAsk[] = []): Report {
+export function buildReport(p: Period, on: By, off: By, until: string, parked: ParkedRow[], boxes: BoxAsk[] = [], watch?: WatchReport): Report {
 	return {
 		v: 1, since: p.since, until, on: who(on), off: who(off), parked, lines: group(p.notes.filter((n) => n.kind !== "still-waiting")), decided: p.decided,
-		stillWaiting: group(p.notes.filter((n) => n.kind === "still-waiting")), boxes, foreign: p.foreign,
+		stillWaiting: group(p.notes.filter((n) => n.kind === "still-waiting")), boxes, foreign: p.foreign, ...(watch ? { watch } : {}),
 	};
 }
 /** What a person did not choose: the cancels and refusals of the period (the count of the head's event). */
@@ -108,5 +111,6 @@ export function reportText(r: Report): string {
 	if (r.boxes.length) out.push("Asks of the boxes you control, left waiting:", ...r.boxes.map((b) => `- ${b.box}: ${b.gist}`));
 	else out.push("Asks of the boxes you control: not collected in this version; look at the page's waiting dialogs.");
 	if (r.foreign.length) out.push(`${r.foreign.length} foreign or unreadable write${r.foreign.length > 1 ? "s" : ""} to the state file were put back.`);
+	if (r.watch) out.push(...watchLines(r.watch));
 	return out.join("\n");
 }

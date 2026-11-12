@@ -83,7 +83,7 @@ export interface StallDeps {
 	/** Pids that are never a pi session: this server (its tower identities are in pi-intercom's list under its pid). */
 	self?: number[];
 }
-export interface StallRow { pid: number; session: string; pane: string; signals: Signal[]; told: number }
+export interface StallRow { pid: number; session: string; pane: string; /** The workspace of its pane, when Herdr named one. */ workspace?: string; signals: Signal[]; told: number }
 export interface StallWatch {
 	/** One look at the table of a tick; it does nothing until a minute has passed since the last sample, or while a sample runs. Never rejects. */
 	sample(table: readonly Proc[]): Promise<void>;
@@ -316,6 +316,6 @@ export function createStallWatch(d: StallDeps): StallWatch {
 				busy = false;
 			}
 		},
-		list: () => [...watched.values()].flatMap((w) => (w.incident ? [{ pid: w.pid, session: w.session ?? "(unknown)", pane: w.pane, signals: [...w.incident.signals], told: w.incident.told }] : [])),
+		list: () => [...watched.values()].flatMap((w) => (w.incident ? [{ pid: w.pid, session: w.session ?? "(unknown)", pane: w.pane, ...(w.workspace ? { workspace: w.workspace } : {}), signals: [...w.incident.signals], told: w.incident.told }] : [])),
 	};
 }
