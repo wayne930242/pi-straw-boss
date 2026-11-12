@@ -27,7 +27,7 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 		const name = pi.getSessionName()?.trim() ?? "";
 		return name === me() || name === me().slice(0, 8) ? "" : name;
 	};
-	// The refresh runs at every tool call, so the branch is read incrementally (branchscan.ts): the todo snapshot and the withdrawal are found once and then only looked for in what was appended.
+	// The refresh runs at every tool call and walked the branch from the leaf for the todo snapshot each time (the whole branch in a session that keeps no todo list). That walk is incremental now (branchscan.ts): the snapshot is found once and then looked for only in what was appended; so is the withdrawal, which is read only while seeding and at a session start. pi's own `getBranch()` still walks the history at every call.
 	const snapshotOf = snapshotScan(), withdrawnKey = withdrawnScan();
 	const derive = () => deriveBoard({ name: named(), todos: todosOf(snapshotOf(branchOf())), root: ctx?.cwd ?? process.cwd() });
 	const branchOf = (): readonly unknown[] => {

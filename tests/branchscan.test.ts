@@ -4,8 +4,8 @@ import { newestOf } from "../src/branchscan.ts";
 import { BOARD_ENTRY, withdrawnKey, withdrawnScan } from "../src/boardseed.ts";
 import { snapshotOfBranch, snapshotScan } from "../src/todo.ts";
 
-// The incremental reading of a session branch (src/branchscan.ts): the work board's refresh runs at every tool call, so what it reads from the branch must cost what was appended since the last read,
-// and give what the full walk gives whatever happened to the branch in between.
+// The incremental reading of a session branch (src/branchscan.ts): the work board's refresh runs at every tool call, so the reader's own walk of the branch must cover only what was appended since the last
+// read (pi's `getBranch()` still builds the whole branch at each call), and give what the full walk gives whatever happened to the branch in between.
 
 const cleared = (key: unknown) => ({ type: "custom", customType: BOARD_ENTRY, data: { cleared: key } });
 const message = (n: number) => ({ type: "message", message: { role: "assistant", n } });
