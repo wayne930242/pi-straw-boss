@@ -1,10 +1,11 @@
 import { join } from "node:path";
 import { ENDED_MS, finished, readEntries, removeEntry, writeEntry } from "./board.ts";
 import { type Derived, deriveBoard } from "./boardauto.ts";
-import { BOARD_ENTRY, seedBoard, withdrawnKey } from "./boardseed.ts";
+import { BOARD_ENTRY, seedBoard, withdrawnScan } from "./boardseed.ts";
 import type { Kit } from "./state.ts";
 import { ownsBoard } from "./trainrole.ts";
-import { todosOfBranch } from "./todo.ts";
+import { todosOf } from "./items.ts";
+import { snapshotScan } from "./todo.ts";
 
 // The work board fills itself (docs/specs/2026-10-25-straw-link.md, Work board, Auto-fill): the main's own session turns its todo list and its name into its entry and writes it
 // with `writeEntry`, as `board_set` does, marked `src: "todo"`. The server takes no part. boardauto.ts is the derivation and the scrub.
@@ -26,7 +27,9 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 		const name = pi.getSessionName()?.trim() ?? "";
 		return name === me() || name === me().slice(0, 8) ? "" : name;
 	};
-	const derive = () => deriveBoard({ name: named(), todos: todosOfBranch(branchOf()), root: ctx?.cwd ?? process.cwd() });
+	// The refresh runs at every tool call, so the branch is read incrementally (branchscan.ts): the todo snapshot and the withdrawal are found once and then only looked for in what was appended.
+	const snapshotOf = snapshotScan(), withdrawnKey = withdrawnScan();
+	const derive = () => deriveBoard({ name: named(), todos: todosOf(snapshotOf(branchOf())), root: ctx?.cwd ?? process.cwd() });
 	const branchOf = (): readonly unknown[] => {
 		try { return ctx?.sessionManager?.getBranch() ?? []; } catch { return []; } // a replaced session's context throws
 	};
