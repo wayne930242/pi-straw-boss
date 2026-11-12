@@ -30,6 +30,9 @@ Each solid arrow is a tool from [Tools](#tools). The dotted ones are not tools: 
 | head tower | the boss's one entry point, one per computer; hands each instruction to a workspace's tower | made by the sb server at the boss's first message |
 | train | a worker that carries one batch of merge cars to the base branch | opened by a tower for the project's integrator |
 
+<details>
+<summary>Kinds of main agent, subagent, and tower run</summary>
+
 **Kinds of main agent** (the page shows the kind word; the GUI says "on watch" for `standing`)
 
 | Kind | What it is for | How it is set |
@@ -55,6 +58,8 @@ Each solid arrow is a tool from [Tools](#tools). The dotted ones are not tools: 
 | event run | an event from a session, such as a main's `call_tower` or a finished milestone | a fresh pi in the standing pane; ends with `tower_done` and a handoff note |
 | boss conversation | the boss's words (the page's composer, the standing pane, `/boss tower`) | the run that resumes the boss's last session |
 | ally run | a Straw Link message from a teammate's device | a fresh pi in a pane beside the standing pane, at the sender's trust level |
+
+</details>
 
 **Where to read**
 

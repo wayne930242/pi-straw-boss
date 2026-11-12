@@ -30,6 +30,9 @@ flowchart TD
 | 主塔台 | 老闆唯一的入口，每台電腦一座；把每項指示交給某個工作區的塔台 | 老闆第一次說話時由 sb server 建立 |
 | 火車 | 把一批合併車廂送進基底分支的工作者 | 塔台為專案的整合員開啟 |
 
+<details>
+<summary>主智慧體、子智慧體與塔台 run 的種類</summary>
+
 **主智慧體的種類**（頁面顯示種類的詞；GUI 把 `standing` 稱為「值守」）
 
 | 種類 | 用途 | 怎麼設定 |
@@ -55,6 +58,8 @@ flowchart TD
 | 事件 run | session 送來的事件，例如主智慧體的 `call_tower` 或完成的里程碑 | 常駐 pane 裡的一個全新 pi；以 `tower_done` 和交接筆記結束 |
 | 老闆對話 | 老闆的話（頁面的輸入框、常駐 pane、`/boss tower`） | 接續老闆上一個 session 的 run |
 | 隊友 run | 隊友的裝置送來的 Straw Link 訊息 | 常駐 pane 旁邊的 pane 裡的一個全新 pi，以寄件者的信任等級執行 |
+
+</details>
 
 **要看哪一節**
 
