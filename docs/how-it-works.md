@@ -2291,6 +2291,9 @@ Agents the net does not know come last, in Herdr's workspace, tab and pane order
 
 A tower the sb server runs keeps its row when no run is live: the server reports a stand-in agent `tower` on the standing pane (idle, with `standing by`, `3 queued` or `held` as its message) while the tower prompt runs there ([The standing pane](#the-standing-pane)), so the row sits first in its workspace as the tower's mark and `agent.list` shows it. It is a row and nothing more: no net, dashboard, stash, closer or reaper check counts it as an agent, a main, or a member, and an idle report starts no toast, sound, or attention count. A run replaces it with pi's own row, and it comes back when the run ends. An ally run's pane is a row too, right under the tower (`[ally] <device label>`, see [Ally runs](#ally-runs)).
 
+<details>
+<summary>Details</summary>
+
 **The tokens.** Every session in the net writes display tokens next to `sb_role`, in the same report, on the same 4 minute refresh and with the same 10 minute TTL. It writes them on the panes of the subagents it launched as well, because those never join and write nothing themselves. A session that ends clears its own and its subagents'.
 
 - `sb_order` is the sort key. A tower's is `WWW.0`. A main agent's or member's is `WWW.1.TTT.R.PPP`: `WWW` is the place of its workspace among the base workspaces (a sub workspace does not count, and the head tower's workspace is `000` while it exists, so the base workspaces then start at `001`), `TTT` the place of its tab in the workspace, `R` is `0` for a main agent and `1` for a member, and `PPP` the place of its pane in the tab.
@@ -2317,17 +2320,35 @@ While a launched subagent has no pi pane, its launcher keeps one `events.subscri
 
 The connection closes as soon as every launched subagent has a pi pane, and with it a session that launched none holds none; a subagent that finished in the last 10 minutes has no pane either, so the connection stays that long after it. The 4 minute refresh stays as the safety net, and a subagent's tokens still go at the next refresh once it has finished.
 
+</details>
+
 ### A new Herdr server
 
 Herdr keeps pane and workspace tokens in the server's memory, so a server that takes over (a live handoff during an update, or a stop and a start) begins with none of them, and the net view would stay unsorted, and a tower would look absent, until each session's next 4 minute refresh. Every session that can join the net, and every tower, therefore keeps one `events.subscribe` connection open on Herdr's socket, only to see it close; it asks for `workspace.renamed`, which almost never happens, so the connection carries no traffic and costs nothing while the server runs.
+
+<details>
+<summary>Details</summary>
 
 When it closes, the session reconnects after 0.25 s, 0.5 s, 1 s, and then every 2 s, and when a server answers, it writes everything again at once: first, for a tower, the workspace token `tower` and its own `sb_role`, which is how another session finds the tower (without them a `call_tower` in the gap would open a second one), then the full publish of the 4 minute refresh (its role and net tokens, and the marks of the subagents it launched). The first connection of a session is no takeover.
 
 A session that has not finished joining (or a tower that has not taken its role) writes nothing on a takeover, and a subagent and a session in a sub workspace hold no connection.
 
+</details>
+
 ### A Herdr restore
 
+```mermaid
+flowchart TD
+    r["herdr server stop,<br/>then a new server"] --> p["Herdr starts a new pi in each<br/>restored pane: pi --session file"]
+    p --> c{"Same pane, tab, and workspace<br/>as the recorded role?"}
+    c -->|"yes"| t["The session takes its role back"]
+    c -->|"no"| m["It stays a member"]
+```
+
 After `herdr server stop` and a new server, Herdr (with `[session] resume_agents_on_restore`, on by default) starts a new pi in every restored pane as `pi --session <file>`: the processes are new, the pane and tab ids and the session file path are the same, and `STRAW_BOSS_ROLE`, the tokens, and (for a session that had no conversation yet, since pi writes its file only after the first message, and gives the resumed one a new session id) the `straw-boss` entry are gone. Without more, every resumed session would come back a member: the PM who quits the app and opens it again would lose the tower and every main.
+
+<details>
+<summary>Details</summary>
 
 A tower and a main therefore record their role in `roles/<hash of the session file>.json` of the state directory (role, pane, tab, workspace, and for a main the pane's terminal), when the tower takes its role and when a session becomes its tab's main, and drop it when the session is closed on purpose (the GUI's quit, `/boss close`, a tower asking an opened main to quit, a second tower yielding).
 
@@ -2355,9 +2376,14 @@ The connection and the retry timer never keep pi alive, and `session_shutdown` c
 
 The subagents a restore brings back are another matter: each comes back as a plain pi without the extension that makes it a child, and its launcher is asked to resume it (see [Subagents a Herdr restore brought back plain](#subagents-a-herdr-restore-brought-back-plain)).
 
+</details>
+
 ### Sidebar rows
 
 The tokens also show the roles in Herdr's own grouped view, which a plugin cannot reorder. Add them to a row of `[ui.sidebar.agents]` in `config.toml`. `$sb_indent` goes before the state icon, so a subagent hangs under its launcher as the worktrees do in the Spaces panel; Herdr puts its own ` · ` after it, and an agent without the token shows nothing. `$sb_name` goes right after the state icon, so a subagent row says which subagent it is even when Herdr has lost the pane's label, and `$sb_step` after it shows what a merge train is doing.
+
+<details>
+<summary>Details</summary>
 
 Every glyph sits in the first row; the `[sub]` mark of a subagent with no kind stays hidden because the branch already says what it is, and a subagent's kind glyph shows, since the branch does not. The snippet bolds the glyphs of the main kinds and leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark. Herdr drops a row whose every item is empty, so the second row, the tab label from `$sb_main_tab` or `$sb_tab`, gives a main agent and a member a second line and leaves every other agent one line; give the two tokens the colors of the star and the person. The first row leaves out Herdr's `tab`, which the second row carries.
 
@@ -2404,19 +2430,31 @@ description = "toggle the straw net view"
 
 `prefix+?` lists the keys that are taken, `herdr server reload-config` loads a new binding, and `herdr plugin unlink wayne930242.straw-boss` removes the plugin. The plugin needs Herdr 0.9.5 or newer (the view probe is checked on it) and node; on Windows it reaches Herdr over its named pipe and has its own action, `net-windows` ([Windows](#windows)). The tokens come from the sessions, so a session that still runs an older pi-straw-boss (before 0.6.5) has none until pi reloads it, and sorts after the others.
 
+</details>
+
 ### How the view works
 
 The view is one `agent.view.set` request on Herdr's socket, which the CLI has no command for, sorted by the `sb_order` token ascending, then by Herdr's workspace, tab and pane order. Herdr sorts a present value before a missing one, so agents without the token come after the net, and among themselves in that place order. The plugin writes no tokens of its own. Herdr servers before 0.9.4 do not sort an installed view again when tokens change (0.9.4 does): the order stays as it was at the last install until the view is switched off and on again, so press the key twice to refresh it.
 
+<details>
+<summary>Details</summary>
+
 **On at start.** `[[startup]]` in the manifest runs `net-view.mjs startup` once after the server has restored its session, and again when a new server takes over in an update handoff. It installs the same view as the key and exits at once; no process stays running, and a failure (Herdr refusing the view) is in the plugin log and does not stop the server. Every server start turns the view on, whatever an earlier server left: a press that turned it off lasts until the server stops. The one exception is a startup that runs again in the same server, which leaves that server's own "off" alone.
+
+</details>
 
 ### The toggle
 
 Herdr has no query for the active view, but `agent.view.clear` with a source that owns nothing (`<plugin source>-probe`; Herdr accepts only ASCII letters, digits, colon, dot, underscore and hyphen in a source) leaves the view unchanged and answers with it (checked on Herdr 0.9.5), so the action reads what is shown instead of trusting what it saved: it clears when its own view is the active one and installs otherwise. A plugin unlinked and linked again, or disabled and enabled, in one server run loses its view without a startup hook, and the first press used to record "off" and change nothing; now one press always changes the sidebar.
 
+<details>
+<summary>Details</summary>
+
 The state in `net-view.json` in the plugin's state directory ("on" or "off" and the identity of the running server, the socket file's inode and creation time) is only the wish the hooks read. The next press clears the view with `agent.view.clear` named to this plugin's own source, so it never clears a view that another owner installed. A restarted server drops its view; the startup hook turns the view on and records it, so the first press switches it off.
 
 `[[events]] on = "pane.agent_detected"` runs `net-view.mjs reapply` (Herdr has no hook for a link or an enable): it installs the view when no view is active and this server's own "off" has not been pressed, and leaves any active view, this plugin's or another owner's, and a pressed off alone; so after a relink the net view is back at the next agent Herdr detects. A view another owner installed over this one also counts as off: the press installs this one again.
+
+</details>
 
 ### Limits
 

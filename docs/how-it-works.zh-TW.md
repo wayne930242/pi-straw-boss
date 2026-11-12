@@ -2291,6 +2291,9 @@ pi 不等待就發出這兩個事件，並逐一走過各擴充套件，所以�
 
 由 sb server 執行的塔台，即使沒有任何執行中的 run，也保有它的那一列：只要塔台提示在常駐 pane 上執行（[常駐 pane](#常駐-pane)），server 就會在該 pane 上回報一個替身智慧體 `tower`（閒置，訊息為 `standing by`、`3 queued` 或 `held`），所以這一列會排在其工作區的第一個位置，作為塔台的標記，`agent.list` 也看得到它。它只是一列，沒有別的作用：網、儀表板、收起、closer 或 reaper 的檢查都不把它算作智慧體、主智慧體或成員，閒置回報也不會觸發 toast、音效或注意力計數。run 開始時，由 pi 自己的那一列取代它；run 結束後它會再回來。隊友 run 的 pane 也是一列，就在塔台的正下方（`[ally] <device label>`，見[隊友 run](#隊友-run)）。
 
+<details>
+<summary>細節</summary>
+
 **token。** 網裡的每個 session 都會在 `sb_role` 旁邊寫入顯示用 token，寫在同一份回報裡，沿用同樣 4 分鐘的更新週期與 10 分鐘的 TTL。它也會在自己啟動的子智慧體的 pane 上寫入，因為子智慧體不會加入，自己也不寫任何東西。session 結束時，會清掉自己和其子智慧體的 token。
 
 - `sb_order` 是排序鍵。塔台的是 `WWW.0`。主智慧體或成員的是 `WWW.1.TTT.R.PPP`：`WWW` 是它的工作區在基地工作區中的位置（子工作區不算；主塔台的工作區存在時是 `000`，所以此時基地工作區從 `001` 開始），`TTT` 是它的分頁在工作區中的位置，`R` 對主智慧體是 `0`、對成員是 `1`，`PPP` 是它的 pane 在分頁中的位置。
@@ -2317,17 +2320,35 @@ pi 不等待就發出這兩個事件，並逐一走過各擴充套件，所以�
 
 每個啟動出去的子智慧體都有 pi pane 時，連線就會關閉，所以沒有啟動任何子智慧體的 session 不會持有連線；而最近 10 分鐘內完成的子智慧體也沒有 pane，所以連線在那之後還會保留這麼久。4 分鐘的更新維持為安全網，子智慧體完成後，它的 token 仍會在下一次更新時移除。
 
+</details>
+
 ### 新的 Herdr server
 
 Herdr 把 pane 與工作區的 token 存在 server 的記憶體裡，所以接手的 server（更新期間的即時交接，或是停止再啟動）一開始沒有任何 token，網檢視會一直沒有排序，塔台看起來也像不存在，直到每個 session 的下一次 4 分鐘更新。因此，每個能加入網的 session 與每個塔台，都會在 Herdr 的 socket 上維持一條 `events.subscribe` 連線，唯一目的是看它何時關閉；它訂閱的是 `workspace.renamed`，這幾乎不會發生，所以這條連線沒有流量，server 運作期間也不花任何成本。
+
+<details>
+<summary>細節</summary>
 
 連線關閉時，session 會在 0.25 秒、0.5 秒、1 秒後重新連線，之後每 2 秒一次；等到有 server 回應，就一次把所有東西重新寫入：先是塔台的工作區 token `tower` 與它自己的 `sb_role`（其他 session 就是靠這兩個找到塔台，沒有它們，空窗期間的 `call_tower` 會開出第二個塔台），然後是 4 分鐘更新的完整發布（它的角色與網 token，以及它啟動的子智慧體的標記）。session 的第一次連線不算接手。
 
 尚未完成加入的 session（或尚未取得其角色的塔台），在接手時不寫任何東西；子智慧體與子工作區中的 session 不持有連線。
 
+</details>
+
 ### Herdr 還原
 
+```mermaid
+flowchart TD
+    r["herdr server stop，<br/>再啟動新的 server"] --> p["Herdr 在每個還原的 pane<br/>啟動新的 pi --session file"]
+    p --> c{"pane、分頁、工作區<br/>都和記錄的角色相同？"}
+    c -->|"是"| t["session 取回它的角色"]
+    c -->|"否"| m["它維持成員"]
+```
+
 `herdr server stop` 之後換了新 server，Herdr（`[session] resume_agents_on_restore` 預設開啟）會在每個還原的 pane 以 `pi --session <file>` 啟動新的 pi：行程是新的，pane 與分頁的 id 以及 session 檔路徑不變，而 `STRAW_BOSS_ROLE`、token，以及（對尚未有對話的 session 來說，因為 pi 要到第一則訊息之後才寫檔，而且會給接續的 session 一個新的 session id）`straw-boss` 條目都沒了。
+
+<details>
+<summary>細節</summary>
 
 若不另外處理，每個接續的 session 都會變成成員：退出應用程式再重新開啟的 PM，會失去塔台與所有主智慧體。因此，塔台與主智慧體會把自己的角色記錄在狀態資料夾的 `roles/<hash of the session file>.json` 裡（角色、pane、分頁、工作區，主智慧體另外記錄該 pane 的終端機），時機是塔台取得其角色時，以及 session 成為其分頁的主智慧體時；當 session 被刻意關閉（GUI 的結束、`/boss close`、塔台要求它開出的主智慧體結束、第二個塔台讓位）時，就刪除這筆紀錄。
 
@@ -2355,9 +2376,14 @@ Herdr 把 pane 與工作區的 token 存在 server 的記憶體裡，所以接�
 
 還原所帶回來的子智慧體是另一回事：每一個都會以沒有擴充套件的普通 pi 回來，沒有讓它成為子層的擴充套件，要請它的啟動者讓它接續（見[被 Herdr 還原成普通 pi 的子智慧體](#herdr-還原後變成一般-pi-的子智慧體)）。
 
+</details>
+
 ### 側邊欄的列
 
 這些 token 也會在 Herdr 自己的分組檢視中顯示角色，只是外掛無法重新排序該檢視。把它們加進 `config.toml` 中 `[ui.sidebar.agents]` 的某一列。`$sb_indent` 放在狀態圖示之前，這樣子智慧體就會像 Spaces 面板裡的 worktree 一樣掛在其啟動者底下；Herdr 會在它後面自己加上 ` · `，沒有這個 token 的智慧體則什麼都不顯示。`$sb_name` 緊接在狀態圖示之後，所以即使 Herdr 弄丟了 pane 的標籤，子智慧體那一列也會說明它是哪個子智慧體，而它後面的 `$sb_step` 顯示合併火車正在做什麼。
+
+<details>
+<summary>細節</summary>
 
 所有圖示都放在第一列；沒有種類的子智慧體的 `[sub]` 標記保持隱藏，因為分支已經說明了它是什麼，而子智慧體的種類字符會顯示，因為分支沒有說明它。這段範例替主智慧體種類的字符加粗，把顏色交給你的 Herdr 主題；想替標記上色，就在規則裡加上 `fg`。Herdr 會丟掉每個項目都是空的那一列，所以第二列，也就是來自 `$sb_main_tab` 或 `$sb_tab` 的分頁標籤，讓主智慧體和成員多出第二行，而其他每個智慧體維持一行；請把這兩個 token 設成星星和人形的顏色。第一列省略了 Herdr 的 `tab`，由第二列負責顯示。
 
@@ -2404,19 +2430,31 @@ description = "toggle the straw net view"
 
 `prefix+?` 會列出已被占用的按鍵，`herdr server reload-config` 會載入新的綁定，`herdr plugin unlink wayne930242.straw-boss` 則移除外掛。外掛需要 Herdr 0.9.5 或更新版本（檢視探測在該版本上檢查過）與 node；在 Windows 上，它透過具名管道連到 Herdr，並有自己的動作 `net-windows`（[Windows](#windows)）。token 來自各個 session，所以仍在執行舊版 pi-straw-boss（0.6.5 之前）的 session 在 pi 重新載入它之前沒有 token，並且排在其他之後。
 
+</details>
+
 ### 檢視如何運作
 
 檢視是 Herdr socket 上的一個 `agent.view.set` 請求（CLI 沒有對應的指令），依 `sb_order` token 遞增排序，其次依 Herdr 的工作區、分頁與 pane 順序。Herdr 把有值的排在沒有值的之前，所以沒有 token 的智慧體排在網之後，彼此之間則依該位置順序排列。外掛自己不寫任何 token。0.9.4 之前的 Herdr server 在 token 變動時不會重新排序已安裝的檢視（0.9.4 會）：順序會停在上次安裝時的樣子，直到檢視被關掉再打開，所以請按兩次鍵來更新它。
 
+<details>
+<summary>細節</summary>
+
 **啟動時開啟。** manifest 裡的 `[[startup]]` 會在 server 還原完它的 session 之後執行一次 `net-view.mjs startup`，在更新交接中由新 server 接手時再執行一次。它安裝的檢視與按鍵安裝的相同，然後立刻結束；沒有任何行程留著執行，而失敗（Herdr 拒絕該檢視）會記在外掛的 log 裡，不會讓 server 停下來。每次 server 啟動都會把檢視打開，不管先前的 server 留下什麼：按鍵把它關掉的效果，會持續到 server 停止為止。唯一的例外是在同一個 server 裡再次執行的 startup，它不會動該 server 自己的「關閉」狀態。
+
+</details>
 
 ### 切換
 
 Herdr 沒有查詢目前檢視的指令，但帶著一個不擁有任何東西的 source（`<plugin source>-probe`；Herdr 的 source 只接受 ASCII 字母、數字、冒號、點、底線與連字號）的 `agent.view.clear` 不會改變檢視，並且會回答目前的檢視（在 Herdr 0.9.5 上檢查過），所以這個動作讀取實際顯示的內容，而不是相信它自己存下的狀態：當自己的檢視是作用中的就清除，否則就安裝。在同一次 server 執行中被取消連結又重新連結，或被停用又重新啟用的外掛，會在沒有 startup hook 的情況下失去它的檢視，而以前第一次按鍵會記下「關閉」卻什麼都沒改變；現在按一次鍵一定會改變側邊欄。
 
+<details>
+<summary>細節</summary>
+
 外掛狀態資料夾裡的 `net-view.json` 所存的狀態（「on」或「off」，以及執行中 server 的身分，也就是 socket 檔案的 inode 與建立時間）只是 hook 讀取的意願。下一次按鍵會用以這個外掛自己的 source 命名的 `agent.view.clear` 來清除檢視，所以它絕不會清掉其他擁有者安裝的檢視。重啟的 server 會丟掉它的檢視；startup hook 會把檢視打開並記下來，所以第一次按鍵會把它關掉。
 
 `[[events]] on = "pane.agent_detected"` 會執行 `net-view.mjs reapply`（Herdr 沒有針對連結或啟用的 hook）：當沒有作用中的檢視、而且這個 server 自己的「關閉」沒有被按過時，它就安裝檢視；任何作用中的檢視（本外掛的或其他擁有者的），以及被按下的關閉，它都不動；所以重新連結之後，網檢視會在 Herdr 偵測到下一個智慧體時回來。其他擁有者蓋在這個檢視上的檢視也算作關閉：按鍵會再次安裝這個檢視。
+
+</details>
 
 ### 限制
 
