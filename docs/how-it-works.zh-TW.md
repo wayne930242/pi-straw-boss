@@ -317,6 +317,8 @@ flowchart TD
 
 屬於盒子兩個團隊的控制端只會被告知一次：盒子對每個裝置只送一個 `dialog-open`（被告知的那個團隊，只要該團隊還列著這個裝置就保留，否則選一個裝置在線的團隊），控制端對每個裝置和對話框 id 只保留一張卡片。轉發成功過去不會在任何地方留下一行；現在盒子的 `server.log` 在啟動時有 `dialog-forwarder`（`started` 或 `skipped`）、`dialog-controllers`（數量和已知者，在第一次查看以及兩者任一改變時）、每個問題各有 `dialog-seen`、`dialog-sent`（每位控制端一筆，已排進 outbox，尚未遞送）和 `dialog-ended`，以及一輪超過一分鐘沒完成時的 `dialog-pass-stuck`（它卡在 `read`、`dispatcher`、`notice` 或 `post`；會放開它，下一次查看開一輪新的；它沒來得及 post 的關閉會保留，由下一輪 post，最多試五次，卡片在控制端過期之後就完全不 post；最多只有一輪被放開的仍未完成，所以一個永不返回的呼叫只多出一輪待處理的，第二個卡住的一輪會留著繼續跑，並留下一行 `dialog-pass-hung`），而控制端的 `link.log` 在有一則到達時有 `dialog-in`；沒有任何一行含問題的隻字片語（[這些行](unattended-device.zh-TW.md#6-被拒絕時看起來像什麼)）。
 
+#### 盒子回報什麼
+
 裝置每分鐘以及有變動時，會對每位 `dispatch` 控制端送出一則 `unit-status`（ephemeral）：每個塔台單位的狀態、hub 看到在該單位工作區裡執行的 monitor，以及它的最後一份報告（最後一則 `tower_done` 備註和最後一則送給該控制端的 `tower_send` 文字，兩者中較晚的，4 KB）；控制端在記憶體裡為每個裝置保留最新的一份，把它顯示成裝置的隊友基地卡片（見下），重新啟動就消失。
 
 **卡片**（標準和極客檢視，`gui/allyunits.ts`，0.60.2）列出盒子回報的單位，而不列它自己的任何主智慧體或工作者（無人值守的盒子沒回報任何單位時，也就是較舊的盒子、只分享 presence 的團隊，以及這個伺服器重新啟動後的那一分鐘，會有一行說有幾個單位在線、不列出任何名稱；隊友自己的電腦，名冊標為有人看管、從不回報單位，則照舊列出它的主智慧體和工作者及其狀態）：每個單位有一個狀態詞（待命、本次執行中、當掉、待信任、當掉後暫停；頁面不認得的就照原樣顯示；塔台單位在服務的 `running` 或 `waking` 狀態時，也就是它的一次短執行持續期間，這個詞寫「本次執行中」，詞的提示文字說塔台會為每則訊息喚醒一次執行、執行之間待命，一般單位的 `working` 仍然讀作「執行中」，0.74.0），卡片的副標題寫出盒子名稱以及它在不在，而不是它的塔台狀態加上「updated 40s ago」（頁面的時鐘會讓它保持最新），monitor 放在同一行（數量，接著是指令），最後一份報告折成它的第一行，點一下以 Markdown 開啟（它不解析 HTML；Markdown 在這個摺疊第一次打開時才建立）。
@@ -1935,7 +1937,9 @@ pi-herdr-agents 沒有「父層還活著」的紀錄，所以對它的 worktree 
 
 ## sb server
 
-sb server 是獨立成一個行程的 Straw Boss 後端，讓塔台、連線持有者與頁面不必取決於哪個 pi session 剛好在執行它們（[規格](specs/2026-10-26-sb-backend.md)）。這個版本包含該行程、它的紀錄、它的控制 socket、它的 log、它的啟動與重啟規則、它與 intercom broker 的連線，以及 GUI server（頁面、它的 API、對話框 hub、遠端存取、收起與關閉路由）。連線持有者在主 server 中執行（見[連線持有者](#straw-link跨電腦的塔台連線持有者)），GUI 以行程內方式向它詢問；塔台在 server 中以塔台服務執行（[見下文](#塔台服務)），這預設是開啟的；只有在 `config.json` 中明確設定 `"towerRuns": { "enabled": false }`，才會讓它們維持為前述的常駐 pi session。
+sb server 是獨立成一個行程的 Straw Boss 後端，讓塔台、連線持有者與頁面不必取決於哪個 pi session 剛好在執行它們（[規格](specs/2026-10-26-sb-backend.md)）。它擁有行程紀錄、控制 socket、log、與 intercom broker 的連線，以及 GUI server（頁面、它的 API、對話框 hub、遠端存取、收起與關閉路由）。連線持有者在主 server 中執行（見[連線持有者](#straw-link跨電腦的塔台連線持有者)）；塔台在 server 中以[塔台服務](#塔台服務)執行，預設開啟（在 `config.json` 設定 `"towerRuns": { "enabled": false }` 則改為常駐的 pi session）。
+
+這一節包含：[它是什麼](#它是什麼)、[啟動](#啟動)與[重啟](#重啟)、[shell 的狀態](#shell-的狀態)、[桌面模式](#桌面模式up---dir)；接著是塔台服務：[服務](#塔台服務)、[常駐 pane](#常駐-pane)、[主智慧體呼叫塔台時](#主智慧體呼叫塔台時)、[本機執行](#本機執行)、[老闆對話](#老闆對話)、[塔台記憶](#塔台記憶)與[隊友 run](#隊友-run)。
 
 ### 它是什麼
 
@@ -2087,7 +2091,7 @@ GUI 不再等待塔台 pi：sb server 從它自己啟動起就提供頁面，所
 
 ### 塔台服務
 
-一個開關，`~/.pi/agent/straw-boss/config.json` 中的 `towerRuns`：`{ "towerRuns": { "enabled": false } }`（`max`，同時最多的 pi run 數，預設 4，是給 B5 的 run 用的）。**它預設是開啟的**（自 B6，也就是帶有隊友 run 的版本起）：沒有 `config.json`，或 `towerRuns` 沒有 `enabled: false`，都表示開啟。讀不出來或解析不了的 `config.json` 也表示開啟，但 server 會說一次：在 log 與 status 的 `lastError` 中有一行 `code=config` 的 `error`，因為在此期間檔案自己的 `enabled: false` 並未被遵守。在 `enabled: false` 時，塔台維持為常駐，本節中的一切都不會發生；這個旗標在 B6 之後的版本中移除。
+一個開關，`~/.pi/agent/straw-boss/config.json` 中的 `towerRuns`：`{ "towerRuns": { "enabled": false } }`（`max`，同時最多的 pi run 數，預設 4，是給[本機執行](#本機執行)用的）。**它預設是開啟的**：沒有 `config.json`，或 `towerRuns` 沒有 `enabled: false`，都表示開啟。讀不出來或解析不了的 `config.json` 也表示開啟，但 server 會說一次：在 log 與 status 的 `lastError` 中有一行 `code=config` 的 `error`，因為在此期間檔案自己的 `enabled: false` 並未被遵守。在 `enabled: false` 時，塔台維持為常駐，本節中的一切都不會發生。
 
 server 在啟動時與每次 `ensure-tower` 時讀取它，所以改變它不需要重啟。關閉它對 server 在一次更新（4 分鐘）之內生效：它釋放它的塔台身分，清除它的 `tower` token，並清掉每個 `service.json`、佇列與帳本；在那之前，發現存活身分 token 的 session 仍能找到它，而它送出的東西會被排進佇列、永遠不被讀取。以關閉的開關啟動的 server 也會清掉遺留物。服務代替塔台；喚醒 pi 處理它收到的事件的東西，是下文的[本機執行](#本機執行)（[規格](specs/2026-10-26-sb-backend.md)，**The tower service**）。
 
@@ -2129,7 +2133,7 @@ server 絕不為它建立工作區或基地，不移動任何焦點，也不在�
 
 新的 Herdr server 沒有 token。server 依記錄的 pane 與分頁再次找到每個塔台分頁，否則（接手或 server 啟動之後的一分鐘內）依標有該圖示、在工作區中只有一個 pane 的分頁，再次寫入標記，並在 pane 改變時再次註冊身分。一分鐘內沒有回來的分頁會結束它的服務。**id 什麼也證明不了。**
 
-Herdr 以短計數器為工作區、分頁與 pane 編號，這些計數器在不同的 Herdr server 之間會重複，所以遺失已存 session 的 Herdr，可能給老闆自己的新工作區塔台原有的那個 id（VM 第 B7 輪，F10：server 把塔台指令輸入到老闆的 shell、標記它，而一則訊息本會在那裡啟動 run）。在 Herdr 回來之後，或當 server 從 `service.json` 啟動時，服務只有在記錄的 id 之下的 pane 位於帶有塔台圖示的分頁中，才算**就位**（`typegate.ts` 中的 `seatGate`；圖示是還原所保留的 server 建立的分頁的東西，而 token 與 pane 的環境都沒了）。
+Herdr 以短計數器為工作區、分頁與 pane 編號，這些計數器在不同的 Herdr server 之間會重複，所以遺失已存 session 的 Herdr，可能給老闆自己的新工作區塔台原有的那個 id（server 會把塔台指令輸入到老闆的 shell、標記它，並在那裡啟動 run）。在 Herdr 回來之後，或當 server 從 `service.json` 啟動時，服務只有在記錄的 id 之下的 pane 位於帶有塔台圖示的分頁中，才算**就位**（`typegate.ts` 中的 `seatGate`；圖示是還原所保留的 server 建立的分頁的東西，而 token 與 pane 的環境都沒了）。
 
 在那之前，它不輸入任何東西、不寫任何標記、不喚醒任何 run，而它的 Herdr 連線或監看再次觸發，會使在它之前讀到的證明作廢。**證明只針對一個終端機。** Herdr 給新 server 的每個 pane 一個新的 `terminal_id`，而連線在新 server 回應之後最多兩秒才再次被確認，所以只被它們作廢的旗標，會在其間被相信為重用 id 之下的陌生人的 shell。
 
@@ -2153,7 +2157,7 @@ Herdr 以短計數器為工作區、分頁與 pane 編號，這些計數器在�
 
 給該身分的訊息會寫入 `tower/<workspace id>/queue/<seq>-<id>.json`，刷到磁碟，文字照收到的樣子；log 不含文字。回條 `queued` 只在 fsync 之後才送給寄件者，而已被接收的訊息（相同的寄件者、去掉重試的 `~r<n>` 的基礎訊息 id，以及文字雜湊；`seen.jsonl`，48 小時，每個工作區 5,000 筆）不會再被排入佇列，但仍會得到它的回條。對塔台身分的失敗傳送，會由 Straw Boss 自己的傳送器（`src/reach.ts`）以 `<request id>~r<n>` 重試最多 30 秒。
 
-B4 的佇列是在 `seen.jsonl` 存在之前寫的，照原樣讀取：重試後綴被去掉，超過一天的事件被丟掉，每個工作區最多保留 1,000 個。給 server 所執行塔台的連線訊息會在 `link/inbox/` 中等待，而且不提供給任何 session；老闆會看到一則通知（`a Straw Link message waits … ally runs come with the next step`），直到 B6。
+在 `seen.jsonl` 存在之前寫的佇列照原樣讀取：重試後綴被去掉，超過一天的事件被丟掉，每個工作區最多保留 1,000 個。給 server 所執行塔台的連線訊息會在 `link/inbox/` 中等待，而且不提供給任何 session；老闆會看到一則通知（`a Straw Link message waits … ally runs come with the next step`），直到 B6。
 
 ### 常駐 pane
 
@@ -2236,7 +2240,7 @@ Herdr（0.9.5）會在一秒內，丟掉它不認得標籤的已回報智慧體�
 | `shared` | 在主智慧體動它的分頁之外的任何東西之前：連接埠、資料庫、共用分支、部署目標、另一個應用程式的 checkout、執行中的服務。它說明是什麼以及多久，然後等待答案。 | 預期有。 |
 | `blocked` | 主智慧體在等它的分頁之外的某個人，或等一個它的授權沒有涵蓋的決定。成員也以同樣的方式回報協調上的摩擦。 | 預期有。 |
 
-例行進度在工作看板上，不喚醒任何東西。程式碼把原因寫進標頭（`reply=` 之後的 `why=<kind>`）。在 pi 的工具中，`why` 對主智慧體是必填的，塔台可以省略，而沒有它時標頭是 `why=unspecified`，事件像 `blocked` 那樣喚醒。集合之外的字會在送出任何東西之前被拒絕。 塔台的 `call_tower` 把 `why` 當作選填（它是 `blocked` 呼叫）；常駐塔台提示（`prompts/tower.md`，`towerRuns` 關閉時）刻意不帶 `why=` 的指引，以維持在它的字數預算內。不阻塞的事件放在工作看板上，不喚醒任何東西。
+例行進度在工作看板上，不喚醒任何東西。程式碼把原因寫進標頭（`reply=` 之後的 `why=<kind>`）。在 pi 的工具中，`why` 對主智慧體是必填的，塔台可以省略，而沒有它時標頭是 `why=unspecified`，事件像 `blocked` 那樣喚醒。集合之外的字會在送出任何東西之前被拒絕。塔台的 `call_tower` 把 `why` 當作選填（它是 `blocked` 呼叫）；常駐塔台提示（`prompts/tower.md`，`towerRuns` 關閉時）刻意不帶 `why=` 的指引，以維持在它的字數預算內。不阻塞的事件放在工作看板上，不喚醒任何東西。
 
 #### 保留
 
