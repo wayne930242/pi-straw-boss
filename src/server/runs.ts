@@ -22,6 +22,7 @@ import type { Slot } from "./record.ts";
 import { addNote, clearTimer, listRuns, pruneRuns, readNotes, readTimer, type Outcome, type RunRecord, writeRun, writeTimer } from "./towerrunstore.ts";
 import { addTold, appendEvent, dropParked, HEAD_KEY, parkEvent, type QueuedEvent, readQueue, readTold, removeEvent, type ServiceRecord, unparkEvent, updateEvent } from "./towerstore.ts";
 import { RUN_CAP_MINUTES } from "./towerbrief.ts";
+import { WATCH_KEY } from "./autowatch.ts";
 import { HEAD_RUN_TOOLS, LOCAL_RUN_TOOLS } from "../runallow.ts";
 import { appendChapter, headResume, recapOf } from "./headchapters.ts";
 import type { RunWho } from "./rungate.ts";
@@ -957,8 +958,8 @@ export function createRuns(o: RunsOptions) {
 		if (ally) await finishAlly(a, outcome, failed, keepTaken).finally(() => void (a.rec.device && svc.allies.get(a.rec.device) === a && svc.allies.delete(a.rec.device)));
 		for (const e of taken) {
 			try {
-				// The head's ledger: a notice a head run took to a good end is told; one it was quit, crashed or stopped with is not (AW-D20).
-				if (outcome === "done" && !keepTaken && e.kind === "notice" && e.messageId && isHeadSvc(svc)) addTold(slot, e.messageId);
+				// The head's ledger (the watch's keys alone, RV5-F001): a notice a head run took to a good end is told; one it was quit, crashed or stopped with is not (AW-D20).
+				if (outcome === "done" && !keepTaken && e.kind === "notice" && e.messageId && e.messageId.startsWith(WATCH_KEY) && isHeadSvc(svc)) addTold(slot, e.messageId);
 				// A stale event goes with the run that held it, whatever its end (AW-D21).
 				if (e.drop) removeEvent(slot, ws, e);
 				else if (!failed && outcome !== "herdr-restart" && !keepTaken) removeEvent(slot, ws, e);
@@ -1595,7 +1596,7 @@ export function createRuns(o: RunsOptions) {
 		/** A late outcome of something a run sent after the run ended, or a notice the server raises (the stall watch): a notice event for the next run. False when the server stands in for no tower there. */
 		notice(workspace: string, text: string, key: string): boolean {
 			const svc = services.get(workspace);
-			if (!svc) return false;
+			if (stopped || !svc) return false; // a server that is stopping queues nothing (RV5-F002)
 			if (waitingOf(svc).some((e) => e.kind === "notice" && e.messageId === key)) return true;
 			append(slot, svc.ref.record(), { kind: "notice", text, at: iso(now()), messageId: key });
 			poke(svc);

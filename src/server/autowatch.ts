@@ -402,15 +402,16 @@ function listFrom(v: unknown): FindingList | undefined {
  * The watch's section of the return list, built when auto mode ends: the nudges since the last wake are counted in, and a workspace is quiet when it showed no output for `QUIET_MS` or more up to `until`. A notice still
  * pending is asked about once more (`where`, absent: told), so one a run took to a good end since the last reading counts as told (RV4-F001). Every finding the period saw is then in one place (W3): in flight (the last
  * notice, held by a run), parked (only parked notices carried it), told to nobody (the rest no notice told, with the ones gone by the last reading marked), or still open (told, and there at the last reading). A
- * parked wait of the boss's is not listed as still open: the return list names those itself. None when the watch never came due.
+ * parked wait of the boss's is not listed as still open, told to nobody, or parked: the return list names those itself. None when the watch never came due.
  */
 export function watchSection(state: WatchState | undefined, since: string, until: string, asks: readonly AskRow[], where?: (p: Pending) => NoticeWhere): WatchReport | undefined {
 	if (!state) return undefined;
 	const at: NoticeWhere | undefined = state.pending ? (where?.(state.pending) ?? "told") : undefined;
 	const done = withNudges(at ? settle(state, at) : state, since, asks.filter((a) => a.at <= Date.parse(until)));
 	const untold = done.untold ?? [], live = new Set(done.pending?.fresh ?? []), keys = new Set(untold.map((f) => f.key)), last = new Set((done.found?.items ?? []).map((f) => f.key));
-	const inFlight = at === "taken" ? untold.filter((f) => live.has(f.key)) : [], parkedOnly = untold.filter((f) => f.parked && !live.has(f.key));
-	const nobody = untold.filter((f) => !inFlight.includes(f) && !parkedOnly.includes(f)), open = (done.found?.items ?? []).filter((f) => !keys.has(f.key) && !f.key.startsWith("parked:"));
+	const inFlight = at === "taken" ? untold.filter((f) => live.has(f.key)) : [], parkedOnly = untold.filter((f) => f.parked && !live.has(f.key) && !f.key.startsWith("parked:"));
+	// A parked wait of the boss's is named by the return list's own parked section alone (W3, RV5-F003).
+	const nobody = untold.filter((f) => !inFlight.includes(f) && !parkedOnly.includes(f) && !f.key.startsWith("parked:")), open = (done.found?.items ?? []).filter((f) => !keys.has(f.key) && !f.key.startsWith("parked:"));
 	const named = (list: readonly Finding[]) => list.slice(0, FINDINGS_KEPT).map((f) => (last.has(f.key) ? f.line : `${f.line} (gone by the last reading)`));
 	// A workspace whose mains were all done at the last reading is not quiet: nothing was left for it.
 	const quiet = Object.entries(done.out).filter(([, o]) => !o.done).map(([workspace, o]) => ({ workspace, label: o.label, hours: Math.round(((Date.parse(until) - Date.parse(o.at)) / 3600_000) * 10) / 10 })).filter((q) => q.hours * 3600_000 >= QUIET_MS).sort((a, b) => b.hours - a.hours);
@@ -464,6 +465,8 @@ export interface WatchDeps {
 	noticeState?(workspace: string, key: string): NoticeWhere;
 	/** One notice event in the head's queue; false when nobody took it. */
 	wake(workspace: string, text: string, key: string): boolean;
+	/** The watch was stopped (the server leaves): a reading that ends after it tells nothing (RV5-F002). */
+	stopped?(): boolean;
 }
 /** The key every notice of the watch starts with (`runs.notice`), so an untaken one is found and, when auto mode ends, dropped. */
 export const WATCH_KEY = "auto-watch:";
@@ -498,7 +501,7 @@ export function createAutoWatch(d: WatchDeps) {
 					return skip(state, `the net could not be read (${phrase((error as Error)?.message ?? error, 120)})`);
 				}
 				// Auto mode ended, or another period began, while the net was read: nothing is told.
-				if (!d.auto.view().on || d.auto.view().since !== since) return;
+				if (d.stopped?.() || !d.auto.view().on || d.auto.view().since !== since) return;
 				// Every reading moves the output clocks and the mains seen idle, whether it wakes the head or not.
 				idle = { since, sessions: new Set(facts.workspaces.flatMap((f) => f.idle.map((m) => m.session))) };
 				const out = outAfter(state.out, facts, state.last ?? since), findings = findingsOf(facts);

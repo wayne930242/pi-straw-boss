@@ -274,14 +274,14 @@ const countFiles = (dir: string): number => {
 	for (const e of readdirSync(dir, { withFileTypes: true })) n += e.isDirectory() ? countFiles(join(dir, e.name)) : 1;
 	return n;
 };
-/** The flag is off: every workspace's `service.json`, queue (parked events too), runs, notes, expectations, timer, dedupe ledger and opener's ledger go, the head's in `head/` with them, but not its conversation, memory, asks, or chapters (message text stays on disk with no time limit otherwise). Returns how many files went. */
+/** The flag is off: every workspace's `service.json`, queue (parked events too), runs, notes, expectations, timer, dedupe ledger, opener's ledger and the head's told ledger go, the head's in `head/` with them, but not its conversation, memory, asks, or chapters (message text stays on disk with no time limit otherwise). Returns how many files went. */
 export function purgeAll(slot: Slot): number {
 	let gone = 0, names: string[] = [];
 	try {
 		names = readdirSync(towersDir(slot));
 	} catch { /* none */ }
 	for (const dir of [...names.map((name) => join(towersDir(slot), name)), headDir(slot)]) {
-		for (const entry of ["queue", "runs", SERVICE, OPENED, "notes.jsonl", "expects.json", "timer.json", "seen.jsonl", ...ALLY_FILES]) {
+		for (const entry of ["queue", "runs", SERVICE, OPENED, "notes.jsonl", "expects.json", "timer.json", "seen.jsonl", TOLD, ...ALLY_FILES]) {
 			const path = join(dir, entry), stat = statSync(path, { throwIfNoEntry: false });
 			if (!stat) continue;
 			gone += stat.isDirectory() ? countFiles(path) : 1;

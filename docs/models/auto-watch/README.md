@@ -12,7 +12,7 @@ The parent session decided them on 2026-11-13 under the boss's standing "non-des
 | --- | --- | --- | --- |
 | W1. A notice counts as told only when a head run that took it ended well. A run the server quit, a purge, or a removal with no finished run is "not taken". | `ToldOnlyWhenTaken` | Broke (path A) | Holds |
 | W2. At most one notice of the watch waits at a time. No notice of a period survives that period's switch off, with or without a head open; one a live run holds may finish, but nothing of the old period is offered to a head opened later. | `OneWaits`, `NoStaleNotice` | `NoStaleNotice` broke (paths B, C); `OneWaits` broke only after a lost period file | Holds |
-| W3. Every finding present at any reading of the period is on the morning list in exactly one place (in flight, told to nobody, parked, still open), unless it was told and has resolved. | `MorningWhole` | Broke (paths D, E) | Holds |
+| W3. Every finding present at any reading of the period is on the morning list in exactly one place (in flight, told to nobody, parked, still open), unless it was told and has resolved; a parked wait of the boss's is in the return list's own parked section alone (RV5-F003). | `MorningWhole` | Broke (paths D, E) | Holds |
 | W4. After two notices parked in a row, the watch sends none until a notice is told or the head is opened again. | `CrashBound` | Broke (path F) | Holds |
 | W5. A notice key is never used twice in a period, even after a restart or a bad period file. | `KeysUnique` | Broke (path G) | Holds |
 | W6. A wake never sends over a notice that waits, and never for a calm reading. | `NoSendOver`, `NeverCalm` | Held, but for a lost period file while a run held the notice | Holds |

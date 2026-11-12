@@ -72,7 +72,9 @@ export function startAutoWatch(o: StartWatch): (() => void) | undefined {
 		services: (workspace) => towerPanel(o.towers).view(workspace), head: headSeam(o.slot, o.now), run: o.run, ...(o.world ? { world: o.world } : {}), sessions: o.sessions,
 		board: boardSeam({ dir: join(o.slot.stateDir, "board"), now: o.now }), trainyard: trainyardSeam({ env: o.env, stateDir: o.slot.stateDir, now: o.now, ...(o.book ? { book: o.book } : {}) }),
 	});
+	let stopped = false;
 	const watch: AutoWatch = createAutoWatch({
+		stopped: () => stopped,
 		now: o.now, log: o.log, auto: o.auto,
 		// The head tower is woken where the server stands in for it; a service that is held starts no run, so its notices would only pile up.
 		head: () => ((row) => (row ? { workspace: row.workspace, ...(row.service?.state === "held" ? { held: true } : {}) } : undefined))(o.towers()?.head.status()),
@@ -84,5 +86,5 @@ export function startAutoWatch(o: StartWatch): (() => void) | undefined {
 		...over,
 	});
 	const timer = setInterval(() => void watch.tick(), tickMs ?? WATCH_TICK_MS);
-	return () => (clearInterval(timer), offSwitch());
+	return () => ((stopped = true), clearInterval(timer), offSwitch());
 }
