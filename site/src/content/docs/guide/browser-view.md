@@ -18,11 +18,13 @@ The tower and the head tower keep their own icons, and a unit with no known kind
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-comms.png" width="49%" alt="A unit's comms: its chat as a live log, the messages queued for its next turn, its todo list, its background monitors, and its dossier"> <img src="/pi-straw-boss/docs/img/gui-alert.png" width="49%" alt="An alert dialog with the question a unit waits on, with its options to pick and a note to add"></p>
 
-**A unit's comms** show its chat, the messages queued for its next turn, its todo list, its background monitors, and the documents it shows.
+### A unit's comms
+
+It shows its chat, the messages queued for its next turn, its todo list, its background monitors, and the documents it shows.
 Type into the session from its composer; a file pasted, dropped, or picked with **+** (20 MB at most) is stored in a private temp folder and its path goes into the message.
 On a desktop, click into a unit's terminal and it takes your keyboard.
 
-**Alerts.**
+### Alerts
 A unit that waits on you raises an alert, and the alerts queue up.
 
 | Key | Does |
@@ -39,7 +41,9 @@ The page answers `ask_user_question`, `robot_hand`, pi-code's hook confirmation,
 Other dialogs show read-only, and `secret_drop` always takes its secret in the terminal, never on a page.
 An answer that leaves its next step in a terminal (robot_hand's prompt and pane choices) shows a small card to finish it, with a link to the full terminal for ssh and vim.
 
-**A tower's wait for you** is a card, not a line of text. It says what happened, what you do, where (a link to open, or a command to copy; sb never runs one), what happens after, and which session raised it.
+### A tower's wait for you
+
+It is a card, not a line of text. It says what happened, what you do, where (a link to open, or a command to copy; sb never runs one), what happens after, and which session raised it.
 Pick a row, then press **Send**: a tap alone presses nothing.
 
 | Row | Does |
@@ -53,7 +57,7 @@ A card from the head tower says so in its own words (主塔台 in Traditional Ch
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-wait-answer.png" width="49%" alt="The dialog for a tower's wait: the question, the answer box with a reply typed, Send, the link to the tower's comms, Later, and Dismiss"> <img src="/pi-straw-boss/docs/img/gui-settings.png" width="49%" alt="The settings page: this device's view, reminders, sound and volume, and language, with the sections for phones and devices, teams, and the server below"></p>
 
-**Notices and reminders.**
+### Notices and reminders
 A unit that fails or finishes, and a monitor that fails or goes quiet, raises a quiet notice under the header's Notices button; only a unit waiting on you raises the prominent alert.
 Switches in the settings page (the gear) raise a system notification, and play a sound, when a unit waits on you, fails, or finishes.
 Finished subagents on the map are dismissed one by one or all at once (Dismiss finished).
@@ -94,7 +98,7 @@ A card you are on is never replaced or pulled away; if its question is answered 
 When nothing waits, Zen shows a breathing circle and a short line on mindfulness or stillness.
 A companion session shows its live log and composer.
 
-**Keys.**
+### Keys
 
 | Key | Does |
 | --- | --- |
@@ -108,10 +112,10 @@ A companion session shows its live log and composer.
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-zen-history.png" width="49%" alt="The Zen view with an item's Context open: the unit's session log inside the card, above the question's choices"> <img src="/pi-straw-boss/docs/img/gui-zen-palette.png" width="49%" alt="The Zen view's command palette open over the companion session"></p>
 
-**Cards of their own.**
+### Cards of their own
 Besides questions, Zen shows as cards a tower's wait on you, a confirm a teammate's tower asks of this computer, a dialog a Straw Link box forwarded, a phone's pair request, and a tower's memory proposal.
 
-**Sound and music.**
+### Sound and music
 Sound effects follow the settings page's Sound effects switch (off by default): a singing bowl when an item takes the screen, a wooden fish when one is done.
 Put audio files in `~/.pi/agent/straw-boss-music/` and Zen shows a ♪ in the corner that plays them on a loop, while the Background sound switch is on.
 
