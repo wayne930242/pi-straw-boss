@@ -175,7 +175,7 @@ export const WATCH_RUNBOOK = [
 	"What to do, with tower_send, tower_memory, board_read, and tower_list only:",
 	"- A main idle with open work at two wakes in a row: tower_send its workspace's tower to nudge that main to go on, or to say on its board why it stopped. One seen idle for the first time may be between turns: leave it.",
 	"- A refused, cancelled, or parked wait: answer it only where a standing instruction or decision in your memory covers it and the session's own recommendation agrees; tower_send the tower that answer with the S<n> or D<n> it rests on. Anything else stays parked for the boss (it is on the return list), or you record it for the morning with tower_memory.",
-	"- A tower that takes no events, a train or a forward that does not move, a stall, a workspace with no output: tell the owning tower what the server saw (tower_send), or record it for the morning when no tower can act on it.",
+	"- A tower that takes no events, work or a forward of yours that does not move, a stall, a workspace with no output: tell the owning tower what the server saw (tower_send), or record it for the morning when no tower can act on it.",
 	"- Never decide past the boss's mandate, never ask a session to wait for the boss, and send one message per finding: an open ask of yours that covers it is not sent again.",
 	"- Nothing to act on: call tower_done at once with one line.",
 ].join("\n");
