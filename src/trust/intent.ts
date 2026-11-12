@@ -5,8 +5,9 @@ import { canonical } from "./found.ts";
 // trust question is asked as usual instead of being answered "not trusted" at once. The list of such panes is the sb server's, in its memory only: the pane it started, with the folder it
 // started pi in, from before pi starts until the open's start and join have ended, however they end. The pane's pi runs in another process, so it asks the server over the control socket
 // (`open-intent`, with its own pane id, Herdr's, and its own folder) and takes only the server's yes. No server, no answer in time, an older server, or one that started again (its memory is
-// new) is a no, and the question is answered as before. Nothing is written to or read from disk for it (review R156-F001: a file is not proof of who wrote it), and no request field, flag, or
-// environment variable can add a pane to the list.
+// new) is a no, and the question is answered as before. No listing is written to or read from disk for it (review R156-F001: a file is not proof of who wrote it), and no request field, flag, or
+// environment variable can add a pane to the list. The asker finds the server through its record (`server.json`), as every control request does, so a same-uid process that writes that record and
+// answers the socket can say yes (review R0752-F001); that grants no trust, D3 becomes a question that waits for a person.
 
 export interface Intents {
 	/** Lists `pane`, whose pi starts in `cwd`; returns the call that takes it off again. */
