@@ -2615,15 +2615,30 @@ pi-herdr-agents 沒有「父層還活著」的紀錄，所以對它的 worktree 
 
 設有 `PI_SUBAGENT_ID` 的 pi（pi-herdr-agents 的 worker）會在 `session_start` 時，透過控制 socket 對 sb server 送出 `procs-hello {pid, started, subagentId, sessionFile, pane, terminal, cwd}`，每 30 秒打一次 beat，結束時送出 `procs-bye`（重新載入或切換 session 會保留行程，所以不算 bye）。server 在自己的行程表中找到該 pid 並檢查啟動時間；它從 `cwd` 找出 worktree 根目錄（往上最近的 `.git` 是帶有 `gitdir:` 的檔案；在主 checkout 裡的 worker 沒有 worktree，也沒有 cwd 規則）。紀錄存放在 `<slot dir>/procs/owners.json`（權限 600）。
 
+<details>
+<summary>細節</summary>
+
 如果 server 拒絕 hello，worker 會說一次，而它啟動的東西不會被清理；沒有 server 在執行時，會在下一次 beat 再試一次 hello。server 會拒絕 pid 是 Herdr server、pane 的 shell、shell、server 或 broker，或底下有 Herdr 或 pane 的 shell 的 hello。session 的資料夾、session 檔與通知函式在它啟動時讀取，絕不在 await 之後讀，所以進行中的重新載入不會在過期的情境上出錯。
 
 **server 保存什麼。** 每 10 秒（第一次 tick 花了超過一秒時改為 30 秒；這個成本會以 `procs-tick-cost` 記錄一次），server 依 ppid 對每個存活擁有者的後代做快照，格式為（pid、啟動時間、pgid）。之後才換親的行程仍被視為該擁有者的。身分在每個地方都是 `(pid, start time)`，而且每個動作在執行之前都會再檢查一次。
 
 **擁有者何時結束。** 在 `procs-bye` 時、它的 pid 已經消失或被重用時，或 Herdr 回報它的 pane 發生 `pane.exited` 或 `pane.closed` 且終端機 id 相符時（Herdr 會重用 pane id，所以終端機不同的 pane 的事件會被忽略）。在 server 停止期間結束的擁有者，會在 server 啟動時依 `owners.json` 清理。
 
+</details>
+
 ### 清理什麼
 
+```mermaid
+flowchart TD
+    e["擁有者結束"] --> k["殺除集合：還活著的後代、<br/>帶有它標記的行程、<br/>在它 worktree 裡的孤兒"]
+    k --> t["對每個 group 再對每個<br/>pid 送 SIGTERM"]
+    t --> s["10 秒後，對剩下的<br/>送 SIGKILL"]
+```
+
 已結束擁有者的擊殺集合是：快照中仍存活且身分相同的後代，加上帶有它標記的行程，加上工作資料夾在它的 worktree 或在最後一次被看成該根目錄的已移除 checkout 裡的孤兒（孤兒的父 pid 是 1，Linux 上則是 `systemd --user`），再加上這些行程在它們底下啟動的東西。要扣除受保護的集合：Herdr server、每個存活 pane 的 shell 與前景行程、`server.json` 中指名的 sb server、intercom broker、其他每個存活的已註冊擁有者及其樹，以及帶有其他存活擁有者標記的行程。
+
+<details>
+<summary>細節</summary>
 
 在沒有已註冊擁有者的已連結 worktree 工作區中關閉的 pane（不是 pi 的智慧體）只套用 cwd 規則，而且不會套用到另有存活 session 在其中工作的 worktree。主智慧體的結束不清理任何東西：主智慧體會刻意啟動長期存活的 daemon。
 
@@ -2637,9 +2652,14 @@ pi-herdr-agents 沒有「父層還活著」的紀錄，所以對它的 worktree 
 | `procs reap --owner <id>` | 對已結束而留有東西存活的擁有者，再執行一次擊殺順序。對仍存活的擁有者會被拒絕。 |
 | `procs reap --checkout <path>` | 殺掉在某個已連結 worktree（或 worker 已知在其中工作的已移除 checkout）裡工作的東西：孤兒與已結束擁有者的遺留。有存活擁有者在那裡工作時會被拒絕：請先結束該 worker 或關閉它的 pane。有行程仍然存活時結束碼為 1；stdout 上的 JSON 會說是哪些。 |
 
+</details>
+
 ### 移除守衛
 
 只要有任何行程的工作資料夾在目標 checkout 裡，擴充套件就會拒絕 `worktree_remove`，以及含有 `git worktree remove` 或 `herdr worktree remove` 的 bash 指令（也包括在 `cd`、`git -C`、`&&`、`;`、管線之後，或在 `bash -c "…"` 裡面）。目標是從路徑、分支名稱或 Herdr 工作區 id，透過 `git worktree list --porcelain` 與 Herdr 的工作區清單解析出來的。拒絕訊息會逐一列出每個持有者的 pid、程式名稱（`comm`；在 Linux 上是其執行檔的檔名，因為在那裡 `comm` 是主執行緒的名稱，由程式自己設定，而 node 24 把它設成 `MainThread`；絕不是指令列）、CPU 時間、存活時間與擁有者狀態（存活、已結束、未知或沒有標記），並給出 `cli.mjs procs reap --checkout '<path>'`；清理之後，同一個呼叫就會通過。
+
+<details>
+<summary>細節</summary>
 
 目標也可以用 git 唯一的結尾路徑元件解析，而沒有 `--workspace` 的 `herdr worktree remove` 取用 `HERDR_WORKSPACE_ID` 裡的工作區。無法執行的檢查（git 或 Herdr 沒有回應）不算通過。已完成的 worker 保留的閒置 pane shell（Herdr 說它是該 pane 的前景行程），在目標自己的工作區裡時不會擋住移除；其他任何資料夾在那裡的東西都會。`/worktree remove` 斜線指令不經過 `tool_call`：這是有記載的限制，而 reaper 外掛仍會拒絕它自己的移除。
 
@@ -2652,6 +2672,8 @@ pi-herdr-agents 沒有「父層還活著」的紀錄，所以對它的 worktree 
 在 macOS 上重放時顯示出三個限制。(1) 只有程式不是 Apple 平台二進位檔的行程，才讀得到標記：node 與 Homebrew 工具看得到，`/bin/bash`、`/bin/sleep` 與 `/usr/bin/perl` 則看不到，因為系統隱藏了它們的環境，此時移除守衛的拒絕訊息會對它們說「no owner marker」。這些由快照與 cwd 規則負責。pi 本身也看不到標記（它在啟動之後才設定該變數；只有它啟動的東西會繼承）。
 
 (2) cwd 規則不會伸進另有其他 pane 也在工作的 worktree（老闆的 shell、主智慧體），因為那個 session 可能擁有在那裡執行的東西；以雙重 fork 逃過每一次快照（在幾毫秒內被 launchd 接管）、又無法靠標記讀取的行程，在這種情況下會留著，而 `cli.mjs procs reap --checkout <path>` 是明確停止它的方法。(3) server 在它的 tick（每 10 秒）才得知已連結 worktree 的工作區：沒有擁有者的 pane，在其工作區建立後 10 秒內關閉，不會被視為 worktree 的 pane。
+
+</details>
 
 ### 時間
 

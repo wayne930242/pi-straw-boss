@@ -2615,15 +2615,30 @@ Every pi that loads the `src/hygiene.ts` extension (a main, a worker, any sessio
 
 A pi with `PI_SUBAGENT_ID` set (a pi-herdr-agents worker) sends `procs-hello {pid, started, subagentId, sessionFile, pane, terminal, cwd}` to the sb server over the control socket at `session_start`, beats every 30 s, and sends `procs-bye` when it quits (a reload or a switch of session keeps the process, so it is not a bye). The server finds the pid in its own process table and checks the start time; it finds the worktree root from `cwd` (the nearest `.git` going up is a file with `gitdir:`; a worker in the main checkout has no worktree and gets no cwd rule). Records live in `<slot dir>/procs/owners.json` (mode 600).
 
+<details>
+<summary>Details</summary>
+
 If the server turns a hello down, the worker says so once and what it starts is not reaped; with no server running the hello is tried again at the next beat. The server refuses a hello for a pid that is the Herdr server, a pane's shell, a shell, a server or the broker, or that has Herdr or a pane's shell below it. The folder, session file and notify function of the session are read when it starts, never after an await, so a reload in flight cannot raise on a stale context.
 
 **What the server keeps.** Every 10 s (30 s after a first tick that cost more than a second; the cost is logged once as `procs-tick-cost`) the server snapshots the descendants of each live owner by ppid, as (pid, start time, pgid). A process that reparents later is still known as that owner's. Identity is `(pid, start time)` everywhere, and every action checks it again right before acting.
 
 **When an owner ends.** On `procs-bye`, when its pid is gone or reused, or when Herdr reports `pane.exited` or `pane.closed` for its pane and the terminal id matches (Herdr reuses pane ids, so an event for a pane whose terminal differs is ignored). An owner that ended while the server was down is reaped when the server starts, from `owners.json`.
 
+</details>
+
 ### What is reaped
 
+```mermaid
+flowchart TD
+    e["An owner ends"] --> k["Kill set: its live descendants,<br/>processes with its marker,<br/>orphans in its worktree"]
+    k --> t["SIGTERM to each group,<br/>then each pid"]
+    t --> s["After 10 s, SIGKILL<br/>what is left"]
+```
+
 The kill set of an ended owner is: the snapshot descendants still alive with the same identity, plus the processes that carry its marker, plus the orphans whose working folder is in its worktree or in a removed checkout last seen as that root (an orphan has parent pid 1, or a `systemd --user` on Linux), plus what those started below them. The protected set is subtracted: the Herdr server, every live pane's shell and foreground, an sb server named in a `server.json`, the intercom broker, every other live registered owner with its tree, and processes that carry another live owner's marker.
+
+<details>
+<summary>Details</summary>
 
 A pane that closes in a linked-worktree workspace with no registered owner (an agent that is not pi) gets only the cwd rule, and not into a worktree where another live session works. A main's quit reaps nothing: mains start long-lived daemons on purpose.
 
@@ -2637,9 +2652,14 @@ A pane that closes in a linked-worktree workspace with no registered owner (an a
 | `procs reap --owner <id>` | Run the kill sequence again for an owner that has ended and left something alive. Refused for an owner that is still alive. |
 | `procs reap --checkout <path>` | Kill what works in a linked worktree (or in a removed checkout a worker was known to work in): the orphans and the leftovers of ended owners. Refused while a live owner works there: end that worker or close its pane first. Exit 1 when a process stayed alive; the JSON on stdout says which. |
 
+</details>
+
 ### The removal guard
 
 The extension refuses `worktree_remove` and a bash command with `git worktree remove` or `herdr worktree remove` (also after `cd`, `git -C`, `&&`, `;`, a pipe, or inside `bash -c "…"`) while any process has its working folder in the target checkout. The target is resolved from a path, a branch name or a Herdr workspace id with `git worktree list --porcelain` and Herdr's workspace list. The refusal lists each holder by pid, program name (`comm`; on Linux the file name of its executable, because there `comm` is the main thread's name, which a program sets for itself and node 24 sets to `MainThread`; never the command line), CPU time, age and owner state (live, ended, unknown, or no marker), and gives `cli.mjs procs reap --checkout '<path>'`; after the reap the same call passes.
+
+<details>
+<summary>Details</summary>
 
 A target also resolves by git's unique trailing path components, and `herdr worktree remove` without `--workspace` takes the workspace in `HERDR_WORKSPACE_ID`. A check that cannot run (git or Herdr does not answer) is not a pass. A finished worker's retained idle pane shell (Herdr says it is its pane's foreground) in the target's own workspace does not hold the removal; anything else with its folder there does. The `/worktree remove` slash command does not pass `tool_call`: that is a documented limit, and the reaper plugin still refuses its own removals.
 
@@ -2652,6 +2672,8 @@ A target also resolves by git's unique trailing path components, and `herdr work
 Three limits the replay on macOS showed. (1) The marker is readable only on processes whose program is not an Apple platform binary: node and Homebrew tools show it, `/bin/bash`, `/bin/sleep` and `/usr/bin/perl` do not, because the system hides their environment, and the refusal of the removal guard then says "no owner marker" for them. The snapshot and the cwd rule carry those. The pi itself shows no marker either (it sets the variable after it started; only what it starts inherits it).
 
 (2) The cwd rule does not reach into a worktree where another pane also works (the boss's shell, a main), because that session may own what runs there; a process that escaped every snapshot by a double fork (adopted by launchd within milliseconds) and cannot be read by marker stays in that case, and `cli.mjs procs reap --checkout <path>` is the explicit way to stop it. (3) The server learns the linked-worktree workspaces at its tick (every 10 s): a pane without an owner that closes within 10 s of its workspace being created is not seen as a worktree's.
+
+</details>
 
 ### Timing
 
