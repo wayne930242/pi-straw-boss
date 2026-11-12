@@ -1,4 +1,4 @@
-# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ 46febb5e -->
+# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ b9272ca5 -->
 
 [README](../README.zh-TW.md) 背後的完整行為。使用說明在各篇指南；這份參考則逐節寫出程式實際怎麼做，所以請在下面找到需要的那一節，其餘可以略過。
 
