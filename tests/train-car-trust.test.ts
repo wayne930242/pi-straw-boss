@@ -246,10 +246,11 @@ test("RR-F001/RR-F004: each landed check fetches into a mirror made then, mode 7
 
 test("CR-F002: a remote that changes between two opens of one server refuses the later train's landed with a word, and a remote that is no safe URL is never fetched", async () => {
 	const w = world();
-	const { pushed } = repo(w);
+	const { pushed, remote } = repo(w);
 	await w.opened();
-	// The first train rewrites the shared config before the next open.
+	// The first train rewrites the shared config before the next open (git in this world reads that URL from the same repository, so the check at received passes and landed meets the changed remote).
 	git(w.checkout, "remote", "set-url", "origin", "https://elsewhere.example.test/acme.git");
+	w.rewrites.push(["https://elsewhere.example.test/acme.git", remote]);
 	w.book.noteTrain({ project: "acme", code: "2026-11-06-n", session: "sess-train-2", pane: "wA:p3", integrator: INTEG, base: "develop", heads: [SHA_B], url: await w.book.remoteOf(w.checkout) });
 	assert.equal(w.book.trainOf("acme", "2026-11-06-n")?.url, "https://elsewhere.example.test/acme.git");
 	w.looks.set("sess-train-2", { id: "sess-train-2", name: "train n", role: "train", train: { project: "acme", code: "2026-11-06-n" }, pane: "wA:p3", workspace: "wA", cwd: w.work, foreground: [333] });
