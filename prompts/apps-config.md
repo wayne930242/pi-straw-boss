@@ -28,7 +28,7 @@ With a merge train:
 <!-- integration -->
 ## Merge train
 
-The procedure is pi-anchorloop's `integrating` and `deploying` skills, which Straw Boss binds in the Seam bindings of the main prompt; this file holds only the `apps.json` fields. The project's skill (`integration.skill`) holds every concrete check, found by the headings of `integrating`'s Project skill contract (`## Light checks` to `## Load`), exactly as written; Straw Boss reads no other part of it. When a required one is missing (`integrating` says which), the integrator does not depart and calls the tower with `why=blocked`.
+The procedure is the `integrating` and `deploying` skills (the merge-train contract), which Straw Boss binds in the Seam bindings of the main prompt; this file holds only the `apps.json` fields. The project's skill (`integration.skill`) holds every concrete check, found by the headings of `integrating`'s Project skill contract (`## Light checks` to `## Load`), exactly as written; Straw Boss reads no other part of it. When a required one is missing (`integrating` says which), the integrator does not depart and calls the tower with `why=blocked`.
 
 A computer can turn the merge train off with `STRAW_BOSS_INTEGRATION=off` in the environment, or `"integration": "off"` in `config.json` of the state folder (the variable wins). Every field above is then ignored, and this file is served without it.
 <!-- /integration -->

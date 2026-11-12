@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CarView } from "../src/train/cars.ts";
-import type { Anchorloop } from "../src/train/anchorloop.ts";
+import type { Contract } from "../src/train/contract.ts";
 import { createTrainGuard, type GuardEnv } from "../src/trainguard.ts";
 import { trainHandoff } from "../src/opener.ts";
 import { CODE, runCheck, sb, slip, type Json } from "./train-fixtures.ts";
@@ -26,7 +26,7 @@ export const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c"
 
 /** What a guard that starts again on the same session shares with the one before it. */
 export interface Shared { root: string; stateDir: string; cwd: string; entries: Entry[]; list: { tasks: Json[]; nextId: number }; now(): number }
-export interface RigOptions { /** The answer of the pi-anchorloop version check (train/anchorloop.ts); left out, nothing is checked. */ anchorloop?: Anchorloop | (() => Anchorloop); /** The `integration.accept` of app `web` in the rig's `.straw-boss/apps.json` (none by default); `apps` is the file's own text, or `false` for no file. */ appAccept?: string[]; apps?: string | false; /** The sb server's answer about the cars (cars-read); the guard asks for it and reads no car file. Left out, the guard has no link to a server. */ cars?: { views: CarView[]; error?: string }; manifest?: string; main?: boolean; /** The main's kind; default integrator, as the guard behaved before kinds. */ duty?: string; train?: boolean; node?: string; cli?: string; stateName?: string; now?: number; /** A guard that starts again on the same session: the folders, the branch and the todo list of an earlier rig (a /reload). */ reuse?: Shared }
+export interface RigOptions { /** The answer of the merge-train contract check (train/contract.ts); left out, nothing is checked. */ contract?: Contract | (() => Contract); /** The `integration.accept` of app `web` in the rig's `.straw-boss/apps.json` (none by default); `apps` is the file's own text, or `false` for no file. */ appAccept?: string[]; apps?: string | false; /** The sb server's answer about the cars (cars-read); the guard asks for it and reads no car file. Left out, the guard has no link to a server. */ cars?: { views: CarView[]; error?: string }; manifest?: string; main?: boolean; /** The main's kind; default integrator, as the guard behaved before kinds. */ duty?: string; train?: boolean; node?: string; cli?: string; stateName?: string; now?: number; /** A guard that starts again on the same session: the folders, the branch and the todo list of an earlier rig (a /reload). */ reuse?: Shared }
 
 export type Rig = ReturnType<typeof build>;
 export const rig = (o: RigOptions = {}): Rig => build(o);
@@ -57,7 +57,7 @@ function build(o: RigOptions) {
 	const env: GuardEnv = {
 		stateDir, train: () => train, isMain: () => o.main === true, duty: () => o.duty ?? "integrator", session: () => ({ id: "sess-train-1", pane: "wA:p2" }), now: () => clock,
 		node: o.node ?? "/usr/local/bin/node", cli: o.cli ?? "/pkg/src/server/cli.ts", home: root, tell: (text) => void told.push(text),
-		...(o.anchorloop ? { anchorloop: () => (typeof o.anchorloop === "function" ? o.anchorloop() : o.anchorloop!) } : {}),
+		...(o.contract ? { contract: () => (typeof o.contract === "function" ? o.contract() : o.contract!) } : {}),
 		...(o.cars ? { cars: { read: async () => { if (o.cars!.error) throw new Error(o.cars!.error); return structuredClone(o.cars!.views); } } } : {}),
 	};
 	const guard = createTrainGuard(pi as never, env);

@@ -97,12 +97,12 @@ test("off: no assembled prompt names the integrator, a car slip, or the train; t
 	assert.equal(set.read("main").includes(PROMPT_DIR), false);
 });
 
-// docs/specs/2026-11-06-seam-bindings.md: the `## Seam bindings` block of main.md sits inside the integration markers, so anchorloop's defaults apply (it asks the boss before a merge or a deploy) when the train is off.
+// docs/specs/2026-11-06-seam-bindings.md: the `## Seam bindings` block of main.md sits inside the integration markers, so the skills' own defaults apply (they ask the boss before a merge or a deploy) when the train is off.
 const SEAMS = ["Handoff route", "Batch owner", "Approval", "Record", "Escalation route", "Settings"];
 test("the seam bindings: a main gets all six with the train on, none with it off, and the ledger path takes the state folder", async () => {
 	const dir = temp();
 	assert.match(strip(raw("main"), false), /## Seam bindings\n/);
-	assert.doesNotMatch(strip(raw("main"), true), /Seam bindings|seam|anchorloop/i);
+	assert.doesNotMatch(strip(raw("main"), true), /Seam bindings|seam|merge-train contract/i);
 	const on = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1", env: { STRAW_BOSS_INTEGRATION: "on" }, deps: { stateDir: dir } });
 	await on.start();
 	await on.promote();

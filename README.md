@@ -30,7 +30,7 @@ pi install npm:pi-straw-boss
 ```
 
 It needs pi inside [Herdr](https://herdr.dev) 0.9.4 or newer, Herdr's pi integration (`herdr integration install pi`), and [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.18.1 or newer.
-The merge train also needs [pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 2.11.0 or newer.
+The merge train also needs `integrating` and `deploying` skills that declare the [merge-train contract](https://wayne930242.github.io/pi-straw-boss/docs/guide/merge-train/#the-merge-train-contract).
 Windows support is experimental.
 See [Install](https://wayne930242.github.io/pi-straw-boss/docs/guide/install/) for the optional packages it works with.
 

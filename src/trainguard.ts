@@ -8,7 +8,7 @@ import { serverCli } from "./server/version.ts";
 import { startOf } from "./startof.ts";
 import { snapshotOfBranch } from "./todo.ts";
 import { type Acceptance, acceptanceOf, checkAcceptRef, checkCar, checkEvidence, type EvidenceOptions, parseSlip, slipBlocks } from "./train/accept.ts";
-import { type Anchorloop, checkAnchorloop } from "./train/anchorloop.ts";
+import { checkContract, type Contract, type SkillCommand } from "./train/contract.ts";
 import { type AppIntegration, readAppIntegration } from "./train/appsconfig.ts";
 import { type BoardRead, type BoardStep, boardPath, capBoard, type CarRow, factsOf, readBoard, readTrainboards, validateTrainTodo, type Writer, writeBoard, writeYard } from "./train/board.ts";
 import { type CarView, coordinatorWord, forwardsFor, forwardsOf, noticeSatisfied, receivedTold, type TerminalState } from "./train/cars.ts";
@@ -197,8 +197,8 @@ export interface GuardEnv {
 	pid?: number;
 	/** The sb server's book of cars (§5.5): the one place a car's state and the delivery of its notice are read. The guard never reads the car files on disk, which the train's shell can write. Left out, a check that needs a notice is refused. */
 	cars?: CarSource;
-	/** Whether the installed pi-anchorloop is the version the train's prompts assume (train/anchorloop.ts, TB-F008): a train's and the integrator's mutating calls are refused with its reason when it is not. Left out, nothing is checked. */
-	anchorloop?(cwd: string | undefined): Anchorloop;
+	/** Whether the `integrating` and `deploying` skills pi loaded declare the merge-train contract the train's prompts assume (train/contract.ts, TB-F008): a train's and the integrator's mutating calls are refused with its reason when they do not. Left out, nothing is checked. */
+	contract?(): Contract;
 }
 /** The sb server's answer about the cars of a project, over its socket. */
 export interface CarSource { read(project: string): Promise<CarView[]> }
@@ -255,12 +255,11 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 		return { session: env.session().id, ...(env.session().pane ? { pane: env.session().pane } : {}), pid, started: Number.isNaN(at) ? created : new Date(at).toISOString() };
 	};
 	const alive = env.alive ?? ((w: Writer) => writerAlive(w));
-	// The installed version changes only when the boss updates it: read at most once a minute.
-	let versionSeen: { at: number; cwd: string | undefined; got: Anchorloop } | undefined;
-	const anchorloopOf = (ctx: Ctx): Anchorloop => {
-		if (!env.anchorloop) return { ok: true, version: "unchecked" };
-		if (!versionSeen || versionSeen.cwd !== ctx.cwd || env.now() - versionSeen.at > 60_000 || !versionSeen.got.ok) versionSeen = { at: env.now(), cwd: ctx.cwd, got: env.anchorloop(ctx.cwd) };
-		return versionSeen.got;
+	// The skills pi loaded change only when the boss updates them and reloads: read at most once a minute, and again on every call while they are refused.
+	let contractSeen: { at: number; got: Contract } | undefined;
+	const contractNow = (): Contract | undefined => {
+		if (env.contract && (!contractSeen || env.now() - contractSeen.at > 60_000 || !contractSeen.got.ok)) contractSeen = { at: env.now(), got: env.contract() };
+		return contractSeen?.got;
 	};
 
 	/** Every board of the project as the waits read them; a read that is cut or cannot list holds everything, which is a refusal here. */
@@ -543,8 +542,8 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 			// The skills the prompts follow must be the ones they assume; a call that changes nothing (a todo read) is let through.
 			const mutates = event.toolName === "MonitorCreate" || input.action === "create" || input.action === "update" || input.action === "delete" || input.action === "clear";
 			if (!reasons.length && mutates && (me || (event.toolName === "todo" && env.isMain() && (hasSb(input) || changesTrainTodo(input, ctx))))) {
-				const version = anchorloopOf(ctx);
-				if (!version.ok) reasons = [version.refusal];
+				const contract = contractNow();
+				if (contract && !contract.ok) reasons = [contract.refusal];
 			}
 		} catch (error) {
 			// A guard that fails does not let the call through: the train's checks are enforcement.
@@ -602,6 +601,6 @@ export function registerTrainGuard(kit: Kit, cars: CarSource | undefined, mainDu
 	return createTrainGuard(kit.pi as unknown as GuardPi, {
 		stateDir: kit.guiDir, train: () => (s.isTrain ? s.train : undefined), pending: () => !s.isTrain && !s.trainSettled && s.trainSign, isMain: () => kit.role() === "main", duty: () => mainDuty.now(), session: () => ({ id: kit.me(), ...(s.at?.paneId ? { pane: s.at.paneId } : {}) }), now: () => cfg.now(),
 		node: process.execPath, cli: serverCli(), home: homedir(), tell: kit.tell, ...(cars ? { cars } : {}),
-		anchorloop: (cwd) => checkAnchorloop({ agentDir: cfg.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), ...(cwd ? { cwd } : {}) }),
+		contract: () => checkContract((kit.pi as { getCommands?(): readonly SkillCommand[] }).getCommands?.()),
 	});
 }

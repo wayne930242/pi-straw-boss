@@ -578,6 +578,7 @@ export class Agent {
 				void this.fire("session_info_changed", { name }); // pi emits it to the extensions at once, the first handler synchronously (agent-session.js setSessionName)
 			},
 			getSessionName: () => this.name,
+			getCommands: () => world.commands,
 			sendMessage: (message: { customType: string; content: string }, options?: { deliverAs?: string; triggerTurn?: boolean }) => void this.sent.push({ ...message, deliverAs: options?.deliverAs, triggerTurn: options?.triggerTurn }),
 		} as unknown as ExtensionAPI;
 		// pi-intercom's side of the extension API.
@@ -680,6 +681,8 @@ export class World {
 	herdr = new FakeHerdr();
 	broker = new FakeBroker(this.herdr);
 	agents: Agent[] = [];
+	/** What `pi.getCommands()` lists in every session of this world: the skills, prompts and extension commands pi loaded. */
+	commands: { name: string; source: string; sourceInfo?: { path: string } }[] = [];
 	/** The Herdr server watches the sessions hold open: `takeover` tells every one that a new server answers. */
 	watchers = new Set<{ onTakeover(): void }>();
 	watch: HerdrWatch = (onTakeover) => {

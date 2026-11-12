@@ -8,14 +8,18 @@ import { sb } from "./train-fixtures.ts";
 
 // The guard as the extension wires it (docs/specs/2026-11-07-train-workers.md §7, task 4): a train opened by a tower is guarded and briefed as a train, a main is not touched, and with the merge train off nothing is registered.
 
-let world = new World();
-// The guard reads the installed pi-anchorloop (train/anchorloop.ts): the run's agent folder holds a 2.11.0.
-const pkg = join(process.env.PI_CODING_AGENT_DIR!, "npm", "node_modules", "pi-anchorloop");
-mkdirSync(pkg, { recursive: true });
-writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "pi-anchorloop", version: "2.11.0" }));
+// The guard reads the contract the loaded `integrating` and `deploying` skills declare (train/contract.ts): the run's agent folder holds the two, and every session's pi lists them.
+const SKILLS = ["integrating", "deploying"].map((name) => {
+	const file = join(process.env.PI_CODING_AGENT_DIR!, "skills", name, "SKILL.md");
+	mkdirSync(join(file, ".."), { recursive: true });
+	writeFileSync(file, `---\nname: ${name}\ndescription: Use when testing ${name}.\nmetadata:\n  merge-train-contract: "1"\n---\n`);
+	return { name: `skill:${name}`, source: "skill", sourceInfo: { path: file } };
+});
+const fresh = () => Object.assign(new World(), { commands: SKILLS });
+let world = fresh();
 afterEach(async () => {
 	await world.stopAll();
-	world = new World();
+	world = fresh();
 });
 const MANIFEST = "train:\n  project: acme\n  app: web\n  code: 2026-11-06-m\n";
 type Blocked = { block?: boolean; reason?: string } | undefined;
@@ -41,6 +45,16 @@ test("a train opened by the tower is guarded: a todo without a step is blocked, 
 	assert.equal(await call(train, "todo", { action: "create", subject: "step", metadata: { sb: sb({}, {}) } }), undefined);
 	assert.match((await call(train, "MonitorCreate", { command: "npm test" }))?.reason ?? "", /^sb: a train's monitor runs one step: describe it "train 1106m #<id> <kind>"/);
 	assert.equal(await call(train, "bash", { command: "ls" }), undefined, "its other tools are none of the guard's");
+});
+
+test("the guard asks the session's pi which skills it loaded: a train whose pi lists no `deploying` is refused, and with both it passes", async () => {
+	world.commands = SKILLS.slice(0, 1);
+	const { train } = await withTrain();
+	await world.quiet();
+	const step = { action: "create", subject: "step", metadata: { sb: sb({}, {}) } };
+	assert.match((await call(train, "todo", step))?.reason ?? "", /^sb: the merge train needs the skills `integrating` and `deploying` to declare merge-train contract 1, and pi loaded no skill named `deploying`/);
+	world.commands = SKILLS;
+	assert.equal(await call(train, "todo", step), undefined);
 });
 
 test("a main is not touched, and an integrator's train todo is checked", async () => {
