@@ -232,7 +232,9 @@ test("an integrator is opened on a car slip of an app that takes the train, and 
 	await assert.rejects(open({ ...car(), request: "please open an integrator for acme" }), /An integrator is opened on a car slip/);
 	await assert.rejects(open({ ...car(), project: "../up" }), /The project of this workspace's checkout is acme/);
 	await assert.rejects(open(car({ car: "docs" })), /app docs has no integration/);
-	await assert.rejects(open(car({ car: "ghost" })), /has no app named ghost/);
+	await assert.rejects(open(car({ car: "ghost" })), /has no app named ghost, so its car takes no train \(the slip's car: names the car's app/);
+	await assert.rejects(open({ ...car(), request: `app: web | ${slip({ coordinator: "sender-1", car: "T-15" })}` }), /cannot be taken as written: .*app: "web" and car: "T-15" name two apps/, "0.77.3 A3: an inline app: is read, and one that differs from car: is refused with the reason");
+	await assert.rejects(open(car({ colour: "blue" })), /cannot be taken as written: .*colour is not a slip field/, "0.77.3 A3: an unknown field is refused, not dropped");
 	await assert.rejects(open({ ...car(), sender: "nobody" }), /No live session is named or has the id "nobody"/);
 	await assert.rejects(open({ ...car(), peer: { id: "link:d1", label: "Ann's laptop", short: "ab12" } }), /not for a teammate's device/);
 	await assert.rejects(towerOpener("wA", true)(car()), /integration is off on this computer/);

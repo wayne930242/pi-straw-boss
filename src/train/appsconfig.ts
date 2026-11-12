@@ -67,7 +67,7 @@ export function noTrainRefusal(dir: string, apps: readonly string[]): string | u
 	if (!read.ok) return `sb: ${read.refusal.replace(/, so integration\.accept of the app is unknown$/, "")}, so no app here takes the merge train`;
 	for (const app of apps) {
 		const entry = read.apps.find((a) => a.name === app);
-		if (!entry) return `sb: ${read.file} has no app named ${app}, so its car takes no train`;
+		if (!entry) return `sb: ${read.file} has no app named ${app}, so its car takes no train (the slip's car: names the car's app as apps.json names it, not a ticket)`;
 		if (!isObject(entry.integration)) return `sb: ${read.file}: app ${app} has no integration, so it takes no train`;
 	}
 	return undefined;

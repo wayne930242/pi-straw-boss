@@ -155,6 +155,9 @@ export function opener(env: OpenerEnv) {
 			// The slip's apps are this checkout's, and so is the project: apps.json says both, and the caller's word only has to agree (R151-F002). A made-up name opens nothing, and one checkout has one integrator's name.
 			const slips = slipsInText(request);
 			if (!slips.length) throw new OpenLimitError("An integrator is opened on a car slip: the request carries none (car: <app> | tickets: … | branch: … | head: <40 hex>)");
+			// A field the parse could not take (a key that is no slip field, `app:` and `car:` naming two apps) is refused here with the parse's words, not dropped: the slip goes back to its sender as written (0.77.3).
+			const unread = slips.flatMap((s) => s.problems ?? []);
+			if (unread.length) throw new OpenLimitError(`The car slip cannot be taken as written: ${unread.join("; ")}. The slip's car: names the car's app (app: is the same field), and its tickets go in tickets:.`);
 			const apps = [...new Set(slips.map((s) => s.app))], config = noTrainRefusal(dir, apps);
 			if (config) throw new OpenLimitError(config);
 			const own = checkoutProject(dir);

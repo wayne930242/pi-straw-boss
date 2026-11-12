@@ -17,8 +17,11 @@ const text = (value: unknown, max = 1000): value is string => typeof value === "
 
 // ---- the slip
 
-/** The keys of a slip (the receive-car playbook's block); any other key refuses the slip. */
-export const SLIP_KEYS = ["car", "tickets", "branch", "head", "tested-on", "review", "light", "migrations", "lane", "deploy", "departs", "accept", "uat", "auth", "coordinator"];
+/**
+ * The keys of a slip (the receive-car playbook's block); any other key refuses the slip. `car:` names the car's app (its `name` in apps.json), never a ticket: the tickets go in `tickets:`, and the first of them is what `train_car`'s
+ * `car` names. `app:` is the same field under its plain name (0.77.3); a slip may give either, or both when they agree.
+ */
+export const SLIP_KEYS = ["car", "app", "tickets", "branch", "head", "tested-on", "review", "light", "migrations", "lane", "deploy", "departs", "accept", "uat", "auth", "coordinator"];
 /** One `key: value` of a slip, in the order written; a segment with no key has `key` empty. Every entry is read for a request, including a repeated key and a keyless line. */
 export interface SlipEntry { key: string; value: string; line: number }
 export interface ParsedSlip { fields: Record<string, string>; tickets: string[]; entries: SlipEntry[]; problems: string[] }
@@ -65,16 +68,29 @@ export function parseSlip(slip: string): ParsedSlip {
 			else fields[key] = value;
 		}
 	});
+	// `app:` is `car:` under its plain name: one names the other's value, and two that differ are refused, since the slip would name two apps (a ticket written in `car:` is the usual cause).
+	if (fields.app !== undefined) {
+		if (fields.car === undefined) fields.car = fields.app;
+		else if (fields.car !== fields.app) problems.push(`sb: slip: app: ${shown(fields.app)} and car: ${shown(fields.car)} name two apps: car: names the car's app (app: is the same field), and its tickets go in tickets:`);
+	}
 	const tickets = (fields.tickets ?? "").replace(/\([^)]*\)/g, " ").split(/[\s,]+/).filter(Boolean);
 	return { fields, tickets, entries, problems };
 }
 
-/** A slip block starts at a `car:` line and runs over the lines of `key: value | key: value` segments up to a blank line or the next `car:` line; what comes before the first block is the manifest's header. */
+/** A line that starts a slip block: one that starts with `car:`, or with `app:` and goes on to a `car:` or `tickets:` segment (a manifest's header `app: <name>` line stands alone, and starts none). */
+const SLIP_START = /^\s*(?:car:|app:[^|\n]*\|\s*(?:car|tickets):)/i;
+/** Whether `line` starts a slip block. */
+export const startsSlip = (line: string) => SLIP_START.test(line);
+
+/** A text with each slip on a line of its own: a `car: <app> | tickets: …` (or `app: <app> | car:`/`tickets:`) that follows other words on its line starts a new line; one that follows a ` | ` is a segment of the slip before it. */
+export const slipLines = (body: string) => body.replace(/([^\s|])[ \t]+((?:car|app):[ \t]*[A-Za-z0-9._-]+[ \t]*\|[ \t]*(?:tickets|car):)/gi, "$1\n$2");
+
+/** A slip block starts at a `car:` line (or an `app:` slip line, `startsSlip`) and runs over the lines of `key: value | key: value` segments up to a blank line or the next `car:` line; what comes before the first block is the manifest's header. */
 export function slipBlocks(text: string): { header: string; blocks: string[] } {
 	const header: string[] = [], blocks: string[][] = [];
 	let open = false;
 	for (const line of text.split(/\r?\n/)) {
-		if (/^\s*car:/i.test(line)) (blocks.push([line]), (open = true));
+		if (startsSlip(line)) (blocks.push([line]), (open = true));
 		else if (open && line.trim() !== "" && /^\s*[A-Za-z][A-Za-z0-9-]*:/.test(line)) blocks.at(-1)!.push(line);
 		else {
 			open = false;

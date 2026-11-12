@@ -8,7 +8,7 @@ import { callControl, type Reply } from "./server/socket.ts";
 import { startOf } from "./startof.ts";
 import type { Kit } from "./state.ts";
 import { snapshotOfBranch } from "./todo.ts";
-import { parseSlip } from "./train/accept.ts";
+import { parseSlip, slipLines } from "./train/accept.ts";
 import { CAR_STATES, type CarState, type CarView, coordinatorWord, forwardsOf, noticeText, validateStateFields } from "./train/cars.ts";
 import { isName, isObject, type Json } from "./train/spec.ts";
 import { type Manifest, rowsOfSnapshot, slipBlocks, type TrainGuard } from "./trainguard.ts";
@@ -125,8 +125,7 @@ const FIELD_KEYS = ["train", "departs", "reason", "round", "evidence", "version"
 
 /** The slip blocks of a forwarded message body: a `car: <app> | tickets: …` that follows the tower's own words starts a block of its own line. */
 function slipsOf(body: string) {
-	const lines = body.replace(/(\S)[ \t]+(car:[ \t]*[A-Za-z0-9._-]+[ \t]*\|[ \t]*tickets:)/gi, "$1\n$2");
-	return slipBlocks(lines).blocks.map(parseSlip);
+	return slipBlocks(slipLines(body)).blocks.map(parseSlip);
 }
 
 const assembles = (rows: ReturnType<typeof rowsOfSnapshot>["rows"]) => rows.flatMap((r) => {
@@ -141,7 +140,7 @@ export async function trainCar(deps: CarToolDeps, params: CarParams, ctx: CarCtx
 	if (!role) throw new Error("sb: train_car is for a train and for the integrator; this session is neither");
 	const state = params.state;
 	if (!(CAR_STATES as readonly string[]).includes(state)) throw new Error(`sb: state "${String(state)}" is not one of ${CAR_STATES.join(", ")}`);
-	if (typeof params.car !== "string" || !params.car.trim()) throw new Error("sb: car is the car's first ticket");
+	if (typeof params.car !== "string" || !params.car.trim()) throw new Error("sb: car is the car's first ticket (the first of the slip's tickets:, not its car:, which names the app)");
 	const ticket = params.car.trim();
 	if (role === "train" && state === "received") throw new Error("sb: a train does not set received: the integrator does, at receipt");
 	if (role === "main" && (state === "dropped" || state === "landed")) throw new Error(`sb: only a train sets ${state}; the integrator sets received and returned`);
@@ -225,7 +224,7 @@ export function trainCarTool(kit: Kit, guard: () => TrainGuard | undefined, link
 			name: "train_car", label: "train_car",
 			description: "Set what became of a car: the sb server tells the car's coordinator by session id and confirms the delivery, and the step that depends on it waits for that. For the integrator (state received with train and departs, or returned with reason, at receipt) and a train (returned with reason, dropped with round, reason and evidence, landed with version and commit). Never send a coordinator a notice yourself.",
 			parameters: Type.Object({
-				car: Type.String({ description: "The car's first ticket, as the slip names it." }),
+				car: Type.String({ description: "The car's first ticket: the first of the slip's tickets:, not the slip's car: (which names the car's app)." }),
 				state: Type.Union(CAR_STATES.map((x) => Type.Literal(x))),
 				project: Type.Optional(Type.String({ description: "Integrator only, when no train todo names the project yet." })),
 				train: Type.Optional(Type.String({ description: "received: the train's code, YYYY-MM-DD-<letters>." })),

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkAcceptRef, checkCar, checkEvidence, checkSlip, checkStages, MAX_EVIDENCE_BYTES, parseAppAccept, parseDeparts, parseSlip } from "../src/train/accept.ts";
+import { checkAcceptRef, checkCar, checkEvidence, checkSlip, checkStages, MAX_EVIDENCE_BYTES, parseAppAccept, parseDeparts, parseSlip, slipBlocks } from "../src/train/accept.ts";
+import { slipsInText } from "../src/train/cars.ts";
+import { appFromRequest } from "../src/trainrole.ts";
 import { MAX_CAR_TICKETS, MAX_TICKET_CHARS } from "../src/train/spec.ts";
 import { evidence, type Json, SHA_A, SHA_B, SHA_C, slip } from "./train-fixtures.ts";
 
@@ -122,6 +124,24 @@ test("the slip parser reads the block format, keeps quoted and parenthesised pip
 	assert.match(parseSlip("nonsense").problems.join("\n"), /^sb: slip line 1: .*no key/);
 	assert.equal(parseSlip("light: pass | light: fail").fields.light, "pass", "a key seen again is ignored");
 	assert.equal(parseSlip('auth: "he said | then left" | coordinator: c').fields.coordinator, "c", "a quote closes");
+});
+
+test("0.77.3 A2/A3: a slip's app is car: or app: (the same field); app: and car: that differ, or a key that is no slip field, are refused by the parse and carried to the door, never dropped", () => {
+	const line = `tickets: MP-4618 | branch: fix/x | head: ${SHA_A} | coordinator: c`;
+	assert.equal(parseSlip(`app: web | ${line}`).fields.car, "web", "app: alone names the app");
+	assert.deepEqual(parseSlip(`app: web | car: web | ${line}`).problems, [], "the two agree");
+	assert.match(parseSlip(`app: moldplan-frontend-2 | car: MP-4618 | ${line}`).problems.join(" "), /app: "moldplan-frontend-2" and car: "MP-4618" name two apps: car: names the car's app/);
+	// The reported slip, after the tower's own words: it stays one slip, its app: is read, and the conflict travels with it.
+	const reported = slipsInText(`Please forward. app: moldplan-frontend-2 | car: MP-4618 | ${line}`);
+	assert.equal(reported.length, 1);
+	assert.match(reported[0]!.problems!.join(" "), /name two apps/);
+	assert.deepEqual(slipsInText(`Please forward. app: web | ${line}`).map((s) => [s.app, s.problems]), [["web", undefined]], "an inline app: slip is taken");
+	assert.match(slipsInText(`car: web | ${line} | colour: blue`)[0]!.problems!.join(" "), /colour is not a slip field/, "an unknown field is told, not dropped");
+	// A manifest's header app: line is no slip: it stays the header, and appFromRequest still reads it.
+	const manifest = `train:\nproject: acme\ncode: 2026-11-12-a\napp: web\n\napp: web | ${line}`;
+	assert.equal(slipBlocks(manifest).blocks.length, 1);
+	assert.match(slipBlocks(manifest).header, /^app: web$/m);
+	assert.equal(appFromRequest(manifest), "web");
 });
 
 test("the whole car: slip and evidence together, with the slip's head, the app's kinds and the slip's own departs", () => {
