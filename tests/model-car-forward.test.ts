@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
+import { createReturnWatch, type ReturnWatch } from "../src/carwait.ts";
 import { CarBook } from "../src/server/carbook.ts";
 import { CarNotices, type Intercom } from "../src/server/carnotices.ts";
 import { noticeStatus } from "../src/train/cars.ts";
 import { type CarCtx, type CarToolDeps, trainCar } from "../src/traincar.ts";
-import { carWorld, type CarWorld, COORD, INTEG, repo } from "./train-car-rig.ts";
+import { appBase, carWorld, type CarWorld, COORD, git, INTEG, repo } from "./train-car-rig.ts";
 import { CODE, SHA_A } from "./train-fixtures.ts";
 import { cleanup, forwardEntry, MANIFEST_HEADER, rig, slipBlock } from "./train-guard-rig.ts";
 
 // Replays of the bug paths of the car model (docs/models/car-forward/report.md): each test walks the shortest path TLC gave for a rule that breaks, one step of the path per numbered comment, on the real book, sender and `train_car` tool,
-// and then asserts the rule in the reader's words. They are red until the behavior is fixed (or the boss drops the rule); a step a fix may refuse is an attempt, so a fix that refuses it, or answers it, turns the test green.
+// and then asserts the rule in the reader's words. They were red on 191ccfa1 and are green with the fixes of #13, #14 and #15; a step a fix may refuse is an attempt, so a fix that refuses it, or answers it, turns the test green.
+// Two paths were made true to the fixed flow when the fixes came: path A drives the step #13 added (the integrator's session waits for the notice of a car it returned), and path C gives the car a real head that the train pushes to the base
+// (the check of #15 reads the car's head on the base's remote branch, and the first version's made-up head was never there).
 
 const worlds: CarWorld[] = [];
 afterEach(() => (worlds.splice(0).forEach((w) => w.done()), cleanup()));
@@ -32,7 +35,12 @@ class Broker implements Intercom {
 }
 const TOWER = "sb-tower-wa", SECOND = 1000;
 const senderOf = (book: CarBook, w: CarWorld, broker: Broker) => new CarNotices({ book, now: w.now, intercom: () => broker, tower: (workspace) => `sb-tower-${workspace.toLowerCase()}` });
-const integrator = (w: CarWorld): CarToolDeps => ({ role: () => "main", train: () => undefined, manifest: () => undefined, client: w.integ, home: w.root });
+const integrator = (w: CarWorld, returns?: ReturnWatch): CarToolDeps => ({ role: () => "main", train: () => undefined, manifest: () => undefined, client: w.integ, home: w.root, ...(returns ? { returns } : {}) });
+/** The integrator's wait for the notices of the cars it returned (carwait.ts): the memory of its own pi process, which a restart of the sb server leaves alone. It reads the server's book as the session does, and its `blocked` call reaches the tower through the broker. */
+const waitOf = (w: CarWorld, broker: Broker) => createReturnWatch({
+	session: () => INTEG, read: (project) => w.integ.read(project), now: w.now, waits: [],
+	callTower: async (text) => { if (!(await broker.send(TOWER, { text })).delivered) throw new Error("the tower did not take it"); },
+});
 /** The integrator's branch: the tower's forward of the slip is on it, and stays there whatever the server forgets. */
 const branch: CarCtx = { cwd: "/", sessionManager: { getBranch: () => [forwardEntry(COORD)] } };
 /** The sb server starts again: a new book on the same folders (the journal on disk is still there), which the control socket now answers from. */
@@ -47,26 +55,28 @@ const attempt = async <T>(step: () => Promise<T> | T): Promise<T | Error> => { t
 test("car model, NoCarLeftInTheDark: a car the integrator returned still ends with its coordinator or the tower told, when the sb server restarts before the notice was delivered", async () => {
 	const w = carWorld();
 	worlds.push(w);
-	const broker = new Broker(), first = senderOf(w.book, w, broker);
+	const broker = new Broker(), first = senderOf(w.book, w, broker), wait = waitOf(w, broker);
 	// 1. the coordinator sends the car's slip to the tower
 	const slip = slipBlock();
 	// 2. the tower forwards the slip to the integrator (runtools.ts notes the forward it stamped)
 	w.book.noteForward({ fwd: "e".repeat(16), from: COORD, to: [INTEG], text: slip });
-	// 3. the integrator returns the car
-	const returned = await trainCar(integrator(w), { car: "T-15", state: "returned", reason: "the accept evidence is missing", project: "acme" }, branch);
+	// 3. the integrator returns the car; its session waits for the notice from here on (#13)
+	const returned = await trainCar(integrator(w, wait), { car: "T-15", state: "returned", reason: "the accept evidence is missing", project: "acme" }, branch);
 	assert.match(returned.text, /^Car T-15 is returned\. sb tells its coordinator \(sess-coord-1\)/);
 	// 4. the notice is not delivered at the first send
 	broker.answers = [{ delivered: false, delivery: "failed", reason: "socket closed" }];
 	await first.tick();
 	assert.deepEqual(noticeStatus(w.book.read("acme")[0]!.notice, "returned"), { kind: "pending", attempts: 1, last: "socket closed" });
-	assert.deepEqual([broker.told("returned").length, broker.tower().length], [0, 0], "nobody is told yet: the retry is due in 30 s");
+	await wait.tick();
+	assert.deepEqual([broker.told("returned").length, broker.tower().length, wait.size()], [0, 0, 1], "nobody is told yet: the retry is due in 30 s, and the integrator's session waits");
 	// 5. the sb server restarts
 	w.tick(10 * SECOND);
 	const second = senderOf(restart(w), w, broker);
-	// Nobody has a step left: the integrator set its state and moved on, and the coordinator waits for sb's notice (prompts/main.md). Every retry of the first server would have come and gone, and a day passes.
+	// The coordinator waits for sb's notice (prompts/main.md), and the new server holds nothing to send. The integrator's session still waits: at its next looks it finds the book without the car. Every retry of the first server would have come and gone, and a day passes.
 	for (const ms of [20 * SECOND, 120 * SECOND, 300 * SECOND, 3600 * SECOND, 23 * 3600 * SECOND]) {
 		w.tick(ms);
 		await second.tick();
+		await wait.tick();
 	}
 	assert.ok(
 		broker.told("returned").length > 0 || broker.tower().length > 0,
@@ -77,12 +87,15 @@ test("car model, NoCarLeftInTheDark: a car the integrator returned still ends wi
 test("car model, LandedToldOnce: the coordinator of a car is told landed once, when its slip is forwarded again after the sb server restarted", async () => {
 	const w = carWorld();
 	worlds.push(w);
-	const { pushed } = repo(w);
+	// The car's head is a commit only the train's clone holds until the train pushes it (`local`); the app lands on develop (apps.json of the tower's checkout).
+	const { local: head } = repo(w);
+	appBase(w);
 	const broker = new Broker(), first = senderOf(w.book, w, broker);
-	const manifest = rig({ manifest: `${MANIFEST_HEADER}  base: develop\n${slipBlock()}\n` });
+	const manifest = rig({ manifest: `${MANIFEST_HEADER}  base: develop\n${slipBlock({ head })}\n` });
+	const branch: CarCtx = { cwd: "/", sessionManager: { getBranch: () => [forwardEntry(COORD, slipBlock({ head }))] } };
 	const trainDeps = (code: string, client: CarWorld["train"]): CarToolDeps => ({ role: () => "train", train: () => ({ project: "acme", code }), manifest: (ctx) => manifest.guard.manifestOf(ctx as never), client, home: w.root });
 	// 1. the coordinator sends the car's slip to the tower
-	const slip = slipBlock();
+	const slip = slipBlock({ head });
 	// 2. the tower forwards the slip to the integrator
 	w.book.noteForward({ fwd: "e".repeat(16), from: COORD, to: [INTEG], text: slip });
 	// 3. the coordinator sends the same slip again; it waits at the tower
@@ -93,10 +106,11 @@ test("car model, LandedToldOnce: the coordinator of a car is told landed once, w
 	await first.tick();
 	assert.equal(broker.told("received").length, 1);
 	// 6. the tower opens a train with the car
-	await w.opened();
-	// 7. the train merges the car to the base (`pushed` is on develop of the remote)
+	await w.opened("develop", [head]);
+	// 7. the train merges the car to the base: it pushes the head to develop of the remote
+	git(w.work, "push", "-q", "origin", `${head}:develop`);
 	// 8. the train sets the car landed
-	const landed = await trainCar(trainDeps(CODE, w.train), { car: "T-15", state: "landed", version: "1.2.0", commit: pushed }, manifest.ctx as unknown as CarCtx);
+	const landed = await trainCar(trainDeps(CODE, w.train), { car: "T-15", state: "landed", version: "1.2.0", commit: head }, manifest.ctx as unknown as CarCtx);
 	assert.match(landed.text, /^Car T-15 is landed\./);
 	// 9. the coordinator gets the notice
 	await first.tick();
@@ -114,9 +128,9 @@ test("car model, LandedToldOnce: the coordinator of a car is told landed once, w
 	// 14. the tower opens a train with the car
 	w.looks.set(TRAIN2, { id: TRAIN2, name: "train 1107n", role: "train", train: { project: "acme", code: CODE2 }, pane: "wA:p3", workspace: "wA", cwd: w.work, foreground: [333] });
 	const url = await book.remoteOf(w.checkout);
-	book.noteTrain({ project: "acme", code: CODE2, session: TRAIN2, pane: "wA:p3", integrator: INTEG, base: "develop", heads: [SHA_A], ...(url ? { url } : {}) });
+	book.noteTrain({ project: "acme", code: CODE2, session: TRAIN2, pane: "wA:p3", integrator: INTEG, base: "develop", heads: [head], ...(url ? { url } : {}) });
 	// 15. the train sets the car landed (its commit is on the base already)
-	const relanded = await attempt(() => trainCar(trainDeps(CODE2, w.client(TRAIN2, 333, "wA:p3")), { car: "T-15", state: "landed", version: "1.3.0", commit: pushed }, manifest.ctx as unknown as CarCtx));
+	const relanded = await attempt(() => trainCar(trainDeps(CODE2, w.client(TRAIN2, 333, "wA:p3")), { car: "T-15", state: "landed", version: "1.3.0", commit: head }, manifest.ctx as unknown as CarCtx));
 	// 16. the coordinator gets the notice
 	await second.tick();
 	const lines = broker.told("landed").map((s) => s.text.replace(/^\[[^\]]*\] /, ""));

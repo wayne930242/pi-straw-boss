@@ -57,11 +57,14 @@ export interface CarFile {
 	states: StateEntry[];
 }
 
+/** The state a car's life ended with (`returned`, `dropped` or `landed`), or nothing while it has not ended. */
+export const endOf = (file: { states: readonly StateEntry[] }): StateEntry | undefined => file.states.find((s) => isTerminal(s.state));
+
 export function emptyCar(car: { project: string; app: string; tickets: string[]; branch: string; head: string; coordinator: string }): CarFile {
 	return { v: 1, project: car.project, app: car.app, car: { tickets: [...car.tickets], branch: car.branch, head: car.head }, coordinator: car.coordinator, states: [] };
 }
 
-/** `<app>-<first 12 hex of the head>.json`: a car that comes back reworked has a new head and so a new file. */
+/** `<app>-<first 12 hex of the head>.json`: a car that comes back reworked has a new head and so a new file; one sent again with the same head starts a new life in the same file (the book keeps the earlier life, carbook.ts). */
 export function carFileName(app: string, head: string): string {
 	if (!isName(app)) throw new Error(`sb: app "${app}" is not a path-safe name`);
 	if (!SHA_RE.test(head)) throw new Error(`sb: head "${head}" is not 40 hex`);
@@ -237,9 +240,16 @@ const toldRefusals = (found: CarView, ticket: string, state: CarState): string[]
 /** A car file with its notice record: what the server answers for a car (`cars-read`). */
 export interface CarView { file: CarFile; notice?: NoticeRecord }
 
+/** The lives of one car (an app and a head) among the views, and the current one: a car sent again after it was returned or dropped has a view for each life (#14), and the life whose state is newest is the one it lives now. */
+export const livesOf = (cars: readonly CarView[], app: string, head: string): CarView[] => cars.filter((c) => c.file.app === app && c.file.car.head === head);
+export const currentLife = (cars: readonly CarView[], app: string, head: string): CarView | undefined => livesOf(cars, app, head).reduce<CarView | undefined>((top, c) => (top && latest(top.file) >= latest(c.file) ? top : c), undefined);
+
+/** The word for a car that is on the base already, at `received` (#15): a car lands once, so it takes no train again, and the integrator returns it with this word. `how` says how sb knows: the head is on the base's remote branch, or the book holds its `landed`. */
+export const landedWord = (ticket: string, head: string, how: string) => `sb: car ${ticket} (${head.slice(0, 12)}) ${how}, so it takes no train again: a car lands once. Return it with this word (train_car returned), which tells its coordinator`;
+
 /** The `received` notice of a car (by app and head) is told, and the car was received by the train `train` when given: what the integrator's `train` todo waits for (§5.5, §7.4). Empty when it holds. */
 export function receivedTold(cars: readonly CarView[], car: { app: string; head: string; ticket: string }): string[] {
-	const found = cars.find((c) => c.file.app === car.app && c.file.car.head === car.head);
+	const found = currentLife(cars, car.app, car.head);
 	if (!found) return [`sb: car ${car.ticket} was never received: set it received with train_car first`];
 	const entry = found.file.states.find((s) => s.state === "received");
 	if (!entry) return [`sb: car ${car.ticket} is not received (${found.file.states.at(-1)?.state ?? "no state"}): set it received with train_car first`];

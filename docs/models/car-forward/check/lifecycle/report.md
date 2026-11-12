@@ -1,8 +1,7 @@
 # CarForward
 
-TLC reached 94 states and 183 steps. The chart draws 15 states and 14 arrows.
-The chart does not draw 13 steps that stay in one chart state.
-The view hides 99 steps, so the chart does not draw them.
+TLC reached 67 states and 86 steps. The chart draws 19 states and 23 arrows.
+The view hides 28 steps, so the chart does not draw them.
 
 ## Rules that hold
 TypeOK, NoCarLeftInTheDark, LandedToldOnce, NoticeToSender

@@ -55,7 +55,11 @@ stateDiagram-v2
   landed --> [*]
   returned --> [*]: notice to the coordinator
   dropped --> [*]: notice to the coordinator
+  returned --> received: the same head is sent again
+  dropped --> received: the same head is sent again
 ```
+
+A returned or dropped car that its coordinator sends again with the same head, its slip put right, is received or returned as a new car would be. A landed car is not received again: a car lands once, and the coordinator of one that is sent again is told it is on the base already.
 
 Integrators:
 

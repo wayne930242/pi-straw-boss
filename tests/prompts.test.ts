@@ -295,6 +295,8 @@ test("train workers: planning, apps-config, main and the tower prompts say the n
 	assert.ok(read("tower.md").includes("needs the tower runs (`towerRuns.enabled`)") && !read("tower.md").includes("`forward:"), "the resident tower forwards nothing");
 	assert.ok(read("tower-run.md").includes("once per code") && read("tower-run.md").includes("two opened mains"), "tower-run.md opens one train per code, outside the two");
 	assert.ok(read("tower-run.md").includes("a car notice") && read("tower-run.md").includes("coordinator that is gone"), "tower-run.md routes the sb server's blocked about a car notice");
+	// Issue #13: the integrator's session hands the tower a `returned` notice the sb server lost (carwait.ts), and the run passes it on.
+	assert.ok(read("tower-run.md").includes("One from an integrator about a `returned` notice sb cannot confirm carries the notice: when that coordinator is live, send it the notice with `tower_reply` (`to`: its session id)"), "tower-run.md passes on a returned notice the integrator hands it");
 });
 
 test("train workers: no prompt of the train flow names an environment", () => {

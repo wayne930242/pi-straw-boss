@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { coordinatorWord } from "../src/train/cars.ts";
+import { coordinatorWord, landedWord, noticeSatisfied, receivedTold } from "../src/train/cars.ts";
 import { type CarCtx, type CarParams, type CarToolDeps, trainCar } from "../src/traincar.ts";
 import { cleanup, forwardEntry, MANIFEST_HEADER, rig, type Rig, slipBlock } from "./train-guard-rig.ts";
 import { CODE, result, SHA_A, SHA_B, sb } from "./train-fixtures.ts";
-import { carWorld, type CarWorld, COORD, INTEG, repo, TRAIN } from "./train-car-rig.ts";
+import { appBase, carWorld, type CarWorld, COORD, git, INTEG, PUBLIC_URL, repo, TRAIN } from "./train-car-rig.ts";
 
 // `train_car` and the server's book of cars (docs/specs/2026-11-07-train-workers.md §5.5, §24; todo #125 task 5a): what each state needs, what the tool checks in the session, and what the server checks itself.
 
@@ -230,6 +230,138 @@ test("returned from the manifest: only when round 1's assemble lists the car in 
 	assert.equal(w.book.read("acme")[0]!.file.states.at(-1)!.reason, word);
 	// A car removed from the train cannot land.
 	await refused(trainCar(deps, { car: "T-15", state: "landed", version: "1", commit: SHA_B }, ctx), "sb: car T-15 was removed from the train, so it cannot land");
+});
+
+// ---- a car's lives (#14) and a car that is on the base already (#15)
+
+const LATER = 60_000, CODE2 = "2026-11-06-n", TRAIN2 = "sess-train-2";
+const states = (w: CarWorld) => w.book.read("acme").map((v) => v.file.states.map((s) => s.state)).sort();
+
+test("#14: a forward the tower makes after a car was returned starts the car's new life: it is received again, the life before stays in the book with its notice, and the journal shows the new life", async () => {
+	const w = world();
+	w.forwarded();
+	const ctx = integratorCtx(forwardEntry(COORD));
+	await trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "no accept", project: "acme" }, ctx);
+	// The forward the car was returned on gets no second answer.
+	await refused(trainCar(integratorDeps(w), received, ctx), "sb: car T-15 is already returned");
+	// Its coordinator sends the same head again and the tower forwards it: a forward newer than the car's end.
+	w.tick(LATER);
+	w.forwarded();
+	assert.match((await trainCar(integratorDeps(w), received, ctx)).text, /^Car T-15 is received\./);
+	assert.deepEqual(states(w), [["received"], ["returned"]], "two lives of one car");
+	assert.deepEqual(w.book.viewOf("acme", "web", SHA_A)!.file.states.map((s) => s.state), ["received"], "the car lives the new one");
+	assert.deepEqual(w.book.pending().map((p) => p.entry.state).sort(), ["received", "returned"], "the notice of the life before is still sent, beside the new one's");
+	const journal = join(w.stateDir, "trainboard", "acme", "cars", `web-${SHA_A.slice(0, 12)}.json`);
+	assert.deepEqual((JSON.parse(readFileSync(journal, "utf8")) as { states: { state: string }[] }).states.map((s) => s.state), ["received"], "the journal shows the life the car lives now");
+	assert.deepEqual(JSON.parse(readFileSync(journal.replace(/\.json$/, ".notice.json"), "utf8")), { v: 1, states: {} }, "with a notice record of its own, not the one of the life before");
+	assert.deepEqual(readdirSync(join(w.stateDir, "trainboard", "acme", "cars")).sort(), [`web-${SHA_A.slice(0, 12)}.json`, `web-${SHA_A.slice(0, 12)}.notice.json`], "the life before has no file of its own");
+	// The integrator's train todo reads the life the car lives now.
+	assert.deepEqual(receivedTold(await w.integ.read("acme"), { app: "web", head: SHA_A, ticket: "T-15" }), [`sb: waits for sb to tell ${COORD} that car T-15 is received (0 attempts)`]);
+	// Within a life the rules are the ones of any car.
+	await refused(trainCar(integratorDeps(w), received, ctx), "sb: car T-15 is already received");
+	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "late", project: "acme" }, ctx), "sb: car T-15 is already received; the integrator returns a car at receipt only");
+});
+
+test("#14: a car returned again in its new life is a new return: both are in the book, each with a notice to send, and the forward it was returned on still gets no second answer", async () => {
+	const w = world();
+	w.forwarded();
+	const ctx = integratorCtx(forwardEntry(COORD));
+	await trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "no accept", project: "acme" }, ctx);
+	w.tick(LATER);
+	w.forwarded();
+	await trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "the review is missing", project: "acme" }, ctx);
+	assert.deepEqual(w.book.pending().map((p) => [p.entry.state, p.entry.reason]), [["returned", "no accept"], ["returned", "the review is missing"]]);
+	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "again", project: "acme" }, ctx), "sb: car T-15 is already returned");
+	await refused(trainCar(integratorDeps(w), received, ctx), "sb: car T-15 is already returned");
+	assert.equal(w.book.read("acme").length, 2);
+});
+
+test("#14: a dropped car that is sent again rides another train in a new life; the train that dropped it still reads the state it set and cannot touch the new life", async () => {
+	const { w } = await ridden();
+	const { pushed } = repo(w);
+	const evidence = join(w.root, "unit.log");
+	w.freeze(evidence);
+	const car = { app: "web", head: SHA_A };
+	await w.train.set({ state: "dropped", car, fields: { round: 1, reason: "unit red", evidence } });
+	w.tick(LATER);
+	w.forwarded();
+	// The new life rides another train: the one that dropped the car is done with it.
+	await refused(trainCar(integratorDeps(w), received, integratorCtx(forwardEntry(COORD))), `sb: car T-15 rode train ${CODE} in an earlier life and left it; received names the train it rides now`);
+	await trainCar(integratorDeps(w), { ...received, train: CODE2 }, integratorCtx(forwardEntry(COORD)));
+	// The first train's assemble waits for the notice of the state it set, whatever the car does in its new life.
+	const first = await w.train.read("acme");
+	assert.deepEqual(first.map((v) => v.file.states.map((s) => s.state)), [["received", "dropped"]]);
+	assert.deepEqual(noticeSatisfied(first, ["T-15"], ["dropped", "returned"], { app: "web" }), [`sb: waits for sb to tell ${COORD} that car T-15 is dropped (0 attempts)`]);
+	await refused(w.train.set({ state: "landed", car, fields: { version: "1", commit: pushed } }), "sb: car T-15 is already dropped");
+	// The next train, opened on the same head, reads and lands the new life.
+	w.looks.set(TRAIN2, { id: TRAIN2, name: "train 1106n", role: "train", train: { project: "acme", code: CODE2 }, pane: "wA:p3", workspace: "wA", cwd: w.work, foreground: [333] });
+	const url = await w.book.remoteOf(w.checkout);
+	w.book.noteTrain({ project: "acme", code: CODE2, session: TRAIN2, pane: "wA:p3", integrator: INTEG, base: "develop", heads: [SHA_A], ...(url ? { url } : {}) });
+	const next = w.client(TRAIN2, 333, "wA:p3");
+	assert.deepEqual((await next.read("acme")).map((v) => v.file.states.map((s) => [s.state, s.train])), [[["received", CODE2]]]);
+	await next.set({ state: "landed", car, fields: { version: "1.3.0", commit: pushed } });
+	assert.deepEqual(states(w), [["received", "dropped"], ["received", "landed"]]);
+});
+
+test("#15: a car the book holds as landed is not received again when its slip comes back: the refusal is the word the integrator returns it with, and the coordinator is told that", async () => {
+	const { w, deps, ctx } = await ridden();
+	const { pushed } = repo(w);
+	await trainCar(deps, { car: "T-15", state: "landed", version: "1.2.0", commit: pushed }, ctx);
+	const mine = integratorCtx(forwardEntry(COORD));
+	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "x", project: "acme" }, mine), "sb: car T-15 is already received; the integrator returns a car at receipt only");
+	w.tick(LATER);
+	w.forwarded();
+	const word = landedWord("T-15", SHA_A, "landed in 1.2.0");
+	assert.equal(word, "sb: car T-15 (aaaaaaaaaaaa) landed in 1.2.0, so it takes no train again: a car lands once. Return it with this word (train_car returned), which tells its coordinator");
+	await assert.rejects(trainCar(integratorDeps(w), { ...received, train: CODE2 }, mine), (e: Error) => e.message === word);
+	await trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: word, project: "acme" }, mine);
+	assert.deepEqual(states(w), [["received", "landed"], ["returned"]]);
+	assert.equal(w.book.pending().at(-1)!.entry.reason, word);
+});
+
+test("#15: received is refused for a head that is on the base's remote branch already, by the server's own git and with nothing remembered; a head that is not there is received", async () => {
+	const w = world();
+	const { pushed, local, remote } = repo(w);
+	appBase(w);
+	const forward = (ticket: string, head: string) => {
+		const text = slipBlock({ tickets: ticket, head });
+		w.book.noteForward({ fwd: "e".repeat(16), from: COORD, to: [INTEG], text });
+		return integratorCtx(forwardEntry(COORD, text));
+	};
+	const on = (ticket: string, head: string) => landedWord(ticket, head, "is on develop of the project's remote already");
+	// The usual car: its head is on no base yet.
+	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-20" }, forward("T-20", local))).text, /^Car T-20 is received\./);
+	// The tip of the base, in a book that never saw the car (a restart, or a push made by hand).
+	const tip = forward("T-21", pushed);
+	await assert.rejects(trainCar(integratorDeps(w), { ...received, car: "T-21" }, tip), (e: Error) => e.message === on("T-21", pushed));
+	assert.deepEqual(w.book.read("acme").map((v) => v.file.car.tickets[0]), ["T-20"], "nothing is recorded of the refused car");
+	// The integrator returns it with the word, and that is what its coordinator is sent.
+	await trainCar(integratorDeps(w), { car: "T-21", state: "returned", reason: on("T-21", pushed), project: "acme" }, tip);
+	assert.equal(w.book.pending().at(-1)!.entry.reason, on("T-21", pushed));
+	// Sent again after the base moved on: the head is an ancestor of the tip now, and the car's new life is not received either.
+	git(w.work, "push", "-q", "origin", `${local}:develop`);
+	w.tick(LATER);
+	await assert.rejects(trainCar(integratorDeps(w), { ...received, car: "T-21" }, forward("T-21", pushed)), (e: Error) => e.message === on("T-21", pushed));
+	assert.deepEqual(readdirSync(w.dir).filter((n) => n.startsWith("cars-mirror-")), [], "each check removes the mirror it made");
+	// Git that cannot read the remote: the rule is that a car on the base is never received, so nothing is received unchecked.
+	w.rewrites.splice(0, w.rewrites.length, [PUBLIC_URL, join(w.root, "gone.git")]);
+	await refused(trainCar(integratorDeps(w), { ...received, car: "T-23" }, forward("T-23", SHA_B)), "sb: car T-23 is not received: whether its head bbbbbbbbbbbb is on develop of the project's remote already could not be checked (git ls-remote of develop from the project's remote failed");
+	assert.ok(w.logs.some((l) => l.startsWith("cars-received-refused")), "the refusal is logged");
+	w.rewrites.splice(0, w.rewrites.length, [PUBLIC_URL, remote]);
+	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-23" }, forward("T-23", SHA_B))).text, /^Car T-23 is received\./);
+});
+
+test("#15: a project whose remote or base the server cannot read is received unchecked, and the log says so", async () => {
+	// No checkout at all, then a checkout whose apps.json names no base for the app.
+	const w = world();
+	await receive(w);
+	assert.equal(w.logs.filter((l) => l.startsWith("cars-received-unchecked")).length, 1);
+	const w2 = world();
+	const { pushed } = repo(w2);
+	appBase(w2, "develop", "other-app");
+	w2.forwarded(COORD, pushed);
+	assert.match((await trainCar(integratorDeps(w2), received, integratorCtx(forwardEntry(COORD, slipBlock({ head: pushed }))))).text, /^Car T-15 is received\./);
+	assert.equal(w2.logs.filter((l) => l.startsWith("cars-received-unchecked")).length, 1);
 });
 
 // ---- the proof the server asks for

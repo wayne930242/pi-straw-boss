@@ -31,6 +31,8 @@ export function carWorld() {
 	const deps = {
 		stateDir, dir, now: () => clock, look: async (id: string) => looks.get(id), git: (cwd: string, args: string[], env?: Record<string, string>) => runGit(cwd, [...rewrites.flatMap(([from, to]) => ["-c", `url.${to}.insteadOf=${from}`]), ...args], { ...env, GIT_ALLOW_PROTOCOL: "https:ssh:file" }), knownHosts: "git.example.test ssh-ed25519 not-a-real-key\n", exists: (p: string) => existing.has(p),
 		startOf, secret: () => `secret-${++counter}`, log: (event: string, facts: Record<string, unknown>) => void logs.push(`${event} ${JSON.stringify(facts)}`),
+		// The integrator's workspace is the tower's: its checkout is where the check at `received` reads the remote and the app's base (nothing is read while `repo()` and `appBase()` have not made them).
+		checkoutOf: async () => checkout,
 	};
 	const book = new CarBook(deps as never);
 	const cars = { book } as Cars;
@@ -73,6 +75,12 @@ function makeRepo(world: CarWorld) {
 	git(clone, "add", "b.txt");
 	git(clone, "commit", "-m", "only here");
 	return { remote, url: PUBLIC_URL, pushed, local: git(clone, "rev-parse", "HEAD") };
+}
+
+/** The app's base in the apps.json of the tower's checkout (`repo()` first): with it the server checks, at `received`, that the car's head is not on that branch of the remote already. */
+export function appBase(world: CarWorld, base = "develop", app = "web") {
+	mkdirSync(join(world.checkout, ".straw-boss"), { recursive: true });
+	writeFileSync(join(world.checkout, ".straw-boss", "apps.json"), JSON.stringify({ apps: [{ name: app, dir: ".", integration: { base } }] }));
 }
 
 /**

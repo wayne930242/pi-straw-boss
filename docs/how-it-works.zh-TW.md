@@ -899,7 +899,11 @@ stateDiagram-v2
     landed --> [*]
     returned --> [*]: 協調者收到通知
     dropped --> [*]: 協調者收到通知
+    returned --> received: 同一個 head 再送一次
+    dropped --> received: 同一個 head 再送一次
 ```
+
+車廂的一輪以 `returned`、`dropped` 或 `landed` 結束。被退回或被丟下的車廂，如果協調者把車廂單改好、用同一個 head 再送一次，等塔台轉發了那張車廂單，車廂就開始新的一輪：整合員像處理新車廂一樣接收或退回它，通知也會再送出。已經 landed 的車廂沒有新的一輪，因為一節車廂只落地一次：head 已經在專案 remote 的 base 分支上時，`received` 會被拒絕，整合員用那句拒絕訊息把車廂退回，協調者因此會被告知。
 
 [`prompts/apps-config.md`](../prompts/apps-config.md) 放 `apps.json` 的欄位，[`prompts/integrator.md`](../prompts/integrator.md) 放整合員的角色，設計紀錄是 [`docs/specs/2026-10-30-merge-train.md`](specs/2026-10-30-merge-train.md)、[`docs/specs/2026-11-05-train-stages.md`](specs/2026-11-05-train-stages.md) 和 [`docs/specs/2026-11-06-seam-bindings.md`](specs/2026-11-06-seam-bindings.md)（它把舊整合員 prompt 的每一行，對應到它在 skill 裡的位置）。
 
@@ -1023,12 +1027,16 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 ##### 車廂通知
 
-火車和整合員用 `train_car` 設定每個車廂的狀態（`received`、`returned`、`landed`、`dropped`）；sb server 對每個（車廂、狀態）以 `kind=car_notice` 送給協調者一則 intercom 通知，在 30 秒、2 分鐘和 5 分鐘重試，記錄 `deliveredAt`，而協調者不在時，送給塔台一則 `blocked` 並記錄 `escalatedAt`。火車在每則 landed 通知都已送達或升級之前，不能通過 `land`。server 只在記憶體裡保留塔台的轉發紀錄，以及門為某張車廂單列出整合員的回答，兩者都不從磁碟讀回（那裡的檔案是火車寫得到的），所以 sb server 重啟後就沒有了。
+火車和整合員用 `train_car` 設定每個車廂的狀態（`received`、`returned`、`landed`、`dropped`）；sb server 對每個（車廂、狀態）以 `kind=car_notice` 送給協調者一則 intercom 通知，在 30 秒、2 分鐘和 5 分鐘重試，記錄 `deliveredAt`，而協調者不在時，送給塔台一則 `blocked` 並記錄 `escalatedAt`。火車在每則 landed 通知都已送達或升級之前，不能通過 `land`。整合員在接收時退回的車廂不在任何火車上，所以沒有哪一列火車的步驟會等它的通知：整合員自己的 session 會等，而 sb server 若在通知送達之前重啟，它就帶著通知內容以 `blocked` 呼叫塔台。server 只在記憶體裡保留塔台的轉發紀錄，以及門為某張車廂單列出整合員的回答，兩者都不從磁碟讀回（那裡的檔案是火車寫得到的），所以 sb server 重啟後就沒有了。
 
 <details>
 <summary>細節</summary>
 
 從 0.75.1 起，拒絕訊息會說明這一點：在 server 啟動後的 24 小時內，整合員的 `train_car` 拒絕訊息 `no forward by a tower carries head ...` 會寫出啟動時間與補救方式（協調者把車廂單再送給塔台一次，塔台再轉發一次），而車廂單在啟動之前就進來的塔台 run，會被告知再問一次門。
+
+整合員的等待放在它自己 pi 行程的記憶體裡（`src/carwait.ts`），不從磁碟讀任何東西。它每 15 秒問一次 server 的帳本，直到 `returned` 通知送達或升級。server 已經不再持有那節車廂、通知過了一天仍未送達，或 session 在還等著的時候結束（reload 會保留等待），它就把通知交給塔台；塔台沒有收下時，30 秒後再問一次，最多十次。被強制終止的 pi 行程什麼也交不出去。
+
+新的一輪需要一則在車廂結束之後才由塔台轉發的車廂單，所以車廂被退回時所依據的那張車廂單不會得到第二次回答（`car <ticket> is already returned`）。server 把前一輪和新的一輪一起留在記憶體裡：前一輪的通知照樣送出，丟下那節車廂的火車也仍然讀得到自己設定的狀態；磁碟上的車廂檔顯示最新的一輪。在 `received` 時，server 對車廂的 head 執行 `landed` 的 git 檢查，對象是整合員工作區 checkout 的 remote，以及那個 checkout 的 `apps.json` 裡該 app 的 `integration.base`：head 已在那個分支上就拒絕，remote 或 base 讀不到的專案不經檢查就接收，fetch 失敗則拒絕接收。以 squash 或 rebase 合併的車廂，head 不在 base 上，這項檢查找不到它。
 
 </details>
 

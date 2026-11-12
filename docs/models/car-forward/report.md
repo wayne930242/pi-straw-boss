@@ -2,26 +2,26 @@
 
 A TLA+ model of one car (one head) on its way from its coordinator's slip, through the tower's forward and the integrator's `train_car`, to the notices the sb server sends back. TLC checks three rules on every path the model allows, including a server restart, a day passing, a forward pushed out, a second slip of the same head, a notice that is not delivered, and a coordinator whose session is gone.
 
-The rules are **proposed**: the boss, who runs coordinators and trains, has not confirmed them yet. Checked on `191ccfa1` (0.76.0) on 2026-11-12. Nothing was fixed; each rule that breaks has a replay test in `tests/model-car-forward.test.ts` that is red on this commit.
+The boss, who runs coordinators and trains, confirmed the rules on 2026-11-12. On `191ccfa1` (0.76.0) rules 1 and 2 broke on three paths, filed as issues #13, #14 and #15. The model now describes the code with the three fixes, and every rule holds. Each of the three paths has a replay test in `tests/model-car-forward.test.ts`, red on 0.76.0 and green with the fixes.
 
 ## Result
 
-| Rule (proposed) | In the model | Result |
-| --- | --- | --- |
-| 1. Every slip the tower forwarded ends with its coordinator knowing the car's outcome or knowing it must send the slip again; when the coordinator could not be told, the tower was told instead. | `NoCarLeftInTheDark` | **Breaks**, two causes (A, B) |
-| 2. A car is never landed twice: its coordinator is told `landed` at most once. | `LandedToldOnce` | **Breaks**, one cause (C) |
-| 3. A notice never names a car its coordinator did not send: it goes to the session that sent the slip, whoever the slip names. | `NoticeToSender` | Holds |
+| Rule | In the model | On 0.76.0 | With the fixes |
+| --- | --- | --- | --- |
+| 1. Every slip the tower forwarded ends with its coordinator knowing the car's outcome or knowing it must send the slip again; when the coordinator could not be told, the tower was told instead. | `NoCarLeftInTheDark` | Broke, two causes (A, B) | Holds |
+| 2. A car is never landed twice: its coordinator is told `landed` at most once. | `LandedToldOnce` | Broke, one cause (C) | Holds |
+| 3. A notice never names a car its coordinator did not send: it goes to the session that sent the slip, whoever the slip names. | `NoticeToSender` | Held | Holds |
 
 ## The files
 
 | File | What it is |
 | --- | --- |
 | `CarForward.tla` | The model: the steps of each actor and the three rules. |
-| `CarForward.cfg` | The full check: 2 slips, 1 restart, 1 day, 2 trains. 5,938 states. |
-| `NoRestart.cfg` | The same with no restart, so the causes a restart hides show. 1,168 states. |
-| `Lifecycle.cfg` | 1 slip, no restart, no day: small enough to draw whole. 94 states. |
+| `CarForward.cfg` | The full check: 2 slips, 1 restart, 1 day, 2 trains. 9,364 states. |
+| `NoRestart.cfg` | The same with no restart. 2,512 states. |
+| `Lifecycle.cfg` | The chart the reader confirms: 2 slips, no restart, no day, and nothing going wrong on the way (`Calm` in the model says what that leaves out). 67 states. |
 | `view.mjs`, `view-lifecycle.mjs` | The reader's words for each state and step. |
-| `check/full`, `check/no-restart`, `check/lifecycle` | What the command wrote: `chart.mmd` and `report.md` of each check. |
+| `check/full`, `check/no-restart`, `check/lifecycle` | What the command wrote: `report.md` of each check, and `chart.mmd` of the lifecycle. The first two draw no chart: they are over the chart's 500 states and no rule breaks, so there is no bug path to draw. |
 
 Run a check again (each takes 3 to 6 seconds; `--out` takes a new or empty folder, so remove the old one first):
 
@@ -34,13 +34,13 @@ cd docs/models/car-forward && rm -r check/full
 
 The command also writes `tlc.out` (TLC's own output, with times and paths of the computer it ran on); it is not kept here.
 
-## Bug paths
+A larger run, 3 slips and 2 restarts, also holds every rule (77,184 states).
 
-Each path is the shortest one TLC found, in the words of `view.mjs`.
+## The three paths of 0.76.0, and what closed each
 
-### A. Rule 1: a restart loses the notice of a car the integrator returned
+Each path is the shortest one TLC found on the model of 0.76.0, in the words of that model's `view.mjs`.
 
-From `check/full/report.md`:
+### A. Rule 1: a restart lost the notice of a car the integrator returned (issue #13)
 
 ```
 ## NoCarLeftInTheDark breaks
@@ -53,15 +53,13 @@ The shortest path has 5 steps:
 5. the sb server restarts: The server holds nothing of the car; the integrator is done with it; coordinator waits for an answer
 ```
 
-The integrator's `returned` at receipt is the one state nobody waits for. A `received` notice holds the integrator's `train` todo, and a `dropped` or `landed` notice holds the train's step, so after a restart the integrator or the train finds the empty book and calls for help. Nothing depends on a `returned` at receipt: the integrator set it and went on, the retry at 30 s was in the memory the restart wiped, and the journal on disk is not read back (CR-F003). The coordinator waits for a notice that no one will send, and the tower is not told.
+The integrator's `returned` at receipt was the one state nobody waited for. A `received` notice holds the integrator's `train` todo, and a `dropped` or `landed` notice holds the train's step, so after a restart the integrator or the train finds the empty book and calls for help. Nothing depended on a `returned` at receipt: the retry at 30 s was in the memory the restart wiped, and the journal on disk is not read back (CR-F003).
 
-A scratch copy of the model in which a restart tells the tower of exactly this case (an undelivered `returned` at receipt), and of cause B, keeps rule 1 with 3 slips and 2 restarts (36,584 states). So within the model these two are the only causes.
+**The fix (the boss: the integrator's side waits until the returned notice is confirmed delivered).** The session that returned the car waits for the notice itself (`src/carwait.ts`). It asks the server's book every 15 s. A notice delivered, or told to the tower by the server, ends the wait. When the server no longer holds the car, the session calls the tower `blocked` with the notice text. Nothing is read from disk. In the model: `intWaits`, set by `IntegReturns` and ended by `IntegSeesTold`, `IntegSeesAnswered`, `IntegFindsNothing` (the call) and `IntegEndsWaiting` (the session ends while it waits, and hands the notice to the tower first). A restart leaves `intWaits` alone, so a restart while the session waits ends with the tower told.
 
 Replay: `car model, NoCarLeftInTheDark: a car the integrator returned still ends with its coordinator or the tower told, when the sb server restarts before the notice was delivered`.
 
-### B. Rule 1: the same head sent again after it came back gets no answer
-
-From `check/no-restart/report.md`:
+### B. Rule 1: the same head sent again after it came back got no answer (issue #14)
 
 ```
 ## NoCarLeftInTheDark breaks
@@ -76,15 +74,13 @@ The shortest path has 7 steps:
 7. sb refuses the integrator: the car already ended; nothing is set, nobody is told: Returned by the integrator; coordinator waits for an answer
 ```
 
-A car file is named after the app and the head and takes one terminal state, and the book never drops a car while the server runs. A car that was returned for its slip, not its code, comes back with the same head: the slip named no accept evidence, or it named a coordinator that was not its sender (the word sb itself writes for that case tells the sender so). The tower forwards the corrected slip, and sb refuses both `received` and `returned` with `sb: car T-15 is already returned`. No state can be set, so no notice is sent, and the coordinator waits for sb's notice as its prompt tells it to. The same holds after `dropped`. The head can be received again only after the server restarts, or with a new commit.
+A car file is named after the app and the head and took one terminal state, and the book never dropped a car while the server ran. A car returned for its slip, not its code, comes back with the same head, and sb refused both `received` and `returned` for it. No state could be set, so no notice was sent.
 
-What the integrator does with that refusal is not in the code or in its prompt; the model takes it that the integrator goes on to its next slip. An integrator that calls the tower of its own accord keeps the rule, by its judgment and not by sb.
+**The fix (the boss: a forward newer than the terminal state starts the car's new round).** A forward of the head that the tower made after the car was returned or dropped starts a new life of the car: the integrator's `received` or `returned` is taken, and the notices go out as for a new car. The forward the car ended on still gets no second answer. In the model: `fwdNew` (the forward is newer than the car's newest state) and `Fresh`; the step `IntegAlready` of the 0.76.0 model is gone, because no state reaches it.
 
 Replay: `car model, NoCarLeftInTheDark: a slip sent again for a car that was returned gets an answer from sb, to its coordinator or to the tower`.
 
-### C. Rule 2: after a restart a landed car can be received, ridden and landed again
-
-From `check/full/report.md`:
+### C. Rule 2: after a restart a landed car could be received, ridden and landed again (issue #15)
 
 ```
 ## LandedToldOnce breaks
@@ -108,42 +104,51 @@ The shortest path has 16 steps:
 16. the coordinator gets the notice: Landed; coordinator was told landed twice
 ```
 
-What stops a second receipt and a second terminal state is the car file in the server's memory. After a restart the book is empty, so a forward of the same head is received as a new car, and a second train lands it: the `landed` check only asks whether the commit is on the base's remote branch, which it already is. In the replay sb accepts `landed` twice with two versions (`1.2.0`, then `1.3.0`) and tells the coordinator both.
+What stopped a second receipt was the car file in the server's memory. After a restart the book is empty, so a forward of the same head was received as a new car, and a second train landed it: the `landed` check only asks whether the commit is on the base's remote branch, which it already was.
 
-The spec accepts part of this (`docs/specs/2026-11-07-train-workers.md` §5.5: "a state set again after it is sent again; a coordinator may then see a notice twice", and §24: "a state set again after a restart is told again"). It speaks of a notice told twice, not of a car that rides and lands on a second train. The rule and the spec disagree here, and the boss chooses between them. With no restart the rule holds (`check/no-restart`).
+**The fix (the boss: the rule wins over the spec's "a state set again is told again").** `received` is refused for a head that git, run by the server, finds on the base's branch of the project's remote already. The check asks nothing the book remembers, so it holds after a restart. The refusal is the word the integrator returns the car with, so the coordinator of a head sent again is told where its car is. In the model: `~merged` in `IntegReceives`, and `IntegReturns` for a car the book holds as landed or whose head is on the base. A new life after `landed` (issue #14's rule stretched to it) meets the same refusal: a scratch copy that lets a landed car start a new life keeps rule 2 as long as the check is there, and breaks it in 15 steps, with no restart, once the check is gone.
 
 Replay: `car model, LandedToldOnce: the coordinator of a car is told landed once, when its slip is forwarded again after the sb server restarted`.
 
-## The replay tests are red on this commit
+## Each rule was shown able to break
 
-`npm run test:one -- tests/model-car-forward.test.ts` on `191ccfa1` plus this branch's files:
+A rule that no change breaks was not checked. Each row is a scratch copy of the model with one change, the way wrong code would behave:
+
+| The change | Config | Result |
+| --- | --- | --- |
+| The integrator's session does not wait for the notice of a car it returned (#13 off) | `CarForward.cfg` | Rule 1 breaks in 5 steps (path A) |
+| The waiting session never finds the empty book | `CarForward.cfg` | Rule 1 breaks in 5 steps |
+| No new life: a slip sent again for an ended car is refused and the integrator goes on (#14 off) | `NoRestart.cfg` | Rule 1 breaks in 8 steps (path B, after the session's wait ended) |
+| `received` is not refused for a head on the base (#15 off) | `CarForward.cfg` | Rule 2 breaks in 16 steps (path C) |
+| A landed car may start a new life, the check at `received` kept | `CarForward.cfg` | Every rule holds (9,364 states) |
+| A landed car may start a new life, the check at `received` gone | `NoRestart.cfg` | Rule 2 breaks in 15 steps |
+| The notice of a returned car goes to the session the slip names | `CarForward.cfg` | Rule 3 breaks in 3 steps |
+
+## The replay tests
+
+`npm run test:one -- tests/model-car-forward.test.ts` was red on `191ccfa1` with these three messages:
 
 ```
-✖ car model, NoCarLeftInTheDark: a car the integrator returned still ends with its coordinator or the tower told, when the sb server restarts before the notice was delivered (9.758458ms)
-✖ car model, LandedToldOnce: the coordinator of a car is told landed once, when its slip is forwarded again after the sb server restarted (859.522291ms)
-✖ car model, NoCarLeftInTheDark: a slip sent again for a car that was returned gets an answer from sb, to its coordinator or to the tower (6.315ms)
-ℹ tests 3
-ℹ pass 0
-ℹ fail 3
+the coordinator sess-coord-1 was never told its car T-15 is returned, and the tower was never told that it could not be: after the restart sb sent 0 message(s), and its book holds 0 car(s) and 0 pending notice(s)
 
-  AssertionError [ERR_ASSERTION]: the coordinator sess-coord-1 was never told its car T-15 is returned, and the tower was never told that it could not be: after the restart sb sent 0 message(s), and its book holds 0 car(s) and 0 pending notice(s)
+the coordinator sess-coord-1 was told landed 2 times for one car (landed in 1.2.0, your commit is … / landed in 1.3.0, your commit is …); after the restart, received was: Car T-15 is received; landed was: Car T-15 is landed
 
-  AssertionError [ERR_ASSERTION]: the coordinator sess-coord-1 was told landed 2 times for one car (landed in 1.2.0, your commit is 86fe1d825a5b9f125f3263a5c0e8e994b2469c9e / landed in 1.3.0, your commit is 86fe1d825a5b9f125f3263a5c0e8e994b2469c9e); after the restart, received was: Car T-15 is received; landed was: Car T-15 is landed
-
-  AssertionError [ERR_ASSERTION]: the coordinator sess-coord-1 sent head aaaaaaaaaaaa again and sb told nobody anything of it: received was refused (sb: car T-15 is already returned); returned was refused (sb: car T-15 is already returned); sb sent 0 message(s) after the second forward
+the coordinator sess-coord-1 sent head aaaaaaaaaaaa again and sb told nobody anything of it: received was refused (sb: car T-15 is already returned); returned was refused (sb: car T-15 is already returned); sb sent 0 message(s) after the second forward
 ```
 
-All three paths reproduced on the real `CarBook`, `CarNotices` and `train_car` at the first run; none needed a change to the model. Each test asserts the rule at the end of its path and treats a step that a fix may refuse as an attempt, so a fix that refuses the step, or answers it, turns the test green. While they are red, `npm test` on this branch is red: the branch is for the model and these tests and is not to be merged as it is.
+With the fixes all three pass. Two of them were made true to the fixed flow, and each was run red again with its fix taken out:
 
-## The rule that holds
+- Path A drives the step the fix added: the integrator's session waits (`createReturnWatch`), and its looks after the restart are part of the path. Without the wait the test fails with the first message above.
+- Path C gives the car a real head that the train pushes to the base at step 7. The first version used a made-up head and landed a commit that was on the base before the car was received; the check of #15 reads the car's head, which that version never put on the base. Without the check the test fails with the second message above.
 
-Rule 3 holds because the book takes a car's coordinator from the stamp the tower's code wrote on the forward (`sent.from`), never from the slip. The model has one sender, so the rule is checked weakly: it can break only where the integrator returns a slip that names another session. To see that the check is live, a scratch copy addressed that notice to the session the slip names; TLC broke the rule in 3 steps. The real code for the same case is covered by an existing test (`tests/train-car.test.ts`, "returned at receipt: a slip whose coordinator is not its sender is returned to the sender").
+Each test asserts the rule at the end of its path and treats a step that a fix may refuse as an attempt.
 
 ## Where each actor's steps come from
 
 - **The sb server** (book, sender, restart): the code, `src/server/carbook.ts` and `src/server/carnotices.ts`.
-- **The integrator and the train**: what `train_car` lets through (`src/traincar.ts`, `carbook.ts`), and for what they do after a refusal, their prompts and the refusal's own words. Asking the coordinator to send again is the #154 refusal's way back; calling the tower `blocked` for a slip with no forward is `prompts/integrator.md`; a train the server forgot calling the tower and ending is `prompts/train.md` and spec §24.
-- **The tower run**: it holds a slip until it forwards it, a restart included (`runtools.ts`: the slip's event is on disk, the door's answer is asked again).
+- **The integrator and the train**: what `train_car` lets through (`src/traincar.ts`, `carbook.ts`), and for what they do after a refusal, their prompts and the refusal's own words. Asking the coordinator to send again is the #154 refusal's way back; calling the tower `blocked` for a slip with no forward is `prompts/integrator.md`; returning a car whose `received` sb refused is the refusal's word (`Return it with this word`); a train the server forgot calling the tower and ending is `prompts/train.md` and spec §24.
+- **The integrator's session** (the wait for a `returned` notice): code, `src/carwait.ts`. No model's judgment is in it.
+- **The tower run**: it holds a slip until it forwards it, a restart included (`runtools.ts`: the slip's event is on disk, the door's answer is asked again). What it does with a `blocked` call is `prompts/tower-run.md`.
 - **The coordinator**: it waits for sb's notice (`prompts/main.md`) and may send the same head again at any time.
 
 A step an agent would have to improvise is not in the model.
@@ -151,11 +156,16 @@ A step an agent would have to improvise is not in the model.
 ## What the model leaves out
 
 - More than one car, and more than one sender of a head. Two sessions that send the same head (a coordinator whose session was replaced by a new one) are not modeled; the newest forward decides the coordinator at receipt.
-- The moment between setting a state and the first send of its notice. The model joins them into one step, since the book starts the sender in the same turn; a restart inside that moment loses the notice the same way path A does.
+- The moment between setting a state and the first send of its notice. The model joins them into one step, since the book starts the sender in the same turn. A restart inside that moment ends as path A does, and the fix covers it the same way: the session finds the book without the car.
+- The life before a new life. The server still sends the notice of that life, and the train that dropped the car still waits for it. The model follows the newest life only: its `notice` is the newest state's, and a train that still runs when a new life starts is done with the car (`Left`).
+- The integrator's pi process being killed while it waits: the wait is its memory, and nothing is handed over. A session that ends in order hands the notice to the tower (`IntegEndsWaiting`).
+- The tower not taking a `blocked` call. The sender and the waiting session each try ten times, 30 s apart, and then stop; with a coordinator that never comes back, nobody is told.
+- A notice the server leaves undelivered for a day (the sender stops then): the waiting session hands it to the tower, which the model does not show.
+- A car merged by squash or rebase. The model has "merged" or not; the real check at `received` reads the car's head on the base's branch, and a squashed car has no head there. For such a project a restart still lets a landed car be received again.
+- The check at `received` not running: a project whose remote or base the server cannot read is received unchecked.
 - The tower's side of a forward: the door's answer (`namedFor`), a slip's event that is dropped after 24 h or when its run ends, and an ally run.
-- The tower not taking the `blocked` call. The sender tries ten times, 30 s apart, and then stops; with a coordinator that never comes back, nobody is told.
 - The sender's own 24 h limit on a notice, the exact retry times (30 s, 2 min, 5 min are one "not delivered yet" state), and the back-off of looking for a coordinator that is away.
-- The registration secret, the `landed` check against the remote (the model has "merged" or not), the three failed checks that close a car, and a train reopened by a repeated open (it can drop but not land).
+- The registration secret, the `landed` check against the remote beyond "merged" or not, the three failed checks that close a car, and a train reopened by a repeated open (it can drop but not land).
 - The integrator's and the train's todos and guards beyond the one fact that their step waits for the notice.
 - Time, other than "a day passed".
 
@@ -163,3 +173,4 @@ A step an agent would have to improvise is not in the model.
 
 - The #154 refusal tells the integrator to "ask the car's coordinator to send its slip to the tower again", while `prompts/integrator.md` says "never send a slip's sender a notice yourself" and names `why=blocked` for a slip with no tower forward. Either way keeps rule 1 in the model; the two texts point the integrator to different doors.
 - The restart sentence is added to every "no forward" refusal while the server is younger than 24 h, also when the forward was pushed out by 512 newer ones or never existed. The way back it names is still the right one.
+- A train that merged a car and then lost its server (a restart) cannot set `landed`, and with the fix of #15 the car is not received for a new train either. Its coordinator learns that the car is on the base from the `returned` notice of the slip sent again; no `landed` notice with a version follows from sb. Spec §24 says so.
