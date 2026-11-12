@@ -4,8 +4,14 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 ---
 
 智慧體呼叫**工具**；你在 Herdr 裡任何 pi session 輸入 **`/boss` 指令**。
-`/boss` 指令只屬於老闆親自輸入：塔台執行、盟友執行或已配對裝置的輸入框都不能輸入，除非某一列另有說明。
+`/boss` 指令只屬於老闆親自輸入：塔台 run、隊友 run 或已配對裝置的輸入框都不能輸入，除非某一列另有說明。
 `/boss` 與 `boss_promote` 在子工作區裡無法使用。
+
+「誰有」欄指 session 的種類，定義見[概念](/pi-straw-boss/docs/zh-tw/guide/concepts/)：
+
+- **已加入的 session**：每個加入分頁的網的 pi（成員與主智慧體）。
+- **塔台**：塔台的 run；列上有寫時，也包括主塔台的。
+- **本機塔台 run**：塔台在這台電腦上的 [run](/pi-straw-boss/docs/zh-tw/guide/concepts/#塔台怎麼運作)，不含隊友的「隊友 run」。
 
 ## 工具
 
@@ -14,20 +20,22 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `boss_promote` | 已加入的 session | 成為這個分頁的主智慧體；分頁已有存活的主智慧體時會被拒絕。 |
 | `boss_status` | 已加入的 session 與塔台 | 每個分頁的主智慧體、這個工作區的塔台、主塔台與其他塔台。 |
 | `boss_duty` | 分頁的主智慧體 | 附理由設定它的種類：`coordinator`、`integrator` 或 `standing`。種類就是它執行的 prompt，並顯示在頁面上。 |
-| `boss_rename` | 已加入的 session | 用一句短語為 session 命名它目前的工作；網與 GUI 會顯示它，主智慧體的分頁也以它為標籤。名稱若是角色標籤（塔台或主塔台的圖示、`train <MMDDx>`）會被拒絕：這些標籤只由 Straw Boss 給分頁。 |
+| `boss_rename` | 已加入的 session | 用一句短語為 session 命名它目前的工作；主智慧體的分頁以它為標籤。角色標籤（塔台的圖示、`train <MMDDx>`）會被拒絕。 |
 | `call_tower` | 已加入的 session 與塔台 | 在標頭之下發訊息給這個工作區的塔台，或另一個工作區的塔台。`why` 是 `milestone`、`shared` 或 `blocked`；通知用 `reply: false`。 |
 | `boss_broadcast` | 已加入的 session 與塔台 | 發訊息給一個分頁、一個工作區、所有塔台或所有 session，標頭會列出每位收件者。 |
 | `board_set` | 分頁的主智慧體 | 覆寫它自己的工作看板項目（一行與最多 8 個清單項目）；`auto: true` 交還給自動填入，`clear: true` 刪除它。 |
 | `boss_server` | 已加入的 session | sb server 的 `status`（server 沒在跑時也可用）、它的 `logs`（最多 200 行），或附理由 `restart`。老闆停掉 server 時會被拒絕，每分鐘最多一次，且在遠端 turn 中絕不可用。 |
-| `link_request` | 有人看管的電腦上的每個 session，以及本機塔台執行 | 附理由請求一個 Straw Link 動作（create、invite、join、trust、leave、remove、role、rotate）。它絕不會未經詢問就執行：老闆要在對話框裡核准。 |
-| `boss_open_main` | 塔台 | 為沒有 session 負責的請求，開一個帶新主智慧體的分頁。`role: "train"` 依整合者的清單開啟火車；`role: "integrator"`（sb server 的執行）把車廂單送給專案唯一的整合者，沒有在跑的就開一個，當成塔台自己的主智慧體；專案若已經有自己在跑的整合者，它什麼也不開並列出它們，由塔台用 `tower_reply` 與 `forward` 轉發車廂單。主智慧體的 `label` 若是角色標籤（塔台或主塔台的圖示、`train <MMDDx>`）會被拒絕。 |
+| `link_request` | 有人看管的電腦上的每個 session，以及本機塔台 run | 附理由請求一個 Straw Link 動作（create、invite、join、trust、leave、remove、role、rotate）。它絕不會未經詢問就執行：老闆要在對話框裡核准。 |
+| `boss_open_main` | 塔台 | 為沒有 session 負責的請求，開一個帶新主智慧體的分頁。`role: "train"` 開一列火車；`role: "integrator"` 把車廂單送給專案唯一的整合員，沒有在跑的就開一個。見[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。 |
 | `boss_close_main` | 塔台 | 等它裡面沒有東西在跑，關掉這座塔台開的主智慧體。 |
 | `tower_list` | 塔台 | 每個工作區的塔台、發給它的訊息會送到誰、它的狀態，以及它的分頁在做什麼。 |
 | `tower_send` | 塔台 | 發訊息給另一座塔台（用工作區 id 或標籤）或全部；附 `device` 則發給隊友電腦上的塔台。 |
 | `board_read` | 塔台 | 工作看板：每位主智慧體在做什麼、做到哪裡，包括這裡與隊友的電腦。 |
-| `tower_memory` | 本機塔台執行 | 保存執行結束後還要留著的內容：引用自老闆自己訊息的長期指示或決定，以及塔台的等待事項，包括對老闆的等待（以卡片呈現）。 |
+| `tower_memory` | 本機塔台 run | 保存 run 結束後還要留著的內容：引用自老闆自己訊息的長期指示或決定，以及塔台的等待事項，包括對老闆的等待（以卡片呈現）。 |
+| `tower_reply` | 塔台 run，不含主塔台的 | 用 intercom 名稱或 session id 回答一個本機 session（主智慧體或成員），掛在塔台的標頭之下。`forward` 把車廂單的事件 id 轉給整合員。 |
+| `tower_done` | 塔台 run | 附一份交接筆記（一項一行，最多 1,200 字元）結束這次 run，留給下一次 run；`wakeAfter`（5 到 240 分鐘，僅限本機 run）要求稍後再跑一次。事件仍在等這次 run 時會被拒絕。 |
 | `boss_auto` | 主塔台 | 依老闆自己的話，在它回答的那個 turn 裡開始或結束[自動模式](/pi-straw-boss/docs/zh-tw/guide/auto-mode/)。 |
-| `train_car` | 整合者與火車 | 設定車廂的狀態（`received`、`returned`、`dropped`、`landed`）；sb server 會通知該車廂的協調者。 |
+| `train_car` | 整合員與火車 | 設定車廂的狀態（`received`、`returned`、`dropped`、`landed`）；sb server 會通知該車廂的協調者。 |
 
 完整的表格與每個參數，見[工具](/pi-straw-boss/docs/zh-tw/reference/how-it-works/tools/)。
 
@@ -39,9 +47,13 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `/boss status` | 每個分頁的主智慧體與各座塔台。 |
 | `/boss tower` | 這個工作區沒有塔台在跑就開一座，並聚焦它的分頁。 |
 | `/boss tower <prompt>` | 寫給這個工作區的塔台。 |
-| `/boss tower -w <workspace\|head> [--answers W3] <status\|parked\|retry\|deliver <id>\|drop <id>\|leave\|new\|message>` | 從任何有畫面的 pi 對另一個工作區的塔台操作，如同塔台的卡片與輸入框所做的。寫給另一座塔台會先詢問。`--answers W3` 標記某個對你的等待在塔台收下訊息後即算已回答。 |
+| `/boss tower -w <workspace\|head> <子指令>` | 對另一個工作區的塔台操作，如同塔台的卡片與輸入框所做的。寫給另一座塔台會先詢問。 |
+| `/boss tower … status`、`parked`、`leave`、`new` | 塔台的狀態、被擱置的事件、讓對話帶著交接筆記結束、開新對話。 |
+| `/boss tower … retry`、`deliver <id>`、`drop <id>` | 重試、送出或丟棄一個被擱置的事件。 |
+| `/boss tower … [--answers W3] <message>` | 寫一則訊息；`--answers W3` 標記某個對你的等待在塔台收下訊息後即算已回答。 |
 | `/boss head [status\|leave\|new\|close\|<message>]` | 與[主塔台](/pi-straw-boss/docs/zh-tw/guide/head-tower/)對話。單獨的 `/boss head` 會建立它的工作區並聚焦它的分頁。 |
-| `/boss head retry`、`parked`、`deliver <id>`、`drop <id>`、`--answers W3 <message>` | 主塔台的通知與被擱置的事件，以及回答某個等待的訊息。 |
+| `/boss head retry`、`parked`、`deliver <id>`、`drop <id>` | 主塔台的通知與被擱置的事件。 |
+| `/boss head --answers W3 <message>` | 回答某個等待的訊息。 |
 
 ## 與 session 對話
 
@@ -60,7 +72,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `/boss memory confirm P1`、`reject P1` | 確認或拒絕塔台的提案。 |
 | `/boss memory add standing\|decision <text>`、`edit S1 <text>`、`delete D1`、`resolve W1` | 自己修改記憶。 |
 | `/boss memory done\|choose\|decline W<n>` | 處理一個等待事項，例如被自動模式擱置的那種。 |
-| `/boss wait [-w workspace \| label \| head]` | 列出每座塔台與 head 上等你處理的等待卡片（這座塔台的排第一），用對話框按下其中一張：完成、選一個選項、略過（先問理由，再確認）、回覆塔台，或開始輸入機密。它送出頁面本身的 press，所以頁面按不了的，這裡也按不了。塔台的常駐 pane 用 `/wait` 做同樣的事，改用數字與 `y/N` 輸入。 |
+| `/boss wait [-w workspace \| label \| head]` | 列出等你處理的等待卡片，並按下其中一張：完成、選一個選項、略過、回覆塔台，或開始輸入機密。它送出頁面本身的 press。塔台的常駐 pane 用 `/wait` 做同樣的事。 |
 | `/boss auto` | 顯示自動模式的狀態與上一份回來清單。 |
 | `/boss auto on`、`/boss auto confirm`、`/boss auto off` | 請求自動模式並在終端機確認；確認主塔台擬好的請求；結束它並印出回來清單。 |
 
