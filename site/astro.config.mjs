@@ -12,7 +12,17 @@ export default defineConfig({
 	trailingSlash: "always",
 	integrations: [
 		// Both before starlight(): they add Sätteri plugins to the processor Starlight then extends.
-		mermaid({ autoTheme: true, enableLog: false }),
+		// Diagrams keep their natural size and scroll sideways when wider than the column, so their text stays readable on a phone;
+		// sequence messages wrap inside the gap between two participants instead of widening it.
+		mermaid({
+			autoTheme: true,
+			enableLog: false,
+			mermaidConfig: {
+				sequence: { wrap: true, width: 140, actorMargin: 24, messageMargin: 34, useMaxWidth: false },
+				flowchart: { useMaxWidth: false },
+				state: { useMaxWidth: false },
+			},
+		}),
 		cjkNewlines(),
 		starlight({
 			title: "pi-straw-boss",

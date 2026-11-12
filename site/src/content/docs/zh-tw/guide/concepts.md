@@ -82,7 +82,7 @@ Straw Boss 從子智慧體啟動時用的 pi-herdr-agents 角色名稱，讀出�
 其他角色名稱仍是一般的子智慧體。
 
 協調者可以隨時派出偵察、規劃與審查。
-它派出 `worker` 時，要等它的 todo 寫出計畫圖才行，否則會被 `sb: plan first` 拒絕；計畫圖是 `single-loop`、`fan-out/fan-in` 或 `orchestrator-worker`。
+其他任何派出（工作者、監控者、未列出的角色）在它的 todo 寫出計畫圖之前，都會被 `sb: plan first` 拒絕；計畫圖是 `single-loop`、`fan-out/fan-in` 或 `orchestrator-worker`。
 
 ## 塔台怎麼運作
 

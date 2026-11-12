@@ -129,3 +129,21 @@ starlight-toc nav > ul > li:first-child > a::before,
 mobile-starlight-toc .dropdown > ul > li:first-child > a::before {
 	content: none;
 }
+
+/* A diagram wider than the column scrolls sideways at its natural size instead of shrinking its text. */
+.sl-markdown-content pre.mermaid {
+	overflow-x: auto;
+}
+.sl-markdown-content pre.mermaid svg {
+	flex: none;
+	max-width: none;
+	margin-inline: auto;
+}
+
+/* A table's first column is a name: keep it whole instead of breaking it per character on a narrow screen. */
+.sl-markdown-content table th:first-child,
+.sl-markdown-content table td:first-child {
+	min-width: 5.5em;
+	overflow-wrap: normal;
+	word-break: keep-all;
+}

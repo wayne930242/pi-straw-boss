@@ -44,17 +44,17 @@ sequenceDiagram
 5. 在它的階段有寫的地方部署並驗證。
 6. 失敗時回滾或回報。
 
-sb server 會為車廂的每個狀態發通知給協調者：
+車廂有四個狀態，sb server 會為每一個發通知給協調者：
 
 ```mermaid
 stateDiagram-v2
-  [*] --> 已送出: 車廂單
-  已送出 --> 已收到
-  已送出 --> 已退回
-  已收到 --> 已落地
-  已收到 --> 已放棄
-  已退回 --> 已送出: 修好再送
-  已放棄 --> 已送出: 再送
+  [*] --> received: 整合員接受車廂單
+  [*] --> returned: 整合員拒絕它
+  received --> landed: 火車合併了它
+  received --> dropped: 火車放棄了它
+  landed --> [*]
+  returned --> [*]: 通知協調者
+  dropped --> [*]: 通知協調者
 ```
 
 整合員：

@@ -541,13 +541,12 @@ For when the boss is away and nothing may wait for them (`src/auto.ts`, `autosta
 The states and the doors between them:
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Off
-    Off --> Staged: /boss auto on, or the head's boss_auto
-    Staged --> On: the boss confirms
-    Staged --> Off: lapses after 10 minutes
-    Off --> On: the page's two taps
-    On --> Off: any door; the return list is written
+flowchart TD
+    Off(["Off"]) -->|"/boss auto on,<br/>or the head's boss_auto"| Staged(["Staged"])
+    Staged -->|"the boss confirms"| On(["On"])
+    Staged -->|"lapses after<br/>10 minutes"| Off
+    Off -->|"the page's two taps"| On
+    On -->|"any door;<br/>the return list is written"| Off
 ```
 
 #### One state, written by the server only
@@ -2281,7 +2280,7 @@ A main opened by a tower reports its done report with `call_tower` (`why: milest
 Three kinds of run share the machinery below:
 
 ```mermaid
-flowchart LR
+flowchart TD
     ev["Event<br/>a main's call_tower,<br/>the boss's words,<br/>a teammate's message"] --> q["Queue<br/>per workspace"]
     q --> who{"Who sent it?"}
     who -->|"a local session"| er["Event run<br/>fresh pi, ends with tower_done"]

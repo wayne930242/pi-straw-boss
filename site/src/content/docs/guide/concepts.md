@@ -82,7 +82,7 @@ The roles come from pi-herdr-agents and its role packs; what a role does is in i
 Any other role name stays a plain subagent.
 
 A coordinator may dispatch scouts, planners, and reviewers at once.
-Its `worker` dispatch is refused with `sb: plan first` until its todos name a plan graph: `single-loop`, `fan-out/fan-in`, or `orchestrator-worker`.
+Any other dispatch (a worker, a watchdog, an unlisted role) is refused with `sb: plan first` until its todos name a plan graph: `single-loop`, `fan-out/fan-in`, or `orchestrator-worker`.
 
 ## How a tower runs
 

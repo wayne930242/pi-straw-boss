@@ -48,7 +48,7 @@ flowchart TD
 | `reviewer`（審查） | `reviewer`、`visual-tester`、`adversarial-reviewer` | 審查變更或檢查 UI | 不需要計畫就放行 |
 | `watchdog`（監控者） | `watchdog` | 監看另一個 session 或 Herdr 狀態，只回報 | 和工作者一樣被拒絕 |
 
-**塔台執行的種類**（喚醒塔台的東西；規則在[本機執行](#本機執行)、[老闆對話](#老闆對話)與[隊友 run](#隊友-run)）
+**塔台 run的種類**（喚醒塔台的東西；規則在[本機 run](#本機 run)、[老闆對話](#老闆對話)與[隊友 run](#隊友-run)）
 
 | 執行 | 由什麼喚醒 | 它是什麼 |
 |---|---|---|
@@ -66,10 +66,10 @@ flowchart TD
 | 工作看板與自動模式 | [工作看板](#工作看板)、[自動模式](#自動模式) |
 | 開啟與關閉主智慧體、設定檢查 | [開啟主智慧體](#開啟主智慧體)、[設定檢查](#pi-在資料夾裡啟動之前設定檢查)、[關閉開啟的主智慧體](#關閉開啟的主智慧體) |
 | 安全地合併很多分支 | [合併火車](#合併火車) |
-| 儀表板，以及失去啟動者的子智慧體 | [塔台儀表板](#塔台儀表板)、[孤兒子智慧體](#孤兒子智慧體) |
+| 儀表板，以及失去啟動者的子智慧體 | [塔台儀表板](#塔台儀表板)、[孤立的子智慧體](#孤立的子智慧體) |
 | 瀏覽器頁面：地圖、通訊畫面、警示、手機、禪 | [瀏覽器檢視](#瀏覽器檢視) |
-| Herdr 側邊欄、worktree 清理、行程清理 | [側邊欄網檢視](#側邊欄網檢視)、[Worktree reaper](#worktree-reaper)、[行程衛生與 slot](#行程衛生與-slot) |
-| 背景 server、塔台執行、常駐 pane、記憶、隊友 run | [sb server](#sb-server) |
+| Herdr 側邊欄、worktree 清理、行程清理 | [側邊欄網檢視](#側邊欄網檢視)、[Worktree reaper](#worktree-reaper)、[程序衛生與 slot](#程序衛生與-slot) |
+| 背景 server、塔台 run、常駐 pane、記憶、隊友 run | [sb server](#sb-server) |
 | 指令、它寫入的檔案、Windows、開發 | [工具](#工具)、[它寫入什麼](#它寫入什麼)、[從 shell 使用](#從-shell-使用)、[Windows](#windows)、[開發](#開發) |
 
 ## 運作方式
@@ -289,7 +289,7 @@ flowchart TD
   路徑的讀法和 pi 自己的工具一樣（開頭的 `@`、`~`、奇怪的空格）。任何指名 `~/.pi`、`~/.ssh`、`~/.aws`、`~/.config`、`~/.gnupg`、agent 資料夾、`link/` 資料夾底下路徑，或名為 `.env*`、`*.pem`、`*.key`、`id_*`、`*.p12` 的檔案（照寫的或解析後）的工具，會直接被拒絕，不會要求確認。其他一切都會開啟關卡。
 - **關卡**透過對話框契約顯示自己的對話框（擁有者 `straw-link-gate`、前綴 `straw-link:gate`，以 `toolCallId` 為鍵的關卡，所以即使在平行批次裡也可以從頁面回答）：寄件者的標籤和短 id、工具，以及它完整的參數（參數超過 12 000 個字元的呼叫會被拒絕）。終端機顯示同一個確認；第一個答案，不論來自終端機、頁面（這台電腦的或已配對的裝置的），或在 `forward` 時來自寄件者的裝置，都會結束另外兩個。拒絕、10 分鐘內沒有回答，以及呼叫被中止，全都以「the boss declined a remote request」擋下它；老闆放行的呼叫，它的輸出不會被過濾。
 - **`forward`**：這次執行中層級最低的寄件者的裝置，也會收到一個 `confirm-request`（對話框 id、摘要、工具、完整參數）。它的持有者最多保留 20 個、10 分鐘（`confirmRequests()`、`answerConfirm(dialogId, allow, digest?)`；GUI 路由 `link/confirm-answer` 需要它所顯示的請求的摘要，持有者會以「That request changed; look at it again」拒絕不同的摘要，並讓請求維持開著），然後送出 `confirm-answer`。發問的持有者只接受來自它所問的裝置、帶著對話框的 id 和摘要的答案，而且只接受一次；任何其他的都會被丟掉，也不會用掉這個對話框。
-- **輪次之後**，在之後的本機執行裡，`context` 事件會把每則並未開啟目前這次遠端執行的 `straw-link` 訊息的文字，換成一個標記，標記指名它的裝置，並說明這是同儕的請求，不是老闆的指示；而塔台在遠端輪次中送給本機 session 的訊息，標頭帶有 `origin=remote:<sender device id>`。給寄件者的回覆本來就不期待回答，除非塔台要求。
+- **輪次之後**，在之後的本機 run裡，`context` 事件會把每則並未開啟目前這次遠端執行的 `straw-link` 訊息的文字，換成一個標記，標記指名它的裝置，並說明這是同儕的請求，不是老闆的指示；而塔台在遠端輪次中送給本機 session 的訊息，標頭帶有 `origin=remote:<sender device id>`。給寄件者的回覆本來就不期待回答，除非塔台要求。
 
   兩項限制只有記載、沒有防護：compaction 的摘要是模型依整段對話寫的，而 pi 的 `session_before_compact` hook 只能取代整個 compaction（不能對摘要者隱藏訊息），所以同儕的文字可能不帶標記地留存在摘要裡；而在關卡核准之後透過 pi-intercom 自己的工具送出的訊息，不帶 `origin=` 標頭，因為只有塔台的 `tower_send` 會加上它。
 
@@ -355,7 +355,7 @@ flowchart TD
 - **名冊**。兩個裝置共用的標籤，旁邊會顯示短 id。管理員可以移除裝置、變更角色和輪替金鑰（各問兩次）；任何人都可以離開（持有者拒絕唯一有人看管的管理員離開，除非頁面說 `force`，而它的按鈕只在第二次按下後才這樣做：沒有有人看管的管理員的團隊，不能移除裝置或輪替金鑰）。有兩個有人看管的裝置、而創辦者是唯一有人看管的管理員時，頁面會提議把另一個變成管理員。每個裝置的信任（`reply`、`forward`、`dispatch`）寫進 `config.json` 的 `link.trust`。
 - **隊友的基地**（`net.link.allies`）依最新的 presence，畫在本機基地旁邊：裝置的標籤和短 id、團隊、塔台的狀態，以及每個分頁的狀態。它們不能開啟，也沒有任何東西連到它們。
 - **通知**（標頭的 Link 按鈕，只在有通知時顯示）：等待中的加入請求、名冊不一致或分岔、relay 超過 2 分鐘無法連上、等待塔台的訊息、保留超過 10 分鐘的訊息，以及轉發來的確認。轉發來的確認在清單裡用允許或拒絕回答，工具的參數完整顯示，經由持有者的 `confirmRequests()` 和 `answerConfirm()`，帶著請求的摘要；在 pi 裡，同樣兩個按鈕是 `/boss link confirms`（清單，參數完整）和 `/boss link confirm <id> allow|deny`（見下面的**在 pi 裡**）。
-- **在 pi 裡**（`src/bosslink.ts`，0.61.0；只接受老闆自己輸入的內容，所以塔台執行或隊友 run 都不能用，沒有任何工具能到達它們，而 `control.ts` 的 `BOSS_LINK_LOCAL` 不讓已配對裝置的輸入區輸入它們，如同對 `link decide`）。每一個都 post 頁面所 post 的路由，所以持有者保留它的檢查，並在它改變誰可以指揮這台電腦的地方詢問 `hereOnly`（`hereOnlyOpts()`）。
+- **在 pi 裡**（`src/bosslink.ts`，0.61.0；只接受老闆自己輸入的內容，所以塔台 run或隊友 run 都不能用，沒有任何工具能到達它們，而 `control.ts` 的 `BOSS_LINK_LOCAL` 不讓已配對裝置的輸入區輸入它們，如同對 `link decide`）。每一個都 post 頁面所 post 的路由，所以持有者保留它的檢查，並在它改變誰可以指揮這台電腦的地方詢問 `hereOnly`（`hereOnlyOpts()`）。
 
   這類畫面在等待時（確認、選擇、token 畫面、邀請畫面），pane 會持有伺服器的覆蓋標記（`src/heremark.ts`：畫面開啟前先開 `gui-lan-face`，`gui-lan-pending` 每秒更新它以對抗 5 秒的租約，畫面返回、拋出錯誤或被切斷時就放掉），所以已配對裝置的按鍵板、輸入區和收回動作只會把 Escape 送進 pane，和 `/boss gui lan` 覆蓋畫面一樣；沒有它的話，`hereOnly` 只對頁面的轉送有效，對終端機無效，而按鍵板的 Enter 就會回答那個確認。
 
@@ -407,7 +407,7 @@ flowchart TD
 
 session 的範圍是它的 `open` 所來自的那一個團隊（當這個裝置是該團隊的名冊管理員時；兩個團隊的管理員持有兩個 session），加上提出要求的 `box` 授權所給的盒子自己的單位。單位只透過盒子自己對「誰啟動了它」的紀錄屬於某個團隊，絕不靠它的資料夾（真實盒子的兩個團隊都在 `/srv/work` 工作）：隊友 run 靠它的執行紀錄，隊友 run 所開啟的主智慧體靠它的 `opened` 列和 pane 的 `sb_opened_by` token（兩者必須一致，否則它不屬於任何人），成員或子智慧體靠它的主智慧體所在的分頁。
 
-盒子的塔台服務、它的本機執行、自己一個分頁裡的工作者，以及任何無法歸屬的東西，都是盒子的，只有 `box` 授權才到得了。hq 簽署的授權永遠不能帶 `operate`。
+盒子的塔台服務、它的本機 run、自己一個分頁裡的工作者，以及任何無法歸屬的東西，都是盒子的，只有 `box` 授權才到得了。hq 簽署的授權永遠不能帶 `operate`。
 
 #### 載體
 
@@ -541,13 +541,12 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 狀態，以及狀態之間的門：
 
 ```mermaid
-stateDiagram-v2
-    [*] --> 關閉
-    關閉 --> 暫存: /boss auto on，或主塔台的 boss_auto
-    暫存 --> 開啟: 老闆確認
-    暫存 --> 關閉: 10 分鐘後失效
-    關閉 --> 開啟: 頁面上的兩次點擊
-    開啟 --> 關閉: 任何一道門；寫出回來的清單
+flowchart TD
+    Off(["關閉"]) -->|"/boss auto on，<br/>或主塔台的 boss_auto"| Staged(["暫存"])
+    Staged -->|"老闆確認"| On(["開啟"])
+    Staged -->|"10 分鐘後<br/>失效"| Off
+    Off -->|"頁面上的兩次點擊"| On
+    On -->|"任何一道門；<br/>寫出回來的清單"| Off
 ```
 
 #### 一個狀態，只由伺服器寫入
@@ -654,7 +653,7 @@ pi 修掉 #11421 之後，這道防護就可以移除。pi 比 1.4.0 新的時�
 
 因為有東西在執行而拒絕（`busy: true`）的，會每 3 秒再問一次，最多 15 秒，因為主智慧體是從緊接著結束的那個輪次送出它的完成回報；任何其他的拒絕都是最終的。10 秒內沒有回答的主智慧體（沒有這個頻道的 pi-straw-boss）會讓工具帶著錯誤離開，而且什麼都不關。接受之後，工具最多等 30 秒，讓 session 離開 intercom，並說明它有沒有離開。
 
-塔台執行 pi 的預設模型，除非你在 `~/.pi/agent/straw-boss/config.json`（設了 `PI_CODING_AGENT_DIR` 時在它底下）為它設定一個：
+塔台 run pi 的預設模型，除非你在 `~/.pi/agent/straw-boss/config.json`（設了 `PI_CODING_AGENT_DIR` 時在它底下）為它設定一個：
 
 ```json
 { "towerModel": "claude-bridge/claude-sonnet-5-5" }
@@ -725,9 +724,9 @@ stateDiagram-v2
 
 #### 交接與分配
 
-協調者用 `call_tower` 的 `why=shared` 送出車廂單。塔台不回答 go：它把車廂單送給專案唯一的整合員，並在那個主智慧體回報閒置時關閉它。整合員自己不告訴協調者任何事：它用 `train_car` 設定車廂的狀態，由 sb server 送出通知，所以塔台不轉達任何回覆。從 0.74.0 起，塔台自己用程式開啟整合員（`src/integrator.ts`、`src/opener.ts`、`src/server/runtools.ts`）：塔台執行呼叫 `boss_open_main`，帶 `role: "integrator"`、以車廂單作為請求，以及它的寄件者。
+協調者用 `call_tower` 的 `why=shared` 送出車廂單。塔台不回答 go：它把車廂單送給專案唯一的整合員，並在那個主智慧體回報閒置時關閉它。整合員自己不告訴協調者任何事：它用 `train_car` 設定車廂的狀態，由 sb server 送出通知，所以塔台不轉達任何回覆。從 0.74.0 起，塔台自己用程式開啟整合員（`src/integrator.ts`、`src/opener.ts`、`src/server/runtools.ts`）：塔台 run呼叫 `boss_open_main`，帶 `role: "integrator"`、以車廂單作為請求，以及它的寄件者。
 
-專案不是執行說了算：開啟器從工作區的 checkout 讀出來（它 `apps.json` 最上層的 `integration.project`，沒有就用它 repository 的資料夾名稱，同一個 repository 的每個 worktree 都一樣），別的字一律拒絕，所以編出來的名稱什麼也開不了。執行看不到事件 id，所以 server 自己找車廂單：這個執行從該寄件者收下的 `call_tower`（`why=shared`）之中，內文帶有請求裡 `head:` 的最新一則。
+專案不是執行說了算：開啟器從工作區的 checkout 讀出來（它 `apps.json` 最上層的 `integration.project`，沒有就用它 repository 的資料夾名稱，同一個 repository 的每個 worktree 都一樣），別的字一律拒絕，所以編出來的名稱什麼也開不了。執行看不到事件 id，所以 server 自己找車廂單：這個 run從該寄件者收下的 `call_tower`（`why=shared`）之中，內文帶有請求裡 `head:` 的最新一則。
 
 接著它在整台電腦上找專案的整合員（種類為 integrator，且由塔台為該專案標記、或名為 `integ <project>` 的主智慧體；為隊友的裝置開啟的主智慧體不論怎麼自稱都不算，依它的 pane token 與路由表判斷），找不到就在自己的工作區開一個，命名為 `integ <project>`，讓新的 pi 在收到任何東西之前就已經是 integrator 種類，然後照寄件者寫的原樣轉發車廂單，蓋上 `fwd` 與 `fwd-from`：執行打的字一個也不會被轉發，所以執行改不了車廂單的 `auth`。
 
@@ -735,13 +734,13 @@ stateDiagram-v2
 
 這條規則管的是門開出來的整合員。專案若已經有用自己名稱在跑的整合員（0.74.0 之前由老闆每個 app 開一個，例如同一個 checkout 裡的 `integ FE2` 與 `integ v3`），就維持原樣：只要塔台的工作區裡、或在 checkout 裡工作（checkout 底下 app 自己的 repository 也算）有一個活著的 integrator 種類主智慧體，它沒有被塔台標記、不是為隊友的裝置開啟的，而且不是那個名為 `integ <project>` 的主智慧體，門就什麼也不開、不把它們算進自己的限制，也不替你挑。
 
-門會先找它們，再套用帳本規則，所以帳本放在它們自己名稱底下（`trains/FE2/<app>.json`）不會造成拒絕。門的拒絕訊息會列出它們的名稱，對本機執行還會附上車廂單的事件 id，讓執行照 0.73 的方式轉發：`tower_reply` 帶 `to`（跑那個 app 火車的整合員）、以車廂單作為訊息、`forward`（那個 id），程式再從執行收下的事件蓋上 `fwd` 與 `fwd-from`。
+門會先找它們，再套用帳本規則，所以帳本放在它們自己名稱底下（`trains/FE2/<app>.json`）不會造成拒絕。門的拒絕訊息會列出它們的名稱，對本機 run還會附上車廂單的事件 id，讓執行照 0.73 的方式轉發：`tower_reply` 帶 `to`（跑那個 app 火車的整合員）、以車廂單作為訊息、`forward`（那個 id），程式再從執行收下的事件蓋上 `fwd` 與 `fwd-from`。
 
 蓋章送出的是事件本身的文字，不是執行打的訊息；對象必須是門為那張車廂單列出的整合員之一；為隊友的裝置開啟的主智慧體，它的車廂單不轉發，它也不能當對象，用的是同樣兩個見證（它的 pane token、任何一個工作區的路由表）。隊友 run 拿不到 id，因為它不轉發車廂單；在 `dispatch` 以下，它會在關卡之前先向開啟器問有沒有拒絕，所以開啟器會拒絕的呼叫不會去問老闆。
 
 保留下來的整合員沒有持久的記號，所以它必須待在塔台的工作區裡，或在 checkout 裡工作，門才看得到。專案的帳本存在（`trains/<project>/<app>.json`）而看不到它的整合員時，門會在 2 秒後再看一次；還是看不到，只有在整台電腦上沒有任何未標記的 integrator 種類主智慧體活著時才開一個（死掉的整合員必須能被替換），否則拒絕並說出那個主智慧體的名稱。整合員的開啟不記進任何帳本，所以閒置的那個關閉之後，下一張車廂單會再開一個；開啟需要工作區的 `apps.json` 裡有帶 `integration` 的 app，合併火車關閉時會被拒絕。
 
-隊友 run 開啟的主智慧體用同樣的方式送出車廂單，而它的 `call_tower` 送達的是它裝置的隊友 run，絕不是本機執行（[隊友 run](#隊友-run)）：在那裡，同一個呼叫是隊友 run 通往整合員的唯一一道門。這樣的車廂單若真的到了本機執行（那個主智慧體指名了另一個工作區的塔台、它的路由已經不在，或本機執行較新的等待蓋過了路由），門會拒絕它：主智慧體的 pane token（`link:<device id>`）或任何一個工作區的路由表都說得出它是誰的。伺服器的重型關卡 semaphore 並沒有建。
+隊友 run 開啟的主智慧體用同樣的方式送出車廂單，而它的 `call_tower` 送達的是它裝置的隊友 run，絕不是本機 run（[隊友 run](#隊友-run)）：在那裡，同一個呼叫是隊友 run 通往整合員的唯一一道門。這樣的車廂單若真的到了本機 run（那個主智慧體指名了另一個工作區的塔台、它的路由已經不在，或本機 run較新的等待蓋過了路由），門會拒絕它：主智慧體的 pane token（`link:<device id>`）或任何一個工作區的路由表都說得出它是誰的。伺服器的重型關卡 semaphore 並沒有建。
 
 #### 整合員
 
@@ -757,13 +756,13 @@ app 的 `integration.stages` 列出整合員帶每列火車走過的階段：`me
 
 不想要這一切的電腦，在它的 session 的環境裡設 `STRAW_BOSS_INTEGRATION=off`，或在狀態資料夾（`$PI_CODING_AGENT_DIR/straw-boss`，否則 `~/.pi/agent/straw-boss`）的 `config.json` 裡設 `"integration": "off"`，就能關掉合併火車。順序：非空的環境值優先；否則是 `config.json` 裡的 `integration`（UTF-8 BOM 會被忽略）；否則 `STRAW_BOSS_DESK=1` 時為關，其他情況為開。開是 `on`、`true`、`1`、`yes`；關是 `off`、`false`、`0`、`no`（大小寫和前後空白會被忽略）。
 
-這個開關失敗即關閉：任何其他值，以及存在但讀不了或解析不了的 `config.json`（結尾逗號、是個資料夾），都會關掉火車，並每個行程告知一次（一則 session 通知，或塔台執行時 stderr 上的一行），指名檔案和值。關閉時，沒有主智慧體或塔台會被給予整合員角色：主智慧體、塔台和塔台執行的 prompt 會去掉它們的整合文字，改說這台電腦上整合是關閉的，主智慧體在合併到共用分支或部署之前問老闆，塔台對帶有 `car:` 區塊的 `shared` 請求回答「integration is off on this computer」並且不為它開任何主智慧體，而任何 `apps.json` 裡的 `integration`、`stages`、`targets` 和 `deploy` 都會被忽略（`apps.json` 仍然給出擁有的 app 和它的路徑）。
+這個開關失敗即關閉：任何其他值，以及存在但讀不了或解析不了的 `config.json`（結尾逗號、是個資料夾），都會關掉火車，並每個行程告知一次（一則 session 通知，或塔台 run時 stderr 上的一行），指名檔案和值。關閉時，沒有主智慧體或塔台會被給予整合員角色：主智慧體、塔台和塔台 run的 prompt 會去掉它們的整合文字，改說這台電腦上整合是關閉的，主智慧體在合併到共用分支或部署之前問老闆，塔台對帶有 `car:` 區塊的 `shared` 請求回答「integration is off on this computer」並且不為它開任何主智慧體，而任何 `apps.json` 裡的 `integration`、`stages`、`targets` 和 `deploy` 都會被忽略（`apps.json` 仍然給出擁有的 app 和它的路徑）。
 
 `{{dir}}`，也就是 prompt 指向 `apps-config.md` 和 `planning.md` 的資料夾，會變成狀態資料夾裡的一份副本（`prompts-off/`），在 session 第一次使用時，從同樣的檔案去掉整合區塊後做成，而且不含 `integrator.md`，所以沒有任何東西會載入整合員的 prompt。每次載入都會重寫文字和來源不同的副本檔案，移除沒有來源的檔案和遺留的暫存檔，而開關再度開啟時副本會被移除。副本寫不出來時，會有通知這樣說，這個輪次仍有它的 Straw Boss 區段，而 `{{dir}}` 讀作「none yet」。
 
 `main.md` 的 `## Seam bindings` 區塊在同樣的標記之內，所以火車關閉時套用 anchorloop 的預設（協調者在合併或部署之前問老闆）。prompt 檔案在一個地方標記文字：`<!-- integration -->…<!-- /integration -->` 在關閉時被去掉，`<!-- no-integration -->…<!-- /no-integration -->` 只有在關閉時才保留（`src/trainswitch.ts`）。標記必須完全照這樣拼，小寫，而且不能巢狀或交錯；任何其他情況都會讓 session 啟動失敗，不論開或關。預設是開，而 session 得到的角色 prompt 就是現在的，去掉標記；開著的主智慧體也會讀帶著標記的 `apps-config.md`，以及這個版本新增的幾行。
 
-這個開關是每台電腦各自的：書桌透過 Straw Link 送給火車開著的裝置的工作，跑的是那個裝置的火車。它只觸及 sb 自己的 prompt：專案的 skill（例如寫著「play the integrator yourself」的協調者 skill）不在它的範圍內。pane（主智慧體和塔台執行一樣）的環境來自 Herdr（`herdr agent start`），所以要把變數設在啟動 `herdr server` 的環境裡（`STRAW_BOSS_DESK=1` 也是這樣），或用每個 session 都會讀的 `config.json`。書桌什麼都不設：`STRAW_BOSS_DESK=1` 已經關掉火車，而它的 `config.json` 裡的 `"integration": "off"` 只是保險。
+這個開關是每台電腦各自的：書桌透過 Straw Link 送給火車開著的裝置的工作，跑的是那個裝置的火車。它只觸及 sb 自己的 prompt：專案的 skill（例如寫著「play the integrator yourself」的協調者 skill）不在它的範圍內。pane（主智慧體和塔台 run一樣）的環境來自 Herdr（`herdr agent start`），所以要把變數設在啟動 `herdr server` 的環境裡（`STRAW_BOSS_DESK=1` 也是這樣），或用每個 session 都會讀的 `config.json`。書桌什麼都不設：`STRAW_BOSS_DESK=1` 已經關掉火車，而它的 `config.json` 裡的 `"integration": "off"` 只是保險。
 
 
 #### 火車作為它們自己的工作者
@@ -794,7 +793,7 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 火車和整合員用 `train_car` 設定每個車廂的狀態（`received`、`returned`、`landed`、`dropped`）；sb server 對每個（車廂、狀態）以 `kind=car_notice` 送給協調者一則 intercom 通知，在 30 秒、2 分鐘和 5 分鐘重試，記錄 `deliveredAt`，而協調者不在時，送給塔台一則 `blocked` 並記錄 `escalatedAt`。火車在每則 landed 通知都已送達或升級之前，不能通過 `land`。server 只在記憶體裡保留塔台的轉發紀錄，以及門為某張車廂單列出整合員的回答，兩者都不從磁碟讀回（那裡的檔案是火車寫得到的），所以 sb server 重啟後就沒有了。
 
-從 0.75.1 起，拒絕訊息會說明這一點：在 server 啟動後的 24 小時內，整合員的 `train_car` 拒絕訊息 `no forward by a tower carries head ...` 會寫出啟動時間與補救方式（協調者把車廂單再送給塔台一次，塔台再轉發一次），而車廂單在啟動之前就進來的塔台執行，會被告知再問一次門。
+從 0.75.1 起，拒絕訊息會說明這一點：在 server 啟動後的 24 小時內，整合員的 `train_car` 拒絕訊息 `no forward by a tower carries head ...` 會寫出啟動時間與補救方式（協調者把車廂單再送給塔台一次，塔台再轉發一次），而車廂單在啟動之前就進來的塔台 run，會被告知再問一次門。
 
 ##### 指令
 
@@ -856,7 +855,7 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 各種清單（`pane list`、`workspace list`、`tab list --workspace`）是對 Herdr socket 的請求（`pane.list`、`workspace.list`、`tab.list`），不是另外啟動的 `herdr` 指令；回覆與 CLI 的相同，所以每個讀取者都一樣。每一個寫入（`report-metadata`、`tab create`、`agent start`、關閉等）仍然執行 CLI。清單失敗時，會以 Herdr 自己的錯誤拒絕，不會退回 CLI。儀表板和瀏覽器檢視從同一個 `session.snapshot` 一併讀取 panes 與 workspaces。瀏覽器檢視的輪詢（有頁面在監聽時每 2 秒一次）仍然是輪詢：它的網還包含只有 session 檔和 intercom 才知道的內容（單位在等什麼、它的佇列、它的對話框），這些沒有任何 Herdr 事件會告知。
 
-## 孤兒子智慧體
+## 孤立的子智慧體
 
 子智慧體的結果只有在啟動它的 session 自己的行程持有 pi-herdr-agents 的 watcher 與已啟動子層的登記簿（`runningSubagents`，位於行程全域的槽位 `globalThis[Symbol.for("pi-subagents/runtime")]`）時，才會送達那個 session。`/reload`、`/new`、`/resume` 和 `/fork` 會保留它們，結束 pi 會抑制送達，崩潰或重新啟動則會永久丟失：pi-herdr-agents 在完全重新啟動後不會恢復 watcher。完成後仍保持開啟的子智慧體（例如互動式的）就此被擱置：它完成後停在自己的 pane 裡，沒有人被告知。
 
@@ -907,7 +906,7 @@ sequenceDiagram
 
 如果 pane 仍然開著，表示關閉從未生效（行程先死了）：`closing` 鍵會被收回（session 中的 `unclosed` 鍵，讓 reload 不會再讀它），這次執行從頭再經過一次還原的證明。之後不再符合資格的執行（沒有還原的 pane、同一個 terminal、不是一般 pi）會和其他任何情況一樣算作一次落空，第八次落空而放棄時，會有一則警告指名它的 session 路徑。這則訊息以 `sessionPath` 和名稱指名每次執行，引述要傳遞的後續指示（完成你拿到的任務，並回報結果），並告訴模型對每次執行呼叫一次 `subagent_resume`（以 `PI_SUBAGENT_AUTO_EXIT=0` 啟動的執行則設 `autoExit` 為 false）；接手後的執行隨後以一般的 `subagent_result` 回報。
 
-它是會觸發回合的 steering 訊息，就像 pi-herdr-agents 自己送達 `subagent_result` 的方式，也像塔台執行被驅動的方式：閒置的啟動者立即醒來，忙碌的啟動者在下一步收到它。Straw Boss 不呼叫該工具、不匯入 pi-herdr-agents，也不替子層寫結果：這次執行是否、如何被接手，仍由 pi-herdr-agents 和模型決定。
+它是會觸發回合的 steering 訊息，就像 pi-herdr-agents 自己送達 `subagent_result` 的方式，也像塔台 run被驅動的方式：閒置的啟動者立即醒來，忙碌的啟動者在下一步收到它。Straw Boss 不呼叫該工具、不匯入 pi-herdr-agents，也不替子層寫結果：這次執行是否、如何被接手，仍由 pi-herdr-agents 和模型決定。
 
 身為塔台的啟動者完全不做這些（塔台由伺服器的佇列驅動，而不是由這類訊息）。每個失敗的步驟都顯示為警告，記為 `gaveUp`，不再重試：關不掉（或關了仍開著）的 pane 不會被接手，放不進 session 的訊息則連同它本來要指名的 session 一起顯示，方便手動接手。
 
@@ -1235,7 +1234,7 @@ session 來自 [pi-loop-monitor](https://www.npmjs.com/package/pi-loop-monitor) 
 
 接著它對基地 POST `close/all`（基地的關掉會先像 `/boss close all` 一樣檢查，只要有執行中的東西會遺失，就會連同所有原因一併拒絕）、`close/tab` 或 `close/unit`。基地的**收起**（在它的 ＋主智慧體旁邊）會先詢問，並在基地的標籤下 POST `close/stash`；HUD 的**已收起（n）** 列出被收起的東西，每個都有**接回**，它 POST `close/pop`，並從伺服器的 session 開啟它。已配對的裝置可以收起和接回，如同它可以關掉。關閉是每個 session 自己的事：伺服器請 session 的 bridge 像 `/boss close` 那樣讓它結束（pi 的 `shutdown`，原因 `quit`，所以它的 token 清除，而塔台的結束會把主智慧體降為成員）。
 
-sb server 所執行的塔台（塔台服務）沒有 pi，也沒有可詢問的 bridge：它的**關掉塔台**POST 同樣的 `close/unit`，伺服器像 `close-tower` 那樣結束該服務（分頁關閉，token 隨 `sb_tower_quit=<members>` 消失，基地的主智慧體變成成員）；小隊或基地被關閉時，不詢問那個身分，也不詢問服務 pane 中執行的 pi（老闆對話、事件執行、手動執行），而服務隨分頁或工作區結束（正在工作的執行的 pi 仍會拒絕基地的關掉）；收起會拒絕塔台是該服務的基地，因為接回不會再產生服務，它的佇列和對話留在舊的工作區 id 之下。
+sb server 所執行的塔台（塔台服務）沒有 pi，也沒有可詢問的 bridge：它的**關掉塔台**POST 同樣的 `close/unit`，伺服器像 `close-tower` 那樣結束該服務（分頁關閉，token 隨 `sb_tower_quit=<members>` 消失，基地的主智慧體變成成員）；小隊或基地被關閉時，不詢問那個身分，也不詢問服務 pane 中執行的 pi（老闆對話、事件 run、手動執行），而服務隨分頁或工作區結束（正在工作的執行的 pi 仍會拒絕基地的關掉）；收起會拒絕塔台是該服務的基地，因為接回不會再產生服務，它的佇列和對話留在舊的工作區 id 之下。
 
 沒有回答的 session 會在對話框中被告知，並提示它可能執行較舊的 pi-straw-boss（對它 `/reload`）。pi 結束後，單位隨即從一個脫離的行程關閉它自己的 pane。在關掉之前，session 會用 token `sb_closing` 標記它的 pane（TTL 10 分鐘，session 絕不清除）：pi 還在關閉時它就離開 intercom，而 Herdr 仍列為沒有 session 的 pi 的 pane，在那幾秒會顯示成「網之外」下一張已完成的未加入 pi 的綠色卡片，所以網會把帶有這個 token 的 pane 排除在外，被關掉的主智慧體從它的分頁直接消失。
 
@@ -1502,7 +1501,7 @@ QR 編碼器是套件自己的（`src/qr.ts`），部分改編自 Project Nayuki
 
 手機版面（未發行；螢幕寬度最多 640 px，桌面不變）。紀錄佔滿螢幕：在主智慧體有三則 steer 排隊或塔台正在等老闆時，紀錄至少佔 390 × 844 視窗的 55%（原本是 29% 和 33%），而第一個基地從地圖頂端 160 px 以內開始。
 
-地圖沒有位置列，也沒有單位的關掉：**單位的關掉只在它的通訊畫面標頭中**；**基地和小隊的關掉**（同一個按鈕，同樣的確認和拒絕）在它標頭的 `⋯` 後面，而標頭自己的 `⋯` 在存在時容納**移除已完成**和**已收起**。塔台的通訊畫面標頭是一列（返回、名稱、資料、`⋯`），**＋主智慧體**和**關掉塔台**在它的 `⋯` 後面，位於通訊畫面｜終端機的切換之上。老闆的對話是一行，附一個 `⋯`，容納離開、新建、該行截掉的資訊，以及事件執行的標籤（只有事件執行時，它寫成「Event runs · n」）。
+地圖沒有位置列，也沒有單位的關掉：**單位的關掉只在它的通訊畫面標頭中**；**基地和小隊的關掉**（同一個按鈕，同樣的確認和拒絕）在它標頭的 `⋯` 後面，而標頭自己的 `⋯` 在存在時容納**移除已完成**和**已收起**。塔台的通訊畫面標頭是一列（返回、名稱、資料、`⋯`），**＋主智慧體**和**關掉塔台**在它的 `⋯` 後面，位於通訊畫面｜終端機的切換之上。老闆的對話是一行，附一個 `⋯`，容納離開、新建、該行截掉的資訊，以及事件 run的標籤（只有事件 run時，它寫成「Event runs · n」）。
 
 排隊中的訊息在有兩則以上時收合成一列「n queued」；點按會開啟清單，並可編輯所有 steer。助理的訊息沒有頭像欄，小隊的單位是底板在名稱旁邊的列，而手機的左側窗格寫出塔台和它的狀態。`⋯` 是一個 44 px 的按鈕，開啟 popover（Escape 或點擊外面會關閉它，焦點回到按鈕；方向鍵、Home 和 End 在它的控制項之間移動；有作用的控制項會關閉它，離開和新建則為了它們的結果而保持開著），而在 640 px 以上，這個按鈕不存在，它的控制項回到它們一直所在的列，方向鍵也再次屬於頁面（`gui/menu.ts`）。
 
@@ -1540,7 +1539,7 @@ server 會把它寫進它提供的每個頁面，作為 `<meta name="sb-view" co
 
 禪一次只顯示一件事（`gui/zen.ts`，一個只在檢視顯示時才載入的 chunk；選擇存放在純模型 `gui/zenmodel.ts`）。**項目**就是在等你的東西：等著回答的單位、待處理的對話框、專案信任詢問，或塔台對你的等待，依它們開始等待的順序排列（會卡住智慧體的問題，例如對話框、信任詢問、盒子轉送的問題或隊友的確認，排在塔台的等待、配對請求或記憶提案之前；沒有任何卡片會在任何狀態下自己占滿螢幕，而是等待 Enter，卡住的優先，而螢幕上的卡片絕不會被取代或抽走；標準的順序不變），所以 HUD 的警示清單是同一組。
 
-另外四種問題，標準把它們顯示在 Link 按鈕、Wi-Fi 通知與塔台的通知中，在禪中各是一張卡片（`gui/cardalerts.ts`、`gui/zendecide.ts`）：隊友的塔台向這台電腦提出的**確認**（允許或拒絕，下面附工具的完整參數）、**Straw Link 盒子轉送的對話框**（共用的問題面板）、**配對請求**（手機顯示的四位數字，允許或拒絕），以及塔台執行的**記憶提案**（確認或駁回）。
+另外四種問題，標準把它們顯示在 Link 按鈕、Wi-Fi 通知與塔台的通知中，在禪中各是一張卡片（`gui/cardalerts.ts`、`gui/zendecide.ts`）：隊友的塔台向這台電腦提出的**確認**（允許或拒絕，下面附工具的完整參數）、**Straw Link 盒子轉送的對話框**（共用的問題面板）、**配對請求**（手機顯示的四位數字，允許或拒絕），以及塔台 run的**記憶提案**（確認或駁回）。
 
 每一種都透過與標準那一列相同的函式回答（`gui/asks.ts`），由 server 的清單決定卡片何時結束（它不再列出的卡片會留在螢幕上，附上*已經在別處回好了*，或在它的單位離開網或關閉時附上*這個單位已離開*，它的回答關閉，直到你按 Enter、Esc 或它的按鈕關閉它；卡片的敲擊聲會響一次，之後的拒絕或失敗仍會響低沉的缽聲，而在轉送之前就被取走、之後才得到對話框的卡片會變成可回答，而不是結束），而已配對的裝置保有它在標準中擁有的權限：它不會得到配對請求卡片，因為 server 對它回答 `local_only`。加入請求留在標準。
 
@@ -1645,7 +1644,7 @@ server 會把它寫進它提供的每個頁面，作為 `<meta name="sb-view" co
 
 這項工作在 `src/balance.mjs` 中以分離的 `node` 行程執行：啟動時是 `balance.mjs now <pane>`，結束時是 `balance.mjs after-close <pane> <tab>`，因為正在結束的 pi 會在 Herdr 關閉它的 pane 之前就離開。它以 `windowsHide` 啟動，所以在 Windows 上，分離的主控台子行程不會得到自己的主控台視窗。每次調整大小都根據剛讀取的版面來規劃，而系統暫存目錄下每個分頁一個的鎖（`pi-straw-boss-pane-balance/`）讓並行的 session 輪流進行，而不是把同一個變更套用兩次。
 
-本機塔台執行的 pi（以 `--sb-run` 啟動，或在 server 把常駐 pane 交給它時由執行模式標記，`src/runmark.ts`）絕不啟動 `after-close`：它的 pane 會留下，所以輔助程式只會空等它的 30 秒。在 Windows 上這個等待很要緊：Herdr 以 `Start-Process -Wait` 啟動 `pi.cmd`，它會等待整個行程樹，所以在輔助程式結束之前，pane 都不顯示提示，而那裡下一個 `herdr agent start` 就撞上自己的逾時。隊友 run 的 pane 會在 pi 一結束就由 server 關閉，所以它的 pi 保留 `after-close`，而塔台分頁就像任何 pane 那樣重新平衡（一旦聲明這麼說，執行模式就把行程標記為 `ally`）。
+本機塔台 run的 pi（以 `--sb-run` 啟動，或在 server 把常駐 pane 交給它時由執行模式標記，`src/runmark.ts`）絕不啟動 `after-close`：它的 pane 會留下，所以輔助程式只會空等它的 30 秒。在 Windows 上這個等待很要緊：Herdr 以 `Start-Process -Wait` 啟動 `pi.cmd`，它會等待整個行程樹，所以在輔助程式結束之前，pane 都不顯示提示，而那裡下一個 `herdr agent start` 就撞上自己的逾時。隊友 run 的 pane 會在 pi 一結束就由 server 關閉，所以它的 pi 保留 `after-close`，而塔台分頁就像任何 pane 那樣重新平衡（一旦聲明這麼說，執行模式就把行程標記為 `ally`）。
 
 ## 被擋住的對話框
 
@@ -1907,7 +1906,7 @@ pi-herdr-agents 沒有「父層還活著」的紀錄，所以對它的 worktree 
 
 只有當 payload 指名終端機時（Herdr 0.9.5 記載了 `pane_id` 與 `workspace_id`），智慧體事件才會拿它的終端機與 pane 的比對，所以在 hook 延遲內被重用的 pane id，在那裡仍可能被誤讀；巡檢的檢查使用終端機 id。從 macOS 應用程式啟動的 Herdr 的 PATH 很短；`run.sh` 尋找 node 的方式與網檢視外掛相同。外掛需要 Herdr 0.9.3 或更新版本、git、node 18 或更新版本，以及 Unix shell，所以只能在 macOS 與 Linux 上執行。`tests/reaper.test.ts` 對著假的 Herdr 與 git 驅動這些決定與巡檢。
 
-## 行程衛生與 slot
+## 程序衛生與 slot
 
 本節的第 1 版（`docs/specs/2026-11-04-procs.md` 計畫的第 2 層）：worker 啟動的任何東西都隨 worker 一起結束，而且 worktree 不會在還有行程執行時被移除。大量指令的 slot、Linux cgroup 路徑與 CPU 卡住偵測屬於第 2 版，目前還沒建好；本節會隨它們一起擴充。
 
@@ -1965,7 +1964,7 @@ pi-herdr-agents 沒有「父層還活著」的紀錄，所以對它的 worktree 
 
 sb server 是獨立成一個行程的 Straw Boss 後端，讓塔台、連線持有者與頁面不必取決於哪個 pi session 剛好在執行它們（[規格](specs/2026-10-26-sb-backend.md)）。它擁有行程紀錄、控制 socket、log、與 intercom broker 的連線，以及 GUI server（頁面、它的 API、對話框 hub、遠端存取、收起與關閉路由）。連線持有者在主 server 中執行（見[連線持有者](#straw-link跨電腦的塔台連線持有者)）；塔台在 server 中以[塔台服務](#塔台服務)執行，預設開啟（在 `config.json` 設定 `"towerRuns": { "enabled": false }` 則改為常駐的 pi session）。
 
-這一節包含：[它是什麼](#它是什麼)、[啟動](#啟動)與[重啟](#重啟)、[shell 的狀態](#shell-的狀態)、[桌面模式](#桌面模式up---dir)；接著是塔台服務：[服務](#塔台服務)、[常駐 pane](#常駐-pane)、[主智慧體呼叫塔台時](#主智慧體呼叫塔台時)、[本機執行](#本機執行)、[老闆對話](#老闆對話)、[塔台記憶](#塔台記憶)與[隊友 run](#隊友-run)。
+這一節包含：[它是什麼](#它是什麼)、[啟動](#啟動)與[重啟](#重啟)、[shell 的狀態](#shell-的狀態)、[桌面模式](#桌面模式up---dir)；接著是塔台服務：[服務](#塔台服務)、[常駐 pane](#常駐-pane)、[主智慧體呼叫塔台時](#主智慧體呼叫塔台時)、[本機 run](#本機 run)、[老闆對話](#老闆對話)、[塔台記憶](#塔台記憶)與[隊友 run](#隊友-run)。
 
 ### 它是什麼
 
@@ -2117,9 +2116,9 @@ GUI 不再等待塔台 pi：sb server 從它自己啟動起就提供頁面，所
 
 ### 塔台服務
 
-一個開關，`~/.pi/agent/straw-boss/config.json` 中的 `towerRuns`：`{ "towerRuns": { "enabled": false } }`（`max`，同時最多的 pi run 數，預設 4，是給[本機執行](#本機執行)用的）。**它預設是開啟的**：沒有 `config.json`，或 `towerRuns` 沒有 `enabled: false`，都表示開啟。讀不出來或解析不了的 `config.json` 也表示開啟，但 server 會說一次：在 log 與 status 的 `lastError` 中有一行 `code=config` 的 `error`，因為在此期間檔案自己的 `enabled: false` 並未被遵守。在 `enabled: false` 時，塔台維持為常駐，本節中的一切都不會發生。
+一個開關，`~/.pi/agent/straw-boss/config.json` 中的 `towerRuns`：`{ "towerRuns": { "enabled": false } }`（`max`，同時最多的 pi run 數，預設 4，是給[本機 run](#本機 run)用的）。**它預設是開啟的**：沒有 `config.json`，或 `towerRuns` 沒有 `enabled: false`，都表示開啟。讀不出來或解析不了的 `config.json` 也表示開啟，但 server 會說一次：在 log 與 status 的 `lastError` 中有一行 `code=config` 的 `error`，因為在此期間檔案自己的 `enabled: false` 並未被遵守。在 `enabled: false` 時，塔台維持為常駐，本節中的一切都不會發生。
 
-server 在啟動時與每次 `ensure-tower` 時讀取它，所以改變它不需要重啟。關閉它對 server 在一次更新（4 分鐘）之內生效：它釋放它的塔台身分，清除它的 `tower` token，並清掉每個 `service.json`、佇列與帳本；在那之前，發現存活身分 token 的 session 仍能找到它，而它送出的東西會被排進佇列、永遠不被讀取。以關閉的開關啟動的 server 也會清掉遺留物。服務代替塔台；喚醒 pi 處理它收到的事件的東西，是下文的[本機執行](#本機執行)（[規格](specs/2026-10-26-sb-backend.md)，**The tower service**）。
+server 在啟動時與每次 `ensure-tower` 時讀取它，所以改變它不需要重啟。關閉它對 server 在一次更新（4 分鐘）之內生效：它釋放它的塔台身分，清除它的 `tower` token，並清掉每個 `service.json`、佇列與帳本；在那之前，發現存活身分 token 的 session 仍能找到它，而它送出的東西會被排進佇列、永遠不被讀取。以關閉的開關啟動的 server 也會清掉遺留物。服務代替塔台；喚醒 pi 處理它收到的事件的東西，是下文的[本機 run](#本機 run)（[規格](specs/2026-10-26-sb-backend.md)，**The tower service**）。
 
 #### 工作區得到一個
 
@@ -2211,7 +2210,7 @@ Herdr 以短計數器為工作區、分頁與 pane 編號，這些計數器在�
 
   一個按鍵是一個字元（一個 code point，`é` 或 `中` 和 `x` 一樣；被拆開的字元的位元組會先被組合，所以半個字元絕不是按鍵）或一個完整的跳脫序列（方向鍵、Alt+b）。輸入的 `/quit` 與它之後片刻輸入的按鍵，即使只差幾毫秒，也是兩組，而 `/quit` 會被遵守；一次同時含有 `/quit⏎` 與多於一個後續按鍵的讀取，無法與貼上區分，會被保留。最後一行是單獨成一次讀取的單一字元、而且在行結束之後的貼上，是兩則訊息。
 
-  結束標記始終沒有到來的 bracketed paste，在它最後的資料之後 2 秒被關閉。提示自己不打開 bracketed paste（shell 在每個提示處設定該模式，在能關掉它之前被殺掉的提示，會讓老闆的 shell 停在它沒要求的模式，而且 Windows console 可能不認得它）：終端機送出標記時，這些標記會被遵守。空的 Enter 會以一行說明老闆在鍵盤前而且什麼都沒寫的訊息來喚醒塔台：這就是老闆現在和塔台說話的方式（見[run 中的老闆](#本機執行)）。server 拒絕的行會被顯示（`the tower did not take it: …`），而提示留著。
+  結束標記始終沒有到來的 bracketed paste，在它最後的資料之後 2 秒被關閉。提示自己不打開 bracketed paste（shell 在每個提示處設定該模式，在能關掉它之前被殺掉的提示，會讓老闆的 shell 停在它沒要求的模式，而且 Windows console 可能不認得它）：終端機送出標記時，這些標記會被遵守。空的 Enter 會以一行說明老闆在鍵盤前而且什麼都沒寫的訊息來喚醒塔台：這就是老闆現在和塔台說話的方式（見[run 中的老闆](#本機 run)）。server 拒絕的行會被顯示（`the tower did not take it: …`），而提示留著。
 - **Ctrl+D 或 Ctrl+C** 把 pane 留給老闆的 shell，不論提示裡有什麼（尚未送出的貼上，或正在途中的送出；被保留的東西會被丟掉，絕不在之後送出），而關閉的輸入也以同樣的方式結束提示，所以提示絕不會帶著死掉的輸入繼續執行：server 被告知，替身消失，而在那裡不會再輸入任何東西，不論老闆待多久，直到塔台 run 接手 pane 並結束，或 Herdr 重啟（沒有計時器把 pane 還回去：輸入到老闆正在使用的 shell 裡的提示，會接在他們寫到一半的那一行後面，或把他們的下一個指令當作訊息）。
 
   老闆透過喚醒塔台取回提示（任何 pi session 中的 `/boss tower <message>`，或任何事件）；那個 run 結束時，提示會回來。老闆可以在那裡手動啟動 `pi`：那是他們自己的 run。老闆在那裡手動啟動的塔台提示，會在它輪詢時就結束這個停放；Retry 不會結束它。
@@ -2272,16 +2271,16 @@ Herdr（0.9.5）會在一秒內，丟掉它不認得標籤的已回報智慧體�
 
 標頭說 `why=milestone` 與 `reply=none`、而且沒有本機 run 存活的 intercom 事件，會從第一個這樣的事件起算，最多等 30 秒（`hold`）等其他事件，所以一起完成的主智慧體會落在同一個 run 裡。其他每個事件（`shared`、`blocked`、未指定、預期回覆、老闆、通知、計時器）像以前一樣在 1 秒時喚醒，並帶著任何被保留的 milestone 一起。存活的 run 在它的下一個閒置時刻取得每個事件，不保留。server 只讀事件文字最開頭的標頭，所以在更後面或引用的名稱裡拼出 `why=milestone` 的訊息不會被保留。
 
-塔台的 run 提示（`prompts/tower-run.md`）說明每個原因該怎麼做：`milestone` 更新它的義務，告訴等它的人，並關閉它開啟的主智慧體；`shared` 呼叫（主智慧體寫入或改變它的分頁之外的東西，不是讀取）會對照看板與它的義務檢查，並回答放行或等待，指名擁有者；十分鐘沒有得到回答的主智慧體會告訴老闆並不再動它；`blocked` 呼叫會轉給它的擁有者，唯獨只有老闆能做的決定例外，塔台在它的交接備註中指名它為等待老闆，並告訴主智慧體，而不是把它送回去。
+塔台的 run 提示（`prompts/tower-run.md`）說明每個原因該怎麼做：`milestone` 更新它的義務，告訴等它的人，並關閉它開啟的主智慧體；`shared` 呼叫（主智慧體寫入或改變它的分頁之外的東西，不是讀取）會對照看板與它的義務檢查，並回答放行或等待，指名擁有者；十分鐘沒有得到回答的主智慧體會告訴老闆並不再動它；`blocked` 呼叫會轉給它的擁有者，唯獨只有老闆能做的決定例外，塔台在它的交接筆記中指名它為等待老闆，並告訴主智慧體，而不是把它送回去。
 
 塔台開啟的主智慧體用 `call_tower`（`why: milestone`，不回覆）回報它的完成報告。它絕不向主智慧體要求進度，因為 `board_read` 有。
 
-### 本機執行
+### 本機 run
 
 三種執行共用下面的機制：
 
 ```mermaid
-flowchart LR
+flowchart TD
     ev["事件<br/>主智慧體的 call_tower、<br/>老闆的話、<br/>隊友的訊息"] --> q["佇列<br/>每個工作區一個"]
     q --> who{"誰送來的？"}
     who -->|"本機的 session"| er["事件 run<br/>全新 pi，以 tower_done 結束"]
@@ -2292,13 +2291,13 @@ flowchart LR
     ar --> sp
 ```
 
-塔台服務開啟時（預設），送給塔台身分的事件會喚醒常駐 pane 裡的一個 pi（[規格](specs/2026-10-26-sb-backend.md)，**The wake protocol**、**Tower tools in a run**）。每個工作區同時只有一個本機執行，整台機器最多 `towerRuns.max` 個（預設 4）；一陣事件只會啟動一個執行（喚醒前等 1 秒；已完成的里程碑最多等 30 秒，見[主智慧體呼叫塔台時](#主智慧體呼叫塔台時)）。`boss` 事件（GUI 的輸入框、`/boss tower <prompt>`）優先處理。
+塔台服務開啟時（預設），送給塔台身分的事件會喚醒常駐 pane 裡的一個 pi（[規格](specs/2026-10-26-sb-backend.md)，**The wake protocol**、**Tower tools in a run**）。每個工作區同時只有一個本機 run，整台機器最多 `towerRuns.max` 個（預設 4）；一陣事件只會啟動一個執行（喚醒前等 1 秒；已完成的里程碑最多等 30 秒，見[主智慧體呼叫塔台時](#主智慧體呼叫塔台時)）。`boss` 事件（GUI 的輸入框、`/boss tower <prompt>`）優先處理。
 
-**啟動。** 每次執行前，server 都會對 pane 所在的資料夾跑設定檢查（`assertSettingsSafe`），被拒絕就什麼都不啟動：事件留在佇列裡，塔台卡片顯示一則錯誤通知，下一次嘗試跟著下一個事件來，最多每分鐘一次。server 會在 pane 裡執行 `pi --name "tower run · <label> · <run8>" --sb-run <run id> --tools <the run's tools>`，不帶任何 Straw Boss 環境變數，並記錄這個執行的 PID 與啟動時間。老闆對話會在 `--tools` 之前加上 `--session <file>`；隊友 run 不帶 `--tools` 啟動（見下方**本機執行沒有 shell**）。
+**啟動。** 每次執行前，server 都會對 pane 所在的資料夾跑設定檢查（`assertSettingsSafe`），被拒絕就什麼都不啟動：事件留在佇列裡，塔台卡片顯示一則錯誤通知，下一次嘗試跟著下一個事件來，最多每分鐘一次。server 會在 pane 裡執行 `pi --name "tower run · <label> · <run8>" --sb-run <run id> --tools <the run's tools>`，不帶任何 Straw Boss 環境變數，並記錄這個 run的 PID 與啟動時間。老闆對話會在 `--tools` 之前加上 `--session <file>`；隊友 run 不帶 `--tools` 啟動（見下方**本機 run沒有 shell**）。
 
 #### 認領（claim）
 
-帶 `--sb-run` 的 pi 在加入任何東西之前，會先透過控制 socket 向 server 送出 `claim {run id, pane, pid, start time}`。只有在 run id 是 server 自己啟動且尚未結束的、pane、PID 與啟動時間都和記錄相符（server 自己在行程表裡找 pi 的行程：當 Herdr 只列出啟動 pi 時經過的包裝程式，例如 Windows 上的 `cmd.exe /c pi.cmd`，記錄的 PID 就是包裝程式底下第一個帶有 run id 且本身不是包裝程式的行程；停止或逾時時會先結束 pi 再結束包裝程式，各自在當下的行程表裡確認；啟動失敗的執行，只結束 pane 裡命令列帶有 run id 的行程）、server 看到的每一次 Herdr 接管都已處理完，而且這個執行尚未被認領時，server 才會回傳 run token（只存在記憶體）、執行的種類和 brief；被拒絕的 pi 會附上原因退出。
+帶 `--sb-run` 的 pi 在加入任何東西之前，會先透過控制 socket 向 server 送出 `claim {run id, pane, pid, start time}`。只有在 run id 是 server 自己啟動且尚未結束的、pane、PID 與啟動時間都和記錄相符（server 自己在行程表裡找 pi 的行程：當 Herdr 只列出啟動 pi 時經過的包裝程式，例如 Windows 上的 `cmd.exe /c pi.cmd`，記錄的 PID 就是包裝程式底下第一個帶有 run id 且本身不是包裝程式的行程；停止或逾時時會先結束 pi 再結束包裝程式，各自在當下的行程表裡確認；啟動失敗的執行，只結束 pane 裡命令列帶有 run id 的行程）、server 看到的每一次 Herdr 接管都已處理完，而且這個 run尚未被認領時，server 才會回傳 run token（只存在記憶體）、執行的種類和 brief；被拒絕的 pi 會附上原因退出。
 
 常駐 pane 裡沒帶旗標的 pi 會問 `pane-role`（常駐塔台帶有 `STRAW_BOSS_ROLE=tower`，且 session 裡有它的 `tower` 項目，永遠不會被這樣問；已經成為常駐塔台的行程也不會，這由行程自己記住：server 回答了 `none`，或當時沒有 server 可以回答。它的 `/reload`、`/new`、`/resume` 或 `/fork` 是它自己的切換，新分支還沒有項目。
 
@@ -2314,9 +2313,9 @@ flowchart LR
 
 #### 執行
 
-它不加入任何網、不發佈 token、不跑守衛。它的角色段落是 `prompts/tower-run.md`，加上 server 建好的 brief（誰、為什麼、它監督的主智慧體、未了的義務、記憶、摘要、上一份交接備註、工具、旗標；最多 8,000 字元）。它每秒向 server 輪詢一次，每個閒置時刻取一個等待中的事件，當成帶 `triggerTurn` 的 `straw-tower` 訊息，然後確認為 `taken`。
+它不加入任何網、不發佈 token、不跑守衛。它的角色段落是 `prompts/tower-run.md`，加上 server 建好的 brief（誰、為什麼、它監督的主智慧體、未了的義務、記憶、摘要、上一份交接筆記、工具、旗標；最多 8,000 字元）。它每秒向 server 輪詢一次，每個閒置時刻取一個等待中的事件，當成帶 `triggerTurn` 的 `straw-tower` 訊息，然後確認為 `taken`。
 
-它的工具是塔台自己的（`boss_status`、`call_tower`、`tower_list`、`board_read`、`tower_send`、`boss_open_main`、`boss_close_main`、`boss_server`），加上 `tower_reply`、`tower_memory`（[塔台記憶](#塔台記憶)）與 `tower_done`，每一個都是在 run token 之下透過 socket 對 server 發出的請求：工作由 server 以塔台身分完成，所以一切都以 `id=sb-tower-<ws>` 送出，回覆也回到 server。pi-intercom 的 `intercom` 工具被擋下，並指向 `tower_reply`。執行以 `tower_done {note, wakeAfter?}` 結束（備註 1 到 1,200 字元，交給下一個本機執行；`wakeAfter` 5 到 240 分鐘，要求一次後續執行，每個工作區同時只有一個待辦）；還有事件是給這個執行的時候，它會被拒絕。
+它的工具是塔台自己的（`boss_status`、`call_tower`、`tower_list`、`board_read`、`tower_send`、`boss_open_main`、`boss_close_main`、`boss_server`），加上 `tower_reply`、`tower_memory`（[塔台記憶](#塔台記憶)）與 `tower_done`，每一個都是在 run token 之下透過 socket 對 server 發出的請求：工作由 server 以塔台身分完成，所以一切都以 `id=sb-tower-<ws>` 送出，回覆也回到 server。pi-intercom 的 `intercom` 工具被擋下，並指向 `tower_reply`。執行以 `tower_done {note, wakeAfter?}` 結束（備註 1 到 1,200 字元，交給下一個本機 run；`wakeAfter` 5 到 240 分鐘，要求一次後續執行，每個工作區同時只有一個待辦）；還有事件是給這個 run的時候，它會被拒絕。
 
 intercom 事件以程式寫的發送者行（`[intercom from <name> (<id>)]`）抵達模型，所以聲稱是老闆指示的文字可以和真正的老闆事件區分開。名稱與 id 只保留字母、數字、空格與 `._@-`（各 80 字元），所以那一行始終只有一行，而真正的 id 永遠是 ASCII 括號裡的最後一組；已知的限制：名稱可能含有長得像括號的字母（例如 `ᐸ…ᐳ`），而用組合記號書寫的文字（例如天城文）會失去它們的記號。
 
@@ -2324,7 +2323,7 @@ intercom 事件以程式寫的發送者行（`[intercom from <name> (<id>)]`）�
 
 常駐 pane 裡被 Herdr 在沒有旗標的情況下接回的 pi（即使它的 pane 失去了 token，只要它的分頁有塔台標籤），會向 server 詢問它的角色，並最多等 30 秒讓 server 上線，所以 server 的兩分鐘退出規則能夠涵蓋到它。
 
-#### 本機執行沒有 shell
+#### 本機 run沒有 shell
 
 執行可能被交給不是老闆寫的文字（主智慧體或對等端的訊息、遠端看板項目、舊對話），所以 sb server 啟動它的 pi 時用 `--tools`，只列出塔台需要的東西：塔台工具（`boss_status`、`call_tower`、`boss_server`、`tower_list`、`board_read`、`tower_send`、`boss_open_main`、`boss_close_main`、`tower_memory`、`tower_reply`、`tower_done`、`link_request`）和唯讀的檔案存取（`read`、`grep`、`find`、`ls`：合併火車的路由會讀專案的 `.straw-boss/apps.json`，回答工作進度到哪裡也可能需要一個檔案）。pi 不註冊其他工具，所以 `bash`、`write`、`edit`、`subagent`，以及老闆其他擴充的每一個工具（網路搜尋、Linear）都不在那裡，呼叫 `setActiveTools` 的擴充也無法把它們帶回來。
 
@@ -2334,13 +2333,13 @@ MCP 工具（`mcp__*`）是「不註冊」的例外：pi 在 `--tools` 之下仍
 
 這就關上了執行自己寫 `memory.json`、讀 hello secret（因而偽造 `tower-event` 或 `tower-memory`）、以及讀 GUI 與連線機密的路子。仍然存在的是：執行還是可以請有 shell 的主智慧體動手（`boss_open_main`、`tower_reply`），這受主智慧體自己的 prompt 與 hook 約束，而主智慧體保有它們的 shell。老闆自己在執行的 pane 裡打的 `!cmd` 是 pi 給使用者的 shell，不是工具呼叫，運作如前。
 
-路徑拒絕（不是工具清單）也約束兩種保有 shell 的執行。**隊友 run**在每個信任等級都受它約束，包括 `dispatch`，所以對等端的執行無法用檔案工具讀取狀態資料夾、連線金鑰或 `auth.json`，另外還受它發送者等級的閘門約束（`link/hooks.ts`）。**手動執行**（老闆自己在常駐 pane 裡的 pi，帶著老闆選的工具）在老闆自己的話沒有開啟的每一輪，同樣受本機執行的工具清單約束（`LOCAL_RUN_TOOLS`，在 `tool_call` 強制：`bash`、`write`、`edit` 和清單外的其他工具都會被拒絕，並附訊息指向老闆自己的那一輪或 `boss_open_main`），也受路徑拒絕約束：對等端、主智慧體或看板的事件會在老闆沉默時送到它那裡。
+路徑拒絕（不是工具清單）也約束兩種保有 shell 的執行。**隊友 run**在每個信任等級都受它約束，包括 `dispatch`，所以對等端的執行無法用檔案工具讀取狀態資料夾、連線金鑰或 `auth.json`，另外還受它發送者等級的閘門約束（`link/hooks.ts`）。**手動執行**（老闆自己在常駐 pane 裡的 pi，帶著老闆選的工具）在老闆自己的話沒有開啟的每一輪，同樣受本機 run的工具清單約束（`LOCAL_RUN_TOOLS`，在 `tool_call` 強制：`bash`、`write`、`edit` 和清單外的其他工具都會被拒絕，並附訊息指向老闆自己的那一輪或 `boss_open_main`），也受路徑拒絕約束：對等端、主智慧體或看板的事件會在老闆沉默時送到它那裡。
 
 只有老闆的話（來自鍵盤的 `input`）在 session 閒置時開啟的那一輪，直到智慧體穩定下來，才算是老闆的；他們在某個事件那一輪的中途輸入的 steer，並不會讓那一輪變成他們的。老闆自己的輪次保有每一個工具。未涵蓋的：常駐塔台（舊模式），以及隊友 run 的 shell。`bash` 仍然可以在命令裡指名受保護的路徑（`cat ~/.pi/agent/straw-boss/server.json`、變數、萬用字元、`cd`），而命令列無法被可靠地檢查，所以不嘗試對它做任何過濾：有人在受管的電腦上以 `dispatch` 等級連來的對等端，就擁有這台電腦使用者的權限，包括 sb server 的老闆憑證。
 
-這是留給老闆的選擇：在 `dispatch` 給隊友 run 本機執行的工具清單（它做實際工作就需要 `open-main`），或保留 shell，並照等級所說去信任對等端。
+這是留給老闆的選擇：在 `dispatch` 給隊友 run 本機 run的工具清單（它做實際工作就需要 `open-main`），或保留 shell，並照等級所說去信任對等端。
 
-**token 的種類。** server 把每個帶 run token 的請求限定在該執行的種類之內。本機執行可以讀 `status`、使用連線持有者的 `list`、`board-read`、`send`、`confirms` 以及已核准請求的操作（一律以它自己的塔台身分），並對自己的工作區使用 `open-main` 與 `close-main`。隊友 run 的 token 一個都沒有。`gui`、`gui-remote`、`gui-pair`、`close-tower`、`restart` 以及控制 socket 的其餘部分，對任何 run token 都一律拒絕：hello secret 是 session 或 shell 的憑證，run token 只是執行的憑證。
+**token 的種類。** server 把每個帶 run token 的請求限定在該執行的種類之內。本機 run可以讀 `status`、使用連線持有者的 `list`、`board-read`、`send`、`confirms` 以及已核准請求的操作（一律以它自己的塔台身分），並對自己的工作區使用 `open-main` 與 `close-main`。隊友 run 的 token 一個都沒有。`gui`、`gui-remote`、`gui-pair`、`close-tower`、`restart` 以及控制 socket 的其餘部分，對任何 run token 都一律拒絕：hello secret 是 session 或 shell 的憑證，run token 只是執行的憑證。
 
 #### 執行中的老闆
 
@@ -2356,15 +2355,15 @@ MCP 工具（`mcp__*`）是「不註冊」的例外：pi 在 `--tools` 之下仍
 
 沒有 `tower_done` 就閒置下來的執行，60 秒後得到一次 steer，5 分鐘後得到 `quit`；18 分鐘時被要求收尾，20 分鐘時被 quit（`quit` 後 10 秒仍未退出的 pi，會透過 Herdr 收到 Escape 與 `/quit`，再 5 秒後 SIGTERM 送到 `herdr pane process-info` 回報的 PID）。
 
-**在 Windows 上**，以 `TerminateProcess` 結束的 pi 會讓它 pane 的 console 停在一個模式，之後在那裡的下一個 `herdr agent start` 會輸入出殘缺的命令並逾時，所以等待時間改為 30 秒與 20 秒，停止中的 server 等它的執行離開 8 秒，而且從不對仍留著的 pi 發訊號（執行就沒有結果，如同重啟時留下它的樣子：那個 pi 會從下一個 server 重新認領，或在 server 已離開 `lostMs` 之後的下一個閒置時刻自己結束：一個正在進行一輪的 pi 先中止這一輪，因為 pi 把關閉保留到它的下一個閒置時刻，而一次模型呼叫可能持續好幾分鐘，當那個 pi 不見時，下一個 server 把執行記為 `quit`，不是 `crashed`），被發過訊號的 pi 所在的 pane，在下一個執行之前換成一個新的常駐 pane，而且只關閉常駐 pane，並且只在它裡面是 shell 或該執行自己的 pi 時才關（跑著老闆程式的 pane，以及同一分頁的其他 pane，都會留著；分頁隨後失去塔台標籤；服務保留它的佇列與通知），而 Herdr 以錯誤碼 `timeout` 回報的啟動，會在新的 pane 裡再試一次，且不計入當機迴圈（其他任何失敗都結束這個執行）。
+**在 Windows 上**，以 `TerminateProcess` 結束的 pi 會讓它 pane 的 console 停在一個模式，之後在那裡的下一個 `herdr agent start` 會輸入出殘缺的命令並逾時，所以等待時間改為 30 秒與 20 秒，停止中的 server 等它的執行離開 8 秒，而且從不對仍留著的 pi 發訊號（執行就沒有結果，如同重啟時留下它的樣子：那個 pi 會從下一個 server 重新認領，或在 server 已離開 `lostMs` 之後的下一個閒置時刻自己結束：一個正在進行一輪的 pi 先中止這一輪，因為 pi 把關閉保留到它的下一個閒置時刻，而一次模型呼叫可能持續好幾分鐘，當那個 pi 不見時，下一個 server 把執行記為 `quit`，不是 `crashed`），被發過訊號的 pi 所在的 pane，在下一個執行之前換成一個新的常駐 pane，而且只關閉常駐 pane，並且只在它裡面是 shell 或該執行自己的 pi 時才關（跑著老闆程式的 pane，以及同一分頁的其他 pane，都會留著；分頁隨後失去塔台標籤；服務保留它的佇列與通知），而 Herdr 以錯誤碼 `timeout` 回報的啟動，會在新的 pane 裡再試一次，且不計入當機迴圈（其他任何失敗都結束這個 run）。
 
 當機會把它的事件退回佇列，並標記 `possibly handled by a run that crashed: check before acting`；被兩個都當機或逾時的執行取走的事件會被擱置（卡片顯示**重新送達**與**捨棄**）；10 分鐘內三個當機或逾時的執行會暫停服務（卡片顯示**重試**）。**隨 Herdr 一起死掉的 pi 不算當機。** Herdr 停止時會帶走它各個 pane 的行程。
 
 server 對 Herdr socket 的監看會說出一個曾經回答過的 server 何時停止（`herdrLost`；記錄行 `herdr-lost` 帶有它的時間，在一次乾淨的停止仍以 `crashed` 結束執行時，用來和執行的 `run-end` 比對），而進行中的接管在它的 look 完成時，讓每個存活的執行以 `herdr-restart` 結束；期間被看見消失的 pi（或在停止後 30 秒內，這是執行可以沉默的時間）等著那個，而且兩者都不計入暫停。Herdr 還在時被看見消失的 pi，只有在下一個 tick 也看見它消失時才是當機，因為 socket 可能在 pane 的行程之後片刻才關閉。
 
-隊友 run 也一樣，它的訊息隨後留在收件匣，等下一個執行。常駐 pane 裡跑著老闆的程式（不是 shell、不是塔台 prompt）時啟動失敗，是 pane 自己造成的：它們的東西一概不關（而且不是 Herdr 的 `timeout` 碼的啟動不會得到新 pane），這個執行像任何當機一樣計入迴圈，那一則啟動通知會指出程式的名稱（它的可執行檔檔名，不含路徑或引數；在 Windows 上，Herdr 的前景清單只顯示 shell，所以在 Herdr 回答 `agent_pane_busy` 時，會到行程表裡 pane 的 shell 底下去找這個程式），而暫停的服務在 pane 的前景回到它的 shell 之後會自己再啟動，如同按**重試**或老闆說一句話時一樣。
+隊友 run 也一樣，它的訊息隨後留在收件匣，等下一個執行。常駐 pane 裡跑著老闆的程式（不是 shell、不是塔台 prompt）時啟動失敗，是 pane 自己造成的：它們的東西一概不關（而且不是 Herdr 的 `timeout` 碼的啟動不會得到新 pane），這個 run像任何當機一樣計入迴圈，那一則啟動通知會指出程式的名稱（它的可執行檔檔名，不含路徑或引數；在 Windows 上，Herdr 的前景清單只顯示 shell，所以在 Herdr 回答 `agent_pane_busy` 時，會到行程表裡 pane 的 shell 底下去找這個程式），而暫停的服務在 pane 的前景回到它的 shell 之後會自己再啟動，如同按**重試**或老闆說一句話時一樣。
 
-**`boss_server` 與重啟限制。** 在本機執行裡，`boss_server` 經過 server：它對隊友 token 拒絕 `restart`、`status` 與 `logs`，而每分鐘一次重啟的限制由 server 自己守著，所以兩個智慧體同時要求也不可能都通過。
+**`boss_server` 與重啟限制。** 在本機 run裡，`boss_server` 經過 server：它對隊友 token 拒絕 `restart`、`status` 與 `logs`，而每分鐘一次重啟的限制由 server 自己守著，所以兩個智慧體同時要求也不可能都通過。
 
 #### GUI
 
@@ -2376,49 +2375,49 @@ server 對 Herdr socket 的監看會說出一個曾經回答過的 server 何時
 
 **隊友 run**顯示在塔台狀態的旁邊：隊友 run 工作時，狀態寫成 `ally run · <device label>`（或一個數字），而不是「standing by」，而每個執行一個晶片（`ally run · <device label>`，有好幾個時前面先寫數量）放在地圖卡片上、工作區檢視裡，以及通訊畫面標頭底下。
 
-只有在執行的 session 檔案已知時，晶片才會以唯讀開啟該執行的通訊畫面：網把每個這樣的執行當成自己的單位（key `ally-<run id>`，沒有 pane，所以輸入、按鍵與焦點都回答 409 `not_live`），不讓路徑出現在頁面上，並在執行離開網十分鐘後把這個 key 從允許清單拿掉，如同任何 session；標頭寫「唯讀」，而不是開放的通道，輸入框與附加按鈕是關閉的，而輸入框說明隊友的訊息驅動這個執行。
+只有在執行的 session 檔案已知時，晶片才會以唯讀開啟該執行的通訊畫面：網把每個這樣的執行當成自己的單位（key `ally-<run id>`，沒有 pane，所以輸入、按鍵與焦點都回答 409 `not_live`），不讓路徑出現在頁面上，並在執行離開網十分鐘後把這個 key 從允許清單拿掉，如同任何 session；標頭寫「唯讀」，而不是開放的通道，輸入框與附加按鈕是關閉的，而輸入框說明隊友的訊息驅動這個 run。
 
 執行連同它的檔案一起回報它的 pi session id，而 server 只有在檔案以那個 session 命名時（`<time>_<session id>.jsonl`）才保留它；執行兩者都回報，所以這只能擋住失手，擋不住說謊的執行，這是依路徑讀檔共有的殘餘風險。工作區檢視帶有和卡片相同的佇列晶片與通知（重試、重新送達、捨棄）。等待隊友 run 的訊息（`served`）說明隊友 run 還沒有取走它，並指向塔台的卡片；轉送來的確認會指出它來自哪一位隊友的塔台。
 
 `link_request` 的對話框維持在擴充寫它時用的語言（英文）：它的標題是 server 用詞、智慧體的理由、以及詢問者與裝置名稱組成的一個字串，而把固定用語從中拿掉的頁面，會在下一次改寫用詞時無聲地壞掉，所以頁面照寫的樣子顯示它，旁邊配上自己的在地化外框。輸入框寫著「喚醒塔台」，而**送出**會發出一個 `boss` 事件（不會往 shell 輸入任何東西）；在沒有存活的執行時，它的按鍵、鏡像與焦點回答 409 `standing`，而終端機分頁用一句話說明，而不是顯示按鍵板。
 
-單位的通訊畫面在有老闆 session 時就是老闆 session（它工作時是存活對話的檔案），否則是存活執行的 session，再否則是上一個執行的；事件執行是旁邊的晶片，唯讀（見[老闆對話](#老闆對話)）。
+單位的通訊畫面在有老闆 session 時就是老闆 session（它工作時是存活對話的檔案），否則是存活執行的 session，再否則是上一個執行的；事件 run是旁邊的晶片，唯讀（見[老闆對話](#老闆對話)）。
 
 **`/boss tower <prompt>`。** 和單獨的 `/boss tower` 一樣先確保塔台存在，把 prompt 以帶 `present` 的 `boss` 事件送出（它啟動或延續[老闆對話](#老闆對話)，如同 GUI 的輸入框），並回答「Handed to the tower」，不改變焦點。`/boss tower status`、`parked`、`retry`、`deliver <id>`、`drop <id>`、`leave` 與 `new` 是該節的指令。單獨的 `/boss tower` 仍然是開啟並聚焦那個分頁。
 
 #### `link_request` 與請求主智慧體
 
-本機執行有 `link_request`：server 開出請求，老闆的核准對話框（和主智慧體得到的同一個：動作、每個引數、理由、提出請求的 session）由這個執行的 pi 顯示，而動作只在得到 yes 時才由持有者執行；server 拿到核准的 call id，並且只對明確的 yes（執行的對話框以 `allow` 關閉）才接受，所以執行無法自己核准自己。`tower_send` 接受 `device`、`reply: true` 與 `for`，後者是提出請求的工作區裡一個存活的主智慧體：server 記錄這個詢問（`tower/<workspace id>/awaiting.json`，24 小時），裝置的答覆直接送給那個主智慧體（見[隊友 run](#隊友-run)）。來自 pi-intercom broker 的信箱 flush 被標記為已送達，卻沒有回執；擬議的修正寫在[pi-intercom 提案](specs/2026-10-27-pi-intercom-mailbox-flush.md)。
+本機 run有 `link_request`：server 開出請求，老闆的核准對話框（和主智慧體得到的同一個：動作、每個引數、理由、提出請求的 session）由這個 run的 pi 顯示，而動作只在得到 yes 時才由持有者執行；server 拿到核准的 call id，並且只對明確的 yes（執行的對話框以 `allow` 關閉）才接受，所以執行無法自己核准自己。`tower_send` 接受 `device`、`reply: true` 與 `for`，後者是提出請求的工作區裡一個存活的主智慧體：server 記錄這個詢問（`tower/<workspace id>/awaiting.json`，24 小時），裝置的答覆直接送給那個主智慧體（見[隊友 run](#隊友-run)）。來自 pi-intercom broker 的信箱 flush 被標記為已送達，卻沒有回執；擬議的修正寫在[pi-intercom 提案](specs/2026-10-27-pi-intercom-mailbox-flush.md)。
 
 ### 老闆對話
 
-**老闆對話**是當沒有存活的本機執行時，帶 `present` 的 `boss` 事件（塔台 prompt 的 Enter、GUI 的輸入框、`/boss tower <prompt>`）所啟動的本機執行（[規格](specs/2026-10-26-sb-backend.md)，**The boss conversation**；D23）。它**接續老闆上一個 session**；其他每一個本機執行，即**事件執行**，都啟動一個新的 session，並以 `tower_done` 結束，一如以往。每個工作區只有一個對話，不論老闆從哪裡寫的：GUI 的輸入框和 prompt 是同一個 server 函式（`runs.boss(…, {present: true})`），所以兩邊來的訊息都延續同一個對話。
+**老闆對話**是當沒有存活的本機 run時，帶 `present` 的 `boss` 事件（塔台 prompt 的 Enter、GUI 的輸入框、`/boss tower <prompt>`）所啟動的本機 run（[規格](specs/2026-10-26-sb-backend.md)，**The boss conversation**；D23）。它**接續老闆上一個 session**；其他每一個本機 run，即**事件 run**，都啟動一個新的 session，並以 `tower_done` 結束，一如以往。每個工作區只有一個對話，不論老闆從哪裡寫的：GUI 的輸入框和 prompt 是同一個 server 函式（`runs.boss(…, {present: true})`），所以兩邊來的訊息都延續同一個對話。
 
 #### 哪個 session
 
 `tower/<workspace id>/boss-session.json`（`{file, run, startedAt, lastAt, turns, fresh?}`，模式 600）指名它。只有對話能移動它，靠它自己的 `run-file` 回報，而且只限 pi 的 `sessions` 資料夾底下的 `.jsonl`（真實路徑，所以不會跟著跳出它的連結）。pi 只在第一則助理訊息時才寫出新 session 的檔案，那是在執行回報它之後，所以該資料夾底下一個尚未在磁碟上的 `.jsonl` 會被擱置（不報錯），並以同樣的檢查，保留到執行的下一次輪詢、老闆的下一個字，或執行結束；始終沒有出現的檔案不留下指標，而一個絕不可能合格的路徑在回報時會被拒絕並記錄。
 
-等待、期間進行的輪次，以及期間要求的 New（塔台 prompt、GUI 或 pi 自己的 `/new`）都記在執行記錄裡，所以 server 重啟不會失去它們，而檔案被標記為 fresh 保留。事件執行永遠不會移動它，老闆在事件執行的 pi 裡打字也不會。在事件執行存活時抵達的老闆訊息會送到那個執行（它不等老闆），塔台的通訊畫面隨後顯示該執行直到它結束；執行記錄保留老闆第一次在其中說話的時間（`bossIn`），而下一個對話的 brief 會指出該執行及它的交接備註。
+等待、期間進行的輪次，以及期間要求的 New（塔台 prompt、GUI 或 pi 自己的 `/new`）都記在執行記錄裡，所以 server 重啟不會失去它們，而檔案被標記為 fresh 保留。事件 run永遠不會移動它，老闆在事件 run的 pi 裡打字也不會。在事件 run存活時抵達的老闆訊息會送到那個執行（它不等老闆），塔台的通訊畫面隨後顯示該執行直到它結束；執行記錄保留老闆第一次在其中說話的時間（`bossIn`），而下一個對話的 brief 會指出該執行及它的交接筆記。
 
-當下列每一項都成立時，server 以 `pi --name "tower · boss · <label>" --sb-run <id> --session <file>` 啟動對話，否則就不帶 `--session`，並由 brief 說明原因：該檔案是 `sessions` 底下的一般檔案，在該資料夾以下的路徑任何地方都沒有符號連結，而且屬於老闆自己（POSIX uid），至多 4 MB，老闆在其中的上一輪至多是 7 天前，沒有任何存活 pane 的 `agent_session` 指名它，而且老闆沒有要求新的。`turns` 計算對話取走的老闆事件，以及老闆在它的 pi 裡的打字（最多每 15 秒一次）。認領、run token 與執行模式都是事件執行的；**隊友 run 從不接續它**。
+當下列每一項都成立時，server 以 `pi --name "tower · boss · <label>" --sb-run <id> --session <file>` 啟動對話，否則就不帶 `--session`，並由 brief 說明原因：該檔案是 `sessions` 底下的一般檔案，在該資料夾以下的路徑任何地方都沒有符號連結，而且屬於老闆自己（POSIX uid），至多 4 MB，老闆在其中的上一輪至多是 7 天前，沒有任何存活 pane 的 `agent_session` 指名它，而且老闆沒有要求新的。`turns` 計算對話取走的老闆事件，以及老闆在它的 pi 裡的打字（最多每 15 秒一次）。認領、run token 與執行模式都是事件 run的；**隊友 run 從不接續它**。
 
 run token 不能啟動、離開或重啟對話，也不能以老闆的身分寫入：`tower-event`、`tower-leave`、`tower-new` 與其他老闆指令，對每個 run token 都一律拒絕（`rungate.ts`），所以接續的 session 的智慧體流量不會得到任何地位；執行的 prompt 只說以老闆行開頭的事件才是老闆的，不論多舊。
 
 #### 對話期間
 
-老闆從認領起就在執行中，所以[執行中的老闆](#本機執行)底下的一切都成立：抵達的事件在它的閒置時刻送給它，`tower_done` 以留下回答，而 20 分鐘上限與 60 秒閒置 steer 都不適用。brief 的第一段寫著 `Boss conversation: the boss is at this pane. Resumed session from <date>, <n> boss turns` 或 `New session: <why>`，而對接續的對話，還有 `Since you last talked with the boss:`，後面接此後寫下的最多 3 則事件執行備註的第一行（合計 1,200 字元，整段 1,400）。
+老闆從認領起就在執行中，所以[執行中的老闆](#本機 run)底下的一切都成立：抵達的事件在它的閒置時刻送給它，`tower_done` 以留下回答，而 20 分鐘上限與 60 秒閒置 steer 都不適用。brief 的第一段寫著 `Boss conversation: the boss is at this pane. Resumed session from <date>, <n> boss turns` 或 `New session: <why>`，而對接續的對話，還有 `Since you last talked with the boss:`，後面接此後寫下的最多 3 則事件 run備註的第一行（合計 1,200 字元，整段 1,400）。
 
 存活的執行在記憶或上一則本機備註變動時，會得到**較新的 brief**（輪詢回答裡的 `brief`）；它的下一輪會讀到它。老闆在執行閒置時沉默 10 分鐘，或 4 小時上限，會觸發收尾：一次 steer（「The boss has left: call tower_done with your handoff note.」），5 分鐘後 `quit`，備註為 `(ended idle)` 或 `(ended at the 4 h cap)`，記為 `quit`（對話從不是逾時，所以上限永遠不計入當機迴圈）。`tower_done`，以及老闆在對話的 pi 裡的 `/quit`（備註 `(boss quit)`，記為 `done`，長時間沉默之後也一樣），立即結束它。server 重啟會讓對話繼續存活，從它的開始算起。
 
 #### 離開與 New
 
-`/boss tower leave`（GUI 的**離開對話**、在塔台輸入框打的 `/quit`、socket 上的 `tower-leave`）告訴 pi 退出，並像 `/quit` 一樣結束它；`/boss tower new`（GUI 的**開新對話**、輸入框或塔台 prompt 的 `/new`、`tower-new`）標記指標，讓下一個對話是新的 session，並以同樣的方式結束存活的對話。在對話自己的 pi 裡打 `/new` 有相同的效果。沒有存活的對話（事件執行不算）或它還沒認領時，離開會被拒絕。這些詞必須恰好是 `/quit` 與 `/new`：多了別的字，它們就是訊息。
+`/boss tower leave`（GUI 的**離開對話**、在塔台輸入框打的 `/quit`、socket 上的 `tower-leave`）告訴 pi 退出，並像 `/quit` 一樣結束它；`/boss tower new`（GUI 的**開新對話**、輸入框或塔台 prompt 的 `/new`、`tower-new`）標記指標，讓下一個對話是新的 session，並以同樣的方式結束存活的對話。在對話自己的 pi 裡打 `/new` 有相同的效果。沒有存活的對話（事件 run不算）或它還沒認領時，離開會被拒絕。這些詞必須恰好是 `/quit` 與 `/new`：多了別的字，它們就是訊息。
 
 **`/boss tower`。** `status`（服務狀態、帶期限的對話、通知、擱置的事件、最近的執行）、`parked`、`retry`、`deliver <id>`、`drop <id>`、`leave`、`new`；其他任何東西都是給塔台的訊息。每一個都是 GUI 的按鈕也能觸及的一個控制指令（`tower-retry`、`tower-deliver`、`tower-drop`、`tower-leave`、`tower-new`，以及 `status`），帶著 server 的拒絕；寫入在沒有畫面的 pi 裡會被拒絕，如同 `/boss memory` 的寫入。這些詞有英文與繁體中文。恰好是這些詞之一的 prompt 就是指令。
 
 #### 另一個塔台、主塔台，以及回答等待事項
 
-`/boss tower -w <workspace id | label | head> <command | message>` 對另一個工作區的塔台動作：工作區用 id 或標籤找出，方式和 `/boss memory -w` 找它一樣（兩個工作區共用的標籤會被拒絕並列出它們的 id：請指名 id；主塔台自己的 Herdr 工作區，不論用 id 或標籤，都是 `head`），那裡每一次寫入都會在 pi 裡詢問並指名塔台，而訊息以帶 `present` 的 `tower-event` 送出，如同 GUI 的輸入框送出的方式，不開啟也不聚焦塔台（它需要塔台執行開著）。
+`/boss tower -w <workspace id | label | head> <command | message>` 對另一個工作區的塔台動作：工作區用 id 或標籤找出，方式和 `/boss memory -w` 找它一樣（兩個工作區共用的標籤會被拒絕並列出它們的 id：請指名 id；主塔台自己的 Herdr 工作區，不論用 id 或標籤，都是 `head`），那裡每一次寫入都會在 pi 裡詢問並指名塔台，而訊息以帶 `present` 的 `tower-event` 送出，如同 GUI 的輸入框送出的方式，不開啟也不聚焦塔台（它需要塔台 run開著）。
 
 `head` 是主塔台：它的指令是 `head-retry`、`head-deliver`、`head-drop`、`head-leave` 與 `head-new`，由 `/boss head retry | parked | deliver <id> | drop <id>` 不經確認送出；這是標準寫法，而 `-w head` 送出同樣的指令，但會先詢問並說「the head tower」，如同在另一個塔台的每一次寫入。`-w head <message>` 就是 `/boss head <message>`，而單獨只是一個主塔台指令詞的訊息（`close`）在那裡會被拒絕：多寫幾個字，或用 `/boss head`。
 
@@ -2430,7 +2429,7 @@ run token 不能啟動、離開或重啟對話，也不能以老闆的身分寫�
 
 這個送出來自這台電腦，但已配對的裝置可能是打這個指令的人（它的輸入框，或按鍵板一個字母一個字母地打），所以 `guarded: true` 讓 server 讓它通過已配對裝置自己的寫入會遇到的每一道守衛，不論它的位址為何：僅限本機的文字（`localOnlyText`，它也讀 `/boss send` 的文字，在任何深度，如同讀 `/boss open` 的文字那樣）、未決的 `link_request`，以及 `/boss gui lan` 畫面的標記。一般的守衛也照舊（session 正在等的對話框、長度限制），而結束或取代 session 的指令，會在 pi 裡指名該 session 並詢問，之後才帶 `confirmed` 再送一次。這個 session 本身會被拒絕。
 
-`/boss stop <name|key>` 如同頁面的**停止**一樣詢問（它需要 pi 的畫面），然後把 `{keys: ["esc"]}` 送到 `sessions/<key>/keys`；單獨的 Esc 不需要 `guarded`。兩者都是老闆親自打的輸入：塔台執行或隊友 run 不接受 `/boss` 指令，也沒有任何工具能觸及它們。
+`/boss stop <name|key>` 如同頁面的**停止**一樣詢問（它需要 pi 的畫面），然後把 `{keys: ["esc"]}` 送到 `sessions/<key>/keys`；單獨的 Esc 不需要 `guarded`。兩者都是老闆親自打的輸入：塔台 run或隊友 run 不接受 `/boss` 指令，也沒有任何工具能觸及它們。
 
 #### `/boss answer`
 
@@ -2444,11 +2443,11 @@ run token 不能啟動、離開或重啟對話，也不能以老闆的身分寫�
 
 **機密從不在這裡回答**：當一個等待事項的 `pending.tool` 是 `secret_drop` 或它的 `why` 是 `SECRET`（`ask.ts`、`dialogs.ts` 對機密對話框給的讀法，所以頁面與這個指令共用同一個字串）時，它就是機密；它被列為存在，並在問任何其他事情或 post 任何東西之前被拒絕，即使它的 `pending` 帶著 `answer`（server 從不給），而且這個指令的任何請求都不帶 `value`。
 
-它是老闆親自打的輸入：塔台執行或隊友 run 不接受 `/boss` 指令，沒有任何工具能觸及它，而 `control.ts` 的 `BOSS_LOCAL` 讓已配對裝置的輸入框無法打它（在 `/boss send` 或 `/boss open` 的文字裡也一樣，如同 `link decide`）。
+它是老闆親自打的輸入：塔台 run或隊友 run 不接受 `/boss` 指令，沒有任何工具能觸及它，而 `control.ts` 的 `BOSS_LOCAL` 讓已配對裝置的輸入框無法打它（在 `/boss send` 或 `/boss open` 的文字裡也一樣，如同 `link decide`）。
 
 #### GUI
 
-塔台的通訊畫面是老闆 session（跨執行穩定；它工作時是存活對話的檔案）：一條分隔線開啟每個對話執行（`Boss conversation · resumed · 10:04` 或 `· new session ·`，一旦結束，還帶著該執行如何結束與它的備註），而事件執行是標頭底下的晶片（`event run · 10:12`，在它們的 session 檔案已知時是網的一個唯讀單位，結果與備註在提示文字裡）。
+塔台的通訊畫面是老闆 session（跨執行穩定；它工作時是存活對話的檔案）：一條分隔線開啟每個對話執行（`Boss conversation · resumed · 10:04` 或 `· new session ·`，一旦結束，還帶著該執行如何結束與它的備註），而事件 run是標頭底下的晶片（`event run · 10:12`，在它們的 session 檔案已知時是網的一個唯讀單位，結果與備註在提示文字裡）。
 
 狀態字寫著 `boss conversation · ends after 10 min idle`，執行等老闆時是 `… · waiting for you · …`（塔台那時顯示閒置，不是工作中），或 `… · closing`；輸入框上方的方塊說明它如何開始（接續並附輪數，或新的並附原因）、它現在在做什麼、閒置期限與硬上限，旁邊有**離開對話**與**開新對話**。輸入框的 `/quit` 與 `/new` 在塔台裡不要求確認。
 
@@ -2456,7 +2455,7 @@ run token 不能啟動、離開或重啟對話，也不能以老闆的身分寫�
 
 ### 塔台記憶
 
-事件執行從頭開始，所以必須比執行活得更久的東西，另外放在 `tower/<workspace id>/memory.json`（[規格](specs/2026-10-26-sb-backend.md)，**Tower memory**）：老闆的**長期指示**（最多 12 條）與**決定**（最多 24 條），各至多 300 字元，塔台的**等待事項**（開啟中最多 12 個；對智慧體是 200 字元，對老闆是一張短欄位的卡片），以及老闆尚未回答的執行所做的**提案**（最多 12 個）。每個本機執行的 brief 都在一個 Memory 段落裡帶著它們（至多 4,900 字元，排在未了的義務之後；長期指示一律完整放進，在 2,400 字元的預算之內；待處理的提案放最後，標示為未確認）。
+事件 run從頭開始，所以必須比執行活得更久的東西，另外放在 `tower/<workspace id>/memory.json`（[規格](specs/2026-10-26-sb-backend.md)，**Tower memory**）：老闆的**長期指示**（最多 12 條）與**決定**（最多 24 條），各至多 300 字元，塔台的**等待事項**（開啟中最多 12 個；對智慧體是 200 字元，對老闆是一張短欄位的卡片），以及老闆尚未回答的執行所做的**提案**（最多 12 個）。每個本機 run的 brief 都在一個 Memory 段落裡帶著它們（至多 4,900 字元，排在未了的義務之後；長期指示一律完整放進，在 2,400 字元的預算之內；待處理的提案放最後，標示為未確認）。
 
 當整份 brief 超過 8,000 字元時，記憶最先被砍，所以工具、`tower_done` 那行、當機旗標與 20 分鐘那行始終都在。隊友 run 的 brief 從不帶記憶，而 `server.log` 只保留一次寫入的操作與 id。
 
@@ -2464,7 +2463,7 @@ run token 不能啟動、離開或重啟對話，也不能以老闆的身分寫�
 
 老闆寫，用工作區內任何已加入的 pi session 裡的 **`/boss memory`**：`/boss memory` 列出（塔台的提案排最前面，各帶它引用的老闆訊息），`/boss memory confirm P3` 與 `reject P3` 回答提案，`add standing|decision <text>`、`edit S2 <text>`、`delete D4` 與 `resolve W1 [outcome]` 改其餘的（`-w <workspace>` 指名另一個工作區；這些詞依你的語系是英文或繁體中文）。pi 是第一個介面：塔台通訊畫面的**記憶**面板與 GUI 的塔台卡片，以同樣的 `rev` 檢查呼叫同一個 server 函式，自己不另加任何東西。
 
-本機執行透過 `tower_memory` 只能**提議**一條長期指示或一項決定，或撤銷其一：提案與存活的項目分開放著等 7 天，只有在老闆確認時才生效（因清單已滿或項目已變動而無法套用的確認會被拒絕，提案留著）。這個工具沒有確認，控制 socket 的 `tower-memory` 指令對每個 run token 都一律拒絕，而執行除了 `/boss wait` 之外不接受 `/boss` 指令（它只按老闆自己清單上的卡片，不造出指示，見下），所以沒有任何執行的工具、隊友、連線信封或訊息能造出一條指示。
+本機 run透過 `tower_memory` 只能**提議**一條長期指示或一項決定，或撤銷其一：提案與存活的項目分開放著等 7 天，只有在老闆確認時才生效（因清單已滿或項目已變動而無法套用的確認會被拒絕，提案留著）。這個工具沒有確認，控制 socket 的 `tower-memory` 指令對每個 run token 都一律拒絕，而執行除了 `/boss wait` 之外不接受 `/boss` 指令（它只按老闆自己清單上的卡片，不造出指示，見下），所以沒有任何執行的工具、隊友、連線信封或訊息能造出一條指示。
 
 這就是全部的保證：它對抗的是這些路徑，不是同一個使用者、握有 shell 的行程。任何有 shell 的智慧體（主智慧體和執行一樣）都能讀 `server.json` 裡的機密，並向控制 socket 送 `tower-memory` 指令、直接寫 `memory.json`、打 `pi -p "/boss memory …"`，或往 pane 裡送文字。`/boss memory` 在它的 pi session 沒有畫面（`pi -p`、RPC）時拒絕每一次寫入，這只關上 `pi -p` 這條路；其餘就是整個 server 所依賴的同一使用者信任（限制 T3R-F005，它也涵蓋主智慧體）。執行可以用 `read` 讀整份記憶與提案。
 
@@ -2514,7 +2513,7 @@ brief 以 `(open 2d 3h)` 顯示一天前的開啟中等待事項，執行會檢�
 
 只有在握有陌生者在重用 id 之下不可能有的事實時，才會標記、在其中啟動並關閉 pane（F10）。這個事實是分出 pane 時產生的終端機，記在執行記錄裡，所以 server 重啟後復原的執行也能證明它的 pane；記錄裡沒有指名任何終端機的復原執行，絕不只憑 id 綁定，分出 pane 的列表從未指名它的 pane 的存活執行也一樣（這個列表最多讀三次）：在 Herdr 會列出終端機 id 的地方，這樣的執行在 Herdr 重啟後，不會憑 id 標記或關閉任何東西。
 
-等待忙碌 pane 的啟動會在每次重試前詢問它，並在執行已結束或 pane 在另一個終端機裡時停止；在不列出終端機 id 的 Herdr 上，一個位於未知終端機的 pane 照舊處理（證明只靠字形）。請求卡住的 pi 退出的按鍵（`esc`、`/quit`、`enter`）只送進已證明屬於該執行的 pane（隊友的終端機，本機執行的塔台座位）；沒有證明就跳過，而以啟動時間檢查 pid 的訊號會結束該執行。
+等待忙碌 pane 的啟動會在每次重試前詢問它，並在執行已結束或 pane 在另一個終端機裡時停止；在不列出終端機 id 的 Herdr 上，一個位於未知終端機的 pane 照舊處理（證明只靠字形）。請求卡住的 pi 退出的按鍵（`esc`、`/quit`、`enter`）只送進已證明屬於該執行的 pane（隊友的終端機，本機 run的塔台座位）；沒有證明就跳過，而以啟動時間檢查 pid 的訊號會結束該執行。
 
 Herdr 重啟之後每個終端機都是新的，所以 server 絕不再碰舊的隊友 pane：不關閉、不標記或取消標記、不啟動或重試、不送按鍵。執行以 `herdr-restart` 結束（它的佇列與認領規則如前），而 pane 留給老闆去關；舊 id 之下的陌生者，一個 shell、老闆自己的 pi 或 claude，也同樣留著不動。一道閘門（`typegate.ts` 的 `allyPaneGate`）允許隊友 pane 的動作，而且只在 pane 仍列在它被分出時所在的終端機時。
 
@@ -2528,7 +2527,7 @@ server 採信用戶端對標記的說法，因為這給出的比什麼都不給�
 
 持有者把收件匣項目留在原處；server 依發送者列出等待中的訊息，並為該裝置啟動一個執行，帶最多 5 則，最舊的在前（執行期間來的訊息等下一個執行）。裝置保有它的執行，直到執行結束把它的訊息交還持有者（在那一刻列出的訊息不會交給第二個執行），而 server 記住十分鐘內交還了哪些訊息：持有者隨後片刻仍列出的訊息，絕不會再被收進來。
 
-執行在分出 pane 之前再讀一次它的訊息，而一則都沒剩的就什麼都不啟動（VM 複查 A6）。每個工作區在它的本機執行旁邊有一個隊友 run，並且計入 `towerRuns.max`。離開名冊的發送者，它的訊息被丟棄，什麼都不啟動；在執行期間離開的，執行以 `quit` 結束（server 在每個監看 tick 與每次工具呼叫時都檢查），並在此期間拒絕它的工具呼叫。
+執行在分出 pane 之前再讀一次它的訊息，而一則都沒剩的就什麼都不啟動（VM 複查 A6）。每個工作區在它的本機 run旁邊有一個隊友 run，並且計入 `towerRuns.max`。離開名冊的發送者，它的訊息被丟棄，什麼都不啟動；在執行期間離開的，執行以 `quit` 結束（server 在每個監看 tick 與每次工具呼叫時都檢查），並在此期間拒絕它的工具呼叫。
 
 #### 信任等級
 
@@ -2540,19 +2539,19 @@ server 把執行限制在它被認領的等級與裝置現在的等級兩者較�
 
 每個等級都自由的：`boss_status`、`tower_list` 與 `board_read`（兩者都限定在發送者的團隊：它專案的工作區與該團隊的看板）、送給發送者裝置的 `tower_send`（`device` 是必需的；任何其他裝置或目標都會被拒絕，不論有沒有 Allow）、`tower_done`，以及執行自己在專案受追蹤檔案之內的 `read`、`grep`、`find` 與 `ls`，如同遠端輪次。塔台自己工具中的其他任何東西（`tower_reply`、`boss_open_main`、`boss_close_main`），server 只在閘門記錄了 yes 時才執行（見下），除了 `dispatch`，在那裡它們不經確認就執行。
 
-`call_tower`、`boss_server`、`link_request`，以及對這台電腦塔台身分的 `tower_reply`，不論等級都被拒絕；`close-tower` 與其他控制指令對每個 run token 都被拒絕，需要 session 身分的連線持有者操作也一樣（`taken`、`gui`、`request-open`、`request-run`、以塔台身分送出；B3R-F003）。`boss_open_main` 帶 `role: "train"` 時，不論等級都被拒絕；帶 `role: "integrator"` 時，只接受為這個執行自己的裝置開啟的主智慧體所送出的車廂單（見下）。執行送給本機 session 的一切，都帶有由 server 蓋上的 `origin=remote:<sender device id>`。
+`call_tower`、`boss_server`、`link_request`，以及對這台電腦塔台身分的 `tower_reply`，不論等級都被拒絕；`close-tower` 與其他控制指令對每個 run token 都被拒絕，需要 session 身分的連線持有者操作也一樣（`taken`、`gui`、`request-open`、`request-run`、以塔台身分送出；B3R-F003）。`boss_open_main` 帶 `role: "train"` 時，不論等級都被拒絕；帶 `role: "integrator"` 時，只接受為這個 run自己的裝置開啟的主智慧體所送出的車廂單（見下）。執行送給本機 session 的一切，都帶有由 server 蓋上的 `origin=remote:<sender device id>`。
 
 #### 對本機 session 的提問
 
-本機 session 回給隊友 run 的 `tower_reply`（帶 `reply: true`）或它所開啟的主智慧體的內容，儲存給該裝置（`ally-routes.json`、`ally-answers.json`，24 小時），不會排給本機執行，並等待該裝置的下一個隊友 run；隊友 run 所開啟的主智慧體有自己的帳冊（`ally-opened.json`）。本機 brief 從不列出它們。隊友 run 開啟的主智慧體會持續把它的報告送給該裝置，而不只是第一個答案：它的路由在 40 條路由的上限之外，每個它轉送的報告都會更新它，而沉默 7 天的主智慧體會被放掉。
+本機 session 回給隊友 run 的 `tower_reply`（帶 `reply: true`）或它所開啟的主智慧體的內容，儲存給該裝置（`ally-routes.json`、`ally-answers.json`，24 小時），不會排給本機 run，並等待該裝置的下一個隊友 run；隊友 run 所開啟的主智慧體有自己的帳冊（`ally-opened.json`）。本機 brief 從不列出它們。隊友 run 開啟的主智慧體會持續把它的報告送給該裝置，而不只是第一個答案：它的路由在 40 條路由的上限之外，每個它轉送的報告都會更新它，而沉默 7 天的主智慧體會被放掉。
 
 開啟的路由每個裝置最多 8 條、總共 20 條（broker 不再列出的主智慧體的列先去，然後是最舊的），broker 不再列出的主智慧體的列，在它沉默 10 分鐘之後、下一個主智慧體開啟時被丟棄，而關閉主智慧體會丟掉它的列。裝置自己對它的主智慧體的 `tower_reply`（帶 `reply: true`）不會增加第二條路由，也不會取代已開啟的那條。即使伺服器不提供 GUI，被閘門管的呼叫的終端機 yes 也會到達 server：它在 `hub.json` 裡為橋接指名它的 session。
 
 #### 為裝置本身開啟的主智慧體
 
-隊友 run 交給 `boss_open_main` 的請求，其發送者是裝置，不是這台電腦的 session，所以執行照原樣傳遞標頭的 `id=`（`link:<device id>`；`link:` 之後的短 id 也行，而重複的 `link:link:` 讀成一個前綴）。server 只在它指名執行被認領時對應的裝置時才接受它（id 來自認領，不是來自引數），並拒絕任何其他 `link:` 發送者、單純的標籤，或沒有 `link:` 的短 id 當成裝置：那些會像本機執行一樣，在存活的 session 之間查找。
+隊友 run 交給 `boss_open_main` 的請求，其發送者是裝置，不是這台電腦的 session，所以執行照原樣傳遞標頭的 `id=`（`link:<device id>`；`link:` 之後的短 id 也行，而重複的 `link:link:` 讀成一個前綴）。server 只在它指名執行被認領時對應的裝置時才接受它（id 來自認領，不是來自引數），並拒絕任何其他 `link:` 發送者、單純的標籤，或沒有 `link:` 的短 id 當成裝置：那些會像本機 run一樣，在存活的 session 之間查找。
 
-執行可以做的其他任何事都沒有改變：在 `dispatch` 以下，開啟仍需要老闆的確認，而離開團隊的裝置什麼都開不了。主智慧體的交接說明這個請求是對等端的，它用 `call_tower` 向塔台回報、無法聯繫發送者，而它的報告會原樣離開這台電腦。一直為開啟的主智慧體而設的路由（`ally-routes.json`）隨後做轉送：每個報告都儲存為給該裝置的答案，從不排給本機執行，並立即喚醒該裝置的一個執行，由它用 `tower_send` 送出。
+執行可以做的其他任何事都沒有改變：在 `dispatch` 以下，開啟仍需要老闆的確認，而離開團隊的裝置什麼都開不了。主智慧體的交接說明這個請求是對等端的，它用 `call_tower` 向塔台回報、無法聯繫發送者，而它的報告會原樣離開這台電腦。一直為開啟的主智慧體而設的路由（`ally-routes.json`）隨後做轉送：每個報告都儲存為給該裝置的答案，從不排給本機 run，並立即喚醒該裝置的一個執行，由它用 `tower_send` 送出。
 
 報告只由它為之開啟的那個裝置的執行讀取，別的不行，而且在那個裝置不再是成員時被丟棄，不開啟任何執行。當開啟主智慧體的執行恰好帶著一個請求（`asks=<id>`）時，路由保留它，報告的標頭再次顯示它，而執行用 `inReplyTo` 回答它，所以報告到達另一台電腦上提出請求的主智慧體；執行自己已經回答的請求不被保留，請求在執行回答一次之後就用盡（之後的報告不帶），而角色 prompt 告訴執行，把「進行中」的備註與任何進度報告不帶 `inReplyTo` 地送出，並且只用主智慧體的最終報告來回答請求。
 
@@ -2562,23 +2561,23 @@ server 把執行限制在它被認領的等級與裝置現在的等級兩者較�
 
 #### 那個主智慧體的車廂單
 
-為裝置開啟的主智慧體在這台電腦上工作，碰到有 `integration` 的 app，最後會用 `call_tower` 的 `why=shared` 送出車廂單，上面的路由把它交給該裝置的下一個隊友 run。那個執行通往專案整合員的門只有一道，和本機執行的一樣：`boss_open_main` 帶 `role: "integrator"`、車廂單，並以那個主智慧體作為 `sender`。
+為裝置開啟的主智慧體在這台電腦上工作，碰到有 `integration` 的 app，最後會用 `call_tower` 的 `why=shared` 送出車廂單，上面的路由把它交給該裝置的下一個隊友 run。那個執行通往專案整合員的門只有一道，和本機 run的一樣：`boss_open_main` 帶 `role: "integrator"`、車廂單，並以那個主智慧體作為 `sender`。
 
-server 只接受這個執行收下的、由為它自己的裝置開啟的主智慧體送出的 `call_tower`（`why=shared`）（路由表這樣記載，主智慧體的 `sb_opened_by` token 若指名裝置，也必須一致），其餘一律在閘門之前拒絕，所以不會消耗 Allow：執行自己編的車廂單、只被寫過訊息的 session 的車廂單、開啟整合員的請求。
+server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧體送出的 `call_tower`（`why=shared`）（路由表這樣記載，主智慧體的 `sb_opened_by` token 若指名裝置，也必須一致），其餘一律在閘門之前拒絕，所以不會消耗 Allow：執行自己編的車廂單、只被寫過訊息的 session 的車廂單、開啟整合員的請求。
 
-在 `dispatch` 以下，開啟仍需要老闆的確認，而確認顯示的是呼叫的引數：所以請求必須是車廂單送來時的原樣（行尾與行末空白不計），別的文字在閘門之前就被拒絕；老闆允許的就是被轉發的那段文字。工作區的 checkout 必須在這個執行的團隊於這台電腦綁定的專案之內。整合員由塔台自己的開啟器開啟，是塔台自己的主智慧體：它沒有隊友路由，所以它的報告和它的火車都交給本機執行，也不算進裝置的那一個主智慧體或工作區的兩個。
+在 `dispatch` 以下，開啟仍需要老闆的確認，而確認顯示的是呼叫的引數：所以請求必須是車廂單送來時的原樣（行尾與行末空白不計），別的文字在閘門之前就被拒絕；老闆允許的就是被轉發的那段文字。工作區的 checkout 必須在這個 run的團隊於這台電腦綁定的專案之內。整合員由塔台自己的開啟器開啟，是塔台自己的主智慧體：它沒有隊友路由，所以它的報告和它的火車都交給本機 run，也不算進裝置的那一個主智慧體或工作區的兩個。
 
 轉發除了 `fwd` 與 `fwd-from` 之外還帶 `origin=remote:<device id>`，它的 `fwd` 是答案 id 的摘要，因為答案沒有事件 id。這節車廂的協調者是裝置的主智慧體，所以 sb server 依 session id 把車廂通知送給它，它的報告照舊送達裝置。一個裝置仍然只有一個主智慧體：要求隊友 run 再開第二個來當整合員，照舊被拒絕（這次修正要解決的 2026-11-10 案例）。
 
-**Brief 與對話串。** 執行的角色段落是 `prompts/ally-run.md`，加上 server 建的 brief（誰、哪個等級、發送者能看到工作區的什麼、這個裝置的上一份交接備註、執行帶著的請求、裝置對話串的最後六列，以及它的工具；至多 4,000 字元）。**對話串儲存**（`link/threads/<device id>.jsonl`，模式 600）保留兩個方向，每個裝置最後 20 則訊息，沒有比 7 天更舊的，並隨裝置的名冊項目一起刪除。它靜態保存著對等端的文字。
+**Brief 與對話串。** 執行的角色段落是 `prompts/ally-run.md`，加上 server 建的 brief（誰、哪個等級、發送者能看到工作區的什麼、這個裝置的上一份交接筆記、執行帶著的請求、裝置對話串的最後六列，以及它的工具；至多 4,000 字元）。**對話串儲存**（`link/threads/<device id>.jsonl`，模式 600）保留兩個方向，每個裝置最後 20 則訊息，沒有比 7 天更舊的，並隨裝置的名冊項目一起刪除。它靜態保存著對等端的文字。
 
 #### 塔台為誰送
 
-裝置的答案從不進入塔台執行，所以為本機 session 把工作送給裝置的塔台，必須發出一個請求，否則這裡沒有人拿得到答案。帶 `device` 與 `reply: true` 而沒有 `for` 的 `tower_send`，取請求者本身：在執行取走的事件之中，向該執行送出期望答案的 `call_tower`（`reply=expected`，來自程式寫的標頭）的那一個 session，當它是存活的主智慧體時（自 0.58.2 起是這台電腦上任何工作區的，不只這個塔台的；見下）；結果會這樣說（「The answer will come to <main> directly (the main that called you for this)」）。
+裝置的答案從不進入塔台 run，所以為本機 session 把工作送給裝置的塔台，必須發出一個請求，否則這裡沒有人拿得到答案。帶 `device` 與 `reply: true` 而沒有 `for` 的 `tower_send`，取請求者本身：在執行取走的事件之中，向該執行送出期望答案的 `call_tower`（`reply=expected`，來自程式寫的標頭）的那一個 session，當它是存活的主智慧體時（自 0.58.2 起是這台電腦上任何工作區的，不只這個塔台的；見下）；結果會這樣說（「The answer will come to <main> directly (the main that called you for this)」）。
 
-兩個請求者、本身是成員或已消失的請求者、不期望答案的呼叫、老闆事件，以及 `reply: false`，都不綁定任何東西；帶 `reply: true` 時，結果會說沒有綁定任何 session（帶 `reply: false` 則什麼都不加），而答案到達隊友 run，所以塔台不承諾它做不到的轉送。`for` 仍然優先；它指名工作區的一個主智慧體，或這台電腦上另一個工作區、向這個執行送出期望答案的 `call_tower` 的主智慧體。
+兩個請求者、本身是成員或已消失的請求者、不期望答案的呼叫、老闆事件，以及 `reply: false`，都不綁定任何東西；帶 `reply: true` 時，結果會說沒有綁定任何 session（帶 `reply: false` 則什麼都不加），而答案到達隊友 run，所以塔台不承諾它做不到的轉送。`for` 仍然優先；它指名工作區的一個主智慧體，或這台電腦上另一個工作區、向這個 run送出期望答案的 `call_tower` 的主智慧體。
 
-來自另一個工作區的請求者或 `for` 只由那個呼叫綁定：server 從同樣的事件讀出請求者，對照 broker 與 Herdr 的 pane token（`sb_role=main`）檢查它，並對這個執行裡沒有呼叫過這個塔台、在這個工作區之外的 session 拒絕 `for`（這個工作區的主智慧體不需要呼叫）。請求者只依 session id 查找，絕不依名稱。請求記在塔台的工作區底下、該 session id 之下，而持有者依 id 把答案提供給該 session，所以投遞中沒有任何東西依賴工作區相符。請求只能用一次，24 小時，綁定被詢問的裝置，並在裝置被撤銷時隨它一起丟棄，如前。
+來自另一個工作區的請求者或 `for` 只由那個呼叫綁定：server 從同樣的事件讀出請求者，對照 broker 與 Herdr 的 pane token（`sb_role=main`）檢查它，並對這個 run裡沒有呼叫過這個塔台、在這個工作區之外的 session 拒絕 `for`（這個工作區的主智慧體不需要呼叫）。請求者只依 session id 查找，絕不依名稱。請求記在塔台的工作區底下、該 session id 之下，而持有者依 id 把答案提供給該 session，所以投遞中沒有任何東西依賴工作區相符。請求只能用一次，24 小時，綁定被詢問的裝置，並在裝置被撤銷時隨它一起丟棄，如前。
 
 #### 給主智慧體的回覆
 
@@ -2594,7 +2593,7 @@ server 只接受這個執行收下的、由為它自己的裝置開啟的主智�
 
 在 `dispatch` 認領的隊友 run，在它的裝置離開團隊或降到 `dispatch` 以下時（連續兩個 tick，而且只在持有者能讀團隊名冊時），由監看者 quit，原因寫在結束通知裡。隊友 run 在 `dispatch` 開啟的主智慧體（路由保留執行的等級；沒有等級的列算作 `dispatch`）由 `revoke.ts` 每 15 秒對照名冊與政策檢查，裝置已不在或低於 `dispatch` 的主智慧體，會像 `boss_close_main` 那樣被要求 quit，忙碌時再次被要求，並在它 quit 時連同它的路由一起放掉；團隊的管理員會被告知一次它仍在執行、一次它已結束（[規格](specs/2026-11-05-link-shared-box.md)）。
 
-**當機與限制**沿用本機執行的（閒置下來、20 分鐘、10 分鐘內三次失敗暫停服務），依裝置分別計算。
+**當機與限制**沿用本機 run的（閒置下來、20 分鐘、10 分鐘內三次失敗暫停服務），依裝置分別計算。
 
 **線路格式。** `caps`、5 欄位的 `tower` 與 `tower-reply` 在 `src/link/kinds.ts` 與 `tests/link/vectors.json` 裡（Straw Link 規格的 **Message kinds** 表有這些列）；straw-relay 帶有同樣兩列與一份向量的副本，並先重新部署。
 
@@ -2608,19 +2607,19 @@ server 只接受這個執行收下的、由為它自己的裝置開啟的主智�
 | `boss_open_main` | 僅塔台 | 在塔台的工作區開一個新分頁，以新的 pi 作為它的主智慧體，交給它一個沒有任何 session 擁有的請求，每個請求一次（見[開啟主智慧體](#開啟主智慧體)）。帶 `role: "train"` 時開啟火車；在 sb server 的執行裡帶 `role: "integrator"` 時，把車廂單送給專案唯一的整合員，沒有在跑的就開一個，當成塔台自己的主智慧體。 |
 | `boss_close_main` | 僅塔台 | 要求這個塔台開啟的主智慧體（依 intercom 名稱或 session id）像 `/boss close` 那樣 quit。對老闆開啟的主智慧體、另一個工作區的主智慧體、Herdr 回報在工作中的，以及正在進行一輪、有排隊訊息、有對話框、有 monitor 或有子智慧體在跑的，都會被拒絕（見[關閉開啟的主智慧體](#關閉開啟的主智慧體)）。 |
 | `tower_list` | 僅塔台 | 每個工作區的塔台，沒有塔台時則是它的主智慧體或成員：`reach`、狀態、主塔台與自己的標記，以及每個分頁的主智慧體與成員的名稱（見[塔台之間的交談](#塔台之間的對話)）。 |
-| `tower_send` | 僅塔台 | 在標頭之下送一則訊息給另一個塔台（工作區 id 或完整標籤，預設是其他每個塔台）；帶 `device` 時，經 Straw Link 送到隊友電腦的塔台（[連線持有者](#straw-link跨電腦的塔台連線持有者)）；沒有塔台的工作區透過它的主智慧體觸及，否則透過它的成員。`reply` 說明是否期望答案。在主塔台的執行裡它只接受 `workspace` 與 `message`（它會開啟那個工作區的塔台），而在工作區塔台的執行裡，`head: true` 加 `inReplyTo`（請求 id）回答主塔台（[主塔台](#主塔台)）。在塔台執行裡，`for`（工作區裡一個還活著的主智慧體；搭配 `device` 和 `reply`）把裝置的答案送給那個主智慧體（省略時，server 取為這件事呼叫塔台的那一個主智慧體；[塔台為誰送](#隊友-run)），而在隊友 run 裡，`inReplyTo`（請求 id）回答對主智慧體的請求（[隊友 run](#隊友-run)）。 |
+| `tower_send` | 僅塔台 | 在標頭之下送一則訊息給另一個塔台（工作區 id 或完整標籤，預設是其他每個塔台）；帶 `device` 時，經 Straw Link 送到隊友電腦的塔台（[連線持有者](#straw-link跨電腦的塔台連線持有者)）；沒有塔台的工作區透過它的主智慧體觸及，否則透過它的成員。`reply` 說明是否期望答案。在主塔台的執行裡它只接受 `workspace` 與 `message`（它會開啟那個工作區的塔台），而在工作區塔台的執行裡，`head: true` 加 `inReplyTo`（請求 id）回答主塔台（[主塔台](#主塔台)）。在塔台 run裡，`for`（工作區裡一個還活著的主智慧體；搭配 `device` 和 `reply`）把裝置的答案送給那個主智慧體（省略時，server 取為這件事呼叫塔台的那一個主智慧體；[塔台為誰送](#隊友-run)），而在隊友 run 裡，`inReplyTo`（請求 id）回答對主智慧體的請求（[隊友 run](#隊友-run)）。 |
 
-| `tower_reply` | 僅塔台執行（不含主塔台） | 以塔台的標頭，用 intercom 名稱或 session id 回答一個本機 session（主智慧體或成員）。`reply` 說明是否等待答案；`basis` 在自動模式下指出對 blocked 的 `call_tower` 的回答依據什麼；`forward` 是車廂單的路徑（[合併火車](#合併火車)）。 |
-| `tower_done` | 僅塔台執行 | 以一份給下一次執行的交接筆記結束這次執行：每行一項，1 到 1,200 個字元。`wakeAfter`（5 到 240 分鐘）要求一次後續執行，只限本機執行。老闆在執行裡時，執行不會結束（[執行中的老闆](#執行中的老闆)）。 |
+| `tower_reply` | 僅塔台 run（不含主塔台） | 以塔台的標頭，用 intercom 名稱或 session id 回答一個本機 session（主智慧體或成員）。`reply` 說明是否等待答案；`basis` 在自動模式下指出對 blocked 的 `call_tower` 的回答依據什麼；`forward` 是車廂單的路徑（[合併火車](#合併火車)）。 |
+| `tower_done` | 僅塔台 run | 以一份給下一次執行的交接筆記結束這次執行：每行一項，1 到 1,200 個字元。`wakeAfter`（5 到 240 分鐘）要求一次後續執行，只限本機 run。老闆在執行裡時，執行不會結束（[執行中的老闆](#執行中的老闆)）。 |
 | `board_read` | 僅塔台 | 工作看板：這台電腦上，以及透過 Straw Link 在隊友電腦上，每個主智慧體的一行目前工作與檢查清單，以 JSON 形式（見[工作看板](#工作看板)）。 |
 | `board_set` | 已加入且不是塔台的 session（只有分頁的主智慧體可以寫） | 覆寫主智慧體自己的看板項目（它會依 todo 清單與名稱自己填）：`now` 與最多 8 個檢查清單項目，或 `auto: true` 交還給它；回答會說明它去了哪裡。 |
-| `link_request` | 受管電腦上的每個 session，以及本機塔台執行 | 以一個理由請求一個 Straw Link 動作（create、invite、invite-unattended、join、trust、leave、remove、role、rotate）。老闆在一個顯示動作、每個引數、理由與這個 session 的對話框裡核准每一個；沒有任何東西會未經詢問就執行。在無人值守裝置上與遠端輪次裡會被拒絕。 |
+| `link_request` | 受管電腦上的每個 session，以及本機塔台 run | 以一個理由請求一個 Straw Link 動作（create、invite、invite-unattended、join、trust、leave、remove、role、rotate）。老闆在一個顯示動作、每個引數、理由與這個 session 的對話框裡核准每一個；沒有任何東西會未經詢問就執行。在無人值守裝置上與遠端輪次裡會被拒絕。 |
 | `call_tower` | 已加入的 session 與塔台 | 在標頭之下送一則訊息給這個工作區的塔台，或依 id 或完整標籤送給另一個工作區的。沒有塔台在跑時會開啟塔台分頁。`why`（在 pi 裡必填：`milestone`、`shared` 或 `blocked`）寫進標頭。`reply`（預設 true）說明是否期望塔台回答。 |
 | `boss_duty` | 分頁的主智慧體（成員、火車、塔台與子智慧體會被拒絕或沒有這個工具） | 設定主智慧體的種類：`coordinator`、`integrator`（整合關閉時省略）或 `standing`，附一行理由（至多 200 字元）。對同一個種類、對在 `train` todo 還待處理或進行中時從 `integrator` 切換出去，以及在 Straw Link 遠端輪次裡，都會被拒絕。寫入種類項目、重新 brief（一次 steer）、發佈 `sb_duty`，並記到塔台的摘要裡。 |
 | `boss_rename` | 已加入的 session，不含塔台 | 把 session 的名稱（`pi.setSessionName`）設成描述它目前工作的短語，去除空白，至多 40 字元（分頁標籤放得下 16 個）。網與 GUI 依名稱顯示 session，而主智慧體用它來標示它的 Herdr 分頁（和 pi-auto-tab-name 一樣截成 16 字元，所以那個擴充在載入時，會把標籤當成自己的，並在壓縮之間把它當成選定的名稱保留）。主智慧體自己重新命名分頁，是因為 pi-auto-tab-name 不動別人標示過的分頁，例如老闆命名的分頁，或塔台帶著標籤開啟的分頁；成員不動它的主智慧體的分頁。主智慧體的 prompt 讓它在工作轉向另一個任務時呼叫這個。塔台沒有這樣的工具：網依它的名稱認出它。名稱若是塔台或列車分頁的標籤（塔台圖示、主塔台圖示、`train <MMDDx>`）會被拒絕：還原之後，證明角色的就是這個標籤。 |
 | `boss_broadcast` | 已加入的 session 與塔台 | 在標頭（指名每個收件者）之下，送一則訊息給某個範圍內的每個其他 session。`tab`、`workspace` 與 `towers` 只觸及加入網的 session（Herdr 裡幾乎每個 pi，不含子工作區的 session；`towers` 透過主智慧體觸及沒有塔台的工作區，否則透過它的成員）；`all` 觸及這台機器上每個 pi session，不論有沒有加入（用於像是要去睡覺之類的通知）。預設 `workspace`。塔台對其他塔台用 `tower_send`。 |
 | `boss_server` | Herdr 裡每個有畫面且已加入的 session | sb server 的 `status`（它關著時也可以）、`logs`，或附理由的 `restart`（見 [sb server](#sb-server)）。遠端輪次裡不可用。 |
-| `tower_memory` | 僅本機塔台執行 | 保存比執行活得更久的東西：長期指示或決定，須是執行取走的某則老闆訊息的逐字引用（server 會檢查），撤銷一條用同樣的證明，以及塔台自己的等待事項（add、resolve、drop；給老闆的等待事項是一張有欄位的卡片，見[塔台記憶](#塔台記憶)）。隊友 run 會被拒絕。見[塔台記憶](#塔台記憶)。 |
+| `tower_memory` | 僅本機塔台 run | 保存比執行活得更久的東西：長期指示或決定，須是執行取走的某則老闆訊息的逐字引用（server 會檢查），撤銷一條用同樣的證明，以及塔台自己的等待事項（add、resolve、drop；給老闆的等待事項是一張有欄位的卡片，見[塔台記憶](#塔台記憶)）。隊友 run 會被拒絕。見[塔台記憶](#塔台記憶)。 |
 
 | 指令 | 效果 |
 |---|---|
@@ -2637,7 +2636,7 @@ server 只接受這個執行收下的、由為它自己的裝置開啟的主智�
 | `/boss gui view`, `/boss gui view auto\|standard\|geek\|zen\|raven` | 顯示或設定 GUI 的預設檢視（控制 socket 上的 `gui-view`，保存在 `gui-prefs.json`）。`zen` 是一次一個等待中的項目，之後留一個 session 作伴；設為自動的裝置跟隨它，自己選了檢視的裝置保留它的選擇。見瀏覽器檢視裡的**檢視：自動、標準、極客、禪**。只有這個指令能設它：沒有任何頁面可以，已配對的手機也不行。 |
 | `/boss server [stop\|restart [--downgrade] [reason]]` | 顯示 sb server，並在它關著時啟動它；刻意停止它；重啟它。見 [sb server](#sb-server)。 |
 | `/boss close all` | 讓這個基地的塔台、主智慧體與成員 quit 並關閉它，否則什麼都不做；見**收起與接回**。 |
-| `/boss close <name\|key>`, `/boss close all <workspace>` | 在 pi 裡經確認後，讓另一個單位、小隊或基地 quit，做法是向 sb server 的 GUI post `close/unit`、`close/tab` 或 `close/all {workspace}`（頁面的 Quit 所 post 的）。只限老闆親自打：這個指令在塔台執行或隊友 run 裡會被拒絕，也沒有任何工具能觸及它。 |
+| `/boss close <name\|key>`, `/boss close all <workspace>` | 在 pi 裡經確認後，讓另一個單位、小隊或基地 quit，做法是向 sb server 的 GUI post `close/unit`、`close/tab` 或 `close/all {workspace}`（頁面的 Quit 所 post 的）。只限老闆親自打：這個指令在塔台 run或隊友 run 裡會被拒絕，也沒有任何工具能觸及它。 |
 | `/boss stash [name]` | 把這個基地以 `name`（預設是工作區標籤）收起並關閉它；見**收起與接回**。 |
 | `/boss stash [name] --workspace <label\|id>` | 經確認後把另一個基地收起（`close/stash {workspace, name}`）。 |
 | `/boss dismiss [all\|<name>]` | 隱藏已完成的子智慧體（`dismiss {all}` 或 `{key}`）。 |

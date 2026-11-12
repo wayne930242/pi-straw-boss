@@ -44,17 +44,17 @@ A train does these steps, then ends:
 5. Where its stages say so, deploys and verifies.
 6. On a failure, rolls back or reports.
 
-The sb server sends the coordinator a notice for each state of its car:
+A car has four states, and the sb server sends the coordinator a notice for each:
 
 ```mermaid
 stateDiagram-v2
-  [*] --> sent: car slip
-  sent --> received
-  sent --> returned
-  received --> landed
-  received --> dropped
-  returned --> sent: fixed and sent again
-  dropped --> sent: sent again
+  [*] --> received: the integrator accepts the slip
+  [*] --> returned: the integrator refuses it
+  received --> landed: the train merged it
+  received --> dropped: the train dropped it
+  landed --> [*]
+  returned --> [*]: notice to the coordinator
+  dropped --> [*]: notice to the coordinator
 ```
 
 Integrators:
