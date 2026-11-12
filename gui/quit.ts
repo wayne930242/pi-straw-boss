@@ -62,8 +62,9 @@ export const choose = <T extends string>(text: string, choices: { label: string;
 	first.focus();
 });
 
-/** The keys of the finished subagents on the net, as the server counts them (net.ts: the subagents of the tower, of each tab's units, and of the outside units). */
-export const endedSubs = (net: Net): string[] => unitsOf(net).filter((r) => r.sub && "ended" in r.unit && r.unit.ended).map((r) => r.unit.key);
+/** The keys of the finished subagents the Dismiss finished button can hide: this computer's, as the server counts them (net.ts: the subagents of the tower, of each tab's units, and of the outside units), and an ally box's while its session is live and the box lists `dismiss` (boxmodel.ts `can`). */
+const endedRows = (net: Net) => unitsOf(net).filter((r) => r.sub && "ended" in r.unit && r.unit.ended && can(r.base, "dismiss"));
+export const endedSubs = (net: Net): string[] => endedRows(net).map((r) => r.unit.key);
 
 /** The HUD's Dismiss finished button: shown only while a finished subagent is on the net, and says how many. */
 export function showDismissAll(button: HTMLElement, net: Net) {
@@ -95,6 +96,16 @@ export function showStashed(button: HTMLElement, list: HTMLElement, net: Net, of
 /** Dismisses finished subagents, one by key or all; a refusal or no answer says why in the page's dialog. Resolves whether it went. */
 export const dismiss = (body: { key: string } | { all: true }) => import("./post.ts").then(({ post }) => post("dismiss", body)).then((r) => r.ok || (sheet(r.body.reason ?? m.refused({ status: r.status })), false), () => (sheet(m.no_answer()), false));
 
+/**
+ * Dismiss finished: this computer's finished subagents by the server's `all`, and each ally box's by its own key, as one row's Dismiss sends it (an `all` never reaches a box: it would hide the finished units of every team on it, operateroutes.ts).
+ * The first refusal says why once (`dismiss` shows it) and stops the rest. Resolves whether everything went.
+ */
+export async function dismissFinished(net: Net | undefined, send: (body: { key: string } | { all: true }) => Promise<boolean> = dismiss): Promise<boolean> {
+	if (!(await send({ all: true }))) return false;
+	for (const { unit: { key } } of net ? endedRows(net).filter((r) => r.base.box) : []) if (!(await send({ key }))) return false;
+	return true;
+}
+
 export interface QuitDeps { route(): NetRoute; net(): Net | undefined; go(route: NetRoute): void }
 
 /** A view of what was just closed goes up to what is left: a closed base to the map, a closed squad or unit to its base. */
@@ -113,7 +124,8 @@ export function mountQuit(deps: QuitDeps) {
 		if (!b || !d) return;
 		event.preventDefault();
 		if (d.close === "head") return void sheet(m.head_close_ask(), m.head_close()).then((yes) => yes && (b.toggleAttribute("disabled", true), import("./post.ts").then(({ post }) => post("head/close", {})).then((r) => r.ok || sheet(r.body.reason ?? m.refused({ status: r.status })), () => sheet(m.no_answer())).finally(() => b.toggleAttribute("disabled", false))));
-		if (d.close === "dismiss" || d.close === "dismiss-all") return void dismiss(d.close === "dismiss" ? { key: d.key! } : { all: true });
+		if (d.close === "dismiss") return void dismiss({ key: d.key! });
+		if (d.close === "dismiss-all") return void dismissFinished(deps.net());
 		if (d.close === "pop") return void (b.toggleAttribute("disabled", true), Promise.all([import("./post.ts"), import("./refusal.ts")]).then(([{ post }, { reasonOf }]) => post("close/pop", { name: d.name }).then((r) => r.ok || sheet(reasonOf(r.body.reason, r.body.settings) ?? m.refused({ status: r.status })))).catch(() => sheet(m.no_answer())).finally(() => b.toggleAttribute("disabled", false)));
 		const ask = d.close === "stash" ? m.stash_base_ask : d.close === "base" ? m.close_base_ask : d.close === "tab" ? m.close_squad_ask : d.role === "tower" ? m.close_tower_ask : m.close_unit_ask;
 		void sheet(ask({ name: d.name ?? "" }), d.close === "stash" ? m.stash() : m.quit()).then((yes) => {
