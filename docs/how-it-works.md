@@ -92,6 +92,9 @@ stateDiagram-v2
 
 The numbered rules below are the whole behavior.
 
+<details>
+<summary>Details</summary>
+
 1. Every joinable pi in Herdr joins its tab's net at session start as a **member**: no reminder, no question. It does not join outside Herdr, as a pi-herdr-agents subagent (`PI_SUBAGENT_ID`, its parent represents it), in a sub workspace (below), or as the tower itself.
 2. A member becomes its tab's **main agent** by promotion. The agent calls `boss_promote` when its work grows (several steps, dispatching workers, more than one app); the member prompt says so. A member that calls pi-herdr-agents' `subagent` or `subagent_resume` tool without promoting is promoted automatically, before the subagent starts or resumes. A join that failed at start and retries after the session's pane moved to another tab registers on the tab it is in now, so it never becomes a second main there.
 3. A tab has one main. An agent never takes over an existing one: while the tab's main is live, `boss_promote` is refused with a message and the automatic promotion is skipped. The member may still dispatch its own subagents, but its prompt tells it to first message the main through intercom with what it will do and which resources it will use.
@@ -132,17 +135,27 @@ When a tower quits (pi's `session_shutdown` with reason `quit`; a reload, `/new`
 
 Towers of different workspaces reach each other with `tower_list` and `tower_send` ([Talking between towers](#talking-between-towers)), or with `call_tower` from any session; the **head tower** is a tower of its own, in a workspace of its own, that the boss talks to and that forwards his work to these towers ([The head tower](#the-head-tower)).
 
+</details>
+
 ### The tower's digest
 
 A tower learns what changed in its workspace without asking. Each session in the workspace's net writes one line when it joins (`a1 joined tab billing`), when its `subagent` or `subagent_resume` call returns without an error (`MP-1 export started subagent lint-sweep (worker)`), and when it calls `boss_rename` (`a1 renamed itself "MP-1 export" (tab billing)`). Each line starts with the local time (`HH:MM`). At the start of each run the tower reads the lines, oldest first, into its role section under `Since your last run:`, and clears them, so it reads each line once. A member's or main's run never reads them.
+
+<details>
+<summary>Details</summary>
 
 The lines live in Herdr's memory as workspace tokens (`sbd_<time>`, one line each), written under their own source, `straw-boss-digest`, without the TTL of Straw Boss's role tokens, so they wait however long the tower is idle. Herdr keeps at most 32 tokens on a workspace, changes at most 16 per report, and cuts a value to 80 characters without its newlines: the digest keeps the newest 20 lines, a note that finds 20 drops the oldest in the same report, and a line is cut to 80 characters. A new Herdr server starts without them, as it does without every other token; the role tokens are written again, the digest is not.
 
 A line that cannot be written is dropped without failing the join, the launch, or the rename. The sb server writes `head tower opened` and `head tower closed` in the digest of every tower workspace when the head tower starts or ends ([The head tower](#the-head-tower)).
 
+</details>
+
 ### Talking between towers
 
 Towers coordinate with each other directly, with two tools only a tower has, and every message the net carries for a session tells its reader who sent it.
+
+<details>
+<summary>Details</summary>
 
 **The header.** The code writes a line before the text of every `call_tower`, `boss_broadcast`, `tower_send`, and handoff message (never the model, so a name or a message cannot change it):
 
@@ -160,13 +173,20 @@ Control characters and runs of whitespace in a name fold to one space, and a nam
 
 **`tower_send`** (tower only) takes a message, an optional `workspace` (id or exact label; a sub workspace goes to its parent workspace), and `reply` (default false). With no workspace it goes to every other tower. It never opens a tower. In a head tower run it takes only `workspace`, and the server opens that workspace's tower when it has none ([Forwarding and answers](#the-head-tower)); a workspace tower answers the head tower with `head: true` and `inReplyTo` (an ask id).
 
+</details>
+
 #### Workspaces without a tower
 
 A workspace without a live tower (no `tower` token, or the session is not on the net) is reached through its main agents, else its members: the sessions of the workspace that joined the net, the tower's own session excluded. Both `tower_send` and `boss_broadcast` with scope `towers` do this, and the result labels each such recipient, as in `kb-main: sent [no tower in 知識庫: main]`. A workspace with no tower and no joined session is skipped (`tower_send` to it alone is an error that says so).
 
+<details>
+<summary>Details</summary>
+
 The sender's own workspace never answers for a tower: a session never reaches itself, and a main in a workspace without a tower does not reach its sibling mains by scope `towers`; the tower of its own workspace, when there is one, is a recipient. Sub workspaces keep their rules (they have no tower and their sessions receive only scope `all`).
 
 **`boss_broadcast`** with scope `towers` stays for sessions that are not towers, under the same header. `call_tower` has an optional `reply` too, default true (the tower answers); a notice sets it to false. It also takes `why`, which pi's tool requires ([When a main calls the tower](#when-a-main-calls-the-tower)).
+
+</details>
 
 ### The head tower
 
@@ -192,29 +212,58 @@ sequenceDiagram
 
 The sb server makes it the first time the head tower is needed (the boss's first message from any channel, or `/boss head`), in the folder `<pi agent dir>/straw-boss-head/`. A fresh install shows nothing new in Herdr until the boss writes to it. The workspace is labelled `主塔台` when the server's locale is Traditional Chinese and `Head tower` otherwise, its tab carries the crown glyph (U+F01A5), and its pane holds the standing pane of a tower, marked `sb_role=head` and sorted first (`000`). It is known by its record and its `sb_head` token, never by its label, so a workspace of the boss's with the same label is not taken for it.
 
+<details>
+<summary>Details</summary>
+
 Closing its tab or workspace in Herdr, or `/boss head close`, ends the service as for a tower; the conversation, its memory, and its asks are kept, and the next message makes the workspace again and resumes. With `towerRuns` off there is no head tower, and every channel says so. Its state is `<state dir>/head/`: the service record, the queue, `boss-session.json`, `chapters.json`, `asks.json`, and `memory.json`.
+
+</details>
 
 #### Its runs and conversation
 
 It is a tower service of its own kind with the tower's machinery (standing pane, wake, claim, crash rules). Every run resumes the one pi session, whether the boss's message or a tower's answer woke it, under the boss conversation's limits (the 10-minute wrap-up after his silence, the 4-hour cap). There is no age limit: a session past 8 MB, and **New conversation** or `/new`, start a new **chapter** whose brief carries the last handoff note and the last lines between the boss and the head. The GUI pages the history across chapters, with a divider where one ends. The model is `headModel`, else `towerModel`. Its brief lists the workspaces now (each tower's state, each main and what it is doing), the open asks, its memory, and its limits.
 
+<details>
+<summary>Details</summary>
+
 **Its tools and who may reach it.** `read`, `grep`, `find`, `ls`, `tower_list`, `board_read`, `tower_send`, `tower_memory`, `tower_done`, and `boss_server`: no shell, no edits, no `boss_open_main`, no `call_tower`, and no Straw Link (`tower_send` with `device` is refused). Before anything is queued the server's gate lets in only the boss's own words (the GUI, `/boss head`, the standing pane's prompt) and an answer to one of its open asks; a broadcast, a main's message, or an answer with no open ask gets a receipt and wakes nothing.
+
+</details>
 
 #### Forwarding and answers
 
 `tower_send` goes to one workspace's tower (an id or exact label; a sub workspace goes to its parent). A workspace with no tower gets one first (its tab and standing pane), then the message. Each forward opens an ask `H<n>` that stays open for 24 hours after its last forward or answer, with at most 40 open.
 
+<details>
+<summary>Details</summary>
+
 An ask also carries `group`, the id of the first ask of its broadcast, which the GUI page folds into one row: asks with the same `relay` are one broadcast (the head words its message to each tower, so the first lines differ); an ask with no `relay` joins the newest earlier one without a `relay` that has the same first line and is under 60 seconds before it. A file from before `group` is grouped the same way when read.
 
 The header carries `ask=H<n>` and, only when the turn was started by the boss's own message that the server delivered to this run, `relay=boss:<event id>`; a tower reads `head=yes relay=boss` as the boss's instruction routed through the head, and a `head=yes` message without `relay` as the head's own note. The tower answers with `tower_send({ head: true, inReplyTo: "H12", message })`, the server writes `in-reply-to=H12`, holds the answer up to 30 seconds with others, and wakes the head, which tells the boss in a line. When it needs his decision it asks in plain words and records a wait for him in its memory.
+
+</details>
 
 #### The head page
 
 The GUI page is the conversation and its composer: End, New, and Close sit above the composer, the asks are one card per broadcast (its parts, then `2h ago · 1/4 handled`; each tower's state and newest answer unfold, and an order a later one corrects folds under it; groups quiet for a day fold into "Older"; [spec](specs/2026-11-07-head-log-cards.md)), a wait for the boss shows only until its `due` (a day old with none; the server's summary of the head leaves it out of the rows and of the footer count, the file keeps it for 7 days, and the head's brief tells it to resolve or re-ask it), the memory footer shows only for a standing instruction, a decision, or a pending proposal, and the head's tool calls and the sb server's notices are not drawn on this page (Zen's history of the head still draws them). Design: [docs/specs/2026-11-06-head-page-minimal.md](specs/2026-11-06-head-page-minimal.md).
 
+<details>
+<summary>Details</summary>
+
 **Where the boss meets it.** The GUI page and Zen strip ([Browser view](#browser-view)), `/boss head [status | leave | new | close | <message>]` in any pi session (a bare one makes the workspace and focuses its tab), `/boss memory -w head`, the head's standing pane (Enter talks to the same conversation), Herdr's net view (the head workspace first), and `status`'s `head`. The head workspace is no base: it is not a target of `tower_send` or `boss_broadcast`, it is not stashed, and a pi typed into it by hand joins no net.
 
+</details>
+
 ### Straw Link: towers across computers (the link holder)
+
+```mermaid
+flowchart TD
+    t["tower_send with device"] --> h["The link holder<br/>in the sb server"]
+    h --> r["The relay"]
+    r --> o["The other device's holder"]
+    o --> i["Inbox, up to 7 days"]
+    i --> a["An ally run, or the tower<br/>takes it when idle"]
+```
 
 Design: [docs/specs/2026-10-25-straw-link.md](specs/2026-10-25-straw-link.md). This is what the code does so far (the holder, delivery, the tools, remote turns, and the GUI's team settings); joining over a tailnet is a later step. Unattended devices (the policy, `join.txt`, dialogs, the tower they open, `unit-status` and notices) are the paragraph **Unattended devices** below, and [their setup](unattended-device.md). A computer with no team set up (nothing under `link.teams` in `config.json`, no team file) runs none of it: no channel, no election, no files. The holder runs in the [sb server](#the-sb-server) (`src/link/service.ts`); a pi session only asks it.
 
@@ -222,27 +271,45 @@ Design: [docs/specs/2026-10-25-straw-link.md](specs/2026-10-25-straw-link.md). T
 
 `<pi agent dir>/straw-boss/link/` (`PI_CODING_AGENT_DIR` aware, mode 700, files 600 where the OS has modes; paths are used as Unicode paths and never become a shell command): `device.json` (the keys, the label, and the next sequence number), `device.id`, `teams/<team>.json` (the roster copy, the team keys by epoch, the relay URL, the last event id, and the last sequence number taken from each sender), `inbox/<envelope id>.json`, `holder.json` with `holder.lock`, and `link.log` (one JSON line per dropped envelope, notice, or send). Every write goes through the lock; a write outside it throws. A lock whose process is gone, or that is older than 10 s, is taken over.
 
+<details>
+<summary>Details</summary>
+
 A team file that is missing or damaged makes the team stop: nothing is taken and nothing is acknowledged, and the only way back is to join again, because a fresh file would forget which sequence numbers were already taken.
+
+</details>
 
 #### The link holder
 
 It runs in the primary sb server (the server of the default Herdr; a secondary server holds no link, and a session on another Herdr is told so), and the server is its only candidate: no pi session or tower takes part in the election any more. The election is still its own, not the GUI's: `holder.json` (session id, version, PID, start time) names the server, whose id is `sb-server-<8 hex>`, and `holder.lock` guards it as before.
 
+<details>
+<summary>Details</summary>
+
 The server ranks as a tower of its own version, so a session of the previous build, which is still a candidate there, can neither outrank it by build nor by role: it contests only a record that is vacant or whose process is gone, and the server takes the record back at its next look (every 2 s). The server starts the holder after it has connected to the broker and before it reports ready, waiting at most 3 s for the first look; a stop or restart removes the record first, so the next server takes it at its first look. A holder that finds the record names another process stops.
 
 `status` shows the link's state (`inUse`, `holding`, `active`, and the last notices); the notices that a session used to see on its screen go to `server.log` (`link-notice`) and to `status`.
+
+</details>
 
 #### Requests from sessions
 
 A session asks the holder over the server's control socket, one request per connection: `{cmd: "link", from: <the session's intercom id>, body: {op, …}}` answered by `{ok: true, answer: <the holder's answer>}`. The ops are the ones the channel carried (`send`, `list`, `board-read`, `confirm-request`, `confirms`, `answer-confirm`, `forget-confirm`, `gui`, `request-open`, `request-run`, `request-drop`) and `taken` (the tower says an inbox message is in its session). There is no 16 KiB limit and no chunking. `from` is self-reported, as pi-intercom's ids are; the GUI's requests are still taken only from the session `gui.json` names (and from the server itself once it hosts the GUI).
 
+<details>
+<summary>Details</summary>
+
 A session finds the server through `server.json` and the `hello` secret; with no server running, or none holding the link yet, a request fails with "No link holder is running", and a server that is restarting says so. The channel `straw-boss/link` is kept for the previous build: the server answers a session of that build's chunked `req` with chunked `res`, takes its `taken`, and offers inbox messages to resident towers on it. Nothing the server loads imports pi-tui, `tools.ts`, `pairing.ts`, or the trust question (a test walks its imports).
 
 **Receiving.** A stream resumes from the team file's last event id (the relay sends every envelope this device has not acknowledged on a new stream anyway). Each `tower` envelope is checked and decrypted under the lock, written to the inbox, and the sender's high-water mark moved in the same locked write; only then does the stream acknowledge it to the relay. A crash before the inbox write gets the envelope again and delivers it once; a crash after it and before the acknowledgement gets it again and the sequence guard drops the copy. A displaced holder (the record names another session) keeps the envelope for the next stream.
 
+</details>
+
 #### Delivery
 
 A message goes only to a tower whose pane's cwd is inside the team's `project`: the one closest to the project root, then the first in Herdr's workspace order (a named `workspace` restricts it to that workspace's tower). Mains and members never receive one. The holder offers the inbox item to that tower over the intercom channel `straw-boss/link` (not owner-eligible; only a tower registers it now); a tower takes an offer only from the session `holder.json` names, the server.
+
+<details>
+<summary>Details</summary>
 
 The tower keeps it until it is idle (`isIdle()` and no pending message, checked in the same tick), then sends it as a custom message of type `straw-link` with `triggerTurn`, under the header below, one message per tick, and tells the holder (`taken`, on the control socket), which removes it from the inbox. The session entry `straw-link-seen` remembers what a session took, so a restart does not take it twice.
 
@@ -256,9 +323,14 @@ When the tower is the sb server's (the default), nothing of this paragraph's off
 
 `from`, `workspace`, and `remote` are cut to the label character set (ASCII letters, digits, space, `.`, `_`, `-`; anything else becomes `_`) and 40 characters before they are quoted, and `id=` is always `link:` and the sender's device id, never a session id of this computer. `team=` is this computer's own name for the team, so it keeps its characters (cleaned, quoted, at most 80).
 
+</details>
+
 #### Sending
 
 `tower_send` with `device` (a short id, an id, or a label; `workspace` then names a workspace label on that device) hands the message to the holder in the sb server over the control socket. The holder checks that the caller is a tower whose cwd is inside a team's project, resolves the device (a name that fits two devices, or this device, is an error that lists the candidates), reserves the next sequence number, builds and signs the envelope, and writes it to `link/outbox/` under one lock before the first post, then posts it in order with retries and answers once the relay has it or after 10 s with "queued".
+
+<details>
+<summary>Details</summary>
 
 The file goes once the relay holds the envelope or refuses it for good (a refusal that comes after the answer is told to the boss), and the next holder of the computer posts what is left, first, in order. A 401 from the relay halts the team's posts for 60 s (a clock that was off), and a send meanwhile is refused with the reason. A team that forks, loses its team file, or refuses the stream (the device was removed) stays stopped, on disk too, until its team file is replaced by joining again.
 
@@ -267,6 +339,8 @@ A message may hold 192 KB; the inbox keeps at most 100 messages per sender and 5
 **Remote turns** (`src/link/{turn,allow,gate,policy,hooks}.ts`; `hooks.ts` registers the pi hooks, `runtime.ts` wires it to the holder in the server). A run is a remote turn from the first `message_start` or `message_end` of a `straw-link` custom message until `agent_settled`, however the message got into it (a delivery, a steer into a run that began local); `agent_end`, a retry, a compaction, or a continuation does not end it, and a local message that joins leaves it as it is. Its level is the lowest of its remote senders'.
 
 A sender's level is `reply` unless this computer names it: `link.trust` in `config.json` (device id to `reply`, `forward`, or `dispatch`), or, on a device whose `/etc/straw-link/policy.json` says `unattended` and passes the owner check (the file and its folder owned by another user, not symlinks, not writable by this user), that file's `trust` (`true` means `dispatch`) and `config.json`'s `link` section is ignored. A policy file that is there but fails the check refuses unattended mode: every sender stays at `reply` and the boss is told once. A message that names no sender this code put there is remote at `reply`.
+
+</details>
 
 What a tool call in a remote turn meets:
 
@@ -282,6 +356,9 @@ flowchart TD
     allow -->|"yes"| run
     allow -->|"no"| gate["The boss confirms;<br/>at forward the sender's device can too"]
 ```
+
+<details>
+<summary>Details</summary>
 
 - `link_request` is blocked at every level, `dispatch` included, with no dialog (the tool is the boss's alone, in a local turn).
 - At `dispatch` nothing else is held. At `reply` and `forward` the `tool_call` hook allows by exact tool name: `read` of a file `git ls-files` lists in the bound project (after `realpath`, so a symlink out of the project is not); `grep`, `find`, and `ls` with every path inside the project, whose output the `tool_result` hook cuts to the lines and entries that belong to a tracked path (a line it cannot attribute, such as a notice, is dropped; the structured copy goes with the replaced content); `tower_list`, `board_read`, `boss_status`, `todo` (the first two answer a remote turn only what its senders already receive: [The work board](#the-work-board)); and `tower_send` whose `device` is a sender of the run (id, short id, or label).
@@ -317,9 +394,14 @@ While the panel is open the map's overview in the corner steps aside (the panel'
 
 A forward that works used to leave no line anywhere; now the box's `server.log` has `dialog-forwarder` (`started` or `skipped`) at the start, `dialog-controllers` (count and known, at the first look and whenever either changes), `dialog-seen`, `dialog-sent` (per controller, queued in the outbox, not yet delivered) and `dialog-ended` for each question, and `dialog-pass-stuck` when a pass has not finished in a minute (it waits at `read`, `dispatcher`, `notice` or `post`; it is let go and the next look starts a new one; a close it had not posted is kept and posted by the next pass, five tries at most, and not at all once the card has expired at the controller; at most one pass let go is outstanding, so a call that never returns costs one pending pass, and a second stuck pass is left running with one `dialog-pass-hung` line), and the controller's `link.log` has `dialog-in` when one arrived; none holds a word of the question ([the lines](unattended-device.md#6-what-a-refusal-looks-like)).
 
+</details>
+
 #### What the box reports
 
 Every minute and on a change the device sends each `dispatch` controller a `unit-status` (ephemeral): each tower unit's state, the monitors the hub sees running in that unit's workspace, and its last report (the later of the last `tower_done` note and the last `tower_send` text to that controller, 4 KB); the controller keeps the latest per device in memory, shows it as the device's ally base card (below), and loses it on restart.
+
+<details>
+<summary>Details</summary>
 
 **The card** (Standard and Geek, `gui/allyunits.ts`) lists the units the box reported and none of its own mains or workers (while an unattended box reports none, which is an older box, a team that shares presence only, and the minute after this server restarted, one line says how many units are online and names none; a teammate's own computer, which the roster marks attended and which never reports units, lists its mains and workers with their states as before): per unit a state word (standing by, run in progress, crashed, needs trust, held after crashes; one the page does not know as it is; a tower unit is in the service's `running` or `waking` state while one of its short runs lasts, so the word says *run in progress* and its tooltip says that a tower wakes a run for each message and stands by between runs, and a plain unit's `working` still reads *running*), and the card's subtitle names the box and whether it is there, not its tower's state with "updated 40s ago" (the page's clock keeps it current), the monitors on one line (count, then the commands), and the last report folded to its first line, a tap opens it as Markdown (it parses no HTML; the Markdown is built when the fold first opens).
 
@@ -385,9 +467,14 @@ The box's `link.log` has one `tower-in` line per message kept in the inbox (send
 - **`/boss link on`** posts `link/enable`, the route the page's Set up button posts, so a computer where Straw Link is not on can be set up from pi (the "not on in this server" answer names it). The page asks nothing first, so this asks nothing either; like the other lines it is the boss's typed input only, and `BOSS_LINK_LOCAL` keeps a paired device from typing it (the route itself is `local_only` too).
 - **A paired device** may read the state, answer a forwarded confirm or dialog, and ask a box to stop one main (`unit-stop`: a graceful stop that the box decides on), and nothing else: every other action changes who may command this computer, so only this computer's own page (a request on the loopback listener) does it. An invite text is only ever returned to that page, and a paired device's state leaves out what an agent put into the join or create screen.
 
+</details>
+
 #### `link_request`
 
 An agent asks for `create`, `invite`, `invite-unattended`, `join`, `trust`, `leave`, `remove`, `role`, or `rotate` with its arguments and a reason. It never runs unasked: the holder checks and words the request (the dialog shows these lines, never the agent's own description), and a dialog through the dialog contract (owner `straw-link-request`, prefix `straw-link:request`, keyed by `toolCallId`) shows the action, every argument, the reason, and the requesting session.
+
+<details>
+<summary>Details</summary>
 
 Only an explicit Approve runs it; for `trust`, `remove`, `role`, `rotate`, and `leave` (the high-risk actions) Approve can be given only from this computer's own page or terminal: a paired device sees the dialog with Approve disabled, can still deny, and its approval is refused (403 `local_only`, decided by the listener), while the other actions are approvable from a paired device too; Deny, a timeout (10 minutes), the end of the tool call, and a dialog that cannot show everything all refuse. Each request is its own dialog; no setting skips it. The holder carries the action out, and an approved `invite` returns the invite text to the asker.
 
@@ -395,7 +482,22 @@ An approved `join` or `create` only opens the screen prefilled: the words are st
 
 Residual assumption: a Herdr or GUI stall of more than 1.5 s after a key passed its last check can still deliver that key late.
 
+</details>
+
 ### Straw Link operate: an attended computer drives an unattended box
+
+```mermaid
+sequenceDiagram
+    participant C as Controller
+    participant R as Relay
+    participant B as Unattended box
+    C->>R: open (signed, ephemeral key)
+    R->>B: live envelope, memory only
+    B-->>C: accept with its scope, or refuse
+    B-->>C: snap, ev, rep (encrypted)
+    C->>B: watch, req
+    B-->>C: close, with a reason
+```
 
 Design: [docs/specs/2026-11-07-link-operate.md](specs/2026-11-07-link-operate.md). An attended computer (the controller) shows the work of an [unattended box](unattended-device.md) as bases of its own GUI and drives it: the live terminal and the conversation of the box's towers, mains and workers, typing, Escape and steering, and the transcripts of runs that have finished. It is a remote base bridge, not a second viewer: the box's sb server runs its own GUI core for one operator session, the controller's sb server merges the result into its net, and the page is the usual page (the map, the comms view, the pad, Zen, a paired phone through the Mac).
 
@@ -405,13 +507,21 @@ It is **not** a shell: nothing here runs a command on the box except through the
 
 `operate` is a root-owned field of `/etc/straw-link/policy.json` (`src/link/policy.ts`; [setup](unattended-device.md#2-the-policy-file)): a map of device id to `team` or `box`. The box checks it on every request (`src/server/operatescope.ts`, `operateguard.ts`): this device is unattended and its policy reads; the sender is a current, attended member of the team the envelope came on; the sender is at `dispatch` in `trust` now and `operate` names it; and the unit the request names is in the session's scope. A failure answers with one word (`not-granted`, `not-admin`, `out-of-scope`, `local-only`, `policy`) and is logged.
 
+<details>
+<summary>Details</summary>
+
 The scope of a session is the one team its `open` came on, when the device is a roster admin of that team (an admin of two teams holds two sessions), plus the box's own units for a `box` grant that asked for them. A unit belongs to a team only through the box's own records of who started it, never its folder (both teams of the real box work in `/srv/work`): an ally run by its run record, a main an ally run opened by its `opened` row and the pane's `sb_opened_by` token (both must agree, else it is nobody's), a member or subagent by the tab of its main.
 
 The box's tower service, its local runs, a worker in a tab of its own and anything unattributed are the box's, which only a `box` grant reaches. A hq-signed grant can never carry `operate`.
 
+</details>
+
 #### The carrier
 
 Operate rides the one `operate` Link kind, which the relay treats as a third class beside queued and ephemeral: `live`. The relay holds a live envelope in memory only, writes it to the one addressee's open streams as an SSE `live` event with no `id:` line, and never stores, replays or acknowledges it (an addressee with no stream gets nothing: the post answers `delivered: 0`).
+
+<details>
+<summary>Details</summary>
 
 The holder fails closed on its side: it drops a live envelope older than 60 s (`stale-live`), one that names other than a single addressee, and one that arrives as a stored event; a post whose answer lacks `delivered` (a relay that stored it) stops live posts for an hour (`operate-relay-not-live`); a live post has a 5 s deadline and no retry. An attended sender may send only `open` and `frame`/`close`, an unattended one only `accept`, `refuse` and `frame`/`close`; a device lists `operate/1` in its `caps` only when it has a sink, and a box only while its policy grants someone `operate` (it changes within a tick).
 
@@ -437,19 +547,31 @@ Everything the box sends is treated as hostile on the controller: it is rebuilt 
 
 A request admitted just before a revoke is checked once more, after the last look at the terminal, and does not write if the session has ended.
 
+</details>
+
 #### Pacing
 
 The box sends whole visible screens, never row diffs: at most one every 500 ms while a screen changes and an empty "current" frame every 2 s while it is calm (so the controller's 3 s freshness holds on a slow link); the net snapshot at most once per 2 s and only when it changed. One budget of 900 envelopes a minute covers all the box's sessions; as it fills, the terminal slows to 1 s and then 2 s, then the snapshots to 4 s, and past it no bulk goes. An `accept`, `refuse`, `close` and `rep` are never held.
 
+<details>
+<summary>Details</summary>
+
 The relay gives live traffic its own limits (1,200 envelopes and 8 MB a minute per sender and team, 3,000 a minute per team), apart from the 600 a minute queued kinds have. A page request the box does not answer in 20 s is a 504 ("the box did not answer; check before sending again").
+
+</details>
 
 #### Ending
 
 The box ends a session with a `close` and a reason word the moment the grant or the scope is gone: on any roster change (the operator removed or no longer an admin of the team, the box removed), on a change of the policy (`fs.watch` on the file and its folder plus a 2 s poll of its stat, so a lowered or withdrawn `operate`, a policy that stops reading, or an `unattended` that is no more) and on a request whose recheck fails. One bad read ends operate: a roster or policy that cannot be read is no grant.
 
+<details>
+<summary>Details</summary>
+
 A scope that narrows (an admin demoted, `box` lowered to `team`) narrows the session, and watches and terminals end when their unit leaves it. A holder that stops a team (removed, forked, left) closes the controller's sessions of it at once.
 
 **History.** The box's server keeps `link/operate-ledger.jsonl` (mode 600, append-only, no content): per unit seen, its owner, dispatcher, role, scrubbed name, workspace label and session file path (the path never leaves the box), for 30 days and at most 2,000 rows. While the policy grants operate, the box reads its own net every 30 s, so a run that starts and ends unobserved still has a row. `GET api/transcripts` lists the rows in the session's scope whose file still exists; `api/history`, `api/entry` and `api/image` take `t<id>` keys that the ledger resolves, never a path from a request, and only a regular `.jsonl` inside pi's session folder is read.
+
+</details>
 
 #### Audit
 
@@ -459,13 +581,23 @@ The box writes to `link.log`, never with text, keys, choices or file content: `o
 
 No frame for 45 s greys the base (`unreachable`, "last seen …", no typing or keys) and the controller reopens after 5 s, doubling to 5 minutes; the wait resets only after a session lived 60 s. A box that closes for `policy` or `roster` shows an `ended` base, a single line (「操作權限已撤銷」, 「這台機器不讓這部裝置操作」 for a refusal shown once, or "Operating this machine has ended"), and is tried again after a minute. A refusal of the grant itself is remembered for 10 minutes and shows its line once; a refusal for "not now" (`unavailable`, a full slot, a session id seen before) is retried with the backoff and says nothing.
 
+<details>
+<summary>Details</summary>
+
 A box that stops, is overloaded or swaps its GUI greys the base and is reopened with the backoff. A controller that is not offered a box any more (removed, attended, no `operate/1`) drops it from the map.
+
+</details>
 
 #### `/boss link operate`
 
 On this computer's own page and in pi only (a slash command of the boss's typed input, no tool; a paired device's request is refused). `/boss link operate` lists the sessions that have opened (box, team, scope, state, since, pages). `/boss link operate off` ends every session and keeps operate off until `/boss link operate on`: it writes `link/operate-off.json` (`{"since": <ms>}`, mode 600, in the server's state folder), the host opens nothing and stops its clock while the file is there, across a GUI and a server that start again, and a file that is there but cannot be read as that still means off.
 
+<details>
+<summary>Details</summary>
+
 `off` says when the file could not be written (then it is off only until the server stops); `on` says when it could not be removed (it stays off). The list says "off since <time>" while it is off.
+
+</details>
 
 ### The work board
 
@@ -475,17 +607,30 @@ A main says what it is doing in one place, and a tower reads it before it routes
 
 **An entry** is `now` (1 to 120 characters, one line) and 0 to 8 checklist items (`t` of 1 to 80 characters, `done`). Whitespace folds to one space; a control or format character (an escape, a bidi override, a zero-width mark) is refused on write with the reason, never cut silently. Every reader checks the same rules and cuts again, so a file that skipped them is held to them, and a file that fails the structure check is ignored. The entry carries no name, workspace, tab, or state: a reader joins those from the net when it reads.
 
+<details>
+<summary>Details</summary>
+
 The file also says who wrote it (`src`: `set` for `board_set`, `todo` for the auto-fill, with the todo list's `count` of tasks done and in all); `src` and `count` stay on this computer and are not in the `board` message.
+
+</details>
 
 #### `board_set({ now, items })`
 
 `board_set({ now, items })` replaces the session's whole entry; it overrides the auto-fill (below). It is registered for joined sessions that are not towers, and refused unless the session is its tab's main at the call (a member, a demoted main, a tower, and a subagent do not write). It writes only `<state dir>/board/<own session id>.json` (folder 700, file 600, a temporary file renamed over it); no parameter names another session's file. Its answer says where the text goes: `local towers`, and `team <name> (<n> devices)` for each team whose project holds the main's pane directory and whose `share` is `status`. `board_set({ auto: true })` (no text) hands the board back to auto-fill at once.
 
+<details>
+<summary>Details</summary>
+
 `board_set({ clear: true })` (no text, no `auto`) deletes the session's entry, and auto-fill writes nothing until the todo list or the name moves; it is what a main calls when its work ends or is shelved, and `prompts/main.md` makes that part of "done". A cleared line, and a finished line removed after its 30 minutes, stay off across a `/reload` (the session keeps a `straw-boss-board` entry with the withdrawn key); a line a reload finds on file is kept with its own age, and a quit with no turn after a reload deletes it. A main that commands work (a subagent of it runs) is never marked `stale`.
+
+</details>
 
 #### Auto-fill
 
 Auto-fill (`src/boardauto.ts`, `src/boardfill.ts`). The board fills itself in the main's own session; the server takes no part. At the end of a turn, after a tool call, and after a move in the session tree or a compaction, a main reads its todo list (rpiv-todo's snapshots on its branch, the same reading as the card's todo summary) and its name (`boss_rename`, or `/name`; pi's default name, the session id, is no name) and writes the entry.
+
+<details>
+<summary>Details</summary>
 
 `now` is `<name>: <task in progress>` (its `activeForm`, else its subject), else `<name>: next <first pending>`, else `<name>: done (n/n)`; with no todo list there is no entry, a name alone being no work (it would stay on the board after the work is gone); with no name the line has no prefix. A finished list (`done (n/n)`) is written once and goes 30 minutes later: the main removes it at its next reading, a reader does not show it, and a tower's `board_read` deletes the file. The items are the tasks, in progress first, then pending in id order, then completed (highest id first), at most 8. `boss_rename` refills the line at once.
 
@@ -495,11 +640,18 @@ Auto-fill (`src/boardauto.ts`, `src/boardfill.ts`). The board fills itself in th
 - **One gate for labels.** Every workspace label, tab label, session name, opened-by, and ledger line that an ally can read (the board and presence on the wire, a `tower` message's workspace, a confirm request's tower name, `tower_list`, `boss_status`, and `board_read` in a remote turn or an ally run, scoped to the workspaces inside the bound project, and the ally brief) goes through `allyLabel`: scrubbed first, cut last. Your own views keep the raw text.
 - **Override.** The main writes only when the entry it would write differs from the last one it wrote, not from the file, so a `board_set` stands until the todo list or the name moves, and `board_set({ auto: true })` ends it at once (with nothing to show it removes the entry), and `board_set({ clear: true })` stops auto-fill the same way, with no entry. A `board_set` entry that outlived a `/reload` stands the same way: the first reading in the new extension only records the list. A member and a demoted main write nothing. After a `/reload` the new extension finds the file this session left and takes it as its own, so a later quit deletes it.
 
+</details>
+
 #### Expiry
 
 A main's `session_shutdown` deletes its own file on `quit`, `new`, `resume`, and `fork`, and keeps it on `reload`; the reloaded session still deletes it at its own quit. A file whose session is not live, or no longer its tab's main, shows as `state: "ended"` until 30 minutes after its last update, then not at all. A live main that is `idle` and whose entry was last updated over 2 hours ago shows it with `stale: true` (`board_read` and the tower's brief say so): the text is probably not what it works on now.
 
+<details>
+<summary>Details</summary>
+
 Only a tower's `board_read` (and the Straw Link holder's tick) deletes files, and it deletes those of sessions that are not live and have not been updated for 24 hours, and a finished auto entry (all todos done) older than 30 minutes; `board_set` does not purge, because it cannot tell which sessions are live, and age alone would delete an idle live main's entry.
+
+</details>
 
 #### `board_read({ scope?, device? })`
 
@@ -513,7 +665,12 @@ In a remote turn (any level) both `board_read` and `tower_list` are on the allow
 
 Sharing is the `board` message kind (`src/link/kinds.ts`): ephemeral, to the whole team, from any member, a kind of its own so an older client drops it as `unknown-kind` and keeps reading presence. Each entry is `(entry id, workspace label, tab label, name, now, updated, items)`; an auto-filled entry goes as the main's name and the done count (`<name> (3/5)`), no task text and no items, and a `board_set` entry whole; the id is the first 8 bytes of `sha256(device id ‖ session id)` in hex, so no local session id leaves the computer. At most 24 entries (newest first), labels and names 40 characters.
 
+<details>
+<summary>Details</summary>
+
 The holder looks at the board folder on its 5-second tick, once per team per 15 seconds (a change goes out within about 20 seconds): it sends the live mains whose pane directory is inside that team's project, when `share` is `status` (`presence` sends none), when the board differs from the last one it sent (compared by hash, without `ts`), when the stream (re)started or the epoch changed, and once an hour unchanged; the last bound entry going sends one empty board, which clears the allies' copy. A relay that refuses the kind (`unknown-kind`) is logged once and left alone for an hour; nobody is told. `ts` rises by at least 1 per board.
+
+</details>
 
 #### Holding allies' boards
 
@@ -522,6 +679,9 @@ The holder keeps each ally's last board in memory only (the relay gives it back 
 #### On the boss's own page and in pi
 
 On the boss's own page and in pi (`src/boardview.ts`, `server/boardpanel.ts`, `gui/board.ts`; the design is `docs/specs/2026-11-09-board-view.md`). The earlier rule, that a board never reaches the GUI, was about allies' boards, and it stands: allies' boards are never shown there. This computer's own board is, so the boss can see whether lines are cleaned up when work ends.
+
+<details>
+<summary>Details</summary>
 
 The net snapshot carries it as `board` (like `yards`, it never goes to Straw Link, a remote turn or an operate session; the operate table refuses `board/**`): one row per live main in tab order (with its line, if it wrote one; without, its name and tab only), then one row for every entry whose session is not a live main, **for as long as its file exists** (a tower's `board_read` still drops an ended entry after 30 minutes).
 
@@ -533,6 +693,7 @@ The head tower's page has a **Work board** section under the log, folded to one 
 
 The button is disabled while its request is on its way. The writer's auto-fill compares with what it last wrote, so a cleared line comes back only when its todo list or name moves. `/boss board` prints the same rows as text. Zen is unchanged.
 
+</details>
 
 ### Auto mode
 
@@ -561,7 +722,12 @@ Only the boss's own act: a typed `/boss auto` (`on` stages a request and the ter
 
 In every session (main, member, train, subagent) a new `ask_user_question`, `question`, `robot_hand`, `secret_drop`, `link_request`, or `mcp` browser login is refused with a note that says the boss is away; a confirm or prompt opened inside a tool call is answered as Escape without being drawn; a Straw Link gate confirm is denied (`no one can confirm this here now`); pi's trust question is answered "not trusted", except in a pane the page's `open/base` started: a person asked for that project, so its question is asked as usual.
 
+<details>
+<summary>Details</summary>
+
 The sb server keeps the list of the panes it started, each with its folder, in its memory until the open has joined, and the pane's pi asks it over the control socket (`open-intent`); no answer, an older server, or a server that started again is the usual "not trusted", and no listing is written to or read from disk for it. The asker finds the server through its record (`server.json`), as every control request does, so a process of the same user that replaces that record and answers the socket can say yes for any pane; that grants no trust, and the question only waits for a person. The boss's own `/boss` commands still draw their confirms. `call_tower`, `intercom ask`, `caller_ping`, monitors, loops, and `subagent` are not refused; `show_doc` is allowed and says not to wait for its form.
+
+</details>
 
 #### What it cancels
 
@@ -579,8 +745,12 @@ When it ends by any door the server writes `<state>/auto-report.json` for that p
 
 A process of the same user can write files, speak to the control socket, or type into a pane. Every switch and staging is notified to every pane and listed with its requester; the head's confirm record is the one a forged request cannot skip.
 
-
 ### Opening a main
+
+When no session owns a request, a tower opens a main for it itself with `boss_open_main`, without asking the user first. It resolves the sender, makes one new tab in the tower's own workspace without taking focus, starts pi there as a main, and hands over the request. Any failure closes the tab it made, with nothing handed over.
+
+<details>
+<summary>Details</summary>
 
 A tower routes a request to the main that owns it, or to the member doing that work. When no session owns it, the tower no longer returns it to the sender: it calls its own tool, `boss_open_main`, and does not ask the user first. Its other limits stay: it runs no shell command, sends no process signal, and edits no file. The tool is registered in the tower only, takes the request (verbatim, with every user decision it quotes kept verbatim), the sender (intercom name or session id), and an optional tab label, and does this:
 
@@ -599,6 +769,8 @@ Limits, counted from live Herdr panes so they survive a tower restart: the tool 
 
 Any failure (the start, the wait, the delivery) closes the tab the tool created, nothing having been handed over, and reaches the tower's model as an error that its prompt tells it to relay to the sender. The tower remembers each sender and request for the life of its session: the same request never opens a second main, whether the first attempt is still running, succeeded (the repeat answers that a main was already opened), or failed (the repeat is refused, not retried). A tower restarted in between forgets, and different wording is a different request.
 
+</details>
+
 ### Before pi starts in a folder: the settings check
 
 pi 1.4.0 reads `<folder>/.pi/settings.json` at startup, whole and with no size limit, before any extension loads and before the trust question (`SettingsManager.create(cwd, agentDir)` with the project trusted by default, in `dist/main.js`; upstream issue [earendil-works/pi#11421](https://github.com/earendil-works/pi/issues/11421)). A link to `/dev/zero` makes pi grow without bound, `/dev/stdin` or a FIFO blocks it for good, and a huge file is read whole. No extension can step in, so whoever starts pi looks first: Straw Boss does it before it creates anything for a new pi (`src/trust/settings.ts`).
@@ -607,19 +779,34 @@ pi 1.4.0 reads `<folder>/.pi/settings.json` at startup, whole and with no size l
 
 Inspecting the path in the boss's own process always diverges from what the kernel does for pi (`.pi -> /proc/self/cwd` means whoever looks, link targets that are not UTF-8, `/DEV` on a case-insensitive disk, Windows paths), so the kernel resolves it. Cost: one `lstat` of `<folder>/.pi` when there is no `.pi` (`ENOENT`/`ENOTDIR` means no file, no child); when `.pi` exists, one short child process (`process.execPath`, `--max-old-space-size=32`, no input, working directory `<folder>`, the same as pi's). The child first `lstat`s `.pi` and `.pi/settings.json` relative to that directory.
 
+<details>
+<summary>Details</summary>
+
 With no link involved, `ENOENT`, `ENOTDIR`, or `EACCES` means no file (pi's `existsSync` is false or its read error is caught: `tryLoadFromStorage` in `core/settings-manager.js`); a link it cannot follow or open is refused, whatever the error. It then `stat`s the path, following links, before it opens anything: a directory is fine (pi catches `EISDIR`), and anything but a regular file is `special` and is never opened, so a FIFO's writer is not released and no device is touched. A regular file is opened with `O_RDONLY|O_NONBLOCK`, `fstat`ed again, and read through the descriptor with a fixed buffer, whatever `st_size` says (so `/proc/self/pagemap`, size 0 and endless, stops at once), `large` when more than 256 KB arrive. It prints one JSON line (the parent cuts its output at 4 KB). Any other error, a link loop (`ELOOP`) included, refuses as `unreadable`.
+
+</details>
 
 #### What is refused
 
 A `settings.json` that is not a plain file (a device, FIFO, or socket, or a link that ends at one), one over 256 KB, one that cannot be looked at (`unreadable`), a link the check could not follow or open, whatever the reason (a dangling link is refused too, though pi itself would skip it: a per-process link such as `/proc/self/fd/17` is missing for the check but is pi's own terminal for pi), and one the check did not finish (also a failed start of the check itself): no answer in 5 seconds (the child is killed), a crash, or output that is not the expected line is `unchecked` ("could not be checked in time"). **What is fine.**
 
+<details>
+<summary>Details</summary>
+
 No `.pi`, no file, a directory at the path, and a plain file of at most 256 KB, also through links. A file swapped for a device or a link between the check and pi's start is not covered; the window is the few seconds of the opening. The look is asynchronous, so the boss's event loop is not blocked; every opening (a new main, member, or base, the tower's tab, an opened main, a pop) refuses before it creates anything. An adopted tower pane that reports no folder is checked as the folder the tower is for (the workspace's checkout, else the opening cwd), since herdr gave nothing better.
+
+</details>
 
 #### Bounded stall
 
 A `settings.json` on a hung network or FUSE mount can stall the read; the child's timeout bounds it, and the opening is then refused as `unchecked`. **Remaining gap.** The child's file descriptors differ from pi's: its `/dev/stdin` and `/dev/fd/0` are `/dev/null`, its stdout and stderr are pipes. A link to `/dev/stdin` or `/dev/fd/N` therefore never shows pi's real descriptor: the child's pipes, sockets, and devices are `special`, and a number the child has not opened is refused as a link it cannot follow. On macOS the child's `/dev/fd/6`, `8`, and `10` are the directory `/`, as pi's are, so such a link is allowed as a directory.
 
+<details>
+<summary>Details</summary>
+
 The check is wrong only if pi holds a regular file at a number where the child holds something else, which no tab Straw Boss opens arranges.
+
+</details>
 
 #### Where it runs
 
@@ -629,10 +816,19 @@ Every path that starts pi in a folder: the GUI's + New base, + New member (new t
 
 The deploy panel fails its first step (`create`) and says, in the page's language (zh-TW first, English), that nothing was started, which file, and why; a refused pop shows the same in its dialog. The server's answer carries the facts (`settings: {path, why, size?, limit?, code?}`) and the page words them. A tool or the LLM (`boss_open_main`, `/boss pop`) gets one English sentence with the same path and reason. The upstream issue is named here only, never in the interface.
 
+<details>
+<summary>Details</summary>
 
 This guard can be removed once pi fixes #11421. When pi is newer than 1.4.0, check `SettingsManager.create` in its `dist/main.js` (and `FileSettingsStorage` in `core/settings-manager.js`): once it skips an untrusted project's `settings.json` until the trust question is answered, or reads it with a size and file-type limit, delete `src/trust/settings.ts`, its calls in the paths above, and the `deploy_settings_*` messages.
 
+</details>
+
 ### Closing an opened main
+
+A main a tower opened tells the sender and the tower when its work is done, then waits; the tower closes it with `boss_close_main`, unless the main says it awaits a boss decision. The tower may close only a main of its own workspace that it opened itself and that Herdr reports idle or done, and the main decides for itself whether to accept the request to quit.
+
+<details>
+<summary>Details</summary>
 
 A main a tower opened (`boss_open_main`) tells the sender and the tower when its work is done, then waits; the tower closes it with `boss_close_main`, unless the main says it awaits a boss decision. The handoff message names both (`Sender:` and `Tower:` with their session ids) and says to report the outcome to the sender with `intercom send` and to the tower with `call_tower` (`why: milestone`, no reply); the main prompt repeats it for a tab a tower opened. The tool is registered in towers only and takes a main's intercom name or session id. The tower checks first, from Herdr's view:
 
@@ -660,6 +856,8 @@ The tower runs pi's default model unless you set one for it in `~/.pi/agent/stra
 ```
 
 Straw Boss passes it to pi as `--model` whenever it starts a tower, and reads the file at each start, so a change applies to the next tower without a reload. A tower already running keeps its model; restart it (or switch with `/model` in its pane) to change that one.
+
+</details>
 
 ### Merge train
 
@@ -708,7 +906,12 @@ The extension checks it: a train's and the integrator's `todo` and `MonitorCreat
 
 `integrating` names six seams (Handoff route, Batch owner, Approval, Record, Escalation route, Settings) and reads one `## Seam bindings` block from the session's instructions. Straw Boss's block is the last text of `main.md`, inside the integration markers: `main.md` is the system prompt of every main, a coordinator and the integrator alike, so each session holds exactly one block, in front of it before its first step, with no file to read. The tower runs no skill and holds none; its prompts carry only the forwarding.
 
+<details>
+<summary>Details</summary>
+
 The block binds: the **Handoff route** to `call_tower` `why: shared`, which the tower forwards (`tower_reply` with `forward`, its header naming the sender as `fwd-from`) to the project's one integrator, and the sb server sends every car notice to the slip's `coordinator` (which must be that sender) by session id; the **Batch owner** to the project's one integrator main (opened by the tower with `boss_open_main`, named `integ <project>`, closed by the tower after its idle `milestone`), which schedules trains and opens each with `boss_open_main` `role: "train"` (a departed train runs in a `train` session of its own), with train worktrees at `~/.herdr/worktrees/<repo>/train-<code>`; **Approval** to the boss, whose covering words the coordinator quotes in the slip's `auth` from its brief or the boss's messages, asking with its question tool only when they are missing (an overnight train must not stall on a question), each deploy target `auto` or `strict` by `integration.targets`; the **Record** to `trains/<project>/<app>.json` (the integrator's index) and `trains/<project>/<app>/<code>.json` (one per train, its train's) in the state folder; the **Escalation route** to `call_tower` (`blocked`; idle as `milestone`; an announced deploy as `shared` naming the target); **Settings** to `apps.json`'s `integration`. With the train off the block drops out and anchorloop's defaults apply: the session asks the boss before a merge or a deploy.
+
+</details>
 
 #### Principle
 
@@ -726,6 +929,9 @@ The project skill is found by the headings in `integrating`'s Project skill cont
 
 A coordinator sends a car slip with `call_tower` `why=shared`. The tower does not answer go: it sends the slip to the project's one integrator and closes that main when it reports idle. The integrator tells the coordinator nothing itself: it sets the car's state with `train_car` and the sb server sends the notice, so the tower relays nothing back. Since 0.74.0 the tower opens the integrator itself, in code (`src/integrator.ts`, `src/opener.ts`, `src/server/runtools.ts`): a tower run calls `boss_open_main` with `role: "integrator"`, the slip as the request, and its sender.
 
+<details>
+<summary>Details</summary>
+
 The project is not the run's word: the opener reads it from the workspace's checkout (`integration.project` at the top of its `apps.json`, else the folder name of its repository, which every worktree of it shares) and refuses another word, so a made-up name opens nothing. A run is shown no event id, so the server finds the slip itself: the newest `call_tower` (`why=shared`) the run took from that sender whose text carries the request's `head:`.
 
 It then finds the project's integrator on the whole computer (a main of kind integrator that a tower marked for the project, or that is named `integ <project>`; a main opened for a teammate's device is never one, whatever it calls itself, by its pane token and by the route table) or opens one in its workspace, named `integ <project>` so the new pi is of kind integrator before it is handed anything, and forwards the slip as its sender wrote it, stamped `fwd` and `fwd-from`: nothing the run typed is forwarded, so a run cannot change a slip's `auth`.
@@ -742,11 +948,18 @@ A kept integrator leaves no durable sign, so it has to sit in the tower's worksp
 
 A main an ally run opened sends its car slip the same way, and its `call_tower` reaches the ally runs of its device, never a local run ([Ally runs](#ally-runs)): there the same call is an ally run's one door to an integrator. When such a slip does reach a local run (the main named another workspace's tower, its route was gone, or a local run's newer expectation outranked it), the door refuses it: the main's pane token (`link:<device id>`) or a route table of any workspace says whose it is. A server heavy-gate semaphore is not built.
 
+</details>
+
 #### Integrator
 
 Its prompt keeps only what is Straw Boss's: the role (a main, not the tower, and the exception to "never merge into an integration base"), the name `integ <project>` (16 characters at most, never renamed), the ledger at `trains/<project>/<app>.json` in the state folder (`$PI_CODING_AGENT_DIR/straw-boss`, `~/.pi/agent/straw-boss` by default; the role prompt names the resolved path), one `train` todo per forming train (the guard checks it; the yard is drawn from it), the tower calls (no `shared` call for its own merges, pushes, and merge-triggered deploys, whose slips' `auth` covers them; a `shared` call naming the target for a deploy it starts itself; `blocked`; the idle `milestone`), and the `reviewer` role for a step it briefs.
 
+<details>
+<summary>Details</summary>
+
 Slips, departure, assembly, review, red handling, the urgent and fix-forward lanes, deploy, and rollback are the skills'; since 0.65.0 the integrator only receives cars and schedules trains (below), and the train does the rest.
+
+</details>
 
 #### Stages
 
@@ -756,6 +969,9 @@ An app's `integration.stages` lists what the integrator carries each train throu
 
 A computer that wants none of this turns the merge train off with `STRAW_BOSS_INTEGRATION=off` in the environment of its sessions, or with `"integration": "off"` in `config.json` of the state folder (`$PI_CODING_AGENT_DIR/straw-boss`, else `~/.pi/agent/straw-boss`). Order: a non-empty environment value wins; else `integration` in `config.json` (a UTF-8 BOM is ignored); else off when `STRAW_BOSS_DESK=1` and on otherwise. On is `on`, `true`, `1`, `yes`; off is `off`, `false`, `0`, `no` (case and surrounding spaces ignored).
 
+<details>
+<summary>Details</summary>
+
 The switch fails closed: any other value, and a `config.json` that exists but cannot be read or parsed (a trailing comma, a folder), turn the train off and tell once per process (a session notice, or a line on stderr for a tower run) naming the file and the value. Off, no main or tower is given the integrator role: the main, tower, and tower-run prompts drop their integration text and say instead that integration is off on this computer, a main asks the boss before it merges to a shared branch or deploys, a tower answers a `shared` request that carries a `car:` block with "integration is off on this computer" and opens no main for it, and `integration`, `stages`, `targets`, and `deploy` in any `apps.json` are ignored (`apps.json` still gives the owning app and its paths).
 
 `{{dir}}`, the folder the prompts point to for `apps-config.md` and `planning.md`, becomes a copy in the state folder (`prompts-off/`) made at the first use in a session from the same files with the integration blocks dropped, and holds no `integrator.md`, so nothing loads the integrator prompt. Each load rewrites a copy file whose text differs from its source, removes files with no source and leftover temp files, and the copy is removed when the switch is on again. When the copy cannot be written, a notice says so, the turn still has its Straw Boss section, and `{{dir}}` reads "none yet".
@@ -764,6 +980,7 @@ The `## Seam bindings` block of `main.md` is inside the same markers, so with th
 
 The switch is per computer: work a desk sends over Straw Link to a device where the train is on runs that device's train. It reaches sb's own prompts only: a project's skills (a coordinator skill that says "play the integrator yourself", say) are outside it. Panes (mains and tower runs alike) get their environment from Herdr (`herdr agent start`), so set the variable in the environment that starts `herdr server` (as `STRAW_BOSS_DESK=1` is), or use `config.json`, which every session reads. The desk sets nothing: `STRAW_BOSS_DESK=1` already turns the train off, and `"integration": "off"` in its `config.json` is only a belt.
 
+</details>
 
 #### Trains as their own workers
 
@@ -773,13 +990,23 @@ Design record: [`docs/specs/2026-11-07-train-workers.md`](specs/2026-11-07-train
 
 The coordinator (a main) runs its acceptance, then sends the car slip. The integrator (`integ <project>`, one per project, as before) receives cars, checks each, sets it `received` or `returned`, forms trains, and asks the tower to open one. The tower opens a train with `boss_open_main` and `role: "train"` and the manifest, in a tab of its own named `train 1106m` (`MMDDx`, unique per project, never reused). The train assembles the cars on the latest base in `~/.herdr/worktrees/<repo>/train-<code>`, has a fresh reviewer read the assembly, runs the full checks, merges, watches the pipelines, deploys and verifies where its stages say so, rolls back or reports on a failure, and ends.
 
+<details>
+<summary>Details</summary>
+
 It runs on its own once it departs; the integrator does not supervise it. It never waits on a person, and the tower closes it after its `milestone`.
+
+</details>
 
 ##### Acceptance before handoff
 
 e2e and UAT happen on the coordinator's own branch before the slip, with the boss's nod, as the project skill's `## Acceptance` says (`integration.accept` names the kinds an app requires). The slip carries `accept:` (evidence: what ran, on which head, the result, the boss's words) and `departs:` (when the car may leave: `next`, `alone`, `with <car>`, `after <time>` or `by <time>`, comma separated); `cli.mjs train check --accept <file>|none [--slip <file>] [--app <name>] [--app-accept K,…]` validates both. What the app requires is `integration.accept` in the project's `apps.json`, which the integrator's guard and the train read themselves, so a flag can add to it and never weaken it: a car whose evidence lacks a required kind, or says `none` for an app that requires some, is refused before a train departs (`train check` reads the file in its own folder when there is one).
 
+<details>
+<summary>Details</summary>
+
 An app whose `stages` still list `uat` is a config error: the tower does not open a train for it, the integrator's `train` todo is refused, and `train check` says so, each naming the field and the migration below. A car that asks the train for acceptance is refused with one word ("the train runs no acceptance…") and returned.
+
+</details>
 
 ##### Steps
 
@@ -793,7 +1020,12 @@ A train holds a lane (an app's integration branch) or a target from its first st
 
 The train and the integrator set each car's state with `train_car` (`received`, `returned`, `landed`, `dropped`); the sb server sends the coordinator one intercom notice per (car, state) under `kind=car_notice`, retries at 30 s, 2 min and 5 min, records `deliveredAt`, and when the coordinator is gone sends the tower one `blocked` and records `escalatedAt`. A train cannot pass `land` before every landed notice is delivered or escalated. The server keeps a tower's forwards, and the door's answer naming a slip's integrators, in memory only and reads neither back from disk (a file there is one a train can write), so an sb server restart loses them.
 
+<details>
+<summary>Details</summary>
+
 The refusals say so since 0.75.1: within 24 hours of the server's start, the integrator's `train_car` refusal `no forward by a tower carries head ...` names the start time and the way back (the coordinator sends the slip to the tower again and the tower forwards it again), and a tower run whose slip came in before the start is told to ask the door again.
+
+</details>
 
 ##### Commands
 
@@ -803,12 +1035,16 @@ The refusals say so since 0.75.1: within 24 hours of the server's start, the int
 
 The ledger (`trains/<project>/<app>.json` with an `index`, and one file per train) stays the model's. The trainboard (`<state>/trainboard/<project>/<code>/board.json` and `yard.json`) is derived by the extensions; `<state>/trainboard/<project>/cars/` is the server's journal of car states and notices, written by the server and read only for display after a restart. A car's acceptance chip is stated by the code from the evidence it checked (kinds of a complete evidence file, or none required when the app requires none), and says it is unknown when the evidence cannot be checked; no word a model wrote there is shown.
 
+<details>
+<summary>Details</summary>
+
 The cars a round removed stay on the board with their heads, so the yard shows whether their coordinators were told and the sweep removes their car files with the board. The server deletes an ended trainboard 7 days after its last update, and a stale one only after `train clear` and the same 7 days, at start and every hour, with the merge train on.
+
+</details>
 
 ##### Where it shows
 
 A train's pane carries `sb_role=train` and `sb_train=<project>/<code>`, so the net, the sidebar and the work board show a train, not a member; the Herdr sidebar orders the tower's subagents, the integrator, then trains by code ([Sidebar net view](#sidebar-net-view)). The page (spec §11.2): one yard per project, opened from a chip on the base header, with the forming trains and their cars, each car's acceptance chip and departure condition, one row per train (code, cars, round, steps as pills by kind, the wait in words, the load it needs, each car's notice, from the server's own record, or from the journal on disk marked as such for a car the server has not seen since it started), and a locomotive card for a train; Zen's strip adds only the train count and the waiting count.
-
 
 #### Moving a project to 0.65.0
 
