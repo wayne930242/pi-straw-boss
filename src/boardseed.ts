@@ -1,17 +1,21 @@
 import { type Entry, finished } from "./board.ts";
 import type { Derived } from "./boardauto.ts";
+import { newestOf } from "./branchscan.ts";
 
 /** The custom entry a main keeps in its session when it withdraws the line for a derived entry (`board_set { clear }`, or a finished list's 30 minutes): a /reload reads it back, so the line is not written again. */
 export const BOARD_ENTRY = "straw-boss-board";
 
+const withdrawnOf = (entry: unknown): string | undefined => { const e = entry as { type?: string; customType?: string; data?: { cleared?: unknown } }; return e.type === "custom" && e.customType === BOARD_ENTRY && typeof e.data?.cleared === "string" ? e.data.cleared : undefined; };
 /** The key of the newest withdrawal the session branch holds. */
 export function withdrawnKey(branch: readonly unknown[]): string | undefined {
 	for (let i = branch.length - 1; i >= 0; i--) {
-		const e = branch[i] as { type?: string; customType?: string; data?: { cleared?: unknown } };
-		if (e.type === "custom" && e.customType === BOARD_ENTRY && typeof e.data?.cleared === "string") return e.data.cleared;
+		const key = withdrawnOf(branch[i]);
+		if (key !== undefined) return key;
 	}
 	return undefined;
 }
+/** `withdrawnKey` for a reader that asks again as its branch grows: each call walks only what was appended since the last (branchscan.ts). */
+export const withdrawnScan = (): ((branch: readonly unknown[]) => string | undefined) => newestOf(withdrawnOf);
 
 /** What the auto-fill starts from on its first refresh after a start or /reload: `last` (the key it believes is written or withdrawn) and `doneAt` (when a finished line was written). */
 export interface Seed { last?: string; doneAt?: number }

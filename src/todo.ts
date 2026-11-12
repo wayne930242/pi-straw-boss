@@ -1,4 +1,5 @@
 import { GRAPHS, type Graph } from "./duty.ts";
+import { newestOf } from "./branchscan.ts";
 import { type Todo, todosOf } from "./items.ts";
 
 // A session's todo list in short, for its card on the map: its bridge reads it from rpiv-todo's snapshots on its branch (bridge.ts) and the hub
@@ -9,15 +10,24 @@ export interface TodoSum { done: number; total: number; now?: string; steps?: St
 export interface StepLine { id: number; kind: string; status: Todo["status"]; name?: string; round?: number; outcome?: "passed" | "failed" | "void" }
 export const TODO_TEXT = 120;
 
+type BranchEntry = { type?: string; customType?: string; data?: unknown; message?: { role?: string; toolName?: string; details?: unknown } };
+/** rpiv-todo's state entry, and the details of a `todo` tool result, when they hold a todo list. */
+const stateOf = (entry: unknown): unknown => { const e = entry as BranchEntry; return e.type === "custom" && e.customType === "rpiv-todo-state" && todosOf(e.data) ? e.data : undefined; };
+const resultOf = (entry: unknown): unknown => { const e = entry as BranchEntry; return e.type === "message" && e.message?.role === "toolResult" && e.message.toolName === "todo" && todosOf(e.message.details) ? e.message.details : undefined; };
 /** The snapshot rpiv-todo left last on a branch, oldest first: its state entries win over its tool results (rpiv-todo's own replay rule). Raw, with every task's metadata, for a reader that needs all of it (the train's guard). */
 export function snapshotOfBranch(entries: readonly unknown[]): unknown {
-	let fromEntries: unknown, fromResults: unknown;
-	for (let i = entries.length - 1; i >= 0 && fromEntries === undefined; i--) { // from the leaf: the newest state entry wins, so the walk stops there
-		const e = entries[i] as { type?: string; customType?: string; data?: unknown; message?: { role?: string; toolName?: string; details?: unknown } };
-		if (e.type === "custom" && e.customType === "rpiv-todo-state") fromEntries = todosOf(e.data) && e.data;
-		else if (e.type === "message" && e.message?.role === "toolResult" && e.message.toolName === "todo") fromResults ??= todosOf(e.message.details) && e.message.details;
+	let fromResults: unknown;
+	for (let i = entries.length - 1; i >= 0; i--) { // from the leaf: the newest state entry wins, so the walk stops there
+		const fromEntries = stateOf(entries[i]);
+		if (fromEntries !== undefined) return fromEntries;
+		fromResults ??= resultOf(entries[i]);
 	}
-	return fromEntries ?? fromResults;
+	return fromResults;
+}
+/** `snapshotOfBranch` for a reader that asks again as its branch grows (the work board's refresh at every tool call): each call walks only what was appended since the last (branchscan.ts). */
+export function snapshotScan(): (entries: readonly unknown[]) => unknown {
+	const state = newestOf(stateOf), result = newestOf(resultOf);
+	return (entries) => state(entries) ?? result(entries);
 }
 /** The todo list from a branch's entries, oldest first. */
 export const todosOfBranch = (entries: readonly unknown[]): Todo[] | undefined => todosOf(snapshotOfBranch(entries));

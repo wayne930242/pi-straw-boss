@@ -59,6 +59,8 @@ export interface ProcsDeps {
 	reap?: (refs: readonly Ref[]) => Promise<KillReport>;
 	/** Pids that must outlive any reap: this server. */
 	self?: number[];
+	/** Gets the table of each tick (the stall watch, stallwatch.ts): it runs behind the tick, which never waits for it. */
+	watch?: (table: readonly Proc[]) => Promise<void>;
 	ownUid?: number;
 	platform?: NodeJS.Platform;
 }
@@ -278,6 +280,7 @@ export function createProcs(d: ProcsDeps): Procs {
 	async function takeTick(): Promise<void> {
 		const table = await read();
 		if (!table) return;
+		void d.watch?.(table).catch((error: Error) => d.log("procs-error", { text: `the tick's watch failed: ${String(error?.message).slice(0, 160)}` }));
 		await lookAtWorkspaces();
 		let changed = false;
 		for (const r of [...owners.values()]) {
