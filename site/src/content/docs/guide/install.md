@@ -18,8 +18,7 @@ Subagents and sessions in Herdr worktree workspaces never join the net: the sess
 - **[pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 2.11.0 or newer**, only for the [merge train](/pi-straw-boss/docs/guide/merge-train/). Its `integrating` and `deploying` skills are the train's procedure. Without it, a main or integrator that meets a car slip reports `blocked` naming pi-anchorloop and merges nothing.
 
 Windows support is experimental.
-The extension reaches Herdr over its named pipe there, the sidebar plugin runs with the `node` on `PATH`, the worktree reaper runs on macOS and Linux only, and the project-trust relay works only while pi's agent folder lies inside your user profile.
-See [Windows](/pi-straw-boss/docs/reference/how-it-works/windows/) for the rest.
+See [Windows](/pi-straw-boss/docs/reference/how-it-works/windows/) for what differs.
 
 ## Works with
 
@@ -36,7 +35,7 @@ When one is installed, Straw Boss picks it up; without it, the rest works as bef
 | [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 2.13 or newer | A session's todo list shows above its composer in the GUI, read from the session file. |
 
 Any extension's `select` and `confirm` can be answered from the GUI too, with no change to that extension.
-Straw Boss wraps them on pi's shared `ctx.ui`, opens pi's own dialog as always, and relays the same dialog; the first answer wins.
+The first answer, in pi or in the GUI, wins.
 `input`, `editor`, and `custom` dialogs are never touched: they show read-only in the GUI, with the terminal one tap away.
 
 ## Optional Herdr plugins
