@@ -1075,6 +1075,9 @@ A tower session with a TUI shows a monitoring widget above its editor. It is rea
 ╰──────────────────────────────────────────────────────────────────────────╯
 ```
 
+<details>
+<summary>Details</summary>
+
 - **This net**, in detail: the sessions that joined in this workspace, by tab (main agent first, then members), each with the subagents it launched, and this workspace's sub workspaces. Sessions that did not join are not listed, and neither is anything in other workspaces.
 - **Other towers**: the head tower first when it exists (`head tower`, with its state), then one line per workspace that has a live tower (workspace and status). No workspace tower carries the head tag.
 - Each row carries the role mark Herdr's sidebar shows (see [Sidebar net view](#sidebar-net-view)), in Nerd Font glyphs one column wide: the radio tower (U+F043B) for a tower and in the title, the glyph of its kind for a main agent or a launched subagent that has one (see `sb_mark` below), Font Awesome's star (U+F005) for a main with no known kind, person (U+F007) for a member, and `[sub]` for a subagent with none. A tab and a sub workspace have none. Their colors are pi theme roles, so they follow the active theme: the tower `warning`, a main kind's glyph (and the star) `accent`, the person `success`, all bold, and a subagent kind's glyph and `[sub]` `dim`. The kind column keeps the role's word.
@@ -1086,6 +1089,8 @@ A tower session with a TUI shows a monitoring widget above its editor. It is rea
 Where the data comes from: pi-intercom `listSessions()` (status `idle`, `thinking`, `tool:<name>`, and the Herdr location of each session), Herdr's pane list (`sb_role` token, Herdr's agent status where `blocked` means waiting on a question, and the pi session file) and workspace list (workspace status, `tower` token, linked-worktree fields), which one `session.snapshot` request answers together (the snapshot's panes and workspaces are what `herdr pane list` and `herdr workspace list` print). Subagents are linked to their parent through pi-herdr-agents' own layout: the parent's session file names its artifacts directory, `subagent-activity/<child id>.json` there records each child's activity, and the child's pane session file contains the child id.
 
 So a subagent is grouped under the session that launched it wherever it runs, and it never counts as a net member of the workspace or tab it sits in. The pane of each child is found by one pass over the panes (their session file names are indexed by child id), the two directories are listed again only when their timestamp changes (a directory changed in the last two seconds is always listed), and a launch script is read again only when it changes.
+
+</details>
 
 ### How Herdr is read
 

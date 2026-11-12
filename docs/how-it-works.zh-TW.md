@@ -1075,6 +1075,9 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 ╰──────────────────────────────────────────────────────────────────────────╯
 ```
 
+<details>
+<summary>細節</summary>
+
 - **This net**（本網）的細節：在這個工作區加入的 session，依分頁列出（先是主智慧體，再是成員），每個都帶著它啟動的子智慧體，以及這個工作區的子工作區。沒有加入的 session 不會列出，其他工作區裡的任何東西也不會。
 - **Other towers**（其他塔台）：有主塔台時先列主塔台（`head tower`，附狀態），接著每個有存活塔台的工作區各一行（工作區與狀態）。沒有任何工作區塔台帶有主塔台標籤。
 - 每一列都帶有 Herdr 側邊欄顯示的角色標記（見[側邊欄的網檢視](#側邊欄網檢視)），使用寬度為一欄的 Nerd Font 字符：塔台和標題用無線電塔（U+F043B），有種類的主智慧體或被派出的子智慧體用它種類的字符（見下方的 `sb_mark`），不知道種類的主智慧體用 Font Awesome 的星形（U+F005），成員用人形（U+F007），沒有種類的子智慧體用 `[sub]`。分頁和子工作區沒有標記。它們的顏色是 pi 佈景主題的角色，所以會跟著目前的佈景主題變：塔台是 `warning`，主智慧體種類的字符（和星形）是 `accent`，人形是 `success`，全部粗體，子智慧體種類的字符和 `[sub]` 是 `dim`。種類欄仍是角色的字詞。
@@ -1086,6 +1089,8 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 資料的來源：pi-intercom 的 `listSessions()`（狀態 `idle`、`thinking`、`tool:<name>`，以及每個 session 的 Herdr 位置）、Herdr 的 pane 清單（`sb_role` token、Herdr 的智慧體狀態，其中 `blocked` 表示等待問題回覆，以及 pi session 檔）和工作區清單（工作區狀態、`tower` token、linked-worktree 欄位），這些由一次 `session.snapshot` 請求一併回答（snapshot 的 panes 與 workspaces 就是 `herdr pane list` 與 `herdr workspace list` 印出的內容）。子智慧體透過 pi-herdr-agents 自己的目錄配置連到它的父層：父層的 session 檔指出它的 artifacts 目錄，那裡的 `subagent-activity/<child id>.json` 記錄每個子層的活動，子層的 pane session 檔則包含子層 id。
 
 所以子智慧體不論在哪裡執行，都歸在啟動它的 session 底下，而且絕不算作它所在的工作區或分頁的網成員。每個子層的 pane 是掃過一遍 pane 找到的（它們的 session 檔名以子層 id 建立索引），這兩個目錄只在時間戳改變時才重新列出（最近兩秒內有變動的目錄一律重新列出），啟動腳本只在內容改變時才重新讀取。
+
+</details>
 
 ### Herdr 如何被讀取
 
