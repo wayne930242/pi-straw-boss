@@ -16,6 +16,7 @@ pi-straw-boss 不需要任何設定就能運作。
   "headModel": "provider/model-id",
   "towerRuns": { "enabled": true, "max": 4 },
   "integration": "on",
+  "stallWatch": { "cpuMinutes": 5, "silentMinutes": 30 },
   "link": {
     "relay": "https://relay.example",
     "trust": { "<device id>": "forward" }
@@ -30,6 +31,12 @@ pi-straw-boss 不需要任何設定就能運作。
 | `towerRuns.enabled` | `true` | 塔台服務：塔台是一次因事件而醒來、結束時留下交接筆記的執行。`false` 則保留常駐的塔台。讀不到或無法解析的檔案也視為開啟，server 會在它的 log 裡說明。 |
 | `towerRuns.max` | 4 | 同時跑的 pi 執行上限。 |
 | `integration` | `on`（在 `STRAW_BOSS_DESK=1` 下為 `off`） | `off` 會在這台電腦上關掉[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。開啟是 `on`、`true`、`1` 或 `yes`；關閉是 `off`、`false`、`0` 或 `no`。任何其他值，以及讀不到的檔案，都會把它關掉並發出通知。 |
+| `stallWatch.enabled` | `true` | [停滯監看](/pi-straw-boss/docs/zh-tw/guide/process-hygiene/#停滯監看)：pi session 看起來卡死時，sb server 會告訴該工作區的塔台，但絕不停掉那個 session。`false` 關閉。`stallWatch` 的每個鍵每分鐘讀一次，改了不必重啟。 |
+| `stallWatch.cpuPercent` | 75 | 占用單一核心多少算是滿載，10 到 100。 |
+| `stallWatch.cpuMinutes` | 5 | pi 連續滿載、session 檔又沒有寫入達幾分鐘才通報。`0` 關閉這個訊號。 |
+| `stallWatch.silentMinutes` | 30 | pane 顯示工作中，但 session 檔沒有寫入、也沒有進行中的工具呼叫，最多容許連續幾分鐘。`0` 關閉這個訊號。 |
+| `stallWatch.missingMinutes` | 3 | 還活著的 pi 最多可以連續幾分鐘不在 pi-intercom 的清單裡；server 重啟後的寬限也是這個數字。`0` 關閉這個訊號。 |
+| `stallWatch.remindMinutes` | 60 | 事件通報後多久發第一次提醒；之後每次等待加倍，最長 8 小時。`0` 不提醒。 |
 | `link.relay` | 無 | 新的 [Straw Link](/pi-straw-boss/docs/zh-tw/guide/straw-link/) 團隊預設使用的 relay。 |
 | `link.trust` | 每個裝置都是 `reply` | 這台電腦對每位隊友裝置的信任程度：`reply`、`forward` 或 `dispatch`。 |
 

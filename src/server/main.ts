@@ -29,6 +29,7 @@ import { operateWire, type OperateWire } from "./operatewire.ts";
 import { createLog, tailLog } from "./log.ts";
 import { type Cars, carsReply, startCars } from "./carops.ts";
 import { procsReply, startProcs, type StartProcs } from "./procsops.ts";
+import { startStall, type StartStall } from "./stallops.ts";
 import { gateRun, type RunInfo } from "./rungate.ts";
 import type { ServerTools } from "./runtools.ts";
 import {
@@ -112,6 +113,8 @@ export interface ServerOptions {
 	towers?: Partial<TowersOptions>;
 	/** Replaces the owner registry's seams (the process table, the kill sequence, the tick), for tests. */
 	procs?: StartProcs["over"];
+	/** The stall watch's seams (stallops.ts), for tests: without them a test run has no watch. */
+	stall?: StartStall["over"];
 	touchMs?: number;
 	brokerMs?: number;
 	herdrGoneMs?: number;
@@ -627,7 +630,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		log.line("herdr-takeover");
 		void towers?.takeover().catch((error: Error) => recordError("towers", error.message));
 	}, () => (log.line("herdr-lost", { at: Date.now() }), towers?.runs.herdrLost())));
-	procs = startProcs({ dir: slot.dir, stateDir: slot.stateDir, env, pid, platform, now, log: (event, facts) => log.line(event, facts), run: cfg.run, events: cfg.events, ...(o.procs ? { over: o.procs } : {}), stops, timers, leaving: () => Boolean(leaving) || phase === "stopping" || phase === "restarting" });
+	// The stall watch (stallwatch.ts): a pi that froze is told to its workspace's tower from the registry's tick; it signals nothing.
+	const stall = startStall({ dir: slot.dir, stateDir: slot.stateDir, pid, platform, now, log: (event, facts) => log.line(event, facts), run: cfg.run, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, ...(o.stall ? { over: o.stall } : {}) });
+	procs = startProcs({ dir: slot.dir, stateDir: slot.stateDir, env, pid, platform, now, log: (event, facts) => log.line(event, facts), run: cfg.run, events: cfg.events, ...(stall ? { watch: (table) => stall.sample(table) } : {}), ...(o.procs ? { over: o.procs } : {}), stops, timers, leaving: () => Boolean(leaving) || phase === "stopping" || phase === "restarting" });
 	let downSince: number | undefined;
 	const herdrUp = o.herdrUp ?? (() => herdrListens({ slot, platform }));
 	timers.push(setInterval(() => void herdrUp().then((up) => {

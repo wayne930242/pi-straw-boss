@@ -1582,13 +1582,14 @@ export function createRuns(o: RunsOptions) {
 			poke(svc);
 			return written;
 		},
-		/** A late outcome of something a run sent after the run ended: a notice event for the next run. */
-		notice(workspace: string, text: string, key: string) {
+		/** A late outcome of something a run sent after the run ended, or a notice the server raises (the stall watch): a notice event for the next run. False when the server stands in for no tower there. */
+		notice(workspace: string, text: string, key: string): boolean {
 			const svc = services.get(workspace);
-			if (!svc) return;
-			if (waitingOf(svc).some((e) => e.kind === "notice" && e.messageId === key)) return;
+			if (!svc) return false;
+			if (waitingOf(svc).some((e) => e.kind === "notice" && e.messageId === key)) return true;
 			append(slot, svc.ref.record(), { kind: "notice", text, at: iso(now()), messageId: key });
 			poke(svc);
+			return true;
 		},
 		/** The service is held because the standing pane runs a program of the boss's: it is Retried by itself once the pane is free (standing.ts). */
 		paneBusy(workspace: string) {
