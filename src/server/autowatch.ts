@@ -55,31 +55,53 @@ export interface WatchState {
 	asked?: number;
 	/** Per workspace the watch saw a main or a train in: its label, when output was last seen there (when it was first seen, until some is), the `at` its quiet was told for, and whether its work was all done at the last reading. */
 	out: Record<string, OutClock>;
-	/** The last notice while the head has not taken it (it waits in the queue, a run holds it, or it was parked after crashes): what it tells counts as told only once a run that took it ended (`settle`). */
+	/**
+	 * The last notice while it is not settled (it waits in the queue, or a run holds it): it counts as told only once a head run that took it ended well (`settle`, AW-D20). At most one notice of the watch waits at a time
+	 * (W2): while it is here, or the head's queue holds one, no other is sent.
+	 */
 	pending?: Pending;
-	/** The notices parked after two head runs crashed with them (`count`), and the last of them: not taken, so their findings were told to nobody and the next notice carries them again; kept for the morning only. */
-	parked?: { count: number; at: string; findings: number; items: Finding[] };
+	/** The notices sent this period: the next one's number. Its key also carries the reading's time, so a key is never used twice in a period even when this count is lost with the period file (W5). */
+	notices?: number;
+	/** The notices that left the head's queue before a head run took them to a good end (a run the server quit, a purge): not taken, so their findings stay untold. */
+	lost?: number;
+	/**
+	 * The notices parked after two head runs crashed with them (`count`), the ones parked in a row since a notice was told or the head tower changed (`inRow`: at two the watch sends no more, W4), when the last was parked,
+	 * and the head's workspace then.
+	 */
+	parked?: { count: number; inRow: number; at?: string; head?: string };
+	/**
+	 * Every finding a reading of the period saw that no notice has told yet, with its line (`parked`: the last notice that carried it was parked). A finding leaves it only when a notice that carries it is told, so the
+	 * morning names each one, still there or gone (W3).
+	 */
+	untold?: (Finding & { parked?: true })[];
 	/** The findings of the last reading, for the morning's "still open" list. */
-	open?: FindingList;
+	found?: FindingList;
 }
 export interface OutClock { label: string; at: string; quietTold?: string; done?: true }
 /** A finding as the return list names it: its key, and a short line with its workspace. */
 export interface Finding { key: string; line: string }
-/** Some findings, the first `FINDINGS_KEPT` of them (`more`: the rest, counted), as of `at`. */
+/** Some findings, the first `SHOWN_KEPT` of them (`more`: the rest, counted), as of `at`. */
 export interface FindingList { at: string; items: Finding[]; more: number }
-/** A notice sent and not yet taken: the head's workspace and the notice's key (`runs.noticeState`), the keys it tells (`fresh`, kept whole, with their lines in `items`), and the quiet workspaces it tells with their output clocks. */
-export interface Pending extends FindingList { workspace: string; key: string; fresh: string[]; quiet: Record<string, string> }
+/** A notice sent and not settled: when, the head's workspace and the notice's key (`runs.noticeState`), the keys it tells (`fresh`), and the quiet workspaces it tells with their output clocks. */
+export interface Pending { at: string; workspace: string; key: string; fresh: string[]; quiet: Record<string, string> }
 export interface Nudge { at: string; workspace: string; gist: string }
-/** Where a notice of the watch is (`runs.noticeState`): waiting in the head's queue, held by a head run that has not ended, parked after two runs crashed with it, or gone (a run that took it ended, or it was dropped). */
-export type NoticeWhere = "queued" | "taken" | "parked" | "gone";
-/** The watch's section of the return list (autotower.ts `Report.watch`). */
+/**
+ * Where a notice of the watch is (`runs.noticeState`): waiting in the head's queue, held by a head run that has not ended, parked after two runs crashed with it, `told` (a head run that took it ended well), or `gone` (it
+ * left the queue with no such run: the run was quit, the queue purged, the notice dropped).
+ */
+export type NoticeWhere = "queued" | "taken" | "parked" | "told" | "gone";
+/** The watch's section of the return list (autotower.ts `Report.watch`). Every finding the period saw is in one of `inFlight`, `untaken`, `parked`, and `open`, unless it was told and is gone (W3). */
 export interface WatchReport {
 	everyMinutes: number; readings: number; calm: number; wakes: number; skipped: number; first?: string; last?: string; noHead?: { first: string; count: number }; nudges: number; sent: Nudge[]; quietHours: number; quiet: { workspace: string; label: string; hours: number }[];
-	/** The last notice when the head never took it: when it was sent, how many findings it told, and their lines. */
-	untaken?: { at: string; findings: number; items: string[]; inFlight?: true };
-	/** The notices parked after two head runs crashed with them: how many, and the last one's time, findings, and lines. */
-	parked?: { count: number; at: string; findings: number; items: string[] };
-	/** The findings of the last reading not in `untaken`: still open when auto mode ended, as far as the watch saw. */
+	/** The last notice when a head run still in flight holds it: when it was sent, how many findings it tells, and their lines. */
+	inFlight?: { at: string; findings: number; items: string[] };
+	/** The findings no head run took (told to nobody), with ` (gone by the last reading)` on the ones that were gone; `waiting`: the time of the last notice when it still waits in the head's queue. */
+	untaken?: { findings: number; items: string[]; waiting?: string };
+	/** The notices parked after two head runs crashed with them: how many, the last one's time, the findings only they carried, and whether the watch stopped sending (two in a row). */
+	parked?: { count: number; at?: string; findings: number; items: string[]; stopped?: true };
+	/** The notices that left the head's queue before a head run took them to a good end. */
+	lost?: number;
+	/** The findings of the last reading that were told: still open when auto mode ended, as far as the watch saw. */
 	open?: { at: string; items: string[]; more: number };
 }
 /** A head ask as the watch reads it (headasks.ts `HeadAsk`). */
@@ -312,19 +334,28 @@ export function findingsOf(facts: Facts): Finding[] {
 	return [...all].map(([key, line]) => ({ key, line: phrase(line, FINDING_LINE) }));
 }
 /** Some findings as a bounded list. */
-const listOf = (at: string, found: readonly Finding[]): FindingList => ({ at, items: found.slice(0, FINDINGS_KEPT), more: Math.max(0, found.length - FINDINGS_KEPT) });
+const listOf = (at: string, found: readonly Finding[], max = FINDINGS_KEPT): FindingList => ({ at, items: found.slice(0, max), more: Math.max(0, found.length - max) });
+/** The findings no notice told after a reading: the ones untold before, and the ones it saw that no told notice carried (a finding stays until a notice that carries it is told, W3), the newest `SHOWN_KEPT`. */
+export function untoldAfter(state: WatchState, found: readonly Finding[]): NonNullable<WatchState["untold"]> {
+	const shown = new Set(state.shown), had = state.untold ?? [], keys = new Set(had.map((f) => f.key));
+	return [...had, ...found.filter((f) => !shown.has(f.key) && !keys.has(f.key))].slice(-SHOWN_KEPT);
+}
 /**
- * The state once the head took its pending notice (a run that took it ended, so it is neither queued nor parked): the notice counts as a wake, its findings as told, its quiet workspaces as told, and its time as the last
- * wake's, so the next notice tells the waits since it. Unchanged when nothing is pending or it was not taken.
+ * The state once the watch learned where its pending notice is (AW-D20). Queued, or held by a run in flight: nothing changes. `told` (a head run that took it ended well): the notice counts as a wake, its findings and
+ * quiet workspaces as told, its time as the last wake's (so the next notice tells the waits since it), and the row of parked notices ends. `parked`: nothing it tells counts as told, its findings are marked parked, and
+ * the row grows (W4). `gone` (it left the queue with no run that ended well: quit, purged, dropped): it is lost, and its findings stay untold for the next notice and the morning.
  */
 export function settle(state: WatchState, where: NoticeWhere): WatchState {
 	const p = state.pending;
 	if (!p || where === "queued" || where === "taken") return state;
-	const { pending: _done, ...rest } = state;
-	// Parked: no run took it to the end, so nothing it tells counts as told; it no longer blocks the watch, and the morning names it.
-	if (where === "parked") return { ...rest, parked: { count: (rest.parked?.count ?? 0) + 1, at: p.at, findings: p.fresh.length, items: p.items } };
+	const { pending: _done, ...rest } = state, fresh = new Set(p.fresh);
+	if (where === "gone") return { ...rest, lost: (rest.lost ?? 0) + 1 };
+	if (where === "parked") return { ...rest, parked: { count: (rest.parked?.count ?? 0) + 1, inRow: (rest.parked?.inRow ?? 0) + 1, at: p.at, head: p.workspace }, untold: (rest.untold ?? []).map((f) => (fresh.has(f.key) ? { ...f, parked: true as const } : f)) };
 	const out = Object.fromEntries(Object.entries(rest.out).map(([id, o]) => [id, p.quiet[id] !== undefined ? { ...o, quietTold: p.quiet[id]! } : o]));
-	return { ...rest, wakes: rest.wakes + 1, first: rest.first ?? p.at, told: p.at, out, shown: [...rest.shown, ...p.fresh].slice(-SHOWN_KEPT) };
+	return {
+		...rest, wakes: rest.wakes + 1, first: rest.first ?? p.at, told: p.at, out, shown: [...rest.shown, ...p.fresh].slice(-SHOWN_KEPT), untold: (rest.untold ?? []).filter((f) => !fresh.has(f.key)),
+		...(rest.parked ? { parked: { ...rest.parked, inRow: 0 } } : {}),
+	};
 }
 
 /** The head's own forwards since `state.asked` (headasks.ts): an ask with no `relay` carries no boss instruction, so while auto mode is on it is the head acting on what it saw. */
@@ -338,66 +369,78 @@ export const freshWatch = (): WatchState => ({ readings: 0, calm: 0, wakes: 0, s
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isTime = (v: unknown): v is string => typeof v === "string" && !Number.isNaN(Date.parse(v));
 const count = (v: unknown) => (Number.isSafeInteger(v) && (v as number) >= 0 ? (v as number) : 0);
+const isFinding = (f: unknown): f is Finding & { parked?: unknown } => isObj(f) && typeof f.key === "string" && typeof f.line === "string";
 /**
  * A watch state as the period file holds it, field by field: an entry of a list or of `out` that is not what the server writes is left out, a count that is not one is 0, and a file from before a field existed gets it
- * empty. Undefined when it is no object, so the watch starts the period's count again. A hand edit costs the entries it broke, never the return list.
+ * empty. Undefined when it is no object, so the watch starts the period's count again. A hand edit costs the entries it broke, never the return list; a parked count is kept whatever else of `parked` broke (W5).
  */
 export function watchOf(w: unknown): WatchState | undefined {
 	if (!isObj(w)) return undefined;
 	const sent = (Array.isArray(w.sent) ? w.sent : []).filter((n): n is Nudge => isObj(n) && isTime(n.at) && typeof n.workspace === "string" && typeof n.gist === "string").slice(-NUDGES_KEPT);
 	const out = Object.fromEntries(Object.entries(isObj(w.out) ? w.out : {}).filter((e): e is [string, OutClock] => isObj(e[1]) && typeof e[1].label === "string" && isTime(e[1].at)).map(([id, o]) => [id, { label: o.label, at: o.at, ...(isTime(o.quietTold) ? { quietTold: o.quietTold } : {}), ...(o.done === true ? { done: true as const } : {}) }]));
 	const noHead = isObj(w.noHead) && isTime(w.noHead.first) ? { first: w.noHead.first, count: count(w.noHead.count) } : undefined;
-	const parked = isObj(w.parked) && listFrom({ ...w.parked, more: 0 }), open = listFrom(w.open), p = isObj(w.pending) ? w.pending : undefined, base = p && listFrom(p);
-	const pending: Pending | undefined = p && base && typeof p.workspace === "string" && typeof p.key === "string" && Array.isArray(p.fresh) && isObj(p.quiet)
-		? { ...base, workspace: p.workspace, key: p.key, fresh: p.fresh.filter((k): k is string => typeof k === "string").slice(-SHOWN_KEPT), quiet: Object.fromEntries(Object.entries(p.quiet).filter((e): e is [string, string] => isTime(e[1]))) }
+	const pk = isObj(w.parked) ? w.parked : undefined, parked = pk && count(pk.count) > 0 ? { count: count(pk.count), inRow: count(pk.inRow), ...(isTime(pk.at) ? { at: pk.at } : {}), ...(typeof pk.head === "string" ? { head: pk.head } : {}) } : undefined;
+	const found = listFrom(w.found), untold = (Array.isArray(w.untold) ? w.untold : []).filter(isFinding).map((f) => ({ key: f.key, line: f.line, ...(f.parked === true ? { parked: true as const } : {}) })).slice(-SHOWN_KEPT);
+	const p = isObj(w.pending) ? w.pending : undefined;
+	const pending: Pending | undefined = p && isTime(p.at) && typeof p.workspace === "string" && typeof p.key === "string" && Array.isArray(p.fresh) && isObj(p.quiet)
+		? { at: p.at, workspace: p.workspace, key: p.key, fresh: p.fresh.filter((k): k is string => typeof k === "string").slice(-SHOWN_KEPT), quiet: Object.fromEntries(Object.entries(p.quiet).filter((e): e is [string, string] => isTime(e[1]))) }
 		: undefined;
 	return {
 		readings: count(w.readings), calm: count(w.calm), wakes: count(w.wakes), skipped: count(w.skipped), nudges: count(w.nudges), sent, out, shown: (Array.isArray(w.shown) ? w.shown : []).filter((k): k is string => typeof k === "string").slice(-SHOWN_KEPT),
 		...(isTime(w.first) ? { first: w.first } : {}), ...(isTime(w.last) ? { last: w.last } : {}), ...(isTime(w.told) ? { told: w.told } : {}), ...(noHead ? { noHead } : {}), ...(Number.isSafeInteger(w.asked) ? { asked: w.asked as number } : {}),
-		...(pending ? { pending } : {}), ...(open ? { open } : {}), ...(parked && isObj(w.parked) ? { parked: { count: Math.max(1, count(w.parked.count)), at: parked.at, findings: count(w.parked.findings), items: parked.items } } : {}),
+		...(count(w.notices) ? { notices: count(w.notices) } : {}), ...(count(w.lost) ? { lost: count(w.lost) } : {}),
+		...(pending ? { pending } : {}), ...(parked ? { parked } : {}), ...(untold.length ? { untold } : {}), ...(found ? { found } : {}),
 	};
 }
 /** A list of findings as the period file holds it: undefined when it is none, the entries that are no finding left out. */
 function listFrom(v: unknown): FindingList | undefined {
 	if (!isObj(v) || !isTime(v.at) || !Array.isArray(v.items)) return undefined;
-	return { at: v.at, items: v.items.filter((f): f is Finding => isObj(f) && typeof f.key === "string" && typeof f.line === "string").slice(0, FINDINGS_KEPT), more: count(v.more) };
+	return { at: v.at, items: v.items.filter(isFinding).map((f) => ({ key: f.key, line: f.line })).slice(0, SHOWN_KEPT), more: count(v.more) };
 }
 
 /**
  * The watch's section of the return list, built when auto mode ends: the nudges since the last wake are counted in, and a workspace is quiet when it showed no output for `QUIET_MS` or more up to `until`. A notice still
- * pending is asked about once more (`taken`: whether a run took it since the last reading); one the head never took is named with its findings, and the last reading's other findings are listed as still open. None when the
- * watch never came due.
+ * pending is asked about once more (`where`, absent: told), so one a run took to a good end since the last reading counts as told (RV4-F001). Every finding the period saw is then in one place (W3): in flight (the last
+ * notice, held by a run), parked (only parked notices carried it), told to nobody (the rest no notice told, with the ones gone by the last reading marked), or still open (told, and there at the last reading). A
+ * parked wait of the boss's is not listed as still open: the return list names those itself. None when the watch never came due.
  */
 export function watchSection(state: WatchState | undefined, since: string, until: string, asks: readonly AskRow[], where?: (p: Pending) => NoticeWhere): WatchReport | undefined {
 	if (!state) return undefined;
-	const at = state.pending ? (where?.(state.pending) ?? "gone") : "gone";
-	const done = withNudges(settle(state, at), since, asks.filter((a) => a.at <= Date.parse(until)));
-	const untold = new Set([...(done.pending?.fresh ?? []), ...(at === "parked" ? (state.pending?.fresh ?? []) : [])]), open = done.open?.items.filter((f) => !untold.has(f.key) && !f.key.startsWith("parked:")) ?? [];
+	const at: NoticeWhere | undefined = state.pending ? (where?.(state.pending) ?? "told") : undefined;
+	const done = withNudges(at ? settle(state, at) : state, since, asks.filter((a) => a.at <= Date.parse(until)));
+	const untold = done.untold ?? [], live = new Set(done.pending?.fresh ?? []), keys = new Set(untold.map((f) => f.key)), last = new Set((done.found?.items ?? []).map((f) => f.key));
+	const inFlight = at === "taken" ? untold.filter((f) => live.has(f.key)) : [], parkedOnly = untold.filter((f) => f.parked && !live.has(f.key));
+	const nobody = untold.filter((f) => !inFlight.includes(f) && !parkedOnly.includes(f)), open = (done.found?.items ?? []).filter((f) => !keys.has(f.key) && !f.key.startsWith("parked:"));
+	const named = (list: readonly Finding[]) => list.slice(0, FINDINGS_KEPT).map((f) => (last.has(f.key) ? f.line : `${f.line} (gone by the last reading)`));
 	// A workspace whose mains were all done at the last reading is not quiet: nothing was left for it.
 	const quiet = Object.entries(done.out).filter(([, o]) => !o.done).map(([workspace, o]) => ({ workspace, label: o.label, hours: Math.round(((Date.parse(until) - Date.parse(o.at)) / 3600_000) * 10) / 10 })).filter((q) => q.hours * 3600_000 >= QUIET_MS).sort((a, b) => b.hours - a.hours);
 	return { everyMinutes: Math.round(WATCH_MS / 60_000), readings: done.readings, calm: done.calm, wakes: done.wakes, skipped: done.skipped, ...(done.first ? { first: done.first } : {}), ...(done.last ? { last: done.last } : {}), ...(done.noHead ? { noHead: done.noHead } : {}), nudges: done.nudges, sent: done.sent, quietHours: QUIET_MS / 3600_000, quiet,
-		...(done.pending ? { untaken: { at: done.pending.at, findings: done.pending.fresh.length, items: done.pending.items.map((f) => f.line), ...(at === "taken" ? { inFlight: true as const } : {}) } } : {}),
-		...(done.parked ? { parked: { count: done.parked.count, at: done.parked.at, findings: done.parked.findings, items: done.parked.items.map((f) => f.line) } } : {}),
-		...(done.open && (open.length || done.open.more) ? { open: { at: done.open.at, items: open.map((f) => f.line), more: done.open.more } } : {}),
+		...(at === "taken" && done.pending ? { inFlight: { at: done.pending.at, findings: inFlight.length, items: named(inFlight) } } : {}),
+		...(nobody.length || (at === "queued" && done.pending) ? { untaken: { findings: nobody.length, items: named(nobody), ...(at === "queued" && done.pending ? { waiting: done.pending.at } : {}) } } : {}),
+		...(done.parked ? { parked: { count: done.parked.count, ...(done.parked.at ? { at: done.parked.at } : {}), findings: parkedOnly.length, items: named(parkedOnly), ...(done.parked.inRow >= 2 ? { stopped: true as const } : {}) } } : {}),
+		...(done.lost ? { lost: done.lost } : {}),
+		...(done.found && (open.length || done.found.more) ? { open: { at: done.found.at, items: open.slice(0, FINDINGS_KEPT).map((f) => f.line), more: Math.max(0, open.length - FINDINGS_KEPT) + done.found.more } } : {}),
 	};
 }
 /** The section as `/boss auto off` prints it. */
 export function watchLines(w: WatchReport): string[] {
-	const out = [`The head tower's watch (a reading every ${w.everyMinutes} minutes): ${plural(w.readings ?? 0, "reading")}, ${w.calm ?? 0} calm (nobody woken), ${plural(w.wakes, "wake")}${w.skipped ? `, ${w.skipped} skipped (no head tower was open, it was held or had not taken the last notice, or the net could not be read)` : ""}; ${plural(w.nudges, "message")} it sent on its own.`];
+	const out = [`The head tower's watch (a reading every ${w.everyMinutes} minutes): ${plural(w.readings ?? 0, "reading")}, ${w.calm ?? 0} calm (nobody woken), ${plural(w.wakes, "wake")}${w.skipped ? `, ${w.skipped} skipped (no head tower was open, it was held, it had not taken the last notice or crashed on the last two, or the net could not be read)` : ""}; ${plural(w.nudges, "message")} it sent on its own.`];
 	if (w.noHead) out.push(`No head tower was open at ${plural(w.noHead.count, "reading")}, from ${hhmm(w.noHead.first)}: the server opens one only when auto mode is switched on.`);
 	if (w.sent.length) out.push(...w.sent.map((n) => `- ${hhmm(n.at)} to ${n.workspace}: ${n.gist}`), ...(w.nudges > w.sent.length ? [`- (+${w.nudges - w.sent.length} earlier)`] : []));
 	if (w.quiet.length) out.push(`No output seen for ${w.quietHours} hours or more:`, ...w.quiet.map((q) => `- ${q.label}: ${q.hours} h`));
 	if (w.open) out.push(`Still open at the last reading (${hhmm(w.open.at)}):`, ...w.open.items.map((l) => `- ${l}`), ...(w.open.more ? [`- (+${w.open.more} more)`] : []));
 	const lines = (findings: number, items: string[]) => [...items.map((l) => `- ${l}`), ...(findings > items.length ? [`- (+${findings - items.length} more)`] : [])];
 	if (w.parked) {
-		const { count: n, at, findings, items } = w.parked;
-		out.push(`${n > 1 ? `${n} notices were` : "A notice was"} parked after two head runs crashed with ${n > 1 ? "them" : "it"}; ${n > 1 ? "the last" : "it"} (${hhmm(at)})${findings ? ` told ${plural(findings, "finding")} to nobody:` : " told nothing new."}`, ...lines(findings, items));
+		const { count: n, at, findings, items, stopped } = w.parked, they = n > 1 ? "they" : "it";
+		const lead = n > 1 ? `${n} notices were parked after two head runs crashed with each${at ? ` (the last at ${hhmm(at)})` : ""}` : `A notice was parked after two head runs crashed with it${at ? ` (${hhmm(at)})` : ""}`;
+		// A parked notice told nobody anything (RV4-F005): what it carried is either listed here, told by a later notice, or a wait or a quiet workspace the lists above name.
+		out.push(`${lead}; ${findings ? `${they} told ${plural(findings, "finding")} to nobody:` : `${they} ${n > 1 ? "hold" : "holds"} no finding left untold; the waits and quiet workspaces ${they} named are in the lists above.`}`, ...lines(findings, items));
+		if (stopped) out.push("After two notices in a row were parked the watch sent no more; it sends again once the head tower is opened again.");
 	}
-	if (w.untaken) {
-		const { at, findings, items, inFlight } = w.untaken;
-		if (inFlight) out.push(`The last notice (${hhmm(at)}) is taken by a head run still in flight${findings ? `: ${plural(findings, "finding")}:` : "."}`, ...lines(findings, items));
-		else out.push(`The last notice (${hhmm(at)}) was not taken by the head tower${findings ? `: ${plural(findings, "finding")} told to nobody:` : "."}`, ...lines(findings, items));
-	}
+	if (w.inFlight) out.push(`The last notice (${hhmm(w.inFlight.at)}) is taken by a head run still in flight${w.inFlight.findings ? `: ${plural(w.inFlight.findings, "finding")}:` : "."}`, ...lines(w.inFlight.findings, w.inFlight.items));
+	if (w.untaken?.waiting) out.push(`The last notice (${hhmm(w.untaken.waiting)}) was not taken by the head tower.`);
+	if (w.lost) out.push(`${w.lost > 1 ? `${w.lost} notices` : "A notice"} left the head tower's queue before a head run took ${w.lost > 1 ? "them" : "it"} to a good end (the run was quit, or the queue purged).`);
+	if (w.untaken?.findings) out.push(`Told to nobody (${plural(w.untaken.findings, "finding")} no head run took):`, ...lines(w.untaken.findings, w.untaken.items));
 	return out;
 }
 
@@ -415,9 +458,9 @@ export interface WatchDeps {
 	facts(input: Pick<FactsInput, "now" | "since" | "notes" | "idleBefore">): Promise<Facts>;
 	/** The head's asks (headasks.ts `readAsks`). */
 	asks(): readonly AskRow[];
-	/** Whether a notice of the watch (`WATCH_KEY` keys) still waits in the head's queue, not taken by a run. */
+	/** Whether a notice of the watch (`WATCH_KEY` keys) still waits in the head's queue: not taken, or held by a run in flight (`runs.noticeWaits`). */
 	waiting?(workspace: string): boolean;
-	/** Where one notice is (`runs.noticeState`): queued (a run may hold it), parked after crashes, or gone (a run that took it ended). Absent: gone at once. */
+	/** Where one notice is (`runs.noticeState`). Absent: told at once (a test with no queue). */
 	noticeState?(workspace: string, key: string): NoticeWhere;
 	/** One notice event in the head's queue; false when nobody took it. */
 	wake(workspace: string, text: string, key: string): boolean;
@@ -436,16 +479,18 @@ export function createAutoWatch(d: WatchDeps) {
 			const since = view.since, kept = d.auto.watch() ?? (mem?.since === since ? mem.state : freshWatch()), now = d.now();
 			if (now - Date.parse(kept.last ?? since) < WATCH_MS) return;
 			busy = true;
-			const where = (p: { workspace: string; key: string }) => d.noticeState?.(p.workspace, p.key) ?? "gone";
+			const where = (p: { workspace: string; key: string }) => d.noticeState?.(p.workspace, p.key) ?? "told";
 			const save = (next: WatchState) => (mem = { since, state: next }, d.auto.setWatch(next));
 			const skip = (base: WatchState, why: string) => {
 				if (logged !== `${since}\n${why}`) (logged = `${since}\n${why}`, d.log("watch-skipped", { why }));
 				save(withNudges({ ...base, skipped: base.skipped + 1, last: iso(now) }, since, d.asks()));
 			};
 			try {
-				// The last notice counts as told once the head took it; until then every reading is skipped behind it.
-				const state = kept.pending ? settle(kept, where(kept.pending)) : kept;
+				// The last notice counts as told once a head run took it to a good end (AW-D20); until it is settled every reading is skipped behind it.
+				const settled = kept.pending ? settle(kept, where(kept.pending)) : kept;
 				const head = d.head();
+				// A head tower that closed, or one opened again in another workspace, ends the row of parked notices (W4).
+				const state = settled.parked?.inRow && (!head || head.workspace !== settled.parked.head) ? { ...settled, parked: { ...settled.parked, inRow: 0 } } : settled;
 				let facts: Facts;
 				try {
 					facts = await d.facts({ now, since: Date.parse(state.told ?? since), notes: d.auto.period()?.notes ?? [], idleBefore: idle?.since === since ? idle.sessions : new Set() });
@@ -457,22 +502,22 @@ export function createAutoWatch(d: WatchDeps) {
 				// Every reading moves the output clocks and the mains seen idle, whether it wakes the head or not.
 				idle = { since, sessions: new Set(facts.workspaces.flatMap((f) => f.idle.map((m) => m.session))) };
 				const out = outAfter(state.out, facts, state.last ?? since), findings = findingsOf(facts);
-				// The morning's "still open": the findings no pending notice tells and no parked wait (the return list names those itself), cut after they are filtered.
-				const openOf = (told: readonly string[]) => (t = new Set(told)) => listOf(iso(now), findings.filter((f) => !t.has(f.key) && !f.key.startsWith("parked:")));
-				const read: WatchState = { ...state, readings: state.readings + 1, last: iso(now), out, open: openOf(state.pending?.fresh ?? [])(), ...(head ? {} : { noHead: { first: state.noHead?.first ?? iso(now), count: (state.noHead?.count ?? 0) + 1 } }) };
+				// What the morning reads (W3): the findings of this reading, and every finding of the period no notice told yet.
+				const read: WatchState = { ...state, readings: state.readings + 1, last: iso(now), out, found: listOf(iso(now), findings, SHOWN_KEPT), untold: untoldAfter(state, findings), ...(head ? {} : { noHead: { first: state.noHead?.first ?? iso(now), count: (state.noHead?.count ?? 0) + 1 } }) };
 				if (read.pending) return skip(read, "the head tower has not taken the last notice");
 				const found = assess(facts, read);
 				if (!found.hot.length && !found.other) return void save(withNudges({ ...read, calm: read.calm + 1 }, since, d.asks()));
 				if (!head) return skip(read, "no head tower is open");
 				if (head.held) return skip(read, "the head tower is held");
+				// Two notices in a row parked: the head crashes on them, and a notice every reading would keep it crashing all night (W4, RV4-F002).
+				if ((read.parked?.inRow ?? 0) >= 2) return skip(read, "the head tower crashed on the last notices");
 				if (d.waiting?.(head.workspace)) return skip(read, "the head tower has not taken the last notice");
-				// A parked notice keeps its key in the parked queue: the next one takes a number past it.
-				const n = state.wakes + (state.parked?.count ?? 0) + 1, key = `${WATCH_KEY}${since}:${n}`;
+				// The key carries the count of notices sent and the reading's time: never used twice in a period, even when the count is lost with the period file (W5).
+				const n = (state.notices ?? state.wakes + (state.parked?.count ?? 0) + (state.lost ?? 0)) + 1, key = `${WATCH_KEY}${since}:${n}:${now}`;
 				if (!d.wake(head.workspace, watchText(facts, { n, since, out, shown: state.shown }), key)) return skip(read, "the head tower took no notice");
 				logged = undefined;
-				const told = new Set(found.fresh), pending: Pending = { ...listOf(iso(now), findings.filter((f) => told.has(f.key))), workspace: head.workspace, key, fresh: found.fresh, quiet: Object.fromEntries(found.quiet.map((id) => [id, out[id]!.at])) };
-				pending.more = Math.max(0, found.fresh.length - pending.items.length);
-				save(withNudges(settle({ ...read, pending, open: openOf(found.fresh)() }, where(pending)), since, d.asks()));
+				const pending: Pending = { at: iso(now), workspace: head.workspace, key, fresh: found.fresh, quiet: Object.fromEntries(found.quiet.map((id) => [id, out[id]!.at])) };
+				save(withNudges(settle({ ...read, notices: n, pending }, where(pending)), since, d.asks()));
 				d.log("watch-wake", { n, workspaces: found.hot.length });
 			} catch (error) {
 				// A state file that cannot be written is one log line: the reading is tried again at the next look.

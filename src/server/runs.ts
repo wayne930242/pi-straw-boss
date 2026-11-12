@@ -20,7 +20,7 @@ import type { Log } from "./log.ts";
 import { noteEvent } from "./headasks.ts";
 import type { Slot } from "./record.ts";
 import { addNote, clearTimer, listRuns, pruneRuns, readNotes, readTimer, type Outcome, type RunRecord, writeRun, writeTimer } from "./towerrunstore.ts";
-import { appendEvent, dropParked, HEAD_KEY, parkEvent, type QueuedEvent, readQueue, removeEvent, type ServiceRecord, unparkEvent, updateEvent } from "./towerstore.ts";
+import { addTold, appendEvent, dropParked, HEAD_KEY, parkEvent, type QueuedEvent, readQueue, readTold, removeEvent, type ServiceRecord, unparkEvent, updateEvent } from "./towerstore.ts";
 import { RUN_CAP_MINUTES } from "./towerbrief.ts";
 import { HEAD_RUN_TOOLS, LOCAL_RUN_TOOLS } from "../runallow.ts";
 import { appendChapter, headResume, recapOf } from "./headchapters.ts";
@@ -391,13 +391,15 @@ export function createRuns(o: RunsOptions) {
 	};
 	/** The head tower's service (kind `head`): its runs resume one conversation in chapters and have the head's tools (docs/specs/2026-11-04-head-tower.md, Runs). */
 	const isHeadSvc = (svc: Svc) => svc.ref.record().kind === "head";
+	/** Whether a run of that id is held and has not ended. */
+	const liveRun = (id: string) => Boolean(byRun.get(id) && !byRun.get(id)!.ended);
 	const headRun = (a: Active) => a.rec.kind === "local" && isHeadSvc(a.svc);
 
 	// --- events -----------------------------------------------------------------------------------------------------------------------------------------------------
 
-	/** Events waiting for a run: not taken, not offered, a timer only when due; the boss first, then in the order the server received them. */
+	/** Events waiting for a run: not taken, not offered, not stale (`drop`), a timer only when due; the boss first, then in the order the server received them. */
 	const waitingOf = (svc: Svc, offered: ReadonlySet<string> = new Set()): QueuedEvent[] =>
-		readQueue(slot, svc.ref.workspace).filter((e) => !e.taken && !offered.has(e.id)).sort((a, b) => (PRIORITY[a.kind] ?? 1) - (PRIORITY[b.kind] ?? 1) || a.seq - b.seq);
+		readQueue(slot, svc.ref.workspace).filter((e) => !e.taken && !e.drop && !offered.has(e.id)).sort((a, b) => (PRIORITY[a.kind] ?? 1) - (PRIORITY[b.kind] ?? 1) || a.seq - b.seq);
 	const noticeOf = (svc: Svc, n: Omit<Notice, "at">) => {
 		svc.notices = [...svc.notices.filter((x) => x.id !== n.id), { ...n, at: now() }].slice(-10);
 	};
@@ -949,17 +951,25 @@ export function createRuns(o: RunsOptions) {
 		slots = Math.max(0, slots - 1);
 		if (svc.run === a) svc.run = undefined;
 		const ally = a.rec.kind === "ally";
-		const taken = ally ? [] : readQueue(slot, ws).filter((e) => e.taken?.run === a.rec.id);
+		const mine = ally ? [] : readQueue(slot, ws), taken = mine.filter((e) => e.taken?.run === a.rec.id);
 		const failed = outcome === "crashed" || outcome === "timeout";
 		// The device keeps its run until its messages are handed back: a run begun meanwhile would take them again (A6).
 		if (ally) await finishAlly(a, outcome, failed, keepTaken).finally(() => void (a.rec.device && svc.allies.get(a.rec.device) === a && svc.allies.delete(a.rec.device)));
 		for (const e of taken) {
 			try {
-				if (!failed && outcome !== "herdr-restart" && !keepTaken) removeEvent(slot, ws, e);
+				// The head's ledger: a notice a head run took to a good end is told; one it was quit, crashed or stopped with is not (AW-D20).
+				if (outcome === "done" && !keepTaken && e.kind === "notice" && e.messageId && isHeadSvc(svc)) addTold(slot, e.messageId);
+				// A stale event goes with the run that held it, whatever its end (AW-D21).
+				if (e.drop) removeEvent(slot, ws, e);
+				else if (!failed && outcome !== "herdr-restart" && !keepTaken) removeEvent(slot, ws, e);
 				else if (outcome === "herdr-restart" || keepTaken) updateEvent(slot, ws, { ...withoutTaken(e), flag: "crash" });
 				else if ((e.crashes ?? 0) + 1 >= 2) (parkEvent(slot, ws, { ...withoutTaken(e), crashes: (e.crashes ?? 0) + 1, flag: "crash" }), noticeOf(svc, { id: `parked-${e.id}`, level: "warning", kind: "late", text: `An event was parked after two runs crashed with it: ${e.kind} ${e.from?.name ?? e.from?.id ?? ""}`.trim() }));
 				else updateEvent(slot, ws, { ...withoutTaken(e), crashes: (e.crashes ?? 0) + 1, flag: "crash" });
 			} catch (cause) { error("run-events", (cause as Error).message); }
+		}
+		// A stale event offered to this run and never taken goes with it too.
+		for (const e of mine.filter((x) => x.drop && !x.taken && a.offered.has(x.id))) {
+			try { removeEvent(slot, ws, e); } catch (cause) { error("run-events", (cause as Error).message); }
 		}
 		if (failed) {
 			try { addNote(slot, ws, { kind: a.rec.kind, ...(a.rec.device ? { device: a.rec.device } : {}), run: a.rec.id, at: iso(now()), note: `(${outcome === "timeout" ? "timed out" : "crashed"}: ${detail ?? outcome})` }); } catch (cause) { error("run-note", (cause as Error).message); }
@@ -1591,30 +1601,45 @@ export function createRuns(o: RunsOptions) {
 			poke(svc);
 			return true;
 		},
-		/** Whether a notice whose key starts with `prefix` waits in the queue, not yet taken by a run (the auto watch sends no second one over it). */
+		/**
+		 * Whether a notice whose key starts with `prefix` waits in the queue: not taken yet, or held by a run that has not ended; a stale one (`drop`) does not count. The auto watch sends no second one over it, even when
+		 * its own mark of the last notice is lost with its period file (AW-D21, W2).
+		 */
 		noticeWaits(workspace: string, prefix: string): boolean {
-			const svc = services.get(workspace);
-			return Boolean(svc) && waitingOf(svc!).some((e) => e.kind === "notice" && e.messageId?.startsWith(prefix));
+			if (!services.get(workspace)) return false;
+			return readQueue(slot, workspace).some((e) => e.kind === "notice" && !e.drop && Boolean(e.messageId?.startsWith(prefix)) && (!e.taken || liveRun(e.taken.run)));
 		},
 		/**
-		 * Where the head's notice of key `key` is: held by a head run that has not ended (`taken`), in the queue otherwise (waiting, offered, or held by a run that is gone), parked after two runs crashed with it, or gone (a run
-		 * that took it ended, or it was dropped). Read in the head's own folder, not through its workspace's binding: the head that closes unbinds it, and its untaken notice must not read as gone (RV3-F001).
+		 * Where the head's notice of key `key` is: held by a head run that has not ended (`taken`), in the queue otherwise (waiting, offered, or held by a run that is gone), parked after two runs crashed with it, `told` (a
+		 * head run that took it ended well: the head's ledger has it), or `gone` (it left the queue with no run that ended well: a run that was quit, a purge, a drop). Read in the head's own folder, not through its
+		 * workspace's binding: the head that closes unbinds it, and its untaken notice must not read as gone (RV3-F001; AW-D20).
 		 */
-		noticeState(_workspace: string, key: string): "queued" | "taken" | "parked" | "gone" {
+		noticeState(key: string): "queued" | "taken" | "parked" | "told" | "gone" {
 			const ours = (e: QueuedEvent) => e.kind === "notice" && e.messageId === key;
 			const e = readQueue(slot, HEAD_KEY).find(ours);
-			if (e) return e.taken && byRun.get(e.taken.run) && !byRun.get(e.taken.run)!.ended ? "taken" : "queued";
-			return readQueue(slot, HEAD_KEY, true).some(ours) ? "parked" : "gone";
+			if (e) return e.taken && liveRun(e.taken.run) ? "taken" : "queued";
+			if (readQueue(slot, HEAD_KEY, true).some(ours)) return "parked";
+			return readTold(slot).includes(key) ? "told" : "gone";
 		},
-		/** Drops the notices whose key starts with `prefix` that no run took, queued or parked (auto mode ended: its watch's notices are stale); one offered to the run in flight stays. Returns how many went. */
-		dropNotices(workspace: string, prefix: string): number {
-			const svc = services.get(workspace);
-			if (!svc) return 0;
+		/**
+		 * Auto mode ended: the notices whose key starts with `prefix` are stale. Read in the head's own folder whether or not a head is open (RV4-F003): the ones queued or parked go; one a live head run holds (taken or
+		 * offered) is marked `drop`, so that run may finish it but it goes when the run ends and no other run is offered it (AW-D21). Returns how many went at once.
+		 */
+		dropNotices(prefix: string): number {
 			const ours = (e: QueuedEvent) => e.kind === "notice" && Boolean(e.messageId?.startsWith(prefix));
-			const queued = waitingOf(svc, new Set(svc.run ? svc.run.offered.keys() : [])).filter(ours), parked = readQueue(slot, workspace, true).filter(ours);
-			for (const e of queued) removeEvent(slot, workspace, e);
-			for (const e of parked) dropParked(slot, workspace, e);
-			return queued.length + parked.length;
+			const live = [...byRun.values()].filter((a) => !a.ended && a.rec.kind === "local" && isHeadSvc(a.svc));
+			let gone = 0;
+			for (const e of readQueue(slot, HEAD_KEY).filter(ours)) {
+				const holder = live.find((a) => e.taken?.run === a.rec.id || a.offered.has(e.id));
+				if (!holder) (removeEvent(slot, HEAD_KEY, e), gone++);
+				else if (!e.drop) {
+					const marked: QueuedEvent = { ...e, drop: true };
+					updateEvent(slot, HEAD_KEY, marked);
+					if (holder.offered.has(e.id)) holder.offered.set(e.id, { ...holder.offered.get(e.id)!, drop: true });
+				}
+			}
+			for (const e of readQueue(slot, HEAD_KEY, true).filter(ours)) (dropParked(slot, HEAD_KEY, e), gone++);
+			return gone;
 		},
 		/** The service is held because the standing pane runs a program of the boss's: it is Retried by itself once the pane is free (standing.ts). */
 		paneBusy(workspace: string) {

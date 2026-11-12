@@ -36,14 +36,15 @@ export interface StartWatch {
 
 /**
  * What the switch does for the watch (boss, 11/12): switched on with no head tower open, the server opens one, since the boss is at their switch and the watch has nobody to wake otherwise; a head that is gone later in the
- * night is not opened again (the readings count it for the morning). Switched off, the watch's notices no run took are dropped: they are stale, and nothing of the watch acts once the boss is back.
+ * night is not opened again (the readings count it for the morning). Switched off, the watch's notices are stale and nothing of the watch acts once the boss is back: they are dropped from the head's own folder whether or
+ * not a head tower is open (RV4-F003), and one a live head run holds goes when that run ends, whatever its end (AW-D21).
  */
 export function watchSwitch(o: { towers(): Towers | undefined; log: StartWatch["log"] }) {
 	return (change: { from: { on: boolean }; to: { on: boolean } }): void => {
 		const towers = o.towers();
 		if (!towers || change.from.on === change.to.on) return;
 		if (!change.to.on) {
-			const head = towers.head.status()?.workspace, dropped = head ? towers.runs.dropNotices(head, WATCH_KEY) : 0;
+			const dropped = towers.runs.dropNotices(WATCH_KEY);
 			if (dropped) o.log("watch-dropped", { notices: dropped });
 			return;
 		}
@@ -52,10 +53,10 @@ export function watchSwitch(o: { towers(): Towers | undefined; log: StartWatch["
 	};
 }
 
-/** The watch's section of the return list for the period that ends (automode.ts `watch`): the head's asks are read here, so the nudges since the last wake are in it, and the queue, so a notice a run took since the last reading counts as told. */
+/** The watch's section of the return list for the period that ends (automode.ts `watch`): the head's asks are read here, so the nudges since the last wake are in it, and the queue, so a notice a run took to a good end since the last reading counts as told. */
 export const reportWatch = (slot: Slot, now: () => number, towers: () => Towers | undefined) => (period: Period, until: string): WatchReport | undefined => watchSection(period.watch, period.since, until, asksOf(slot, now), (p) => noticeState(towers, p));
-/** Where a notice of the watch is; queued while the towers are not known (it is not taken for told). */
-const noticeState = (towers: () => Towers | undefined, p: { workspace: string; key: string }): NoticeWhere => towers()?.runs.noticeState(p.workspace, p.key) ?? "queued";
+/** Where a notice of the watch is, read in the head's own folder; queued while the towers are not known (it is not taken for told). */
+const noticeState = (towers: () => Towers | undefined, p: { key: string }): NoticeWhere => towers()?.runs.noticeState(p.key) ?? "queued";
 /** The head's asks; none when the file cannot be read (the watch's count of the head's own messages then stands where it was, and the return list is still written). */
 const asksOf = (slot: Slot, now: () => number) => { try { return readAsks(slot, now()); } catch { return []; } };
 
@@ -78,7 +79,7 @@ export function startAutoWatch(o: StartWatch): (() => void) | undefined {
 		facts: async (input) => factsOf(await net.read(), { ...input, stalls: o.stalls() }),
 		asks: () => asksOf(o.slot, o.now),
 		waiting: (workspace) => o.towers()?.runs.noticeWaits(workspace, WATCH_KEY) ?? false,
-		noticeState: (workspace, key) => noticeState(o.towers, { workspace, key }),
+		noticeState: (_workspace, key) => noticeState(o.towers, { key }),
 		wake: (workspace, text, key) => o.towers()?.runs.notice(workspace, text, key) ?? false,
 		...over,
 	});

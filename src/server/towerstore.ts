@@ -60,6 +60,8 @@ export interface QueuedEvent {
 	press?: true;
 	/** Who sent a boss event over the control socket, as the request reported it (auto mode records it; docs/specs/2026-11-09-auto-mode.md, §2). */
 	requester?: Requester;
+	/** The event is stale (the auto watch's notice of a period that ended): the run that holds it may finish it, but it goes when that run ends, whatever the outcome, and no other run is offered it (AW-D21). */
+	drop?: true;
 }
 
 /** A file name for a Herdr id: ids are short counters, but nothing a caller sends may leave the folder. */
@@ -187,6 +189,16 @@ export function unparkEvent(slot: Slot, workspace: string, event: QueuedEvent): 
 }
 export function dropParked(slot: Slot, workspace: string, event: Pick<QueuedEvent, "seq" | "id">): void {
 	rmSync(join(parkedDir(slot, workspace), nameOf(event)), { force: true });
+}
+/** The head's ledger of the notices a head run finished well (`told.json` in `head/`): the auto watch counts its notice as told only when its key is here (AW-D20). Newest last. */
+const TOLD = "told.json", TOLD_KEPT = 50;
+export function readTold(slot: Slot): string[] {
+	const list = readJson<unknown>(join(headDir(slot), TOLD));
+	return Array.isArray(list) ? list.filter((k): k is string => typeof k === "string") : [];
+}
+export function addTold(slot: Slot, key: string): void {
+	ensureDir(headDir(slot));
+	writeDurable(join(headDir(slot), TOLD), [...readTold(slot).filter((k) => k !== key), key].slice(-TOLD_KEPT));
 }
 export function queueLength(slot: Slot, workspace: string): number {
 	try {

@@ -205,13 +205,16 @@ for (const [probe, where] of [["B", "queued"]] as const) {
 		const off = s.auto.switchOff(pi) as { report?: string };
 		assert.doesNotMatch(off.report!, /calm \(nobody woken\), 1 wake/);
 		assert.match(off.report!, /: 32 readings, 0 calm \(nobody woken\), 0 wakes, 31 skipped /);
-		assert.match(off.report!, /\nThe last notice \(\d\d:\d\d\) was not taken by the head tower: 2 findings told to nobody:\n- "Alpha": its tower: held \(it starts no run\)\n- "Alpha": train "1112a" \("acme"\): its writer is gone and it has not ended$/);
+		// W3 (AW-D22): every finding no head run took is in one list, the notice that waits named above it.
+		assert.match(off.report!, /\nThe last notice \(\d\d:\d\d\) was not taken by the head tower\.\nTold to nobody \(2 findings no head run took\):\n- "Alpha": its tower: held \(it starts no run\)\n- "Alpha": train "1112a" \("acme"\): its writer is gone and it has not ended$/);
 	});
 }
 
 test("RV3-F002 (probe A): a parked notice no longer blocks the watch: the next notice tells its findings again, and the morning names it as parked; it is neither a wake nor a skip", async () => {
 	shown = troubleNet();
-	const s = server({ noticeState: (_ws, key) => (key.endsWith(":1") ? "parked" : "gone") });
+	// W1 (AW-D20): the second notice is taken to a good end (`told`); a notice that is merely gone from the queue is not taken.
+	let first = "";
+	const s = server({ noticeState: (_ws, key) => ((first ||= key) === key ? "parked" : "told") });
 	s.auto.switchOn(pi);
 	await s.run(WATCH_MS);
 	assert.equal(s.sent.length, 1);
@@ -224,7 +227,8 @@ test("RV3-F002 (probe A): a parked notice no longer blocks the watch: the next n
 	assert.deepEqual(state(s).shown, ["tower:wA:held", "train:acme:1112a:stale"]);
 	const off = s.auto.switchOff(pi) as { report?: string };
 	assert.match(off.report!, /: 2 readings, 0 calm \(nobody woken\), 1 wake; /);
-	assert.match(off.report!, /\nA notice was parked after two head runs crashed with it; it \(\d\d:\d\d\) told 2 findings to nobody:\n- "Alpha": its tower: held \(it starts no run\)\n- "Alpha": train "1112a"/);
+	// W3 (AW-D22): its findings were told by the next notice, so they are no longer the parked notice's to name.
+	assert.match(off.report!, /\nA notice was parked after two head runs crashed with it \(\d\d:\d\d\); it holds no finding left untold; the waits and quiet workspaces it named are in the lists above\./);
 	assert.doesNotMatch(off.report!, /was not taken/);
 });
 
@@ -238,18 +242,20 @@ test("RV3-F003: past 20 findings, the still-open list is cut after the pending n
 	shown = { bases: many(28), board: [] };
 	await s.run(WATCH_MS);
 	const off = s.auto.switchOff(pi) as { report?: string };
-	assert.match(off.report!, /\nStill open at the last reading \(\d\d:\d\d\):\n- "Ws25": its tower: held \(it starts no run\)\n- "Ws26": [^\n]*\n- "Ws27": [^\n]*\n/);
-	assert.match(off.report!, /25 findings told to nobody/);
+	// W3 (AW-D22): the three the notice does not carry were never told either, so they are told to nobody with the 25 it carries, and the count names the ones past 20.
+	assert.match(off.report!, /\nTold to nobody \(28 findings no head run took\):\n(- [^\n]*\n){20}- \(\+8 more\)$/);
+	assert.doesNotMatch(off.report!, /Still open/);
 });
 
 test("R2-F001: a notice counts as told once the head took it; the return list then reads it as a wake", async () => {
 	shown = troubleNet();
-	let where: "queued" | "gone" = "queued";
+	// W1 (AW-D20): taken to a good end is `told`; a notice merely gone from the queue is not taken.
+	let where: "queued" | "told" = "queued";
 	const s = server({ noticeState: () => where });
 	s.auto.switchOn(pi);
 	await s.run(2 * WATCH_MS);
 	assert.deepEqual([state(s).wakes, state(s).skipped, state(s).shown.length], [0, 1, 0], "queued: pending, and the reading behind it is skipped");
-	where = "gone";
+	where = "told";
 	await s.run(2 * WATCH_MS);
 	assert.equal(s.sent.length, 1, "taken: its findings are told, so the later readings are calm");
 	assert.deepEqual([state(s).readings, state(s).calm, state(s).wakes, state(s).skipped], [4, 2, 1, 1]);
@@ -260,7 +266,7 @@ test("R2-F001: a notice counts as told once the head took it; the return list th
 	where = "queued";
 	await s.run(WATCH_MS);
 	assert.equal(s.sent.length, 2);
-	where = "gone";
+	where = "told";
 	const off = s.auto.switchOff(pi) as { report?: string };
 	assert.match(off.report!, /: 5 readings, 2 calm \(nobody woken\), 2 wakes, 1 skipped /);
 	assert.doesNotMatch(off.report!, /was not taken/);
