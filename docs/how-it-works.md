@@ -1098,7 +1098,18 @@ The listings (`pane list`, `workspace list`, `tab list --workspace`) are request
 
 ## Orphaned subagents
 
+```mermaid
+flowchart TD
+    c["Every 15 s, each session checks<br/>the children it launched"] --> s{"A child is stranded?"}
+    s -->|"yes"| m["One intercom message to the child:<br/>send your final report, then stop"]
+    m --> r["The report reaches the launcher"]
+    s -->|"no"| n["Nothing is sent"]
+```
+
 A subagent's result reaches the session that launched it only while that session's own process keeps pi-herdr-agents' watchers and its registry of launched children (`runningSubagents`, in the process-wide slot `globalThis[Symbol.for("pi-subagents/runtime")]`). `/reload`, `/new`, `/resume` and `/fork` keep them, quitting pi suppresses the delivery, and a crash or restart drops them for good: pi-herdr-agents does not recover watchers after a full restart. A subagent that stays open after it finished, an interactive one for instance, is then stranded: it sits done in its pane and nobody is told.
+
+<details>
+<summary>Details</summary>
 
 Every session in Herdr that is not itself a subagent checks for this every 15 seconds. While no subagent of the session is stranded, a check reads the registry and one directory; only a subagent that is not tracked and whose own activity says it waits brings a pi-intercom session listing, and after that one `herdr pane list` per check (and one `herdr pane process-info` when it is about to be asked). A subagent is asked to report when all of these hold:
 
@@ -1113,6 +1124,8 @@ Straw Boss then sends that session one intercom message: the launcher's session 
 A child whose pane cannot be found or does not run its launch script, or that has no pi-intercom session of its own, is given up on after four looks, until the next session start (a reload counts). A subagent whose process has exited cannot be asked; its result stays in its session file. A resumed run (`subagent_resume`) has an id of its own that nothing in its pane's session file names, so it is never found and never asked.
 
 The subagent's own launcher does this, not a tower: only the launcher's process knows what it tracks, so a tower never nudges the subagents of other sessions, and a subagent that launches subagents of its own does not (it runs no Straw Boss).
+
+</details>
 
 ### Subagents a Herdr restore brought back plain
 
@@ -1132,6 +1145,9 @@ sequenceDiagram
 ```
 
 The nudge above needs the child to still be what pi-herdr-agents started. A Herdr restart does not leave that: with `resume_agents_on_restore` (on by default) Herdr starts a plain `pi --session <file>` in every pane that had reported an agent session, subagent panes included. That pi has none of the child's setup (no `subagent-done.ts` extension, no `PI_SUBAGENT_*` environment, no `caller_ping`, no auto-exit, no `<session>.exit` sidecar), so it sits idle at its prompt with the task unfinished and will never report, and the restored launcher's registry is empty and is never filled again. Nothing can ask it to report by itself, so the launcher resumes the run instead, through pi-herdr-agents' public `subagent_resume`.
+
+<details>
+<summary>Details</summary>
 
 The same check every 15 seconds (`restored.ts`) finds such a run when all of these hold. It lists Herdr's panes only while some run could still be noted or found: a run that can never qualify (a persistent specialist, or a launch script that is missing or does not name the run's own session) is dropped before that, so it costs no list and no process look.
 
@@ -1153,9 +1169,14 @@ Each step that fails is shown as a warning, recorded as `gaveUp`, and not tried 
 
 A **managed-worktree** run (it has a manifest under `artifacts/<session id>/worktree-runs/`) is the exception. Its pane is the root pane of the retained worktree workspace, so Straw Boss does not close it, and pi-herdr-agents' `subagent_resume` neither reattaches the worktree's lifecycle nor accepts such a session. The message says so, names the pane, worktree and branch, tells the model not to call `subagent_resume` for it, and leaves the restored pi waiting at its prompt for the user to continue (a run cut off mid-turn is told to go on, below).
 
+</details>
+
 #### A child cut off mid-turn is told to go on
 
 A restart or a reboot can land in the middle of a child's turn, and the restored pi then waits at its prompt with nothing to do: its interrupted tool call has no result and nobody continues the turn. Before a run is handed to the launcher, `cut.ts` reads the end of the child's session file (the last chunk of it, which grows until it holds the last assistant message; a large file is not read whole). Only `message` entries and the custom messages that start a turn (an intercom message, a nested launcher's result, a monitor's wake, a second-thought or document-review notice, a robot-hand follow-up) count, so a custom entry, a model change, or any other notice says nothing.
+
+<details>
+<summary>Details</summary>
 
 The session is **cut** when the last tool calls of the last assistant message have no result, or the last step is a tool result the model never read, or the last step is a message nobody answered, or the last assistant message is an error a restart leaves: claude-bridge's `Claude Code process terminated by signal SIGHUP` or `exited with code 129` (a SIGTERM or code 143 may be a kill by hand, and nothing shows a restart came after it, so it is no cut) (the reply was cut while it was being written, with or without a tool call that had begun to stream).
 
@@ -1169,13 +1190,20 @@ The child is told once, in one message: its last turn was cut by a Herdr restart
   It is sent only while that session's own intercom status is `idle` (and the pane was idle or done at the look), and the transcript is read again just before the send: a child someone went on with is not told. A session that is not reachable yet (pi-intercom connects a moment after pi starts) is looked at again at the next looks, four at most; then the launcher is told it could not be reached. `continued` is written to the launcher's session before the send, so a child is told at most once per restore, even across a reload or a failing send.
 - In both cases the one message the launcher gets says which runs were restored mid-turn, and for a worktree run whether the child was told ("not idle, wait for its report over intercom"; then the message does not send the launcher to the pane for that run) or not (why, and to continue it in its pane).
 
+</details>
+
 #### Limit: a draft the boss is typing
 
 Straw Boss does not see the prompt editor of another pi, and the intercom message starts the child's turn as soon as its status is idle. If the boss has a draft in the restored pane in the first minute after the restore, the draft is kept (nothing is typed into the editor) but the child may act before the boss sends it. The text tells the child to check the state first. A guard on the child's side (its own Straw Boss extension holding the message until the editor is empty) would need a channel of its own between the two, an acknowledgement, and a fallback for a child whose extension is older, so it is not part of this release.
 
+<details>
+<summary>Details</summary>
+
 Not covered: a run that was itself resumed (`subagent_resume`) is not recovered by a second restart. Its resume script is named `<name>-resume-<time>.sh` and its header (`# Session:`, `# Surface:`) does give the session file and pane, but not the run's id (that is only in the script's command, as `PI_SUBAGENT_ID`), and the id is what every other proof here hangs on. The resumed run reuses the original session file, whose name carries the original id, so the pane and the transcript cannot be matched to the new id (`ownFile`), and the original run's `subagent_result` names the same session file, so the transcript cannot say whether the resumed run finished.
 
 Covering it would mean closing a pane on a guess, so a restart after a resume stays unknown and nothing is closed; and a `.exit` sidecar left unconsumed means the child finished, so the run is left alone and its result has to be read from the session file.
+
+</details>
 
 ## Browser view
 

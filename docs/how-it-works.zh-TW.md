@@ -1098,7 +1098,18 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 ## 孤立的子智慧體
 
+```mermaid
+flowchart TD
+    c["每 15 秒，每個 session<br/>檢查它啟動的子智慧體"] --> s{"有子智慧體被孤立？"}
+    s -->|"有"| m["對子智慧體送一則訊息：<br/>送出最終報告後停止"]
+    m --> r["報告抵達啟動它的 session"]
+    s -->|"沒有"| n["不送任何東西"]
+```
+
 子智慧體的結果只有在啟動它的 session 自己的行程持有 pi-herdr-agents 的 watcher 與已啟動子層的登記簿（`runningSubagents`，位於行程全域的槽位 `globalThis[Symbol.for("pi-subagents/runtime")]`）時，才會送達那個 session。`/reload`、`/new`、`/resume` 和 `/fork` 會保留它們，結束 pi 會抑制送達，崩潰或重新啟動則會永久丟失：pi-herdr-agents 在完全重新啟動後不會恢復 watcher。完成後仍保持開啟的子智慧體（例如互動式的）就此被擱置：它完成後停在自己的 pane 裡，沒有人被告知。
+
+<details>
+<summary>細節</summary>
 
 Herdr 中每個本身不是子智慧體的 session，每 15 秒檢查一次這種情況。只要 session 沒有被擱置的子智慧體，一次檢查就只讀登記簿和一個目錄；只有未被追蹤、且自身活動顯示在等待的子智慧體，才會帶出一次 pi-intercom session 清單，之後每次檢查再有一次 `herdr pane list`（以及在即將詢問它時的一次 `herdr pane process-info`）。符合以下全部條件時，子智慧體會被要求回報：
 
@@ -1113,6 +1124,8 @@ Straw Boss 接著向該 session 送一則 intercom 訊息：啟動者的 session
 找不到 pane、pane 沒有執行其啟動腳本，或沒有自己的 pi-intercom session 的子層，看過四次後就放棄，直到下一次 session 啟動（reload 也算）。行程已結束的子智慧體無法被詢問；它的結果留在它的 session 檔裡。被接手的執行（`subagent_resume`）有自己的 id，而它的 pane session 檔裡沒有任何東西指名這個 id，所以它永遠找不到，也永遠不會被詢問。
 
 這是子智慧體自己的啟動者做的事，不是塔台：只有啟動者的行程知道它追蹤了什麼，所以塔台絕不會催促其他 session 的子智慧體，而自己啟動了子智慧體的子智慧體也不會這樣做（它不執行 Straw Boss）。
+
+</details>
 
 ### Herdr 還原後變成一般 pi 的子智慧體
 
@@ -1132,6 +1145,9 @@ sequenceDiagram
 ```
 
 上面的催促要求子層仍然是 pi-herdr-agents 當初啟動的樣子。Herdr 重新啟動後就不是了：在 `resume_agents_on_restore`（預設開啟）下，Herdr 會在每個曾經回報過智慧體 session 的 pane 裡啟動一個一般的 `pi --session <file>`，包括子智慧體的 pane。那個 pi 沒有子層的任何設定（沒有 `subagent-done.ts` 擴充功能、沒有 `PI_SUBAGENT_*` 環境變數、沒有 `caller_ping`、沒有自動結束、沒有 `<session>.exit` sidecar），所以它停在提示字元上閒置，任務沒做完，也永遠不會回報，而還原後啟動者的登記簿是空的，之後也不會再被填入。沒有任何東西能讓它自己回報，所以啟動者改為接手那次執行，方式是透過 pi-herdr-agents 的公開工具 `subagent_resume`。
+
+<details>
+<summary>細節</summary>
 
 同樣每 15 秒的檢查（`restored.ts`）在以下全部條件成立時找出這種執行。它只在還有執行可能被記下或找到時才列出 Herdr 的 pane：永遠不可能符合的執行（常駐專家，或啟動腳本不存在或沒有指名該次執行自己的 session），會在那之前就被剔除，所以不會花一次清單或一次行程查看。
 
@@ -1153,9 +1169,14 @@ sequenceDiagram
 
 **managed-worktree** 執行（在 `artifacts/<session id>/worktree-runs/` 下有一份 manifest）是例外。它的 pane 是保留下來的 worktree 工作區的根 pane，所以 Straw Boss 不關它，而 pi-herdr-agents 的 `subagent_resume` 既不會重新接上 worktree 的生命週期，也不接受這樣的 session。訊息會說明這點，指名 pane、worktree 與分支，告訴模型不要對它呼叫 `subagent_resume`，並讓還原的 pi 停在提示字元等使用者繼續（回合中途被切斷的執行，會被告知繼續，見下文）。
 
+</details>
+
 #### 回合中途被切斷的子層，會被告知繼續
 
 重新啟動或重新開機可能正好發生在子層回合的中途，還原的 pi 於是停在提示字元，沒有事可做：被打斷的工具呼叫沒有結果，也沒有人接續該回合。在一次執行交給啟動者之前，`cut.ts` 會讀子層 session 檔的結尾（它的最後一段，會增長到包含最後一則助理訊息；大檔案不會整個讀）。只有 `message` 項目，以及啟動回合的自訂訊息（intercom 訊息、巢狀啟動者的結果、Monitor 的喚醒、second-thought 或文件審閱通知、robot-hand 的後續）才算數，所以自訂項目、模型變更或任何其他通知都說明不了什麼。
+
+<details>
+<summary>細節</summary>
 
 符合以下任一情況，session 即為**被切斷**：最後一則助理訊息的最後幾個工具呼叫沒有結果，或最後一步是模型從未讀過的工具結果，或最後一步是沒有人回答的訊息，或最後一則助理訊息是重新啟動會留下的錯誤：claude-bridge 的 `Claude Code process terminated by signal SIGHUP` 或 `exited with code 129`（SIGTERM 或代碼 143 可能是手動砍掉的，沒有任何東西顯示重新啟動發生在它之後，所以不算被切斷）（回覆在寫到一半時被切斷，不論是否有已開始串流的工具呼叫）。
 
@@ -1169,13 +1190,20 @@ sequenceDiagram
   只有在該 session 自己的 intercom 狀態為 `idle`（且 pane 在查看時為 idle 或 done）時才送出，而且在送出前會再讀一次逐字稿：已有人讓它繼續的子層不會被告知。尚無法連上的 session（pi-intercom 在 pi 啟動後一會兒才連線）會在接下來的查看中再看，最多四次；之後告知啟動者無法連上它。`continued` 在送出之前就寫入啟動者的 session，所以每次還原最多告知一個子層一次，即使跨過 reload 或送出失敗也一樣。
 - 兩種情況下，啟動者收到的那一則訊息都會說明哪些執行是在回合中途還原的，對 worktree 執行還會說明子層是否已被告知（「not idle, wait for its report over intercom」；此時訊息不會讓啟動者為這次執行去那個 pane）或沒有（原因，並請在它的 pane 裡讓它繼續）。
 
+</details>
+
 #### 限制：老闆正在輸入的草稿
 
 Straw Boss 看不到另一個 pi 的提示編輯器，而 intercom 訊息在狀態為 idle 時就會立即啟動子層的回合。如果老闆在還原後的第一分鐘內在還原的 pane 裡有草稿，草稿會保留（不會打任何東西進編輯器），但子層可能在老闆送出之前就先行動。文字會告訴子層先檢查狀態。子層這邊的防護（它自己的 Straw Boss 擴充功能在編輯器清空前先扣住訊息）需要兩者之間專屬的通道、一個確認，以及對擴充功能版本較舊的子層的備援，所以不屬於這個版本。
 
+<details>
+<summary>細節</summary>
+
 未涵蓋：本身已被接手（`subagent_resume`）的執行，不會在第二次重新啟動後被復原。它的接手腳本命名為 `<name>-resume-<time>.sh`，標頭（`# Session:`、`# Surface:`）確實給出 session 檔與 pane，但沒有該次執行的 id（它只在腳本的指令中，作為 `PI_SUBAGENT_ID`），而這裡其他每項證明都繫於這個 id。被接手的執行重用原本的 session 檔，檔名帶的是原本的 id，所以 pane 和逐字稿都無法與新 id 對應（`ownFile`），而原本那次執行的 `subagent_result` 指名同一個 session 檔，所以逐字稿也說不出被接手的執行是否完成。
 
 要涵蓋它，就得憑猜測關閉 pane，所以接手之後的重新啟動維持未知，什麼都不關；而留下未被取用的 `.exit` sidecar，表示子層已完成，所以這次執行不動，它的結果必須從 session 檔讀取。
+
+</details>
 
 ## 瀏覽器檢視
 
