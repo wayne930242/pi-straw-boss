@@ -114,8 +114,9 @@ const noticeName = (name: string) => name.replace(/\.json$/, ".notice.json");
 /** What follows a car file's name in the key of an earlier life (`<name>#<n>`); no file name holds it. */
 const PAST = "#";
 const changedAt = (held: Held) => held.file.states.at(-1)?.at ?? "";
-/** git's first line of stderr, else the error's message (sb's own timeout names the command and its URL), with a URL's userinfo blanked: a token used as the https username goes into no tool text or log (R0772-F002). */
-const firstLine = (error: unknown) => String((error as { stderr?: unknown }).stderr || (error as Error).message).trim().split("\n")[0]!.replace(/\/\/[^/@\s'"]+@/g, "//***@").slice(0, 200);
+/** git's first line of stderr, else the error's message (sb's own timeout names the command and its URL), with a URL's userinfo blanked (`blankUser`, also on the remotes a moved-remote refusal names): a token used as the https username goes into no tool text or log (R0772-F002, R0773-F001). */
+const blankUser = (text: string) => text.replace(/\/\/[^/@\s'"]+@/g, "//***@");
+const firstLine = (error: unknown) => blankUser(String((error as { stderr?: unknown }).stderr || (error as Error).message).trim().split("\n")[0]!).slice(0, 200);
 /** Why git could not reach a remote, read from its first line of stderr; undefined for any other failure. Only `received` acts on it (0.77.2). */
 export function reachClass(line: string): "auth" | "connection" | "repository-not-found" | undefined {
 	if (/could not read (?:Username|Password)|terminal prompts disabled|Authentication failed|Access denied|Permission denied \(publickey|returned error: 40[13]|Host key verification failed/i.test(line)) return "auth";
@@ -548,7 +549,7 @@ export class CarBook {
 		if (!base || !BASE_RE.test(base) || base.includes("..")) throw refusal(`sb: the manifest of train ${code} names no usable base (base: <branch>)`);
 		if (!record.url) throw refusal(`sb: the remote of project ${project} was not read when train ${code} opened (the open names none or none that is safe to fetch from, or this server learned of the train after a restart), so ${label}'s commit cannot be checked`);
 		const url = record.url, first = this.remotes.get(project);
-		if (first !== undefined && first !== url) throw refusal(`sb: the remote of project ${project} changed between two opens of this server (${first.slice(0, 120)}, then ${url.slice(0, 120)}); landed is not checked against a remote that moved`);
+		if (first !== undefined && first !== url) throw refusal(`sb: the remote of project ${project} changed between two opens of this server (${blankUser(first).slice(0, 120)}, then ${blankUser(url).slice(0, 120)}); landed is not checked against a remote that moved`);
 		await this.withBase({ project, url, base, key: code, state: "landed" }, async (git, tip) => {
 			try { await git("merge-base", "--is-ancestor", commit, tip); } catch { throw refusal(`sb: landed.commit ${commit.slice(0, 12)} is not on ${base} of the project's remote: a car has landed only when its commit is on the base's branch there`); }
 		});
