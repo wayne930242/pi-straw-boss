@@ -147,3 +147,28 @@ mobile-starlight-toc .dropdown > ul > li:first-child > a::before {
 	overflow-wrap: normal;
 	word-break: keep-all;
 }
+
+/*
+ * Folded details: each section of the reference opens with its principle (and a diagram), and the limits, refusal rules, security facts,
+ * edge cases, and log keys wait in a <details> that is closed by default. Headings stay outside, so every anchor and the outline hold.
+ */
+.sl-markdown-content details {
+	margin-block: 0.9rem 1.2rem;
+	border-inline-start: 2px solid var(--sl-color-gray-5);
+	padding-inline-start: 1rem;
+}
+.sl-markdown-content details > summary {
+	cursor: pointer;
+	color: var(--sl-color-gray-2);
+	font-size: var(--sl-text-sm);
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	line-height: 1.5;
+}
+.sl-markdown-content details > summary:hover,
+.sl-markdown-content details[open] > summary {
+	color: var(--sl-color-text-accent);
+}
+.sl-markdown-content details[open] > summary {
+	margin-bottom: 0.4rem;
+}
