@@ -35,7 +35,7 @@ let shown: Net = { bases: [] };
 /** One server's life over the state folder: auto mode and its watch as main.ts wires them, with a head that keeps what it was sent (`taken`: how many of them a run took). */
 function server(over: Partial<WatchDeps> = {}) {
 	const sent: { workspace: string; text: string; key: string }[] = [], asks: Ask[] = [], unparked: number[] = [];
-	const auto = createAutoMode({ dir, now: clock.now, log: (event, facts) => void logs.push([event, facts]), unpark: () => void unparked.push(1), watch: (p, until) => watchSection(p.watch, p.since, until, asks) });
+	const auto = createAutoMode({ dir, now: clock.now, log: (event, facts) => void logs.push([event, facts]), unpark: () => void unparked.push(1), watch: (p, until) => watchSection(p.watch, p.since, until, asks, (x) => (over.noticeState?.(x.workspace, x.key) ?? "gone") === "gone") });
 	auto.start();
 	const watch = createAutoWatch({
 		now: clock.now, log: (event, facts) => void logs.push([event, facts]), auto, head: () => ({ workspace: "w-head" }), asks: () => asks,
@@ -184,6 +184,68 @@ test("R-F007: a workspace's label and a wait's tool are quoted in the notice, an
 	s.auto.switchOn(pi);
 	assert.equal(s.auto.note({ session: "m1", tool: "x", kind: "refused", gist: "g", at: new Date(T0 + 365 * 24 * HOUR).toISOString() }).ok, true);
 	assert.equal(s.auto.period()!.notes.at(-1)!.at, new Date(clock.now()).toISOString());
+});
+
+/** A workspace whose tower is held and whose train's writer is gone: two findings that last all night. */
+const troubleNet = (): Net => ({
+	bases: [base("wA", "Alpha", [unit("m1", "docs-main"), unit("t1", "train 1112a", { role: "train", train: { project: "acme", code: "1112a" } })], { state: "held" })],
+	board: [],
+	yards: { projects: [{ project: "acme", forming: [], waiting: [], trains: [{ code: "1112a", app: "web", state: "stale", key: "t1", updated: new Date(T0 - HOUR).toISOString(), steps: [], cars: [] }] }] },
+});
+
+for (const [probe, where] of [["B", "queued"], ["A", "parked"]] as const) {
+	test(`R2-F001 (probe ${probe}): a notice the head never takes (${where}) tells nobody: every later reading is skipped, and the return list names its findings`, async () => {
+		shown = troubleNet();
+		const s = server({ noticeState: () => where });
+		s.auto.switchOn(pi);
+		for (let i = 0; i < 32; i++) (shown.board = [row("m1", { updated: clock.now() + MIN })], await s.run(WATCH_MS));
+		assert.equal(s.sent.length, 1, "one notice was queued");
+		assert.deepEqual([state(s).readings, state(s).calm, state(s).wakes, state(s).skipped], [32, 0, 0, 31], "the head took none: no reading after the notice is calm, and no wake is counted");
+		assert.deepEqual(state(s).shown, [], "nothing counts as told");
+		const off = s.auto.switchOff(pi) as { report?: string };
+		assert.doesNotMatch(off.report!, /calm \(nobody woken\), 1 wake/);
+		assert.match(off.report!, /: 32 readings, 0 calm \(nobody woken\), 0 wakes, 31 skipped /);
+		assert.match(off.report!, /\nThe last notice \(\d\d:\d\d\) was not taken by the head tower: 2 findings told to nobody:\n- "Alpha": its tower: held \(it starts no run\)\n- "Alpha": train "1112a" \("acme"\): its writer is gone and it has not ended$/);
+	});
+}
+
+test("R2-F001: a notice counts as told once the head took it; the return list then reads it as a wake", async () => {
+	shown = troubleNet();
+	let where: "queued" | "gone" = "queued";
+	const s = server({ noticeState: () => where });
+	s.auto.switchOn(pi);
+	await s.run(2 * WATCH_MS);
+	assert.deepEqual([state(s).wakes, state(s).skipped, state(s).shown.length], [0, 1, 0], "queued: pending, and the reading behind it is skipped");
+	where = "gone";
+	await s.run(2 * WATCH_MS);
+	assert.equal(s.sent.length, 1, "taken: its findings are told, so the later readings are calm");
+	assert.deepEqual([state(s).readings, state(s).calm, state(s).wakes, state(s).skipped], [4, 2, 1, 1]);
+	assert.deepEqual(state(s).shown, ["tower:wA:held", "train:acme:1112a:stale"]);
+	// taken between the last reading and the switch off: the return list asks the queue, not the last reading
+	shown.bases[0]!.tower!.service!.state = "standing";
+	s.refused();
+	where = "queued";
+	await s.run(WATCH_MS);
+	assert.equal(s.sent.length, 2);
+	where = "gone";
+	const off = s.auto.switchOff(pi) as { report?: string };
+	assert.match(off.report!, /: 5 readings, 2 calm \(nobody woken\), 2 wakes, 1 skipped /);
+	assert.doesNotMatch(off.report!, /was not taken/);
+});
+
+test("R2-F002: a problem told once and still there at the last reading is on the return list; one that cleared is not", async () => {
+	shown = troubleNet();
+	const s = server();
+	s.auto.switchOn(pi);
+	for (let i = 0; i < 8; i++) (shown.board = [row("m1", { updated: clock.now() + MIN })], await s.run(WATCH_MS));
+	assert.equal(s.sent.length, 1, "told once");
+	shown.yards!.projects[0]!.trains = []; // the train ended; the tower is still held
+	await s.run(WATCH_MS);
+	const last = state(s).last;
+	const off = s.auto.switchOff(pi) as { report?: string };
+	assert.match(off.report!, /\nStill open at the last reading \(\d\d:\d\d\):\n- "Alpha": its tower: held \(it starts no run\)$/);
+	assert.doesNotMatch(off.report!, /1112a/, "the train that ended is not listed");
+	assert.deepEqual(s.auto.report()!.watch!.open, { at: last, items: ['"Alpha": its tower: held (it starts no run)'], more: 0 });
 });
 
 test("R-F008: a forward of the head with no answer is told once, and a forward that was not delivered is no message it sent", async () => {

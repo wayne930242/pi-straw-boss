@@ -1596,6 +1596,11 @@ export function createRuns(o: RunsOptions) {
 			const svc = services.get(workspace);
 			return Boolean(svc) && waitingOf(svc!).some((e) => e.kind === "notice" && e.messageId?.startsWith(prefix));
 		},
+		/** Where the notice of key `key` is: in the queue (waiting, offered, or held by a run that has not ended), parked after two runs crashed with it, or gone (a run that took it ended, or it was dropped). */
+		noticeState(workspace: string, key: string): "queued" | "parked" | "gone" {
+			const ours = (e: QueuedEvent) => e.kind === "notice" && e.messageId === key;
+			return readQueue(slot, workspace).some(ours) ? "queued" : readQueue(slot, workspace, true).some(ours) ? "parked" : "gone";
+		},
 		/** Drops the notices whose key starts with `prefix` that no run took, queued or parked (auto mode ended: its watch's notices are stale); one offered to the run in flight stays. Returns how many went. */
 		dropNotices(workspace: string, prefix: string): number {
 			const svc = services.get(workspace);

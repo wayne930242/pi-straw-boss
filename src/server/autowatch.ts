@@ -29,6 +29,8 @@ export const NUDGES_KEPT = 20;
 
 /** The keys of the findings told in a wake that the watch keeps, so a finding is told once a period. */
 export const SHOWN_KEPT = 500;
+/** The findings the return list names in a section (the rest are counted), and the characters of a finding's line. */
+export const FINDINGS_KEPT = 20, FINDING_LINE = 200;
 /** What the watch keeps of one period of auto mode (in `auto-period.json`, with the period). */
 export interface WatchState {
 	/** Readings of the net taken; `calm`: the ones with nothing new, which woke nobody. */
@@ -53,11 +55,27 @@ export interface WatchState {
 	asked?: number;
 	/** Per workspace the watch saw a main or a train in: its label, when output was last seen there (when it was first seen, until some is), the `at` its quiet was told for, and whether its work was all done at the last reading. */
 	out: Record<string, OutClock>;
+	/** The last notice while the head has not taken it (it waits in the queue, a run holds it, or it was parked after crashes): what it tells counts as told only once a run that took it ended (`settle`). */
+	pending?: Pending;
+	/** The findings of the last reading, for the morning's "still open" list. */
+	open?: FindingList;
 }
 export interface OutClock { label: string; at: string; quietTold?: string; done?: true }
+/** A finding as the return list names it: its key, and a short line with its workspace. */
+export interface Finding { key: string; line: string }
+/** Some findings, the first `FINDINGS_KEPT` of them (`more`: the rest, counted), as of `at`. */
+export interface FindingList { at: string; items: Finding[]; more: number }
+/** A notice sent and not yet taken: the head's workspace and the notice's key (`runs.noticeState`), the keys it tells (`fresh`, kept whole, with their lines in `items`), and the quiet workspaces it tells with their output clocks. */
+export interface Pending extends FindingList { workspace: string; key: string; fresh: string[]; quiet: Record<string, string> }
 export interface Nudge { at: string; workspace: string; gist: string }
 /** The watch's section of the return list (autotower.ts `Report.watch`). */
-export interface WatchReport { everyMinutes: number; readings: number; calm: number; wakes: number; skipped: number; first?: string; last?: string; noHead?: { first: string; count: number }; nudges: number; sent: Nudge[]; quietHours: number; quiet: { workspace: string; label: string; hours: number }[] }
+export interface WatchReport {
+	everyMinutes: number; readings: number; calm: number; wakes: number; skipped: number; first?: string; last?: string; noHead?: { first: string; count: number }; nudges: number; sent: Nudge[]; quietHours: number; quiet: { workspace: string; label: string; hours: number }[];
+	/** The last notice when the head never took it: when it was sent, how many findings it told, and their lines. */
+	untaken?: { at: string; findings: number; items: string[] };
+	/** The findings of the last reading not in `untaken`: still open when auto mode ended, as far as the watch saw. */
+	open?: { at: string; items: string[]; more: number };
+}
 /** A head ask as the watch reads it (headasks.ts `HeadAsk`). */
 export type AskRow = { at: number; label: string; first: string; relay?: string; closed?: true };
 
@@ -86,10 +104,11 @@ export interface WsFacts {
 	landed: string[];
 	cars: number;
 	newest?: number;
-	/** A key per finding that lasts (a parked wait, a main idle twice, a tower's trouble, a train, a forward, a stall): a wake tells each once. */
+	/** A key per finding that lasts (a parked wait, a main idle twice, a tower's trouble, a train, a forward, a stall): a wake tells each once. `said`: per key, the short line the return list names it by. */
 	keys: string[];
+	said: Record<string, string>;
 }
-export interface Facts { at: number; workspaces: WsFacts[]; /** Trains, waits, and stalls the server could not place in a workspace. */ elsewhere: Pick<WsFacts, "waits" | "trains" | "stalls" | "keys">; /** The head tower's own parked waits. */ headParked: number }
+export interface Facts { at: number; workspaces: WsFacts[]; /** Trains, waits, and stalls the server could not place in a workspace. */ elsewhere: Pick<WsFacts, "waits" | "trains" | "stalls" | "keys" | "said">; /** The head tower's own parked waits. */ headParked: number }
 export interface FactsInput {
 	now: number;
 	/** The last wake that reached the head, or the period's start. */
@@ -122,8 +141,10 @@ export function factsOf(net: Net, x: FactsInput): Facts {
 	const bases = net.bases.filter((b) => !b.box), where = new Map<string, string>(), names = new Map<string, string>();
 	const place = (u: Unit, base: string): void => (where.set(u.key, base), names.set(u.key, u.name), u.subs.forEach((c) => place(c, base)));
 	for (const b of bases) (b.tabs.forEach((t) => t.units.forEach((u) => place(u, b.id))), b.outside.forEach((u) => place(u, b.id)), b.tower && (where.set(b.tower.key, b.id), b.tower.subs.forEach((c) => place(c, b.id))));
-	const elsewhere: Facts["elsewhere"] = { waits: [], trains: [], stalls: [], keys: [] };
-	const made = new Map<string, WsFacts>(bases.map((b) => [b.id, { id: b.id, label: word(b.label, 60), worked: false, finished: false, waits: [], open: [], parked: [], idle: [], tower: [], trains: [], forwards: [], stalls: [], lines: 0, landed: [], cars: 0, keys: [] }]));
+	const elsewhere: Facts["elsewhere"] = { waits: [], trains: [], stalls: [], keys: [], said: {} };
+	const made = new Map<string, WsFacts>(bases.map((b) => [b.id, { id: b.id, label: word(b.label, 60), worked: false, finished: false, waits: [], open: [], parked: [], idle: [], tower: [], trains: [], forwards: [], stalls: [], lines: 0, landed: [], cars: 0, keys: [], said: {} }]));
+	/** A finding: its key, and the short line the return list names it by. */
+	const find = (f: Pick<WsFacts, "keys" | "said">, key: string, line: string) => void (f.keys.push(key), (f.said[key] = line));
 	const at = (base: string | undefined): Facts["elsewhere"] & Partial<WsFacts> => (base ? made.get(base) : undefined) ?? elsewhere;
 	const newer = (f: Partial<WsFacts>, t: number) => void (f.newest = Math.max(f.newest ?? 0, t));
 	/** Workspaces where a train runs or forms: their work is not done. */
@@ -146,7 +167,7 @@ export function factsOf(net: Net, x: FactsInput): Facts {
 		for (const u of b.tabs.flatMap((t) => t.units)) {
 			if (u.role === "main" || u.role === "train") f.worked = true;
 			if (u.role === "train") mains = -Infinity;
-			for (const one of [u, ...u.subs]) if (one.mark === "waiting") (f.open.push({ who: word(one.name, 40), ...(one.pending?.tool ? { tool: word(one.pending.tool, 40) } : {}) }), f.keys.push(`open:${one.key}:${one.pending?.callId ?? one.pending?.tool ?? ""}`));
+			for (const one of [u, ...u.subs]) if (one.mark === "waiting") (f.open.push({ who: word(one.name, 40), ...(one.pending?.tool ? { tool: word(one.pending.tool, 40) } : {}) }), find(f, `open:${one.key}:${one.pending?.callId ?? one.pending?.tool ?? ""}`, `"${word(one.name, 40)}" waiting on a dialog${one.pending?.tool ? ` ("${word(one.pending.tool, 40)}")` : ""}`));
 			const row = rows.get(u.key);
 			if (row?.updated !== undefined && row.updated > x.since) (f.lines++, newer(f, row.updated));
 			if (u.role !== "main") continue;
@@ -157,7 +178,7 @@ export function factsOf(net: Net, x: FactsInput): Facts {
 			else {
 				f.idle.push({ session: u.key, who: word(u.name, 40), open, ...(row.now ? { now: word(row.now, 80) } : {}), ...(row.stale ? { stale: true as const } : {}), ...(x.idleBefore.has(u.key) ? { again: true as const } : {}) });
 				// A main first seen idle may be between turns: only the second reading in a row is a finding.
-				if (x.idleBefore.has(u.key)) f.keys.push(`idle:${u.key}:${row.updated ?? ""}`);
+				if (x.idleBefore.has(u.key)) find(f, `idle:${u.key}:${row.updated ?? ""}`, `"${word(u.name, 40)}" idle at two readings with ${open} open`);
 			}
 		}
 		f.finished = mains > 0 && done === mains;
@@ -165,8 +186,8 @@ export function factsOf(net: Net, x: FactsInput): Facts {
 		if (!s) continue;
 		const waits = s.memory?.bossWaits ?? [], blocked = (b.tower?.queued ?? []).filter((q) => q.why);
 		f.parked = waits.filter((w) => w.parked && openWait(w)).map((w) => ({ id: w.id, text: word(w.text, 80), ...(w.card?.from?.name ? { from: word(w.card.from.name, 40) } : {}) }));
-		f.keys.push(...f.parked.map((w) => `parked:${b.id}:${w.id}`));
-		const trouble = (key: string, line: string) => (f.tower.push(line), f.keys.push(`tower:${b.id}:${key}`));
+		for (const w of f.parked) find(f, `parked:${b.id}:${w.id}`, `wait ${word(w.id, 12)} parked for the boss: "${w.text}"`);
+		const trouble = (key: string, line: string) => (f.tower.push(line), find(f, `tower:${b.id}:${key}`, `its tower: ${line}`));
 		if (s.state === "held") trouble("held", `held (it starts no run)${s.queued ? `, ${plural(s.queued, "event")} waiting` : ""}`);
 		else if (blocked.length) trouble(`blocked:${[...new Set(blocked.map((q) => q.why))].join(",")}`, `${plural(blocked.length, "event")} waiting with no run starting (${[...new Set(blocked.map((q) => word(q.why, 40)))].join(", ")})`);
 		if (s.parked.length) trouble("parked", `${plural(s.parked.length, "event")} parked after a run that failed`);
@@ -181,7 +202,7 @@ export function factsOf(net: Net, x: FactsInput): Facts {
 			const base = (t.key ? where.get(t.key) : undefined) ?? home, f = at(base), name = `train "${word(t.code, 32)}" ("${word(y.project, 40)}")`, key = `train:${y.project}:${t.code}`;
 			if (base && t.state !== "ended") moving.add(base);
 			for (const c of t.cars) if (told(c.notice, x.since) && f.landed) ((c.notice.state === "landed" ? f.landed.push(`${word(c.tickets.join(" "), 40) || c.head.slice(0, 12)} on ${word(t.code, 32)}`) : f.cars!++), newer(f, Date.parse(c.notice.at!)));
-			const stuck = (why: string, line: string) => (f.trains.push(`${name}: ${line}`), f.keys.push(`${key}:${why}`));
+			const stuck = (why: string, line: string) => (f.trains.push(`${name}: ${line}`), find(f, `${key}:${why}`, `${name}: ${line}`));
 			if (t.state === "unreadable") stuck("unreadable", "its board cannot be read");
 			else if (t.state === "stale") stuck("stale", "its writer is gone and it has not ended");
 			else if (t.state === "live" && x.now - movedAt(t) >= STUCK_MS) stuck(`still:${movedAt(t)}`, `no step moved for ${ageOf(x.now - movedAt(t))}`);
@@ -189,16 +210,17 @@ export function factsOf(net: Net, x: FactsInput): Facts {
 		for (const t of y.forming) {
 			const f = at(home), name = `train "${word(t.code, 32)}" ("${word(y.project, 40)}")`, late = t.departs ? x.now - Date.parse(t.departs.oldest) - t.departs.maxWaitMin * 60_000 : 0;
 			if (home) moving.add(home);
-			if (t.status === "refused") (f.trains.push(`${name}: its departure was refused`), f.keys.push(`forming:${y.project}:${t.code}:refused`));
-			else if (late >= STUCK_MS) (f.trains.push(`${name}: forming, ${ageOf(late)} past its departure wait`), f.keys.push(`forming:${y.project}:${t.code}:late`));
+			if (t.status === "refused") (f.trains.push(`${name}: its departure was refused`), find(f, `forming:${y.project}:${t.code}:refused`, `${name}: its departure was refused`));
+			else if (late >= STUCK_MS) (f.trains.push(`${name}: forming, ${ageOf(late)} past its departure wait`), find(f, `forming:${y.project}:${t.code}:late`, `${name}: forming, past its departure wait`));
 		}
 	}
 
 	for (const a of net.head?.asks ?? []) {
 		const f = made.get(a.workspace);
-		if (f && (a.state === "waiting" || a.state === "received") && x.now - a.since >= STUCK_MS) (f.forwards.push({ id: a.id, state: a.state === "waiting" ? "not taken by its tower" : "taken, with no act and no answer", age: x.now - a.since, first: word(a.first, 80) }), f.keys.push(`ask:${a.id}`));
+		const state = a.state === "waiting" ? "not taken by its tower" : "taken, with no act and no answer";
+		if (f && (a.state === "waiting" || a.state === "received") && x.now - a.since >= STUCK_MS) (f.forwards.push({ id: a.id, state, age: x.now - a.since, first: word(a.first, 80) }), find(f, `ask:${a.id}`, `the head's forward ${word(a.id, 12)} ${state}: "${word(a.first, 80)}"`));
 	}
-	for (const s of x.stalls) ((f) => (f.stalls.push(`"${word(names.get(s.session) ?? s.session, 40)}" (pane ${word(s.pane, 40)}): ${s.signals.map((sig) => word(sig, 12)).join("+")}`), f.keys.push(`stall:${s.session}:${s.signals.join("+")}`)))(at(s.workspace));
+	for (const s of x.stalls) ((f, line) => (f.stalls.push(line), find(f, `stall:${s.session}:${s.signals.join("+")}`, `stall watch: ${line}`)))(at(s.workspace), `"${word(names.get(s.session) ?? s.session, 40)}" (pane ${word(s.pane, 40)}): ${s.signals.map((sig) => word(sig, 12)).join("+")}`);
 	for (const id of moving) made.get(id)!.finished = false;
 	return { at: x.now, workspaces: [...made.values()], elsewhere, headParked: (net.head?.service?.memory?.bossWaits ?? []).filter((w) => w.parked && openWait(w)).length };
 }
@@ -276,6 +298,27 @@ export function outAfter(out: WatchState["out"], facts: Facts, seen: string): Wa
 	return next;
 }
 
+/** The findings of a reading with their lines, each once, the workspace's label first. */
+export function findingsOf(facts: Facts): Finding[] {
+	const all = new Map<string, string>();
+	for (const f of facts.workspaces) for (const key of f.keys) all.has(key) || all.set(key, `"${f.label}": ${f.said[key] ?? key}`);
+	for (const key of facts.elsewhere.keys) all.has(key) || all.set(key, `in no workspace: ${facts.elsewhere.said[key] ?? key}`);
+	return [...all].map(([key, line]) => ({ key, line: phrase(line, FINDING_LINE) }));
+}
+/** Some findings as a bounded list. */
+const listOf = (at: string, found: readonly Finding[]): FindingList => ({ at, items: found.slice(0, FINDINGS_KEPT), more: Math.max(0, found.length - FINDINGS_KEPT) });
+/**
+ * The state once the head took its pending notice (a run that took it ended, so it is neither queued nor parked): the notice counts as a wake, its findings as told, its quiet workspaces as told, and its time as the last
+ * wake's, so the next notice tells the waits since it. Unchanged when nothing is pending or it was not taken.
+ */
+export function settle(state: WatchState, taken: boolean): WatchState {
+	const p = state.pending;
+	if (!p || !taken) return state;
+	const { pending: _done, ...rest } = state;
+	const out = Object.fromEntries(Object.entries(rest.out).map(([id, o]) => [id, p.quiet[id] !== undefined ? { ...o, quietTold: p.quiet[id]! } : o]));
+	return { ...rest, wakes: rest.wakes + 1, first: rest.first ?? p.at, told: p.at, out, shown: [...rest.shown, ...p.fresh].slice(-SHOWN_KEPT) };
+}
+
 /** The head's own forwards since `state.asked` (headasks.ts): an ask with no `relay` carries no boss instruction, so while auto mode is on it is the head acting on what it saw. */
 export function withNudges(state: WatchState, since: string, asks: readonly AskRow[]): WatchState {
 	// A forward that was not delivered (`closed`: its tower did not take it) is no message the head sent.
@@ -296,19 +339,37 @@ export function watchOf(w: unknown): WatchState | undefined {
 	const sent = (Array.isArray(w.sent) ? w.sent : []).filter((n): n is Nudge => isObj(n) && isTime(n.at) && typeof n.workspace === "string" && typeof n.gist === "string").slice(-NUDGES_KEPT);
 	const out = Object.fromEntries(Object.entries(isObj(w.out) ? w.out : {}).filter((e): e is [string, OutClock] => isObj(e[1]) && typeof e[1].label === "string" && isTime(e[1].at)).map(([id, o]) => [id, { label: o.label, at: o.at, ...(isTime(o.quietTold) ? { quietTold: o.quietTold } : {}), ...(o.done === true ? { done: true as const } : {}) }]));
 	const noHead = isObj(w.noHead) && isTime(w.noHead.first) ? { first: w.noHead.first, count: count(w.noHead.count) } : undefined;
+	const open = listFrom(w.open), p = isObj(w.pending) ? w.pending : undefined, base = p && listFrom(p);
+	const pending: Pending | undefined = p && base && typeof p.workspace === "string" && typeof p.key === "string" && Array.isArray(p.fresh) && isObj(p.quiet)
+		? { ...base, workspace: p.workspace, key: p.key, fresh: p.fresh.filter((k): k is string => typeof k === "string").slice(-SHOWN_KEPT), quiet: Object.fromEntries(Object.entries(p.quiet).filter((e): e is [string, string] => isTime(e[1]))) }
+		: undefined;
 	return {
 		readings: count(w.readings), calm: count(w.calm), wakes: count(w.wakes), skipped: count(w.skipped), nudges: count(w.nudges), sent, out, shown: (Array.isArray(w.shown) ? w.shown : []).filter((k): k is string => typeof k === "string").slice(-SHOWN_KEPT),
 		...(isTime(w.first) ? { first: w.first } : {}), ...(isTime(w.last) ? { last: w.last } : {}), ...(isTime(w.told) ? { told: w.told } : {}), ...(noHead ? { noHead } : {}), ...(Number.isSafeInteger(w.asked) ? { asked: w.asked as number } : {}),
+		...(pending ? { pending } : {}), ...(open ? { open } : {}),
 	};
 }
+/** A list of findings as the period file holds it: undefined when it is none, the entries that are no finding left out. */
+function listFrom(v: unknown): FindingList | undefined {
+	if (!isObj(v) || !isTime(v.at) || !Array.isArray(v.items)) return undefined;
+	return { at: v.at, items: v.items.filter((f): f is Finding => isObj(f) && typeof f.key === "string" && typeof f.line === "string").slice(0, FINDINGS_KEPT), more: count(v.more) };
+}
 
-/** The watch's section of the return list, built when auto mode ends: the nudges since the last wake are counted in, and a workspace is quiet when it showed no output for `QUIET_MS` or more up to `until`. None when the watch never came due. */
-export function watchSection(state: WatchState | undefined, since: string, until: string, asks: readonly AskRow[]): WatchReport | undefined {
+/**
+ * The watch's section of the return list, built when auto mode ends: the nudges since the last wake are counted in, and a workspace is quiet when it showed no output for `QUIET_MS` or more up to `until`. A notice still
+ * pending is asked about once more (`taken`: whether a run took it since the last reading); one the head never took is named with its findings, and the last reading's other findings are listed as still open. None when the
+ * watch never came due.
+ */
+export function watchSection(state: WatchState | undefined, since: string, until: string, asks: readonly AskRow[], taken?: (p: Pending) => boolean): WatchReport | undefined {
 	if (!state) return undefined;
-	const done = withNudges(state, since, asks.filter((a) => a.at <= Date.parse(until)));
+	const done = withNudges(settle(state, Boolean(state.pending && taken?.(state.pending))), since, asks.filter((a) => a.at <= Date.parse(until)));
+	const untold = new Set(done.pending?.fresh ?? []), open = done.open?.items.filter((f) => !untold.has(f.key) && !f.key.startsWith("parked:")) ?? [];
 	// A workspace whose mains were all done at the last reading is not quiet: nothing was left for it.
 	const quiet = Object.entries(done.out).filter(([, o]) => !o.done).map(([workspace, o]) => ({ workspace, label: o.label, hours: Math.round(((Date.parse(until) - Date.parse(o.at)) / 3600_000) * 10) / 10 })).filter((q) => q.hours * 3600_000 >= QUIET_MS).sort((a, b) => b.hours - a.hours);
-	return { everyMinutes: Math.round(WATCH_MS / 60_000), readings: done.readings, calm: done.calm, wakes: done.wakes, skipped: done.skipped, ...(done.first ? { first: done.first } : {}), ...(done.last ? { last: done.last } : {}), ...(done.noHead ? { noHead: done.noHead } : {}), nudges: done.nudges, sent: done.sent, quietHours: QUIET_MS / 3600_000, quiet };
+	return { everyMinutes: Math.round(WATCH_MS / 60_000), readings: done.readings, calm: done.calm, wakes: done.wakes, skipped: done.skipped, ...(done.first ? { first: done.first } : {}), ...(done.last ? { last: done.last } : {}), ...(done.noHead ? { noHead: done.noHead } : {}), nudges: done.nudges, sent: done.sent, quietHours: QUIET_MS / 3600_000, quiet,
+		...(done.pending ? { untaken: { at: done.pending.at, findings: done.pending.fresh.length, items: done.pending.items.map((f) => f.line) } } : {}),
+		...(done.open && open.length ? { open: { at: done.open.at, items: open.map((f) => f.line), more: done.open.more } } : {}),
+	};
 }
 /** The section as `/boss auto off` prints it. */
 export function watchLines(w: WatchReport): string[] {
@@ -316,6 +377,11 @@ export function watchLines(w: WatchReport): string[] {
 	if (w.noHead) out.push(`No head tower was open at ${plural(w.noHead.count, "reading")}, from ${hhmm(w.noHead.first)}: the server opens one only when auto mode is switched on.`);
 	if (w.sent.length) out.push(...w.sent.map((n) => `- ${hhmm(n.at)} to ${n.workspace}: ${n.gist}`), ...(w.nudges > w.sent.length ? [`- (+${w.nudges - w.sent.length} earlier)`] : []));
 	if (w.quiet.length) out.push(`No output seen for ${w.quietHours} hours or more:`, ...w.quiet.map((q) => `- ${q.label}: ${q.hours} h`));
+	if (w.open) out.push(`Still open at the last reading (${hhmm(w.open.at)}):`, ...w.open.items.map((l) => `- ${l}`), ...(w.open.more ? [`- (+${w.open.more} more)`] : []));
+	if (w.untaken) {
+		const { at, findings, items } = w.untaken;
+		out.push(`The last notice (${hhmm(at)}) was not taken by the head tower${findings ? `: ${plural(findings, "finding")} told to nobody:` : "."}`, ...items.map((l) => `- ${l}`), ...(findings > items.length ? [`- (+${findings - items.length} more)`] : []));
+	}
 	return out;
 }
 
@@ -335,6 +401,8 @@ export interface WatchDeps {
 	asks(): readonly AskRow[];
 	/** Whether a notice of the watch (`WATCH_KEY` keys) still waits in the head's queue, not taken by a run. */
 	waiting?(workspace: string): boolean;
+	/** Where one notice is (`runs.noticeState`): queued (a run may hold it), parked after crashes, or gone (a run that took it ended). Absent: gone at once. */
+	noticeState?(workspace: string, key: string): "queued" | "parked" | "gone";
 	/** One notice event in the head's queue; false when nobody took it. */
 	wake(workspace: string, text: string, key: string): boolean;
 }
@@ -349,15 +417,18 @@ export function createAutoWatch(d: WatchDeps) {
 		async tick(): Promise<void> {
 			const view = d.auto.view();
 			if (busy || !view.on || !view.since) return;
-			const since = view.since, state = d.auto.watch() ?? (mem?.since === since ? mem.state : freshWatch()), now = d.now();
-			if (now - Date.parse(state.last ?? since) < WATCH_MS) return;
+			const since = view.since, kept = d.auto.watch() ?? (mem?.since === since ? mem.state : freshWatch()), now = d.now();
+			if (now - Date.parse(kept.last ?? since) < WATCH_MS) return;
 			busy = true;
+			const taken = (p: { workspace: string; key: string }) => (d.noticeState?.(p.workspace, p.key) ?? "gone") === "gone";
 			const save = (next: WatchState) => (mem = { since, state: next }, d.auto.setWatch(next));
 			const skip = (base: WatchState, why: string) => {
 				if (logged !== `${since}\n${why}`) (logged = `${since}\n${why}`, d.log("watch-skipped", { why }));
 				save(withNudges({ ...base, skipped: base.skipped + 1, last: iso(now) }, since, d.asks()));
 			};
 			try {
+				// The last notice counts as told once the head took it; until then every reading is skipped behind it.
+				const state = settle(kept, Boolean(kept.pending && taken(kept.pending)));
 				const head = d.head();
 				let facts: Facts;
 				try {
@@ -369,17 +440,20 @@ export function createAutoWatch(d: WatchDeps) {
 				if (!d.auto.view().on || d.auto.view().since !== since) return;
 				// Every reading moves the output clocks and the mains seen idle, whether it wakes the head or not.
 				idle = { since, sessions: new Set(facts.workspaces.flatMap((f) => f.idle.map((m) => m.session))) };
-				const out = outAfter(state.out, facts, state.last ?? since), read: WatchState = { ...state, readings: state.readings + 1, last: iso(now), out, ...(head ? {} : { noHead: { first: state.noHead?.first ?? iso(now), count: (state.noHead?.count ?? 0) + 1 } }) };
+				const out = outAfter(state.out, facts, state.last ?? since), findings = findingsOf(facts);
+				const read: WatchState = { ...state, readings: state.readings + 1, last: iso(now), out, open: listOf(iso(now), findings), ...(head ? {} : { noHead: { first: state.noHead?.first ?? iso(now), count: (state.noHead?.count ?? 0) + 1 } }) };
+				if (read.pending) return skip(read, "the head tower has not taken the last notice");
 				const found = assess(facts, read);
 				if (!found.hot.length && !found.other) return void save(withNudges({ ...read, calm: read.calm + 1 }, since, d.asks()));
 				if (!head) return skip(read, "no head tower is open");
 				if (head.held) return skip(read, "the head tower is held");
 				if (d.waiting?.(head.workspace)) return skip(read, "the head tower has not taken the last notice");
-				const n = state.wakes + 1;
-				if (!d.wake(head.workspace, watchText(facts, { n, since, out, shown: state.shown }), `${WATCH_KEY}${since}:${n}`)) return skip(read, "the head tower took no notice");
+				const n = state.wakes + 1, key = `${WATCH_KEY}${since}:${n}`;
+				if (!d.wake(head.workspace, watchText(facts, { n, since, out, shown: state.shown }), key)) return skip(read, "the head tower took no notice");
 				logged = undefined;
-				const clocks = Object.fromEntries(Object.entries(out).map(([id, o]) => [id, found.quiet.includes(id) ? { ...o, quietTold: o.at } : o]));
-				save(withNudges({ ...read, wakes: n, first: state.first ?? iso(now), told: iso(now), out: clocks, shown: [...state.shown, ...found.fresh].slice(-SHOWN_KEPT) }, since, d.asks()));
+				const told = new Set(found.fresh), pending: Pending = { ...listOf(iso(now), findings.filter((f) => told.has(f.key))), workspace: head.workspace, key, fresh: found.fresh, quiet: Object.fromEntries(found.quiet.map((id) => [id, out[id]!.at])) };
+				pending.more = Math.max(0, found.fresh.length - pending.items.length);
+				save(withNudges(settle({ ...read, pending }, taken(pending)), since, d.asks()));
 				d.log("watch-wake", { n, workspaces: found.hot.length });
 			} catch (error) {
 				// A state file that cannot be written is one log line: the reading is tried again at the next look.

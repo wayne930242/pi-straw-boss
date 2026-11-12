@@ -334,9 +334,12 @@ test("in the server: auto mode on opens the head tower, a calm reading wakes nob
 		await refused(again);
 		watchClock.advance(WATCH_MS);
 		await until(() => watchOf()?.skipped === 1, "the reading after the restart").catch((e) => { throw new Error(`${e.message}: ${JSON.stringify(watchOf())}`); });
-		assert.deepEqual([watchOf()!.readings, watchOf()!.wakes, notices().length], [3, 1, 1], "the head has not taken the last notice: no second one piles up");
-		assert.equal((await ask(again, { cmd: "auto-off", ...who })).ok, true);
+		assert.deepEqual([watchOf()!.readings, watchOf()!.wakes, notices().length], [3, 0, 1], "the head has not taken the last notice: no second one piles up, and it is no wake yet");
+		assert.equal((watchOf() as { pending?: { key: string } }).pending?.key, notices()[0]!.messageId, "the period file keeps it pending across the restart");
+		const off = await ask(again, { cmd: "auto-off", ...who });
+		assert.equal(off.ok, true);
 		assert.equal(notices().length, 0, "auto mode ended: the notice no run took is dropped");
+		assert.match(String(off.report), /\nThe last notice \(\d\d:\d\d\) was not taken by the head tower\./, "the return list says the head never took it");
 	} finally {
 		await world.close();
 	}
