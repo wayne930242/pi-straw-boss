@@ -954,9 +954,14 @@ Any session can open it, in a Herdr workspace or a sub workspace, joined or not.
 
 Each workspace the net reaches is a **base**: one with a live tower or with sessions that joined. Workspaces with neither, and sessions that did not join, are not shown. A base has its **control tower** (the head tower wears a crown; a base without a tower shows a dim ghost), each tab's main agent and members as units, subagents under the session that launched them, the tower's own under the tower (linked as the dashboard does, wherever they run), and sub workspaces as **outposts** under their parent.
 
+<details>
+<summary>Details</summary>
+
 A unit's card shows how long it has been in its state (once the server has seen it take that state), its todos (done of total and the task in progress, from rpiv-todo via the session's bridge), and its last steps as marks along its foot. Under the map, a **timeline** marks the net's joins, leaves, and state changes of the last 30 minutes (after [zoetrope](https://github.com/furkankly/zoetrope)): waiting and errors on top, work in the middle, the rest below, each named on hover and linking to its unit. The server keeps them, so a reloaded page still has them; a phone folds the strip to its newest event.
 
 The bases pack like masonry in reading order. While the map runs past the window, an overview in the corner shows each base in its state's colour and scrolls where you click.
+
+</details>
 
 #### States
 
@@ -970,7 +975,12 @@ States look the same everywhere:
 | finished | a green `✓` |
 | error | a red `!` |
 
+<details>
+<summary>Details</summary>
+
 Changes animate; the page honors `prefers-reduced-motion`. What the open session is doing (thinking, using a tool, watching a monitor, commanding, waiting for the boss) is not a row in the log: a ring runs round the composer's box while it works, stands still and amber while it waits for the boss, and a live region says the same in words.
+
+</details>
 
 #### Routes
 
@@ -980,7 +990,12 @@ Changes animate; the page honors `prefers-reduced-motion`. What the open session
 | A base | `/<token>/w/<workspace id>` |
 | A unit | `/<token>/w/<workspace id>/s/<session key>`, optionally with `?at=<entry id>` to open its comms at one entry |
 
+<details>
+<summary>Details</summary>
+
 Links are real links (middle-click and copy-link work); a plain click, Back, and Forward change the view without reloading, and Escape goes up one level. The **Straw Net** title in the header goes back to the map. A deep link loads straight into its view.
+
+</details>
 
 #### A base, zoomed in
 
@@ -994,15 +1009,30 @@ The session route shows the session's chat as a comms log, with the unit's dossi
 
 Your messages are gold on the right; the unit's transmissions are on the left with its icon. Each tool call is a collapsed action card with a state badge (running, done, failed), thinking is folded behind its length, and compactions are dividers. An assistant message's header names the unit's role (tower, main agent, member, subagent) with the model and the time, not the session's name, which the page header already shows; a relayed message still names its sender.
 
+<details>
+<summary>Details</summary>
+
 New entries appear when pi writes them; text still being streamed is not in the file yet, so it shows at the end of the reply. The log opens at the newest entry and stays pinned there. Scrolled up, it stays put and a floating button (**jump to latest**, or **N new** once entries arrived) scrolls to the end and pins it again. Older pages load as you scroll up; at most 600 entries stay in the page.
+
+</details>
 
 ##### Terminal mirror
 
+The **Terminal** button opens a live mirror of the unit's pane beside the log. The server sends only colours and attributes, the page draws the rows as text, and the mirror refreshes within a second while the pane changes.
+
+<details>
+<summary>Details</summary>
+
 The tile shows what the unit's pane shows, with colours and attributes, updated within a second while it changes (at most 4 reads a second, shared by every page that shows it, and none while no page does). The server sends only colour and attribute escapes, and the page builds the rows from text. **Fit width** scales the tile and scrolls to the bottom, where pi's editor is; otherwise it keeps its size and scrolls sideways, as on a phone. While the session waits for a secret (`secret_drop`) nothing is read and the tile says so. A tile pauses 5 s after its browser tab is hidden and resumes when it shows. A read-only question panel offers **Show terminal** too. On a phone the mirror is display only: typing or tapping in it sends nothing.
+
+</details>
 
 ##### Key pad
 
 Under the mirror, the key pad sends one key per tap: `esc`, `tab`, `⇧tab`, the arrows, `enter`, `space`, `⌫`, `home`, `end`, `pgup`, `pgdn`, and `1`–`9` (folded away). It has no letters, `/`, Ctrl, or Alt, and the server refuses them as keys.
+
+<details>
+<summary>Details</summary>
 
 - It works only while the tile shows the terminal live (a frame in the last 3 s), at most 8 keys a second.
 - While the session waits for a secret, or on a question its panel answers, only Escape works. A paired device likewise sends only Escape, and no prompt, while a `link_request` is open.
@@ -1010,9 +1040,14 @@ Under the mirror, the key pad sends one key per tap: `esc`, `tab`, `⇧tab`, the
 - A confirm says why in the page's own words, chosen by the server's `confirm` token (`gui/confirmwords.ts`; the server's English only for a token the page does not know), above two buttons of one height: the one that sends carries its label (**Send Enter**) on a fill, and **Cancel** is outlined and has the focus.
 - The pad's buttons join the same write queue as typed keys: a press while a write is on its way waits its turn, and the buttons stay enabled meanwhile. Escape goes to the pane, not to the page.
 
+</details>
+
 ##### Typing into the mirror
 
 On a desktop (a fine pointer) a click into the mirror gives it the keyboard until a click elsewhere; a drag that selects text to copy does not, and switching the session view to its terminal gives it once. Keys land in an invisible text box by the mirror's corner, so an input method shows its candidates there.
+
+<details>
+<summary>Details</summary>
 
 On a phone nothing takes the keyboard by itself, because a tap into a pane opens no soft keyboard. The terminal's **Keyboard** button (鍵盤) focuses the same text box and opens the soft keyboard (a second tap, or leaving the terminal, closes it). What it types goes out as text (an input method's composition as one write when it ends), with Backspace and Enter read from the soft keyboard's `beforeinput` where it sends no key for them. Switching to the terminal also makes the composer's box let go of the focus, so keys never land in the hidden chat.
 
@@ -1025,6 +1060,8 @@ What goes, all on the same `keys` endpoint under the same guards:
 
 Writes go one at a time, at most one every 130 ms, under the same 8 a second. Characters typed meanwhile join the next write, a held key repeats only into an empty queue (never Enter, Escape, Tab, or a chord), and a refusal or a confirm drops what was still queued.
 
+</details>
+
 ##### The composer
 
 Under the log, the composer types into the unit's terminal through Herdr, as if typed there:
@@ -1032,6 +1069,9 @@ Under the log, the composer types into the unit's terminal through Herdr, as if 
 - **Send** (Enter; Shift+Enter adds a line; off while the box is empty) sends a prompt when the unit is idle and a steering message while it works;
 - **After this** (Alt+Enter, shown while it works) queues one for when the current task is done;
 - **Stop** sends Escape after a confirm.
+
+<details>
+<summary>Details</summary>
 
 While the box holds only `/` and a name being typed, a menu above it lists the session's matching commands (extension commands, prompt templates, and skills, as its own pi lists them; pi's built-in commands are not listed): ↑ and ↓ move, Enter, Tab, or a click puts `/name ` in the box, and Escape closes it. The session's dialog bridge answers the list, so it is the session's own set, and the menu shows nothing when it does not answer within a second.
 
@@ -1041,9 +1081,26 @@ The box is disabled, with the reason, while the stream is down, the session is g
 
 Ctrl+C and Ctrl+D are never sent from the browser. On a touch screen Enter adds a line and Send sends; drafts survive a reload. Markdown is rendered into DOM nodes, never as HTML; only `http`, `https`, and `mailto` links are links; block quotes and lists nest at most 16 deep, and deeper levels stay text.
 
+</details>
+
 ### Alerts and questions
 
 #### Alerts and panels
+
+```mermaid
+flowchart TD
+    q["A unit waits on<br/>a question or dialog"] --> a["Alert in the header queue<br/>(questions first)"]
+    a --> d["You open it: a dialog"]
+    d --> s["Answer"]
+    d --> l["Later: back in the queue"]
+    d --> o["Open comms"]
+    f["A unit fails or<br/>a subagent finishes"] --> n["Notice under the<br/>Notices button"]
+```
+
+Only a unit that needs an answer raises an alert. Alerts queue in the header and never open by themselves: you open one as a dialog, then answer it, put it back with **Later**, or jump to the unit's comms with **Open comms**. A failure or a finished subagent is a **notice**: it waits apart, under the **Notices** button, and never takes focus.
+
+<details>
+<summary>Details</summary>
 
 Only a unit that needs you to answer raises the prominent alert: one waiting on a question or a dialog (mark waiting, or a pending dialog). A unit that fails (mark error, or a monitor that failed or went quiet) and a subagent that finishes are **notices**: they never take the header's alert, queue a dialog, or steal focus. An alert never opens anything by itself: it joins the queue in the header (questions first, then notices, oldest first in each), and leaves it again when the unit moves on.
 
@@ -1057,7 +1114,23 @@ A second dialog you open stacks on top, with the one beneath peeking out; click 
 
 Escape closes the top dialog only, focus returns to where it was, and dialogs are not modal (the page stays usable, nothing traps focus). Documents open as **tiles** beside the current view instead, sharing its width; a tile that arrives by itself takes no focus, and narrow windows show tiles as tabs. A dialog shows the unit, its last line, and the tool call it waits on, with a link to its comms.
 
+</details>
+
 #### Questions and selectors
+
+```mermaid
+flowchart TD
+    w["A unit waits on a dialog"] --> p["The page shows it<br/>(alert dialog, session view)"]
+    p --> a["Send answer"]
+    a --> k["The package that opened<br/>the dialog settles it"]
+    k --> e["The terminal dialog closes,<br/>the agent gets the answer once"]
+    p --> r["Anything else: read-only<br/>with Show terminal"]
+```
+
+When a unit waits on a dialog, the page shows it in the alert dialog and above the session's composer. Four kinds can be answered from the page: pi-robot-hand's selector, rpiv's questionnaires, pi-code's hook gate, and an extension's own `select` or `confirm`. **Send answer** goes to the package that opened the dialog, which settles it as a terminal answer would, so the agent gets the answer once. Everything else stays read-only, and `secret_drop` is never answerable from a page.
+
+<details>
+<summary>Details</summary>
 
 When a unit waits on a dialog, its alert dialog and its session view (above the composer) show it. Four kinds can be answered from the page: pi-robot-hand's selector (`robot_hand` ≥ 0.3.0: its title as written, each choice with where it acts and the terminal's number, and **Copy command**, which copies through the browser and answers nothing); @juicesharp/rpiv-ask-user-question's questionnaires (`ask_user_question`: one to four questions, each with a header tag, options with descriptions as radio buttons or, when it takes several, checkboxes, "Or type your own answer", and "Note (optional)"); pi-code's hook gate (its confirmation before a gated tool call of any tool, such as "Allow bash?": **Allow** or **Deny**); and any extension's own `ctx.ui.select` or `ctx.ui.confirm` (see [Any extension's select and confirm](#any-extensions-select-and-confirm)).
 
@@ -1081,7 +1154,14 @@ The `secret_drop` call itself is still shown in a device's comms history with it
 
 The question shown is the newest unanswered call on the session's current branch (for a hook gate answered among several open calls, the call it gates); a call longer than 256 KB is read from further back in the file (up to 16 MB, shown clipped), and a longer one says it is too long to read.
 
+</details>
+
 #### Any extension's select and confirm
+
+Every extension's `ctx.ui` is one object, so Straw Boss wraps `select` and `confirm` (and leaves `input`, `editor`, and `custom` alone, since a secret may be typed there). A wrapped call opens pi's own terminal dialog and relays the same question to the page; the first answer wins and the other side is dismissed. The dialog is never made worse: a call that cannot be relayed is the original call.
+
+<details>
+<summary>Details</summary>
 
 Every extension's `ctx.ui` is one object, so Straw Boss (in every pi in Herdr, subagents too) replaces its `select` and `confirm` and leaves `input`, `editor`, and `custom` alone (a secret may be typed there). A wrapped call opens pi's own terminal dialog exactly as before and, in the same call, publishes the dialog on pi's event bus as a dialog-contract v1 owner under `straw-boss:ui`, so the bridge, hub, and answer route handle it like any owner's dialog and every existing check applies (one open dialog, the digest, an answer already on its way, `secret_drop` open, too long).
 
@@ -1096,7 +1176,24 @@ The dialog is never made worse: a call that cannot be relayed, or whose relay fa
 *Remote.* A paired device answers a `select` and a `confirm` as this computer's page does: the relayed dialog carries `confirm: true` (told apart by its digest, so a relay cannot pass one off as the other) and every page shows Yes and No. A secret is the exception: no page takes one. Cancel follows the same rule as any choice: a paired device may cancel a select or a confirm unless every one of its choices is `hereOnly`.
 - *Lifetime.* The wrap marks the `ui` object it wrapped, so several loaded copies of the package wrap it once. Pi replaces the object when it binds a new UI context (a mode change), so the marker is checked at session start and before every tool call and the wrap is put back on the new object; at shutdown the relayed dialogs are closed and the original methods restored. A session without a UI has pi's shared no-op object, which is never touched.
 
+</details>
+
 #### An answer that needs the terminal opens it
+
+```mermaid
+flowchart TD
+    a["You answer on the page<br/>with a terminal-bound choice"] --> c["Terminal card opens"]
+    c --> p["A command in pi's prompt:<br/>Send it or Cancel"]
+    c --> n["A command in a new pane:<br/>the pane's own screen"]
+    p --> x["The card closes when<br/>its step is over"]
+    n --> x
+    c --> f["Full terminal<br/>(ssh, vim, and the like)"]
+```
+
+Some choices leave the next step in a terminal: robot_hand can put a command in pi's prompt, or run or type it in a new Herdr pane. When the owner accepts such an answer, the page opens a small **terminal card** that holds the command, and the card closes when its step is over. **Full terminal** opens the whole terminal for anything longer.
+
+<details>
+<summary>Details</summary>
 
 Some choices leave the next step in a terminal: robot_hand's *Put it in my prompt* (the command waits in pi's prompt for Enter), *Type it into a new Herdr pane* and *Run it in a new Herdr pane* (a new pane below pi that shows or runs the command; the pane closes itself and its output returns as a message). A choice says so with an optional `next` (`"terminal"` or `"pane"`, a hint like `note`, not hashed); pi-robot-hand sends none, so its adapter reads it from the labels it shows, and an owner that sends its own keeps it.
 
@@ -1136,21 +1233,40 @@ A grant never reaches a pane that runs an agent or carries `sb_role`, and ends t
 
   A grant answers once, whatever it answers, belongs to its session, and expires after 2 minutes; a changed line, another session's or an unknown/replayed answer id, and a stale grant are refused with `run_changed`, `run_unknown`, `run_expired` (said in the page's words), and the next Enter, which carries no `run`, asks the usual confirm. Only a pane answer, a choice with no `next`, or an answer the owner did not accept leaves no grant. Only MACs are kept or logged.
 
+</details>
+
 #### Notices
 
 Notices are read once opened: they have no Later, and closing one does not put it back in the queue. They wait apart from what needs you, under the header's **Notices N** button: it opens a list of the finished or failed units, each with its base and last line; a row goes to the unit's comms and clears it, and **Clear all** clears every one (questions stay, to be answered).
 
+<details>
+<summary>Details</summary>
+
 A finished unit whose pane has closed, and a subagent whose run pi-herdr-agents recorded done (`phase: "done"` in its `subagent-activity` file, even while its pane still runs pi), clears itself from the list after its sound and reminder: its parent has the result. The map still shows a finished subagent for ten minutes.
 
+</details>
+
 #### Enlarge
+
+An alert dialog's ⤢ turns the dialog dock into one wide panel in the middle of the window, for a long question; ⤡ puts it back. The choice is kept per browser.
+
+<details>
+<summary>Details</summary>
 
 An alert dialog's ⤢ beside its × turns the dialog dock into one wide panel in the middle of the window (at most 880 px wide, nearly the window's height), for a long question; ⤡ puts it back. The choice is kept per browser (`sb.dialog-wide`), so the next dialog opens the same size. A phone has no Enlarge: its dialogs already take the width. Three keys drive the dialogs: **Space** opens the next alert, as the header's alert button does, **F** presses the top dialog's ⤢ or ⤡, and **Escape** closes the top dialog. The page leaves a key alone while you type (an input, the composer and its `/` menu, a terminal's key sink), with Ctrl, Alt, or ⌘ held, while an input method composes, or while a confirmation, the image viewer, or a popover is open; Space on an answer option, which selects or toggles it, or on a button or link you moved the focus to with the keyboard, keeps its own activation.
 
 A button or link the mouse left focused (the logo after a click) does not hold Space: it still opens the next alert. A key that did nothing (Space with nothing queued, F with no dialog) is not taken, so the page scrolls as usual.
 
+</details>
+
 ### What a unit's page shows
 
 #### Documents
+
+A session that shows documents with pi-herdr-doc-review lists them in its dossier under **Documents**, and a click opens one as a tile beside the current view. An HTML document runs in a sandboxed frame without scripts; a text document renders read only.
+
+<details>
+<summary>Details</summary>
 
 A session that shows documents with [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 or newer (`show_doc`, or a Mini SDD spec that opens on its own) lists them in its dossier under **Documents** within 2 s, and a parchment badge on a unit's token counts those still on screen in its terminal (a tower lists them only in its dossier). On that session's comms a document that arrives opens as a tile beside the log without taking focus, unless four tiles are open already (it never pushes out one you opened); anywhere else (the map, a base, another session) only the badge changes, and a page that opens on a session with documents opens none.
 
@@ -1160,6 +1276,8 @@ Answers travel in the URL of a GET, as in Chawan, and stay in the browser's hist
 
 A session lists at most 32 documents; a list too large for the dialog channel is dropped (the dossier says to read them in the terminal), and documents never hold back its dialogs.
 
+</details>
+
 #### Files
 
 A file pasted, dropped, or picked with **+** in a composer is posted as its bytes to `sessions/<key>/upload`, under the same origin and CSRF checks as typed input (a paired phone too), at most 20 MB. The server stores it under `pi-straw-boss-uploads` in the temp directory (folder 700, file 600) with a cleaned name, and the page puts the path into the message where the cursor is, the way a picture pasted into pi's terminal lands as a temp file path; the session reads it with its own tools. Text pastes as text.
@@ -1168,23 +1286,46 @@ A file pasted, dropped, or picked with **+** in a composer is posted as its byte
 
 Two switches on the settings page (This device), each a labelled button that says On or Off, kept per browser in `localStorage`: Remind (on by default) and Sound (off by default, so a page that opens makes no noise; Sound is in fact two switches, Sound effects and Background sound, described in the next entry). They act on the alerts a snapshot raises: a unit that turned to waiting on an answer, to error, or that finished.
 
+<details>
+<summary>Details</summary>
+
 Reminders are system notifications (a question's may beep; a failure's or a finish's is silent, a quiet notice), raised only while the page is hidden or unfocused, one per alert, tagged by unit, and a click brings the page forward on that unit; a focused page already shows the alert queue. A first press on Remind asks the browser's permission; until it is granted the switch shows amber, red when the browser blocks it. A batch plays one sound, the most urgent of its marks (waiting, then error, then finished; an error keeps its own clip, which sounds apart from the question's), from three Kenney CC0 clips bundled as hashed MP3 files and fetched when one first plays.
 
 Sound has a volume from 0 to 100 (60 by default, kept in `localStorage` as `sb.volume`) and a Try button under it; each change plays the finished sound. The device's preferences live in one store; another tab's Sound switch or Volume applies to the open page at once. The clips play through Web Audio at the volume squared (loudness follows the square, and an iPhone ignores an audio element's `volume`). Both follow every snapshot, a hidden page's included, through their own record of what was heard: the alert queue's record moves only while the page is shown, so it still queues what arrived while hidden. What was already waiting when the page opened raises neither.
+
+</details>
 
 #### Sound effects and background sound
 
 The settings page's one Sound switch and Volume became two, each with its own switch and volume under *This device*: **Sound effects** (the cues of events: the question, finish, and failure clips of Standard and of a theme, the unit-ready chime, Zen's bowl and knock) and **Background sound** (what plays under the page: Zen's music, Raven's rain and thunder; the thunder belongs to the weather). Both are off by default and work in Standard, Geek, Zen, and Raven Keep; Zen's corner menu and its palette carry both too (a switch and two volume steps each).
 
+<details>
+<summary>Details</summary>
+
 A volume is 0 to 100 (60 by default) and reaches the page's audio core as the square, as a gain for its class only; each switch is checked by the sources of its class only, so Effects off silences the cues and leaves the rain, and Background off silences the rain, the thunder, and the music and leaves the cues. Sound effects has a Try button and plays the finished clip when it is turned on or its volume is released; Background has no sample, because what it plays is already audible.
 
 The old `sb.sound` and `sb.volume` are read as the start of both classes while a class has nothing stored of its own (the old on is both on at the old volume, the old off is both off) and are never written, so an older page on the same browser keeps reading its own.
+
+</details>
 
 #### Images
 
 A user message's or tool result's images (png, jpeg, gif, or webp, as pi stores them in the session file) show as thumbnails in the chat: under the message, or under the tool's card whether it is open or closed. The page loads each from `api/image/<key>/<entry id>/<n>`, which reads that one entry and answers with the image's bytes, cached for a day since an entry never changes; the history itself carries only the count. A thumbnail opens the lightbox: the image fitted to the screen, its own size on a tap, ← → or the arrows for the other images of the same message, and Escape, ×, or a tap beside it to close.
 
 #### Queued messages
+
+```mermaid
+flowchart TD
+    t["You type while the agent works"] --> q["pi's queue:<br/>steer or follow-up"]
+    q --> b["Dimmed bubbles under the chat"]
+    b --> e["Edit: take the whole queue<br/>back into the composer"]
+    q --> n["A turn takes them"]
+```
+
+What is typed while the agent works waits in pi's queue: a steer reaches the agent at its next turn, a follow-up when the run ends. The session view shows them as dimmed bubbles under the chat until a turn takes them, and **Edit** takes the whole queue back into the composer. Everything below is how the take-back stays safe.
+
+<details>
+<summary>Details</summary>
 
 What is typed while the agent works waits in pi's queue: a steer reaches the agent at its next turn, a follow-up when the run ends. The session view shows them under the chat as dimmed bubbles, labelled steer or follow-up, until a turn takes them. pi tells extensions only whether messages wait, so each session's dialog bridge keeps what it saw arrive and drops one when its user message starts (the one with the same text, else the oldest); a queue pi emptied another way (Esc, its dequeue key) clears at the bridge's next check, within 2 s.
 
@@ -1206,21 +1347,33 @@ An empty queue sends no key (`{empty: true}`, "nothing is queued any more"), a q
 
 Refusals that leave the messages in pi's editor say so: pi's dequeue key is bound only to keys the page will not send (`no_key`, nothing sent), pi did not take its queue back (the message names the key that went, which may not be its dequeue key; an older bridge names none, and the server then sends its platform's default), the editor changed meanwhile, the text is longer than 12,000 bytes, the editor could not be cleared (nothing is handed over while it would stay in the editor too), or the take-back timed out after the key went (`stale`). A bridge without `pull` (an older pi-straw-boss in that session) does not answer, and the page says it is unsure. The rows the user opened are remembered per session and per row (the nth of identical rows counts apart).
 
+</details>
+
 #### Monitors
 
 A session's background monitors from [pi-loop-monitor](https://www.npmjs.com/package/pi-loop-monitor) (`MonitorCreate`) show under its todos: folded to how many run and how many failed, with the newest running one's last output line; unfolded to each monitor (newest first, running ones before ended ones, six at most) with its description or command, its state (running, finished, failed, no output and stopped, or stopped), its exit code, its line count, and its last line. Each session's dialog bridge follows pi-loop-monitor's events on the session's bus (`monitor:started`, `monitor:output` at most once every 2 s, `monitor:finished`), strips terminal escapes and control characters, cuts text to 160 characters, and relays the list with its dialogs; an ended monitor stays 15 minutes, as long as pi-loop-monitor keeps its record.
 
+<details>
+<summary>Details</summary>
+
 The list is read-only: pi-loop-monitor gives other extensions no way to stop a monitor. A monitor that fails (exit code other than 0) or goes quiet (stopped by its inactivity timeout) raises an error notice of its own, apart from its unit's state (it goes under Notices, not the header's alert): its dialog names the monitor, and Open comms, its chat, its terminal, and a reminder's click all go to the unit. A monitor that finishes or is stopped raises nothing. The alert leaves the queue when the session stops listing the monitor.
+
+</details>
 
 #### Commanding
 
 A unit that is itself idle while a subagent of it is working, waiting, or commanding, or while one of its monitors runs, shows a mark of its own, **commanding** (zh-TW 指揮中), instead of idle. Its own state wins: working and waiting stay as they are, and finished subagents count for nothing. This holds for a main agent, a member, a tower, or any unit that has subagents or monitors, in the tower's dashboard and in the browser view (the server decides; a monitor also keeps the note "watching a monitor", in red).
+
+<details>
+<summary>Details</summary>
 
 It has its own colour (violet), glyph (`◈`, a diamond) and a breathing glow on the unit's plate on the map, in the dossier, on the squad's tokens, on the comms head, and on the HUD's Commanding figure (still under `prefers-reduced-motion` and after the page has rested), and a line in the legend. A base or squad that holds a commanding unit rolls it up as working (its subagents work anyway; a unit that only watches a monitor makes its base working); the HUD and the tally count each mark on its own, so Working does not include Commanding.
 
 The alert queue treats commanding like working: it raises nothing. A subagent whose run pi-herdr-agents recorded done but whose pi is still alive with a running monitor has not finished: it is not `ended`, so it shows as commanding (note: watching a monitor) instead of finished, has no Dismiss button, is left out of Dismiss finished (the server refuses to dismiss it too), and raises no finished notice. When the monitor stops and pi is idle it is finished again.
 
 The same holds for any unit, subagent or not, whose pi is alive: marked done by Herdr while a monitor runs, it shows as commanding, not done, and raises no finished notice or done sound until the monitor stops. The tower's own TUI dashboard has no monitor data (monitors reach only the session that hosts the GUI), so its glyph for such a unit is unchanged.
+
+</details>
 
 #### Todos
 
@@ -1229,6 +1382,20 @@ A session that keeps a todo list with [@juicesharp/rpiv-todo](https://www.npmjs.
 ### Closing, opening, and trust
 
 #### Closing
+
+```mermaid
+flowchart TD
+    q["Quit on a unit, squad, or base"] --> a["Asks first"]
+    a --> b["Each agent's bridge is asked<br/>to quit, pane kept"]
+    b --> r{"Any refusal<br/>or silence?"}
+    r -->|"yes"| k["Nothing closes"]
+    r -->|"no"| c["The tab or workspace closes"]
+```
+
+**Quit** on a unit, squad, or base asks first, then asks each session's own bridge to quit, as `/boss close` does. One refusal or silence closes nothing; only when every agent has gone does the tab or workspace close. A finished subagent has **Dismiss** instead, and a base can be **Stash**ed and popped again.
+
+<details>
+<summary>Details</summary>
 
 **Quit** on the map, on a base, a squad, or a unit (not a subagent: its launcher closes it), and **Quit tower** under a base's name for its tower alone, asks first. × only closes dialogs. Quit is also in a unit's own comms header, desktop and phone alike: the same button as the map's for that unit (a tower's is Quit tower), shown only where the map shows one (not for a subagent, a finished subagent's Dismiss, or a unit the page cannot control), with the same confirmation, request, and refusals; cancelling or a refusal stays in the comms, and a quit that went returns to the unit's base.
 
@@ -1242,7 +1409,19 @@ For a squad or a base every agent of the net in it (mains, members, and the base
 
 A finished subagent has **Dismiss** instead of Quit (it hides it from every page until it leaves the net), and **Dismiss finished (n)**, in the location bar under the HUD, hides every finished subagent on the net at once through the same path (the button shows only while one exists, on this computer's page and a paired device's alike); the phone's left pane has it as well, at the bottom directly above Back to the map, where a thumb reaches both. A page that was showing what it closed goes up to what is left: from a closed base to the map, from a closed squad's or unit's comms to its base.
 
+</details>
+
 #### Opening agents
+
+```mermaid
+flowchart LR
+    f["Pick a folder"] --> c["create"] --> s["start"] --> j["join"] --> d["deliver"]
+```
+
+**+ New base** opens a Herdr workspace in a folder you pick, with one member and no tower; **+ Member** and **+ Main** open one more agent in a new tab. The page shows the opening's steps (create, start, join, and deliver when there is a first message), and the server enforces the same rules as the commands do.
+
+<details>
+<summary>Details</summary>
 
 **+ New base**, the last card on the map, opens a Herdr workspace in a folder you pick with one member in its first tab and no tower: a base is never empty, and a failed open closes the workspace again. A base without a tower takes only members: **+ Member** on the base opens one in a new tab in a picked folder, and on a squad splits one into that squad's tab, in the folder of its main (or its first pane). Its tower opens by the rules of the tower, never from the page.
 
@@ -1266,9 +1445,14 @@ A record that cannot be written, when the workspace is made or when the message 
 
 The wait for the new pi to join is 60 s by default; `open/base` takes an optional `joinWaitMs` (a whole number of milliseconds, 10000 to 300000; anything else is refused 400 `bad_request` before anything is made) for a slow computer such as a Windows one, and a pi that has not joined within it fails the open at the `join` step (502 `open_failed`, naming the seconds waited). Time a trust question is open does not count against it, as before. `open/member` and `open/main` keep the 60 s.
 
+</details>
+
 #### Project trust
 
 A pi started in a folder with project resources (`.pi/settings.json`, `mcp.json`, `extensions`, `skills`, `prompts`, `themes`, `SYSTEM.md`, `APPEND_SYSTEM.md`, or `.agents/skills` in the folder or an ancestor) stops at pi's own "Trust project folder?" before it loads anything of the folder, and that prompt is drawn only in the pane's terminal. Straw Boss registers a `project_trust` handler in every pi in Herdr (subagents too) that asks the running GUI as well, so a person who uses only the GUI sees an alert instead of an opening that hangs. With no GUI it answers `undecided` and pi asks as before.
+
+<details>
+<summary>Details</summary>
 
 - *When it asks.* The handler answers `undecided` at once, leaving pi's own order intact (a `--approve` or `--no-approve` override, then the saved decision in `trust.json`, then `defaultProjectTrust`), unless: pi runs in its TUI on a terminal; this is the process's first runtime (a `/new`, `/resume`, or `/fork` into another folder is pi's own prompt); no decision is saved for the folder or a parent (a `trust.json` that cannot be read counts as a decision: pi reports it); `defaultProjectTrust` is `ask`; and a GUI that reads trust requests runs for this Herdr (`gui.json` carries `trust: 1`, names this Herdr's socket, is not stopped, and answers within 1 s).
 
@@ -1280,11 +1464,16 @@ A pi started in a folder with project resources (`.pi/settings.json`, `mcp.json`
 - *Openings.* A new pi that waits on the question has not joined, so every wait for a new pi (the page's opens, `boss_open_main`, a tower's start, a pop) stops counting while its pane has a request, and fails after ten minutes of it with "No trust decision for <folder> within 10 minutes", closing what it created. The deploy panel gets a **trust** step between start and join that holds the same three choices inline; that page's alert queue then does not open a second dialog for it, while a paired device or another tab still gets the alert, and the panel's 120 s give-up does not count that time.
 - *Desk mode and the team profile.* Nothing more is needed: the desk window is this computer's page, and every pane on the desk stack runs the handler. Leave `defaultProjectTrust` at `ask`, so the person is asked once per new folder and **Trust** remembers it (`always` would load any cloned repository's extensions with no question; `never` would drop a team repository's own `.agents/skills`).
 
+</details>
+
 ### Serving the page
 
 #### The server
 
 The server runs in one session at a time, the one that opened it or a survivor that took it over (see One server per machine), on `127.0.0.1` with two random free ports: the local listener, for this computer's browser, and the remote listener, the only target `tailscale serve` is pointed at. Which request is local is decided by the listener it arrived on, not by what it says about itself: a request on the remote listener is remote whatever its `Host` or headers say, and the local listener lets in only a request with `Host: 127.0.0.1:<port>` and none of the forwarding headers `tailscale serve` adds (`X-Forwarded-*`, `Tailscale-*`, `Forwarded`, `Via`), and refuses the rest with 403 (a second guard).
+
+<details>
+<summary>Details</summary>
 
 Both listeners run the same handler. Every URL starts with a random token (`http://127.0.0.1:<port>/<token>/`); a request without it or with another `Host` header is refused with 403, so other local pages cannot read the net. The only writes are POSTs under `/<token>/api/sessions/<key>/`: `input`; `keys`, which takes one key pad key from a page that shows that terminal live, or Stop's Escape; `commands`, which asks the session's bridge for the commands that match a typed `/name` and calls no Herdr method; `answer`, which carries a dialog's answer to its owner and sends no key; and `mirror`, which shows the pane's screen on the page's own stream. Only this computer's page may also send (403 from a paired device) `server/stop`, `remote/pair` (a new one-time pairing code: pairing is the desktop's), `remote/on`, `remote/off`, `remote/devices`, `remote/unpair`, `remote/unpair-all`, and `/<token>/api/dismiss` (one finished subagent, or `all`). Each needs the page's own `Origin`, `Sec-Fetch-Site: same-origin` when sent, a JSON body of at most 64 KB, and the CSRF secret written into the page; for `input`, `keys`, and `answer` the server also asks Herdr right then that the pane still runs pi on that session's file (a mirror checks it before its first read and every 2 s, and starts afresh when the session moved to another pane).
 
@@ -1296,15 +1485,40 @@ Only documents a session lists now are served. Every `/doc/` response carries a 
 
 While a page listens the net is read every 2 s; with none it is still read every 10 s, so the timeline keeps what happened while a phone slept. The page is installable as an app: the bundle carries `manifest.webmanifest` (its `id`, `start_url`, and `scope` are `./`, so they resolve under the token path), PNG and SVG icons, and `apple-touch-icon.png`; the page's policy adds `manifest-src 'self'` and links the manifest with `crossorigin="use-credentials"`, so a paired device's cookie goes with it. There is no service worker: every page comes from the running server's own build.
 
+</details>
+
 #### Session files
 
 The server reads only the session files of units in the net it just read (joined sessions, towers, subagents through their pane or launch script, and the other pi panes of a base); a path never comes from the browser. A file is read only from a pane running pi, only as a `.jsonl` under pi's sessions directory (`sessions/` in `PI_CODING_AGENT_DIR` or `~/.pi/agent`, symlinks resolved on both sides), and for an intercom session only when it is named for that session, so a net read during `/new` cannot pair the old session with the next file; a watched session whose file changes re-attaches to the new one.
+
+<details>
+<summary>Details</summary>
 
 A file is indexed in 1 MB chunks from the first and last bytes of each line, and only the index stays in memory; entries are read by offset for the page being sent. Indexing, appends, and reads run one at a time in order, so entries pi writes during the first index wait for it, and a read never uses the index of a file that was replaced. A rewritten file or a branch move resets the page. A first page that cannot be read is tried again on the next net reading.
 
 A unit that leaves the net stays readable for ten minutes, with a link to the pane's new session when there is one. A session file is opened without following a symlink at its last step (`O_NOFOLLOW`): a file swapped for a link after the net resolved its path is not read. Where the platform has no `O_NOFOLLOW` (Windows) the link is looked for just before the open, which leaves a short window between the look and the open; a process of the same user that can swap files in pi's sessions directory can use it to make the GUI show another `.jsonl` under that directory, and only the user and their paired devices read the result. Sessions stored elsewhere (`--session-dir`, `PI_CODING_AGENT_SESSION_DIR`, or pi's `sessionDir` setting) show on the map but have no history and cannot be typed into.
 
+</details>
+
 #### Remote access
+
+```mermaid
+sequenceDiagram
+    participant P as pi session
+    participant S as sb server
+    participant T as Tailscale
+    participant M as Phone
+    P->>S: /boss gui remote
+    S->>T: tailscale serve entry (HTTPS 8443)
+    S-->>P: QR and one-time link
+    M->>S: scan, open the link
+    S-->>M: device cookie, paired
+```
+
+`/boss gui remote` asks the sb server to put the GUI on your tailnet with one `tailscale serve` entry (HTTPS on port 8443, to the remote listener only, never Funnel). The session shows a QR in a pi overlay; a phone signed in to Tailscale as this machine's user scans it and gets a device cookie. Every remote request must also carry this machine's Tailscale identity.
+
+<details>
+<summary>Details</summary>
 
 `/boss gui remote`, from any pi session, asks the sb server to put the GUI on your tailnet: it adds one `tailscale serve` entry, HTTPS on port 8443 proxying to the server's remote listener (never Funnel, and never the local port), and the session shows a QR code in a pi overlay, drawn here from the server's answer, so the QR and its one-time links never reach the server's log or the model's conversation. Scan it with a phone signed in to Tailscale as this machine's user (or, in an installed app, type the short code printed under the QR: see **The installed app's entry** below).
 
@@ -1344,9 +1558,22 @@ After five wrong codes every waiting code is void and the entry answers 429 unti
 
 A document load at a dead token by this machine's user, or at the current token with no pairing and `Sec-Fetch-Site: same-origin`, answers 302 to `/sb-app/`, so an app installed before the entry existed (its start URL is an old tokened address) finds it by itself; any other request gets the refusals as before. The 401 text for everything else says to type the code in an installed app. A restart keeps the token and the pairing, so a paired app goes on by itself; the code is for a first pairing and for a device that a new token unpaired.
 
+</details>
+
 #### Wi-Fi access
 
+```mermaid
+flowchart TD
+    on["/boss gui lan"] --> w["Read the risk,<br/>answer y"]
+    w --> ca["This computer makes its own CA"]
+    ca --> ph["Each phone installs it once"]
+    ph --> pr["Pair, approved<br/>on this computer"]
+```
+
 `/boss gui lan` lets a phone on the same Wi-Fi as this computer open the GUI without Tailscale. It is off until you turn it on, and it stays on across restarts until `/boss gui lan off`. Tailscale access is unchanged and stays a separate switch; both can be on, and a phone may be paired over each. The terminal speaks English; the pages the phone sees speak English or Traditional Chinese by the browser's first language.
+
+<details>
+<summary>Details</summary>
 
 **Read the risk first.** Wi-Fi access needs a certificate authority (CA) that this computer makes for itself and that each phone installs once. A phone that trusts the CA accepts anything the CA signs. Whoever copies the CA's key can pose to that phone as this computer, and as any private-network address (a router's or a NAS's `192.168.x.x` page), on any Wi-Fi the phone joins, until the certificate is removed from the phone.
 
@@ -1354,7 +1581,14 @@ The key lives in `lan-ca.json`, which every program running as you can read, age
 
 The first `/boss gui lan` shows this warning and makes the CA only after you answer **y**; the page's Wi-Fi tab shows the same text before it turns anything on.
 
+</details>
+
 ##### What is served
+
+Each eligible address of this computer (private IPv4 only) gets its own listener, `8445` by default. IPv6, the Tailscale address, and link-local and public addresses are never served.
+
+<details>
+<summary>Details</summary>
 
 - Each eligible address of this computer gets its own listener (`8445` by default, kept in `lan.json`, because the port is part of an installed app's origin).
 - An address is eligible when it is IPv4 in `10/8`, `172.16/12`, or `192.168/16`, is on a real interface (not loopback, not a tunnel such as `utun`, WireGuard, or a `/31` or `/32` link), and has a sensible prefix.
@@ -1365,7 +1599,14 @@ The first `/boss gui lan` shows this warning and makes the CA only after you ans
 - The server watches the interfaces every 5 s: a new address gets a listener, a gone one loses it, and a wake from sleep rebinds all of them.
 - A port taken by another program on an address leaves that address unserved with a note; `/boss gui lan` moves the port only then, and an app installed on the old port must be added again.
 
+</details>
+
 ##### The certificate
+
+The CA is made once and kept in `lan-ca.json`; each served address gets a short-lived server certificate that names only the computer's `.local` name and that address. The CA is constrained to private IPv4 names.
+
+<details>
+<summary>Details</summary>
 
 - `lan-ca.json` holds an ECDSA P-256 CA valid for two years. Each served address gets a 90-day server certificate (kept in memory, renewed under 30 days) that names `<computer name>.local` and that address, nothing else.
 - The CA may sign only that name, private IPv4 addresses, no IPv6, no email address, and no URI. If the computer's name cannot be read, the CA signs addresses only and the QR carries an address.
@@ -1374,7 +1615,14 @@ The first `/boss gui lan` shows this warning and makes the CA only after you ans
 - `/boss gui rotate` leaves the CA alone.
 - A corrupt, foreign-owned, linked, or too-open `lan-ca.json` leaves Wi-Fi access off with a note; nothing makes a new CA behind your back.
 
+</details>
+
 ##### Getting the phone to trust it (once per phone)
+
+Each phone trusts the CA once. The best way is to send the profile (iPhone) or the `.crt` (Android) from this computer by AirDrop or Quick Share; the certificate page is the fallback.
+
+<details>
+<summary>Details</summary>
 
 - Best: send the profile (iPhone) or the `.crt` (Android) from this computer by AirDrop or Quick Share. The overlay's **f** key writes these public files to `lan-ca-files/` and shows them; the page's share buttons download them, one link for each file. Nobody on the Wi-Fi can touch this path, and it needs no check unless the phone asked you to accept a file from an unknown sender.
 - Otherwise scan the certificate QR, or open `http://<name>.local:8445/sb-ca/`, a plain-HTTP page that offers the files and the steps for the phone's platform. Anyone who controls the Wi-Fi can swap what that page serves, and the page itself shows no fingerprint, because an attacker who swaps the page would print the real one. So the check is on this computer's screen, which shows the SHA-256 start of the real certificate and where to look on the phone:
@@ -1387,7 +1635,14 @@ The first `/boss gui lan` shows this warning and makes the CA only after you ans
 - An Android phone before 12 may not resolve `.local`; press **i** in the overlay to use the address instead. An app installed from an address stops working when the address changes.
 - The page `/sb-ca/check` shows whether the phone trusts some certificate for this name. It cannot tell this computer's from an attacker's.
 
+</details>
+
 ##### Pairing, with approval on this computer
+
+The overlay's QR carries a token-free link that asks the phone to press **Pair**; a code works once, and a redeemed code only makes a pending device that this computer must approve.
+
+<details>
+<summary>Details</summary>
 
 - The overlay's QR carries a token-free link, `https://<name>.local:8445/sb-app/pair/<code>`, which asks the phone to press **Pair** before it uses the code, so a link preview cannot spend it. A typed code for the installed app is shown only when asked for.
 - A code works once, within ten minutes, and each surface (one overlay, one page tab) has at most one live code; making a new one voids the one shown before.
@@ -1397,7 +1652,14 @@ The first `/boss gui lan` shows this warning and makes the CA only after you ans
 - A request that arrives while no screen is open raises a notice in every pi session and on the page.
 - The approval does not stop a swapped certificate: an attacker in the middle relays the real number. The fingerprint check does.
 
+</details>
+
 ##### After pairing
+
+After approval the phone holds a Wi-Fi cookie, set only for the GUI's paths and kept apart from the remote one. A Wi-Fi device may do what a paired tailnet device may do, nothing more.
+
+<details>
+<summary>Details</summary>
 
 - The cookie is `__Secure-sb_lan` (HttpOnly, Secure, SameSite=Strict, 90 days, renewed by use), set for `/<token>/` and `/sb-app/` only. Remote and Wi-Fi cookies live on different hosts and are never mixed.
 - Allowed devices live in `lan.json`, bound to the GUI token: a new token (a taken port, a lost store, `/boss gui rotate`) unpairs them. They survive Wi-Fi access off and on, restarts, new addresses, and CA renewal.
@@ -1429,6 +1691,8 @@ Whether a phone enforces the CA's name constraints for a certificate you install
 | macOS, Safari and Chrome | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured |
 | Windows, Edge and Chrome | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured |
 
+</details>
+
 #### The server panel
 
 The settings page's **Server** section, on this computer's page only (127.0.0.1; a paired device does not see it, and the server answers it 403 `local_only`), opens the sb server's state (live, restarting, or stopped; version; mode; uptime; last error), **Restart server** (a confirm in place that says the page keeps its address and reconnects by itself, then the server restarts and the page reconnects when it is back, with a note to open `/boss gui` if it does not: the address changes only when a port was taken) and **Show log** (the last 200 lines of `server.log`, which holds no message text or secret). Restarting from the page names the asker "GUI" in the log; the reason is one line of at most 200 characters.
@@ -1436,6 +1700,9 @@ The settings page's **Server** section, on this computer's page only (127.0.0.1;
 #### One GUI per machine, served by the sb server
 
 The GUI runs in the sb server ([The sb server](#the-sb-server)), not in a pi session: the server binds its two loopback listeners (the local one and the remote one) after it has registered its intercom id, and, while Wi-Fi access is on, one more listener per served private address ([Wi-Fi access](#browser-view)), and `/boss gui`, `/boss gui stop`, `/boss gui remote`, `/boss stash`, and `/boss close all` ask the server over its control socket. A pi session hosts nothing, adopts nothing, takes nothing over, and holds no dialog hub, so the page does not depend on which pi lives. The server writes `gui.json` and records the same port and token in `server.json` (`gui: { port, token, stopped }`).
+
+<details>
+<summary>Details</summary>
 
 The boss chose to keep the GUI token, the CSRF secret, and the paired devices across restarts. The token and the CSRF secret live in `gui-secrets.json` (mode 600, written by rename, beside `paired.json` in the owner-only folder; on Windows covered by the state folder's ACL; the ACL read-back lists it in the primary slot's folder only, a secondary slot's copy inherits the folder's protection without being read back) with the pair of ports they were bound to.
 
@@ -1457,9 +1724,14 @@ No automatic ask starts a GUI that was stopped on purpose: `/boss stash` and `/b
 
 If the remote port is taken (two servers, or another process) the server gets another free one, which `remote.json` and the next serve entry then name.
 
+</details>
+
 #### `gui.json` is a contract
 
 Besides the sessions, a program that shows the GUI (the straw-boss-desk shell) reads `gui.json` in the state directory, `$PI_CODING_AGENT_DIR/straw-boss/` (a pi without that variable uses `~/.pi/agent/straw-boss/`). It may read `port`, `token`, `pid`, `started`, `stopped`, `version`, `herdr`, `owner`, and `view`; `csrf` and the rest are for the sessions (`trust: 1` tells a pi that the server reads its project trust question, [Project trust](#browser-view)).
+
+<details>
+<summary>Details</summary>
 
 Since the GUI moved into the sb server, `pid` and `started` name the sb server, the process that serves the GUI, `owner` is `sb server (pid N)`, `ownerSession` is the server's intercom id, `view` (optional, `standard`, `geek`, or `zen`, absent when the boss has set no default) is the default view of the GUI (`/boss gui view`; the record is written again when it changes, also while the GUI is stopped, and a shell that does not know the field ignores it), and `stopped` means the GUI was stopped on purpose (`/boss gui stop`) while the server runs on; the whole server stopped on purpose is `server.json`'s `stopped`.
 
@@ -1473,19 +1745,31 @@ While the server restarts, `gui.json` still names it but has no `started`: an ol
 
 `gui.json` stays on disk, and is never removed without a note in the release. A session started with `STRAW_BOSS_DESK=1` in its environment (the desk shell shows the page itself) prints the URL for `/boss gui` and opens no browser.
 
+</details>
+
 #### Desk mode in the page and the session
 
 Desk mode in the page and the session (`STRAW_BOSS_DESK=1`; the desk shell starts its Herdr server with it, so everything under it has it, and `server.json` records `desk`). A server that runs with the switch puts `<meta name="sb-desk" content="1">` beside `sb-csrf` in the page it serves, and the page, which reads it once at load, leaves out GUI remote access (the settings page's **Phone & devices** section) and stash (each base's **Stash** button, the HUD's **Stashed** button and its list); this holds after every restart, because each server reads the switch from its own environment (`up` with the switch restarts one that runs without it). Hiding is presentation only: the routes stay, and the URL is the credential either way.
+
+<details>
+<summary>Details</summary>
 
 A session in a desk stack prints the URL for `/boss gui` and opens no browser, and its pairing overlay has no **o** key. The folder pickers (**+ New base**, **+ Member**, **+ Main**, and Straw Link's folder steps) show a **Choose…** button when the shell's preload exposes `globalThis.strawBossDesk.pickFolder({ defaultPath, title })`, which answers a folder path or `null`: the chosen path goes through the same `POST api/dirs` as a click on a breadcrumb, so the server stays the judge of it (home only, nothing hidden, and a refusal shows in the picker's note), and `null` changes nothing. A browser has no such hook, so no button.
 
 Every session, desk or not, checks 20 s after its start whether Herdr's pi integration is in place for its agent directory: when Herdr reports an agent in its pane but no `agent_session`, it warns once, "Herdr's pi integration is missing for this agent directory, so this session cannot join the net; run `herdr integration install pi` and restart pi." (`src/integration.ts`; a failed listing says nothing).
 
+</details>
+
 #### Background tabs
 
 The page treats a stream as dead after 45 s without a message and reconnects with a backoff of 1 s doubling to 30 s (±20 %), giving up after 8 failures until the tab is used again. Coming back (visible, focus, `pageshow`, `online`) reconnects at once when the stream is closed or has been quiet for 20 s, and takes a fresh full snapshot instead of replaying what was missed. While disconnected, the map is dimmed and the banner says so with the time of the last update.
 
+<details>
+<summary>Details</summary>
+
 A modal overlay (`gui/connect.ts`) covers the page from the first byte until the stream's first snapshot, and again whenever the stream is lost: "Connecting…" or "Reconnecting…", and after the 8 failures the give-up note with Try again. The app root is inert and no click or key reaches the page behind it. A hidden tab pauses its animations, draws only the newest snapshot when it returns, and holds no timer beyond the stall monitor.
+
+</details>
 
 #### The QR encoder
 
@@ -1501,15 +1785,23 @@ A page left alone costs a phone's battery in frames, so the animations that neve
 
 Phone layout (unreleased; on a screen up to 640 px wide, a desktop is unchanged). The log gets the screen: with a main's queue of three steers or the tower waiting for the boss, the log is at least 55 % of a 390 × 844 viewport (it was 29 % and 33 %), and the first base starts within 160 px of the top of the map.
 
+<details>
+<summary>Details</summary>
+
 The map has no location bar and no unit Quit: **a unit's Quit is only in its comms header**; **a base's and a squad's Quit** (the same button, the same confirmation and refusals) are behind a `⋯` on its header, and the header's own `⋯` holds **Dismiss finished** and **Stashed** while one exists. A tower's comms header is one row (back, name, Info, `⋯`) with **+ Main** and **Quit tower** behind its `⋯`, over the Comms | Terminal switch. The boss conversation is one line with a `⋯` for Leave, New, the facts the line cuts, and the event runs' chips (with only event runs it reads "Event runs · n").
 
 Queued messages fold to one row, "n queued", when there are two or more; a tap opens the list and Edit all steers. An assistant's message has no avatar gutter, a squad's units are rows with the plate beside the name, and the phone's left pane names the tower and its state. A `⋯` is a 44 px button that opens a popover (Escape or a tap outside closes it and the focus returns to the button; the arrow keys, Home and End move between its controls; a control that acts closes it, Leave and New keep it open for their result), and above 640 px the button is not there, its controls sit in the row they always had, and the arrow keys are the page's again (`gui/menu.ts`).
 
 A finished subagent's **Dismiss** takes its own row under its words, so its state and note keep the card's width. A question's card scrolls as one, with a "More below" cue and fade over the Send row while more lies under it. On a 360 px screen the boss conversation's line may take two lines (the time it ends shows) and the composer is one row (+, the box, Send) until the box is tapped or has text; the log is at least 55 % of 360 × 740 for a main with queued steers and for the tower waiting. An open conversation `⋯` stays open, with the result of Leave or New, when the page redraws.
 
+</details>
+
 #### View: Auto, Standard, Geek, Zen, Raven Keep
 
 View: Auto, Standard, Geek, Zen, Raven Keep (per device, with a default from the server). The settings page's This device group has a five-word control (Auto, Standard, Geek, Zen, Raven Keep; Raven Keep is the next entry's sibling, described after Zen; Zen is described in the next entry, and its design is the spec `docs/specs/2026-11-01-zen-view.md`), kept in this browser's `localStorage` (`sb.view`); `gui/view.ts` reads it first thing and sets `data-view` on `<html>` (and the browser's `theme-color`) before anything is drawn. **Standard** is the palette above.
+
+<details>
+<summary>Details</summary>
 
 **Geek** is a terminal: black surfaces, one monospace face at 13 px, every text colour at least 7 : 1 on every surface and every border at least 3 : 1 (`tests/geek-contrast.test.ts` does the arithmetic on the stylesheet's `[data-view="geek"]` block, tints included), no motion, glow, gradient, or press-in (the still signs of "Motion rests" are always on), one plain border on all four sides, and each state also as a text tag before a unit's name (`[WORK]`, `[WAIT?]`, `[CMD◈]`, `[IDLE]`, `[DONE✓]`, `[ERR!]`, `[UNKN]`), the connection in words, the Remind, Sound effects, and Background sound switches as `[On]` and `[Off]` (Standard shows the same words beside a dot), and what is chosen (a tab, the mode switch, a picked folder) in inverse video.
 
@@ -1521,9 +1813,14 @@ The server writes it into every page it serves as `<meta name="sb-view" content=
 
 With the default on `auto` each device is back to its own screen's contrast preference. `gui.json` carries the default as an optional `view` (`standard`, `geek`, `zen`, or `raven`; absent for `auto`) for a shell that paints its window before the page loads. Under `forced-colors` the system's colours take over and the state shapes get an outline; the QR code and the terminal keep their own colours. `calm.ts` runs no timer in Geek.
 
+</details>
+
 #### Raven Keep (鴉閣)
 
 Raven Keep (鴉閣) is a gothic skin of Standard, with the same layout and interaction (loaded only when a page shows it). Dark only: a near-black ground with a cold violet cast, bone text, candle gold for what waits, blood crimson for failures, fog grey for rest, every text colour at least 4.5 : 1.
+
+<details>
+<summary>Details</summary>
 
 It brings its own ten role icons (every icon goes through `iconRef`; Standard's stay the fallback), its own role nouns in English and Traditional Chinese (the head tower is Raven Keep / 鴉閣, the boss is the Count / 伯爵, a tower is a Steward (管家), a main a Spawn (血僕), a member a Wolf, a subagent a Bat, an outpost a Coffin chamber, an unaligned unit a Ghost, the comms Ravens (通信 in Chinese)), and in Traditional Chinese a sentence pack that swaps with the nouns (every message that says 塔台 says 管家, 主塔台 says 鴉閣, and a base with no tower says 自主活動; English sentences keep the base words). It also has a crest for the tab icon, and three sounds that replace Standard's clips behind the same Sound effects switch and volume: a bell strike for a question (a bell asks for an answer), a crow's caw for a finish, a door's creak for a failure (`bell.mp3`, `caw.mp3`, `door.mp3`, mono, fetched on first play).
 
@@ -1535,7 +1832,24 @@ A phone (under 600 px) draws the picture covering the screen's height, pinned le
 
 Every view maps pi-better-show's `--pbs-*` tokens onto its own palette (`tests/pbs-tokens.test.ts`), so a pbs element in a document or a chat entry follows the view. `/boss gui view raven` sets the server's default as the others do; a page showing Zen keeps Zen when the default moves to raven, and Auto with `prefers-contrast: more` is still Geek.
 
+</details>
+
 #### Zen
+
+```mermaid
+stateDiagram-v2
+    [*] --> rest
+    rest: At rest (breathing circle)
+    rest --> card: Enter, an item waits
+    card --> answered: answer or Maybe later
+    answered --> card: the next item
+    answered --> rest: none left
+```
+
+Zen shows one thing at a time. An **item** is whatever waits for you, such as a unit's question, a trust question, or a tower's wait, and it appears as one card. Zen rests on a breathing circle, and no card takes the screen by itself: it waits for Enter. A card is never replaced or pulled away while you read it.
+
+<details>
+<summary>Details</summary>
 
 Zen shows one thing at a time (`gui/zen.ts`, a chunk loaded only when the view shows; the choices live in the pure model `gui/zenmodel.ts`). An **item** is what waits for you: a unit waiting on an answer, a pending dialog, a project trust question, or a tower's wait for you, in the order they began waiting (a question that holds an agent, such as a dialog, a trust question, a question a box forwarded, or a teammate's confirm, before a tower's wait, a pair request, or a memory proposal; no card takes the screen by itself, in any state, but waits for Enter, blocking ones first, and a card on the screen is never replaced or pulled away; Standard's order is unchanged), so the HUD's alert list is the same set.
 
@@ -1579,9 +1893,14 @@ The companion's log and composer have no boxes: messages, tool calls, code, and 
 
 On a phone the card, the pause, and the corner keep 44 px targets, the menu and the music list open over the page, and the corner's full-screen button gives way to a one-time Add to Home Screen hint where the browser has no Fullscreen API. `&upgrade=<ms>` on any state announces a new build that long after the page starts (once for the browser session). The demo opens more states for pictures: `history` (an item with its context open), `palette` (the companion with the palette open), `pause` (an item put aside, so the pause shows), and `?music=<n>` (a music folder of n invented tracks; no audio file, so a switched-on track says *tap to play*).
 
+</details>
+
 #### The head tower in Standard and Geek
 
 The head tower in Standard and Geek (`gui/headpage.ts`; design in `docs/specs/2026-11-04-head-tower.md`). The route `head` (`/head`) is a tower's comms on the key `sb-head`: the log with a chapter divider where each chapter begins, the composer ("Wakes the head tower"; `/quit` and `/new` with no confirm), the conversation box with **Leave conversation** and **New conversation**, the memory panel, the notices with Retry, Deliver again, and Drop, and the terminal mode.
+
+<details>
+<summary>Details</summary>
 
 What differs is the header (a gold crown where the comms logo is, the title *Head tower* or 主塔台, the state line), the **broadcast cards** under the conversation box ([spec](specs/2026-11-07-head-log-cards.md): one card per instruction the head forwarded, its closed line the labelled parts *You said* (the boss's own words, kept by the server from the event the relay names), *Head sent* (its first line, without the boss's quoted copy) and *To*, then `11m ago · 2/3 handled`; a tap unfolds the whole texts and each tower's state (`answered`, `handled`, `received`, `waiting`, `no answer`), its newest answer as text, and a link to its comms; an order the head names as corrected by a later one folds under the newest card, struck, with `corrects N earlier` / `corrected by the next`), and **Close the head tower** in the conversation box's ⋯ menu, which asks once.
 
@@ -1591,9 +1910,14 @@ The newest line is the newest broadcast's one-line summary while it had activity
 
 Geek and Raven Keep restyle it; Zen has no map), the hub of the map's wires, which are dashed and orthogonal only: one drop from the band's bottom centre to a bus in the gap above the grid (about 32 px under the band), the bus along the column gutters, then down the gutter on the left of each column and across into each tower's centre, so a column reads as one trunk with branches and no segment crosses a card. A wire's packet travels while either end works, along the same path, and the first row of the phone drawer. No base has a crown any more. ![The head tower's page: the conversation with its forwards, the asks as chips, and the conversation box](gui-head.png)
 
+</details>
+
 #### The head tower in Zen
 
 On the circle screen (no item, no pause, no companion) the head tower sits under the breathing circle as a strip: its lines once the boss calls them up (as many whole lines as the height leaves, the newest at the foot next to the input; three, or two on a phone, while it is quiet; the circle gives way first, never under 80 px), the boss's in ash on the right, its replies in paper on the left, and one-line notes for a forward (`→ Harbor API tower`) and an answer.
+
+<details>
+<summary>Details</summary>
 
 Each line is clear for 20 seconds from when it is first on screen, then fades over three minutes to almost nothing and stays; the fade is one CSS animation per line, so no timer repaints. Hovering or focusing the strip, or tapping it on a phone (10 seconds), eases every line to clear over 0.6 seconds, and back to where its fade stands 1.5 seconds after the pointer leaves (the fade's clock never stops: a hover only lifts the lines, `--lift` in `gui/zen.css`); a wait for the boss keeps its line clear.
 
@@ -1613,6 +1937,8 @@ A page nobody is looking at (hidden, or in front without the focus) gets one sys
 
 Reduced motion has no fade and no easing (clear for 20 seconds, then at rest at once; a hover lifts the lines at once); forced colours show the lines unfaded, as many as fit (up to 24 while awake), with `CanvasText` borders. An item you take takes the screen first, and the strip goes with the circle. ![Zen's strip under the circle: the head tower's last lines and the folded input](gui-zen-head.png) ![The strip with the input open and a draft, the lines clear under the pointer](gui-zen-head-open.png) <img src="gui-phone-zen-head.png" width="220" alt="The strip on a phone">
 
+</details>
+
 #### Demo states for the head tower
 
 `?head=absent|talk|answers|waiting|busy` puts the head tower on the net (not open; a conversation; work handed to three towers with one answered; a wait for the boss; and one that refuses what the boss sends, for the strip's refusal), and `?zen=head`, `?zen=head-open` (the input unfolded with a draft), `?zen=head-history`, and `?zen=head-rest` (Esc a moment after the page starts, then a report the head makes by itself, which the rested strip does not show) show the strip in Zen.
@@ -1621,20 +1947,29 @@ Reduced motion has no fade and no easing (clear for 20 seconds, then at rest at 
 
 Settings page (unreleased; route `settings`, `gui/settings.ts`, step 5 of the GUI pass). The header's gear is a link to it, and so is a link anyone can copy (`settings`, or `settings/phone`, `settings/wifi`, `settings/teams`, `settings/server` to open a section; the server answers the page for each, behind the token as any route). It replaces the settings popover and the Phone, Teams, and Server tiles that opened beside the map, so the map keeps its columns.
 
+<details>
+<summary>Details</summary>
+
 **This device** holds what a person sets once and is always there: View (Auto, Standard, Geek; the server's default stays a pi command), Remind and Sound as labelled buttons that say On or Off (Remind also says Allow? or Blocked, with a line under it on what that means), Sound's volume and Try, and Language. **Phone & devices** (the Tailscale and Same Wi-Fi tabs, the paired devices with Unpair all beside their heading), **Teams**, and **Server** are closed sections that fill when opened and are dropped when closed or when the page is left, so nothing polls or mints behind a closed section: opening Phone is what asks for a pairing code, as the Phone button was.
 
 Who may use each is as it was: Phone and Server only on this computer's page (a paired device's page has This device and Teams, and the server still answers `local_only` to it), and a desk window has no Phone. The header's waiting-request notice opens `settings/wifi`; Escape, the page's back arrow, and the gear go back to where the page was opened from (or to the map when it was the first page). In the Same Wi-Fi tab, while Wi-Fi access is off, the full warning (risk, not verified yet, hotspot) stays above the turn-on button, which is a filled button; it folds under Details only once Wi-Fi access is on. On a phone each control is 44 px (`tests/phone-targets.test.ts`).
+
+</details>
 
 #### A unit's icon is its kind's
 
 a coordinator a ship's wheel, an integrator two arrows joining, a standing main a lighthouse, a train the locomotive, and a launched worker, scout, planner, reviewer or watchdog a wrench, binoculars, a pencil and ruler, a magnifier or a hound. The tower (control tower) and the head tower (crown) keep theirs, and a unit with no known kind keeps its position's icon (main, member, subagent). The icon is drawn from `unitIcon(role, duty)` (`gui/icons.ts`) wherever a unit's role icon was: the map's tokens and cards, the drawer, the dossier, the chat avatar, an alert's face, and the row of a box's main on the ally card (from the kind the box sends).
 
+<details>
+<summary>Details</summary>
+
 A launched subagent's kind reaches the page as `Unit.duty`, read from the agent role its launch script names. Raven Keep draws Standard's symbols for the kinds, as it does for the train, and Geek draws Standard's too.
+
+</details>
 
 #### Icons
 
 Icons come from [game-icons.net](https://game-icons.net) by Lorc and Delapouite, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) (details in [`gui/ICONS.md`](../gui/ICONS.md)). Nothing is loaded from the network: no CDN, fonts, or runtime dependencies.
-
 
 ![The browser view changing state](straw-net-gui.gif)
 
