@@ -344,12 +344,27 @@ test("#15: received is refused for a head that is on the base's remote branch al
 	w.tick(LATER);
 	await assert.rejects(trainCar(integratorDeps(w), { ...received, car: "T-21" }, forward("T-21", pushed)), (e: Error) => e.message === on("T-21", pushed));
 	assert.deepEqual(readdirSync(w.dir).filter((n) => n.startsWith("cars-mirror-")), [], "each check removes the mirror it made");
-	// Git that cannot read the remote: the rule is that a car on the base is never received, so nothing is received unchecked.
+	// A remote that is gone, or that asks for credentials the server's git has none of (0.77.2): received unchecked, with the class logged and the reason in the tool's text.
 	w.rewrites.splice(0, w.rewrites.length, [PUBLIC_URL, join(w.root, "gone.git")]);
-	await refused(trainCar(integratorDeps(w), { ...received, car: "T-23" }, forward("T-23", SHA_B)), "sb: car T-23 is not received: whether its head bbbbbbbbbbbb is on develop of the project's remote already could not be checked (git ls-remote of develop from the project's remote failed");
-	assert.ok(w.logs.some((l) => l.startsWith("cars-received-refused")), "the refusal is logged");
+	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-23" }, forward("T-23", SHA_B))).text, /Received unchecked: the server could not reach the project's remote \(repository-not-found: /);
+	assert.ok(w.logs.some((l) => l.startsWith("cars-received-unchecked") && l.includes("repository-not-found")), w.logs.join("\n"));
 	w.rewrites.splice(0, w.rewrites.length, [PUBLIC_URL, remote]);
-	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-23" }, forward("T-23", SHA_B))).text, /^Car T-23 is received\./);
+	const real = w.deps.git;
+	const failing = (line: string) => async (cwd: string, args: string[], env?: Record<string, string>) => {
+		if (args.includes("ls-remote")) throw Object.assign(new Error("Command failed"), { stderr: `${line}\n` });
+		return real(cwd, args, env);
+	};
+	w.deps.git = failing("fatal: could not read Username for 'https://gitlab.example': terminal prompts disabled");
+	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-24" }, forward("T-24", "c".repeat(40)))).text, /Received unchecked: the server could not reach the project's remote \(auth: git ls-remote of develop from the project's remote failed: fatal: could not read Username/);
+	assert.ok(w.logs.some((l) => l.startsWith("cars-received-unchecked") && l.includes("auth")));
+	// Any other failure of git is still refused: the check has to run.
+	w.deps.git = failing("fatal: protocol error: bad line length character");
+	await refused(trainCar(integratorDeps(w), { ...received, car: "T-25" }, forward("T-25", "d".repeat(40))), "sb: car T-25 is not received: whether its head dddddddddddd is on develop of the project's remote already could not be checked (git ls-remote of develop from the project's remote failed");
+	assert.ok(w.logs.some((l) => l.startsWith("cars-received-refused")), "the refusal is logged");
+	// A head on the base is refused even while git can reach the remote again.
+	w.deps.git = real;
+	await assert.rejects(trainCar(integratorDeps(w), { ...received, car: "T-26" }, forward("T-26", pushed)), (e: Error) => e.message === on("T-26", pushed));
+	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-27" }, forward("T-27", "e".repeat(40)))).text, /^Car T-27 is received\./);
 });
 
 test("#15: a project whose remote the server cannot read is received unchecked, the log and the tool say so; one whose remote is read and whose app names no usable base is refused (car-forward-F003)", async () => {
