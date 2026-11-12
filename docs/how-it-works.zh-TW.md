@@ -176,7 +176,7 @@ stateDiagram-v2
 
 **`tower_list`**（只有塔台能用）讀一次網，並針對每個不是子工作區的工作區回答：它的 id 和標籤、`head`、`self`、`reach`（`tower`、`main`、`member` 或 `none`：送給它的訊息會到誰那裡，見下）、它觸及的 session 及其狀態（和儀表板同一種標記：`idle`、`working`、`waiting`），以及它的分頁，附上標籤、主智慧體的名稱和成員的名稱。主智慧體會用 `boss_rename` 以目前的工作替自己取名，分頁就採用這個名稱，所以分頁顯示的就是工作區正在做什麼。回答是 JSON，和 `boss_status` 一樣。
 
-**`tower_send`**（只有塔台能用）接受一則訊息、可選的 `workspace`（id 或完全一致的標籤；子工作區會送到它的上層工作區），以及 `reply`（預設 false）。沒有指定工作區時，會送給其他每一座塔台。它從不開啟塔台。在主塔台的執行裡，它只接受 `workspace`，而伺服器會在該工作區沒有塔台時開啟它（[轉發與回答](#主塔台)）；工作區塔台以 `head: true` 和 `inReplyTo`（一個 ask id）回答主塔台。
+**`tower_send`**（只有塔台能用）接受一則訊息、可選的 `workspace`（id 或完全一致的標籤；子工作區會送到它的上層工作區），以及 `reply`（預設 false）。沒有指定工作區時，會送給其他每一座塔台。它從不開啟塔台。在主塔台的執行裡，它只接受 `workspace`，而伺服器會在該工作區沒有塔台時開啟它（[轉發與回答](#主塔台)）；工作區塔台以 `head: true` 和 `inReplyTo`（一個 ask id）回答主塔台。`workspace` 指向主塔台（它工作區的 id 或標籤，或它的 session id `sb-head`）時會被拒絕，並說明要用 "use head: true"，因為主塔台不是任何工作區的塔台。
 
 </details>
 
@@ -1008,7 +1008,7 @@ app 的 `integration.stages` 列出整合員帶每列火車走過的階段：`me
 
 ##### 交接前的驗收
 
-e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，並取得老闆的同意，如同專案 skill 的 `## Acceptance` 所說（`integration.accept` 指名 app 要求的種類）。車廂單帶有 `accept:`（證據：跑了什麼、在哪個 head 上、結果、老闆的話）和 `departs:`（車廂何時可以離開：`next`、`alone`、`with <car>`、`after <time>` 或 `by <time>`，以逗號分隔）；`cli.mjs train check --accept <file>|none [--slip <file>] [--app <name>] [--app-accept K,…]` 驗證兩者。app 要求什麼，是專案 `apps.json` 裡的 `integration.accept`，整合員的防護和火車自己會讀它，所以旗標只能往上加，絕不能削弱它：證據缺少必要種類、或對要求某些種類的 app 寫 `none` 的車廂，在火車出發之前就被拒絕（`train check` 在自己的資料夾裡有檔案時就讀那個檔案）。
+e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，並取得老闆的同意，如同專案 skill 的 `## Acceptance` 所說（`integration.accept` 指名 app 要求的種類）。車廂單帶有 `accept:`（證據：跑了什麼、在哪個 head 上、結果、老闆的話）和 `departs:`（車廂何時可以離開：`next`、`alone`、`with <car>`、`after <time>` 或 `by <time>`，以逗號分隔）；`cli.mjs train check --accept <file>|none [--slip <file>] [--app <name>] [--app-accept K,…]` 驗證兩者。app 要求什麼，是專案 `apps.json` 裡的 `integration.accept`，整合員的防護和火車自己會讀它，所以旗標只能往上加，絕不能削弱它：證據缺少必要種類、或對要求某些種類的 app 寫 `none` 的車廂，在火車出發之前就被拒絕（`train check` 在自己的資料夾裡有檔案時就讀那個檔案，否則讀它儲存庫主 checkout 裡的那份，因為連結的 worktree 常常沒有；兩處都沒有時，它指名的 app 會以無法檢查為由被拒絕，絕不放行）。車廂單的 `car:` 指名車廂的 app，用 `apps.json` 裡的名字，絕不是票號；`app:` 是同一個欄位，兩者都給卻不一致的車廂單會被拒絕，不是車廂單欄位的鍵也一樣，在塔台門口和 `train check` 都會被拒絕。`train_car` 的 `car` 是車廂的第一張票，也就是車廂單 `tickets:` 的第一個。
 
 <details>
 <summary>細節</summary>
@@ -1036,7 +1036,7 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 整合員的等待放在它自己 pi 行程的記憶體裡（`src/carwait.ts`），不從磁碟讀任何東西。它每 15 秒問一次 server 的帳本，直到 `returned` 通知送達或升級。server 已經不再持有那節車廂、通知過了一天仍未送達，或 session 在還等著的時候結束（reload 會保留等待），它就把通知交給塔台；塔台沒有收下時，30 秒後再問一次，最多十次。被強制終止的 pi 行程什麼也交不出去。
 
-新的一輪需要一則在車廂結束之後才由塔台轉發的車廂單，所以車廂被退回時所依據的那張車廂單不會得到第二次回答（`car <ticket> is already returned`）。server 把前一輪和新的一輪一起留在記憶體裡：前一輪的通知照樣送出，丟下那節車廂的火車也仍然讀得到自己設定的狀態；磁碟上的車廂檔顯示最新的一輪。在 `received` 時，server 對車廂的 head 執行 `landed` 的 git 檢查，對象是整合員工作區 checkout 的 remote，以及那個 checkout 的 `apps.json` 裡該 app 的 `integration.base`：head 已在那個分支上就拒絕，remote 讀不到的專案不經檢查就接收（工具會說明；開啟火車時在那裡也讀不到 remote，所以這種火車不能設定 `landed`），remote 讀得到、但 app 沒有可用的 `integration.base` 時拒絕接收，remote 連不上或無法認證時（`ls-remote` 或 fetch 因認證、連線或找不到儲存庫而失敗；server 的 git 沒有 credential helper），不經檢查就接收並註明原因，其他 git 失敗則拒絕接收。這項檢查在 server 逐一處理設定之前執行，所以緩慢的 fetch 不會拖住火車的 `landed`。以 squash 或 rebase 合併的車廂，head 不在 base 上，這項檢查找不到它。
+新的一輪需要一則在車廂結束之後才由塔台轉發的車廂單，所以車廂被退回時所依據的那張車廂單不會得到第二次回答（`car <ticket> is already returned`）。server 把前一輪和新的一輪一起留在記憶體裡：前一輪的通知照樣送出，丟下那節車廂的火車也仍然讀得到自己設定的狀態；磁碟上的車廂檔顯示最新的一輪。在 `received` 時，server 對車廂的 head 執行 `landed` 的 git 檢查，對象是整合員工作區 checkout 的 remote，以及那個 checkout 的 `apps.json` 裡該 app 的 `integration.base`：head 已在那個分支上就拒絕，remote 讀不到的專案不經檢查就接收（工具會說明；開啟火車時在那裡也讀不到 remote，所以這種火車不能設定 `landed`），remote 讀得到、但 app 沒有可用的 `integration.base` 時拒絕接收，remote 連不上或無法認證時（`ls-remote` 或 fetch 因認證失敗，包括金鑰或主機金鑰被拒、HTTP 401 或 403；因連線失敗，包括 DNS、連線被拒或重設、TLS 錯誤、HTTP 5xx、代理伺服器的 407，以及 server 自己的 60 秒逾時；或因 remote 說儲存庫不存在而失敗，其他的「not found」不算，所以缺少 `ssh` 會被拒絕；server 的 git 沒有 credential helper），不經檢查就接收並註明原因，URL 裡的 userinfo 會被遮掉，其他 git 失敗則拒絕接收，server 的 mirror 被別的東西寫過之後 fetch 失敗也一樣拒絕。這項檢查在 server 逐一處理設定之前執行，所以緩慢的 fetch 不會拖住火車的 `landed`。以 squash 或 rebase 合併的車廂，head 不在 base 上，這項檢查找不到它。
 
 </details>
 
@@ -1107,7 +1107,7 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 ### Herdr 如何被讀取
 
-各種清單（`pane list`、`workspace list`、`tab list --workspace`）是對 Herdr socket 的請求（`pane.list`、`workspace.list`、`tab.list`），不是另外啟動的 `herdr` 指令；回覆與 CLI 的相同，所以每個讀取者都一樣。每一個寫入（`report-metadata`、`tab create`、`agent start`、關閉等）仍然執行 CLI。清單失敗時，會以 Herdr 自己的錯誤拒絕，不會退回 CLI。儀表板和瀏覽器檢視從同一個 `session.snapshot` 一併讀取 panes 與 workspaces。瀏覽器檢視的輪詢（有頁面在監聽時每 2 秒一次）仍然是輪詢：它的網還包含只有 session 檔和 intercom 才知道的內容（單位在等什麼、它的佇列、它的對話框），這些沒有任何 Herdr 事件會告知。
+各種清單（`pane list`、`workspace list`、`tab list --workspace`）是對 Herdr socket 的請求（`pane.list`、`workspace.list`、`tab.list`），不是另外啟動的 `herdr` 指令；回覆與 CLI 的相同，所以每個讀取者都一樣。每一個寫入（`report-metadata`、`tab create`、`agent start`、關閉等）仍然執行 CLI。清單失敗時，會以 Herdr 自己的錯誤拒絕，不會退回 CLI。只讀取的請求（各種清單、`pane.current`、`pane.get`、`pane.read`、`pane.process_info`、`pane.layout`、`session.snapshot`）逾時或連線在回答前關閉時，會在 250 ms 後再問一次；會改變東西的請求只送一次。儀表板和瀏覽器檢視從同一個 `session.snapshot` 一併讀取 panes 與 workspaces。瀏覽器檢視的輪詢（有頁面在監聽時每 2 秒一次）仍然是輪詢：它的網還包含只有 session 檔和 intercom 才知道的內容（單位在等什麼、它的佇列、它的對話框），這些沒有任何 Herdr 事件會告知。
 
 ## 孤立的子智慧體
 

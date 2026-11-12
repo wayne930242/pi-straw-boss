@@ -35,7 +35,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `tower_reply` | 塔台 run，不含主塔台的 | 用 intercom 名稱或 session id 回答一個本機 session（主智慧體或成員），掛在塔台的標頭之下。`forward` 把車廂單的事件 id 轉給整合員。 |
 | `tower_done` | 塔台 run | 附一份交接筆記（一項一行，最多 1,200 字元）結束這次 run，留給下一次 run；`wakeAfter`（5 到 240 分鐘，僅限本機 run）要求稍後再跑一次。事件仍在等這次 run 時會被拒絕。 |
 | `boss_auto` | 主塔台 | 依老闆自己的話，在它回答的那個 turn 裡開始或結束[自動模式](/pi-straw-boss/docs/zh-tw/guide/auto-mode/)。 |
-| `train_car` | 整合員與火車 | 設定車廂的狀態（`received`、`returned`、`dropped`、`landed`）；sb server 會通知該車廂的協調者。 |
+| `train_car` | 整合員與火車 | 設定車廂的狀態（`received`、`returned`、`dropped`、`landed`）；sb server 會通知該車廂的協調者。它的 `car` 是車廂的第一張票；車廂單的 `car:`（或 `app:`）指名 app。 |
 
 完整的表格與每個參數，見[工具](/pi-straw-boss/docs/zh-tw/reference/how-it-works/tools/)。
 

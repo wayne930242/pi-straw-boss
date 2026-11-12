@@ -35,7 +35,7 @@ Agents call the **tools**; you type the **`/boss` commands** in any pi session i
 | `tower_reply` | tower runs, not the head tower's | Answer one local session (a main or a member) by its intercom name or session id, under the tower's header. `forward` carries a car slip's event id to an integrator. |
 | `tower_done` | tower runs | End this run with a handoff note (one item per line, up to 1,200 characters) for the next run; `wakeAfter` (5 to 240 minutes, local runs only) asks for a follow-up run. Refused while events are still waiting for the run. |
 | `boss_auto` | the head tower | Start or end [auto mode](/pi-straw-boss/docs/guide/auto-mode/) on the boss's own words in the turn it answers. |
-| `train_car` | the integrator and trains | Set a car's state (`received`, `returned`, `dropped`, `landed`); the sb server tells the car's coordinator. |
+| `train_car` | the integrator and trains | Set a car's state (`received`, `returned`, `dropped`, `landed`); the sb server tells the car's coordinator. Its `car` is the car's first ticket; the slip's `car:` (or `app:`) names the app. |
 
 The full table, with every argument, is in [Tools](/pi-straw-boss/docs/reference/how-it-works/tools/).
 
