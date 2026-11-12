@@ -2487,15 +2487,23 @@ Only a workspace whose worktree is a linked git worktree (`worktree.is_linked_wo
 
 The plugin remembers which panes ran an agent: a `pane.agent_detected` event and every sweep that sees `agent` set record the pane's terminal. A pane that was recorded, now has no agent, and whose shell is idle (Herdr's `pane process-info` shows the shell as the only foreground process) is a candidate. The first sweep after the plugin's state is created counts every agent-less pane in a linked-worktree workspace as recorded, so leftovers from before the plugin was installed go too, and it starts as soon as the plugin is installed (the first hook starts the ticker, which waits 20 s, and a candidate waits 60 s more: about a minute and a half).
 
+<details>
+<summary>Details</summary>
+
 There is no log-only first run: reaping begins at once, so run `dry-run` and pin first. Only a pane the first sweep treats as a leftover is recorded; a pane it skipped because it was pinned, focused or running something stays the user's shell for later sweeps too. Panes opened afterwards that never ran an agent are the user's shells and stay. A candidate must stay one for `CONFIRM_MS` (60 s) before it is closed, so an agent restarting in the same pane, or a command started at the prompt, is not caught between two looks; the `reap-now` action skips the wait.
 
 The focused pane is never closed, and a pane whose shell runs something (a dev server, an editor) is skipped with that process named. Right before each close the plugin looks at the pane again: it must still be the same terminal (a pane id can be reused), have no agent, not be focused, have an idle shell, and its workspace must not be pinned (token and state file, read fresh). Anything that changed since the plan skips the close and keeps the workspace's checkout for that run.
 
 "Focused" is the one pane Herdr reports as focused; a second client (the web UI, say) that is viewing another pane does not count, so a pane someone watches from there can be closed. Closing a workspace's last pane lets Herdr close its tab and then the workspace, with no dialog.
 
+</details>
+
 ### The checkout
 
 When every pane of a workspace was closed by one sweep, the plugin waits up to 5 s for Herdr to close the workspace, then reads `git --no-optional-locks status --porcelain --untracked-files=all --ignore-submodules=none` in the checkout (the options keep a repository or user setting such as `status.showUntrackedFiles=no` from hiding files). It also keeps the checkout when `git ls-files -v` shows skip-worktree or assume-unchanged files, whose edits `status` cannot show.
+
+<details>
+<summary>Details</summary>
 
 Right before removing, it lists Herdr's panes and workspaces again and keeps the checkout if any live pane's cwd or foreground cwd is the checkout or below it, or any live workspace has the same checkout path: in the usual pi-herdr-agents layout the worker's pane sits in the parent's workspace, not in the linked worktree's, and it must not lose its directory. A list that cannot be read keeps the checkout too. This applies to checkouts retried from the pending list as well. Three more guards decide, in this order, whether a clean checkout is released.
 
@@ -2520,9 +2528,14 @@ Each keeps it as pending (retried every sweep, with no give-up) and logs `keep c
 
    Each decision is a line in the plugin log with its reason (`close`, `remove checkout`, `keep checkout ... uncommitted changes`, `keep checkout ... pi-herdr-agents child ...`, `skip ... workspace is pinned`).
 
+</details>
+
 ### The parent shell
 
 When a linked-worktree workspace is open, Herdr groups it under the workspace of the repository's main checkout and opens a plain shell workspace for that checkout if none exists. The plugin remembers a non-linked workspace as a parent once a linked worktree workspace with the same `worktree.repo_key` (else `repo_root`) was seen open, in a sweep or by the `workspace.created` hook, within `only_under`; a workspace never seen with a worktree under it is never remembered, so it is never closed.
+
+<details>
+<summary>Details</summary>
 
 After the checkout step of a sweep, on a fresh look at Herdr, a remembered parent is closed (`herdr workspace close`, never the group form, so Herdr refuses if a worktree workspace appeared meanwhile) when no linked workspace of its repository is left and every pane has no agent and an idle shell, none is focused, the workspace is not pinned, and its name is the one Herdr gave it (the repository or checkout directory name) and was never renamed (a rename also pins it).
 
@@ -2532,23 +2545,38 @@ Any one of them keeps the parent, and the parent is not tracked as a candidate m
 
 The log lines are `wait parent <label> (workspace <id>): ...`, `skip parent ...: <reason>` (worktree workspace still open, pinned, name changed, a tower stands in it, agent or running process in a pane, focused pane), and `close parent workspace ...`; a dry run prints `would close parent workspace ...`, counting the worktree workspaces it would close as gone. A child closed by the user rather than the plugin is handled the same way, by the next sweep (up to 10 minutes later) and the confirmation wait.
 
+</details>
+
 ### Pins
 
 The `pin` action is one toggle, in the `workspace` context: it sets or clears the workspace token `pin`, a Nerd Font pin (nf-md-pin, U+F0403), through `workspace.report_metadata` under the source `wayne930242.straw-boss-reaper`. Herdr shows a workspace token only where a row asks for it, so add `{ token = "$pin" }` to `[ui.sidebar.spaces]` rows as the README shows. Bind it with `[[keys.command]]` (`prefix+i` in the README's example: `prefix+P` is Herdr's default `rename_pane`, and `alt` combinations are often taken by window managers such as AeroSpace); a key invokes it in the focused workspace. A pin is also written to the plugin's state file, because Herdr drops workspace tokens when its server restarts, and a sweep puts the token back.
+
+<details>
+<summary>Details</summary>
 
 A linked worktree's pin is keyed by its checkout path, so it outlives the workspace and the checkout is never removed; any other workspace's pin is keyed by its id (`workspace:<id>`) and goes when the workspace closes, so a later workspace on the same main checkout starts unpinned. A sweep moves a main-checkout pin an older version keyed by its path to the ids of the workspaces open on it. A workspace is pinned when either the token or the state entry says so, and a pinned workspace is skipped by every sweep and its checkout is never removed.
 
 A pin does nothing else: closing a pinned workspace closes it, and a linked worktree's pin keeps its checkout from being removed until the checkout is gone or you unpin a workspace on it.
 
+</details>
+
 ### Pinning by renaming
 
 Herdr's `workspace.renamed` event does not say who renamed, but nothing renames a workspace except the user: pi-herdr-agents and Straw Boss set the label when they create the workspace, and `herdr workspace create --label` and `herdr worktree create --label` fire no rename. `herdr worktree open --label` on a worktree whose workspace is already open does fire one, and counts as a rename. So every rename pins the workspace (any workspace, linked worktree or not, within `only_under`) and marks its record `renamed`, even when a sweep recorded the new label first; a workspace already pinned stays as it is. Unpinning clears the token and the state entry and leaves the name alone.
 
+<details>
+<summary>Details</summary>
+
 Herdr reuses the ids of closed workspaces, so a `workspace.created` event replaces any earlier record of its id, the `workspace.closed` event (or a `pane.exited` that took the workspace's last pane) deletes the record and any `workspace:<id>` pin of the id, and a sweep drops the records of the workspaces it closed. Each record also stores the workspace's checkout path, and a record whose checkout differs from the live workspace's belongs to an earlier workspace on a reused id and is ignored.
+
+</details>
 
 ### When it runs
 
 A sweep runs every 10 minutes and again when an agent was released, `CONFIRM_MS` later. Herdr has no timers for plugins, so the startup hook and the event hooks start a ticker, a small detached node process that checks the state file every 15 s and runs the `sweep` action through `herdr plugin action invoke` when one is due, which makes every sweep a normal, logged plugin command. This departs from Herdr's guidance (0.9.5): startup hooks are meant to be one-shot rather than supervised daemons, and plugins are told to stop detached background processes before their command exits.
+
+<details>
+<summary>Details</summary>
 
 The ticker is the only way a plugin can sweep on a schedule, and it limits the departure: it is a single process (a beat file and a lock), it keeps nothing but the beat and its log (`ticker.log` in the state directory, truncated at a start when over 200 KB), and it ends on its own after three failed invocations in a row. After an uninstall, unlink or server exit it therefore lives until its next sweep is due, up to 10 minutes, plus about a minute for the three retries: roughly 11 minutes.
 
@@ -2558,13 +2586,20 @@ The event hooks do bookkeeping only (`workspace.created`, `workspace.renamed`, `
 
 Every `herdr` call has a 30 s timeout and every git call 60 s (5 minutes to remove a checkout), so a hung call fails instead of holding the lock. `bash herdr-reaper/run.sh reaper.mjs dry-run`, run in a terminal inside Herdr, prints what a sweep would do now without changing anything, the state file included; it reads the plugin's state, so its first-sweep rule applies until the plugin has swept once.
 
+</details>
+
 ### Limits
 
 The state is `state.json` in the plugin's state directory. Only a missing file reads as empty; a damaged or unreadable one makes the sweep and the events fail with the file's path in the plugin log (and stops the ticker) instead of bringing back the first-sweep rule and forgetting the pins, so repair or remove the file. A user's shell that outlived its agent in a linked-worktree workspace is closed like a leftover: pin the workspace to keep it. Ignored files (`.env*`, `node_modules`, build output, local databases) do not make a checkout dirty, so they go with it; pin the workspace to keep them.
 
+<details>
+<summary>Details</summary>
+
 A pi-herdr-agents worktree is held by guard 1 whatever it contains; the ignored-file loss is for checkouts nothing holds. pi-herdr-agents keeps no "parent is alive" record, so the hold on its worktrees rests on two signals: a pane in which Herdr sees pi on the parent session, and the idle limit. A parent session that was resumed, forked or restarted with `/new` in its pane is another session id, so its old id no longer counts as open; a parent in a terminal outside Herdr is held only by the idle limit. A pi session of either kind left idle past `retain_idle_hours` and resumed later may find its clean worktree removed (the branch is kept).
 
 The agent event compares its terminal with the pane's only when the payload names one (Herdr 0.9.5 documents `pane_id` and `workspace_id`), so a pane id reused within the hook's latency can still be misread there; the sweep's checks use the terminal id. A Herdr launched from a macOS app has a short PATH; `run.sh` finds node the way the net-view plugin's does. The plugin needs Herdr 0.9.3 or newer, git, node 18 or newer, and a Unix shell, so it runs on macOS and Linux only. `tests/reaper.test.ts` drives the decisions and the sweeps against a fake Herdr and git.
+
+</details>
 
 ## Process hygiene and slots
 

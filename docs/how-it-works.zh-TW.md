@@ -2487,15 +2487,23 @@ flowchart TD
 
 外掛會記住哪些 pane 跑過智慧體：`pane.agent_detected` 事件，以及每次看到 `agent` 有設定的巡檢，都會記錄該 pane 的終端機。曾被記錄、現在沒有智慧體、而且 shell 閒置（Herdr 的 `pane process-info` 顯示 shell 是唯一的前景行程）的 pane，就是候選。外掛狀態建立後的第一次巡檢，會把已連結 worktree 工作區中每個沒有智慧體的 pane 都算作已記錄，所以外掛安裝之前遺留的 pane 也會被清掉，而且它在外掛安裝後立刻開始（第一個 hook 啟動 ticker，等 20 秒，候選再等 60 秒：大約一分半）。
 
+<details>
+<summary>細節</summary>
+
 沒有只記 log 的第一次執行：清理會立刻開始，所以請先跑 `dry-run` 並釘選。只有第一次巡檢視為遺留的 pane 才會被記錄；因為被釘選、有焦點或正在執行東西而被它跳過的 pane，在之後的巡檢中也仍是使用者的 shell。之後開啟、從未跑過智慧體的 pane 是使用者的 shell，會留著。候選必須維持 `CONFIRM_MS`（60 秒）才會被關閉，所以在同一個 pane 重啟的智慧體，或在提示符號下啟動的指令，不會在兩次查看之間被抓到；`reap-now` 動作會跳過這段等待。
 
 有焦點的 pane 絕不關閉，shell 正在執行東西（開發 server、編輯器）的 pane 會被跳過，並指名該行程。每次關閉之前，外掛會再看一次該 pane：它必須仍是同一個終端機（pane id 可能被重用）、沒有智慧體、沒有焦點、shell 閒置，而且它的工作區不能被釘選（token 與狀態檔，重新讀取）。自計畫之後有任何變動，就跳過關閉，並在這次執行中保留該工作區的 checkout。
 
 「有焦點」指 Herdr 回報為有焦點的那一個 pane；正在查看另一個 pane 的第二個用戶端（例如網頁 UI）不算，所以有人在那裡盯著看的 pane 還是可能被關掉。關掉一個工作區的最後一個 pane 時，Herdr 會關閉它的分頁，再關閉工作區，不會跳出對話框。
 
+</details>
+
 ### checkout
 
 當一個工作區的每個 pane 都在同一次巡檢中被關閉，外掛最多等 5 秒讓 Herdr 關閉該工作區，然後在 checkout 裡讀取 `git --no-optional-locks status --porcelain --untracked-files=all --ignore-submodules=none`（這些選項避免儲存庫或使用者設定，例如 `status.showUntrackedFiles=no`，把檔案藏起來）。當 `git ls-files -v` 顯示有 skip-worktree 或 assume-unchanged 的檔案（`status` 看不到它們的修改）時，它也會保留該 checkout。
+
+<details>
+<summary>細節</summary>
 
 移除之前，它會再列一次 Herdr 的 pane 與工作區，只要有任何存活 pane 的 cwd 或前景 cwd 是該 checkout 或在它底下，或有任何存活工作區的 checkout 路徑相同，就保留該 checkout：在常見的 pi-herdr-agents 配置中，worker 的 pane 在父工作區裡，而不是在已連結 worktree 的工作區裡，它不能失去自己的目錄。讀不出來的清單同樣會保留該 checkout。這也適用於從待處理清單重試的 checkout。另有三道守衛，依這個順序決定乾淨的 checkout 是否釋放。
 
@@ -2520,9 +2528,14 @@ flowchart TD
 
    每個決定都是外掛 log 裡的一行並附上原因（`close`、`remove checkout`、`keep checkout ... uncommitted changes`、`keep checkout ... pi-herdr-agents child ...`、`skip ... workspace is pinned`）。
 
+</details>
+
 ### 父 shell
 
 已連結 worktree 的工作區開著時，Herdr 會把它歸在儲存庫主 checkout 的工作區底下，而且若還沒有，就為該 checkout 開一個單純的 shell 工作區。一旦在巡檢中或由 `workspace.created` hook 看到，在 `only_under` 之內，有帶著相同 `worktree.repo_key`（否則 `repo_root`）的已連結 worktree 工作區開著，外掛就把一個非連結的工作區記為父層；從沒看過底下有 worktree 的工作區不會被記住，所以絕不會被關閉。
+
+<details>
+<summary>細節</summary>
 
 在巡檢的 checkout 步驟之後，重新查看 Herdr，當它的儲存庫已經沒有任何已連結的工作區、每個 pane 都沒有智慧體且 shell 閒置、沒有任何 pane 有焦點、工作區沒有被釘選，而且它的名稱是 Herdr 給的名稱（儲存庫或 checkout 的資料夾名稱）並且從未被重新命名（重新命名也會釘選它）時，被記住的父層就會被關閉（`herdr workspace close`，絕不用群組形式，所以若同時出現了 worktree 工作區，Herdr 會拒絕）。
 
@@ -2532,23 +2545,38 @@ flowchart TD
 
 log 行有 `wait parent <label> (workspace <id>): ...`、`skip parent ...: <reason>`（worktree 工作區仍開著、被釘選、名稱改過、塔台在裡面、pane 裡有智慧體或執行中的行程、有焦點的 pane），以及 `close parent workspace ...`；dry run 會印出 `would close parent workspace ...`，並把它將要關閉的 worktree 工作區算作已消失。由使用者而不是外掛關閉的子層，以同樣的方式處理，由下一次巡檢（最多 10 分鐘後）與確認等待來處理。
 
+</details>
+
 ### 釘選
 
 `pin` 動作是一個切換，在 `workspace` 情境中：它透過 `workspace.report_metadata`，以來源 `wayne930242.straw-boss-reaper`，設定或清除工作區 token `pin`，也就是一個 Nerd Font 的圖釘（nf-md-pin，U+F0403）。Herdr 只在某一列要求時才顯示工作區 token，所以如 README 所示，把 `{ token = "$pin" }` 加進 `[ui.sidebar.spaces]` 的列。用 `[[keys.command]]` 綁定它（README 的範例用 `prefix+i`：`prefix+P` 是 Herdr 預設的 `rename_pane`，而 `alt` 組合常被 AeroSpace 之類的視窗管理器占用）；按鍵會在有焦點的工作區執行它。釘選也會寫入外掛的狀態檔，因為 Herdr 在 server 重啟時會丟掉工作區 token，而巡檢會把 token 放回去。
+
+<details>
+<summary>細節</summary>
 
 已連結 worktree 的釘選以它的 checkout 路徑為鍵，所以它比工作區活得更久，checkout 也絕不會被移除；其他工作區的釘選以它的 id（`workspace:<id>`）為鍵，工作區關閉時就消失，所以之後在同一個主 checkout 上開的工作區一開始是未釘選的。巡檢會把舊版本以路徑為鍵的主 checkout 釘選，搬到開在它上面的工作區 id 之下。token 或狀態項目任何一個說它被釘選，工作區就是被釘選；被釘選的工作區會被每次巡檢跳過，它的 checkout 也絕不會被移除。
 
 釘選不做別的事：關閉被釘選的工作區就是關閉它，而已連結 worktree 的釘選會保住它的 checkout，直到 checkout 消失，或你取消釘選其上的某個工作區。
 
+</details>
+
 ### 用重新命名來釘選
 
 Herdr 的 `workspace.renamed` 事件不會說是誰重新命名的，但除了使用者之外，沒有東西會重新命名工作區：pi-herdr-agents 與 Straw Boss 在建立工作區時設定標籤，而 `herdr workspace create --label` 與 `herdr worktree create --label` 不會觸發重新命名。對工作區已經開著的 worktree 執行 `herdr worktree open --label` 會觸發一次，並算作重新命名。所以每次重新命名都會釘選該工作區（`only_under` 之內的任何工作區，不論是否為已連結 worktree），並把它的紀錄標為 `renamed`，即使巡檢先記下了新標籤也一樣；已經被釘選的工作區維持原狀。取消釘選會清除 token 與狀態項目，並保留名稱不動。
 
+<details>
+<summary>細節</summary>
+
 Herdr 會重用已關閉工作區的 id，所以 `workspace.created` 事件會取代該 id 先前的任何紀錄，`workspace.closed` 事件（或帶走工作區最後一個 pane 的 `pane.exited`）會刪除該 id 的紀錄與任何 `workspace:<id>` 釘選，而巡檢會丟掉它所關閉工作區的紀錄。每筆紀錄也存著該工作區的 checkout 路徑，checkout 與存活工作區不同的紀錄屬於重用 id 的較早工作區，會被忽略。
+
+</details>
 
 ### 何時執行
 
 巡檢每 10 分鐘執行一次，並在有智慧體被釋放之後 `CONFIRM_MS` 再執行一次。Herdr 沒有給外掛用的計時器，所以 startup hook 與事件 hook 會啟動一個 ticker，也就是一個小型的獨立 node 行程，每 15 秒檢查狀態檔，並在到期時透過 `herdr plugin action invoke` 執行 `sweep` 動作，這讓每次巡檢都是一個一般的、有記錄的外掛指令。這偏離了 Herdr 的指引（0.9.5）：startup hook 應該是一次性的，而不是被監督的常駐程式，也告訴外掛要在指令結束前停止獨立的背景行程。
+
+<details>
+<summary>細節</summary>
 
 ticker 是外掛能依排程巡檢的唯一方法，而它限制了這項偏離：它只有單一行程（一個 beat 檔與一個鎖），除了 beat 與它的 log（狀態資料夾裡的 `ticker.log`，超過 200 KB 時在啟動時截斷）之外不保留任何東西，連續三次呼叫失敗後會自行結束。因此，在解除安裝、取消連結或 server 結束之後，它會活到下一次巡檢到期，最多 10 分鐘，再加上三次重試約一分鐘：大約 11 分鐘。
 
@@ -2558,13 +2586,20 @@ ticker 是外掛能依排程巡檢的唯一方法，而它限制了這項偏離�
 
 每次 `herdr` 呼叫有 30 秒逾時，每次 git 呼叫 60 秒（移除 checkout 為 5 分鐘），所以卡住的呼叫會失敗，而不是一直占著鎖。在 Herdr 內的終端機執行 `bash herdr-reaper/run.sh reaper.mjs dry-run`，會印出巡檢現在會做什麼，而不改變任何東西，包括狀態檔；它讀取外掛的狀態，所以在外掛巡檢過一次之前，適用第一次巡檢的規則。
 
+</details>
+
 ### 限制
 
 狀態是外掛狀態資料夾裡的 `state.json`。只有檔案不存在才會被讀成空的；損毀或讀不出來的檔案會讓巡檢與事件失敗，並在外掛 log 裡附上該檔案的路徑（也會停掉 ticker），而不是退回第一次巡檢的規則並忘掉釘選，所以請修復或移除該檔案。已連結 worktree 工作區裡，比智慧體活得更久的使用者 shell，會像遺留物一樣被關閉：要保留它，就釘選該工作區。被忽略的檔案（`.env*`、`node_modules`、建置輸出、本機資料庫）不會讓 checkout 變髒，所以會隨它一起消失；要保留它們，就釘選該工作區。pi-herdr-agents 的 worktree 不論內容為何，都由守衛 1 保留；忽略檔案的遺失只針對沒有任何東西持有的 checkout。
 
+<details>
+<summary>細節</summary>
+
 pi-herdr-agents 沒有「父層還活著」的紀錄，所以對它的 worktree 的保留依賴兩個訊號：Herdr 看到在父 session 上執行 pi 的 pane，以及閒置上限。在 pane 中以 `/new` 接續、fork 或重啟的父 session 是另一個 session id，所以它的舊 id 不再算作開著；在 Herdr 之外的終端機中的父層只由閒置上限保留。這兩種 pi session 只要閒置超過 `retain_idle_hours` 之後才接續，都可能發現它乾淨的 worktree 已被移除（分支保留）。
 
 只有當 payload 指名終端機時（Herdr 0.9.5 記載了 `pane_id` 與 `workspace_id`），智慧體事件才會拿它的終端機與 pane 的比對，所以在 hook 延遲內被重用的 pane id，在那裡仍可能被誤讀；巡檢的檢查使用終端機 id。從 macOS 應用程式啟動的 Herdr 的 PATH 很短；`run.sh` 尋找 node 的方式與網檢視外掛相同。外掛需要 Herdr 0.9.3 或更新版本、git、node 18 或更新版本，以及 Unix shell，所以只能在 macOS 與 Linux 上執行。`tests/reaper.test.ts` 對著假的 Herdr 與 git 驅動這些決定與巡檢。
+
+</details>
 
 ## 程序衛生與 slot
 
