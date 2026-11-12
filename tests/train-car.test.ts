@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
+import { reachClass } from "../src/server/carbook.ts";
 import { coordinatorWord, landedWord, noticeSatisfied, receivedTold } from "../src/train/cars.ts";
 import { type CarCtx, type CarParams, type CarToolDeps, trainCar } from "../src/traincar.ts";
 import { cleanup, forwardEntry, MANIFEST_HEADER, rig, type Rig, slipBlock } from "./train-guard-rig.ts";
@@ -365,6 +366,61 @@ test("#15: received is refused for a head that is on the base's remote branch al
 	w.deps.git = real;
 	await assert.rejects(trainCar(integratorDeps(w), { ...received, car: "T-26" }, forward("T-26", pushed)), (e: Error) => e.message === on("T-26", pushed));
 	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-27" }, forward("T-27", "e".repeat(40)))).text, /^Car T-27 is received\./);
+});
+
+test("0.77.3 R0772-F001/F002: a fetch that fails after the mirror's config was rewritten is refused as tampered, not unchecked; a token in the remote's URL never reaches the tool's text", async () => {
+	const w = world();
+	const { local } = repo(w);
+	appBase(w);
+	const forward = (ticket: string, head: string) => {
+		const text = slipBlock({ tickets: ticket, head });
+		w.book.noteForward({ fwd: "e".repeat(16), from: COORD, to: [INTEG], text });
+		return integratorCtx(forwardEntry(COORD, text));
+	};
+	const real = w.deps.git;
+	// F001: something writes the mirror's config between the init and the fetch, and the fetch then fails as if the host were unreachable.
+	w.deps.git = async (cwd, args, env) => {
+		if (args.includes("fetch")) {
+			writeFileSync(join(cwd, "config"), `${readFileSync(join(cwd, "config"), "utf8")}[url "https://x.invalid/"]\n\tinsteadOf = https://\n`);
+			throw Object.assign(new Error("Command failed"), { stderr: "fatal: unable to access 'https://x.invalid/a.git/': Could not resolve host: x.invalid\n" });
+		}
+		return real(cwd, args, env);
+	};
+	await refused(trainCar(integratorDeps(w), { ...received, car: "T-30" }, forward("T-30", local)), "was written to by something else (config (changed))");
+	// The same failure with the mirror untouched is the unreachable remote it says it is.
+	w.deps.git = async (cwd, args, env) => {
+		if (args.includes("fetch")) throw Object.assign(new Error("Command failed"), { stderr: "fatal: unable to access 'https://x.invalid/a.git/': Could not resolve host: x.invalid\n" });
+		return real(cwd, args, env);
+	};
+	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-31" }, forward("T-31", "c".repeat(40)))).text, /Received unchecked: the server could not reach the project's remote \(connection: git fetch/);
+	// F002: git names the URL with its userinfo; the text blanks it.
+	w.deps.git = async (cwd, args, env) => {
+		if (args.includes("ls-remote")) throw Object.assign(new Error("Command failed"), { stderr: "fatal: could not read Password for 'https://SECRETTOKEN@github.com': terminal prompts disabled\n" });
+		return real(cwd, args, env);
+	};
+	const text = (await trainCar(integratorDeps(w), { ...received, car: "T-32" }, forward("T-32", "d".repeat(40)))).text;
+	assert.match(text, /Received unchecked: .*\(auth: .*https:\/\/\*\*\*@github\.com/);
+	assert.ok(!text.includes("SECRETTOKEN") && !w.logs.some((l) => l.includes("SECRETTOKEN")), text);
+	// With no stderr, the error message (sb's own timeout names the whole command and URL) is blanked the same way.
+	w.deps.git = async (cwd, args, env) => {
+		if (args.includes("ls-remote")) throw new Error("Command timed out after 60000 ms: git ls-remote -- https://user:pass@example.com/x.git");
+		return real(cwd, args, env);
+	};
+	const timed = (await trainCar(integratorDeps(w), { ...received, car: "T-33" }, forward("T-33", "e".repeat(40)))).text;
+	assert.match(timed, /\(connection: .*https:\/\/\*\*\*@example\.com/);
+	assert.ok(!timed.includes("pass@"), timed);
+});
+
+test("0.77.3 R0772-F003: only a repository git says is not there counts as not found; a missing ssh, or any other \"not found\", is no class and still refuses", () => {
+	assert.equal(reachClass("sh: ssh: command not found"), undefined);
+	assert.equal(reachClass("fatal: couldn't find remote ref refs/heads/develop"), undefined);
+	assert.equal(reachClass("remote: Repository not found."), "repository-not-found");
+	assert.equal(reachClass("fatal: repository 'https://github.com/x/y.git/' not found"), "repository-not-found");
+	assert.equal(reachClass("fatal: unable to access 'https://h/': The requested URL returned error: 404"), "repository-not-found");
+	assert.equal(reachClass("fatal: unable to access 'https://h/': SSL certificate problem: self signed certificate"), "connection", "TLS counts as connection, as the docs say");
+	assert.equal(reachClass("fatal: unable to access 'https://h/': The requested URL returned error: 500"), "connection");
+	assert.equal(reachClass("fatal: unable to access 'https://h/': Received HTTP code 407 from proxy after CONNECT"), "connection");
+	assert.equal(reachClass("Command timed out after 60000 ms: git ls-remote"), "connection");
 });
 
 test("#15: a project whose remote the server cannot read is received unchecked, the log and the tool say so; one whose remote is read and whose app names no usable base is refused (car-forward-F003)", async () => {

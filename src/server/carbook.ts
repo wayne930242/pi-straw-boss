@@ -114,11 +114,13 @@ const noticeName = (name: string) => name.replace(/\.json$/, ".notice.json");
 /** What follows a car file's name in the key of an earlier life (`<name>#<n>`); no file name holds it. */
 const PAST = "#";
 const changedAt = (held: Held) => held.file.states.at(-1)?.at ?? "";
-const firstLine = (error: unknown) => String((error as { stderr?: unknown }).stderr || (error as Error).message).trim().split("\n")[0]!.slice(0, 200);
+/** git's first line of stderr, else the error's message (sb's own timeout names the command and its URL), with a URL's userinfo blanked: a token used as the https username goes into no tool text or log (R0772-F002). */
+const firstLine = (error: unknown) => String((error as { stderr?: unknown }).stderr || (error as Error).message).trim().split("\n")[0]!.replace(/\/\/[^/@\s'"]+@/g, "//***@").slice(0, 200);
 /** Why git could not reach a remote, read from its first line of stderr; undefined for any other failure. Only `received` acts on it (0.77.2). */
 export function reachClass(line: string): "auth" | "connection" | "repository-not-found" | undefined {
 	if (/could not read (?:Username|Password)|terminal prompts disabled|Authentication failed|Access denied|Permission denied \(publickey|returned error: 40[13]|Host key verification failed/i.test(line)) return "auth";
-	if (/Repository not found|does not appear to be a git repository|returned error: 404|not found/i.test(line)) return "repository-not-found";
+	// A repository the remote says is not there, and no other "not found" (`ssh: command not found` is a broken server, not a gone repository; R0772-F003).
+	if (/Repository not found|repository '[^']*' not found|does not appear to be a git repository|returned error: 404/i.test(line)) return "repository-not-found";
 	if (/Could not resolve host|Connection refused|Connection timed out|timed out|Failed to connect|Network is unreachable|Could not read from remote repository|unable to access|Connection reset|Connection closed/i.test(line)) return "connection";
 	return undefined;
 }
@@ -206,6 +208,12 @@ function inspectMirror(dir: string, code: string, stage: "init" | "fetch" | "che
 		if (stage === "check" && look.packs !== before.packs) bad.push("objects/pack (changed)");
 	}
 	return { problems: bad, look };
+}
+
+/** What of the mirror's config and HEAD differs from the look taken after its init (a file that cannot be read differs). */
+function mirrorMoved(dir: string, look: Look1 | undefined): string[] {
+	const read = (name: string) => { try { return readFileSync(join(dir, name)).toString("latin1"); } catch { return undefined; } };
+	return look ? [...(read("config") !== look.config ? ["config (changed)"] : []), ...(read("HEAD") !== look.head ? ["HEAD (changed)"] : [])] : ["config (no look)"];
 }
 
 export class CarBook {
@@ -633,7 +641,12 @@ export class CarBook {
 			const inMirror = (...args: string[]) => this.d.git(mirror, ["--git-dir", mirror, ...MIRROR_FLAGS, ...args], env);
 			const fresh = inspectMirror(mirror, code, "init");
 			if (fresh.problems.length) throw tampered(fresh.problems);
-			try { await inMirror(...REMOTE_FLAGS, ...FETCH_FLAGS, "fetch", "--no-tags", "--no-recurse-submodules", "--", url, `+${ref}:${mine}`); } catch (error) { const line = firstLine(error); throw unreached(`sb: git fetch of ${base} from the project's remote failed: ${line}`, line); }
+			try { await inMirror(...REMOTE_FLAGS, ...FETCH_FLAGS, "fetch", "--no-tags", "--no-recurse-submodules", "--", url, `+${ref}:${mine}`); } catch (error) {
+				const line = firstLine(error);
+				// A fetch that failed as unreachable may have been made to fail by a rewritten mirror (an `insteadOf` in its config): that is a tampered mirror, refused, not a remote out of reach (R0772-F001).
+				if (reachClass(line)) { const moved = mirrorMoved(mirror, fresh.look); if (moved.length) throw tampered(moved); }
+				throw unreached(`sb: git fetch of ${base} from the project's remote failed: ${line}`, line);
+			}
 			const fetched = inspectMirror(mirror, code, "fetch", fresh.look);
 			if (fetched.problems.length) throw tampered(fetched.problems);
 			const got = (await inMirror("rev-parse", "--verify", "-q", mine)).trim();
