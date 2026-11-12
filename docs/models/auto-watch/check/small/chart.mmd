@@ -1,0 +1,69 @@
+---
+title: "one night of the auto watch, nothing failing"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: off
+    lg1: watching
+    lg2: notice
+  }
+  class lg0 tan
+  class lg1 blue
+  class lg2 orange
+  s0: Auto mode off
+  s1: no notice out#59; nothing to look at
+  s2: Auto mode off, the morning list written
+  s3: no notice out#59; finding a shows, not told
+  s4: the notice waits in the head's queue#59; finding a shows, not told
+  s5: a head run holds the notice#59; finding a shows, not told
+  s6: the notice waits in the head's queue#59; finding a resolved, not told
+  s7: Auto mode off, the morning list written#59; a head run still holds the last notice
+  s8: a head run finished the notice#59; finding a shows, not told
+  s9: a head run holds the notice#59; finding a resolved, not told
+  s10: no notice out#59; finding a shows, told
+  s11: a head run finished the notice#59; finding a resolved, not told
+  s12: no notice out#59; finding a resolved, told
+  [*] --> s0
+  s0 --> s1: the boss switches auto mode on
+  s0 --> s3: the boss switches auto mode on
+  s1 --> s2: the boss switches auto mode off
+  s1 --> s3: a finding appears
+  s3 --> s1: a finding resolves
+  s3 --> s2: the boss switches auto mode off
+  s3 --> s4: a reading finds something new: one notice to the head
+  s4 --> s2: the boss switches auto mode off
+  s4 --> s5: a head run takes the notice
+  s4 --> s6: a finding resolves
+  s5 --> s7: the boss switches auto mode off
+  s5 --> s8: the head run ends well
+  s5 --> s9: a finding resolves
+  s6 --> s2: the boss switches auto mode off
+  s6 --> s4: a finding appears
+  s6 --> s9: a head run takes the notice
+  s7 --> s2: the head run ends well
+  s8 --> s2: the boss switches auto mode off
+  s8 --> s10: a reading reads the notice back
+  s8 --> s11: a finding resolves
+  s9 --> s5: a finding appears
+  s9 --> s7: the boss switches auto mode off
+  s9 --> s11: the head run ends well
+  s10 --> s2: the boss switches auto mode off
+  s10 --> s12: a finding resolves
+  s11 --> s8: a finding appears
+  s11 --> s2: the boss switches auto mode off
+  s11 --> s12: a reading reads the notice back
+  s12 --> s10: a finding appears
+  s12 --> s2: the boss switches auto mode off
+  class s0 tan
+  class s1 blue
+  class s2 tan
+  class s3 blue
+  class s4 orange
+  class s5 orange
+  class s6 orange
+  class s7 tan
+  class s8 orange
+  class s9 orange
+  class s10 blue
+  class s11 orange
+  class s12 blue

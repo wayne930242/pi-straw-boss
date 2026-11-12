@@ -29,11 +29,25 @@ stateDiagram-v2
 - **Towers park what needs you.** A wait card a tower records for you is parked: it raises no notification, sound, or Zen cue. The session that raised it is told once.
 - **Agents keep working.** `call_tower`, monitors, loops, and subagents are not refused.
 
+## The head tower keeps watch
+
+While auto mode is on, the sb server reads every workspace every 15 minutes and wakes the head tower when a reading holds something new. A calm reading wakes nobody and costs no head tower run; it is only counted. Nothing polls: the timer is the server's, it stops when auto mode ends, and it goes on after a server restart.
+
+- **What the notice says.** The waits that were refused or parked, the mains that are idle with open work, a tower that takes no events, a train or a forward that has not moved for 30 minutes, a session the stall watch flagged, and the output since the last wake. Each finding is told once a night, and a main seen idle once is left alone until the next reading.
+- **Output, not activity.** Output is what the server can see: board lines written and cars landed. A workspace that shows none for 2 hours is flagged once, even when its panes say working, unless its mains are all done. The server sees no commit and no push.
+- **What the head tower does.** It has no new tool. It tells the owning tower to nudge a main that stays idle. For a parked question your standing instructions or decisions in its memory cover, it sends the owning tower the wait and your instruction's words, and the tower decides from its own memory or records it for the morning. It never decides past what you told it.
+- **The head tower is opened for you.** Switching auto mode on opens the head tower when none is open. One that closes later in the night is not opened again: the morning list says from when no head tower was open.
+- **Told means taken to the end.** A notice counts only once a head tower run took it and ended well. A run the server quit (you closed the head tower during it) or a notice purged from the queue does not count: its findings are told again in the next notice and named in the morning. While a notice waits, every later reading is skipped behind it, so a head tower that hangs on it never makes the night look calm.
+- **A crashing head tower is left alone.** A notice parked after two head tower runs crashed with it no longer holds the watch back: the next notice tells its findings again. After two parked in a row the watch sends no more, so a head tower that crashes on every notice is not started all night; it resumes once you open the head tower again.
+- **Nothing is left for the next night.** When auto mode ends, the watch's notices are dropped, even when the head tower is closed. One a head tower run is working on may be finished, but it is never handed to another run.
+- **A box you operate is not watched** by your head tower: it keeps its own.
+
 ## When you are back
 
 When auto mode ends, the parked waits become open waits again, and one list says what happened:
 
 - **On the page**, a return panel opens on the next load: the parked waits first, as cards you can press, then what was cancelled or refused, what a tower decided on its own, and what still waits.
 - **In pi**, `/boss auto off` prints the same list. Act on a parked wait with `/boss memory done|choose|decline W<n>`.
+- **The watch's part.** The list ends with how many readings the server took, how many were calm, how often the head tower was woken, the messages it sent on its own, and the workspaces that showed no output for 2 hours or more. Then every finding of the night is in one place: still open at the last reading (told, and still there: a held tower, a stuck train, an unanswered forward), carried only by notices parked after crashes, in a last notice a head tower run still holds, or told to nobody (no head tower run took it; one gone by the last reading is marked so). A finding that was told and is gone is left out. `/boss auto off` prints it; the page's return panel does not show it yet.
 
 The rules are in [Auto mode](/pi-straw-boss/docs/reference/how-it-works/how-it-works/#auto-mode).

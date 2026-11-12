@@ -63,7 +63,7 @@ test("a pi that stays pegged for five minutes while its session file stands stil
 	assert.deepEqual({ pid: f.pid, started: f.started, session: f.session, name: f.name, pane: f.pane, workspace: f.workspace, role: f.role, told: f.told }, { pid: 101, started: "t101", session: "s-main", name: "main api", pane: "p1", workspace: "w1", role: "main", told: 0 });
 	assert.equal(f.cpuMinutes, 5, "295 s of cpu, to the minute");
 	assert.ok(f.cpuNow! >= 98 && f.cpuNow! <= 99, `the last sample's share of a core: ${f.cpuNow}`);
-	assert.deepEqual(watch().list(), [{ pid: 101, session: "s-main", pane: "p1", signals: ["cpu"], told: 1 }]);
+	assert.deepEqual(watch().list(), [{ pid: 101, session: "s-main", pane: "p1", workspace: "w1", signals: ["cpu"], told: 1 }], "with its pane's workspace, for the auto watch (autowatch.ts)");
 	await minutes(58, { 101: 59 });
 	assert.deepEqual(kinds(), ["flag:cpu"], "58 more pegged minutes: the incident was told");
 	await minutes(2, { 101: 59 });
@@ -505,7 +505,7 @@ test("the server's wiring: a session counts in the pane the broker finds it in n
 	// A session the broker finds in another pane reports the pid.
 	sessions = [{ id: "s-liar", pid: 101, herdrLocation: { status: "current", paneId: "pOTHER", workspace: { id: "w1", label: "api" } } }];
 	await minutes(8);
-	assert.deepEqual(watch.list(), [{ pid: 101, session: "s-main", pane: "p1", signals: ["missing"], told: 0 }]);
+	assert.deepEqual(watch.list(), [{ pid: 101, session: "s-main", pane: "p1", workspace: "w1", signals: ["missing"], told: 0 }]);
 	assert.deepEqual(log.map((l) => l.event), ["stall-no-tower", "stall-untold"], "five samples that could tell nobody: each line once");
 	assert.match(String(log[0]!.facts.text), /towerRuns\.enabled is off/);
 });

@@ -130,10 +130,11 @@ function sources(dir: string, base = dir): string[] {
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
 // server/main.ts only hands the GUI host the test seams of the reading (the load, the clock, the writer check); it reads and carries no yard.
+// server/watchops.ts and server/autowatch.ts are the auto watch (issue #16): a reading of the net of its own, whose stuck trains and landed cars go into the notice the head tower of this computer gets; the head forwards to this computer's towers only.
 test("only the net, the GUI host and the reader name the yards: the code that builds the board message, a remote turn's reading and the operate wire never mention them", () => {
 	const mention = /\.yards\b|\byards\??:|\btrainyard|yardview|readYards|\bYards\b/;
 	const holders = sources(SRC).filter((f) => mention.test(readFileSync(join(SRC, f), "utf8")));
-	assert.deepEqual(holders.sort(), ["net.ts", "server/guihost.ts", "server/main.ts", "server/trainyard.ts", "train/yardview.ts"], "a new place that reads or carries the yards must be added here on purpose");
+	assert.deepEqual(holders.sort(), ["net.ts", "server/autowatch.ts", "server/guihost.ts", "server/main.ts", "server/trainyard.ts", "server/watchops.ts", "train/yardview.ts"], "a new place that reads or carries the yards must be added here on purpose");
 	for (const f of sources(SRC).filter((f) => f.startsWith("link/") || ["boardread.ts", "board.ts", "boardauto.ts", "server/towerbrief.ts", "server/runtools.ts", "operateslice.ts", "operateroutes.ts", "remote.ts"].includes(f) || f.startsWith("server/operate")))
 		assert.ok(!mention.test(readFileSync(join(SRC, f), "utf8")), `${f} must not know the yards`);
 });

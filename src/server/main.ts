@@ -30,6 +30,7 @@ import { createLog, tailLog } from "./log.ts";
 import { type Cars, carsReply, startCars } from "./carops.ts";
 import { procsReply, startProcs, type StartProcs } from "./procsops.ts";
 import { startStall, type StartStall } from "./stallops.ts";
+import { reportWatch, startAutoWatch, type StartWatch } from "./watchops.ts";
 import { gateRun, type RunInfo } from "./rungate.ts";
 import type { ServerTools } from "./runtools.ts";
 import {
@@ -115,6 +116,8 @@ export interface ServerOptions {
 	procs?: StartProcs["over"];
 	/** The stall watch's seams (stallops.ts), for tests: without them a test run has no watch. */
 	stall?: StartStall["over"];
+	/** The auto watch's seams (watchops.ts), for tests: without them a test run has no watch. */
+	autoWatch?: StartWatch["over"];
 	touchMs?: number;
 	brokerMs?: number;
 	herdrGoneMs?: number;
@@ -178,7 +181,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	let link: LinkService | undefined, linkFirst: Promise<void> | undefined;
 	let procs: ReturnType<typeof startProcs> | undefined; // the owner registry (procsops.ts), assigned before the first request is taken
 	// Auto mode (docs/specs/2026-11-09-auto-mode.md): the primary server alone writes `auto.json` at the state root, so every Herdr slot of this computer reads one file; the head's notices go through the tower service once it exists.
-	const auto = slot.primary ? createAutoMode({ dir: slot.stateDir, now, log: (event, facts) => log.line(event, facts), parked: () => towers?.parked() ?? [], unpark: () => towers?.unpark(), tellHead: (text) => { const workspace = towers?.head.status()?.workspace; if (workspace) towers!.runs.notice(workspace, text, `auto:${now()}`); } }) : undefined;
+	const auto = slot.primary ? createAutoMode({ dir: slot.stateDir, now, log: (event, facts) => log.line(event, facts), parked: () => towers?.parked() ?? [], unpark: () => towers?.unpark(), watch: reportWatch(slot, now, () => towers), tellHead: (text) => { const workspace = towers?.head.status()?.workspace; if (workspace) towers!.runs.notice(workspace, text, `auto:${now()}`); } }) : undefined;
 	// A secondary slot follows the primary's files and forwards its asks (autofollow.ts, AMC-F002).
 	const follower = slot.primary ? undefined : createAutoFollower({ dir: slot.stateDir, primary: { ...slot, primary: true, dir: slot.stateDir }, log: (event, facts) => log.line(event, facts), unpark: () => towers?.unpark(), tellHead: (text) => { const workspace = towers?.head.status()?.workspace; if (workspace) towers!.runs.notice(workspace, text, `auto:${now()}`); } });
 	// An unattended device has no boss at it (autoops.ts): the link holder says which this computer is.
@@ -632,6 +635,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	}, () => (log.line("herdr-lost", { at: Date.now() }), towers?.runs.herdrLost())));
 	// The stall watch (stallwatch.ts): a pi that froze is told to its workspace's tower from the registry's tick; it signals nothing.
 	const stall = startStall({ dir: slot.dir, stateDir: slot.stateDir, pid, platform, now, log: (event, facts) => log.line(event, facts), run: cfg.run, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, ...(o.stall ? { over: o.stall } : {}) });
+	// The auto watch (autowatch.ts): while auto mode is on, the head tower is woken about every 15 minutes with what the server's own state shows of each workspace; the primary server's, as auto mode is.
+	if (auto) ((stop) => stop && stops.push(stop))(startAutoWatch({ auto, slot, env, now, log: (event, facts) => log.line(event, facts), run: cfg.run, world: cfg.world, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, stalls: () => stall?.list() ?? [], book: () => cars?.book, ...(o.autoWatch ? { over: o.autoWatch } : {}) }));
 	procs = startProcs({ dir: slot.dir, stateDir: slot.stateDir, env, pid, platform, now, log: (event, facts) => log.line(event, facts), run: cfg.run, events: cfg.events, ...(stall ? { watch: (table) => stall.sample(table) } : {}), ...(o.procs ? { over: o.procs } : {}), stops, timers, leaving: () => Boolean(leaving) || phase === "stopping" || phase === "restarting" });
 	let downSince: number | undefined;
 	const herdrUp = o.herdrUp ?? (() => herdrListens({ slot, platform }));

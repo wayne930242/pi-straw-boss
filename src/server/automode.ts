@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { secretShaped } from "./waitcard.ts";
+import { type WatchReport, type WatchState, watchOf } from "./autowatch.ts";
 import { type BoxAsk, buildReport, endEvent, type ParkedRow, type Report, reportText } from "./autotower.ts";
 import { REPORT_FILE, AUTO_FILE, type AutoState, type By, isOwn, matchBoss, OWN_FILE, type Own, type Pending, readAuto, readOwn, seal } from "../autostate.ts";
 
@@ -28,6 +29,8 @@ export interface AutoDeps {
 	unpark?(): void;
 	/** The asks of the boxes this computer controls that were left waiting (D6). */
 	boxes?(): BoxAsk[];
+	/** The watch's section of the return list (autowatch.ts `watchSection`), from the period that ends. */
+	watch?(period: Period, until: string): WatchReport | undefined;
 }
 /** What the boss's own words in a head turn came from: the event that started it (never a press), or the typed line the head pane's extension reported. */
 export interface Words { event?: { id: string; text: string; press?: true }; typed?: { text: string; run: string; seq: number } }
@@ -41,7 +44,7 @@ const whoFacts = (by: By) => ({ via: by.via, name: by.name, session: by.requeste
 export const NOTE_KINDS = ["refused", "cancelled", "escaped", "trust", "still-waiting", "re-asked", "backstop"] as const;
 export interface Note { session: string; tool: string; kind: (typeof NOTE_KINDS)[number]; gist: string; at: string }
 /** What one period of auto mode collected, from the switch on to the switch off (§8). */
-export interface Period { since: string; notes: Note[]; foreign: { at: string; why: string }[]; decided: Decided[] }
+export interface Period { since: string; notes: Note[]; foreign: { at: string; why: string }[]; decided: Decided[]; /** The head tower's watch (autowatch.ts): its count and last wake, so a restart goes on from them. */ watch?: WatchState }
 /** A `tower_reply` or `tower_send` a run made to a session whose `blocked` call it took, while auto mode was on (§6; AM2-F004). */
 export interface Decided { at: string; run: string; to: string; gist: string; basis: string }
 export const PERIOD_FILE = "auto-period.json", NOTES_MAX = 500;
@@ -70,7 +73,7 @@ export function createAutoMode(d: AutoDeps) {
 	const readPeriod = (): Period | undefined => {
 		try {
 			const j = JSON.parse(readFileSync(join(d.dir, PERIOD_FILE), "utf8")) as Partial<Period>;
-			return typeof j.since === "string" && Array.isArray(j.notes) ? { since: j.since, notes: j.notes.slice(-NOTES_MAX), foreign: Array.isArray(j.foreign) ? j.foreign : [], decided: Array.isArray(j.decided) ? j.decided : [] } : undefined;
+			return typeof j.since === "string" && Array.isArray(j.notes) ? { since: j.since, notes: j.notes.slice(-NOTES_MAX), foreign: Array.isArray(j.foreign) ? j.foreign : [], decided: Array.isArray(j.decided) ? j.decided : [], ...((w) => (w ? { watch: w } : {}))(watchOf(j.watch)) } : undefined;
 		} catch {
 			return undefined;
 		}
@@ -180,7 +183,11 @@ export function createAutoMode(d: AutoDeps) {
 		let text: string | undefined;
 		try {
 			const p = period ?? { since: change.from.since ?? iso(), notes: [], foreign: [], decided: [] };
-			last = buildReport(p, change.from.by, by, iso(), d.parked?.() ?? [], d.boxes?.() ?? []);
+			const until = iso();
+			// The watch's section is the watch's alone: one that cannot be built costs that section, never the list or the unpark.
+			let watch: WatchReport | undefined;
+			try { watch = d.watch?.(p, until); } catch (error) { d.log("auto-watch-report", { text: (error as Error).message }); }
+			last = buildReport(p, change.from.by, by, until, d.parked?.() ?? [], d.boxes?.() ?? [], watch);
 			write(REPORT_FILE, last);
 			text = reportText(last);
 			d.unpark?.();
@@ -222,7 +229,7 @@ export function createAutoMode(d: AutoDeps) {
 		if (!own.state.on || !period) return { ok: false, error: "auto mode is off" };
 		const kind = NOTE_KINDS.find((k) => k === raw.kind);
 		if (!kind) return { ok: false, error: "unknown kind" };
-		period.notes.push({ session: phrase(String(raw.session ?? ""), 80), tool: phrase(String(raw.tool ?? ""), 60), kind, gist: gistOf(raw.gist), at: typeof raw.at === "string" && !Number.isNaN(Date.parse(raw.at)) ? raw.at : iso() });
+		period.notes.push({ session: phrase(String(raw.session ?? ""), 80), tool: phrase(String(raw.tool ?? ""), 60), kind, gist: gistOf(raw.gist), at: typeof raw.at === "string" && Date.parse(raw.at) <= d.now() ? raw.at : iso() });
 		if (period.notes.length > NOTES_MAX) period.notes.splice(0, period.notes.length - NOTES_MAX);
 		savePeriod();
 		return { ok: true };
@@ -234,6 +241,8 @@ export function createAutoMode(d: AutoDeps) {
 		if (period.decided.length > NOTES_MAX) period.decided.splice(0, period.decided.length - NOTES_MAX);
 		savePeriod();
 	}
-	return { note, decided, report: () => last, period: () => period, start, tick, view, state, stage, confirm, switchOn, switchOff, bossAuto, check, onSwitch: (l: (change: Change) => void) => (listeners.add(l), () => void listeners.delete(l)), foreignCount: () => foreign };
+	/** The watch's state of the period that runs; it is written with the period, and dropped when auto mode is off or the period's file is lost. */
+	const setWatch = (state: WatchState): void => { if (own.state.on && period) (period.watch = state, savePeriod()); };
+	return { watch: () => (own.state.on ? period?.watch : undefined), setWatch, note, decided, report: () => last, period: () => period, start, tick, view, state, stage, confirm, switchOn, switchOff, bossAuto, check, onSwitch: (l: (change: Change) => void) => (listeners.add(l), () => void listeners.delete(l)), foreignCount: () => foreign };
 }
 export type AutoMode = ReturnType<typeof createAutoMode>;

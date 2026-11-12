@@ -1,0 +1,4 @@
+cfg/
+check/*
+!check/small/
+check/small/tlc.out

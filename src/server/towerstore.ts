@@ -60,6 +60,8 @@ export interface QueuedEvent {
 	press?: true;
 	/** Who sent a boss event over the control socket, as the request reported it (auto mode records it; docs/specs/2026-11-09-auto-mode.md, §2). */
 	requester?: Requester;
+	/** The event is stale (the auto watch's notice of a period that ended): the run that holds it may finish it, but it goes when that run ends, whatever the outcome, and no other run is offered it (AW-D21). */
+	drop?: true;
 }
 
 /** A file name for a Herdr id: ids are short counters, but nothing a caller sends may leave the folder. */
@@ -188,6 +190,16 @@ export function unparkEvent(slot: Slot, workspace: string, event: QueuedEvent): 
 export function dropParked(slot: Slot, workspace: string, event: Pick<QueuedEvent, "seq" | "id">): void {
 	rmSync(join(parkedDir(slot, workspace), nameOf(event)), { force: true });
 }
+/** The head's ledger of the notices a head run finished well (`told.json` in `head/`): the auto watch counts its notice as told only when its key is here (AW-D20). Newest last. */
+const TOLD = "told.json", TOLD_KEPT = 50;
+export function readTold(slot: Slot): string[] {
+	const list = readJson<unknown>(join(headDir(slot), TOLD));
+	return Array.isArray(list) ? list.filter((k): k is string => typeof k === "string") : [];
+}
+export function addTold(slot: Slot, key: string): void {
+	ensureDir(headDir(slot));
+	writeDurable(join(headDir(slot), TOLD), [...readTold(slot).filter((k) => k !== key), key].slice(-TOLD_KEPT));
+}
 export function queueLength(slot: Slot, workspace: string): number {
 	try {
 		return readdirSync(queueDir(slot, workspace)).filter((name) => name.endsWith(".json")).length;
@@ -262,14 +274,14 @@ const countFiles = (dir: string): number => {
 	for (const e of readdirSync(dir, { withFileTypes: true })) n += e.isDirectory() ? countFiles(join(dir, e.name)) : 1;
 	return n;
 };
-/** The flag is off: every workspace's `service.json`, queue (parked events too), runs, notes, expectations, timer, dedupe ledger and opener's ledger go, the head's in `head/` with them, but not its conversation, memory, asks, or chapters (message text stays on disk with no time limit otherwise). Returns how many files went. */
+/** The flag is off: every workspace's `service.json`, queue (parked events too), runs, notes, expectations, timer, dedupe ledger, opener's ledger and the head's told ledger go, the head's in `head/` with them, but not its conversation, memory, asks, or chapters (message text stays on disk with no time limit otherwise). Returns how many files went. */
 export function purgeAll(slot: Slot): number {
 	let gone = 0, names: string[] = [];
 	try {
 		names = readdirSync(towersDir(slot));
 	} catch { /* none */ }
 	for (const dir of [...names.map((name) => join(towersDir(slot), name)), headDir(slot)]) {
-		for (const entry of ["queue", "runs", SERVICE, OPENED, "notes.jsonl", "expects.json", "timer.json", "seen.jsonl", ...ALLY_FILES]) {
+		for (const entry of ["queue", "runs", SERVICE, OPENED, "notes.jsonl", "expects.json", "timer.json", "seen.jsonl", TOLD, ...ALLY_FILES]) {
 			const path = join(dir, entry), stat = statSync(path, { throwIfNoEntry: false });
 			if (!stat) continue;
 			gone += stat.isDirectory() ? countFiles(path) : 1;
