@@ -2,7 +2,7 @@
 // docs/how-it-works.md (and its zh-TW twin) split by H2, docs/unattended-device*.md, docs/releases/*.md, and the images.
 // Links are rewritten to absolute site paths (the links validator checks them) or to GitHub for files the site does not publish.
 // `--check` reports whether docs/how-it-works.zh-TW.md still matches the English file: heading structure (error) and drift (warning),
-// and every `**` that CommonMark would not turn into bold (CJK punctuation beside it): an error in the site's own pages, a warning in docs/.
+// and every `**` that CommonMark would not turn into bold (CJK punctuation beside it), in the site's own zh pages and in docs/*.zh-TW.md (error).
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
@@ -185,7 +185,7 @@ function checkBold() {
 	}
 	for (const f of readdirSync(DOCS).filter((f) => /\.zh-TW\.md$/.test(f))) {
 		const lines = brokenBold(read(join(DOCS, f)));
-		if (lines.length) console.log(`docs/${f}: ${lines.length} lines with bold that does not render (warning; move the punctuation outside the ** or put a space after it): ${lines.slice(0, 12).join(", ")}${lines.length > 12 ? ", …" : ""}`);
+		if (lines.length) console.log(`docs/${f}: bold the page cannot show (move the punctuation outside the ** or put a space after it), at lines ${lines.join(", ")}`), (bad = 1);
 	}
 	return bad;
 }
