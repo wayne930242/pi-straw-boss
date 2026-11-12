@@ -18,14 +18,50 @@ An app without the `integration` field keeps the old flow.
 | **Coordinator** (a main) | Reviews its own branch (no P0 or P1 findings), runs the behaviour tests for its change and the project skill's light checks, runs the acceptance the app requires (with your nod), then sends a **car slip** with `call_tower` `why: shared`. |
 | **Tower** | Forwards the slip to the project's one integrator, opening it when none runs, and opens each train when the integrator asks. |
 | **Integrator** (`integ <project>`) | Receives or returns each car, forms trains, and asks the tower to open them. It does not supervise a train. |
-| **Train** (`train 1106m`) | A session of its own: assembles the cars on the latest base in a worktree, has a fresh reviewer read the assembly, runs the full gates, merges, watches the pipelines, deploys and verifies where its stages say so, rolls back or reports on a failure, and ends. It never waits on a person. |
+| **Train** (`train 1106m`) | A session of its own for one train, doing the steps below. It never waits on a person. |
 
-The sb server sends the coordinator a notice for each state of its car: received, returned, dropped, or landed.
+```mermaid
+sequenceDiagram
+  participant C as Coordinator
+  participant T as Tower
+  participant I as Integrator
+  participant R as Train
+  C->>T: car slip
+  T->>I: forwards the slip
+  I-->>C: received or returned
+  I->>T: asks for a train
+  T->>R: opens the train
+  R->>R: steps below
+  R-->>C: landed or dropped
+```
 
-The integrator is the tower's own main: it is not one of the two mains a tower opens for requests, and a project has one on the whole computer.
-Its project is the checkout's: `integration.project` at the top of `apps.json`, else the repository's folder name. Set it when your integrator already runs under another name (`integ <project>`).
-Integrators you already run under names of their own (one per app, such as `integ FE2` and `integ v3`) stay: the tower opens none beside them and forwards each slip to the one that runs that app's trains.
-On a shared box, a main opened for a teammate's device sends its car slip the same way, so the teammate asks for no integrator.
+A train does these steps, then ends:
+
+1. Assembles the cars on the latest base in a worktree.
+2. Has a fresh reviewer read the assembly.
+3. Runs the full gates.
+4. Merges, and watches the pipelines.
+5. Where its stages say so, deploys and verifies.
+6. On a failure, rolls back or reports.
+
+The sb server sends the coordinator a notice for each state of its car:
+
+```mermaid
+stateDiagram-v2
+  [*] --> sent: car slip
+  sent --> received
+  sent --> returned
+  received --> landed
+  received --> dropped
+  returned --> sent: fixed and sent again
+  dropped --> sent: sent again
+```
+
+Integrators:
+
+- A project has one integrator on the whole computer. Its project is `integration.project` at the top of `apps.json`, else the repository's folder name; set it when your integrator already runs under another name.
+- Integrators you already run under names of their own (such as `integ FE2` and `integ v3`) stay: the tower opens none beside them and forwards each slip to the one that runs that app's trains.
+- On a shared box, a main opened for a teammate's device sends its car slip the same way.
 
 ## What you set
 
