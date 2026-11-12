@@ -3753,6 +3753,9 @@ Opening a missing tower needs a pi session.
 
 Windows support is experimental. Herdr's API there is a named pipe, and the file at the socket path (`%APPDATA%\herdr\herdr.sock` by default) is only a marker holding the server's pid and start time. Every client in this package (the extension, its watches, the sidebar plugin) connects to `\\.\pipe\` followed by the socket path, as Herdr's own CLI does. The socket path is found as Herdr finds it: `HERDR_SOCKET_PATH`, else the socket of the `HERDR_SESSION` session, else the default one in Herdr's config directory (`XDG_CONFIG_HOME`, else `%APPDATA%`).
 
+<details>
+<summary>Details</summary>
+
 The sb server's control socket is a named pipe too. Pipe names are one namespace for every account on the machine, and the 700 directory that guards a Unix socket has no part in it, so the server names its pipe at random when it starts (`\\.\pipe\sb-<16 hex>`) and records the name in `server.json`, in your profile, where sessions read it. Another account cannot learn the name before the pipe exists, but the name can be listed once it does, and a server that ends leaves a name free for anyone to take.
 
 So the pipe, like the Unix socket, uses a handshake (`src/server/socket.ts`, control protocol 2): the server draws a new 32-byte secret at start and writes it into `server.json` (mode 600), and the secret never crosses the pipe. A client opens with `hello` and a fresh nonce; the server answers its own nonce and `HMAC(secret, "sb-control server" + both nonces)`; the client checks that, and only then sends its own proof (`"sb-control client"`, the same nonces) together with the request, and the server acts only once that proof checks.
@@ -3794,6 +3797,8 @@ As a client, a Windows browser installs the certificate in Current User, Trusted
 The worktree reaper stays macOS and Linux only. It closes a pane only when the pane's shell runs nothing in its foreground, and on Windows Herdr's `pane process-info` reports the shell alone unless an agent runs under it, so a pane running a build, a server, or an editor would look idle and be closed. Removing a checkout also needs each process's working directory, which `lsof` and `/proc` give and Node cannot read on Windows without native code.
 
 `tests/platform.test.ts` checks these on every platform, and the `Windows` workflow runs it on a Windows runner against real named pipes, after loading every module a session and the sidebar plugin load. Herdr itself does not run in CI, so pi starting inside Herdr on Windows is checked by hand.
+
+</details>
 
 ## Development
 

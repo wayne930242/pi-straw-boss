@@ -3753,6 +3753,9 @@ node ~/.pi/agent/npm/node_modules/pi-intercom/cli.mjs ask --to "$TOWER_SESSION_I
 
 Windows 支援是實驗性的。Herdr 在那裡的 API 是具名管道，而位於 socket 路徑的檔案（預設是 `%APPDATA%\herdr\herdr.sock`）只是一個記著 server 的 pid 與啟動時間的標記。這個套件裡每個用戶端（擴充、它的監看、側邊欄外掛）都連到 `\\.\pipe\` 後接 socket 路徑，如同 Herdr 自己的 CLI。socket 路徑的找法與 Herdr 一樣：`HERDR_SOCKET_PATH`，否則是 `HERDR_SESSION` session 的 socket，否則是 Herdr 設定資料夾裡的預設值（`XDG_CONFIG_HOME`，否則 `%APPDATA%`）。
 
+<details>
+<summary>細節</summary>
+
 sb server 的控制 socket 也是一個具名管道。管道名稱是整台機器上每個帳號共用的一個命名空間，而守著 Unix socket 的 700 資料夾在這裡派不上用場，所以 server 在啟動時隨機為它的管道取名（`\\.\pipe\sb-<16 hex>`），並把名稱記在你個人設定檔裡的 `server.json`，由 session 在那裡讀取。另一個帳號在管道存在之前無從得知名稱，但管道存在之後名稱可以被列出，而結束的 server 留下一個任何人都能拿走的空名。
 
 所以管道和 Unix socket 一樣使用握手（`src/server/socket.ts`，控制協定 2）：server 在啟動時抽一個新的 32 位元組機密，寫進 `server.json`（模式 600），而機密從不經過管道。用戶端以 `hello` 加一個新的 nonce 開頭；server 回答它自己的 nonce 與 `HMAC(secret, "sb-control server" + both nonces)`；用戶端檢查它，然後才連同請求送出它自己的證明（`"sb-control client"`，同樣的 nonce），而 server 只在那個證明通過後才動作。
@@ -3794,6 +3797,8 @@ Wi-Fi 存取（[瀏覽器檢視](#瀏覽器檢視)）在 Windows 上運作，有
 worktree reaper 仍然只支援 macOS 與 Linux。它只在 pane 的 shell 前景沒有執行任何東西時才關閉 pane，而在 Windows 上，除非有智慧體在它底下執行，否則 Herdr 的 `pane process-info` 只回報 shell，所以執行建置、server 或編輯器的 pane 看起來會是閒置的而被關閉。移除一個 checkout 也需要每個行程的工作目錄，`lsof` 與 `/proc` 能給，而 Node 在 Windows 上不用原生程式碼就讀不到。
 
 `tests/platform.test.ts` 在每個平台上檢查這些，而 `Windows` workflow 在載入 session 與側邊欄外掛載入的每個模組之後，在 Windows runner 上對真實的具名管道執行它。Herdr 本身不在 CI 裡執行，所以 pi 在 Windows 的 Herdr 裡啟動，是以手動檢查的。
+
+</details>
 
 ## 開發
 
