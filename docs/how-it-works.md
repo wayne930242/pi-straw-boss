@@ -1,10 +1,96 @@
 # How pi-straw-boss works
 
-The full behavior behind the [README](../README.md).
+The full behavior behind the [README](../README.md). The guides say how to use Straw Boss; this reference says exactly what the code does, one section at a time, so find the section you need below and skip the rest.
+
+Straw Boss is a pi extension. It joins the pi sessions that run in Herdr into one net, gives them a chain of command, lets one tower per workspace coordinate them, and shows the whole net on one page.
+
+```mermaid
+flowchart TD
+    boss["You"] --> head["Head tower<br/>one per computer"]
+    head -->|"tower_send"| tower["Tower<br/>one per workspace"]
+    tower -->|"boss_open_main"| main["Main agent<br/>one per tab"]
+    member["Member<br/>any other pi in the tab"] -.->|"boss_promote"| main
+    main -->|"subagent"| sub["Subagents<br/>worker, scout, planner,<br/>reviewer, watchdog"]
+    main -->|"call_tower"| tower
+    tower -->|"boss_open_main"| train["Train<br/>one batch of merge cars"]
+    server["sb server<br/>one per computer"] -.->|"runs"| tower
+    server -.->|"runs"| head
+```
+
+Each solid arrow is a tool from [Tools](#tools). The dotted ones are not tools: a member becomes a main by promotion, and the sb server runs the towers.
+
+**Positions**
+
+| Position | What it is | How it comes to be |
+|---|---|---|
+| member | a joined pi that is not a main | joins at session start, by itself |
+| main agent | one per tab; plans, dispatches, and asks the boss | promotion (`boss_promote`, a first `subagent` call), `/boss`, or a tower opening it |
+| subagent | a pi-herdr-agents child; it never joins, and its launcher speaks for it | launched by a main or a member |
+| tower | one per workspace; routes work and repairs friction, and never asks the boss | opened when agents start to collide |
+| head tower | the boss's one entry point, one per computer; hands each instruction to a workspace's tower | made by the sb server at the boss's first message |
+| train | a worker that carries one batch of merge cars to the base branch | opened by a tower for the project's integrator |
+
+**Kinds of main agent** (the page shows the kind word; the GUI says "on watch" for `standing`)
+
+| Kind | What it is for | How it is set |
+|---|---|---|
+| `coordinator` | the default: splits work, plans, dispatches subagents | by default, or `boss_duty` |
+| `integrator` | a project's merge trains: receives cars, forms trains | `boss_duty`, or the name `integ <project>` |
+| `standing` | minds one system or machine, with no end | `boss_duty` |
+
+**Kinds of subagent** (read from the role name pi-herdr-agents gave it; any other role stays a plain subagent)
+
+| Kind | Role names | What it is for | Dispatch by a coordinator |
+|---|---|---|---|
+| `worker` | `worker` | does a task: edits, runs, builds | refused with `sb: plan first` until its todos name a graph |
+| `scout` | `scout` | investigates and reports | passes without a plan |
+| `planner` | `planner` | writes a plan or a design | passes without a plan |
+| `reviewer` | `reviewer`, `visual-tester`, `adversarial-reviewer` | reviews a change or checks the UI | passes without a plan |
+| `watchdog` | `watchdog` | watches another session or Herdr state and only reports back | refused like a worker |
+
+**Kinds of tower run** (what wakes a tower; the rules are in [Local runs](#local-runs), [The boss conversation](#the-boss-conversation), and [Ally runs](#ally-runs))
+
+| Run | Woken by | What it is |
+|---|---|---|
+| event run | an event from a session, such as a main's `call_tower` or a finished milestone | a fresh pi in the standing pane; ends with `tower_done` and a handoff note |
+| boss conversation | the boss's words (the page's composer, the standing pane, `/boss tower`) | the run that resumes the boss's last session |
+| ally run | a Straw Link message from a teammate's device | a fresh pi in a pane beside the standing pane, at the sender's trust level |
+
+**Where to read**
+
+| You want to know | Read |
+|---|---|
+| who joins, who is promoted, when a tower opens | [How it works](#how-it-works) |
+| what a tower knows, how towers talk, what the head tower does | [The tower's digest](#the-towers-digest), [Talking between towers](#talking-between-towers), [The head tower](#the-head-tower) |
+| teammates' computers and unattended boxes | [Straw Link](#straw-link-towers-across-computers-the-link-holder), [Straw Link operate](#straw-link-operate-an-attended-computer-drives-an-unattended-box) |
+| the work board and auto mode | [The work board](#the-work-board), [Auto mode](#auto-mode) |
+| opening and closing mains, the settings check | [Opening a main](#opening-a-main), [The settings check](#before-pi-starts-in-a-folder-the-settings-check), [Closing an opened main](#closing-an-opened-main) |
+| merging many branches safely | [Merge train](#merge-train) |
+| the dashboard, and subagents that lost their launcher | [Tower dashboard](#tower-dashboard), [Orphaned subagents](#orphaned-subagents) |
+| the browser page: map, comms, alerts, phone, Zen | [Browser view](#browser-view) |
+| Herdr's sidebar, worktree cleanup, process cleanup | [Sidebar net view](#sidebar-net-view), [Worktree reaper](#worktree-reaper), [Process hygiene and slots](#process-hygiene-and-slots) |
+| the background server, tower runs, the standing pane, memory, ally runs | [The sb server](#the-sb-server) |
+| a command, a file it writes, Windows, developing | [Tools](#tools), [What it writes](#what-it-writes), [From a shell](#from-a-shell), [Windows](#windows), [Development](#development) |
 
 ## How it works
 
 Joining is automatic; the chain of command is earned.
+
+In short:
+
+- Every pi in Herdr joins its tab's net as a **member** by itself.
+- A member becomes the tab's one **main agent** by promotion; an agent never takes over an existing main.
+- A **tower** opens for the workspace when agents start to collide, and mains and the tower go together.
+- **Subagents** and sessions in a sub workspace never join: their launcher, or their parent workspace, speaks for them.
+
+```mermaid
+stateDiagram-v2
+    [*] --> member: pi starts in Herdr
+    member --> main: boss_promote, a first subagent call, or /boss
+    main --> [*]: the session ends
+```
+
+The numbered rules below are the whole behavior.
 
 1. Every joinable pi in Herdr joins its tab's net at session start as a **member**: no reminder, no question. It does not join outside Herdr, as a pi-herdr-agents subagent (`PI_SUBAGENT_ID`, its parent represents it), in a sub workspace (below), or as the tower itself.
 2. A member becomes its tab's **main agent** by promotion. The agent calls `boss_promote` when its work grows (several steps, dispatching workers, more than one app); the member prompt says so. A member that calls pi-herdr-agents' `subagent` or `subagent_resume` tool without promoting is promoted automatically, before the subagent starts or resumes. A join that failed at start and retries after the session's pane moved to another tab registers on the tab it is in now, so it never becomes a second main there.
@@ -84,7 +170,23 @@ The sender's own workspace never answers for a tower: a session never reaches it
 
 ### The head tower
 
-The **head tower** is a tower that belongs to no project. The boss talks to it, in one long conversation, and it decides which workspace owns each instruction and hands it to that workspace's tower. It does no work of its own. Before this, "head tower" was only a mark on the tower of the first workspace in Herdr's order; that mark is gone, and so is the `head tower is now <workspace>` digest line. The design is `docs/specs/2026-11-04-head-tower.md`.
+The **head tower** is a tower that belongs to no project. The boss talks to it, in one long conversation, and it decides which workspace owns each instruction and hands it to that workspace's tower. It does no work of its own. The design is `docs/specs/2026-11-04-head-tower.md`.
+
+How an instruction travels:
+
+```mermaid
+sequenceDiagram
+    actor B as You
+    participant H as Head tower
+    participant T as Workspace tower
+    participant M as Main agent
+    B->>H: instruction
+    H->>T: tower_send (the server opens the tower if there is none)
+    T->>M: hands it over, or opens a main
+    M-->>T: milestone (call_tower)
+    T-->>H: answer (head: true)
+    H-->>B: one line
+```
 
 #### Its workspace
 
@@ -165,6 +267,21 @@ A message may hold 192 KB; the inbox keeps at most 100 messages per sender and 5
 **Remote turns** (`src/link/{turn,allow,gate,policy,hooks}.ts`; `hooks.ts` registers the pi hooks, `runtime.ts` wires it to the holder in the server). A run is a remote turn from the first `message_start` or `message_end` of a `straw-link` custom message until `agent_settled`, however the message got into it (a delivery, a steer into a run that began local); `agent_end`, a retry, a compaction, or a continuation does not end it, and a local message that joins leaves it as it is. Its level is the lowest of its remote senders'.
 
 A sender's level is `reply` unless this computer names it: `link.trust` in `config.json` (device id to `reply`, `forward`, or `dispatch`), or, on a device whose `/etc/straw-link/policy.json` says `unattended` and passes the owner check (the file and its folder owned by another user, not symlinks, not writable by this user), that file's `trust` (`true` means `dispatch`) and `config.json`'s `link` section is ignored. A policy file that is there but fails the check refuses unattended mode: every sender stays at `reply` and the boss is told once. A message that names no sender this code put there is remote at `reply`.
+
+What a tool call in a remote turn meets:
+
+```mermaid
+flowchart TD
+    call["Tool call in a remote turn"] --> req{"link_request?"}
+    req -->|"yes"| blocked["Blocked at every level"]
+    req -->|"no"| path{"Names a credential path,<br/>such as ~/.ssh or .env?"}
+    path -->|"yes"| refused["Refused outright"]
+    path -->|"no"| level{"Sender's level"}
+    level -->|"dispatch"| run["Runs"]
+    level -->|"reply or forward"| allow{"On the read-only list,<br/>inside the project?"}
+    allow -->|"yes"| run
+    allow -->|"no"| gate["The boss confirms;<br/>at forward the sender's device can too"]
+```
 
 - `link_request` is blocked at every level, `dispatch` included, with no dialog (the tool is the boss's alone, in a local turn).
 - At `dispatch` nothing else is held. At `reply` and `forward` the `tool_call` hook allows by exact tool name: `read` of a file `git ls-files` lists in the bound project (after `realpath`, so a symlink out of the project is not); `grep`, `find`, and `ls` with every path inside the project, whose output the `tool_result` hook cuts to the lines and entries that belong to a tracked path (a line it cannot attribute, such as a notice, is dropped; the structured copy goes with the replaced content); `tower_list`, `board_read`, `boss_status`, `todo` (the first two answer a remote turn only what its senders already receive: [The work board](#the-work-board)); and `tower_send` whose `device` is a sender of the run (id, short id, or label).
@@ -419,6 +536,18 @@ The button is disabled while its request is on its way. The writer's auto-fill c
 
 For when the boss is away and nothing may wait for them (`src/auto.ts`, `autostate.ts`, `autotext.ts`, `autoscope.ts`, `bossauto.ts`, `declined.ts`, `server/automode.ts`, `autoops.ts`, `autoback.ts`, `autotower.ts`, `gui/auto.ts`; the design is `docs/specs/2026-11-09-auto-mode.md`). It covers this computer and every Herdr slot on it; Straw Link teammates are not told, and an unattended device has none.
 
+The states and the doors between them:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Off
+    Off --> Staged: /boss auto on, or the head's boss_auto
+    Staged --> On: the boss confirms
+    Staged --> Off: lapses after 10 minutes
+    Off --> On: the page's two taps
+    On --> Off: any door; the return list is written
+```
+
 #### One state, written by the server only
 
 The primary server writes `<state>/auto.json` (`on`, `since`, who switched it, a `rev` and a hash) and, before it, `auto-own.json` (the same record, a staged `on`, and the head words it has used). Every session reads `auto.json`; a write that is not the server's own is put back as a new rev within 2 s, cancels nothing, and is listed. An unreadable file keeps the last state. Nothing is cancelled until the server's `auto-check` says the rev is its own; refusals follow the file at once.
@@ -534,6 +663,39 @@ Straw Boss passes it to pi as `--model` whenever it starts a tower, and reads th
 ### Merge train
 
 A project may give each app a merge train: one integrator main merges the coordinators' work instead of each coordinator merging for itself. It is opt-in. The procedure is prompt-only and not in Straw Boss, but since 0.65.0 the extension and the server do read and write some files for it (the trainboards and car files, the car notices, the `landed` git check, the sweep, `apps.json`'s `integration.accept` and `stages`; see [Trains as their own workers](#trains-as-their-own-workers)). Since 0.60.0 the procedure is not in Straw Boss: it is pi-anchorloop's `integrating` (merge) and `deploying` (deploy) skills, and Straw Boss binds the places those skills leave open.
+
+How a car travels, from slip to landing:
+
+```mermaid
+sequenceDiagram
+    participant C as Coordinator
+    participant T as Tower
+    participant I as Integrator
+    participant R as Train
+    participant S as sb server
+    C->>T: car slip (call_tower, why shared)
+    T->>I: forwards it (opens one if there is none)
+    I->>S: train_car received or returned
+    S-->>C: car notice
+    I->>T: asks for a train
+    T->>R: boss_open_main, role train
+    R->>R: assemble, review, full checks, merge, CI, deploy
+    R->>S: train_car landed or dropped
+    S-->>C: car notice
+```
+
+A car has four states, set with `train_car` by the integrator and the train:
+
+```mermaid
+stateDiagram-v2
+    [*] --> received: the integrator accepts the slip
+    [*] --> returned: the integrator refuses it
+    received --> landed: the train merged it
+    received --> dropped: the train dropped it
+    landed --> [*]
+    returned --> [*]: the coordinator gets a notice
+    dropped --> [*]: the coordinator gets a notice
+```
 
 [`prompts/apps-config.md`](../prompts/apps-config.md) holds the `apps.json` fields, [`prompts/integrator.md`](../prompts/integrator.md) the integrator's role, and the design records are [`docs/specs/2026-10-30-merge-train.md`](specs/2026-10-30-merge-train.md), [`docs/specs/2026-11-05-train-stages.md`](specs/2026-11-05-train-stages.md), and [`docs/specs/2026-11-06-seam-bindings.md`](specs/2026-11-06-seam-bindings.md) (which maps every line of the old integrator prompt to its skill location).
 
@@ -712,6 +874,21 @@ The subagent's own launcher does this, not a tower: only the launcher's process 
 
 ### Subagents a Herdr restore brought back plain
 
+The restore case in one picture:
+
+```mermaid
+sequenceDiagram
+    participant H as Herdr
+    participant P as Restored pane
+    participant S as Straw Boss
+    participant L as Launcher session
+    H->>P: a restart starts a plain pi in every agent pane
+    S->>P: finds it (a check every 15 s, twice in a row)
+    S->>L: writes a closing key, closes the pane
+    S->>L: one message with the follow-up
+    L->>L: subagent_resume (pi-herdr-agents)
+```
+
 The nudge above needs the child to still be what pi-herdr-agents started. A Herdr restart does not leave that: with `resume_agents_on_restore` (on by default) Herdr starts a plain `pi --session <file>` in every pane that had reported an agent session, subagent panes included. That pi has none of the child's setup (no `subagent-done.ts` extension, no `PI_SUBAGENT_*` environment, no `caller_ping`, no auto-exit, no `<session>.exit` sidecar), so it sits idle at its prompt with the task unfinished and will never report, and the restored launcher's registry is empty and is never filled again. Nothing can ask it to report by itself, so the launcher resumes the run instead, through pi-herdr-agents' public `subagent_resume`.
 
 The same check every 15 seconds (`restored.ts`) finds such a run when all of these hold. It lists Herdr's panes only while some run could still be noted or found: a run that can never qualify (a persistent specialist, or a launch script that is missing or does not name the run's own session) is dropped before that, so it costs no list and no process look.
@@ -763,6 +940,8 @@ Covering it would mean closing a pane on a guess, so a restart after a resume st
 `/boss gui` shows the whole net in your default browser: a game-style map, live and animated, where you can read any unit's comms and type into its session.
 
 ![The browser view](straw-net-gui.png)
+
+This section is in six groups: [the map, bases, and units](#map-bases-and-units); [alerts and questions](#alerts-and-questions); [what a unit's page shows](#what-a-units-page-shows); [closing, opening, and trust](#closing-opening-and-trust); [serving the page](#serving-the-page) (remote and Wi-Fi access, the server); and [views, themes, phone, and settings](#views-themes-phone-and-settings).
 
 ### Map, bases, and units
 
@@ -1271,7 +1450,7 @@ Every session, desk or not, checks 20 s after its start whether Herdr's pi integ
 
 The page treats a stream as dead after 45 s without a message and reconnects with a backoff of 1 s doubling to 30 s (±20 %), giving up after 8 failures until the tab is used again. Coming back (visible, focus, `pageshow`, `online`) reconnects at once when the stream is closed or has been quiet for 20 s, and takes a fresh full snapshot instead of replaying what was missed. While disconnected, the map is dimmed and the banner says so with the time of the last update.
 
-A modal overlay (`gui/connect.ts`) covers the page from the first byte until the stream's first snapshot, and again whenever the stream is lost: "Connecting…" or "Reconnecting…", and after the 8 failures the give-up note with Try again. The app root is inert and no click or key reaches the page behind it. A hidden tab pauses its animations, draws only the newest snapshot when it returns, and holds no timer beyond the watchdog.
+A modal overlay (`gui/connect.ts`) covers the page from the first byte until the stream's first snapshot, and again whenever the stream is lost: "Connecting…" or "Reconnecting…", and after the 8 failures the give-up note with Try again. The app root is inert and no click or key reaches the page behind it. A hidden tab pauses its animations, draws only the newest snapshot when it returns, and holds no timer beyond the stall monitor.
 
 #### The QR encoder
 
@@ -1598,6 +1777,21 @@ Herdr keeps one Agents view per server, so another plugin's view and this one re
 
 The second optional Herdr plugin, in `herdr-reaper/` (id `wayne930242.straw-boss-reaper`), closes the panes agents leave behind in worktree workspaces and removes the checkouts that are clean. It is plain JavaScript that imports nothing from `src/` and talks to Herdr through the `herdr` CLI (`HERDR_BIN_PATH`) and to git directly.
 
+A sweep decides in this order; the sections below give the details:
+
+```mermaid
+flowchart TD
+    w["Workspace in a linked worktree"] --> pin{"Pinned?"}
+    pin -->|"yes"| keep["Never touched"]
+    pin -->|"no"| pane{"A pane that ran an agent is now<br/>an idle shell, not focused, for 60 s?"}
+    pane -->|"no"| left["Left alone"]
+    pane -->|"yes"| close["Close the pane"]
+    close --> last{"Every pane closed?"}
+    last -->|"yes"| co{"Checkout clean, and nothing holds<br/>or uses it?"}
+    co -->|"yes"| rm["Remove the checkout<br/>(the branch stays)"]
+    co -->|"no"| kept["Keep it and retry next sweep"]
+```
+
 ### Scope
 
 Only a workspace whose worktree is a linked git worktree (`worktree.is_linked_worktree`) is ever touched, whatever its label. A workspace of the main checkout, or of no repository, is never touched, and neither is anything a pinned workspace holds; the one exception is a main-checkout shell workspace a worktree was grouped under (see the parent shell below). An optional `config.json` in the plugin's config directory (`herdr plugin config-dir wayne930242.straw-boss-reaper`) with `{ "only_under": ["/path"] }` narrows the scope further, to repositories and checkouts below the listed directories; `{ "retain_idle_hours": 72 }` sets how long a pi-herdr-agents parent session that is open in no Herdr pane may stay silent before its worktrees are released (see the checkout below; a value that is not a positive number means the default).
@@ -1687,7 +1881,7 @@ The agent event compares its terminal with the pane's only when the payload name
 
 ## Process hygiene and slots
 
-Release 1 of this section (layer 2 of the plan in `docs/specs/2026-11-04-procs.md`): whatever a worker starts dies with the worker, and a worktree is not removed from under a running process. Heavy-command slots, the Linux cgroup path and the CPU watchdog come with release 2 and are not built yet; this section grows with them.
+Release 1 of this section (layer 2 of the plan in `docs/specs/2026-11-04-procs.md`): whatever a worker starts dies with the worker, and a worktree is not removed from under a running process. Heavy-command slots, the Linux cgroup path and the CPU stall monitor come with release 2 and are not built yet; this section grows with them.
 
 **Why.** pi stops a bash call's process group (`killProcessTree`, SIGKILL to the group of the shell it started). `timeout`, `setsid`, `detached: true` spawns and test runners put their children in groups of their own, so a worker that ends, or is killed, leaves them behind, reparented to launchd or init. On 11/03 four such node test processes ran for six hours at 55 to 60% CPU each in a worktree the parent had already removed.
 
@@ -2054,6 +2248,20 @@ A main opened by a tower reports its done report with `call_tower` (`why: milest
 
 ### Local runs
 
+Three kinds of run share the machinery below:
+
+```mermaid
+flowchart LR
+    ev["Event<br/>a main's call_tower,<br/>the boss's words,<br/>a teammate's message"] --> q["Queue<br/>per workspace"]
+    q --> who{"Who sent it?"}
+    who -->|"a local session"| er["Event run<br/>fresh pi, ends with tower_done"]
+    who -->|"the boss"| bc["Boss conversation<br/>resumes the last session"]
+    who -->|"a teammate's device"| ar["Ally run<br/>beside the standing pane"]
+    er --> sp["Standing pane<br/>standing by"]
+    bc --> sp
+    ar --> sp
+```
+
 With the tower service on (the default), an event for a tower identity wakes a pi in the tower's standing pane ([spec](specs/2026-10-26-sb-backend.md), **The wake protocol**, **Tower tools in a run**). One local run per workspace at a time and at most `towerRuns.max` (default 4) across the machine; a burst of events starts one run (the wake waits 1 second; a finished milestone waits up to 30 seconds, see [When a main calls the tower](#when-a-main-calls-the-tower)). `boss` events (the GUI's composer, `/boss tower <prompt>`) go first.
 
 **Start.** The server runs the settings check (`assertSettingsSafe`) on the pane's folder before every run and starts nothing when it refuses: the events stay queued, the tower card shows an error notice, and the next try comes with the next event, at most once a minute. It starts `pi --name "tower run · <label> · <run8>" --sb-run <run id> --tools <the run's tools>` in the pane with no Straw Boss environment, and records the run's PID and start time. A boss conversation adds `--session <file>` before `--tools`; an ally run is started without `--tools` (see **No shell in a local run** below).
@@ -2371,6 +2579,9 @@ An ally run claimed at `dispatch` is quit by the watcher when its device has lef
 | `boss_close_main` | towers only | Ask a main this tower opened (by intercom name or session id) to quit as `/boss close` does. Refused for a main the boss opened, one in another workspace, one Herdr reports working, and one with a turn, a queued message, a dialog, a monitor, or a subagent running (see [Closing an opened main](#closing-an-opened-main)). |
 | `tower_list` | towers only | Every workspace's tower or, without one, its mains or members: `reach`, state, head and self marks, and each tab's main and members by name (see [Talking between towers](#talking-between-towers)). |
 | `tower_send` | towers only | One message to another tower (workspace id or exact label, default every other tower), under a header; with `device`, to the tower of a teammate's computer over Straw Link ([the link holder](#straw-link-towers-across-computers-the-link-holder)); a workspace without a tower is reached through its mains, else its members. `reply` says whether an answer is expected. In a head tower run it takes only `workspace` and `message` (it opens that workspace's tower), and in a workspace tower's run `head: true` with `inReplyTo` (an ask id) answers the head tower ([The head tower](#the-head-tower)). In a tower run, `for` (a live main of the workspace; with `device` and `reply`) sends the device's answer to that main (left out, the server takes the one main that called the tower for this; [Who the tower sends for](#ally-runs)), and in an ally run `inReplyTo` (an ask id) answers an ask for a main ([Ally runs](#ally-runs)). |
+
+| `tower_reply` | tower runs only (not the head's) | Answer one local session (a main or a member) by intercom name or session id, under the tower's header. `reply` says whether you wait for an answer; `basis` names what a blocked `call_tower` is answered from in auto mode; `forward` is the car-slip route ([Merge train](#merge-train)). |
+| `tower_done` | tower runs only | End the run with a handoff note for the next one: one item per line, 1 to 1,200 characters. `wakeAfter` (5 to 240 minutes) asks for a follow-up run, local runs only. The run stays open while the boss is in it ([The boss in a run](#the-boss-in-a-run)). |
 | `board_read` | towers only | The work board: each main's one line of current work and checklist on this computer and, with Straw Link, on teammates' computers, as JSON (see [The work board](#the-work-board)). |
 | `board_set` | joined sessions that are not towers (only a tab's main may write) | Override the main's own board entry (it fills itself from the todo list and the name): `now` and up to 8 checklist items, or `auto: true` to hand it back; the answer says where it goes. |
 | `link_request` | every session on an attended computer, and a local tower run | Ask for a Straw Link action (create, invite, invite-unattended, join, trust, leave, remove, role, rotate) with a reason. The boss approves each one in a dialog showing the action, every argument, the reason, and this session; nothing runs unasked. Refused on an unattended device and in a remote turn. |
@@ -2532,7 +2743,7 @@ The focus views (`gui/views.ts` coordinates `gui/workspace.ts`, `gui/session.ts`
 
 The sidebar plugin is plain JavaScript in `herdr-plugin/` and imports nothing from `src/`, so the folder works wherever Herdr links or installs it. `tests/netview.test.ts` drives it against a fake Herdr that keeps tokens and the one active view, and against a real Unix socket. The reaper plugin in `herdr-reaper/` is built the same way: its decisions (`decide.mjs`) are pure functions, its runs (`sweep.mjs`) take Herdr, git, the state store and the clock as arguments, and `tests/reaper.test.ts` runs them against fakes.
 
-`npm run gui:dev` serves the page on a local port with hot reload, fed by a demo net with invented names that changes state every few seconds. The demo includes a session with every kind of chat entry (open any unit), and the fixture's toolbar (bottom left) has **drop stream**, **go silent** (no messages, no error: the 45 s watchdog), **restore**, to review the disconnected page, and **doc arrives**, which has billing-main show one more document: on its comms it opens as a tile, elsewhere its badge counts up. billing-main lists a markdown plan and an HTML review whose form posts nowhere in the demo.
+`npm run gui:dev` serves the page on a local port with hot reload, fed by a demo net with invented names that changes state every few seconds. The demo includes a session with every kind of chat entry (open any unit), and the fixture's toolbar (bottom left) has **drop stream**, **go silent** (no messages, no error: the 45 s stall monitor), **restore**, to review the disconnected page, and **doc arrives**, which has billing-main show one more document: on its comms it opens as a tile, elsewhere its badge counts up. billing-main lists a markdown plan and an HTML review whose form posts nowhere in the demo.
 
 To point the dev page at a live stream instead, run `/boss gui` and start the dev server with its URL: `GUI_LIVE=http://127.0.0.1:<port>/<token>/ npm run gui:dev`.
 

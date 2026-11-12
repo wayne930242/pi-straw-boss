@@ -1,10 +1,96 @@
 # pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ 827315bc -->
 
-[README](../README.zh-TW.md) 背後的完整行為。
+[README](../README.zh-TW.md) 背後的完整行為。使用說明在各篇指南；這份參考則逐節寫出程式實際怎麼做，所以請在下面找到需要的那一節，其餘可以略過。
+
+Straw Boss 是 pi 的擴充功能。它把在 Herdr 裡執行的 pi session 接成一張網，給它們一條指揮鏈，讓每個工作區有一座塔台來協調，並把整張網顯示在同一頁上。
+
+```mermaid
+flowchart TD
+    boss["你"] --> head["主塔台<br/>每台電腦一座"]
+    head -->|"tower_send"| tower["塔台<br/>每個工作區一座"]
+    tower -->|"boss_open_main"| main["主智慧體<br/>每個分頁一個"]
+    member["成員<br/>分頁裡其他的 pi"] -.->|"boss_promote"| main
+    main -->|"subagent"| sub["子智慧體<br/>工作者、偵察、規劃、<br/>審查、監控者"]
+    main -->|"call_tower"| tower
+    tower -->|"boss_open_main"| train["火車<br/>一批合併車廂"]
+    server["sb server<br/>每台電腦一個"] -.->|"運行"| tower
+    server -.->|"運行"| head
+```
+
+實線箭頭都是[工具](#工具)裡的工具。虛線不是工具：成員靠升任成為主智慧體，塔台則由 sb server 運行。
+
+**位置**
+
+| 位置 | 它是什麼 | 怎麼來的 |
+|---|---|---|
+| 成員 | 已加入、但不是主智慧體的 pi | session 啟動時自己加入 |
+| 主智慧體 | 每個分頁一個；規劃、派工，並詢問老闆 | 升任（`boss_promote`、第一次呼叫 `subagent`）、`/boss`，或由塔台開啟 |
+| 子智慧體 | pi-herdr-agents 的子層；它不加入，由啟動它的 session 代表 | 由主智慧體或成員啟動 |
+| 塔台 | 每個工作區一座；分派工作、修補協調上的摩擦，絕不詢問老闆 | 智慧體開始互相碰撞時開啟 |
+| 主塔台 | 老闆唯一的入口，每台電腦一座；把每項指示交給某個工作區的塔台 | 老闆第一次說話時由 sb server 建立 |
+| 火車 | 把一批合併車廂送進基底分支的工作者 | 塔台為專案的整合員開啟 |
+
+**主智慧體的種類**（頁面顯示種類的詞；GUI 把 `standing` 稱為「值守」）
+
+| 種類 | 用途 | 怎麼設定 |
+|---|---|---|
+| `coordinator`（協調者） | 預設：拆分工作、規劃、派出子智慧體 | 預設，或 `boss_duty` |
+| `integrator`（整合員） | 專案的合併火車：接收車廂、組成火車 | `boss_duty`，或名稱 `integ <project>` |
+| `standing`（值守） | 看顧一個系統或一台機器，沒有終點 | `boss_duty` |
+
+**子智慧體的種類**（讀自 pi-herdr-agents 給它的角色名稱；其他角色維持一般子智慧體）
+
+| 種類 | 角色名稱 | 用途 | 協調者派出它時 |
+|---|---|---|---|
+| `worker`（工作者） | `worker` | 做一件任務：修改、執行、建置 | 在待辦指名某個圖之前，會被 `sb: plan first` 拒絕 |
+| `scout`（偵察） | `scout` | 調查並回報 | 不需要計畫就放行 |
+| `planner`（規劃） | `planner` | 寫計畫或設計 | 不需要計畫就放行 |
+| `reviewer`（審查） | `reviewer`、`visual-tester`、`adversarial-reviewer` | 審查變更或檢查 UI | 不需要計畫就放行 |
+| `watchdog`（監控者） | `watchdog` | 監看另一個 session 或 Herdr 狀態，只回報 | 和工作者一樣被拒絕 |
+
+**塔台執行的種類**（喚醒塔台的東西；規則在[本機執行](#本機執行)、[老闆對話](#老闆對話)與[隊友 run](#隊友-run)）
+
+| 執行 | 由什麼喚醒 | 它是什麼 |
+|---|---|---|
+| 事件 run | session 送來的事件，例如主智慧體的 `call_tower` 或完成的里程碑 | 常駐 pane 裡的一個全新 pi；以 `tower_done` 和交接筆記結束 |
+| 老闆對話 | 老闆的話（頁面的輸入框、常駐 pane、`/boss tower`） | 接續老闆上一個 session 的 run |
+| 隊友 run | 隊友的裝置送來的 Straw Link 訊息 | 常駐 pane 旁邊的 pane 裡的一個全新 pi，以寄件者的信任等級執行 |
+
+**要看哪一節**
+
+| 想知道 | 看 |
+|---|---|
+| 誰會加入、誰會升任、塔台何時開啟 | [運作方式](#運作方式) |
+| 塔台知道什麼、塔台怎麼彼此對話、主塔台做什麼 | [塔台的摘要](#塔台的摘要)、[塔台之間的對話](#塔台之間的對話)、[主塔台](#主塔台) |
+| 隊友的電腦與無人值守的盒子 | [Straw Link](#straw-link跨電腦的塔台連線持有者)、[Straw Link operate](#straw-link-operate有人看管的電腦操作無人值守的盒子) |
+| 工作看板與自動模式 | [工作看板](#工作看板)、[自動模式](#自動模式) |
+| 開啟與關閉主智慧體、設定檢查 | [開啟主智慧體](#開啟主智慧體)、[設定檢查](#pi-在資料夾裡啟動之前設定檢查)、[關閉開啟的主智慧體](#關閉開啟的主智慧體) |
+| 安全地合併很多分支 | [合併火車](#合併火車) |
+| 儀表板，以及失去啟動者的子智慧體 | [塔台儀表板](#塔台儀表板)、[孤兒子智慧體](#孤兒子智慧體) |
+| 瀏覽器頁面：地圖、通訊畫面、警示、手機、禪 | [瀏覽器檢視](#瀏覽器檢視) |
+| Herdr 側邊欄、worktree 清理、行程清理 | [側邊欄網檢視](#側邊欄網檢視)、[Worktree reaper](#worktree-reaper)、[行程衛生與 slot](#行程衛生與-slot) |
+| 背景 server、塔台執行、常駐 pane、記憶、隊友 run | [sb server](#sb-server) |
+| 指令、它寫入的檔案、Windows、開發 | [工具](#工具)、[它寫入什麼](#它寫入什麼)、[從 shell 使用](#從-shell-使用)、[Windows](#windows)、[開發](#開發) |
 
 ## 運作方式
 
 加入是自動的；指揮鏈要靠掙得。
+
+簡單說：
+
+- Herdr 裡每個 pi 都會自己以**成員**身分加入所在分頁的網。
+- 成員靠升任成為分頁唯一的**主智慧體**；智慧體絕不接管現有的主智慧體。
+- 智慧體開始互相碰撞時，工作區會開啟**塔台**，主智慧體與塔台是一起出現的。
+- **子智慧體**與子工作區裡的 session 絕不加入：由啟動它們的 session 或它們的上層工作區代表。
+
+```mermaid
+stateDiagram-v2
+    [*] --> 成員: pi 在 Herdr 裡啟動
+    成員 --> 主智慧體: boss_promote、第一次呼叫 subagent，或 /boss
+    主智慧體 --> [*]: session 結束
+```
+
+下面的編號規則就是完整的行為。
 
 1. Herdr 裡每個可加入的 pi 在 session 啟動時，會以**成員**的身分加入所在分頁的網：不提醒、不詢問。以下情況不會加入：不在 Herdr 裡、是 pi-herdr-agents 的子智慧體（`PI_SUBAGENT_ID`，由它的上層代表它）、在子工作區（見下）、或本身就是塔台。
 2. 成員透過升任成為所在分頁的**主智慧體**。工作變大時（步驟變多、要派工作者、涉及不只一個 app），智慧體會呼叫 `boss_promote`；成員的 prompt 會這樣告訴它。成員如果沒有升任就呼叫 pi-herdr-agents 的 `subagent` 或 `subagent_resume` 工具，會在子智慧體啟動或恢復之前自動升任。啟動時加入失敗、等到 session 的 pane 搬到另一個分頁後才重試的，會登記在它現在所在的分頁，所以那裡不會冒出第二個主智慧體。
@@ -84,7 +170,23 @@
 
 ### 主塔台
 
-**主塔台**是不屬於任何專案的塔台。老闆在一段很長的對話裡跟它說話，由它決定每項指示屬於哪個工作區，並交給該工作區的塔台。它自己不做任何工作。在這之前，「主塔台」只是 Herdr 順序裡第一個工作區的塔台上的一個標記；那個標記已經取消，`head tower is now <workspace>` 這行摘要也一併取消。設計在 `docs/specs/2026-11-04-head-tower.md`。
+**主塔台**是不屬於任何專案的塔台。老闆在一段很長的對話裡跟它說話，由它決定每項指示屬於哪個工作區，並交給該工作區的塔台。它自己不做任何工作。設計在 `docs/specs/2026-11-04-head-tower.md`。
+
+一項指示怎麼走：
+
+```mermaid
+sequenceDiagram
+    actor B as 你
+    participant H as 主塔台
+    participant T as 工作區塔台
+    participant M as 主智慧體
+    B->>H: 指示
+    H->>T: tower_send（沒有塔台時由 server 開啟）
+    T->>M: 交給它，或開啟一個主智慧體
+    M-->>T: 里程碑（call_tower）
+    T-->>H: 答覆（head: true）
+    H-->>B: 一行回報
+```
 
 #### 它的工作區
 
@@ -165,6 +267,21 @@ session 透過 `server.json` 和 `hello` 密鑰找到伺服器；沒有伺服器
 **遠端輪次**（`src/link/{turn,allow,gate,policy,hooks}.ts`；`hooks.ts` 註冊 pi 的 hook，`runtime.ts` 把它接到伺服器裡的持有者）。從 `straw-link` 自訂訊息的第一個 `message_start` 或 `message_end` 開始，到 `agent_settled` 為止的一次執行，就是遠端輪次，不論訊息是怎麼進去的（遞送，或 steer 進一次本機開始的執行）；`agent_end`、重試、compaction 或接續都不會結束它，加入的本機訊息則讓它維持原樣。它的層級是它的遠端寄件者之中最低的。
 
 寄件者的層級是 `reply`，除非這台電腦指名它：`config.json` 的 `link.trust`（裝置 id 對應 `reply`、`forward` 或 `dispatch`），或者，在 `/etc/straw-link/policy.json` 寫著 `unattended` 且通過擁有者檢查的裝置上（檔案和它的資料夾由另一位使用者擁有、不是符號連結、這位使用者不能寫入），則以該檔案的 `trust` 為準（`true` 表示 `dispatch`），`config.json` 的 `link` 區段會被忽略。檔案在但沒通過檢查時，會拒絕無人值守模式：每位寄件者都維持在 `reply`，並告訴老闆一次。沒有指名任何由這份程式碼放進去的寄件者的訊息，是 `reply` 層級的遠端訊息。
+
+遠端輪次裡的工具呼叫會遇到什麼：
+
+```mermaid
+flowchart TD
+    call["遠端輪次裡的工具呼叫"] --> req{"link_request？"}
+    req -->|"是"| blocked["任何等級都擋下"]
+    req -->|"否"| path{"指名憑證路徑？<br/>如 ~/.ssh 或 .env"}
+    path -->|"是"| refused["直接拒絕"]
+    path -->|"否"| level{"寄件者的等級"}
+    level -->|"dispatch"| run["執行"]
+    level -->|"reply 或 forward"| allow{"在唯讀清單上，<br/>且在專案內？"}
+    allow -->|"是"| run
+    allow -->|"否"| gate["老闆確認；<br/>forward 時寄件者的裝置也能確認"]
+```
 
 - `link_request` 在每個層級都被擋下，包括 `dispatch`，而且沒有對話框（這個工具只屬於老闆，在本機輪次裡）。
 - 在 `dispatch`，沒有其他東西被攔住。在 `reply` 和 `forward`，`tool_call` hook 以完全一致的工具名稱放行：`read` 一個 `git ls-files` 列在綁定專案裡的檔案（經過 `realpath` 之後，所以指向專案外面的符號連結不算）；`grep`、`find` 和 `ls`，每個路徑都在專案之內，它們的輸出由 `tool_result` hook 截成屬於受追蹤路徑的行和條目（無法歸屬的行，例如通知，會被丟掉；結構化的副本隨被取代的內容一起處理）；`tower_list`、`board_read`、`boss_status`、`todo`（前兩者對遠端輪次只回答它的寄件者本來就會收到的東西：[工作看板](#工作看板)）；以及 `device` 是這次執行的寄件者（id、短 id 或標籤）的 `tower_send`。
@@ -419,6 +536,18 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 給老闆不在、而且沒有任何事可以等他的時候用（`src/auto.ts`、`autostate.ts`、`autotext.ts`、`autoscope.ts`、`bossauto.ts`、`declined.ts`、`server/automode.ts`、`autoops.ts`、`autoback.ts`、`autotower.ts`、`gui/auto.ts`；設計是 `docs/specs/2026-11-09-auto-mode.md`）。它涵蓋這台電腦和它上面的每個 Herdr slot；Straw Link 的隊友不會被告知，無人值守裝置也沒有它。
 
+狀態，以及狀態之間的門：
+
+```mermaid
+stateDiagram-v2
+    [*] --> 關閉
+    關閉 --> 暫存: /boss auto on，或主塔台的 boss_auto
+    暫存 --> 開啟: 老闆確認
+    暫存 --> 關閉: 10 分鐘後失效
+    關閉 --> 開啟: 頁面上的兩次點擊
+    開啟 --> 關閉: 任何一道門；寫出回來的清單
+```
+
 #### 一個狀態，只由伺服器寫入
 
 主要伺服器寫入 `<state>/auto.json`（`on`、`since`、是誰切換的、一個 `rev` 和一個雜湊），並在它之前先寫入 `auto-own.json`（同一筆紀錄、一個暫存的 `on`，以及它用過的主塔台用語）。每個 session 都讀 `auto.json`；不是伺服器自己做的寫入，會在 2 秒內以新的 rev 放回去，不取消任何東西，並被列出。讀不了的檔案保留最後的狀態。在伺服器的 `auto-check` 說 rev 是它自己的之前，不會取消任何東西；拒絕則立刻跟著檔案走。
@@ -534,6 +663,39 @@ Straw Boss 每次啟動塔台時，都會把它當作 `--model` 傳給 pi，並�
 ### 合併火車
 
 專案可以替每個 app 設一列合併火車：由一位整合員主智慧體合併協調者的工作，而不是每位協調者各自合併。它是選用的。程序只是 prompt，不在 Straw Boss 裡，但自 0.65.0 起，擴充和伺服器會為它讀寫一些檔案（trainboard 和車廂檔案、車廂通知、`landed` 的 git 檢查、掃描、`apps.json` 的 `integration.accept` 和 `stages`；見[火車作為它們自己的工作者](#火車作為它們自己的工作者)）。自 0.60.0 起，這個程序不在 Straw Boss 裡：它是 pi-anchorloop 的 `integrating`（合併）和 `deploying`（部署）skill，而 Straw Boss 綁定那些 skill 留白的地方。
+
+一節車廂怎麼從車廂單走到落地：
+
+```mermaid
+sequenceDiagram
+    participant C as 協調者
+    participant T as 塔台
+    participant I as 整合員
+    participant R as 火車
+    participant S as sb server
+    C->>T: 車廂單（call_tower，why shared）
+    T->>I: 轉發（沒有整合員時先開一個）
+    I->>S: train_car received 或 returned
+    S-->>C: 車廂通知
+    I->>T: 要求一列火車
+    T->>R: boss_open_main，role train
+    R->>R: 組裝、審查、完整檢查、合併、CI、部署
+    R->>S: train_car landed 或 dropped
+    S-->>C: 車廂通知
+```
+
+車廂有四種狀態，由整合員與火車用 `train_car` 設定：
+
+```mermaid
+stateDiagram-v2
+    [*] --> received: 整合員接受車廂單
+    [*] --> returned: 整合員拒絕它
+    received --> landed: 火車把它合併了
+    received --> dropped: 火車把它丟下了
+    landed --> [*]
+    returned --> [*]: 協調者收到通知
+    dropped --> [*]: 協調者收到通知
+```
 
 [`prompts/apps-config.md`](../prompts/apps-config.md) 放 `apps.json` 的欄位，[`prompts/integrator.md`](../prompts/integrator.md) 放整合員的角色，設計紀錄是 [`docs/specs/2026-10-30-merge-train.md`](specs/2026-10-30-merge-train.md)、[`docs/specs/2026-11-05-train-stages.md`](specs/2026-11-05-train-stages.md) 和 [`docs/specs/2026-11-06-seam-bindings.md`](specs/2026-11-06-seam-bindings.md)（它把舊整合員 prompt 的每一行，對應到它在 skill 裡的位置）。
 
@@ -712,6 +874,21 @@ Straw Boss 接著向該 session 送一則 intercom 訊息：啟動者的 session
 
 ### Herdr 還原後變成一般 pi 的子智慧體
 
+還原的情況，一張圖看完：
+
+```mermaid
+sequenceDiagram
+    participant H as Herdr
+    participant P as 還原的 pane
+    participant S as Straw Boss
+    participant L as 啟動者的 session
+    H->>P: 重啟在每個有智慧體的 pane 啟動一般的 pi
+    S->>P: 找到它（每 15 秒檢查，連續兩次）
+    S->>L: 寫入 closing 鍵，關掉 pane
+    S->>L: 一則帶著後續動作的訊息
+    L->>L: subagent_resume（pi-herdr-agents）
+```
+
 上面的催促要求子層仍然是 pi-herdr-agents 當初啟動的樣子。Herdr 重新啟動後就不是了：在 `resume_agents_on_restore`（預設開啟）下，Herdr 會在每個曾經回報過智慧體 session 的 pane 裡啟動一個一般的 `pi --session <file>`，包括子智慧體的 pane。那個 pi 沒有子層的任何設定（沒有 `subagent-done.ts` 擴充功能、沒有 `PI_SUBAGENT_*` 環境變數、沒有 `caller_ping`、沒有自動結束、沒有 `<session>.exit` sidecar），所以它停在提示字元上閒置，任務沒做完，也永遠不會回報，而還原後啟動者的登記簿是空的，之後也不會再被填入。沒有任何東西能讓它自己回報，所以啟動者改為接手那次執行，方式是透過 pi-herdr-agents 的公開工具 `subagent_resume`。
 
 同樣每 15 秒的檢查（`restored.ts`）在以下全部條件成立時找出這種執行。它只在還有執行可能被記下或找到時才列出 Herdr 的 pane：永遠不可能符合的執行（常駐專家，或啟動腳本不存在或沒有指名該次執行自己的 session），會在那之前就被剔除，所以不會花一次清單或一次行程查看。
@@ -763,6 +940,8 @@ Straw Boss 看不到另一個 pi 的提示編輯器，而 intercom 訊息在狀�
 `/boss gui` 會在你的預設瀏覽器顯示整個網：一張遊戲風格的地圖，即時且帶動畫，你可以讀任何單位的通訊畫面，也可以對它的 session 打字。
 
 ![瀏覽器檢視](straw-net-gui.png)
+
+這一節分成六組：[地圖、基地與單位](#地圖基地與單位)；[警示與提問](#警示與提問)；[單位頁面顯示的內容](#單位頁面顯示的內容)；[關閉、開啟與信任](#關閉開啟與信任)；[提供頁面](#提供頁面)（遠端與 Wi-Fi 存取、server）；以及[檢視、主題、手機與設定](#檢視主題手機與設定)。
 
 ### 地圖、基地與單位
 
@@ -1271,7 +1450,7 @@ server 重啟期間，`gui.json` 仍指名它，但沒有 `started`：舊版本�
 
 頁面在 45 秒沒有訊息之後，把串流視為已死，並以從 1 秒加倍到 30 秒（±20 %）的退避重新連線，在 8 次失敗後放棄，直到分頁再次被使用。回來時（可見、取得焦點、`pageshow`、`online`），若串流已關閉或已安靜 20 秒，就立刻重新連線，並取得全新的完整快照，而不是重播錯過的內容。斷線期間，地圖會變暗，橫幅會說明並附上最後一次更新的時間。
 
-一個強制回應的覆蓋層（`gui/connect.ts`）從第一個位元組起到串流的第一份快照為止，以及每當串流中斷時，都會蓋住頁面：「連線中…」或「重新連線中…」，在 8 次失敗之後則是放棄的說明，附上「重試」。app 根節點是 inert，沒有任何點擊或按鍵能到達它後面的頁面。隱藏的分頁會暫停它的動畫，回來時只繪製最新的快照，而且除了看門狗之外沒有任何計時器。
+一個強制回應的覆蓋層（`gui/connect.ts`）從第一個位元組起到串流的第一份快照為止，以及每當串流中斷時，都會蓋住頁面：「連線中…」或「重新連線中…」，在 8 次失敗之後則是放棄的說明，附上「重試」。app 根節點是 inert，沒有任何點擊或按鍵能到達它後面的頁面。隱藏的分頁會暫停它的動畫，回來時只繪製最新的快照，而且除了卡住偵測之外沒有任何計時器。
 
 #### QR 編碼器
 
@@ -1598,6 +1777,21 @@ Herdr 每個 server 只保有一個 Agents 檢視，所以其他外掛的檢視�
 
 第二個選用的 Herdr 外掛位於 `herdr-reaper/`（id `wayne930242.straw-boss-reaper`），會關閉智慧體留在 worktree 工作區裡的 pane，並移除乾淨的 checkout。它是純 JavaScript，不從 `src/` 匯入任何東西，透過 `herdr` CLI（`HERDR_BIN_PATH`）與 Herdr 溝通，並直接與 git 溝通。
 
+一次清掃依下面的順序決定；細節在下面各節：
+
+```mermaid
+flowchart TD
+    w["linked worktree 裡的工作區"] --> pin{"已釘選？"}
+    pin -->|"是"| keep["絕不碰"]
+    pin -->|"否"| pane{"跑過智慧體的 pane 現在是<br/>閒置的 shell、沒有焦點，達 60 秒？"}
+    pane -->|"否"| left["不動它"]
+    pane -->|"是"| close["關掉 pane"]
+    close --> last{"每個 pane 都關了？"}
+    last -->|"是"| co{"checkout 乾淨，<br/>且沒有東西持有或使用它？"}
+    co -->|"是"| rm["移除 checkout<br/>（分支留著）"]
+    co -->|"否"| kept["保留它，下次清掃再試"]
+```
+
 ### 範圍
 
 只有 worktree 為已連結 git worktree（`worktree.is_linked_worktree`）的工作區才會被動到，不論它的標籤是什麼。主 checkout 的工作區，或不屬於任何儲存庫的工作區，一律不動，釘選的工作區所持有的任何東西也不動；唯一的例外是某個 worktree 被歸在其底下的主 checkout shell 工作區（見下文的父 shell）。外掛設定資料夾（`herdr plugin config-dir wayne930242.straw-boss-reaper`）裡可以有選用的 `config.json`，內容 `{ "only_under": ["/path"] }` 會進一步縮小範圍，只涵蓋所列資料夾底下的儲存庫與 checkout；`{ "retain_idle_hours": 72 }` 設定一個沒有在任何 Herdr pane 開著的 pi-herdr-agents 父 session，可以沉默多久才釋放它的 worktree（見下文的 checkout；不是正數的值就用預設值）。
@@ -1687,7 +1881,7 @@ pi-herdr-agents 沒有「父層還活著」的紀錄，所以對它的 worktree 
 
 ## 行程衛生與 slot
 
-本節的第 1 版（`docs/specs/2026-11-04-procs.md` 計畫的第 2 層）：worker 啟動的任何東西都隨 worker 一起結束，而且 worktree 不會在還有行程執行時被移除。大量指令的 slot、Linux cgroup 路徑與 CPU 看門狗屬於第 2 版，目前還沒建好；本節會隨它們一起擴充。
+本節的第 1 版（`docs/specs/2026-11-04-procs.md` 計畫的第 2 層）：worker 啟動的任何東西都隨 worker 一起結束，而且 worktree 不會在還有行程執行時被移除。大量指令的 slot、Linux cgroup 路徑與 CPU 卡住偵測屬於第 2 版，目前還沒建好；本節會隨它們一起擴充。
 
 **原因。** pi 會停止一次 bash 呼叫的行程群組（`killProcessTree`，對它啟動的 shell 的群組送 SIGKILL）。`timeout`、`setsid`、`detached: true` 的 spawn 與測試執行器會把它們的子行程放進自己的群組，所以結束或被殺掉的 worker 會把它們留下，改由 launchd 或 init 接管。11/03 有四個這樣的 node 測試行程，在父層已經移除的 worktree 裡跑了六小時，每個占 55 到 60% 的 CPU。
 
@@ -2054,6 +2248,20 @@ Herdr（0.9.5）會在一秒內，丟掉它不認得標籤的已回報智慧體�
 
 ### 本機執行
 
+三種執行共用下面的機制：
+
+```mermaid
+flowchart LR
+    ev["事件<br/>主智慧體的 call_tower、<br/>老闆的話、<br/>隊友的訊息"] --> q["佇列<br/>每個工作區一個"]
+    q --> who{"誰送來的？"}
+    who -->|"本機的 session"| er["事件 run<br/>全新 pi，以 tower_done 結束"]
+    who -->|"老闆"| bc["老闆對話<br/>接續上一個 session"]
+    who -->|"隊友的裝置"| ar["隊友 run<br/>在常駐 pane 旁邊"]
+    er --> sp["常駐 pane<br/>待命"]
+    bc --> sp
+    ar --> sp
+```
+
 塔台服務開啟時（預設），送給塔台身分的事件會喚醒常駐 pane 裡的一個 pi（[規格](specs/2026-10-26-sb-backend.md)，**The wake protocol**、**Tower tools in a run**）。每個工作區同時只有一個本機執行，整台機器最多 `towerRuns.max` 個（預設 4）；一陣事件只會啟動一個執行（喚醒前等 1 秒；已完成的里程碑最多等 30 秒，見[主智慧體呼叫塔台時](#主智慧體呼叫塔台時)）。`boss` 事件（GUI 的輸入框、`/boss tower <prompt>`）優先處理。
 
 **啟動。** 每次執行前，server 都會對 pane 所在的資料夾跑設定檢查（`assertSettingsSafe`），被拒絕就什麼都不啟動：事件留在佇列裡，塔台卡片顯示一則錯誤通知，下一次嘗試跟著下一個事件來，最多每分鐘一次。server 會在 pane 裡執行 `pi --name "tower run · <label> · <run8>" --sb-run <run id> --tools <the run's tools>`，不帶任何 Straw Boss 環境變數，並記錄這個執行的 PID 與啟動時間。老闆對話會在 `--tools` 之前加上 `--session <file>`；隊友 run 不帶 `--tools` 啟動（見下方**本機執行沒有 shell**）。
@@ -2371,6 +2579,9 @@ server 只接受這個執行收下的、由為它自己的裝置開啟的主智�
 | `boss_close_main` | 僅塔台 | 要求這個塔台開啟的主智慧體（依 intercom 名稱或 session id）像 `/boss close` 那樣 quit。對老闆開啟的主智慧體、另一個工作區的主智慧體、Herdr 回報在工作中的，以及正在進行一輪、有排隊訊息、有對話框、有 monitor 或有子智慧體在跑的，都會被拒絕（見[關閉開啟的主智慧體](#關閉開啟的主智慧體)）。 |
 | `tower_list` | 僅塔台 | 每個工作區的塔台，沒有塔台時則是它的主智慧體或成員：`reach`、狀態、主塔台與自己的標記，以及每個分頁的主智慧體與成員的名稱（見[塔台之間的交談](#塔台之間的對話)）。 |
 | `tower_send` | 僅塔台 | 在標頭之下送一則訊息給另一個塔台（工作區 id 或完整標籤，預設是其他每個塔台）；帶 `device` 時，經 Straw Link 送到隊友電腦的塔台（[連線持有者](#straw-link跨電腦的塔台連線持有者)）；沒有塔台的工作區透過它的主智慧體觸及，否則透過它的成員。`reply` 說明是否期望答案。在主塔台的執行裡它只接受 `workspace` 與 `message`（它會開啟那個工作區的塔台），而在工作區塔台的執行裡，`head: true` 加 `inReplyTo`（請求 id）回答主塔台（[主塔台](#主塔台)）。在塔台執行裡，`for`（工作區裡一個還活著的主智慧體；搭配 `device` 和 `reply`）把裝置的答案送給那個主智慧體（省略時，server 取為這件事呼叫塔台的那一個主智慧體；[塔台為誰送](#隊友-run)），而在隊友 run 裡，`inReplyTo`（請求 id）回答對主智慧體的請求（[隊友 run](#隊友-run)）。 |
+
+| `tower_reply` | 僅塔台執行（不含主塔台） | 以塔台的標頭，用 intercom 名稱或 session id 回答一個本機 session（主智慧體或成員）。`reply` 說明是否等待答案；`basis` 在自動模式下指出對 blocked 的 `call_tower` 的回答依據什麼；`forward` 是車廂單的路徑（[合併火車](#合併火車)）。 |
+| `tower_done` | 僅塔台執行 | 以一份給下一次執行的交接筆記結束這次執行：每行一項，1 到 1,200 個字元。`wakeAfter`（5 到 240 分鐘）要求一次後續執行，只限本機執行。老闆在執行裡時，執行不會結束（[執行中的老闆](#執行中的老闆)）。 |
 | `board_read` | 僅塔台 | 工作看板：這台電腦上，以及透過 Straw Link 在隊友電腦上，每個主智慧體的一行目前工作與檢查清單，以 JSON 形式（見[工作看板](#工作看板)）。 |
 | `board_set` | 已加入且不是塔台的 session（只有分頁的主智慧體可以寫） | 覆寫主智慧體自己的看板項目（它會依 todo 清單與名稱自己填）：`now` 與最多 8 個檢查清單項目，或 `auto: true` 交還給它；回答會說明它去了哪裡。 |
 | `link_request` | 受管電腦上的每個 session，以及本機塔台執行 | 以一個理由請求一個 Straw Link 動作（create、invite、invite-unattended、join、trust、leave、remove、role、rotate）。老闆在一個顯示動作、每個引數、理由與這個 session 的對話框裡核准每一個；沒有任何東西會未經詢問就執行。在無人值守裝置上與遠端輪次裡會被拒絕。 |
@@ -2532,7 +2743,7 @@ npm run gui:dev    # the page with hot reload against a demo net; see below
 
 側邊欄外掛是 `herdr-plugin/` 裡的純 JavaScript，不從 `src/` 匯入任何東西，所以不論 Herdr 在哪裡連結或安裝它，這個資料夾都能運作。`tests/netview.test.ts` 對一個保有 token 與唯一作用中檢視的假 Herdr，以及一個真實的 Unix socket 驅動它。`herdr-reaper/` 裡的 reaper 外掛以同樣的方式建成：它的決定（`decide.mjs`）是純函式，它的執行（`sweep.mjs`）以 Herdr、git、狀態儲存與時鐘作為引數，而 `tests/reaper.test.ts` 對假物件執行它們。
 
-`npm run gui:dev` 在本機連接埠上以熱重載提供頁面，由一個用虛構名稱、每隔幾秒變動狀態的示範網供應資料。示範包含一個帶有每種聊天項目的 session（開啟任何單位），而 fixture 的工具列（左下）有 **drop stream**、**go silent**（沒有訊息、沒有錯誤：45 秒的看門狗）、**restore**，用來檢視斷線的頁面，以及 **doc arrives**，它讓 billing-main 多顯示一份文件：在它的通訊畫面上它開成一個圖磚，在別處它的徽章往上數。billing-main 列出一份 markdown 計畫與一份 HTML 審閱，後者的表單在示範裡不 post 到任何地方。
+`npm run gui:dev` 在本機連接埠上以熱重載提供頁面，由一個用虛構名稱、每隔幾秒變動狀態的示範網供應資料。示範包含一個帶有每種聊天項目的 session（開啟任何單位），而 fixture 的工具列（左下）有 **drop stream**、**go silent**（沒有訊息、沒有錯誤：45 秒的卡住偵測）、**restore**，用來檢視斷線的頁面，以及 **doc arrives**，它讓 billing-main 多顯示一份文件：在它的通訊畫面上它開成一個圖磚，在別處它的徽章往上數。billing-main 列出一份 markdown 計畫與一份 HTML 審閱，後者的表單在示範裡不 post 到任何地方。
 
 要改成把開發頁面指向存活的串流，執行 `/boss gui`，並以它的 URL 啟動開發 server：`GUI_LIVE=http://127.0.0.1:<port>/<token>/ npm run gui:dev`。
 
