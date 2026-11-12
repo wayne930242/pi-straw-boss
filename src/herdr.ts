@@ -119,8 +119,27 @@ export async function panes(run: HerdrRun, workspace?: string): Promise<Pane[]> 
 	return (await result(run, ["pane", "list", ...(workspace ? ["--workspace", workspace] : [])])).panes;
 }
 
+/** The requests that only read: one that times out or whose connection closes before an answer is asked once more, after `RETRY_MS`. Anything else is sent once, since a second send could do it twice (0.77.3: at a load of 30 to 55 about half the first tries failed). */
+const READS = new Set(["workspace.list", "pane.list", "tab.list", "pane.current", "pane.get", "pane.read", "pane.process_info", "pane.layout", "session.snapshot"]);
+const RETRY_MS = 250;
+const RETRIED = new Set(["timeout", "closed"]);
+
+/** Herdr's socket API: one request on a connection of its own, and for a read (`READS`) one more try after a timeout or a closed connection. */
+export const herdrCall = (socketPath = herdrSocket()): HerdrCall => {
+	const once = callOnce(socketPath);
+	return async (method, params, timeoutMs) => {
+		try {
+			return await once(method, params, timeoutMs);
+		} catch (error) {
+			if (!READS.has(method) || !(error instanceof HerdrError) || !RETRIED.has(error.code)) throw error;
+			await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+			return once(method, params, timeoutMs);
+		}
+	};
+};
+
 // Herdr answers one request per connection with one newline-ended frame, which may arrive in pieces (split anywhere, even inside a character).
-export const herdrCall = (socketPath = herdrSocket()): HerdrCall => (method, params, timeoutMs = 5000) =>
+const callOnce = (socketPath: string): HerdrCall => (method, params, timeoutMs = 5000) =>
 	new Promise((resolve, reject) => {
 		const socket = createConnection(localEndpoint(socketPath)), text = new StringDecoder("utf8");
 		let reply = "";

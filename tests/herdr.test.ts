@@ -140,7 +140,33 @@ test("herdrCall returns Herdr's result, even split mid-character across reads, a
 		await assert.rejects(call("bad", {}), (e: HerdrError) => e.code === "bad_frame");
 		await assert.rejects(call("pane.read", {}, 100), (e: HerdrError) => e.code === "timeout" && /no answer within 100 ms/.test(e.message));
 		await assert.rejects(herdrCall(join(tmpdir(), "psb-no-such.sock"))("ping", {}), (e: HerdrError) => e.code === "socket_error");
-		assert.deepEqual(seen, ["pane.get", "agent.prompt", "pane.close", "bad", "pane.read"]);
+		assert.deepEqual(seen, ["pane.get", "agent.prompt", "pane.close", "bad", "pane.read", "pane.read"], "a read that times out is asked once more (0.77.3)");
+	} finally {
+		fake.close();
+	}
+});
+
+test("0.77.3 A4: a read-only herdrCall that times out or whose connection closes is asked once more; a call that changes something is not", async () => {
+	const seen: string[] = [], tries = new Map<string, number>();
+	const fake = await socket((request, reply, end) => {
+		seen.push(request.method);
+		const n = (tries.get(request.method) ?? 0) + 1;
+		tries.set(request.method, n);
+		if (request.method === "pane.list") n === 1 ? end() : reply(`${JSON.stringify({ id: request.id, result: { panes: [] } })}\n`);
+		else if (request.method === "workspace.list") { if (n > 1) reply(`${JSON.stringify({ id: request.id, result: { workspaces: [] } })}\n`); }
+		else if (request.method === "session.snapshot") end();
+		else end();
+	});
+	try {
+		const call = herdrCall(fake.path);
+		// Deadlines far above a stall of a loaded machine, except the one meant to pass; the fake answers at once otherwise.
+		const LONG = 60_000;
+		assert.deepEqual(await call("pane.list", {}, LONG), { panes: [] }, "a closed connection, then the answer");
+		assert.deepEqual(await call("workspace.list", {}, 1500), { workspaces: [] }, "no answer in time, then the answer");
+		await assert.rejects(call("session.snapshot", {}, LONG), (e: HerdrError) => e.code === "closed", "two closed connections: the second failure is the answer");
+		await assert.rejects(call("pane.send_text", { pane_id: "wA:p1", text: "x" }, LONG), (e: HerdrError) => e.code === "closed");
+		await assert.rejects(call("agent.prompt", { target: "wA:p1", text: "hi" }, LONG), (e: HerdrError) => e.code === "closed");
+		assert.deepEqual(seen, ["pane.list", "pane.list", "workspace.list", "workspace.list", "session.snapshot", "session.snapshot", "pane.send_text", "agent.prompt"], "what changes something is sent once");
 	} finally {
 		fake.close();
 	}
