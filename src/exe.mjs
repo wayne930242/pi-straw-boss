@@ -82,7 +82,7 @@ const signalGroup = (pid, signal) => {
  * `execFile` with a deadline that holds (`options.deadline`, in ms). execFile's own `timeout` sends one SIGTERM and calls back when the program has ended, so a program that does not end on SIGTERM holds the
  * callback for as long as it lives (todo #155: a `herdr agent start` given 35 s called back 61 minutes later). Here `done` is called at the deadline at the latest. A program that had ended by then, with a copy
  * of its stdout or stderr still open somewhere, is told by its own exit status, as execFile tells it. One still running is cut off: the error is marked as execFile marks a timeout (`killed`, `signal: "SIGTERM"`,
- * no exit code), with what was read so far, and the program is ended behind the call by SIGTERM, then SIGKILL after `options.grace` (2 s). Where there are process groups it starts as the leader of its own
+ * no exit code; an overflow of `maxBuffer` is marked as execFile marks that: its code, `killed: false`, no signal), with what was read so far, and the program is ended behind the call by SIGTERM, then SIGKILL after `options.grace` (2 s). Where there are process groups it starts as the leader of its own
  * (`detached`) and both signals go to the group, so what it started ends with it; on Windows they end the program alone. Output is read as UTF-8 text, and more than `maxBuffer` of it cuts the program off too.
  * `options.group: false` is for a program whose children are meant to stay (an opener and the file manager it started): it runs in the caller's group, and the signals end it alone.
  * @param {string} file
@@ -108,10 +108,10 @@ function execFileByDeadline(file, args, options, done) {
 	const failure = (what, marks) => Object.assign(new Error(`${what}: ${cmd}${stderr ? `\n${stderr}` : ""}`), { cmd, ...marks });
 	/** @param {{ code: number | null, signal: NodeJS.Signals | null }} status */
 	const byStatus = ({ code, signal }) => settle(code === 0 ? null : failure("Command failed", { code, killed: false, signal }));
-	/** @param {string} what @param {string | null} code */
-	const cutOff = (what, code) => {
+	/** @param {string} what @param {string | null} code @param {boolean} timedOut a timeout is marked as execFile marks one; an overflow is marked as execFile marks it (a code, no `killed`, no signal), though the program behind the call is ended too */
+	const cutOff = (what, code, timedOut) => {
 		if (settled) return;
-		settle(failure(what, { code, killed: true, signal: "SIGTERM" }));
+		settle(failure(what, timedOut ? { code, killed: true, signal: "SIGTERM" } : { code, killed: false, signal: null }));
 		if (ended) return; // it left by itself: what it left behind is not signalled, and its group's id may be another program's by now
 		/** @param {NodeJS.Signals} signal */
 		const send = (signal) => (alone || child.pid === undefined ? child.kill(signal) : signalGroup(child.pid, signal));
@@ -120,9 +120,9 @@ function execFileByDeadline(file, args, options, done) {
 		// The leader gone and nothing left in its group: there is nothing to kill at the grace.
 		child.once("exit", () => (alone || child.pid === undefined || !signalGroup(child.pid, 0)) && clearTimeout(hard));
 	};
-	const timer = setTimeout(() => (ended ? byStatus(ended) : cutOff(`Command timed out after ${options.deadline} ms`, null)), options.deadline);
-	child.stdout?.setEncoding("utf8").on("data", (chunk) => (stdout += chunk).length > limit && cutOff("stdout maxBuffer length exceeded", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"));
-	child.stderr?.setEncoding("utf8").on("data", (chunk) => (stderr += chunk).length > limit && cutOff("stderr maxBuffer length exceeded", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"));
+	const timer = setTimeout(() => (ended ? byStatus(ended) : cutOff(`Command timed out after ${options.deadline} ms`, null, true)), options.deadline);
+	child.stdout?.setEncoding("utf8").on("data", (chunk) => (stdout += chunk).length > limit && cutOff("stdout maxBuffer length exceeded", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", false));
+	child.stderr?.setEncoding("utf8").on("data", (chunk) => (stderr += chunk).length > limit && cutOff("stderr maxBuffer length exceeded", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", false));
 	child.on("error", settle); // the program could not be started; after the call has ended, a signal that could not be sent
 	child.once("exit", (code, signal) => (ended = { code, signal }));
 	child.once("close", (code, signal) => byStatus({ code, signal }));

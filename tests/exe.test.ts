@@ -6,7 +6,7 @@ import { afterEach, test } from "node:test";
 import { execFileExe, execFileSyncExe, ExeNotFound, forgetExe, resolveExe, searchPath } from "../src/exe.mjs";
 import { createStartOf } from "../src/startof.ts";
 import { stallWatch, until } from "./server-world.ts";
-import { type Cut, cutOff, gone, LINGER, standIn } from "./standin.ts";
+import { type Cut, cutOff, deadlineFor, gone, LINGER, standIn } from "./standin.ts";
 
 // A bare program name is searched in the current folder first on Windows (nodejs/node#46264), and a pi session's folder is a project. Every program the package starts by name is
 // found by a PATH search that never looks in the current folder, and spawned by the path it found.
@@ -183,16 +183,31 @@ test("todo #155: every program started with a time limit through execFileExe get
 
 test("todo #155: with `group: false` a program cut off at its deadline is ended alone, by SIGTERM and then SIGKILL, and what it started stays (the file manager an opener started)", { skip: process.platform === "win32" }, async () => {
 	// The program ignores SIGTERM, so its end is the SIGKILL's doing; it is no leader of a group (its group is the caller's), so a signal to a group of its own would reach nothing.
-	const fake = standIn({
+	const deadline = await deadlineFor(), fake = standIn({
 		herdr: `trap '' TERM\n"$1/holder" "$1" &\nwhile [ ! -s "$1/held" ]; do sleep 0.05; done\nps -o pgid= -p $$ | tr -d ' ' > "$1/pgid"\necho $$ > "$1/pid"\n${LINGER}`,
 		holder: `echo $$ > "$1/held"\n${LINGER}`,
 	});
 	try {
-		const error = await new Promise<Cut | null>((resolve) => execFileExe(fake.bin, [fake.dir], { deadline: 1500, grace: 300, group: false }, (e) => resolve(e)));
+		const error = await new Promise<Cut | null>((resolve) => execFileExe(fake.bin, [fake.dir], { deadline, grace: 300, group: false }, (e) => resolve(e)));
 		assert.ok(error && cutOff(error), "cut off at the deadline");
 		assert.notEqual(fake.pid("pgid"), fake.pid("pid"), "the program runs in the caller's process group");
 		await until(() => gone(fake.pid("pid")), "the program that ignores SIGTERM to be gone", 15_000);
 		assert.ok(!gone(fake.pid("held")) && !fake.has("outlived"), "what it started was not signalled");
+	} finally {
+		fake.close();
+	}
+});
+
+test("R0752-F002: a program that writes more than `maxBuffer` is cut off and ended, and the error is marked as execFile marks an overflow (its code, not killed, no signal), not as a timeout", { skip: process.platform === "win32" }, async () => {
+	const dl = await deadlineFor(10_000), fake = standIn({ herdr: `echo $$ > "$1/pid"\nwhile :; do echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; done` });
+	try {
+		const error = await new Promise<(Cut & { message?: string }) | null>((resolve) => execFileExe(fake.bin, [fake.dir], { deadline: dl, maxBuffer: 200, grace: 300 }, (e) => resolve(e)));
+		assert.ok(error, "the call failed");
+		assert.equal(error.code, "ERR_CHILD_PROCESS_STDIO_MAXBUFFER");
+		assert.equal(error.killed, false, "an overflow is not a timeout");
+		assert.equal(error.signal, null);
+		assert.ok(!cutOff(error));
+		await until(() => fake.has("pid") && gone(fake.pid("pid")), "the program behind the call to be ended", 15_000);
 	} finally {
 		fake.close();
 	}
