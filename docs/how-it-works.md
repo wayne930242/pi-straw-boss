@@ -3802,6 +3802,8 @@ The worktree reaper stays macOS and Linux only. It closes a pane only when the p
 
 ## Development
 
+`npm run check` type-checks the extension and the page, and `npm test` runs the suite. The page is vanilla TypeScript in `gui/`, built by Vite into `dist/gui`; the sidebar plugin is plain JavaScript in `herdr-plugin/`; prompts are plain markdown in `prompts/`.
+
 ```bash
 npm install
 npm run check      # tsc --noEmit for the extension and for the page
@@ -3812,6 +3814,9 @@ npm test           # node --test, against a fake Herdr and a fake intercom broke
 npm run test:one -- tests/x.test.ts # one file, isolated the same way
 npm run gui:dev    # the page with hot reload against a demo net; see below
 ```
+
+<details>
+<summary>Details</summary>
 
 The dashboard has its own file (`src/dashboard.ts`, budget 162 lines) and its rendering is a pure function of a snapshot, so tests drive it without a terminal. What it shows without drawing (the marks, the rows, and the subagent reading) is in `src/netdata.ts`, which reaches no value import of pi-tui, typebox, or pi-coding-agent so the server can load it; `tests/pure-imports.test.ts` walks the import graph and fails on one. The browser view's data and server (`src/net.ts`, `src/gui.ts`) share a budget of 300 lines; `buildNet` turns sessions, panes, and workspaces into the JSON snapshot as a pure function (and fills the registry of readable session files), and `collectNet` reads Herdr and intercom and reuses the subagent linking of `src/netdata.ts`. The session reader (`src/history.ts`), the entry-to-item mapping (`src/items.ts`), and the stream and API glue (`src/watch.ts`) are tested against fixture files.
 
@@ -3830,3 +3835,5 @@ To point the dev page at a live stream instead, run `/boss gui` and start the de
 To check a checkout in real pi while your own sb server runs (one per state directory), start a scratch pi with `--no-extensions`, `-e` for pi-intercom and your provider, and `-e` for a two-line wrapper that calls this checkout's `createStrawBoss({ stateDir: "<scratch dir>", openUrl: async () => {} })`, with `PI_CODING_AGENT_DIR` and `HOME` pointing at scratch folders and a scratch Herdr. Its `/boss gui` then starts a second sb server from the checkout, recorded in the scratch directory, and opens no browser.
 
 Prompts are plain markdown in `prompts/`, read at session start, so an edit applies after `/reload`.
+
+</details>

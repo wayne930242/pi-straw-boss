@@ -3802,6 +3802,8 @@ worktree reaper 仍然只支援 macOS 與 Linux。它只在 pane 的 shell 前�
 
 ## 開發
 
+`npm run check` 對擴充功能和頁面做型別檢查，`npm test` 跑測試套件。頁面是 `gui/` 裡的純 TypeScript，由 Vite 建置到 `dist/gui`；側邊欄外掛是 `herdr-plugin/` 裡的純 JavaScript；提示詞是 `prompts/` 裡的純 markdown。
+
 ```bash
 npm install
 npm run check      # tsc --noEmit for the extension and for the page
@@ -3812,6 +3814,9 @@ npm test           # node --test, against a fake Herdr and a fake intercom broke
 npm run test:one -- tests/x.test.ts # one file, isolated the same way
 npm run gui:dev    # the page with hot reload against a demo net; see below
 ```
+
+<details>
+<summary>細節</summary>
 
 儀表板有它自己的檔案（`src/dashboard.ts`，預算 162 行），它的渲染是快照的純函式，所以測試不需要終端機就能驅動它。它不畫出來就顯示的東西（標記、列，以及子智慧體的讀法）在 `src/netdata.ts` 裡，它不含對 pi-tui、typebox 或 pi-coding-agent 的任何值匯入，好讓 server 能載入它；`tests/pure-imports.test.ts` 走訪匯入圖，並在遇到一個時失敗。瀏覽器檢視的資料與 server（`src/net.ts`、`src/gui.ts`）共用 300 行的預算；`buildNet` 把 session、pane 與工作區變成 JSON 快照，是純函式（並填入可讀 session 檔案的登錄表），而 `collectNet` 讀取 Herdr 與 intercom，並重用 `src/netdata.ts` 的子智慧體連結。session 讀取器（`src/history.ts`）、項目對應（`src/items.ts`）以及串流與 API 的黏合層（`src/watch.ts`）以 fixture 檔案測試。
 
@@ -3830,3 +3835,5 @@ npm run gui:dev    # the page with hot reload against a demo net; see below
 要在真實的 pi 裡檢查一個 checkout，同時你自己的 sb server 仍在執行（每個狀態資料夾一個），用 `--no-extensions` 啟動一個暫用的 pi，用 `-e` 載入 pi-intercom 與你的 provider，再用 `-e` 載入一個兩行的包裝，它呼叫這個 checkout 的 `createStrawBoss({ stateDir: "<scratch dir>", openUrl: async () => {} })`，並讓 `PI_CODING_AGENT_DIR` 與 `HOME` 指向暫用資料夾，以及一個暫用的 Herdr。它的 `/boss gui` 於是從這個 checkout 啟動第二個 sb server，記錄在暫用資料夾裡，而且不開啟瀏覽器。
 
 prompt 是 `prompts/` 裡單純的 markdown，在 session 啟動時讀取，所以編輯在 `/reload` 之後生效。
+
+</details>
