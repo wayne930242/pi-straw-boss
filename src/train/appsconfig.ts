@@ -85,6 +85,16 @@ export function openRefusal(dir: string, app: string | undefined): string | unde
 	return out.length ? `sb: ${out.join("; ")}` : undefined;
 }
 
+/**
+ * The folder whose apps.json speaks for the project at `dir`: `dir` when its git root has one, else the main checkout of its repository when that has one (a linked worktree of a coordinator often lacks an untracked
+ * `.claude/straw-boss/apps.json` the main checkout keeps, and the tower reads the project's), else undefined: no apps.json is found, and nothing that needs one can be checked.
+ */
+export function projectAppsDir(dir: string): string | undefined {
+	if (appsFile(dir).exists) return dir;
+	const main = repoRoot(dir);
+	return appsFile(main).exists ? main : undefined;
+}
+
 /** The repository `dir` is a checkout of, as its main checkout's real folder: a linked worktree's `.git` is a file naming its git dir, whose `commondir` leads to the repository's own `.git`. Two worktrees of one repository answer the same; anything else answers its git root. */
 export function repoRoot(dir: string): string {
 	const real = (path: string) => { try { return realpathSync(path); } catch { return resolve(path); } };

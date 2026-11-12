@@ -1,9 +1,9 @@
-import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { availableParallelism, loadavg, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { execFileSyncExe } from "../exe.mjs";
 import { checkAcceptRef, checkCar, checkEvidence, parseAppAccept, parseSlip } from "../train/accept.ts";
-import { readAppIntegration, readApps } from "../train/appsconfig.ts";
+import { appsFile, projectAppsDir, readAppIntegration, repoRoot } from "../train/appsconfig.ts";
 import { type Board, boardPath, boardState, MAX_TRAINS, trainboardDir, factsOf, MAX_CLEARS, readBoard, readTrainboards, type Writer, writeBoard } from "../train/board.ts";
 import { isName, isObject, validateStep } from "../train/spec.ts";
 import { noticeStatus, stateLine, type Attempt } from "../train/cars.ts";
@@ -92,14 +92,20 @@ function check(flags: Record<string, string | true>, io: TrainIo): number {
 		if (accept.refusal) refusals.push(accept.refusal);
 		if (slip?.refusal) refusals.push(slip.refusal);
 		if (!setting.ok) refusals.push(setting.refusal);
-		// What the app requires is the file's (TB-F001): the project's apps.json in this folder, for the app `--app` names, else the slip's `car:`, else the evidence's `car.app`. `--app-accept` can only add to it. A folder with no apps.json
-		// (a coordinator's worktree may have none) is checked with the flag alone; the integrator's guard and the train read the project's file.
+		// What the app requires is the file's (TB-F001): the project's apps.json, for the app `--app` names, else the slip's `car:` (or `app:`), else the evidence's `car.app`. `--app-accept` can only add to it. The file is this folder's, else
+		// that of the repository's main checkout (a coordinator's linked worktree may have none, and the tower reads the project's). When neither has one, a named app could not be checked, and the check says so instead of ok (0.77.3);
+		// with no app named, the flag alone is checked.
 		let required: string[] = setting.ok ? setting.accept : [];
-		if (!accept.refusal && !slip?.refusal && setting.ok && !readApps(cwd).missing) {
+		if (!accept.refusal && !slip?.refusal && setting.ok) {
 			const app = typeof flags.app === "string" ? flags.app : slip ? parseSlip(slip.text!).fields.car : evidenceApp(accept.text);
-			const found = app ? readAppIntegration(cwd, app) : { ok: false as const, refusal: "sb: the project has an apps.json, so name the app to check against: --app <name>" };
-			if (found.ok) required = [...new Set([...required, ...found.accept])];
-			else refusals.push(found.refusal);
+			const dir = projectAppsDir(cwd);
+			if (dir === undefined) {
+				if (app) refusals.push(`sb: app ${app} could not be checked: ${noAppsWhere(cwd)}; run train check in the project's checkout`);
+			} else {
+				const found = app ? readAppIntegration(dir, app) : { ok: false as const, refusal: "sb: the project has an apps.json, so name the app to check against: --app <name>" };
+				if (found.ok) required = [...new Set([...required, ...found.accept])];
+				else refusals.push(found.refusal);
+			}
 		}
 		if (!accept.refusal && !slip?.refusal && setting.ok && !refusals.length) {
 			const exists = io.exists ?? ((path: string) => existsSync(resolve(cwd, path)));
@@ -117,6 +123,13 @@ function check(flags: Record<string, string | true>, io: TrainIo): number {
 	}
 	io.out(`${JSON.stringify({ ok: refusals.length === 0, refusals })}\n`);
 	return refusals.length ? 2 : 0;
+}
+
+/** Where `train check` looked for an apps.json and found none: the folder's git root, and the repository's main checkout when that is another folder. */
+function noAppsWhere(cwd: string): string {
+	const real = (path: string) => { try { return realpathSync(path); } catch { return path; } };
+	const here = appsFile(real(cwd)).both, main = appsFile(repoRoot(cwd)).both;
+	return `no apps.json at ${here}${main === here ? "" : `, nor in the main checkout of this repository (${main})`}`;
 }
 
 /** The app an evidence file names (`car.app`), if it is one. */

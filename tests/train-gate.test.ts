@@ -772,7 +772,9 @@ test("cli: train gate runs the wrapper and returns its exit code", async () => {
 
 // ---- check
 
-function checkIo(w: World) {
+/** `train check` in `w.base`, which holds an apps.json naming app `web` with an integration that requires no acceptance (0.77.3: a named app is checked against the project's file, and with none found it is refused as unchecked), unless `apps` is false. */
+function checkIo(w: World, apps = true) {
+	if (apps) (mkdirSync(join(w.base, ".straw-boss"), { recursive: true }), writeFileSync(join(w.base, ".straw-boss", "apps.json"), JSON.stringify({ apps: [{ name: "web", dir: ".", integration: { base: "develop" } }] })));
 	const out: string[] = [], err: string[] = [];
 	const go = async (...argv: string[]) => {
 		out.length = 0;
@@ -824,7 +826,7 @@ test("train check --accept validates acceptance evidence, with --app-accept and 
 	// the default checks run against the real folder and git: a path that is not there is refused
 	const out: string[] = [];
 	writeFileSync(file, JSON.stringify(evidence({}, { evidence: join(w.base, "no-such-log") })));
-	assert.equal(await run(["train", "check", "--accept", file], { out: (t) => out.push(t), err: () => {}, stateDir: w.stateDir }), 2);
+	assert.equal(await run(["train", "check", "--accept", file], { out: (t) => out.push(t), err: () => {}, stateDir: w.stateDir, train: { cwd: w.base } }), 2);
 	assert.match(out.join(""), /does not exist/);
 });
 
@@ -834,11 +836,11 @@ test("TP-F003: train check --accept none means no evidence: the slip is checked 
 	writeFileSync(join(w.base, "none-slip.txt"), slip({ accept: "none" }));
 	writeFileSync(join(w.base, "file-slip.txt"), slip({ accept: join(w.base, "accept.json") }));
 	assert.deepEqual((await go("--accept", "none", "--slip", join(w.base, "none-slip.txt"))).result, { ok: true, refusals: [] }, "no evidence and the app asks for none");
-	assert.deepEqual((await go("--accept", "none")).result, { ok: true, refusals: [] }, "no slip: only what the app requires is checked");
+	assert.deepEqual((await go("--accept", "none", "--app", "web")).result, { ok: true, refusals: [] }, "no slip: only what the app requires is checked");
 	const required = await go("--accept", "none", "--app-accept", "e2e", "--slip", join(w.base, "none-slip.txt"));
 	assert.equal(required.code, 2);
 	assert.match(required.result!.refusals.join(" "), /accept: none is allowed only for an app whose integration\.accept is empty \(this app requires e2e\)/);
-	const bare = await go("--accept", "none", "--app-accept", "e2e,uat");
+	const bare = await go("--accept", "none", "--app", "web", "--app-accept", "e2e,uat");
 	assert.equal(bare.code, 2);
 	assert.match(bare.result!.refusals.join(" "), /requires e2e, uat/, "without a slip the refusal is the same");
 	const named = await go("--accept", "none", "--slip", join(w.base, "file-slip.txt"));
@@ -847,14 +849,15 @@ test("TP-F003: train check --accept none means no evidence: the slip is checked 
 	assert.ok(!named.result!.refusals.join(" ").includes("ENOENT"), "none is not a path");
 });
 
-test("TB-F001: train check reads what the app requires from apps.json, so --app-accept cannot weaken it; a folder without the file is checked by the flag alone", async () => {
+test("TB-F001: train check reads what the app requires from apps.json, so --app-accept cannot weaken it; a folder without the file checks the flag alone, and an app it names is refused as unchecked", async () => {
 	const w = world();
-	const go = checkIo(w);
+	const go = checkIo(w, false);
 	const file = join(w.base, "accept.json");
 	writeFileSync(file, JSON.stringify(evidence()));
 	writeFileSync(join(w.base, "web-slip.txt"), slip({ accept: file }));
 	writeFileSync(join(w.base, "none-slip.txt"), slip({ accept: "none" }));
-	assert.equal((await go("--accept", file)).code, 0, "no apps.json here: the flag alone, and it asks for nothing");
+	assert.match((await go("--accept", file)).result!.refusals.join(" "), /app web could not be checked: no apps\.json at/, "no apps.json here: the evidence's car.app cannot be checked, which is no ok (0.77.3)");
+	assert.equal((await go("--accept", "none")).code, 0, "no apps.json and no app named: the flag alone, and it asks for nothing");
 	const apps = (integration: object) => (mkdirSync(join(w.base, ".straw-boss"), { recursive: true }), writeFileSync(join(w.base, ".straw-boss", "apps.json"), JSON.stringify({ apps: [{ name: "web", dir: ".", integration }] })));
 	apps({ base: "develop", accept: ["e2e", "uat"] });
 	const weak = await go("--accept", file, "--app-accept", "e2e", "--slip", join(w.base, "web-slip.txt"));
@@ -872,6 +875,33 @@ test("TB-F001: train check reads what the app requires from apps.json, so --app-
 	assert.match(old.result!.refusals.join(" "), /stages lists "uat".*Moving a project to 0\.65\.0/);
 	writeFileSync(join(w.base, ".straw-boss", "apps.json"), "{");
 	assert.match((await go("--accept", file)).result!.refusals.join(" "), /cannot be parsed/, "a file that exists and cannot be read refuses");
+});
+
+test("0.77.3 A1: train check in a linked worktree with no apps.json reads the main checkout's; with none anywhere a named app is refused as unchecked, never ok", async () => {
+	const w = world();
+	const main = join(w.base, "main"), wt = join(w.base, "wt"), gitdir = join(main, ".git", "worktrees", "wt");
+	mkdirSync(gitdir, { recursive: true });
+	mkdirSync(wt, { recursive: true });
+	writeFileSync(join(gitdir, "commondir"), "../..\n");
+	writeFileSync(join(wt, ".git"), `gitdir: ${gitdir}\n`);
+	const file = join(w.base, "accept.json"), slipFile = join(w.base, "slip.txt");
+	writeFileSync(file, JSON.stringify(evidence()));
+	writeFileSync(slipFile, slip({ car: "no-such-app", accept: file }));
+	const go = async (...argv: string[]) => {
+		const out: string[] = [];
+		const code = await run(["train", "check", ...argv], { out: (t) => out.push(t), err: () => {}, stateDir: w.stateDir, train: { cwd: wt, exists: () => true, isAncestor: () => true } });
+		return { code, result: JSON.parse(out.join("")) as { ok: boolean; refusals: string[] } };
+	};
+	const none = await go("--accept", file, "--app-accept", "e2e", "--slip", slipFile);
+	assert.equal(none.code, 2, "no apps.json in the worktree nor the main checkout: the app could not be checked, so not ok");
+	assert.match(none.result.refusals.join(" "), /no-such-app could not be checked/);
+	mkdirSync(join(main, ".claude", "straw-boss"), { recursive: true });
+	writeFileSync(join(main, ".claude", "straw-boss", "apps.json"), JSON.stringify({ apps: [{ name: "web", dir: ".", integration: { base: "develop", accept: ["e2e"] } }] }));
+	const missing = await go("--accept", file, "--app-accept", "e2e", "--slip", slipFile);
+	assert.equal(missing.code, 2);
+	assert.match(missing.result.refusals.join(" "), /has no app named no-such-app/, "the main checkout's apps.json is read, as the tower reads it");
+	writeFileSync(slipFile, slip({ car: "web", accept: file }));
+	assert.deepEqual((await go("--accept", file, "--slip", slipFile)).result, { ok: true, refusals: [] });
 });
 
 // ---- status and clear
