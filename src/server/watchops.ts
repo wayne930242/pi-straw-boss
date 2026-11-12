@@ -3,7 +3,7 @@ import { boardSeam } from "../boardview.ts";
 import type { HerdrRun, HerdrWorld, Session } from "../herdr.ts";
 import { netSource } from "../net.ts";
 import type { AutoMode, Period } from "./automode.ts";
-import { type AutoWatch, createAutoWatch, type WatchDeps, type WatchReport, WATCH_KEY, WATCH_TICK_MS, factsOf, watchSection } from "./autowatch.ts";
+import { type AutoWatch, createAutoWatch, type NoticeWhere, type WatchDeps, type WatchReport, WATCH_KEY, WATCH_TICK_MS, factsOf, watchSection } from "./autowatch.ts";
 import { readAsks } from "./headasks.ts";
 import { headSeam } from "./headnet.ts";
 import type { Slot } from "./record.ts";
@@ -53,9 +53,9 @@ export function watchSwitch(o: { towers(): Towers | undefined; log: StartWatch["
 }
 
 /** The watch's section of the return list for the period that ends (automode.ts `watch`): the head's asks are read here, so the nudges since the last wake are in it, and the queue, so a notice a run took since the last reading counts as told. */
-export const reportWatch = (slot: Slot, now: () => number, towers: () => Towers | undefined) => (period: Period, until: string): WatchReport | undefined => watchSection(period.watch, period.since, until, asksOf(slot, now), (p) => noticeState(towers, p) === "gone");
+export const reportWatch = (slot: Slot, now: () => number, towers: () => Towers | undefined) => (period: Period, until: string): WatchReport | undefined => watchSection(period.watch, period.since, until, asksOf(slot, now), (p) => noticeState(towers, p));
 /** Where a notice of the watch is; queued while the towers are not known (it is not taken for told). */
-const noticeState = (towers: () => Towers | undefined, p: { workspace: string; key: string }) => towers()?.runs.noticeState(p.workspace, p.key) ?? "queued";
+const noticeState = (towers: () => Towers | undefined, p: { workspace: string; key: string }): NoticeWhere => towers()?.runs.noticeState(p.workspace, p.key) ?? "queued";
 /** The head's asks; none when the file cannot be read (the watch's count of the head's own messages then stands where it was, and the return list is still written). */
 const asksOf = (slot: Slot, now: () => number) => { try { return readAsks(slot, now()); } catch { return []; } };
 

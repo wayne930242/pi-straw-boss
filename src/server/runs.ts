@@ -20,7 +20,7 @@ import type { Log } from "./log.ts";
 import { noteEvent } from "./headasks.ts";
 import type { Slot } from "./record.ts";
 import { addNote, clearTimer, listRuns, pruneRuns, readNotes, readTimer, type Outcome, type RunRecord, writeRun, writeTimer } from "./towerrunstore.ts";
-import { appendEvent, dropParked, parkEvent, type QueuedEvent, readQueue, removeEvent, type ServiceRecord, unparkEvent, updateEvent } from "./towerstore.ts";
+import { appendEvent, dropParked, HEAD_KEY, parkEvent, type QueuedEvent, readQueue, removeEvent, type ServiceRecord, unparkEvent, updateEvent } from "./towerstore.ts";
 import { RUN_CAP_MINUTES } from "./towerbrief.ts";
 import { HEAD_RUN_TOOLS, LOCAL_RUN_TOOLS } from "../runallow.ts";
 import { appendChapter, headResume, recapOf } from "./headchapters.ts";
@@ -1596,10 +1596,15 @@ export function createRuns(o: RunsOptions) {
 			const svc = services.get(workspace);
 			return Boolean(svc) && waitingOf(svc!).some((e) => e.kind === "notice" && e.messageId?.startsWith(prefix));
 		},
-		/** Where the notice of key `key` is: in the queue (waiting, offered, or held by a run that has not ended), parked after two runs crashed with it, or gone (a run that took it ended, or it was dropped). */
-		noticeState(workspace: string, key: string): "queued" | "parked" | "gone" {
+		/**
+		 * Where the head's notice of key `key` is: held by a head run that has not ended (`taken`), in the queue otherwise (waiting, offered, or held by a run that is gone), parked after two runs crashed with it, or gone (a run
+		 * that took it ended, or it was dropped). Read in the head's own folder, not through its workspace's binding: the head that closes unbinds it, and its untaken notice must not read as gone (RV3-F001).
+		 */
+		noticeState(_workspace: string, key: string): "queued" | "taken" | "parked" | "gone" {
 			const ours = (e: QueuedEvent) => e.kind === "notice" && e.messageId === key;
-			return readQueue(slot, workspace).some(ours) ? "queued" : readQueue(slot, workspace, true).some(ours) ? "parked" : "gone";
+			const e = readQueue(slot, HEAD_KEY).find(ours);
+			if (e) return e.taken && byRun.get(e.taken.run) && !byRun.get(e.taken.run)!.ended ? "taken" : "queued";
+			return readQueue(slot, HEAD_KEY, true).some(ours) ? "parked" : "gone";
 		},
 		/** Drops the notices whose key starts with `prefix` that no run took, queued or parked (auto mode ended: its watch's notices are stale); one offered to the run in flight stays. Returns how many went. */
 		dropNotices(workspace: string, prefix: string): number {

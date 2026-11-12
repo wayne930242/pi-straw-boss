@@ -35,7 +35,7 @@ let shown: Net = { bases: [] };
 /** One server's life over the state folder: auto mode and its watch as main.ts wires them, with a head that keeps what it was sent (`taken`: how many of them a run took). */
 function server(over: Partial<WatchDeps> = {}) {
 	const sent: { workspace: string; text: string; key: string }[] = [], asks: Ask[] = [], unparked: number[] = [];
-	const auto = createAutoMode({ dir, now: clock.now, log: (event, facts) => void logs.push([event, facts]), unpark: () => void unparked.push(1), watch: (p, until) => watchSection(p.watch, p.since, until, asks, (x) => (over.noticeState?.(x.workspace, x.key) ?? "gone") === "gone") });
+	const auto = createAutoMode({ dir, now: clock.now, log: (event, facts) => void logs.push([event, facts]), unpark: () => void unparked.push(1), watch: (p, until) => watchSection(p.watch, p.since, until, asks, (x) => over.noticeState?.(x.workspace, x.key) ?? "gone") });
 	auto.start();
 	const watch = createAutoWatch({
 		now: clock.now, log: (event, facts) => void logs.push([event, facts]), auto, head: () => ({ workspace: "w-head" }), asks: () => asks,
@@ -193,7 +193,7 @@ const troubleNet = (): Net => ({
 	yards: { projects: [{ project: "acme", forming: [], waiting: [], trains: [{ code: "1112a", app: "web", state: "stale", key: "t1", updated: new Date(T0 - HOUR).toISOString(), steps: [], cars: [] }] }] },
 });
 
-for (const [probe, where] of [["B", "queued"], ["A", "parked"]] as const) {
+for (const [probe, where] of [["B", "queued"]] as const) {
 	test(`R2-F001 (probe ${probe}): a notice the head never takes (${where}) tells nobody: every later reading is skipped, and the return list names its findings`, async () => {
 		shown = troubleNet();
 		const s = server({ noticeState: () => where });
@@ -208,6 +208,39 @@ for (const [probe, where] of [["B", "queued"], ["A", "parked"]] as const) {
 		assert.match(off.report!, /\nThe last notice \(\d\d:\d\d\) was not taken by the head tower: 2 findings told to nobody:\n- "Alpha": its tower: held \(it starts no run\)\n- "Alpha": train "1112a" \("acme"\): its writer is gone and it has not ended$/);
 	});
 }
+
+test("RV3-F002 (probe A): a parked notice no longer blocks the watch: the next notice tells its findings again, and the morning names it as parked; it is neither a wake nor a skip", async () => {
+	shown = troubleNet();
+	const s = server({ noticeState: (_ws, key) => (key.endsWith(":1") ? "parked" : "gone") });
+	s.auto.switchOn(pi);
+	await s.run(WATCH_MS);
+	assert.equal(s.sent.length, 1);
+	assert.equal(state(s).pending, undefined, "parked: not pending");
+	assert.deepEqual([state(s).wakes, state(s).skipped, state(s).shown.length, state(s).parked?.count], [0, 0, 0, 1], "neither a wake nor a block, and nothing told");
+	await s.run(WATCH_MS);
+	assert.equal(s.sent.length, 2, "the next reading sends a notice");
+	assert.match(s.sent[1]!.text, /held/, "carrying the parked notice's findings again");
+	assert.deepEqual([state(s).readings, state(s).wakes, state(s).skipped], [2, 1, 0]);
+	assert.deepEqual(state(s).shown, ["tower:wA:held", "train:acme:1112a:stale"]);
+	const off = s.auto.switchOff(pi) as { report?: string };
+	assert.match(off.report!, /: 2 readings, 0 calm \(nobody woken\), 1 wake; /);
+	assert.match(off.report!, /\nA notice was parked after two head runs crashed with it; it \(\d\d:\d\d\) told 2 findings to nobody:\n- "Alpha": its tower: held \(it starts no run\)\n- "Alpha": train "1112a"/);
+	assert.doesNotMatch(off.report!, /was not taken/);
+});
+
+test("RV3-F003: past 20 findings, the still-open list is cut after the pending notice's findings are left out, so the ones it does not tell are listed", async () => {
+	const many = (n: number) => Array.from({ length: n }, (_, i) => base(`w${String(i).padStart(2, "0")}`, `Ws${i}`, [unit(`m${i}`, `main-${i}`)], { state: "held" }));
+	shown = { bases: many(25), board: [] };
+	const s = server({ noticeState: () => "queued" });
+	s.auto.switchOn(pi);
+	await s.run(WATCH_MS);
+	assert.equal(s.sent.length, 1);
+	shown = { bases: many(28), board: [] };
+	await s.run(WATCH_MS);
+	const off = s.auto.switchOff(pi) as { report?: string };
+	assert.match(off.report!, /\nStill open at the last reading \(\d\d:\d\d\):\n- "Ws25": its tower: held \(it starts no run\)\n- "Ws26": [^\n]*\n- "Ws27": [^\n]*\n/);
+	assert.match(off.report!, /25 findings told to nobody/);
+});
 
 test("R2-F001: a notice counts as told once the head took it; the return list then reads it as a wake", async () => {
 	shown = troubleNet();
