@@ -26,5 +26,5 @@ It hears again when another signal fires, when the session recovers, and as a re
 
 The thresholds are the `stallWatch` keys in [`config.json`](/pi-straw-boss/docs/reference/configuration/#configjson).
 
-Heavy-command slots, Linux cgroups, and a watchdog that stops a runaway worker process are planned for a later release.
+Heavy-command slots, Linux cgroups, and a runaway-process guard are planned for a later release.
 See [Process hygiene and slots](/pi-straw-boss/docs/reference/how-it-works/process-hygiene-and-slots/) for the rules and the limits.

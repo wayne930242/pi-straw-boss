@@ -9,6 +9,15 @@ It covers this computer; Straw Link teammates are not told.
 
 ## Turning it on and off
 
+```mermaid
+stateDiagram-v2
+  [*] --> Off
+  Off --> Staged: you say you are going to sleep (boss_auto)
+  Staged --> On: you confirm
+  Off --> On: the page's two taps, or /boss auto on and confirm
+  On --> Off: you say you are up, one tap, or /boss auto off
+```
+
 - **Tell the head tower.** Say you are going to sleep (「我要睡了」), and the head tower stages a request with `boss_auto`. Confirm it with the button on the head page or Zen's strip, or with `/boss auto confirm`. Say you are up again (「我起床了」) and it ends. The server reads your words itself and refuses a question, a negation, and words used before.
 - **The page's switch.** The chip under the header says `Auto mode` while off and `Auto · since 23:10` while on. Starting takes two taps: the first shows what will happen, the second starts. Ending takes one tap.
 - **In pi.** `/boss auto on` asks you to confirm in the terminal, `/boss auto off` ends it, and a bare `/boss auto` shows the state.

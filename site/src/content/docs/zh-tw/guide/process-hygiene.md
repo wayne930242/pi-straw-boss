@@ -26,5 +26,5 @@ sb server 每分鐘檢查每個 pane 裡的 pi，看起來卡死時就告訴該�
 
 門檻是 [`config.json`](/pi-straw-boss/docs/zh-tw/reference/configuration/#configjson) 裡的 `stallWatch`。
 
-重型指令的 slot、Linux cgroup，以及會停掉失控工作者程序的看門狗，計畫在之後的版本推出。
+重型指令的 slot、Linux cgroup，與失控程序的防護，計畫在之後的版本推出。
 規則與限制見[程序衛生與 slot](/pi-straw-boss/docs/zh-tw/reference/how-it-works/process-hygiene-and-slots/)。

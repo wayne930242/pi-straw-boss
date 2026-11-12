@@ -15,11 +15,10 @@ Herdr worktree 工作區裡的子智慧體與 session 不會加入網：由啟�
 - **在 Herdr 0.9.4 或更新版本裡執行的 pi。**
 - **Herdr 的 pi 整合**，即 `herdr integration install pi`。沒有它，Herdr 不會為 pane 裡的 pi session 命名，該 session 也就無法加入網。缺少這個整合時，每個 session 會在啟動 20 秒後警告一次。
 - **[pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.18.1 或更新版本。** 網的頻道與訊息、GUI 的對話框轉送，以及 sb server 的連線，都透過它進行。server 在啟動時檢查版本，並把過舊或缺少的 pi-intercom 寫進 `start-error.json` 與 `boss_server status`。
-- **[pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 2.11.0 或更新版本**，只有[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)需要。它的 `integrating` 與 `deploying` skill 就是火車的程序。沒有它，遇到車廂單的主智慧體或整合者會回報 `blocked` 並指名 pi-anchorloop，且不會合併任何東西。
+- **[pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 2.11.0 或更新版本**，只有[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)需要。它的 `integrating` 與 `deploying` skill 就是火車的程序。沒有它，遇到車廂單的主智慧體或整合員會回報 `blocked` 並指名 pi-anchorloop，且不會合併任何東西。
 
 Windows 支援還在實驗階段。
-在 Windows 上，擴充套件透過具名管道連到 Herdr，側邊欄外掛使用 `PATH` 上的 `node`，worktree 清理外掛只在 macOS 與 Linux 上執行，專案信任的轉送只有在 pi 的 agent 資料夾位於你的使用者目錄之內時才有效。
-其餘細節見 [Windows](/pi-straw-boss/docs/zh-tw/reference/how-it-works/windows/)。
+有哪些不同，見 [Windows](/pi-straw-boss/docs/zh-tw/reference/how-it-works/windows/)。
 
 ## 搭配使用
 
@@ -36,7 +35,7 @@ Windows 支援還在實驗階段。
 | [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 2.13 或更新版本 | session 的 todo 清單顯示在 GUI 的輸入框上方，內容讀自 session 檔。 |
 
 任何擴充套件的 `select` 與 `confirm` 也都可以從 GUI 回答，不必改動那個擴充套件。
-Straw Boss 把它們包在 pi 共用的 `ctx.ui` 上，照常開出 pi 自己的對話框，同時轉送同一個對話框；先回答的算數。
+不論在 pi 或在 GUI 裡，先回答的算數。
 `input`、`editor` 與 `custom` 對話框完全不碰：它們在 GUI 裡以唯讀顯示，點一下就能切到終端機。
 
 ## 選用的 Herdr 外掛

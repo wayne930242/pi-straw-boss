@@ -26,7 +26,7 @@ pi-straw-boss 不需要任何設定就能運作。
 
 | 鍵 | 預設 | 做什麼 |
 | --- | --- | --- |
-| `towerModel` | pi 的預設模型 | 塔台執行的模型。塔台只負責轉送與協調，所以可以用比較輕量的模型。每次塔台啟動時讀取。 |
+| `towerModel` | pi 的預設模型 | 塔台 run 的模型。塔台只負責轉送與協調，所以可以用比較輕量的模型。每次塔台啟動時讀取。 |
 | `headModel` | `towerModel` | [主塔台](/pi-straw-boss/docs/zh-tw/guide/head-tower/)執行的模型。 |
 | `towerRuns.enabled` | `true` | 塔台服務：塔台是一次因事件而醒來、結束時留下交接筆記的執行。`false` 則保留常駐的塔台。讀不到或無法解析的檔案也視為開啟，server 會在它的 log 裡說明。 |
 | `towerRuns.max` | 4 | 同時跑的 pi 執行上限。 |

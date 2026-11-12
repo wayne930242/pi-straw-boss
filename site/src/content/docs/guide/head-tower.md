@@ -7,6 +7,20 @@ The **head tower** is the one tower that belongs to no project.
 You talk to it in one long conversation, and it decides which workspace owns each instruction and hands it to that workspace's tower, opening the tower if there is none.
 It does no work itself, and it tells you in a line when a tower answers.
 
+```mermaid
+sequenceDiagram
+  participant Y as You
+  participant H as Head tower
+  participant T as Tower
+  participant M as Main
+  Y->>H: an instruction
+  H->>T: tower_send
+  T->>M: hands it over
+  M-->>T: a milestone
+  T-->>H: the answer
+  H-->>Y: one line
+```
+
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-head.png" width="49%" alt="The head tower's page in the Standard view: the conversation with two forwards to towers and one answer, the open and answered asks as chips, and the composer"> <img src="/pi-straw-boss/docs/img/gui-zen-head.png" width="49%" alt="The Zen view with the head tower at rest: the breathing circle, a line on mindfulness, one quiet line saying a card waits, and a hairline input"></p>
 
 ## Where you talk to it

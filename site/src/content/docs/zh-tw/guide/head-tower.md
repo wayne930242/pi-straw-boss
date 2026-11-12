@@ -7,6 +7,20 @@ description: 一座屬於你自己、不屬於任何專案的塔台，接收你�
 你在一段長長的對話裡跟它說話，它判斷每項指示由哪個工作區負責，交給那個工作區的塔台，沒有塔台就先開一座。
 它自己不做事；塔台回答時，它會用一行告訴你。
 
+```mermaid
+sequenceDiagram
+  participant Y as 你
+  participant H as 主塔台
+  participant T as 塔台
+  participant M as 主智慧體
+  Y->>H: 一項指示
+  H->>T: tower_send
+  T->>M: 交給它
+  M-->>T: 里程碑
+  T-->>H: 回答
+  H-->>Y: 一行字
+```
+
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-head.png" width="49%" alt="標準檢視裡主塔台的頁面：對話中有兩次轉給塔台與一次回答，已開啟與已回答的詢問以 chip 顯示，下方是輸入框"> <img src="/pi-straw-boss/docs/img/gui-zen-head.png" width="49%" alt="主塔台靜止時的禪檢視：呼吸的圓圈、一行關於正念的話、一行安靜的字說有一張卡片在等，以及一條細線般的輸入框"></p>
 
 ## 在哪裡跟它說話
@@ -25,7 +39,7 @@ description: 一座屬於你自己、不屬於任何專案的塔台，接收你�
 它只聽你的話，以及對它自己轉送的回答；廣播或主智慧體的訊息不會喚醒它。
 它可以依你自己的話開始或結束[自動模式](/pi-straw-boss/docs/zh-tw/guide/auto-mode/)。
 
-對話會跨多次執行延續。
+對話會跨多次 run 延續。
 太長的對話會開一個新章節，帶著上一份交接筆記；**開新對話**或 `/boss head new` 可以手動開新的一章。
 它的模型是[設定](/pi-straw-boss/docs/zh-tw/reference/configuration/)裡的 `headModel`，沒有就用 `towerModel`。
 

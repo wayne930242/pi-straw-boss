@@ -12,20 +12,12 @@ description: See the net work in four steps.
 
 ## The tower runs on its own
 
-The tower service of the sb server is on by default.
-A tower is a run that wakes for the events it gets and ends with a handoff note; `/boss tower <prompt>` writes to it.
-A teammate's [Straw Link](/pi-straw-boss/docs/guide/straw-link/) message gets an ally run of its own.
-
-Each run starts fresh.
-What has to outlive a run sits in a small memory: your standing instructions, your decisions, and the tower's open waits on you.
-Read and change it with `/boss memory`, or in the tower's comms in the GUI.
-A tower can only propose a standing instruction or a decision; it takes effect when you confirm it.
-See [Tower memory](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/#tower-memory).
-
-The tower only routes and coordinates, so it can run a lighter model: set `towerModel` in the [configuration](/pi-straw-boss/docs/reference/configuration/).
+The tower service of the sb server is on by default: it wakes for events and keeps a small memory, so you do not have to talk to it.
+`/boss tower <prompt>` writes to it, `/boss memory` shows its memory, and `towerModel` in the [configuration](/pi-straw-boss/docs/reference/configuration/) gives it a lighter model.
+How a run works, and what a handoff note is, is in [How a tower runs](/pi-straw-boss/docs/guide/concepts/#how-a-tower-runs).
 
 ## Next
 
-- [Concepts](/pi-straw-boss/docs/guide/concepts/): who is a member, a main, a tower, and the head tower.
+- [Concepts](/pi-straw-boss/docs/guide/concepts/): who is a member, a main, a tower, and the head tower, and every kind of agent and run.
 - [The browser view](/pi-straw-boss/docs/guide/browser-view/): the map, comms, alerts, and the Zen view.
 - [Commands](/pi-straw-boss/docs/reference/commands/): every tool and `/boss` command.

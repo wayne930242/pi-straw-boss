@@ -2,13 +2,28 @@
 // Pages under reference/how-it-works, guide/unattended-device, and releases are generated from docs/ by scripts/sync.mjs.
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
+import mermaid from "astro-mermaid";
 import starlightLinksValidator from "starlight-links-validator";
+import cjkNewlines from "./cjk-newlines.mjs";
 
 export default defineConfig({
 	site: "https://wayne930242.github.io",
 	base: "/pi-straw-boss/docs",
 	trailingSlash: "always",
 	integrations: [
+		// Both before starlight(): they add Sätteri plugins to the processor Starlight then extends.
+		// Diagrams keep their natural size and scroll sideways when wider than the column, so their text stays readable on a phone;
+		// sequence messages wrap inside the gap between two participants instead of widening it.
+		mermaid({
+			autoTheme: true,
+			enableLog: false,
+			mermaidConfig: {
+				sequence: { wrap: true, width: 140, actorMargin: 24, messageMargin: 34, useMaxWidth: false },
+				flowchart: { useMaxWidth: false },
+				state: { useMaxWidth: false },
+			},
+		}),
+		cjkNewlines(),
 		starlight({
 			title: "pi-straw-boss",
 			description: "Many pi agents, one project, no collisions: a main agent per Herdr tab, a tower per workspace, and a live view of who is doing what.",
@@ -21,6 +36,7 @@ export default defineConfig({
 			editLink: { baseUrl: "https://github.com/wayne930242/pi-straw-boss/edit/main/site/" },
 			lastUpdated: false,
 			customCss: ["./src/styles/custom.css"],
+			tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 4 },
 			sidebar: [
 				{
 					label: "Start here",

@@ -13,32 +13,51 @@ The sb server serves it, one per computer, so it does not depend on which sessio
 
 Each workspace is a **base**, with its tower, its tabs as **squads**, and every agent and subagent as a **unit** in a live state: working, waiting on you, commanding (idle while a subagent or a monitor of it works), idle, finished, or failed.
 Click a base to zoom in, and click a unit to read its chat as a live comms log.
-A unit's icon tells its kind: a ship's wheel for a coordinator, two arrows joining for an integrator, a lighthouse for a standing main, a locomotive for a train, and a wrench, binoculars, a pencil and ruler, a magnifier or a hound for a launched worker, scout, planner, reviewer or watchdog.
-The tower and the head tower keep their own icons, and a unit with no known kind keeps the plain main, member or subagent icon; the unit's kind word is beside its name.
+A unit's icon and the word beside its name tell its kind; the [kinds tables](/pi-straw-boss/docs/guide/concepts/#kinds) list them.
+The tower and the head tower keep their own icons, and a unit with no known kind keeps the plain main, member, or subagent icon.
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-comms.png" width="49%" alt="A unit's comms: its chat as a live log, the messages queued for its next turn, its todo list, its background monitors, and its dossier"> <img src="/pi-straw-boss/docs/img/gui-alert.png" width="49%" alt="An alert dialog with the question a unit waits on, with its options to pick and a note to add"></p>
 
-**A unit's comms** show its chat, the messages queued for its next turn, its todo list, its background monitors, and the documents it shows.
+### A unit's comms
+
+It shows its chat, the messages queued for its next turn, its todo list, its background monitors, and the documents it shows.
 Type into the session from its composer; a file pasted, dropped, or picked with **+** (20 MB at most) is stored in a private temp folder and its path goes into the message.
 On a desktop, click into a unit's terminal and it takes your keyboard.
 
-**Alerts.**
+### Alerts
 A unit that waits on you raises an alert, and the alerts queue up.
-Space opens the next one, F enlarges the top dialog, and Escape closes it (none of them while you type).
-Answer a question from the keyboard: arrows choose, Tab walks a question's own-words box and note and then the next question, and Enter confirms.
+
+| Key | Does |
+| --- | --- |
+| Space | Opens the next alert |
+| F | Enlarges the top dialog |
+| Escape | Closes it |
+| Arrows | Choose an option |
+| Tab | Moves to the question's own-words box and note, then the next question |
+| Enter | Confirms |
+
+The first three do nothing while you type.
 The page answers `ask_user_question`, `robot_hand`, pi-code's hook confirmation, and any extension's `select` and `confirm`.
 Other dialogs show read-only, and `secret_drop` always takes its secret in the terminal, never on a page.
 An answer that leaves its next step in a terminal (robot_hand's prompt and pane choices) shows a small card to finish it, with a link to the full terminal for ssh and vim.
 
-**A tower's wait for you** is a card, not a line of text: what happened, what you do, where (a link to open, or a command to copy; sb never runs one), what happens after, and which session raised it.
-It is drawn as the question panel is, in every view: the acts that fit are rows (I'm done, a choice's options, or the steps of a secret entered in the terminal), then **Reply to the tower** and **Skip**.
-Pick a row, then press **Send**: a tap alone presses nothing, and a card folded into a tower's row unfolds when you tap it.
-**Skip** shows who will be told and an optional reason, and Send tells the tower and the session; **Reply to the tower** shows the reply box, and Enter sends it.
+### A tower's wait for you
+
+It is a card, not a line of text. It says what happened, what you do, where (a link to open, or a command to copy; sb never runs one), what happens after, and which session raised it.
+Pick a row, then press **Send**: a tap alone presses nothing.
+
+| Row | Does |
+| --- | --- |
+| The acts that fit: *I'm done*, a choice's options, or the steps of a secret entered in the terminal | Pick one, then **Send** |
+| **Reply to the tower** | Shows the reply box; Enter sends it |
+| **Skip** | Shows who will be told and an optional reason; **Send** tells the tower and the session |
+
+A card folded into a tower's row unfolds when you tap it.
 A card from the head tower says so in its own words (主塔台 in Traditional Chinese, 鴉閣 in Raven).
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-wait-answer.png" width="49%" alt="The dialog for a tower's wait: the question, the answer box with a reply typed, Send, the link to the tower's comms, Later, and Dismiss"> <img src="/pi-straw-boss/docs/img/gui-settings.png" width="49%" alt="The settings page: this device's view, reminders, sound and volume, and language, with the sections for phones and devices, teams, and the server below"></p>
 
-**Notices and reminders.**
+### Notices and reminders
 A unit that fails or finishes, and a monitor that fails or goes quiet, raises a quiet notice under the header's Notices button; only a unit waiting on you raises the prominent alert.
 Switches in the settings page (the gear) raise a system notification, and play a sound, when a unit waits on you, fails, or finishes.
 Finished subagents on the map are dismissed one by one or all at once (Dismiss finished).
@@ -72,27 +91,31 @@ Each device picks its view on the settings page: Auto, Standard, Geek, Zen, or R
 
 When something waits for you, Zen shows that one thing alone: no map.
 A card never takes the screen by itself: one quiet line says how many wait, and **Enter**, or a tap on the line, takes the next, blocking questions first.
-Enter then presses the card's main button (Allow, Trust, the first choice, Run), but never inside a text field. On a card that waits for you the focus lands on its first row, and Enter picks it and moves on to **Send**.
 A card you are on is never replaced or pulled away; if its question is answered elsewhere, it stays and says so.
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-zen-item.png" width="49%" alt="The Zen view with one item: a robot_hand question on an ink-dark page, its choices as lines of text"> <img src="/pi-straw-boss/docs/img/gui-zen-alone.png" width="49%" alt="The Zen view with nothing waiting: a breathing circle and a line on mindfulness"></p>
 
 When nothing waits, Zen shows a breathing circle and a short line on mindfulness or stillness.
-`[` or `]` steps to a session to keep you company, with its live log and composer.
+A companion session shows its live log and composer.
 
-**Keys.**
-Enter or Space ends the breathing pause early.
-Esc answers or skips the card on the page, and a second Esc within 600 ms goes back to Standard.
-**H** opens *Context* on a card: the unit's session log inside the card, read-only, while you can still answer.
-**⌘K** (Ctrl+K off a Mac) opens a command palette for the page's actions.
-Inside a terminal, Shift+Esc lets the keyboard out.
+### Keys
+
+| Key | Does |
+| --- | --- |
+| Enter | Takes the next card; then presses its main button (Allow, Trust, the first choice, Run), never inside a text field. On a card that waits for you, it picks the first row and moves on to **Send**. |
+| Enter or Space | Ends the breathing pause early |
+| Esc | Answers or skips the card; a second Esc within 600 ms goes back to Standard |
+| `[` or `]` | Steps to a session to keep you company |
+| H | Opens *Context* on a card: the unit's session log inside the card, read-only, while you can still answer |
+| ⌘K (Ctrl+K off a Mac) | Opens a command palette for the page's actions |
+| Shift+Esc | Inside a terminal, lets the keyboard out |
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-zen-history.png" width="49%" alt="The Zen view with an item's Context open: the unit's session log inside the card, above the question's choices"> <img src="/pi-straw-boss/docs/img/gui-zen-palette.png" width="49%" alt="The Zen view's command palette open over the companion session"></p>
 
-**Cards of their own.**
+### Cards of their own
 Besides questions, Zen shows as cards a tower's wait on you, a confirm a teammate's tower asks of this computer, a dialog a Straw Link box forwarded, a phone's pair request, and a tower's memory proposal.
 
-**Sound and music.**
+### Sound and music
 Sound effects follow the settings page's Sound effects switch (off by default): a singing bowl when an item takes the screen, a wooden fish when one is done.
 Put audio files in `~/.pi/agent/straw-boss-music/` and Zen shows a ♪ in the corner that plays them on a loop, while the Background sound switch is on.
 
