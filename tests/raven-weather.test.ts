@@ -121,11 +121,20 @@ test("no thunder with Background off, a hidden tab, calm, reduced motion, before
 	}
 });
 
-test("on a fine pointer calm does not stop the thunder (the lightning goes on there; boss 2026-11-09), and does not start rain; on a coarse pointer calm still stops both", () => {
+test("on a fine pointer calm does not stop the thunder (the lightning goes on there; boss 2026-11-09), and rain keeps playing; on a coarse pointer calm still stops both", () => {
 	const r = rig();
 	Object.assign(r.env, { calm: true, fine: true });
 	r.w.refresh();
-	assert.equal(r.sources.length, 0, "rain still rests under calm, whatever the pointer");
+	assert.equal(r.rainsLive(), 1, "rain keeps playing under calm on a fine pointer (boss 2026-11-12)");
+	Object.assign(r.env, { calm: false });
+	r.w.refresh();
+	assert.equal(r.rainsLive(), 1, "calm ending does not restart it");
+	Object.assign(r.env, { calm: true, fine: false });
+	r.w.refresh();
+	assert.equal(r.rainsLive(), 0, "the pointer turning coarse under calm stops it");
+	Object.assign(r.env, { fine: true });
+	r.w.refresh();
+	assert.equal(r.rainsLive(), 1);
 	r.w.flash();
 	assert.equal(r.timers.length, 1, "a wait is set under calm on a fine pointer");
 	r.wait();
