@@ -12,9 +12,19 @@ There is **no boot pi session**. The sb server (`cli.mjs serve`) is the link hol
 
 ## 1. The two processes: systemd user units
 
+```mermaid
+flowchart TD
+    u["One unprivileged user"] --> h["Herdr server<br/>(systemd user unit)"]
+    u --> s["sb server: cli.mjs serve<br/>(systemd user unit), the link holder"]
+    c["A controller's computer"] -->|"Straw Link"| s
+```
+
 Both run under `env -i`, with only `HOME`, `PATH`, `TERM` and `LANG`, and with Herdr on its **default** socket, so the sb server is the primary one (a named `herdr --session` is
 invisible to the net, and an environment inherited from a pi session makes every pane's pi act as a subagent). Enable lingering so the units start at boot without a login:
 `loginctl enable-linger <user>`.
+
+<details>
+<summary>Details</summary>
 
 `~/.config/systemd/user/herdr.service`:
 
@@ -49,11 +59,16 @@ WantedBy=default.target
 `herdr server`, not `herdr`: the second wants a terminal. Install Herdr's pi integration once (`herdr integration install pi`) so Herdr resumes pi panes from their session files. On macOS the
 same two commands run as a launchd daemon with `UserName`, with the same environment.
 
+</details>
+
 ## 2. The policy file
 
 `/etc/straw-link/policy.json` (the path is fixed in `src/link/policy.ts`). It decides that the device is unattended, which controllers it obeys and at what level, and which teams it takes
 and where their work happens. **Owned by `root:root`, mode `0644`, in a directory owned by `root` at `0755`**: the check refuses unattended mode unless both the file and its directory
 belong to another user than the one the server runs as, neither is a symlink, and neither is writable by that user.
+
+<details>
+<summary>Details</summary>
 
 ```json
 {
@@ -77,9 +92,14 @@ belong to another user than the one the server runs as, neither is a symlink, an
 - A file that says `unattended: true` but fails the check, or whose `teams` is malformed, **refuses** unattended mode: no holder runs, every sender is at `reply`, the team list is empty.
   The reason is written once to `link/link.log` (`policy-refused`) and shown as a log-line notice of the server.
 
+</details>
+
 ## 3. The controller's side: the team, the invite, the approval
 
 This is done in the GUI of an attended computer; the approval can also be done in pi. Nothing here touches the device.
+
+<details>
+<summary>Details</summary>
 
 1. **Turn Straw Link on.** Settings → Teams shows "Set up Straw Link" while Straw Link is not running on that computer. Press it and wait a few seconds; it also writes `link/enabled`.
 2. **Create the team** (once per team; skip it when the team exists). The relay's operator gives you a one-time team token. Open "Create a team", fill the Relay URL, the Team token, "This computer's label", "Share" (your towers' and tabs' states, or only that you are online) and the Project folder, then press "Create team". The token field is a password field, so a password manager's inline menu can take the focus when you click it: close the menu before you paste. The page clears the token once it is used.
@@ -89,11 +109,16 @@ This is done in the GUI of an attended computer; the approval can also be done i
 6. **Approve the join.** When the device's holder asks the relay, a card "{label} ({short}), an unattended device, asks to join team {team}" appears under Teams, and the Link bar raises a notice with a "Review" button. There are no four words to match: the device id in your invite stands in. Press "Approve" (or "Refuse"). In pi, `/boss link` lists the waiting requests with a short id and `/boss link decide <id> approve|refuse` decides; pi asks you to confirm an unattended device first, and a paired phone can read the requests but not decide them.
 7. **Check.** The device is in the team's roster, with "unattended" in the column Kind. Its trust for your messages is the policy file's, not the roster's: your controller device id has to be in the policy's `trust` at `dispatch` (section 2).
 
+</details>
+
 ## 4. Joining: `join.txt`
 
 An unattended device has no screen to paste an invite into. An admin on an attended computer creates an invite pinned to this device's id; the infra drops the text in
 `<pi agent dir>/straw-boss/link/join.txt`, **owned by the server's own user, mode `0600`, a regular file** (never a symlink). The device's id is in `link/device.id` (26 characters, a to z
 and 2 to 7); it exists from the first look of the server, before any team, so the admin can pin the invite to it.
+
+<details>
+<summary>Details</summary>
 
 The holder reads the file at start and on each tick while no join is in flight, asks the relay, waits for an admin's approval, writes the team file (never `config.json`) with project and share from
 the policy, and ends with one logged outcome (`joined`, `refused`, `lapsed`, `failed`, `already-member`) after which the file is deleted. An invite for a team the policy does not name, or one that is
@@ -101,20 +126,30 @@ not pinned to this device's id, is refused before the relay hears of it. If the 
 (`join-file-retry`, 30 s up to 5 min). A file that cannot be removed (the folder is not writable) is reported once and left alone until it changes. Any failure of the file check deletes the file, so a leaked secret does not stay on disk. A server that restarts in the middle of a join loses the invite: drop a new
 one. The invite text is never logged.
 
+</details>
+
 ## 5. Pre-trusting the projects: `trust.json`
 
 A project folder's `.pi/settings.json` and extensions ask for trust the first time a pi starts in it, and so does a `.agents/skills` folder in the working directory or any folder above it. Nobody is there to answer. Write the bound projects into pi's own
 `<pi agent dir>/trust.json` (`{ "/srv/work/moldplan-center": true }`) when the device is set up. Without it the run fails after ten minutes of an unanswered question, and the controller gets a
 `notice` (`trust-unanswered`). `assertSettingsSafe` still applies to every run and refuses a project whose settings link out of it; that refusal is also a `notice` (`run-refused`).
 
+<details>
+<summary>Details</summary>
+
 The project is not the only folder a pi starts in:
 
 - **Herdr's worker worktrees.** When a tower opens a worker, Herdr opens a worktree for it at `~/.herdr/worktrees/<repo>/<branch>` (seen on macOS; the Linux path is not confirmed yet, so check it at the first trial with a real worker), outside the project. A repository that carries `.agents/skills` stops every such worker at the trust prompt. pi uses the nearest entry of `trust.json` at or above the working directory, so one entry for the worktrees folder (`"/home/<user>/.herdr/worktrees": true`, written as its real path) covers every worktree, and one entry for the work folder (`"/srv/work": true`) covers every repository under it. Create the worktrees folder first, so that its real path can be written.
 - **A changed `HOME`.** pi treats only `$HOME/.agents/skills` (the `HOME` of the pi process) as the user's own. A process that sets another `HOME` and then starts an interactive pi in a folder under the real home (for example `~/.pi/agent/sessions`) no longer has `~/.agents/skills` exempt and gets the trust prompt. Start such a pi with the real `HOME`, or trust that folder.
 
+</details>
+
 ## 6. What a refusal looks like
 
 The holder's events are in `<pi agent dir>/straw-boss/link/link.log` (JSON lines) and the forwarder's and the server's in `<pi agent dir>/straw-boss/server.log` (one `event key=value` line each: every `dialog-*` line below, and the `drop` lines of the forwarder's checks of an answer: `dialog-answer-unknown`, `-malformed`, `-invalid`, `-digest`, `-id`, `-late`, `-not-recipient`, `-here-only`, and `dialog-answered` for an answer carried to a session, with its `outcome`; the holder's own, `dialog-answer-level` and `-sender`, are in `link.log`); texts of dialogs and invites are never in them.
+
+<details>
+<summary>Details</summary>
 
 | Log event | Meaning |
 | --- | --- |
@@ -141,9 +176,14 @@ The holder's events are in `<pi agent dir>/straw-boss/link/link.log` (JSON lines
 | `notice` | A notice was sent: `key`, `kind` and unit, never its text. |
 | `drop` with `reason` | A message failed a check (`dialog-answer-level`, `dialog-answer-digest`, `dialog-answer-here-only`, `dialog-answer-not-recipient`, `unit-status-unexpected`, …). |
 
+</details>
+
 ## 7. What a controller sees
 
 **On a box several devs share, a controller sees only its own work and the admins see all of it.** A question a unit asks and a run's notice go to the controller that dispatched the unit (the device whose message started the ally run, or for which the run opened the main) and to the team's admins, not to the other controllers at `dispatch`; a unit nobody dispatched (the tower's own run) is the admins' alone. The box refuses an answer to a question from anyone else (`drop` with `dialog-answer-not-recipient`). The policy file has no field for this.
+
+<details>
+<summary>Details</summary>
 
 Its page shows the device's bases like an ally's, with each unit's state, its running monitors, and its last report (the last `tower_done` summary or the last `tower_send` text to that
 controller, cut to 4 KB), sent every minute and on a change. Only the units of workspaces inside the team's project are listed, and none when the team shares `presence` only; a device that has sent
@@ -162,12 +202,19 @@ Every attach and every input is a line in `link/link.log` (`operate-open`, `oper
 On an unattended box `link/link.log` rotates at 8 MiB and keeps four old copies (`link.log.1`, newest, to `link.log.4`), so an hour of typing does not push a week of audit out; an attended computer keeps 1 MiB and one old copy.
 `/boss link operate` on the controller lists its sessions, and `/boss link operate off` ends them and keeps operate off there until `/boss link operate on`.
 
+</details>
+
 ## 8. When a controller is removed
 
 Take the controller out of the policy's `trust` (or make it `reply`), or remove it from the team, and the box ends what it started: an ally run claimed at `dispatch` is quit within a few seconds, and each main such a run opened is asked to quit every 15 seconds until it does. A main in the middle of a turn, or with a subagent working, refuses until it is idle; the team's admins get a notice once that it still runs and once that it has ended. A main that was opened with an Allow below `dispatch` is not ended. Nothing is ended while the box cannot read the policy or the team's roster, and a change must be seen twice (up to 30 seconds) before it ends anything. There is no remote stop of one unit yet: a main that never goes idle has to be closed at the box. The credentials of a controller who left badly are a matter for the infra, not for the link.
+
+<details>
+<summary>Details</summary>
 
 Operate ends sooner and on one read.
 Remove the controller from `operate`, take it below `dispatch`, make the policy unreadable or no longer `unattended`, remove it from the team, or take the admin role from it for a team, and the box closes that session at once (within the next 2-second look at the policy file for a policy edit, and when the roster change arrives for the others): it stops the session's watches and terminals, drops its keys, and writes `operate-close` to `link/link.log`.
 A scope that only shrinks (an admin demoted for one team, `box` lowered to `team`) keeps the session with what is left.
 The controller's page turns that base into one line ("the operate grant was withdrawn", or "this machine does not let this device operate" for a refusal) and tries again after a minute.
 A session never outlives its grant: unlike the two looks the stop of a main waits for, a single bad read of the policy or the roster ends operate, since ending a view loses no work.
+
+</details>
