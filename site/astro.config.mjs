@@ -26,6 +26,7 @@ export default defineConfig({
 			editLink: { baseUrl: "https://github.com/wayne930242/pi-straw-boss/edit/main/site/" },
 			lastUpdated: false,
 			customCss: ["./src/styles/custom.css"],
+			tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 4 },
 			sidebar: [
 				{
 					label: "Start here",
