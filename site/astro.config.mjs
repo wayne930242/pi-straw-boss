@@ -19,7 +19,7 @@ export default defineConfig({
 			enableLog: false,
 			mermaidConfig: {
 				sequence: { wrap: true, width: 140, actorMargin: 24, messageMargin: 34, useMaxWidth: false },
-				flowchart: { useMaxWidth: false },
+				flowchart: { useMaxWidth: false, wrappingWidth: 320 },
 				state: { useMaxWidth: false },
 			},
 		}),
@@ -36,6 +36,17 @@ export default defineConfig({
 			editLink: { baseUrl: "https://github.com/wayne930242/pi-straw-boss/edit/main/site/" },
 			lastUpdated: false,
 			customCss: ["./src/styles/custom.css"],
+			// The reference pages fold each section's limits and edge cases into <details>: open the ones a link or a search hit points into.
+			head: [
+				{
+					tag: "script",
+					content:
+						"(()=>{const up=(el)=>{for(let d=el&&el.closest&&el.closest('details');d;d=d.parentElement&&d.parentElement.closest('details'))d.open=true};" +
+						"const go=()=>{if(!location.hash)return;let t;try{t=document.getElementById(decodeURIComponent(location.hash.slice(1)))}catch{}if(t&&t.closest('details')){up(t);t.scrollIntoView()}};" +
+						"addEventListener('hashchange',go);addEventListener('DOMContentLoaded',go);" +
+						"addEventListener('load',()=>setTimeout(()=>{document.querySelectorAll('mark[data-pagefind-highlight]').forEach(up)},400))})();",
+				},
+			],
 			tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 4 },
 			sidebar: [
 				{

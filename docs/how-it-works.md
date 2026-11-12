@@ -30,6 +30,9 @@ Each solid arrow is a tool from [Tools](#tools). The dotted ones are not tools: 
 | head tower | the boss's one entry point, one per computer; hands each instruction to a workspace's tower | made by the sb server at the boss's first message |
 | train | a worker that carries one batch of merge cars to the base branch | opened by a tower for the project's integrator |
 
+<details>
+<summary>Kinds of main agent, subagent, and tower run</summary>
+
 **Kinds of main agent** (the page shows the kind word; the GUI says "on watch" for `standing`)
 
 | Kind | What it is for | How it is set |
@@ -55,6 +58,8 @@ Each solid arrow is a tool from [Tools](#tools). The dotted ones are not tools: 
 | event run | an event from a session, such as a main's `call_tower` or a finished milestone | a fresh pi in the standing pane; ends with `tower_done` and a handoff note |
 | boss conversation | the boss's words (the page's composer, the standing pane, `/boss tower`) | the run that resumes the boss's last session |
 | ally run | a Straw Link message from a teammate's device | a fresh pi in a pane beside the standing pane, at the sender's trust level |
+
+</details>
 
 **Where to read**
 
@@ -91,6 +96,9 @@ stateDiagram-v2
 ```
 
 The numbered rules below are the whole behavior.
+
+<details>
+<summary>Details</summary>
 
 1. Every joinable pi in Herdr joins its tab's net at session start as a **member**: no reminder, no question. It does not join outside Herdr, as a pi-herdr-agents subagent (`PI_SUBAGENT_ID`, its parent represents it), in a sub workspace (below), or as the tower itself.
 2. A member becomes its tab's **main agent** by promotion. The agent calls `boss_promote` when its work grows (several steps, dispatching workers, more than one app); the member prompt says so. A member that calls pi-herdr-agents' `subagent` or `subagent_resume` tool without promoting is promoted automatically, before the subagent starts or resumes. A join that failed at start and retries after the session's pane moved to another tab registers on the tab it is in now, so it never becomes a second main there.
@@ -132,17 +140,27 @@ When a tower quits (pi's `session_shutdown` with reason `quit`; a reload, `/new`
 
 Towers of different workspaces reach each other with `tower_list` and `tower_send` ([Talking between towers](#talking-between-towers)), or with `call_tower` from any session; the **head tower** is a tower of its own, in a workspace of its own, that the boss talks to and that forwards his work to these towers ([The head tower](#the-head-tower)).
 
+</details>
+
 ### The tower's digest
 
 A tower learns what changed in its workspace without asking. Each session in the workspace's net writes one line when it joins (`a1 joined tab billing`), when its `subagent` or `subagent_resume` call returns without an error (`MP-1 export started subagent lint-sweep (worker)`), and when it calls `boss_rename` (`a1 renamed itself "MP-1 export" (tab billing)`). Each line starts with the local time (`HH:MM`). At the start of each run the tower reads the lines, oldest first, into its role section under `Since your last run:`, and clears them, so it reads each line once. A member's or main's run never reads them.
+
+<details>
+<summary>Details</summary>
 
 The lines live in Herdr's memory as workspace tokens (`sbd_<time>`, one line each), written under their own source, `straw-boss-digest`, without the TTL of Straw Boss's role tokens, so they wait however long the tower is idle. Herdr keeps at most 32 tokens on a workspace, changes at most 16 per report, and cuts a value to 80 characters without its newlines: the digest keeps the newest 20 lines, a note that finds 20 drops the oldest in the same report, and a line is cut to 80 characters. A new Herdr server starts without them, as it does without every other token; the role tokens are written again, the digest is not.
 
 A line that cannot be written is dropped without failing the join, the launch, or the rename. The sb server writes `head tower opened` and `head tower closed` in the digest of every tower workspace when the head tower starts or ends ([The head tower](#the-head-tower)).
 
+</details>
+
 ### Talking between towers
 
 Towers coordinate with each other directly, with two tools only a tower has, and every message the net carries for a session tells its reader who sent it.
+
+<details>
+<summary>Details</summary>
 
 **The header.** The code writes a line before the text of every `call_tower`, `boss_broadcast`, `tower_send`, and handoff message (never the model, so a name or a message cannot change it):
 
@@ -160,13 +178,20 @@ Control characters and runs of whitespace in a name fold to one space, and a nam
 
 **`tower_send`** (tower only) takes a message, an optional `workspace` (id or exact label; a sub workspace goes to its parent workspace), and `reply` (default false). With no workspace it goes to every other tower. It never opens a tower. In a head tower run it takes only `workspace`, and the server opens that workspace's tower when it has none ([Forwarding and answers](#the-head-tower)); a workspace tower answers the head tower with `head: true` and `inReplyTo` (an ask id).
 
+</details>
+
 #### Workspaces without a tower
 
 A workspace without a live tower (no `tower` token, or the session is not on the net) is reached through its main agents, else its members: the sessions of the workspace that joined the net, the tower's own session excluded. Both `tower_send` and `boss_broadcast` with scope `towers` do this, and the result labels each such recipient, as in `kb-main: sent [no tower in 知識庫: main]`. A workspace with no tower and no joined session is skipped (`tower_send` to it alone is an error that says so).
 
+<details>
+<summary>Details</summary>
+
 The sender's own workspace never answers for a tower: a session never reaches itself, and a main in a workspace without a tower does not reach its sibling mains by scope `towers`; the tower of its own workspace, when there is one, is a recipient. Sub workspaces keep their rules (they have no tower and their sessions receive only scope `all`).
 
 **`boss_broadcast`** with scope `towers` stays for sessions that are not towers, under the same header. `call_tower` has an optional `reply` too, default true (the tower answers); a notice sets it to false. It also takes `why`, which pi's tool requires ([When a main calls the tower](#when-a-main-calls-the-tower)).
+
+</details>
 
 ### The head tower
 
@@ -192,29 +217,58 @@ sequenceDiagram
 
 The sb server makes it the first time the head tower is needed (the boss's first message from any channel, or `/boss head`), in the folder `<pi agent dir>/straw-boss-head/`. A fresh install shows nothing new in Herdr until the boss writes to it. The workspace is labelled `主塔台` when the server's locale is Traditional Chinese and `Head tower` otherwise, its tab carries the crown glyph (U+F01A5), and its pane holds the standing pane of a tower, marked `sb_role=head` and sorted first (`000`). It is known by its record and its `sb_head` token, never by its label, so a workspace of the boss's with the same label is not taken for it.
 
+<details>
+<summary>Details</summary>
+
 Closing its tab or workspace in Herdr, or `/boss head close`, ends the service as for a tower; the conversation, its memory, and its asks are kept, and the next message makes the workspace again and resumes. With `towerRuns` off there is no head tower, and every channel says so. Its state is `<state dir>/head/`: the service record, the queue, `boss-session.json`, `chapters.json`, `asks.json`, and `memory.json`.
+
+</details>
 
 #### Its runs and conversation
 
 It is a tower service of its own kind with the tower's machinery (standing pane, wake, claim, crash rules). Every run resumes the one pi session, whether the boss's message or a tower's answer woke it, under the boss conversation's limits (the 10-minute wrap-up after his silence, the 4-hour cap). There is no age limit: a session past 8 MB, and **New conversation** or `/new`, start a new **chapter** whose brief carries the last handoff note and the last lines between the boss and the head. The GUI pages the history across chapters, with a divider where one ends. The model is `headModel`, else `towerModel`. Its brief lists the workspaces now (each tower's state, each main and what it is doing), the open asks, its memory, and its limits.
 
+<details>
+<summary>Details</summary>
+
 **Its tools and who may reach it.** `read`, `grep`, `find`, `ls`, `tower_list`, `board_read`, `tower_send`, `tower_memory`, `tower_done`, and `boss_server`: no shell, no edits, no `boss_open_main`, no `call_tower`, and no Straw Link (`tower_send` with `device` is refused). Before anything is queued the server's gate lets in only the boss's own words (the GUI, `/boss head`, the standing pane's prompt) and an answer to one of its open asks; a broadcast, a main's message, or an answer with no open ask gets a receipt and wakes nothing.
+
+</details>
 
 #### Forwarding and answers
 
 `tower_send` goes to one workspace's tower (an id or exact label; a sub workspace goes to its parent). A workspace with no tower gets one first (its tab and standing pane), then the message. Each forward opens an ask `H<n>` that stays open for 24 hours after its last forward or answer, with at most 40 open.
 
+<details>
+<summary>Details</summary>
+
 An ask also carries `group`, the id of the first ask of its broadcast, which the GUI page folds into one row: asks with the same `relay` are one broadcast (the head words its message to each tower, so the first lines differ); an ask with no `relay` joins the newest earlier one without a `relay` that has the same first line and is under 60 seconds before it. A file from before `group` is grouped the same way when read.
 
 The header carries `ask=H<n>` and, only when the turn was started by the boss's own message that the server delivered to this run, `relay=boss:<event id>`; a tower reads `head=yes relay=boss` as the boss's instruction routed through the head, and a `head=yes` message without `relay` as the head's own note. The tower answers with `tower_send({ head: true, inReplyTo: "H12", message })`, the server writes `in-reply-to=H12`, holds the answer up to 30 seconds with others, and wakes the head, which tells the boss in a line. When it needs his decision it asks in plain words and records a wait for him in its memory.
+
+</details>
 
 #### The head page
 
 The GUI page is the conversation and its composer: End, New, and Close sit above the composer, the asks are one card per broadcast (its parts, then `2h ago · 1/4 handled`; each tower's state and newest answer unfold, and an order a later one corrects folds under it; groups quiet for a day fold into "Older"; [spec](specs/2026-11-07-head-log-cards.md)), a wait for the boss shows only until its `due` (a day old with none; the server's summary of the head leaves it out of the rows and of the footer count, the file keeps it for 7 days, and the head's brief tells it to resolve or re-ask it), the memory footer shows only for a standing instruction, a decision, or a pending proposal, and the head's tool calls and the sb server's notices are not drawn on this page (Zen's history of the head still draws them). Design: [docs/specs/2026-11-06-head-page-minimal.md](specs/2026-11-06-head-page-minimal.md).
 
+<details>
+<summary>Details</summary>
+
 **Where the boss meets it.** The GUI page and Zen strip ([Browser view](#browser-view)), `/boss head [status | leave | new | close | <message>]` in any pi session (a bare one makes the workspace and focuses its tab), `/boss memory -w head`, the head's standing pane (Enter talks to the same conversation), Herdr's net view (the head workspace first), and `status`'s `head`. The head workspace is no base: it is not a target of `tower_send` or `boss_broadcast`, it is not stashed, and a pi typed into it by hand joins no net.
 
+</details>
+
 ### Straw Link: towers across computers (the link holder)
+
+```mermaid
+flowchart TD
+    t["tower_send with device"] --> h["The link holder<br/>in the sb server"]
+    h --> r["The relay"]
+    r --> o["The other device's holder"]
+    o --> i["Inbox, up to 7 days"]
+    i --> a["An ally run, or the tower<br/>takes it when idle"]
+```
 
 Design: [docs/specs/2026-10-25-straw-link.md](specs/2026-10-25-straw-link.md). This is what the code does so far (the holder, delivery, the tools, remote turns, and the GUI's team settings); joining over a tailnet is a later step. Unattended devices (the policy, `join.txt`, dialogs, the tower they open, `unit-status` and notices) are the paragraph **Unattended devices** below, and [their setup](unattended-device.md). A computer with no team set up (nothing under `link.teams` in `config.json`, no team file) runs none of it: no channel, no election, no files. The holder runs in the [sb server](#the-sb-server) (`src/link/service.ts`); a pi session only asks it.
 
@@ -222,27 +276,45 @@ Design: [docs/specs/2026-10-25-straw-link.md](specs/2026-10-25-straw-link.md). T
 
 `<pi agent dir>/straw-boss/link/` (`PI_CODING_AGENT_DIR` aware, mode 700, files 600 where the OS has modes; paths are used as Unicode paths and never become a shell command): `device.json` (the keys, the label, and the next sequence number), `device.id`, `teams/<team>.json` (the roster copy, the team keys by epoch, the relay URL, the last event id, and the last sequence number taken from each sender), `inbox/<envelope id>.json`, `holder.json` with `holder.lock`, and `link.log` (one JSON line per dropped envelope, notice, or send). Every write goes through the lock; a write outside it throws. A lock whose process is gone, or that is older than 10 s, is taken over.
 
+<details>
+<summary>Details</summary>
+
 A team file that is missing or damaged makes the team stop: nothing is taken and nothing is acknowledged, and the only way back is to join again, because a fresh file would forget which sequence numbers were already taken.
+
+</details>
 
 #### The link holder
 
 It runs in the primary sb server (the server of the default Herdr; a secondary server holds no link, and a session on another Herdr is told so), and the server is its only candidate: no pi session or tower takes part in the election any more. The election is still its own, not the GUI's: `holder.json` (session id, version, PID, start time) names the server, whose id is `sb-server-<8 hex>`, and `holder.lock` guards it as before.
 
+<details>
+<summary>Details</summary>
+
 The server ranks as a tower of its own version, so a session of the previous build, which is still a candidate there, can neither outrank it by build nor by role: it contests only a record that is vacant or whose process is gone, and the server takes the record back at its next look (every 2 s). The server starts the holder after it has connected to the broker and before it reports ready, waiting at most 3 s for the first look; a stop or restart removes the record first, so the next server takes it at its first look. A holder that finds the record names another process stops.
 
 `status` shows the link's state (`inUse`, `holding`, `active`, and the last notices); the notices that a session used to see on its screen go to `server.log` (`link-notice`) and to `status`.
+
+</details>
 
 #### Requests from sessions
 
 A session asks the holder over the server's control socket, one request per connection: `{cmd: "link", from: <the session's intercom id>, body: {op, …}}` answered by `{ok: true, answer: <the holder's answer>}`. The ops are the ones the channel carried (`send`, `list`, `board-read`, `confirm-request`, `confirms`, `answer-confirm`, `forget-confirm`, `gui`, `request-open`, `request-run`, `request-drop`) and `taken` (the tower says an inbox message is in its session). There is no 16 KiB limit and no chunking. `from` is self-reported, as pi-intercom's ids are; the GUI's requests are still taken only from the session `gui.json` names (and from the server itself once it hosts the GUI).
 
+<details>
+<summary>Details</summary>
+
 A session finds the server through `server.json` and the `hello` secret; with no server running, or none holding the link yet, a request fails with "No link holder is running", and a server that is restarting says so. The channel `straw-boss/link` is kept for the previous build: the server answers a session of that build's chunked `req` with chunked `res`, takes its `taken`, and offers inbox messages to resident towers on it. Nothing the server loads imports pi-tui, `tools.ts`, `pairing.ts`, or the trust question (a test walks its imports).
 
 **Receiving.** A stream resumes from the team file's last event id (the relay sends every envelope this device has not acknowledged on a new stream anyway). Each `tower` envelope is checked and decrypted under the lock, written to the inbox, and the sender's high-water mark moved in the same locked write; only then does the stream acknowledge it to the relay. A crash before the inbox write gets the envelope again and delivers it once; a crash after it and before the acknowledgement gets it again and the sequence guard drops the copy. A displaced holder (the record names another session) keeps the envelope for the next stream.
 
+</details>
+
 #### Delivery
 
 A message goes only to a tower whose pane's cwd is inside the team's `project`: the one closest to the project root, then the first in Herdr's workspace order (a named `workspace` restricts it to that workspace's tower). Mains and members never receive one. The holder offers the inbox item to that tower over the intercom channel `straw-boss/link` (not owner-eligible; only a tower registers it now); a tower takes an offer only from the session `holder.json` names, the server.
+
+<details>
+<summary>Details</summary>
 
 The tower keeps it until it is idle (`isIdle()` and no pending message, checked in the same tick), then sends it as a custom message of type `straw-link` with `triggerTurn`, under the header below, one message per tick, and tells the holder (`taken`, on the control socket), which removes it from the inbox. The session entry `straw-link-seen` remembers what a session took, so a restart does not take it twice.
 
@@ -256,9 +328,14 @@ When the tower is the sb server's (the default), nothing of this paragraph's off
 
 `from`, `workspace`, and `remote` are cut to the label character set (ASCII letters, digits, space, `.`, `_`, `-`; anything else becomes `_`) and 40 characters before they are quoted, and `id=` is always `link:` and the sender's device id, never a session id of this computer. `team=` is this computer's own name for the team, so it keeps its characters (cleaned, quoted, at most 80).
 
+</details>
+
 #### Sending
 
 `tower_send` with `device` (a short id, an id, or a label; `workspace` then names a workspace label on that device) hands the message to the holder in the sb server over the control socket. The holder checks that the caller is a tower whose cwd is inside a team's project, resolves the device (a name that fits two devices, or this device, is an error that lists the candidates), reserves the next sequence number, builds and signs the envelope, and writes it to `link/outbox/` under one lock before the first post, then posts it in order with retries and answers once the relay has it or after 10 s with "queued".
+
+<details>
+<summary>Details</summary>
 
 The file goes once the relay holds the envelope or refuses it for good (a refusal that comes after the answer is told to the boss), and the next holder of the computer posts what is left, first, in order. A 401 from the relay halts the team's posts for 60 s (a clock that was off), and a send meanwhile is refused with the reason. A team that forks, loses its team file, or refuses the stream (the device was removed) stays stopped, on disk too, until its team file is replaced by joining again.
 
@@ -267,6 +344,8 @@ A message may hold 192 KB; the inbox keeps at most 100 messages per sender and 5
 **Remote turns** (`src/link/{turn,allow,gate,policy,hooks}.ts`; `hooks.ts` registers the pi hooks, `runtime.ts` wires it to the holder in the server). A run is a remote turn from the first `message_start` or `message_end` of a `straw-link` custom message until `agent_settled`, however the message got into it (a delivery, a steer into a run that began local); `agent_end`, a retry, a compaction, or a continuation does not end it, and a local message that joins leaves it as it is. Its level is the lowest of its remote senders'.
 
 A sender's level is `reply` unless this computer names it: `link.trust` in `config.json` (device id to `reply`, `forward`, or `dispatch`), or, on a device whose `/etc/straw-link/policy.json` says `unattended` and passes the owner check (the file and its folder owned by another user, not symlinks, not writable by this user), that file's `trust` (`true` means `dispatch`) and `config.json`'s `link` section is ignored. A policy file that is there but fails the check refuses unattended mode: every sender stays at `reply` and the boss is told once. A message that names no sender this code put there is remote at `reply`.
+
+</details>
 
 What a tool call in a remote turn meets:
 
@@ -282,6 +361,9 @@ flowchart TD
     allow -->|"yes"| run
     allow -->|"no"| gate["The boss confirms;<br/>at forward the sender's device can too"]
 ```
+
+<details>
+<summary>Details</summary>
 
 - `link_request` is blocked at every level, `dispatch` included, with no dialog (the tool is the boss's alone, in a local turn).
 - At `dispatch` nothing else is held. At `reply` and `forward` the `tool_call` hook allows by exact tool name: `read` of a file `git ls-files` lists in the bound project (after `realpath`, so a symlink out of the project is not); `grep`, `find`, and `ls` with every path inside the project, whose output the `tool_result` hook cuts to the lines and entries that belong to a tracked path (a line it cannot attribute, such as a notice, is dropped; the structured copy goes with the replaced content); `tower_list`, `board_read`, `boss_status`, `todo` (the first two answer a remote turn only what its senders already receive: [The work board](#the-work-board)); and `tower_send` whose `device` is a sender of the run (id, short id, or label).
@@ -317,9 +399,14 @@ While the panel is open the map's overview in the corner steps aside (the panel'
 
 A forward that works used to leave no line anywhere; now the box's `server.log` has `dialog-forwarder` (`started` or `skipped`) at the start, `dialog-controllers` (count and known, at the first look and whenever either changes), `dialog-seen`, `dialog-sent` (per controller, queued in the outbox, not yet delivered) and `dialog-ended` for each question, and `dialog-pass-stuck` when a pass has not finished in a minute (it waits at `read`, `dispatcher`, `notice` or `post`; it is let go and the next look starts a new one; a close it had not posted is kept and posted by the next pass, five tries at most, and not at all once the card has expired at the controller; at most one pass let go is outstanding, so a call that never returns costs one pending pass, and a second stuck pass is left running with one `dialog-pass-hung` line), and the controller's `link.log` has `dialog-in` when one arrived; none holds a word of the question ([the lines](unattended-device.md#6-what-a-refusal-looks-like)).
 
+</details>
+
 #### What the box reports
 
 Every minute and on a change the device sends each `dispatch` controller a `unit-status` (ephemeral): each tower unit's state, the monitors the hub sees running in that unit's workspace, and its last report (the later of the last `tower_done` note and the last `tower_send` text to that controller, 4 KB); the controller keeps the latest per device in memory, shows it as the device's ally base card (below), and loses it on restart.
+
+<details>
+<summary>Details</summary>
 
 **The card** (Standard and Geek, `gui/allyunits.ts`) lists the units the box reported and none of its own mains or workers (while an unattended box reports none, which is an older box, a team that shares presence only, and the minute after this server restarted, one line says how many units are online and names none; a teammate's own computer, which the roster marks attended and which never reports units, lists its mains and workers with their states as before): per unit a state word (standing by, run in progress, crashed, needs trust, held after crashes; one the page does not know as it is; a tower unit is in the service's `running` or `waking` state while one of its short runs lasts, so the word says *run in progress* and its tooltip says that a tower wakes a run for each message and stands by between runs, and a plain unit's `working` still reads *running*), and the card's subtitle names the box and whether it is there, not its tower's state with "updated 40s ago" (the page's clock keeps it current), the monitors on one line (count, then the commands), and the last report folded to its first line, a tap opens it as Markdown (it parses no HTML; the Markdown is built when the fold first opens).
 
@@ -385,9 +472,14 @@ The box's `link.log` has one `tower-in` line per message kept in the inbox (send
 - **`/boss link on`** posts `link/enable`, the route the page's Set up button posts, so a computer where Straw Link is not on can be set up from pi (the "not on in this server" answer names it). The page asks nothing first, so this asks nothing either; like the other lines it is the boss's typed input only, and `BOSS_LINK_LOCAL` keeps a paired device from typing it (the route itself is `local_only` too).
 - **A paired device** may read the state, answer a forwarded confirm or dialog, and ask a box to stop one main (`unit-stop`: a graceful stop that the box decides on), and nothing else: every other action changes who may command this computer, so only this computer's own page (a request on the loopback listener) does it. An invite text is only ever returned to that page, and a paired device's state leaves out what an agent put into the join or create screen.
 
+</details>
+
 #### `link_request`
 
 An agent asks for `create`, `invite`, `invite-unattended`, `join`, `trust`, `leave`, `remove`, `role`, or `rotate` with its arguments and a reason. It never runs unasked: the holder checks and words the request (the dialog shows these lines, never the agent's own description), and a dialog through the dialog contract (owner `straw-link-request`, prefix `straw-link:request`, keyed by `toolCallId`) shows the action, every argument, the reason, and the requesting session.
+
+<details>
+<summary>Details</summary>
 
 Only an explicit Approve runs it; for `trust`, `remove`, `role`, `rotate`, and `leave` (the high-risk actions) Approve can be given only from this computer's own page or terminal: a paired device sees the dialog with Approve disabled, can still deny, and its approval is refused (403 `local_only`, decided by the listener), while the other actions are approvable from a paired device too; Deny, a timeout (10 minutes), the end of the tool call, and a dialog that cannot show everything all refuse. Each request is its own dialog; no setting skips it. The holder carries the action out, and an approved `invite` returns the invite text to the asker.
 
@@ -395,7 +487,22 @@ An approved `join` or `create` only opens the screen prefilled: the words are st
 
 Residual assumption: a Herdr or GUI stall of more than 1.5 s after a key passed its last check can still deliver that key late.
 
+</details>
+
 ### Straw Link operate: an attended computer drives an unattended box
+
+```mermaid
+sequenceDiagram
+    participant C as Controller
+    participant R as Relay
+    participant B as Unattended box
+    C->>R: open (signed, ephemeral key)
+    R->>B: live envelope, memory only
+    B-->>C: accept with its scope, or refuse
+    B-->>C: snap, ev, rep (encrypted)
+    C->>B: watch, req
+    B-->>C: close, with a reason
+```
 
 Design: [docs/specs/2026-11-07-link-operate.md](specs/2026-11-07-link-operate.md). An attended computer (the controller) shows the work of an [unattended box](unattended-device.md) as bases of its own GUI and drives it: the live terminal and the conversation of the box's towers, mains and workers, typing, Escape and steering, and the transcripts of runs that have finished. It is a remote base bridge, not a second viewer: the box's sb server runs its own GUI core for one operator session, the controller's sb server merges the result into its net, and the page is the usual page (the map, the comms view, the pad, Zen, a paired phone through the Mac).
 
@@ -405,13 +512,21 @@ It is **not** a shell: nothing here runs a command on the box except through the
 
 `operate` is a root-owned field of `/etc/straw-link/policy.json` (`src/link/policy.ts`; [setup](unattended-device.md#2-the-policy-file)): a map of device id to `team` or `box`. The box checks it on every request (`src/server/operatescope.ts`, `operateguard.ts`): this device is unattended and its policy reads; the sender is a current, attended member of the team the envelope came on; the sender is at `dispatch` in `trust` now and `operate` names it; and the unit the request names is in the session's scope. A failure answers with one word (`not-granted`, `not-admin`, `out-of-scope`, `local-only`, `policy`) and is logged.
 
+<details>
+<summary>Details</summary>
+
 The scope of a session is the one team its `open` came on, when the device is a roster admin of that team (an admin of two teams holds two sessions), plus the box's own units for a `box` grant that asked for them. A unit belongs to a team only through the box's own records of who started it, never its folder (both teams of the real box work in `/srv/work`): an ally run by its run record, a main an ally run opened by its `opened` row and the pane's `sb_opened_by` token (both must agree, else it is nobody's), a member or subagent by the tab of its main.
 
 The box's tower service, its local runs, a worker in a tab of its own and anything unattributed are the box's, which only a `box` grant reaches. A hq-signed grant can never carry `operate`.
 
+</details>
+
 #### The carrier
 
 Operate rides the one `operate` Link kind, which the relay treats as a third class beside queued and ephemeral: `live`. The relay holds a live envelope in memory only, writes it to the one addressee's open streams as an SSE `live` event with no `id:` line, and never stores, replays or acknowledges it (an addressee with no stream gets nothing: the post answers `delivered: 0`).
+
+<details>
+<summary>Details</summary>
 
 The holder fails closed on its side: it drops a live envelope older than 60 s (`stale-live`), one that names other than a single addressee, and one that arrives as a stored event; a post whose answer lacks `delivered` (a relay that stored it) stops live posts for an hour (`operate-relay-not-live`); a live post has a 5 s deadline and no retry. An attended sender may send only `open` and `frame`/`close`, an unattended one only `accept`, `refuse` and `frame`/`close`; a device lists `operate/1` in its `caps` only when it has a sink, and a box only while its policy grants someone `operate` (it changes within a tick).
 
@@ -437,19 +552,31 @@ Everything the box sends is treated as hostile on the controller: it is rebuilt 
 
 A request admitted just before a revoke is checked once more, after the last look at the terminal, and does not write if the session has ended.
 
+</details>
+
 #### Pacing
 
 The box sends whole visible screens, never row diffs: at most one every 500 ms while a screen changes and an empty "current" frame every 2 s while it is calm (so the controller's 3 s freshness holds on a slow link); the net snapshot at most once per 2 s and only when it changed. One budget of 900 envelopes a minute covers all the box's sessions; as it fills, the terminal slows to 1 s and then 2 s, then the snapshots to 4 s, and past it no bulk goes. An `accept`, `refuse`, `close` and `rep` are never held.
 
+<details>
+<summary>Details</summary>
+
 The relay gives live traffic its own limits (1,200 envelopes and 8 MB a minute per sender and team, 3,000 a minute per team), apart from the 600 a minute queued kinds have. A page request the box does not answer in 20 s is a 504 ("the box did not answer; check before sending again").
+
+</details>
 
 #### Ending
 
 The box ends a session with a `close` and a reason word the moment the grant or the scope is gone: on any roster change (the operator removed or no longer an admin of the team, the box removed), on a change of the policy (`fs.watch` on the file and its folder plus a 2 s poll of its stat, so a lowered or withdrawn `operate`, a policy that stops reading, or an `unattended` that is no more) and on a request whose recheck fails. One bad read ends operate: a roster or policy that cannot be read is no grant.
 
+<details>
+<summary>Details</summary>
+
 A scope that narrows (an admin demoted, `box` lowered to `team`) narrows the session, and watches and terminals end when their unit leaves it. A holder that stops a team (removed, forked, left) closes the controller's sessions of it at once.
 
 **History.** The box's server keeps `link/operate-ledger.jsonl` (mode 600, append-only, no content): per unit seen, its owner, dispatcher, role, scrubbed name, workspace label and session file path (the path never leaves the box), for 30 days and at most 2,000 rows. While the policy grants operate, the box reads its own net every 30 s, so a run that starts and ends unobserved still has a row. `GET api/transcripts` lists the rows in the session's scope whose file still exists; `api/history`, `api/entry` and `api/image` take `t<id>` keys that the ledger resolves, never a path from a request, and only a regular `.jsonl` inside pi's session folder is read.
+
+</details>
 
 #### Audit
 
@@ -459,13 +586,23 @@ The box writes to `link.log`, never with text, keys, choices or file content: `o
 
 No frame for 45 s greys the base (`unreachable`, "last seen …", no typing or keys) and the controller reopens after 5 s, doubling to 5 minutes; the wait resets only after a session lived 60 s. A box that closes for `policy` or `roster` shows an `ended` base, a single line (「操作權限已撤銷」, 「這台機器不讓這部裝置操作」 for a refusal shown once, or "Operating this machine has ended"), and is tried again after a minute. A refusal of the grant itself is remembered for 10 minutes and shows its line once; a refusal for "not now" (`unavailable`, a full slot, a session id seen before) is retried with the backoff and says nothing.
 
+<details>
+<summary>Details</summary>
+
 A box that stops, is overloaded or swaps its GUI greys the base and is reopened with the backoff. A controller that is not offered a box any more (removed, attended, no `operate/1`) drops it from the map.
+
+</details>
 
 #### `/boss link operate`
 
 On this computer's own page and in pi only (a slash command of the boss's typed input, no tool; a paired device's request is refused). `/boss link operate` lists the sessions that have opened (box, team, scope, state, since, pages). `/boss link operate off` ends every session and keeps operate off until `/boss link operate on`: it writes `link/operate-off.json` (`{"since": <ms>}`, mode 600, in the server's state folder), the host opens nothing and stops its clock while the file is there, across a GUI and a server that start again, and a file that is there but cannot be read as that still means off.
 
+<details>
+<summary>Details</summary>
+
 `off` says when the file could not be written (then it is off only until the server stops); `on` says when it could not be removed (it stays off). The list says "off since <time>" while it is off.
+
+</details>
 
 ### The work board
 
@@ -475,17 +612,30 @@ A main says what it is doing in one place, and a tower reads it before it routes
 
 **An entry** is `now` (1 to 120 characters, one line) and 0 to 8 checklist items (`t` of 1 to 80 characters, `done`). Whitespace folds to one space; a control or format character (an escape, a bidi override, a zero-width mark) is refused on write with the reason, never cut silently. Every reader checks the same rules and cuts again, so a file that skipped them is held to them, and a file that fails the structure check is ignored. The entry carries no name, workspace, tab, or state: a reader joins those from the net when it reads.
 
+<details>
+<summary>Details</summary>
+
 The file also says who wrote it (`src`: `set` for `board_set`, `todo` for the auto-fill, with the todo list's `count` of tasks done and in all); `src` and `count` stay on this computer and are not in the `board` message.
+
+</details>
 
 #### `board_set({ now, items })`
 
 `board_set({ now, items })` replaces the session's whole entry; it overrides the auto-fill (below). It is registered for joined sessions that are not towers, and refused unless the session is its tab's main at the call (a member, a demoted main, a tower, and a subagent do not write). It writes only `<state dir>/board/<own session id>.json` (folder 700, file 600, a temporary file renamed over it); no parameter names another session's file. Its answer says where the text goes: `local towers`, and `team <name> (<n> devices)` for each team whose project holds the main's pane directory and whose `share` is `status`. `board_set({ auto: true })` (no text) hands the board back to auto-fill at once.
 
+<details>
+<summary>Details</summary>
+
 `board_set({ clear: true })` (no text, no `auto`) deletes the session's entry, and auto-fill writes nothing until the todo list or the name moves; it is what a main calls when its work ends or is shelved, and `prompts/main.md` makes that part of "done". A cleared line, and a finished line removed after its 30 minutes, stay off across a `/reload` (the session keeps a `straw-boss-board` entry with the withdrawn key); a line a reload finds on file is kept with its own age, and a quit with no turn after a reload deletes it. A main that commands work (a subagent of it runs) is never marked `stale`.
+
+</details>
 
 #### Auto-fill
 
 Auto-fill (`src/boardauto.ts`, `src/boardfill.ts`). The board fills itself in the main's own session; the server takes no part. At the end of a turn, after a tool call, and after a move in the session tree or a compaction, a main reads its todo list (rpiv-todo's snapshots on its branch, the same reading as the card's todo summary) and its name (`boss_rename`, or `/name`; pi's default name, the session id, is no name) and writes the entry.
+
+<details>
+<summary>Details</summary>
 
 `now` is `<name>: <task in progress>` (its `activeForm`, else its subject), else `<name>: next <first pending>`, else `<name>: done (n/n)`; with no todo list there is no entry, a name alone being no work (it would stay on the board after the work is gone); with no name the line has no prefix. A finished list (`done (n/n)`) is written once and goes 30 minutes later: the main removes it at its next reading, a reader does not show it, and a tower's `board_read` deletes the file. The items are the tasks, in progress first, then pending in id order, then completed (highest id first), at most 8. `boss_rename` refills the line at once.
 
@@ -495,11 +645,18 @@ Auto-fill (`src/boardauto.ts`, `src/boardfill.ts`). The board fills itself in th
 - **One gate for labels.** Every workspace label, tab label, session name, opened-by, and ledger line that an ally can read (the board and presence on the wire, a `tower` message's workspace, a confirm request's tower name, `tower_list`, `boss_status`, and `board_read` in a remote turn or an ally run, scoped to the workspaces inside the bound project, and the ally brief) goes through `allyLabel`: scrubbed first, cut last. Your own views keep the raw text.
 - **Override.** The main writes only when the entry it would write differs from the last one it wrote, not from the file, so a `board_set` stands until the todo list or the name moves, and `board_set({ auto: true })` ends it at once (with nothing to show it removes the entry), and `board_set({ clear: true })` stops auto-fill the same way, with no entry. A `board_set` entry that outlived a `/reload` stands the same way: the first reading in the new extension only records the list. A member and a demoted main write nothing. After a `/reload` the new extension finds the file this session left and takes it as its own, so a later quit deletes it.
 
+</details>
+
 #### Expiry
 
 A main's `session_shutdown` deletes its own file on `quit`, `new`, `resume`, and `fork`, and keeps it on `reload`; the reloaded session still deletes it at its own quit. A file whose session is not live, or no longer its tab's main, shows as `state: "ended"` until 30 minutes after its last update, then not at all. A live main that is `idle` and whose entry was last updated over 2 hours ago shows it with `stale: true` (`board_read` and the tower's brief say so): the text is probably not what it works on now.
 
+<details>
+<summary>Details</summary>
+
 Only a tower's `board_read` (and the Straw Link holder's tick) deletes files, and it deletes those of sessions that are not live and have not been updated for 24 hours, and a finished auto entry (all todos done) older than 30 minutes; `board_set` does not purge, because it cannot tell which sessions are live, and age alone would delete an idle live main's entry.
+
+</details>
 
 #### `board_read({ scope?, device? })`
 
@@ -513,7 +670,12 @@ In a remote turn (any level) both `board_read` and `tower_list` are on the allow
 
 Sharing is the `board` message kind (`src/link/kinds.ts`): ephemeral, to the whole team, from any member, a kind of its own so an older client drops it as `unknown-kind` and keeps reading presence. Each entry is `(entry id, workspace label, tab label, name, now, updated, items)`; an auto-filled entry goes as the main's name and the done count (`<name> (3/5)`), no task text and no items, and a `board_set` entry whole; the id is the first 8 bytes of `sha256(device id ‖ session id)` in hex, so no local session id leaves the computer. At most 24 entries (newest first), labels and names 40 characters.
 
+<details>
+<summary>Details</summary>
+
 The holder looks at the board folder on its 5-second tick, once per team per 15 seconds (a change goes out within about 20 seconds): it sends the live mains whose pane directory is inside that team's project, when `share` is `status` (`presence` sends none), when the board differs from the last one it sent (compared by hash, without `ts`), when the stream (re)started or the epoch changed, and once an hour unchanged; the last bound entry going sends one empty board, which clears the allies' copy. A relay that refuses the kind (`unknown-kind`) is logged once and left alone for an hour; nobody is told. `ts` rises by at least 1 per board.
+
+</details>
 
 #### Holding allies' boards
 
@@ -522,6 +684,9 @@ The holder keeps each ally's last board in memory only (the relay gives it back 
 #### On the boss's own page and in pi
 
 On the boss's own page and in pi (`src/boardview.ts`, `server/boardpanel.ts`, `gui/board.ts`; the design is `docs/specs/2026-11-09-board-view.md`). The earlier rule, that a board never reaches the GUI, was about allies' boards, and it stands: allies' boards are never shown there. This computer's own board is, so the boss can see whether lines are cleaned up when work ends.
+
+<details>
+<summary>Details</summary>
 
 The net snapshot carries it as `board` (like `yards`, it never goes to Straw Link, a remote turn or an operate session; the operate table refuses `board/**`): one row per live main in tab order (with its line, if it wrote one; without, its name and tab only), then one row for every entry whose session is not a live main, **for as long as its file exists** (a tower's `board_read` still drops an ended entry after 30 minutes).
 
@@ -533,6 +698,7 @@ The head tower's page has a **Work board** section under the log, folded to one 
 
 The button is disabled while its request is on its way. The writer's auto-fill compares with what it last wrote, so a cleared line comes back only when its todo list or name moves. `/boss board` prints the same rows as text. Zen is unchanged.
 
+</details>
 
 ### Auto mode
 
@@ -561,7 +727,12 @@ Only the boss's own act: a typed `/boss auto` (`on` stages a request and the ter
 
 In every session (main, member, train, subagent) a new `ask_user_question`, `question`, `robot_hand`, `secret_drop`, `link_request`, or `mcp` browser login is refused with a note that says the boss is away; a confirm or prompt opened inside a tool call is answered as Escape without being drawn; a Straw Link gate confirm is denied (`no one can confirm this here now`); pi's trust question is answered "not trusted", except in a pane the page's `open/base` started: a person asked for that project, so its question is asked as usual.
 
+<details>
+<summary>Details</summary>
+
 The sb server keeps the list of the panes it started, each with its folder, in its memory until the open has joined, and the pane's pi asks it over the control socket (`open-intent`); no answer, an older server, or a server that started again is the usual "not trusted", and no listing is written to or read from disk for it. The asker finds the server through its record (`server.json`), as every control request does, so a process of the same user that replaces that record and answers the socket can say yes for any pane; that grants no trust, and the question only waits for a person. The boss's own `/boss` commands still draw their confirms. `call_tower`, `intercom ask`, `caller_ping`, monitors, loops, and `subagent` are not refused; `show_doc` is allowed and says not to wait for its form.
+
+</details>
 
 #### What it cancels
 
@@ -579,8 +750,12 @@ When it ends by any door the server writes `<state>/auto-report.json` for that p
 
 A process of the same user can write files, speak to the control socket, or type into a pane. Every switch and staging is notified to every pane and listed with its requester; the head's confirm record is the one a forged request cannot skip.
 
-
 ### Opening a main
+
+When no session owns a request, a tower opens a main for it itself with `boss_open_main`, without asking the user first. It resolves the sender, makes one new tab in the tower's own workspace without taking focus, starts pi there as a main, and hands over the request. Any failure closes the tab it made, with nothing handed over.
+
+<details>
+<summary>Details</summary>
 
 A tower routes a request to the main that owns it, or to the member doing that work. When no session owns it, the tower no longer returns it to the sender: it calls its own tool, `boss_open_main`, and does not ask the user first. Its other limits stay: it runs no shell command, sends no process signal, and edits no file. The tool is registered in the tower only, takes the request (verbatim, with every user decision it quotes kept verbatim), the sender (intercom name or session id), and an optional tab label, and does this:
 
@@ -599,6 +774,8 @@ Limits, counted from live Herdr panes so they survive a tower restart: the tool 
 
 Any failure (the start, the wait, the delivery) closes the tab the tool created, nothing having been handed over, and reaches the tower's model as an error that its prompt tells it to relay to the sender. The tower remembers each sender and request for the life of its session: the same request never opens a second main, whether the first attempt is still running, succeeded (the repeat answers that a main was already opened), or failed (the repeat is refused, not retried). A tower restarted in between forgets, and different wording is a different request.
 
+</details>
+
 ### Before pi starts in a folder: the settings check
 
 pi 1.4.0 reads `<folder>/.pi/settings.json` at startup, whole and with no size limit, before any extension loads and before the trust question (`SettingsManager.create(cwd, agentDir)` with the project trusted by default, in `dist/main.js`; upstream issue [earendil-works/pi#11421](https://github.com/earendil-works/pi/issues/11421)). A link to `/dev/zero` makes pi grow without bound, `/dev/stdin` or a FIFO blocks it for good, and a huge file is read whole. No extension can step in, so whoever starts pi looks first: Straw Boss does it before it creates anything for a new pi (`src/trust/settings.ts`).
@@ -607,19 +784,34 @@ pi 1.4.0 reads `<folder>/.pi/settings.json` at startup, whole and with no size l
 
 Inspecting the path in the boss's own process always diverges from what the kernel does for pi (`.pi -> /proc/self/cwd` means whoever looks, link targets that are not UTF-8, `/DEV` on a case-insensitive disk, Windows paths), so the kernel resolves it. Cost: one `lstat` of `<folder>/.pi` when there is no `.pi` (`ENOENT`/`ENOTDIR` means no file, no child); when `.pi` exists, one short child process (`process.execPath`, `--max-old-space-size=32`, no input, working directory `<folder>`, the same as pi's). The child first `lstat`s `.pi` and `.pi/settings.json` relative to that directory.
 
+<details>
+<summary>Details</summary>
+
 With no link involved, `ENOENT`, `ENOTDIR`, or `EACCES` means no file (pi's `existsSync` is false or its read error is caught: `tryLoadFromStorage` in `core/settings-manager.js`); a link it cannot follow or open is refused, whatever the error. It then `stat`s the path, following links, before it opens anything: a directory is fine (pi catches `EISDIR`), and anything but a regular file is `special` and is never opened, so a FIFO's writer is not released and no device is touched. A regular file is opened with `O_RDONLY|O_NONBLOCK`, `fstat`ed again, and read through the descriptor with a fixed buffer, whatever `st_size` says (so `/proc/self/pagemap`, size 0 and endless, stops at once), `large` when more than 256 KB arrive. It prints one JSON line (the parent cuts its output at 4 KB). Any other error, a link loop (`ELOOP`) included, refuses as `unreadable`.
+
+</details>
 
 #### What is refused
 
 A `settings.json` that is not a plain file (a device, FIFO, or socket, or a link that ends at one), one over 256 KB, one that cannot be looked at (`unreadable`), a link the check could not follow or open, whatever the reason (a dangling link is refused too, though pi itself would skip it: a per-process link such as `/proc/self/fd/17` is missing for the check but is pi's own terminal for pi), and one the check did not finish (also a failed start of the check itself): no answer in 5 seconds (the child is killed), a crash, or output that is not the expected line is `unchecked` ("could not be checked in time"). **What is fine.**
 
+<details>
+<summary>Details</summary>
+
 No `.pi`, no file, a directory at the path, and a plain file of at most 256 KB, also through links. A file swapped for a device or a link between the check and pi's start is not covered; the window is the few seconds of the opening. The look is asynchronous, so the boss's event loop is not blocked; every opening (a new main, member, or base, the tower's tab, an opened main, a pop) refuses before it creates anything. An adopted tower pane that reports no folder is checked as the folder the tower is for (the workspace's checkout, else the opening cwd), since herdr gave nothing better.
+
+</details>
 
 #### Bounded stall
 
 A `settings.json` on a hung network or FUSE mount can stall the read; the child's timeout bounds it, and the opening is then refused as `unchecked`. **Remaining gap.** The child's file descriptors differ from pi's: its `/dev/stdin` and `/dev/fd/0` are `/dev/null`, its stdout and stderr are pipes. A link to `/dev/stdin` or `/dev/fd/N` therefore never shows pi's real descriptor: the child's pipes, sockets, and devices are `special`, and a number the child has not opened is refused as a link it cannot follow. On macOS the child's `/dev/fd/6`, `8`, and `10` are the directory `/`, as pi's are, so such a link is allowed as a directory.
 
+<details>
+<summary>Details</summary>
+
 The check is wrong only if pi holds a regular file at a number where the child holds something else, which no tab Straw Boss opens arranges.
+
+</details>
 
 #### Where it runs
 
@@ -629,10 +821,19 @@ Every path that starts pi in a folder: the GUI's + New base, + New member (new t
 
 The deploy panel fails its first step (`create`) and says, in the page's language (zh-TW first, English), that nothing was started, which file, and why; a refused pop shows the same in its dialog. The server's answer carries the facts (`settings: {path, why, size?, limit?, code?}`) and the page words them. A tool or the LLM (`boss_open_main`, `/boss pop`) gets one English sentence with the same path and reason. The upstream issue is named here only, never in the interface.
 
+<details>
+<summary>Details</summary>
 
 This guard can be removed once pi fixes #11421. When pi is newer than 1.4.0, check `SettingsManager.create` in its `dist/main.js` (and `FileSettingsStorage` in `core/settings-manager.js`): once it skips an untrusted project's `settings.json` until the trust question is answered, or reads it with a size and file-type limit, delete `src/trust/settings.ts`, its calls in the paths above, and the `deploy_settings_*` messages.
 
+</details>
+
 ### Closing an opened main
+
+A main a tower opened tells the sender and the tower when its work is done, then waits; the tower closes it with `boss_close_main`, unless the main says it awaits a boss decision. The tower may close only a main of its own workspace that it opened itself and that Herdr reports idle or done, and the main decides for itself whether to accept the request to quit.
+
+<details>
+<summary>Details</summary>
 
 A main a tower opened (`boss_open_main`) tells the sender and the tower when its work is done, then waits; the tower closes it with `boss_close_main`, unless the main says it awaits a boss decision. The handoff message names both (`Sender:` and `Tower:` with their session ids) and says to report the outcome to the sender with `intercom send` and to the tower with `call_tower` (`why: milestone`, no reply); the main prompt repeats it for a tab a tower opened. The tool is registered in towers only and takes a main's intercom name or session id. The tower checks first, from Herdr's view:
 
@@ -660,6 +861,8 @@ The tower runs pi's default model unless you set one for it in `~/.pi/agent/stra
 ```
 
 Straw Boss passes it to pi as `--model` whenever it starts a tower, and reads the file at each start, so a change applies to the next tower without a reload. A tower already running keeps its model; restart it (or switch with `/model` in its pane) to change that one.
+
+</details>
 
 ### Merge train
 
@@ -708,7 +911,12 @@ The extension checks it: a train's and the integrator's `todo` and `MonitorCreat
 
 `integrating` names six seams (Handoff route, Batch owner, Approval, Record, Escalation route, Settings) and reads one `## Seam bindings` block from the session's instructions. Straw Boss's block is the last text of `main.md`, inside the integration markers: `main.md` is the system prompt of every main, a coordinator and the integrator alike, so each session holds exactly one block, in front of it before its first step, with no file to read. The tower runs no skill and holds none; its prompts carry only the forwarding.
 
+<details>
+<summary>Details</summary>
+
 The block binds: the **Handoff route** to `call_tower` `why: shared`, which the tower forwards (`tower_reply` with `forward`, its header naming the sender as `fwd-from`) to the project's one integrator, and the sb server sends every car notice to the slip's `coordinator` (which must be that sender) by session id; the **Batch owner** to the project's one integrator main (opened by the tower with `boss_open_main`, named `integ <project>`, closed by the tower after its idle `milestone`), which schedules trains and opens each with `boss_open_main` `role: "train"` (a departed train runs in a `train` session of its own), with train worktrees at `~/.herdr/worktrees/<repo>/train-<code>`; **Approval** to the boss, whose covering words the coordinator quotes in the slip's `auth` from its brief or the boss's messages, asking with its question tool only when they are missing (an overnight train must not stall on a question), each deploy target `auto` or `strict` by `integration.targets`; the **Record** to `trains/<project>/<app>.json` (the integrator's index) and `trains/<project>/<app>/<code>.json` (one per train, its train's) in the state folder; the **Escalation route** to `call_tower` (`blocked`; idle as `milestone`; an announced deploy as `shared` naming the target); **Settings** to `apps.json`'s `integration`. With the train off the block drops out and anchorloop's defaults apply: the session asks the boss before a merge or a deploy.
+
+</details>
 
 #### Principle
 
@@ -726,6 +934,9 @@ The project skill is found by the headings in `integrating`'s Project skill cont
 
 A coordinator sends a car slip with `call_tower` `why=shared`. The tower does not answer go: it sends the slip to the project's one integrator and closes that main when it reports idle. The integrator tells the coordinator nothing itself: it sets the car's state with `train_car` and the sb server sends the notice, so the tower relays nothing back. Since 0.74.0 the tower opens the integrator itself, in code (`src/integrator.ts`, `src/opener.ts`, `src/server/runtools.ts`): a tower run calls `boss_open_main` with `role: "integrator"`, the slip as the request, and its sender.
 
+<details>
+<summary>Details</summary>
+
 The project is not the run's word: the opener reads it from the workspace's checkout (`integration.project` at the top of its `apps.json`, else the folder name of its repository, which every worktree of it shares) and refuses another word, so a made-up name opens nothing. A run is shown no event id, so the server finds the slip itself: the newest `call_tower` (`why=shared`) the run took from that sender whose text carries the request's `head:`.
 
 It then finds the project's integrator on the whole computer (a main of kind integrator that a tower marked for the project, or that is named `integ <project>`; a main opened for a teammate's device is never one, whatever it calls itself, by its pane token and by the route table) or opens one in its workspace, named `integ <project>` so the new pi is of kind integrator before it is handed anything, and forwards the slip as its sender wrote it, stamped `fwd` and `fwd-from`: nothing the run typed is forwarded, so a run cannot change a slip's `auth`.
@@ -742,11 +953,18 @@ A kept integrator leaves no durable sign, so it has to sit in the tower's worksp
 
 A main an ally run opened sends its car slip the same way, and its `call_tower` reaches the ally runs of its device, never a local run ([Ally runs](#ally-runs)): there the same call is an ally run's one door to an integrator. When such a slip does reach a local run (the main named another workspace's tower, its route was gone, or a local run's newer expectation outranked it), the door refuses it: the main's pane token (`link:<device id>`) or a route table of any workspace says whose it is. A server heavy-gate semaphore is not built.
 
+</details>
+
 #### Integrator
 
 Its prompt keeps only what is Straw Boss's: the role (a main, not the tower, and the exception to "never merge into an integration base"), the name `integ <project>` (16 characters at most, never renamed), the ledger at `trains/<project>/<app>.json` in the state folder (`$PI_CODING_AGENT_DIR/straw-boss`, `~/.pi/agent/straw-boss` by default; the role prompt names the resolved path), one `train` todo per forming train (the guard checks it; the yard is drawn from it), the tower calls (no `shared` call for its own merges, pushes, and merge-triggered deploys, whose slips' `auth` covers them; a `shared` call naming the target for a deploy it starts itself; `blocked`; the idle `milestone`), and the `reviewer` role for a step it briefs.
 
+<details>
+<summary>Details</summary>
+
 Slips, departure, assembly, review, red handling, the urgent and fix-forward lanes, deploy, and rollback are the skills'; since 0.65.0 the integrator only receives cars and schedules trains (below), and the train does the rest.
+
+</details>
 
 #### Stages
 
@@ -756,6 +974,9 @@ An app's `integration.stages` lists what the integrator carries each train throu
 
 A computer that wants none of this turns the merge train off with `STRAW_BOSS_INTEGRATION=off` in the environment of its sessions, or with `"integration": "off"` in `config.json` of the state folder (`$PI_CODING_AGENT_DIR/straw-boss`, else `~/.pi/agent/straw-boss`). Order: a non-empty environment value wins; else `integration` in `config.json` (a UTF-8 BOM is ignored); else off when `STRAW_BOSS_DESK=1` and on otherwise. On is `on`, `true`, `1`, `yes`; off is `off`, `false`, `0`, `no` (case and surrounding spaces ignored).
 
+<details>
+<summary>Details</summary>
+
 The switch fails closed: any other value, and a `config.json` that exists but cannot be read or parsed (a trailing comma, a folder), turn the train off and tell once per process (a session notice, or a line on stderr for a tower run) naming the file and the value. Off, no main or tower is given the integrator role: the main, tower, and tower-run prompts drop their integration text and say instead that integration is off on this computer, a main asks the boss before it merges to a shared branch or deploys, a tower answers a `shared` request that carries a `car:` block with "integration is off on this computer" and opens no main for it, and `integration`, `stages`, `targets`, and `deploy` in any `apps.json` are ignored (`apps.json` still gives the owning app and its paths).
 
 `{{dir}}`, the folder the prompts point to for `apps-config.md` and `planning.md`, becomes a copy in the state folder (`prompts-off/`) made at the first use in a session from the same files with the integration blocks dropped, and holds no `integrator.md`, so nothing loads the integrator prompt. Each load rewrites a copy file whose text differs from its source, removes files with no source and leftover temp files, and the copy is removed when the switch is on again. When the copy cannot be written, a notice says so, the turn still has its Straw Boss section, and `{{dir}}` reads "none yet".
@@ -764,6 +985,7 @@ The `## Seam bindings` block of `main.md` is inside the same markers, so with th
 
 The switch is per computer: work a desk sends over Straw Link to a device where the train is on runs that device's train. It reaches sb's own prompts only: a project's skills (a coordinator skill that says "play the integrator yourself", say) are outside it. Panes (mains and tower runs alike) get their environment from Herdr (`herdr agent start`), so set the variable in the environment that starts `herdr server` (as `STRAW_BOSS_DESK=1` is), or use `config.json`, which every session reads. The desk sets nothing: `STRAW_BOSS_DESK=1` already turns the train off, and `"integration": "off"` in its `config.json` is only a belt.
 
+</details>
 
 #### Trains as their own workers
 
@@ -773,13 +995,23 @@ Design record: [`docs/specs/2026-11-07-train-workers.md`](specs/2026-11-07-train
 
 The coordinator (a main) runs its acceptance, then sends the car slip. The integrator (`integ <project>`, one per project, as before) receives cars, checks each, sets it `received` or `returned`, forms trains, and asks the tower to open one. The tower opens a train with `boss_open_main` and `role: "train"` and the manifest, in a tab of its own named `train 1106m` (`MMDDx`, unique per project, never reused). The train assembles the cars on the latest base in `~/.herdr/worktrees/<repo>/train-<code>`, has a fresh reviewer read the assembly, runs the full checks, merges, watches the pipelines, deploys and verifies where its stages say so, rolls back or reports on a failure, and ends.
 
+<details>
+<summary>Details</summary>
+
 It runs on its own once it departs; the integrator does not supervise it. It never waits on a person, and the tower closes it after its `milestone`.
+
+</details>
 
 ##### Acceptance before handoff
 
 e2e and UAT happen on the coordinator's own branch before the slip, with the boss's nod, as the project skill's `## Acceptance` says (`integration.accept` names the kinds an app requires). The slip carries `accept:` (evidence: what ran, on which head, the result, the boss's words) and `departs:` (when the car may leave: `next`, `alone`, `with <car>`, `after <time>` or `by <time>`, comma separated); `cli.mjs train check --accept <file>|none [--slip <file>] [--app <name>] [--app-accept K,…]` validates both. What the app requires is `integration.accept` in the project's `apps.json`, which the integrator's guard and the train read themselves, so a flag can add to it and never weaken it: a car whose evidence lacks a required kind, or says `none` for an app that requires some, is refused before a train departs (`train check` reads the file in its own folder when there is one).
 
+<details>
+<summary>Details</summary>
+
 An app whose `stages` still list `uat` is a config error: the tower does not open a train for it, the integrator's `train` todo is refused, and `train check` says so, each naming the field and the migration below. A car that asks the train for acceptance is refused with one word ("the train runs no acceptance…") and returned.
+
+</details>
 
 ##### Steps
 
@@ -793,7 +1025,12 @@ A train holds a lane (an app's integration branch) or a target from its first st
 
 The train and the integrator set each car's state with `train_car` (`received`, `returned`, `landed`, `dropped`); the sb server sends the coordinator one intercom notice per (car, state) under `kind=car_notice`, retries at 30 s, 2 min and 5 min, records `deliveredAt`, and when the coordinator is gone sends the tower one `blocked` and records `escalatedAt`. A train cannot pass `land` before every landed notice is delivered or escalated. The server keeps a tower's forwards, and the door's answer naming a slip's integrators, in memory only and reads neither back from disk (a file there is one a train can write), so an sb server restart loses them.
 
+<details>
+<summary>Details</summary>
+
 The refusals say so since 0.75.1: within 24 hours of the server's start, the integrator's `train_car` refusal `no forward by a tower carries head ...` names the start time and the way back (the coordinator sends the slip to the tower again and the tower forwards it again), and a tower run whose slip came in before the start is told to ask the door again.
+
+</details>
 
 ##### Commands
 
@@ -803,12 +1040,16 @@ The refusals say so since 0.75.1: within 24 hours of the server's start, the int
 
 The ledger (`trains/<project>/<app>.json` with an `index`, and one file per train) stays the model's. The trainboard (`<state>/trainboard/<project>/<code>/board.json` and `yard.json`) is derived by the extensions; `<state>/trainboard/<project>/cars/` is the server's journal of car states and notices, written by the server and read only for display after a restart. A car's acceptance chip is stated by the code from the evidence it checked (kinds of a complete evidence file, or none required when the app requires none), and says it is unknown when the evidence cannot be checked; no word a model wrote there is shown.
 
+<details>
+<summary>Details</summary>
+
 The cars a round removed stay on the board with their heads, so the yard shows whether their coordinators were told and the sweep removes their car files with the board. The server deletes an ended trainboard 7 days after its last update, and a stale one only after `train clear` and the same 7 days, at start and every hour, with the merge train on.
+
+</details>
 
 ##### Where it shows
 
 A train's pane carries `sb_role=train` and `sb_train=<project>/<code>`, so the net, the sidebar and the work board show a train, not a member; the Herdr sidebar orders the tower's subagents, the integrator, then trains by code ([Sidebar net view](#sidebar-net-view)). The page (spec §11.2): one yard per project, opened from a chip on the base header, with the forming trains and their cars, each car's acceptance chip and departure condition, one row per train (code, cars, round, steps as pills by kind, the wait in words, the load it needs, each car's notice, from the server's own record, or from the journal on disk marked as such for a car the server has not seen since it started), and a locomotive card for a train; Zen's strip adds only the train count and the waiting count.
-
 
 #### Moving a project to 0.65.0
 
@@ -839,6 +1080,9 @@ A tower session with a TUI shows a monitoring widget above its editor. It is rea
 ╰──────────────────────────────────────────────────────────────────────────╯
 ```
 
+<details>
+<summary>Details</summary>
+
 - **This net**, in detail: the sessions that joined in this workspace, by tab (main agent first, then members), each with the subagents it launched, and this workspace's sub workspaces. Sessions that did not join are not listed, and neither is anything in other workspaces.
 - **Other towers**: the head tower first when it exists (`head tower`, with its state), then one line per workspace that has a live tower (workspace and status). No workspace tower carries the head tag.
 - Each row carries the role mark Herdr's sidebar shows (see [Sidebar net view](#sidebar-net-view)), in Nerd Font glyphs one column wide: the radio tower (U+F043B) for a tower and in the title, the glyph of its kind for a main agent or a launched subagent that has one (see `sb_mark` below), Font Awesome's star (U+F005) for a main with no known kind, person (U+F007) for a member, and `[sub]` for a subagent with none. A tab and a sub workspace have none. Their colors are pi theme roles, so they follow the active theme: the tower `warning`, a main kind's glyph (and the star) `accent`, the person `success`, all bold, and a subagent kind's glyph and `[sub]` `dim`. The kind column keeps the role's word.
@@ -851,13 +1095,26 @@ Where the data comes from: pi-intercom `listSessions()` (status `idle`, `thinkin
 
 So a subagent is grouped under the session that launched it wherever it runs, and it never counts as a net member of the workspace or tab it sits in. The pane of each child is found by one pass over the panes (their session file names are indexed by child id), the two directories are listed again only when their timestamp changes (a directory changed in the last two seconds is always listed), and a launch script is read again only when it changes.
 
+</details>
+
 ### How Herdr is read
 
 The listings (`pane list`, `workspace list`, `tab list --workspace`) are requests on Herdr's socket (`pane.list`, `workspace.list`, `tab.list`), not spawned `herdr` commands; the reply is the same as the CLI's, so every reader is the same. Every write (`report-metadata`, `tab create`, `agent start`, closing, and the rest) still runs the CLI. A listing that fails rejects with Herdr's own error, and nothing falls back to the CLI. The dashboard and the browser view read the panes and workspaces together from one `session.snapshot`. The browser view's poll (every 2 s while a page listens) stays a poll: its net also holds what only the session files and intercom know (what a unit waits on, its queue, its dialogs), which no Herdr event tells.
 
 ## Orphaned subagents
 
+```mermaid
+flowchart TD
+    c["Every 15 s, each session checks<br/>the children it launched"] --> s{"A child is stranded?"}
+    s -->|"yes"| m["One intercom message to the child:<br/>send your final report, then stop"]
+    m --> r["The report reaches the launcher"]
+    s -->|"no"| n["Nothing is sent"]
+```
+
 A subagent's result reaches the session that launched it only while that session's own process keeps pi-herdr-agents' watchers and its registry of launched children (`runningSubagents`, in the process-wide slot `globalThis[Symbol.for("pi-subagents/runtime")]`). `/reload`, `/new`, `/resume` and `/fork` keep them, quitting pi suppresses the delivery, and a crash or restart drops them for good: pi-herdr-agents does not recover watchers after a full restart. A subagent that stays open after it finished, an interactive one for instance, is then stranded: it sits done in its pane and nobody is told.
+
+<details>
+<summary>Details</summary>
 
 Every session in Herdr that is not itself a subagent checks for this every 15 seconds. While no subagent of the session is stranded, a check reads the registry and one directory; only a subagent that is not tracked and whose own activity says it waits brings a pi-intercom session listing, and after that one `herdr pane list` per check (and one `herdr pane process-info` when it is about to be asked). A subagent is asked to report when all of these hold:
 
@@ -872,6 +1129,8 @@ Straw Boss then sends that session one intercom message: the launcher's session 
 A child whose pane cannot be found or does not run its launch script, or that has no pi-intercom session of its own, is given up on after four looks, until the next session start (a reload counts). A subagent whose process has exited cannot be asked; its result stays in its session file. A resumed run (`subagent_resume`) has an id of its own that nothing in its pane's session file names, so it is never found and never asked.
 
 The subagent's own launcher does this, not a tower: only the launcher's process knows what it tracks, so a tower never nudges the subagents of other sessions, and a subagent that launches subagents of its own does not (it runs no Straw Boss).
+
+</details>
 
 ### Subagents a Herdr restore brought back plain
 
@@ -891,6 +1150,9 @@ sequenceDiagram
 ```
 
 The nudge above needs the child to still be what pi-herdr-agents started. A Herdr restart does not leave that: with `resume_agents_on_restore` (on by default) Herdr starts a plain `pi --session <file>` in every pane that had reported an agent session, subagent panes included. That pi has none of the child's setup (no `subagent-done.ts` extension, no `PI_SUBAGENT_*` environment, no `caller_ping`, no auto-exit, no `<session>.exit` sidecar), so it sits idle at its prompt with the task unfinished and will never report, and the restored launcher's registry is empty and is never filled again. Nothing can ask it to report by itself, so the launcher resumes the run instead, through pi-herdr-agents' public `subagent_resume`.
+
+<details>
+<summary>Details</summary>
 
 The same check every 15 seconds (`restored.ts`) finds such a run when all of these hold. It lists Herdr's panes only while some run could still be noted or found: a run that can never qualify (a persistent specialist, or a launch script that is missing or does not name the run's own session) is dropped before that, so it costs no list and no process look.
 
@@ -912,9 +1174,14 @@ Each step that fails is shown as a warning, recorded as `gaveUp`, and not tried 
 
 A **managed-worktree** run (it has a manifest under `artifacts/<session id>/worktree-runs/`) is the exception. Its pane is the root pane of the retained worktree workspace, so Straw Boss does not close it, and pi-herdr-agents' `subagent_resume` neither reattaches the worktree's lifecycle nor accepts such a session. The message says so, names the pane, worktree and branch, tells the model not to call `subagent_resume` for it, and leaves the restored pi waiting at its prompt for the user to continue (a run cut off mid-turn is told to go on, below).
 
+</details>
+
 #### A child cut off mid-turn is told to go on
 
 A restart or a reboot can land in the middle of a child's turn, and the restored pi then waits at its prompt with nothing to do: its interrupted tool call has no result and nobody continues the turn. Before a run is handed to the launcher, `cut.ts` reads the end of the child's session file (the last chunk of it, which grows until it holds the last assistant message; a large file is not read whole). Only `message` entries and the custom messages that start a turn (an intercom message, a nested launcher's result, a monitor's wake, a second-thought or document-review notice, a robot-hand follow-up) count, so a custom entry, a model change, or any other notice says nothing.
+
+<details>
+<summary>Details</summary>
 
 The session is **cut** when the last tool calls of the last assistant message have no result, or the last step is a tool result the model never read, or the last step is a message nobody answered, or the last assistant message is an error a restart leaves: claude-bridge's `Claude Code process terminated by signal SIGHUP` or `exited with code 129` (a SIGTERM or code 143 may be a kill by hand, and nothing shows a restart came after it, so it is no cut) (the reply was cut while it was being written, with or without a tool call that had begun to stream).
 
@@ -928,13 +1195,20 @@ The child is told once, in one message: its last turn was cut by a Herdr restart
   It is sent only while that session's own intercom status is `idle` (and the pane was idle or done at the look), and the transcript is read again just before the send: a child someone went on with is not told. A session that is not reachable yet (pi-intercom connects a moment after pi starts) is looked at again at the next looks, four at most; then the launcher is told it could not be reached. `continued` is written to the launcher's session before the send, so a child is told at most once per restore, even across a reload or a failing send.
 - In both cases the one message the launcher gets says which runs were restored mid-turn, and for a worktree run whether the child was told ("not idle, wait for its report over intercom"; then the message does not send the launcher to the pane for that run) or not (why, and to continue it in its pane).
 
+</details>
+
 #### Limit: a draft the boss is typing
 
 Straw Boss does not see the prompt editor of another pi, and the intercom message starts the child's turn as soon as its status is idle. If the boss has a draft in the restored pane in the first minute after the restore, the draft is kept (nothing is typed into the editor) but the child may act before the boss sends it. The text tells the child to check the state first. A guard on the child's side (its own Straw Boss extension holding the message until the editor is empty) would need a channel of its own between the two, an acknowledgement, and a fallback for a child whose extension is older, so it is not part of this release.
 
+<details>
+<summary>Details</summary>
+
 Not covered: a run that was itself resumed (`subagent_resume`) is not recovered by a second restart. Its resume script is named `<name>-resume-<time>.sh` and its header (`# Session:`, `# Surface:`) does give the session file and pane, but not the run's id (that is only in the script's command, as `PI_SUBAGENT_ID`), and the id is what every other proof here hangs on. The resumed run reuses the original session file, whose name carries the original id, so the pane and the transcript cannot be matched to the new id (`ownFile`), and the original run's `subagent_result` names the same session file, so the transcript cannot say whether the resumed run finished.
 
 Covering it would mean closing a pane on a guess, so a restart after a resume stays unknown and nothing is closed; and a `.exit` sidecar left unconsumed means the child finished, so the run is left alone and its result has to be read from the session file.
+
+</details>
 
 ## Browser view
 
@@ -954,9 +1228,14 @@ Any session can open it, in a Herdr workspace or a sub workspace, joined or not.
 
 Each workspace the net reaches is a **base**: one with a live tower or with sessions that joined. Workspaces with neither, and sessions that did not join, are not shown. A base has its **control tower** (the head tower wears a crown; a base without a tower shows a dim ghost), each tab's main agent and members as units, subagents under the session that launched them, the tower's own under the tower (linked as the dashboard does, wherever they run), and sub workspaces as **outposts** under their parent.
 
+<details>
+<summary>Details</summary>
+
 A unit's card shows how long it has been in its state (once the server has seen it take that state), its todos (done of total and the task in progress, from rpiv-todo via the session's bridge), and its last steps as marks along its foot. Under the map, a **timeline** marks the net's joins, leaves, and state changes of the last 30 minutes (after [zoetrope](https://github.com/furkankly/zoetrope)): waiting and errors on top, work in the middle, the rest below, each named on hover and linking to its unit. The server keeps them, so a reloaded page still has them; a phone folds the strip to its newest event.
 
 The bases pack like masonry in reading order. While the map runs past the window, an overview in the corner shows each base in its state's colour and scrolls where you click.
+
+</details>
 
 #### States
 
@@ -970,7 +1249,12 @@ States look the same everywhere:
 | finished | a green `✓` |
 | error | a red `!` |
 
+<details>
+<summary>Details</summary>
+
 Changes animate; the page honors `prefers-reduced-motion`. What the open session is doing (thinking, using a tool, watching a monitor, commanding, waiting for the boss) is not a row in the log: a ring runs round the composer's box while it works, stands still and amber while it waits for the boss, and a live region says the same in words.
+
+</details>
 
 #### Routes
 
@@ -980,7 +1264,12 @@ Changes animate; the page honors `prefers-reduced-motion`. What the open session
 | A base | `/<token>/w/<workspace id>` |
 | A unit | `/<token>/w/<workspace id>/s/<session key>`, optionally with `?at=<entry id>` to open its comms at one entry |
 
+<details>
+<summary>Details</summary>
+
 Links are real links (middle-click and copy-link work); a plain click, Back, and Forward change the view without reloading, and Escape goes up one level. The **Straw Net** title in the header goes back to the map. A deep link loads straight into its view.
+
+</details>
 
 #### A base, zoomed in
 
@@ -994,15 +1283,30 @@ The session route shows the session's chat as a comms log, with the unit's dossi
 
 Your messages are gold on the right; the unit's transmissions are on the left with its icon. Each tool call is a collapsed action card with a state badge (running, done, failed), thinking is folded behind its length, and compactions are dividers. An assistant message's header names the unit's role (tower, main agent, member, subagent) with the model and the time, not the session's name, which the page header already shows; a relayed message still names its sender.
 
+<details>
+<summary>Details</summary>
+
 New entries appear when pi writes them; text still being streamed is not in the file yet, so it shows at the end of the reply. The log opens at the newest entry and stays pinned there. Scrolled up, it stays put and a floating button (**jump to latest**, or **N new** once entries arrived) scrolls to the end and pins it again. Older pages load as you scroll up; at most 600 entries stay in the page.
+
+</details>
 
 ##### Terminal mirror
 
+The **Terminal** button opens a live mirror of the unit's pane beside the log. The server sends only colours and attributes, the page draws the rows as text, and the mirror refreshes within a second while the pane changes.
+
+<details>
+<summary>Details</summary>
+
 The tile shows what the unit's pane shows, with colours and attributes, updated within a second while it changes (at most 4 reads a second, shared by every page that shows it, and none while no page does). The server sends only colour and attribute escapes, and the page builds the rows from text. **Fit width** scales the tile and scrolls to the bottom, where pi's editor is; otherwise it keeps its size and scrolls sideways, as on a phone. While the session waits for a secret (`secret_drop`) nothing is read and the tile says so. A tile pauses 5 s after its browser tab is hidden and resumes when it shows. A read-only question panel offers **Show terminal** too. On a phone the mirror is display only: typing or tapping in it sends nothing.
+
+</details>
 
 ##### Key pad
 
 Under the mirror, the key pad sends one key per tap: `esc`, `tab`, `⇧tab`, the arrows, `enter`, `space`, `⌫`, `home`, `end`, `pgup`, `pgdn`, and `1`–`9` (folded away). It has no letters, `/`, Ctrl, or Alt, and the server refuses them as keys.
+
+<details>
+<summary>Details</summary>
 
 - It works only while the tile shows the terminal live (a frame in the last 3 s), at most 8 keys a second.
 - While the session waits for a secret, or on a question its panel answers, only Escape works. A paired device likewise sends only Escape, and no prompt, while a `link_request` is open.
@@ -1010,9 +1314,14 @@ Under the mirror, the key pad sends one key per tap: `esc`, `tab`, `⇧tab`, the
 - A confirm says why in the page's own words, chosen by the server's `confirm` token (`gui/confirmwords.ts`; the server's English only for a token the page does not know), above two buttons of one height: the one that sends carries its label (**Send Enter**) on a fill, and **Cancel** is outlined and has the focus.
 - The pad's buttons join the same write queue as typed keys: a press while a write is on its way waits its turn, and the buttons stay enabled meanwhile. Escape goes to the pane, not to the page.
 
+</details>
+
 ##### Typing into the mirror
 
 On a desktop (a fine pointer) a click into the mirror gives it the keyboard until a click elsewhere; a drag that selects text to copy does not, and switching the session view to its terminal gives it once. Keys land in an invisible text box by the mirror's corner, so an input method shows its candidates there.
+
+<details>
+<summary>Details</summary>
 
 On a phone nothing takes the keyboard by itself, because a tap into a pane opens no soft keyboard. The terminal's **Keyboard** button (鍵盤) focuses the same text box and opens the soft keyboard (a second tap, or leaving the terminal, closes it). What it types goes out as text (an input method's composition as one write when it ends), with Backspace and Enter read from the soft keyboard's `beforeinput` where it sends no key for them. Switching to the terminal also makes the composer's box let go of the focus, so keys never land in the hidden chat.
 
@@ -1025,6 +1334,8 @@ What goes, all on the same `keys` endpoint under the same guards:
 
 Writes go one at a time, at most one every 130 ms, under the same 8 a second. Characters typed meanwhile join the next write, a held key repeats only into an empty queue (never Enter, Escape, Tab, or a chord), and a refusal or a confirm drops what was still queued.
 
+</details>
+
 ##### The composer
 
 Under the log, the composer types into the unit's terminal through Herdr, as if typed there:
@@ -1032,6 +1343,9 @@ Under the log, the composer types into the unit's terminal through Herdr, as if 
 - **Send** (Enter; Shift+Enter adds a line; off while the box is empty) sends a prompt when the unit is idle and a steering message while it works;
 - **After this** (Alt+Enter, shown while it works) queues one for when the current task is done;
 - **Stop** sends Escape after a confirm.
+
+<details>
+<summary>Details</summary>
 
 While the box holds only `/` and a name being typed, a menu above it lists the session's matching commands (extension commands, prompt templates, and skills, as its own pi lists them; pi's built-in commands are not listed): ↑ and ↓ move, Enter, Tab, or a click puts `/name ` in the box, and Escape closes it. The session's dialog bridge answers the list, so it is the session's own set, and the menu shows nothing when it does not answer within a second.
 
@@ -1041,9 +1355,26 @@ The box is disabled, with the reason, while the stream is down, the session is g
 
 Ctrl+C and Ctrl+D are never sent from the browser. On a touch screen Enter adds a line and Send sends; drafts survive a reload. Markdown is rendered into DOM nodes, never as HTML; only `http`, `https`, and `mailto` links are links; block quotes and lists nest at most 16 deep, and deeper levels stay text.
 
+</details>
+
 ### Alerts and questions
 
 #### Alerts and panels
+
+```mermaid
+flowchart TD
+    q["A unit waits on<br/>a question or dialog"] --> a["Alert in the header queue<br/>(questions first)"]
+    a --> d["You open it: a dialog"]
+    d --> s["Answer"]
+    d --> l["Later: back in the queue"]
+    d --> o["Open comms"]
+    f["A unit fails or<br/>a subagent finishes"] --> n["Notice under the<br/>Notices button"]
+```
+
+Only a unit that needs an answer raises an alert. Alerts queue in the header and never open by themselves: you open one as a dialog, then answer it, put it back with **Later**, or jump to the unit's comms with **Open comms**. A failure or a finished subagent is a **notice**: it waits apart, under the **Notices** button, and never takes focus.
+
+<details>
+<summary>Details</summary>
 
 Only a unit that needs you to answer raises the prominent alert: one waiting on a question or a dialog (mark waiting, or a pending dialog). A unit that fails (mark error, or a monitor that failed or went quiet) and a subagent that finishes are **notices**: they never take the header's alert, queue a dialog, or steal focus. An alert never opens anything by itself: it joins the queue in the header (questions first, then notices, oldest first in each), and leaves it again when the unit moves on.
 
@@ -1057,7 +1388,23 @@ A second dialog you open stacks on top, with the one beneath peeking out; click 
 
 Escape closes the top dialog only, focus returns to where it was, and dialogs are not modal (the page stays usable, nothing traps focus). Documents open as **tiles** beside the current view instead, sharing its width; a tile that arrives by itself takes no focus, and narrow windows show tiles as tabs. A dialog shows the unit, its last line, and the tool call it waits on, with a link to its comms.
 
+</details>
+
 #### Questions and selectors
+
+```mermaid
+flowchart TD
+    w["A unit waits on a dialog"] --> p["The page shows it<br/>(alert dialog, session view)"]
+    p --> a["Send answer"]
+    a --> k["The package that opened<br/>the dialog settles it"]
+    k --> e["The terminal dialog closes,<br/>the agent gets the answer once"]
+    p --> r["Anything else: read-only<br/>with Show terminal"]
+```
+
+When a unit waits on a dialog, the page shows it in the alert dialog and above the session's composer. Four kinds can be answered from the page: pi-robot-hand's selector, rpiv's questionnaires, pi-code's hook gate, and an extension's own `select` or `confirm`. **Send answer** goes to the package that opened the dialog, which settles it as a terminal answer would, so the agent gets the answer once. Everything else stays read-only, and `secret_drop` is never answerable from a page.
+
+<details>
+<summary>Details</summary>
 
 When a unit waits on a dialog, its alert dialog and its session view (above the composer) show it. Four kinds can be answered from the page: pi-robot-hand's selector (`robot_hand` ≥ 0.3.0: its title as written, each choice with where it acts and the terminal's number, and **Copy command**, which copies through the browser and answers nothing); @juicesharp/rpiv-ask-user-question's questionnaires (`ask_user_question`: one to four questions, each with a header tag, options with descriptions as radio buttons or, when it takes several, checkboxes, "Or type your own answer", and "Note (optional)"); pi-code's hook gate (its confirmation before a gated tool call of any tool, such as "Allow bash?": **Allow** or **Deny**); and any extension's own `ctx.ui.select` or `ctx.ui.confirm` (see [Any extension's select and confirm](#any-extensions-select-and-confirm)).
 
@@ -1081,7 +1428,14 @@ The `secret_drop` call itself is still shown in a device's comms history with it
 
 The question shown is the newest unanswered call on the session's current branch (for a hook gate answered among several open calls, the call it gates); a call longer than 256 KB is read from further back in the file (up to 16 MB, shown clipped), and a longer one says it is too long to read.
 
+</details>
+
 #### Any extension's select and confirm
+
+Every extension's `ctx.ui` is one object, so Straw Boss wraps `select` and `confirm` (and leaves `input`, `editor`, and `custom` alone, since a secret may be typed there). A wrapped call opens pi's own terminal dialog and relays the same question to the page; the first answer wins and the other side is dismissed. The dialog is never made worse: a call that cannot be relayed is the original call.
+
+<details>
+<summary>Details</summary>
 
 Every extension's `ctx.ui` is one object, so Straw Boss (in every pi in Herdr, subagents too) replaces its `select` and `confirm` and leaves `input`, `editor`, and `custom` alone (a secret may be typed there). A wrapped call opens pi's own terminal dialog exactly as before and, in the same call, publishes the dialog on pi's event bus as a dialog-contract v1 owner under `straw-boss:ui`, so the bridge, hub, and answer route handle it like any owner's dialog and every existing check applies (one open dialog, the digest, an answer already on its way, `secret_drop` open, too long).
 
@@ -1096,7 +1450,24 @@ The dialog is never made worse: a call that cannot be relayed, or whose relay fa
 *Remote.* A paired device answers a `select` and a `confirm` as this computer's page does: the relayed dialog carries `confirm: true` (told apart by its digest, so a relay cannot pass one off as the other) and every page shows Yes and No. A secret is the exception: no page takes one. Cancel follows the same rule as any choice: a paired device may cancel a select or a confirm unless every one of its choices is `hereOnly`.
 - *Lifetime.* The wrap marks the `ui` object it wrapped, so several loaded copies of the package wrap it once. Pi replaces the object when it binds a new UI context (a mode change), so the marker is checked at session start and before every tool call and the wrap is put back on the new object; at shutdown the relayed dialogs are closed and the original methods restored. A session without a UI has pi's shared no-op object, which is never touched.
 
+</details>
+
 #### An answer that needs the terminal opens it
+
+```mermaid
+flowchart TD
+    a["You answer on the page<br/>with a terminal-bound choice"] --> c["Terminal card opens"]
+    c --> p["A command in pi's prompt:<br/>Send it or Cancel"]
+    c --> n["A command in a new pane:<br/>the pane's own screen"]
+    p --> x["The card closes when<br/>its step is over"]
+    n --> x
+    c --> f["Full terminal<br/>(ssh, vim, and the like)"]
+```
+
+Some choices leave the next step in a terminal: robot_hand can put a command in pi's prompt, or run or type it in a new Herdr pane. When the owner accepts such an answer, the page opens a small **terminal card** that holds the command, and the card closes when its step is over. **Full terminal** opens the whole terminal for anything longer.
+
+<details>
+<summary>Details</summary>
 
 Some choices leave the next step in a terminal: robot_hand's *Put it in my prompt* (the command waits in pi's prompt for Enter), *Type it into a new Herdr pane* and *Run it in a new Herdr pane* (a new pane below pi that shows or runs the command; the pane closes itself and its output returns as a message). A choice says so with an optional `next` (`"terminal"` or `"pane"`, a hint like `note`, not hashed); pi-robot-hand sends none, so its adapter reads it from the labels it shows, and an owner that sends its own keeps it.
 
@@ -1136,21 +1507,40 @@ A grant never reaches a pane that runs an agent or carries `sb_role`, and ends t
 
   A grant answers once, whatever it answers, belongs to its session, and expires after 2 minutes; a changed line, another session's or an unknown/replayed answer id, and a stale grant are refused with `run_changed`, `run_unknown`, `run_expired` (said in the page's words), and the next Enter, which carries no `run`, asks the usual confirm. Only a pane answer, a choice with no `next`, or an answer the owner did not accept leaves no grant. Only MACs are kept or logged.
 
+</details>
+
 #### Notices
 
 Notices are read once opened: they have no Later, and closing one does not put it back in the queue. They wait apart from what needs you, under the header's **Notices N** button: it opens a list of the finished or failed units, each with its base and last line; a row goes to the unit's comms and clears it, and **Clear all** clears every one (questions stay, to be answered).
 
+<details>
+<summary>Details</summary>
+
 A finished unit whose pane has closed, and a subagent whose run pi-herdr-agents recorded done (`phase: "done"` in its `subagent-activity` file, even while its pane still runs pi), clears itself from the list after its sound and reminder: its parent has the result. The map still shows a finished subagent for ten minutes.
 
+</details>
+
 #### Enlarge
+
+An alert dialog's ⤢ turns the dialog dock into one wide panel in the middle of the window, for a long question; ⤡ puts it back. The choice is kept per browser.
+
+<details>
+<summary>Details</summary>
 
 An alert dialog's ⤢ beside its × turns the dialog dock into one wide panel in the middle of the window (at most 880 px wide, nearly the window's height), for a long question; ⤡ puts it back. The choice is kept per browser (`sb.dialog-wide`), so the next dialog opens the same size. A phone has no Enlarge: its dialogs already take the width. Three keys drive the dialogs: **Space** opens the next alert, as the header's alert button does, **F** presses the top dialog's ⤢ or ⤡, and **Escape** closes the top dialog. The page leaves a key alone while you type (an input, the composer and its `/` menu, a terminal's key sink), with Ctrl, Alt, or ⌘ held, while an input method composes, or while a confirmation, the image viewer, or a popover is open; Space on an answer option, which selects or toggles it, or on a button or link you moved the focus to with the keyboard, keeps its own activation.
 
 A button or link the mouse left focused (the logo after a click) does not hold Space: it still opens the next alert. A key that did nothing (Space with nothing queued, F with no dialog) is not taken, so the page scrolls as usual.
 
+</details>
+
 ### What a unit's page shows
 
 #### Documents
+
+A session that shows documents with pi-herdr-doc-review lists them in its dossier under **Documents**, and a click opens one as a tile beside the current view. An HTML document runs in a sandboxed frame without scripts; a text document renders read only.
+
+<details>
+<summary>Details</summary>
 
 A session that shows documents with [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 or newer (`show_doc`, or a Mini SDD spec that opens on its own) lists them in its dossier under **Documents** within 2 s, and a parchment badge on a unit's token counts those still on screen in its terminal (a tower lists them only in its dossier). On that session's comms a document that arrives opens as a tile beside the log without taking focus, unless four tiles are open already (it never pushes out one you opened); anywhere else (the map, a base, another session) only the badge changes, and a page that opens on a session with documents opens none.
 
@@ -1160,6 +1550,8 @@ Answers travel in the URL of a GET, as in Chawan, and stay in the browser's hist
 
 A session lists at most 32 documents; a list too large for the dialog channel is dropped (the dossier says to read them in the terminal), and documents never hold back its dialogs.
 
+</details>
+
 #### Files
 
 A file pasted, dropped, or picked with **+** in a composer is posted as its bytes to `sessions/<key>/upload`, under the same origin and CSRF checks as typed input (a paired phone too), at most 20 MB. The server stores it under `pi-straw-boss-uploads` in the temp directory (folder 700, file 600) with a cleaned name, and the page puts the path into the message where the cursor is, the way a picture pasted into pi's terminal lands as a temp file path; the session reads it with its own tools. Text pastes as text.
@@ -1168,23 +1560,46 @@ A file pasted, dropped, or picked with **+** in a composer is posted as its byte
 
 Two switches on the settings page (This device), each a labelled button that says On or Off, kept per browser in `localStorage`: Remind (on by default) and Sound (off by default, so a page that opens makes no noise; Sound is in fact two switches, Sound effects and Background sound, described in the next entry). They act on the alerts a snapshot raises: a unit that turned to waiting on an answer, to error, or that finished.
 
+<details>
+<summary>Details</summary>
+
 Reminders are system notifications (a question's may beep; a failure's or a finish's is silent, a quiet notice), raised only while the page is hidden or unfocused, one per alert, tagged by unit, and a click brings the page forward on that unit; a focused page already shows the alert queue. A first press on Remind asks the browser's permission; until it is granted the switch shows amber, red when the browser blocks it. A batch plays one sound, the most urgent of its marks (waiting, then error, then finished; an error keeps its own clip, which sounds apart from the question's), from three Kenney CC0 clips bundled as hashed MP3 files and fetched when one first plays.
 
 Sound has a volume from 0 to 100 (60 by default, kept in `localStorage` as `sb.volume`) and a Try button under it; each change plays the finished sound. The device's preferences live in one store; another tab's Sound switch or Volume applies to the open page at once. The clips play through Web Audio at the volume squared (loudness follows the square, and an iPhone ignores an audio element's `volume`). Both follow every snapshot, a hidden page's included, through their own record of what was heard: the alert queue's record moves only while the page is shown, so it still queues what arrived while hidden. What was already waiting when the page opened raises neither.
+
+</details>
 
 #### Sound effects and background sound
 
 The settings page's one Sound switch and Volume became two, each with its own switch and volume under *This device*: **Sound effects** (the cues of events: the question, finish, and failure clips of Standard and of a theme, the unit-ready chime, Zen's bowl and knock) and **Background sound** (what plays under the page: Zen's music, Raven's rain and thunder; the thunder belongs to the weather). Both are off by default and work in Standard, Geek, Zen, and Raven Keep; Zen's corner menu and its palette carry both too (a switch and two volume steps each).
 
+<details>
+<summary>Details</summary>
+
 A volume is 0 to 100 (60 by default) and reaches the page's audio core as the square, as a gain for its class only; each switch is checked by the sources of its class only, so Effects off silences the cues and leaves the rain, and Background off silences the rain, the thunder, and the music and leaves the cues. Sound effects has a Try button and plays the finished clip when it is turned on or its volume is released; Background has no sample, because what it plays is already audible.
 
 The old `sb.sound` and `sb.volume` are read as the start of both classes while a class has nothing stored of its own (the old on is both on at the old volume, the old off is both off) and are never written, so an older page on the same browser keeps reading its own.
+
+</details>
 
 #### Images
 
 A user message's or tool result's images (png, jpeg, gif, or webp, as pi stores them in the session file) show as thumbnails in the chat: under the message, or under the tool's card whether it is open or closed. The page loads each from `api/image/<key>/<entry id>/<n>`, which reads that one entry and answers with the image's bytes, cached for a day since an entry never changes; the history itself carries only the count. A thumbnail opens the lightbox: the image fitted to the screen, its own size on a tap, ← → or the arrows for the other images of the same message, and Escape, ×, or a tap beside it to close.
 
 #### Queued messages
+
+```mermaid
+flowchart TD
+    t["You type while the agent works"] --> q["pi's queue:<br/>steer or follow-up"]
+    q --> b["Dimmed bubbles under the chat"]
+    b --> e["Edit: take the whole queue<br/>back into the composer"]
+    q --> n["A turn takes them"]
+```
+
+What is typed while the agent works waits in pi's queue: a steer reaches the agent at its next turn, a follow-up when the run ends. The session view shows them as dimmed bubbles under the chat until a turn takes them, and **Edit** takes the whole queue back into the composer. Everything below is how the take-back stays safe.
+
+<details>
+<summary>Details</summary>
 
 What is typed while the agent works waits in pi's queue: a steer reaches the agent at its next turn, a follow-up when the run ends. The session view shows them under the chat as dimmed bubbles, labelled steer or follow-up, until a turn takes them. pi tells extensions only whether messages wait, so each session's dialog bridge keeps what it saw arrive and drops one when its user message starts (the one with the same text, else the oldest); a queue pi emptied another way (Esc, its dequeue key) clears at the bridge's next check, within 2 s.
 
@@ -1206,21 +1621,33 @@ An empty queue sends no key (`{empty: true}`, "nothing is queued any more"), a q
 
 Refusals that leave the messages in pi's editor say so: pi's dequeue key is bound only to keys the page will not send (`no_key`, nothing sent), pi did not take its queue back (the message names the key that went, which may not be its dequeue key; an older bridge names none, and the server then sends its platform's default), the editor changed meanwhile, the text is longer than 12,000 bytes, the editor could not be cleared (nothing is handed over while it would stay in the editor too), or the take-back timed out after the key went (`stale`). A bridge without `pull` (an older pi-straw-boss in that session) does not answer, and the page says it is unsure. The rows the user opened are remembered per session and per row (the nth of identical rows counts apart).
 
+</details>
+
 #### Monitors
 
 A session's background monitors from [pi-loop-monitor](https://www.npmjs.com/package/pi-loop-monitor) (`MonitorCreate`) show under its todos: folded to how many run and how many failed, with the newest running one's last output line; unfolded to each monitor (newest first, running ones before ended ones, six at most) with its description or command, its state (running, finished, failed, no output and stopped, or stopped), its exit code, its line count, and its last line. Each session's dialog bridge follows pi-loop-monitor's events on the session's bus (`monitor:started`, `monitor:output` at most once every 2 s, `monitor:finished`), strips terminal escapes and control characters, cuts text to 160 characters, and relays the list with its dialogs; an ended monitor stays 15 minutes, as long as pi-loop-monitor keeps its record.
 
+<details>
+<summary>Details</summary>
+
 The list is read-only: pi-loop-monitor gives other extensions no way to stop a monitor. A monitor that fails (exit code other than 0) or goes quiet (stopped by its inactivity timeout) raises an error notice of its own, apart from its unit's state (it goes under Notices, not the header's alert): its dialog names the monitor, and Open comms, its chat, its terminal, and a reminder's click all go to the unit. A monitor that finishes or is stopped raises nothing. The alert leaves the queue when the session stops listing the monitor.
+
+</details>
 
 #### Commanding
 
 A unit that is itself idle while a subagent of it is working, waiting, or commanding, or while one of its monitors runs, shows a mark of its own, **commanding** (zh-TW 指揮中), instead of idle. Its own state wins: working and waiting stay as they are, and finished subagents count for nothing. This holds for a main agent, a member, a tower, or any unit that has subagents or monitors, in the tower's dashboard and in the browser view (the server decides; a monitor also keeps the note "watching a monitor", in red).
+
+<details>
+<summary>Details</summary>
 
 It has its own colour (violet), glyph (`◈`, a diamond) and a breathing glow on the unit's plate on the map, in the dossier, on the squad's tokens, on the comms head, and on the HUD's Commanding figure (still under `prefers-reduced-motion` and after the page has rested), and a line in the legend. A base or squad that holds a commanding unit rolls it up as working (its subagents work anyway; a unit that only watches a monitor makes its base working); the HUD and the tally count each mark on its own, so Working does not include Commanding.
 
 The alert queue treats commanding like working: it raises nothing. A subagent whose run pi-herdr-agents recorded done but whose pi is still alive with a running monitor has not finished: it is not `ended`, so it shows as commanding (note: watching a monitor) instead of finished, has no Dismiss button, is left out of Dismiss finished (the server refuses to dismiss it too), and raises no finished notice. When the monitor stops and pi is idle it is finished again.
 
 The same holds for any unit, subagent or not, whose pi is alive: marked done by Herdr while a monitor runs, it shows as commanding, not done, and raises no finished notice or done sound until the monitor stops. The tower's own TUI dashboard has no monitor data (monitors reach only the session that hosts the GUI), so its glyph for such a unit is unchanged.
+
+</details>
 
 #### Todos
 
@@ -1229,6 +1656,20 @@ A session that keeps a todo list with [@juicesharp/rpiv-todo](https://www.npmjs.
 ### Closing, opening, and trust
 
 #### Closing
+
+```mermaid
+flowchart TD
+    q["Quit on a unit, squad, or base"] --> a["Asks first"]
+    a --> b["Each agent's bridge is asked<br/>to quit, pane kept"]
+    b --> r{"Any refusal<br/>or silence?"}
+    r -->|"yes"| k["Nothing closes"]
+    r -->|"no"| c["The tab or workspace closes"]
+```
+
+**Quit** on a unit, squad, or base asks first, then asks each session's own bridge to quit, as `/boss close` does. One refusal or silence closes nothing; only when every agent has gone does the tab or workspace close. A finished subagent has **Dismiss** instead, and a base can be **Stash**ed and popped again.
+
+<details>
+<summary>Details</summary>
 
 **Quit** on the map, on a base, a squad, or a unit (not a subagent: its launcher closes it), and **Quit tower** under a base's name for its tower alone, asks first. × only closes dialogs. Quit is also in a unit's own comms header, desktop and phone alike: the same button as the map's for that unit (a tower's is Quit tower), shown only where the map shows one (not for a subagent, a finished subagent's Dismiss, or a unit the page cannot control), with the same confirmation, request, and refusals; cancelling or a refusal stays in the comms, and a quit that went returns to the unit's base.
 
@@ -1242,7 +1683,19 @@ For a squad or a base every agent of the net in it (mains, members, and the base
 
 A finished subagent has **Dismiss** instead of Quit (it hides it from every page until it leaves the net), and **Dismiss finished (n)**, in the location bar under the HUD, hides every finished subagent on the net at once through the same path (the button shows only while one exists, on this computer's page and a paired device's alike); the phone's left pane has it as well, at the bottom directly above Back to the map, where a thumb reaches both. A page that was showing what it closed goes up to what is left: from a closed base to the map, from a closed squad's or unit's comms to its base.
 
+</details>
+
 #### Opening agents
+
+```mermaid
+flowchart LR
+    f["Pick a folder"] --> c["create"] --> s["start"] --> j["join"] --> d["deliver"]
+```
+
+**+ New base** opens a Herdr workspace in a folder you pick, with one member and no tower; **+ Member** and **+ Main** open one more agent in a new tab. The page shows the opening's steps (create, start, join, and deliver when there is a first message), and the server enforces the same rules as the commands do.
+
+<details>
+<summary>Details</summary>
 
 **+ New base**, the last card on the map, opens a Herdr workspace in a folder you pick with one member in its first tab and no tower: a base is never empty, and a failed open closes the workspace again. A base without a tower takes only members: **+ Member** on the base opens one in a new tab in a picked folder, and on a squad splits one into that squad's tab, in the folder of its main (or its first pane). Its tower opens by the rules of the tower, never from the page.
 
@@ -1266,9 +1719,14 @@ A record that cannot be written, when the workspace is made or when the message 
 
 The wait for the new pi to join is 60 s by default; `open/base` takes an optional `joinWaitMs` (a whole number of milliseconds, 10000 to 300000; anything else is refused 400 `bad_request` before anything is made) for a slow computer such as a Windows one, and a pi that has not joined within it fails the open at the `join` step (502 `open_failed`, naming the seconds waited). Time a trust question is open does not count against it, as before. `open/member` and `open/main` keep the 60 s.
 
+</details>
+
 #### Project trust
 
 A pi started in a folder with project resources (`.pi/settings.json`, `mcp.json`, `extensions`, `skills`, `prompts`, `themes`, `SYSTEM.md`, `APPEND_SYSTEM.md`, or `.agents/skills` in the folder or an ancestor) stops at pi's own "Trust project folder?" before it loads anything of the folder, and that prompt is drawn only in the pane's terminal. Straw Boss registers a `project_trust` handler in every pi in Herdr (subagents too) that asks the running GUI as well, so a person who uses only the GUI sees an alert instead of an opening that hangs. With no GUI it answers `undecided` and pi asks as before.
+
+<details>
+<summary>Details</summary>
 
 - *When it asks.* The handler answers `undecided` at once, leaving pi's own order intact (a `--approve` or `--no-approve` override, then the saved decision in `trust.json`, then `defaultProjectTrust`), unless: pi runs in its TUI on a terminal; this is the process's first runtime (a `/new`, `/resume`, or `/fork` into another folder is pi's own prompt); no decision is saved for the folder or a parent (a `trust.json` that cannot be read counts as a decision: pi reports it); `defaultProjectTrust` is `ask`; and a GUI that reads trust requests runs for this Herdr (`gui.json` carries `trust: 1`, names this Herdr's socket, is not stopped, and answers within 1 s).
 
@@ -1280,11 +1738,16 @@ A pi started in a folder with project resources (`.pi/settings.json`, `mcp.json`
 - *Openings.* A new pi that waits on the question has not joined, so every wait for a new pi (the page's opens, `boss_open_main`, a tower's start, a pop) stops counting while its pane has a request, and fails after ten minutes of it with "No trust decision for <folder> within 10 minutes", closing what it created. The deploy panel gets a **trust** step between start and join that holds the same three choices inline; that page's alert queue then does not open a second dialog for it, while a paired device or another tab still gets the alert, and the panel's 120 s give-up does not count that time.
 - *Desk mode and the team profile.* Nothing more is needed: the desk window is this computer's page, and every pane on the desk stack runs the handler. Leave `defaultProjectTrust` at `ask`, so the person is asked once per new folder and **Trust** remembers it (`always` would load any cloned repository's extensions with no question; `never` would drop a team repository's own `.agents/skills`).
 
+</details>
+
 ### Serving the page
 
 #### The server
 
 The server runs in one session at a time, the one that opened it or a survivor that took it over (see One server per machine), on `127.0.0.1` with two random free ports: the local listener, for this computer's browser, and the remote listener, the only target `tailscale serve` is pointed at. Which request is local is decided by the listener it arrived on, not by what it says about itself: a request on the remote listener is remote whatever its `Host` or headers say, and the local listener lets in only a request with `Host: 127.0.0.1:<port>` and none of the forwarding headers `tailscale serve` adds (`X-Forwarded-*`, `Tailscale-*`, `Forwarded`, `Via`), and refuses the rest with 403 (a second guard).
+
+<details>
+<summary>Details</summary>
 
 Both listeners run the same handler. Every URL starts with a random token (`http://127.0.0.1:<port>/<token>/`); a request without it or with another `Host` header is refused with 403, so other local pages cannot read the net. The only writes are POSTs under `/<token>/api/sessions/<key>/`: `input`; `keys`, which takes one key pad key from a page that shows that terminal live, or Stop's Escape; `commands`, which asks the session's bridge for the commands that match a typed `/name` and calls no Herdr method; `answer`, which carries a dialog's answer to its owner and sends no key; and `mirror`, which shows the pane's screen on the page's own stream. Only this computer's page may also send (403 from a paired device) `server/stop`, `remote/pair` (a new one-time pairing code: pairing is the desktop's), `remote/on`, `remote/off`, `remote/devices`, `remote/unpair`, `remote/unpair-all`, and `/<token>/api/dismiss` (one finished subagent, or `all`). Each needs the page's own `Origin`, `Sec-Fetch-Site: same-origin` when sent, a JSON body of at most 64 KB, and the CSRF secret written into the page; for `input`, `keys`, and `answer` the server also asks Herdr right then that the pane still runs pi on that session's file (a mirror checks it before its first read and every 2 s, and starts afresh when the session moved to another pane).
 
@@ -1296,15 +1759,40 @@ Only documents a session lists now are served. Every `/doc/` response carries a 
 
 While a page listens the net is read every 2 s; with none it is still read every 10 s, so the timeline keeps what happened while a phone slept. The page is installable as an app: the bundle carries `manifest.webmanifest` (its `id`, `start_url`, and `scope` are `./`, so they resolve under the token path), PNG and SVG icons, and `apple-touch-icon.png`; the page's policy adds `manifest-src 'self'` and links the manifest with `crossorigin="use-credentials"`, so a paired device's cookie goes with it. There is no service worker: every page comes from the running server's own build.
 
+</details>
+
 #### Session files
 
 The server reads only the session files of units in the net it just read (joined sessions, towers, subagents through their pane or launch script, and the other pi panes of a base); a path never comes from the browser. A file is read only from a pane running pi, only as a `.jsonl` under pi's sessions directory (`sessions/` in `PI_CODING_AGENT_DIR` or `~/.pi/agent`, symlinks resolved on both sides), and for an intercom session only when it is named for that session, so a net read during `/new` cannot pair the old session with the next file; a watched session whose file changes re-attaches to the new one.
+
+<details>
+<summary>Details</summary>
 
 A file is indexed in 1 MB chunks from the first and last bytes of each line, and only the index stays in memory; entries are read by offset for the page being sent. Indexing, appends, and reads run one at a time in order, so entries pi writes during the first index wait for it, and a read never uses the index of a file that was replaced. A rewritten file or a branch move resets the page. A first page that cannot be read is tried again on the next net reading.
 
 A unit that leaves the net stays readable for ten minutes, with a link to the pane's new session when there is one. A session file is opened without following a symlink at its last step (`O_NOFOLLOW`): a file swapped for a link after the net resolved its path is not read. Where the platform has no `O_NOFOLLOW` (Windows) the link is looked for just before the open, which leaves a short window between the look and the open; a process of the same user that can swap files in pi's sessions directory can use it to make the GUI show another `.jsonl` under that directory, and only the user and their paired devices read the result. Sessions stored elsewhere (`--session-dir`, `PI_CODING_AGENT_SESSION_DIR`, or pi's `sessionDir` setting) show on the map but have no history and cannot be typed into.
 
+</details>
+
 #### Remote access
+
+```mermaid
+sequenceDiagram
+    participant P as pi session
+    participant S as sb server
+    participant T as Tailscale
+    participant M as Phone
+    P->>S: /boss gui remote
+    S->>T: tailscale serve entry (HTTPS 8443)
+    S-->>P: QR and one-time link
+    M->>S: scan, open the link
+    S-->>M: device cookie, paired
+```
+
+`/boss gui remote` asks the sb server to put the GUI on your tailnet with one `tailscale serve` entry (HTTPS on port 8443, to the remote listener only, never Funnel). The session shows a QR in a pi overlay; a phone signed in to Tailscale as this machine's user scans it and gets a device cookie. Every remote request must also carry this machine's Tailscale identity.
+
+<details>
+<summary>Details</summary>
 
 `/boss gui remote`, from any pi session, asks the sb server to put the GUI on your tailnet: it adds one `tailscale serve` entry, HTTPS on port 8443 proxying to the server's remote listener (never Funnel, and never the local port), and the session shows a QR code in a pi overlay, drawn here from the server's answer, so the QR and its one-time links never reach the server's log or the model's conversation. Scan it with a phone signed in to Tailscale as this machine's user (or, in an installed app, type the short code printed under the QR: see **The installed app's entry** below).
 
@@ -1344,9 +1832,22 @@ After five wrong codes every waiting code is void and the entry answers 429 unti
 
 A document load at a dead token by this machine's user, or at the current token with no pairing and `Sec-Fetch-Site: same-origin`, answers 302 to `/sb-app/`, so an app installed before the entry existed (its start URL is an old tokened address) finds it by itself; any other request gets the refusals as before. The 401 text for everything else says to type the code in an installed app. A restart keeps the token and the pairing, so a paired app goes on by itself; the code is for a first pairing and for a device that a new token unpaired.
 
+</details>
+
 #### Wi-Fi access
 
+```mermaid
+flowchart TD
+    on["/boss gui lan"] --> w["Read the risk,<br/>answer y"]
+    w --> ca["This computer makes its own CA"]
+    ca --> ph["Each phone installs it once"]
+    ph --> pr["Pair, approved<br/>on this computer"]
+```
+
 `/boss gui lan` lets a phone on the same Wi-Fi as this computer open the GUI without Tailscale. It is off until you turn it on, and it stays on across restarts until `/boss gui lan off`. Tailscale access is unchanged and stays a separate switch; both can be on, and a phone may be paired over each. The terminal speaks English; the pages the phone sees speak English or Traditional Chinese by the browser's first language.
+
+<details>
+<summary>Details</summary>
 
 **Read the risk first.** Wi-Fi access needs a certificate authority (CA) that this computer makes for itself and that each phone installs once. A phone that trusts the CA accepts anything the CA signs. Whoever copies the CA's key can pose to that phone as this computer, and as any private-network address (a router's or a NAS's `192.168.x.x` page), on any Wi-Fi the phone joins, until the certificate is removed from the phone.
 
@@ -1354,7 +1855,14 @@ The key lives in `lan-ca.json`, which every program running as you can read, age
 
 The first `/boss gui lan` shows this warning and makes the CA only after you answer **y**; the page's Wi-Fi tab shows the same text before it turns anything on.
 
+</details>
+
 ##### What is served
+
+Each eligible address of this computer (private IPv4 only) gets its own listener, `8445` by default. IPv6, the Tailscale address, and link-local and public addresses are never served.
+
+<details>
+<summary>Details</summary>
 
 - Each eligible address of this computer gets its own listener (`8445` by default, kept in `lan.json`, because the port is part of an installed app's origin).
 - An address is eligible when it is IPv4 in `10/8`, `172.16/12`, or `192.168/16`, is on a real interface (not loopback, not a tunnel such as `utun`, WireGuard, or a `/31` or `/32` link), and has a sensible prefix.
@@ -1365,7 +1873,14 @@ The first `/boss gui lan` shows this warning and makes the CA only after you ans
 - The server watches the interfaces every 5 s: a new address gets a listener, a gone one loses it, and a wake from sleep rebinds all of them.
 - A port taken by another program on an address leaves that address unserved with a note; `/boss gui lan` moves the port only then, and an app installed on the old port must be added again.
 
+</details>
+
 ##### The certificate
+
+The CA is made once and kept in `lan-ca.json`; each served address gets a short-lived server certificate that names only the computer's `.local` name and that address. The CA is constrained to private IPv4 names.
+
+<details>
+<summary>Details</summary>
 
 - `lan-ca.json` holds an ECDSA P-256 CA valid for two years. Each served address gets a 90-day server certificate (kept in memory, renewed under 30 days) that names `<computer name>.local` and that address, nothing else.
 - The CA may sign only that name, private IPv4 addresses, no IPv6, no email address, and no URI. If the computer's name cannot be read, the CA signs addresses only and the QR carries an address.
@@ -1374,7 +1889,14 @@ The first `/boss gui lan` shows this warning and makes the CA only after you ans
 - `/boss gui rotate` leaves the CA alone.
 - A corrupt, foreign-owned, linked, or too-open `lan-ca.json` leaves Wi-Fi access off with a note; nothing makes a new CA behind your back.
 
+</details>
+
 ##### Getting the phone to trust it (once per phone)
+
+Each phone trusts the CA once. The best way is to send the profile (iPhone) or the `.crt` (Android) from this computer by AirDrop or Quick Share; the certificate page is the fallback.
+
+<details>
+<summary>Details</summary>
 
 - Best: send the profile (iPhone) or the `.crt` (Android) from this computer by AirDrop or Quick Share. The overlay's **f** key writes these public files to `lan-ca-files/` and shows them; the page's share buttons download them, one link for each file. Nobody on the Wi-Fi can touch this path, and it needs no check unless the phone asked you to accept a file from an unknown sender.
 - Otherwise scan the certificate QR, or open `http://<name>.local:8445/sb-ca/`, a plain-HTTP page that offers the files and the steps for the phone's platform. Anyone who controls the Wi-Fi can swap what that page serves, and the page itself shows no fingerprint, because an attacker who swaps the page would print the real one. So the check is on this computer's screen, which shows the SHA-256 start of the real certificate and where to look on the phone:
@@ -1387,7 +1909,14 @@ The first `/boss gui lan` shows this warning and makes the CA only after you ans
 - An Android phone before 12 may not resolve `.local`; press **i** in the overlay to use the address instead. An app installed from an address stops working when the address changes.
 - The page `/sb-ca/check` shows whether the phone trusts some certificate for this name. It cannot tell this computer's from an attacker's.
 
+</details>
+
 ##### Pairing, with approval on this computer
+
+The overlay's QR carries a token-free link that asks the phone to press **Pair**; a code works once, and a redeemed code only makes a pending device that this computer must approve.
+
+<details>
+<summary>Details</summary>
 
 - The overlay's QR carries a token-free link, `https://<name>.local:8445/sb-app/pair/<code>`, which asks the phone to press **Pair** before it uses the code, so a link preview cannot spend it. A typed code for the installed app is shown only when asked for.
 - A code works once, within ten minutes, and each surface (one overlay, one page tab) has at most one live code; making a new one voids the one shown before.
@@ -1397,7 +1926,14 @@ The first `/boss gui lan` shows this warning and makes the CA only after you ans
 - A request that arrives while no screen is open raises a notice in every pi session and on the page.
 - The approval does not stop a swapped certificate: an attacker in the middle relays the real number. The fingerprint check does.
 
+</details>
+
 ##### After pairing
+
+After approval the phone holds a Wi-Fi cookie, set only for the GUI's paths and kept apart from the remote one. A Wi-Fi device may do what a paired tailnet device may do, nothing more.
+
+<details>
+<summary>Details</summary>
 
 - The cookie is `__Secure-sb_lan` (HttpOnly, Secure, SameSite=Strict, 90 days, renewed by use), set for `/<token>/` and `/sb-app/` only. Remote and Wi-Fi cookies live on different hosts and are never mixed.
 - Allowed devices live in `lan.json`, bound to the GUI token: a new token (a taken port, a lost store, `/boss gui rotate`) unpairs them. They survive Wi-Fi access off and on, restarts, new addresses, and CA renewal.
@@ -1429,6 +1965,8 @@ Whether a phone enforces the CA's name constraints for a certificate you install
 | macOS, Safari and Chrome | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured |
 | Windows, Edge and Chrome | not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured |
 
+</details>
+
 #### The server panel
 
 The settings page's **Server** section, on this computer's page only (127.0.0.1; a paired device does not see it, and the server answers it 403 `local_only`), opens the sb server's state (live, restarting, or stopped; version; mode; uptime; last error), **Restart server** (a confirm in place that says the page keeps its address and reconnects by itself, then the server restarts and the page reconnects when it is back, with a note to open `/boss gui` if it does not: the address changes only when a port was taken) and **Show log** (the last 200 lines of `server.log`, which holds no message text or secret). Restarting from the page names the asker "GUI" in the log; the reason is one line of at most 200 characters.
@@ -1436,6 +1974,9 @@ The settings page's **Server** section, on this computer's page only (127.0.0.1;
 #### One GUI per machine, served by the sb server
 
 The GUI runs in the sb server ([The sb server](#the-sb-server)), not in a pi session: the server binds its two loopback listeners (the local one and the remote one) after it has registered its intercom id, and, while Wi-Fi access is on, one more listener per served private address ([Wi-Fi access](#browser-view)), and `/boss gui`, `/boss gui stop`, `/boss gui remote`, `/boss stash`, and `/boss close all` ask the server over its control socket. A pi session hosts nothing, adopts nothing, takes nothing over, and holds no dialog hub, so the page does not depend on which pi lives. The server writes `gui.json` and records the same port and token in `server.json` (`gui: { port, token, stopped }`).
+
+<details>
+<summary>Details</summary>
 
 The boss chose to keep the GUI token, the CSRF secret, and the paired devices across restarts. The token and the CSRF secret live in `gui-secrets.json` (mode 600, written by rename, beside `paired.json` in the owner-only folder; on Windows covered by the state folder's ACL; the ACL read-back lists it in the primary slot's folder only, a secondary slot's copy inherits the folder's protection without being read back) with the pair of ports they were bound to.
 
@@ -1457,9 +1998,14 @@ No automatic ask starts a GUI that was stopped on purpose: `/boss stash` and `/b
 
 If the remote port is taken (two servers, or another process) the server gets another free one, which `remote.json` and the next serve entry then name.
 
+</details>
+
 #### `gui.json` is a contract
 
 Besides the sessions, a program that shows the GUI (the straw-boss-desk shell) reads `gui.json` in the state directory, `$PI_CODING_AGENT_DIR/straw-boss/` (a pi without that variable uses `~/.pi/agent/straw-boss/`). It may read `port`, `token`, `pid`, `started`, `stopped`, `version`, `herdr`, `owner`, and `view`; `csrf` and the rest are for the sessions (`trust: 1` tells a pi that the server reads its project trust question, [Project trust](#browser-view)).
+
+<details>
+<summary>Details</summary>
 
 Since the GUI moved into the sb server, `pid` and `started` name the sb server, the process that serves the GUI, `owner` is `sb server (pid N)`, `ownerSession` is the server's intercom id, `view` (optional, `standard`, `geek`, or `zen`, absent when the boss has set no default) is the default view of the GUI (`/boss gui view`; the record is written again when it changes, also while the GUI is stopped, and a shell that does not know the field ignores it), and `stopped` means the GUI was stopped on purpose (`/boss gui stop`) while the server runs on; the whole server stopped on purpose is `server.json`'s `stopped`.
 
@@ -1473,19 +2019,31 @@ While the server restarts, `gui.json` still names it but has no `started`: an ol
 
 `gui.json` stays on disk, and is never removed without a note in the release. A session started with `STRAW_BOSS_DESK=1` in its environment (the desk shell shows the page itself) prints the URL for `/boss gui` and opens no browser.
 
+</details>
+
 #### Desk mode in the page and the session
 
 Desk mode in the page and the session (`STRAW_BOSS_DESK=1`; the desk shell starts its Herdr server with it, so everything under it has it, and `server.json` records `desk`). A server that runs with the switch puts `<meta name="sb-desk" content="1">` beside `sb-csrf` in the page it serves, and the page, which reads it once at load, leaves out GUI remote access (the settings page's **Phone & devices** section) and stash (each base's **Stash** button, the HUD's **Stashed** button and its list); this holds after every restart, because each server reads the switch from its own environment (`up` with the switch restarts one that runs without it). Hiding is presentation only: the routes stay, and the URL is the credential either way.
+
+<details>
+<summary>Details</summary>
 
 A session in a desk stack prints the URL for `/boss gui` and opens no browser, and its pairing overlay has no **o** key. The folder pickers (**+ New base**, **+ Member**, **+ Main**, and Straw Link's folder steps) show a **Choose…** button when the shell's preload exposes `globalThis.strawBossDesk.pickFolder({ defaultPath, title })`, which answers a folder path or `null`: the chosen path goes through the same `POST api/dirs` as a click on a breadcrumb, so the server stays the judge of it (home only, nothing hidden, and a refusal shows in the picker's note), and `null` changes nothing. A browser has no such hook, so no button.
 
 Every session, desk or not, checks 20 s after its start whether Herdr's pi integration is in place for its agent directory: when Herdr reports an agent in its pane but no `agent_session`, it warns once, "Herdr's pi integration is missing for this agent directory, so this session cannot join the net; run `herdr integration install pi` and restart pi." (`src/integration.ts`; a failed listing says nothing).
 
+</details>
+
 #### Background tabs
 
 The page treats a stream as dead after 45 s without a message and reconnects with a backoff of 1 s doubling to 30 s (±20 %), giving up after 8 failures until the tab is used again. Coming back (visible, focus, `pageshow`, `online`) reconnects at once when the stream is closed or has been quiet for 20 s, and takes a fresh full snapshot instead of replaying what was missed. While disconnected, the map is dimmed and the banner says so with the time of the last update.
 
+<details>
+<summary>Details</summary>
+
 A modal overlay (`gui/connect.ts`) covers the page from the first byte until the stream's first snapshot, and again whenever the stream is lost: "Connecting…" or "Reconnecting…", and after the 8 failures the give-up note with Try again. The app root is inert and no click or key reaches the page behind it. A hidden tab pauses its animations, draws only the newest snapshot when it returns, and holds no timer beyond the stall monitor.
+
+</details>
 
 #### The QR encoder
 
@@ -1501,15 +2059,23 @@ A page left alone costs a phone's battery in frames, so the animations that neve
 
 Phone layout (unreleased; on a screen up to 640 px wide, a desktop is unchanged). The log gets the screen: with a main's queue of three steers or the tower waiting for the boss, the log is at least 55 % of a 390 × 844 viewport (it was 29 % and 33 %), and the first base starts within 160 px of the top of the map.
 
+<details>
+<summary>Details</summary>
+
 The map has no location bar and no unit Quit: **a unit's Quit is only in its comms header**; **a base's and a squad's Quit** (the same button, the same confirmation and refusals) are behind a `⋯` on its header, and the header's own `⋯` holds **Dismiss finished** and **Stashed** while one exists. A tower's comms header is one row (back, name, Info, `⋯`) with **+ Main** and **Quit tower** behind its `⋯`, over the Comms | Terminal switch. The boss conversation is one line with a `⋯` for Leave, New, the facts the line cuts, and the event runs' chips (with only event runs it reads "Event runs · n").
 
 Queued messages fold to one row, "n queued", when there are two or more; a tap opens the list and Edit all steers. An assistant's message has no avatar gutter, a squad's units are rows with the plate beside the name, and the phone's left pane names the tower and its state. A `⋯` is a 44 px button that opens a popover (Escape or a tap outside closes it and the focus returns to the button; the arrow keys, Home and End move between its controls; a control that acts closes it, Leave and New keep it open for their result), and above 640 px the button is not there, its controls sit in the row they always had, and the arrow keys are the page's again (`gui/menu.ts`).
 
 A finished subagent's **Dismiss** takes its own row under its words, so its state and note keep the card's width. A question's card scrolls as one, with a "More below" cue and fade over the Send row while more lies under it. On a 360 px screen the boss conversation's line may take two lines (the time it ends shows) and the composer is one row (+, the box, Send) until the box is tapped or has text; the log is at least 55 % of 360 × 740 for a main with queued steers and for the tower waiting. An open conversation `⋯` stays open, with the result of Leave or New, when the page redraws.
 
+</details>
+
 #### View: Auto, Standard, Geek, Zen, Raven Keep
 
 View: Auto, Standard, Geek, Zen, Raven Keep (per device, with a default from the server). The settings page's This device group has a five-word control (Auto, Standard, Geek, Zen, Raven Keep; Raven Keep is the next entry's sibling, described after Zen; Zen is described in the next entry, and its design is the spec `docs/specs/2026-11-01-zen-view.md`), kept in this browser's `localStorage` (`sb.view`); `gui/view.ts` reads it first thing and sets `data-view` on `<html>` (and the browser's `theme-color`) before anything is drawn. **Standard** is the palette above.
+
+<details>
+<summary>Details</summary>
 
 **Geek** is a terminal: black surfaces, one monospace face at 13 px, every text colour at least 7 : 1 on every surface and every border at least 3 : 1 (`tests/geek-contrast.test.ts` does the arithmetic on the stylesheet's `[data-view="geek"]` block, tints included), no motion, glow, gradient, or press-in (the still signs of "Motion rests" are always on), one plain border on all four sides, and each state also as a text tag before a unit's name (`[WORK]`, `[WAIT?]`, `[CMD◈]`, `[IDLE]`, `[DONE✓]`, `[ERR!]`, `[UNKN]`), the connection in words, the Remind, Sound effects, and Background sound switches as `[On]` and `[Off]` (Standard shows the same words beside a dot), and what is chosen (a tab, the mode switch, a picked folder) in inverse video.
 
@@ -1521,9 +2087,14 @@ The server writes it into every page it serves as `<meta name="sb-view" content=
 
 With the default on `auto` each device is back to its own screen's contrast preference. `gui.json` carries the default as an optional `view` (`standard`, `geek`, `zen`, or `raven`; absent for `auto`) for a shell that paints its window before the page loads. Under `forced-colors` the system's colours take over and the state shapes get an outline; the QR code and the terminal keep their own colours. `calm.ts` runs no timer in Geek.
 
+</details>
+
 #### Raven Keep (鴉閣)
 
 Raven Keep (鴉閣) is a gothic skin of Standard, with the same layout and interaction (loaded only when a page shows it). Dark only: a near-black ground with a cold violet cast, bone text, candle gold for what waits, blood crimson for failures, fog grey for rest, every text colour at least 4.5 : 1.
+
+<details>
+<summary>Details</summary>
 
 It brings its own ten role icons (every icon goes through `iconRef`; Standard's stay the fallback), its own role nouns in English and Traditional Chinese (the head tower is Raven Keep / 鴉閣, the boss is the Count / 伯爵, a tower is a Steward (管家), a main a Spawn (血僕), a member a Wolf, a subagent a Bat, an outpost a Coffin chamber, an unaligned unit a Ghost, the comms Ravens (通信 in Chinese)), and in Traditional Chinese a sentence pack that swaps with the nouns (every message that says 塔台 says 管家, 主塔台 says 鴉閣, and a base with no tower says 自主活動; English sentences keep the base words). It also has a crest for the tab icon, and three sounds that replace Standard's clips behind the same Sound effects switch and volume: a bell strike for a question (a bell asks for an answer), a crow's caw for a finish, a door's creak for a failure (`bell.mp3`, `caw.mp3`, `door.mp3`, mono, fetched on first play).
 
@@ -1535,7 +2106,24 @@ A phone (under 600 px) draws the picture covering the screen's height, pinned le
 
 Every view maps pi-better-show's `--pbs-*` tokens onto its own palette (`tests/pbs-tokens.test.ts`), so a pbs element in a document or a chat entry follows the view. `/boss gui view raven` sets the server's default as the others do; a page showing Zen keeps Zen when the default moves to raven, and Auto with `prefers-contrast: more` is still Geek.
 
+</details>
+
 #### Zen
+
+```mermaid
+stateDiagram-v2
+    [*] --> rest
+    rest: At rest (breathing circle)
+    rest --> card: Enter, an item waits
+    card --> answered: answer or Maybe later
+    answered --> card: the next item
+    answered --> rest: none left
+```
+
+Zen shows one thing at a time. An **item** is whatever waits for you, such as a unit's question, a trust question, or a tower's wait, and it appears as one card. Zen rests on a breathing circle, and no card takes the screen by itself: it waits for Enter. A card is never replaced or pulled away while you read it.
+
+<details>
+<summary>Details</summary>
 
 Zen shows one thing at a time (`gui/zen.ts`, a chunk loaded only when the view shows; the choices live in the pure model `gui/zenmodel.ts`). An **item** is what waits for you: a unit waiting on an answer, a pending dialog, a project trust question, or a tower's wait for you, in the order they began waiting (a question that holds an agent, such as a dialog, a trust question, a question a box forwarded, or a teammate's confirm, before a tower's wait, a pair request, or a memory proposal; no card takes the screen by itself, in any state, but waits for Enter, blocking ones first, and a card on the screen is never replaced or pulled away; Standard's order is unchanged), so the HUD's alert list is the same set.
 
@@ -1579,9 +2167,14 @@ The companion's log and composer have no boxes: messages, tool calls, code, and 
 
 On a phone the card, the pause, and the corner keep 44 px targets, the menu and the music list open over the page, and the corner's full-screen button gives way to a one-time Add to Home Screen hint where the browser has no Fullscreen API. `&upgrade=<ms>` on any state announces a new build that long after the page starts (once for the browser session). The demo opens more states for pictures: `history` (an item with its context open), `palette` (the companion with the palette open), `pause` (an item put aside, so the pause shows), and `?music=<n>` (a music folder of n invented tracks; no audio file, so a switched-on track says *tap to play*).
 
+</details>
+
 #### The head tower in Standard and Geek
 
 The head tower in Standard and Geek (`gui/headpage.ts`; design in `docs/specs/2026-11-04-head-tower.md`). The route `head` (`/head`) is a tower's comms on the key `sb-head`: the log with a chapter divider where each chapter begins, the composer ("Wakes the head tower"; `/quit` and `/new` with no confirm), the conversation box with **Leave conversation** and **New conversation**, the memory panel, the notices with Retry, Deliver again, and Drop, and the terminal mode.
+
+<details>
+<summary>Details</summary>
 
 What differs is the header (a gold crown where the comms logo is, the title *Head tower* or 主塔台, the state line), the **broadcast cards** under the conversation box ([spec](specs/2026-11-07-head-log-cards.md): one card per instruction the head forwarded, its closed line the labelled parts *You said* (the boss's own words, kept by the server from the event the relay names), *Head sent* (its first line, without the boss's quoted copy) and *To*, then `11m ago · 2/3 handled`; a tap unfolds the whole texts and each tower's state (`answered`, `handled`, `received`, `waiting`, `no answer`), its newest answer as text, and a link to its comms; an order the head names as corrected by a later one folds under the newest card, struck, with `corrects N earlier` / `corrected by the next`), and **Close the head tower** in the conversation box's ⋯ menu, which asks once.
 
@@ -1591,9 +2184,14 @@ The newest line is the newest broadcast's one-line summary while it had activity
 
 Geek and Raven Keep restyle it; Zen has no map), the hub of the map's wires, which are dashed and orthogonal only: one drop from the band's bottom centre to a bus in the gap above the grid (about 32 px under the band), the bus along the column gutters, then down the gutter on the left of each column and across into each tower's centre, so a column reads as one trunk with branches and no segment crosses a card. A wire's packet travels while either end works, along the same path, and the first row of the phone drawer. No base has a crown any more. ![The head tower's page: the conversation with its forwards, the asks as chips, and the conversation box](gui-head.png)
 
+</details>
+
 #### The head tower in Zen
 
 On the circle screen (no item, no pause, no companion) the head tower sits under the breathing circle as a strip: its lines once the boss calls them up (as many whole lines as the height leaves, the newest at the foot next to the input; three, or two on a phone, while it is quiet; the circle gives way first, never under 80 px), the boss's in ash on the right, its replies in paper on the left, and one-line notes for a forward (`→ Harbor API tower`) and an answer.
+
+<details>
+<summary>Details</summary>
 
 Each line is clear for 20 seconds from when it is first on screen, then fades over three minutes to almost nothing and stays; the fade is one CSS animation per line, so no timer repaints. Hovering or focusing the strip, or tapping it on a phone (10 seconds), eases every line to clear over 0.6 seconds, and back to where its fade stands 1.5 seconds after the pointer leaves (the fade's clock never stops: a hover only lifts the lines, `--lift` in `gui/zen.css`); a wait for the boss keeps its line clear.
 
@@ -1613,6 +2211,8 @@ A page nobody is looking at (hidden, or in front without the focus) gets one sys
 
 Reduced motion has no fade and no easing (clear for 20 seconds, then at rest at once; a hover lifts the lines at once); forced colours show the lines unfaded, as many as fit (up to 24 while awake), with `CanvasText` borders. An item you take takes the screen first, and the strip goes with the circle. ![Zen's strip under the circle: the head tower's last lines and the folded input](gui-zen-head.png) ![The strip with the input open and a draft, the lines clear under the pointer](gui-zen-head-open.png) <img src="gui-phone-zen-head.png" width="220" alt="The strip on a phone">
 
+</details>
+
 #### Demo states for the head tower
 
 `?head=absent|talk|answers|waiting|busy` puts the head tower on the net (not open; a conversation; work handed to three towers with one answered; a wait for the boss; and one that refuses what the boss sends, for the strip's refusal), and `?zen=head`, `?zen=head-open` (the input unfolded with a draft), `?zen=head-history`, and `?zen=head-rest` (Esc a moment after the page starts, then a report the head makes by itself, which the rested strip does not show) show the strip in Zen.
@@ -1621,20 +2221,29 @@ Reduced motion has no fade and no easing (clear for 20 seconds, then at rest at 
 
 Settings page (unreleased; route `settings`, `gui/settings.ts`, step 5 of the GUI pass). The header's gear is a link to it, and so is a link anyone can copy (`settings`, or `settings/phone`, `settings/wifi`, `settings/teams`, `settings/server` to open a section; the server answers the page for each, behind the token as any route). It replaces the settings popover and the Phone, Teams, and Server tiles that opened beside the map, so the map keeps its columns.
 
+<details>
+<summary>Details</summary>
+
 **This device** holds what a person sets once and is always there: View (Auto, Standard, Geek; the server's default stays a pi command), Remind and Sound as labelled buttons that say On or Off (Remind also says Allow? or Blocked, with a line under it on what that means), Sound's volume and Try, and Language. **Phone & devices** (the Tailscale and Same Wi-Fi tabs, the paired devices with Unpair all beside their heading), **Teams**, and **Server** are closed sections that fill when opened and are dropped when closed or when the page is left, so nothing polls or mints behind a closed section: opening Phone is what asks for a pairing code, as the Phone button was.
 
 Who may use each is as it was: Phone and Server only on this computer's page (a paired device's page has This device and Teams, and the server still answers `local_only` to it), and a desk window has no Phone. The header's waiting-request notice opens `settings/wifi`; Escape, the page's back arrow, and the gear go back to where the page was opened from (or to the map when it was the first page). In the Same Wi-Fi tab, while Wi-Fi access is off, the full warning (risk, not verified yet, hotspot) stays above the turn-on button, which is a filled button; it folds under Details only once Wi-Fi access is on. On a phone each control is 44 px (`tests/phone-targets.test.ts`).
+
+</details>
 
 #### A unit's icon is its kind's
 
 a coordinator a ship's wheel, an integrator two arrows joining, a standing main a lighthouse, a train the locomotive, and a launched worker, scout, planner, reviewer or watchdog a wrench, binoculars, a pencil and ruler, a magnifier or a hound. The tower (control tower) and the head tower (crown) keep theirs, and a unit with no known kind keeps its position's icon (main, member, subagent). The icon is drawn from `unitIcon(role, duty)` (`gui/icons.ts`) wherever a unit's role icon was: the map's tokens and cards, the drawer, the dossier, the chat avatar, an alert's face, and the row of a box's main on the ally card (from the kind the box sends).
 
+<details>
+<summary>Details</summary>
+
 A launched subagent's kind reaches the page as `Unit.duty`, read from the agent role its launch script names. Raven Keep draws Standard's symbols for the kinds, as it does for the train, and Geek draws Standard's too.
+
+</details>
 
 #### Icons
 
 Icons come from [game-icons.net](https://game-icons.net) by Lorc and Delapouite, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) (details in [`gui/ICONS.md`](../gui/ICONS.md)). Nothing is loaded from the network: no CDN, fonts, or runtime dependencies.
-
 
 ![The browser view changing state](straw-net-gui.gif)
 
@@ -1642,13 +2251,29 @@ Icons come from [game-icons.net](https://game-icons.net) by Lorc and Delapouite,
 
 A second extension entry, `src/balance.ts`, keeps Herdr tabs even. When a pi starts in a tab (once per process, so `/reload` does not count) and after a pi quits and Herdr closes its pane, the panes of that tab get equal widths along each split, and stacked panes equal heights. It runs in every pi inside Herdr, joined or not, and leaves a zoomed tab alone. A pane that outlives its pi (a shell you keep) changes nothing.
 
+<details>
+<summary>Details</summary>
+
 The work runs in `src/balance.mjs` as a detached `node` process: `balance.mjs now <pane>` at start, `balance.mjs after-close <pane> <tab>` at quit, because the quitting pi exits before Herdr closes its pane. It is started with `windowsHide`, so on Windows a detached console child gets no console window of its own. Each resize is planned from a freshly read layout, and a per-tab lock under the system temp directory (`pi-straw-boss-pane-balance/`) makes concurrent sessions take turns instead of applying the same change twice.
 
 A local tower run's pi (started with `--sb-run`, or marked by the run mode when the server hands it a standing pane, `src/runmark.ts`) never starts `after-close`: its pane stays, so the helper would only wait out its 30 s. On Windows that wait mattered: Herdr starts `pi.cmd` with `Start-Process -Wait`, which waits for the whole process tree, so the pane showed no prompt until the helper ended and the next `herdr agent start` there ran into its own timeout. An ally run's pane is closed by the server as soon as pi is gone, so its pi keeps `after-close` and the tower tab is rebalanced as for any pane (the run mode marks the process `ally` once the claim says so).
 
+</details>
+
 ## Blocked dialogs
 
+```mermaid
+flowchart TD
+    d["An extension opens a dialog"] --> a["herdr:blocked<br/>active: true"]
+    a --> b["Herdr shows the pane as blocked<br/>while the count is above zero"]
+    e["The dialog ends"] --> z["herdr:blocked<br/>active: false"]
+    z --> w["Count back to zero:<br/>the pane shows its state again"]
+```
+
 Herdr's pi integration shows a pane as `blocked` while its count of `herdr:blocked` events (`{active: true, label}` up, `{active: false}` down) is above zero, and pi's own dialogs emit nothing, so a session waiting on one looked as if it were working. A third extension entry, `src/blocked.ts`, closes that for every pi in Herdr, joined or not, subagents included. It relays two sources into `herdr:blocked`:
+
+<details>
+<summary>Details</summary>
 
 - **rpiv's questionnaire**: `rpiv:ask-user:blocked`, once per open `ask_user_question`.
 - **Every `select`, `confirm`, `input` and `editor` dialog of any extension** (an `mp-infra` command review, pi-robot-hand's selector), from pi's `ui_prompt_start` / `ui_prompt_end` events (pi 0.84.4 and later; on an older pi they never fire and nothing is relayed). This relay wraps nothing: pi wraps `ctx.ui` once per runner for all extensions and emits one pair per outermost dialog (the answer relay above wraps the same object again, and calls pi's wrapper, so the pairs are unchanged), so overlapping dialogs make one pair that spans from the first start to the last end, and a dialog that resolves, is cancelled, aborted, times out or throws ends it all the same.
@@ -1659,6 +2284,8 @@ Pi emits both events without waiting and walks the extensions one after another,
 
 Because pi reports only the outermost dialog, a confirm opened while a `custom` dialog is already open is not reported either. A tool that reports its own dialog as well (pi-robot-hand's `robot_hand` selector, pi-ask-user's input) adds a second, balanced pair while it is open; Herdr counts both and clears them together. Skipping the relay's pair there would drop blocked when the tool's pair closes first while another dialog is still open. A blocked pane has no question to show, so the GUI lists it as waiting with "It waits on a dialog.", and its composer refuses a prompt while Herdr reports the pane `blocked`.
 
+</details>
+
 ## Sidebar net view
 
 The optional Herdr plugin in `herdr-plugin/` (id `wayne930242.straw-boss`, action `net`) toggles the sidebar's Agents list between Herdr's own view and a net view. The net view lists the head tower's workspace first when it exists (its row is the crown tab's pane, and focusing it shows the standing pane, where Enter talks to the head tower), then the other workspaces in Herdr's order. In each workspace the tower comes first, then the tabs in their order, and in each tab the main agent and then the members. Every subagent sits directly under the session that launched it, including one that pi-herdr-agents opened in a worktree sub workspace.
@@ -1668,6 +2295,9 @@ Agents the net does not know come last, in Herdr's workspace, tab and pane order
 ### The tower between runs
 
 A tower the sb server runs keeps its row when no run is live: the server reports a stand-in agent `tower` on the standing pane (idle, with `standing by`, `3 queued` or `held` as its message) while the tower prompt runs there ([The standing pane](#the-standing-pane)), so the row sits first in its workspace as the tower's mark and `agent.list` shows it. It is a row and nothing more: no net, dashboard, stash, closer or reaper check counts it as an agent, a main, or a member, and an idle report starts no toast, sound, or attention count. A run replaces it with pi's own row, and it comes back when the run ends. An ally run's pane is a row too, right under the tower (`[ally] <device label>`, see [Ally runs](#ally-runs)).
+
+<details>
+<summary>Details</summary>
 
 **The tokens.** Every session in the net writes display tokens next to `sb_role`, in the same report, on the same 4 minute refresh and with the same 10 minute TTL. It writes them on the panes of the subagents it launched as well, because those never join and write nothing themselves. A session that ends clears its own and its subagents'.
 
@@ -1695,17 +2325,35 @@ While a launched subagent has no pi pane, its launcher keeps one `events.subscri
 
 The connection closes as soon as every launched subagent has a pi pane, and with it a session that launched none holds none; a subagent that finished in the last 10 minutes has no pane either, so the connection stays that long after it. The 4 minute refresh stays as the safety net, and a subagent's tokens still go at the next refresh once it has finished.
 
+</details>
+
 ### A new Herdr server
 
 Herdr keeps pane and workspace tokens in the server's memory, so a server that takes over (a live handoff during an update, or a stop and a start) begins with none of them, and the net view would stay unsorted, and a tower would look absent, until each session's next 4 minute refresh. Every session that can join the net, and every tower, therefore keeps one `events.subscribe` connection open on Herdr's socket, only to see it close; it asks for `workspace.renamed`, which almost never happens, so the connection carries no traffic and costs nothing while the server runs.
+
+<details>
+<summary>Details</summary>
 
 When it closes, the session reconnects after 0.25 s, 0.5 s, 1 s, and then every 2 s, and when a server answers, it writes everything again at once: first, for a tower, the workspace token `tower` and its own `sb_role`, which is how another session finds the tower (without them a `call_tower` in the gap would open a second one), then the full publish of the 4 minute refresh (its role and net tokens, and the marks of the subagents it launched). The first connection of a session is no takeover.
 
 A session that has not finished joining (or a tower that has not taken its role) writes nothing on a takeover, and a subagent and a session in a sub workspace hold no connection.
 
+</details>
+
 ### A Herdr restore
 
+```mermaid
+flowchart TD
+    r["herdr server stop,<br/>then a new server"] --> p["Herdr starts a new pi in each<br/>restored pane: pi --session file"]
+    p --> c{"Same pane, tab, and workspace<br/>as the recorded role?"}
+    c -->|"yes"| t["The session takes its role back"]
+    c -->|"no"| m["It stays a member"]
+```
+
 After `herdr server stop` and a new server, Herdr (with `[session] resume_agents_on_restore`, on by default) starts a new pi in every restored pane as `pi --session <file>`: the processes are new, the pane and tab ids and the session file path are the same, and `STRAW_BOSS_ROLE`, the tokens, and (for a session that had no conversation yet, since pi writes its file only after the first message, and gives the resumed one a new session id) the `straw-boss` entry are gone. Without more, every resumed session would come back a member: the PM who quits the app and opens it again would lose the tower and every main.
+
+<details>
+<summary>Details</summary>
 
 A tower and a main therefore record their role in `roles/<hash of the session file>.json` of the state directory (role, pane, tab, workspace, and for a main the pane's terminal), when the tower takes its role and when a session becomes its tab's main, and drop it when the session is closed on purpose (the GUI's quit, `/boss close`, a tower asking an opened main to quit, a second tower yielding).
 
@@ -1733,9 +2381,14 @@ The connection and the retry timer never keep pi alive, and `session_shutdown` c
 
 The subagents a restore brings back are another matter: each comes back as a plain pi without the extension that makes it a child, and its launcher is asked to resume it (see [Subagents a Herdr restore brought back plain](#subagents-a-herdr-restore-brought-back-plain)).
 
+</details>
+
 ### Sidebar rows
 
 The tokens also show the roles in Herdr's own grouped view, which a plugin cannot reorder. Add them to a row of `[ui.sidebar.agents]` in `config.toml`. `$sb_indent` goes before the state icon, so a subagent hangs under its launcher as the worktrees do in the Spaces panel; Herdr puts its own ` · ` after it, and an agent without the token shows nothing. `$sb_name` goes right after the state icon, so a subagent row says which subagent it is even when Herdr has lost the pane's label, and `$sb_step` after it shows what a merge train is doing.
+
+<details>
+<summary>Details</summary>
 
 Every glyph sits in the first row; the `[sub]` mark of a subagent with no kind stays hidden because the branch already says what it is, and a subagent's kind glyph shows, since the branch does not. The snippet bolds the glyphs of the main kinds and leaves the colors to your Herdr theme; add an `fg` to a rule to color a mark. Herdr drops a row whose every item is empty, so the second row, the tab label from `$sb_main_tab` or `$sb_tab`, gives a main agent and a member a second line and leaves every other agent one line; give the two tokens the colors of the star and the person. The first row leaves out Herdr's `tab`, which the second row carries.
 
@@ -1782,19 +2435,31 @@ description = "toggle the straw net view"
 
 `prefix+?` lists the keys that are taken, `herdr server reload-config` loads a new binding, and `herdr plugin unlink wayne930242.straw-boss` removes the plugin. The plugin needs Herdr 0.9.5 or newer (the view probe is checked on it) and node; on Windows it reaches Herdr over its named pipe and has its own action, `net-windows` ([Windows](#windows)). The tokens come from the sessions, so a session that still runs an older pi-straw-boss (before 0.6.5) has none until pi reloads it, and sorts after the others.
 
+</details>
+
 ### How the view works
 
 The view is one `agent.view.set` request on Herdr's socket, which the CLI has no command for, sorted by the `sb_order` token ascending, then by Herdr's workspace, tab and pane order. Herdr sorts a present value before a missing one, so agents without the token come after the net, and among themselves in that place order. The plugin writes no tokens of its own. Herdr servers before 0.9.4 do not sort an installed view again when tokens change (0.9.4 does): the order stays as it was at the last install until the view is switched off and on again, so press the key twice to refresh it.
 
+<details>
+<summary>Details</summary>
+
 **On at start.** `[[startup]]` in the manifest runs `net-view.mjs startup` once after the server has restored its session, and again when a new server takes over in an update handoff. It installs the same view as the key and exits at once; no process stays running, and a failure (Herdr refusing the view) is in the plugin log and does not stop the server. Every server start turns the view on, whatever an earlier server left: a press that turned it off lasts until the server stops. The one exception is a startup that runs again in the same server, which leaves that server's own "off" alone.
+
+</details>
 
 ### The toggle
 
 Herdr has no query for the active view, but `agent.view.clear` with a source that owns nothing (`<plugin source>-probe`; Herdr accepts only ASCII letters, digits, colon, dot, underscore and hyphen in a source) leaves the view unchanged and answers with it (checked on Herdr 0.9.5), so the action reads what is shown instead of trusting what it saved: it clears when its own view is the active one and installs otherwise. A plugin unlinked and linked again, or disabled and enabled, in one server run loses its view without a startup hook, and the first press used to record "off" and change nothing; now one press always changes the sidebar.
 
+<details>
+<summary>Details</summary>
+
 The state in `net-view.json` in the plugin's state directory ("on" or "off" and the identity of the running server, the socket file's inode and creation time) is only the wish the hooks read. The next press clears the view with `agent.view.clear` named to this plugin's own source, so it never clears a view that another owner installed. A restarted server drops its view; the startup hook turns the view on and records it, so the first press switches it off.
 
 `[[events]] on = "pane.agent_detected"` runs `net-view.mjs reapply` (Herdr has no hook for a link or an enable): it installs the view when no view is active and this server's own "off" has not been pressed, and leaves any active view, this plugin's or another owner's, and a pressed off alone; so after a relink the net view is back at the next agent Herdr detects. A view another owner installed over this one also counts as off: the press installs this one again.
+
+</details>
 
 ### Limits
 
@@ -1827,15 +2492,23 @@ Only a workspace whose worktree is a linked git worktree (`worktree.is_linked_wo
 
 The plugin remembers which panes ran an agent: a `pane.agent_detected` event and every sweep that sees `agent` set record the pane's terminal. A pane that was recorded, now has no agent, and whose shell is idle (Herdr's `pane process-info` shows the shell as the only foreground process) is a candidate. The first sweep after the plugin's state is created counts every agent-less pane in a linked-worktree workspace as recorded, so leftovers from before the plugin was installed go too, and it starts as soon as the plugin is installed (the first hook starts the ticker, which waits 20 s, and a candidate waits 60 s more: about a minute and a half).
 
+<details>
+<summary>Details</summary>
+
 There is no log-only first run: reaping begins at once, so run `dry-run` and pin first. Only a pane the first sweep treats as a leftover is recorded; a pane it skipped because it was pinned, focused or running something stays the user's shell for later sweeps too. Panes opened afterwards that never ran an agent are the user's shells and stay. A candidate must stay one for `CONFIRM_MS` (60 s) before it is closed, so an agent restarting in the same pane, or a command started at the prompt, is not caught between two looks; the `reap-now` action skips the wait.
 
 The focused pane is never closed, and a pane whose shell runs something (a dev server, an editor) is skipped with that process named. Right before each close the plugin looks at the pane again: it must still be the same terminal (a pane id can be reused), have no agent, not be focused, have an idle shell, and its workspace must not be pinned (token and state file, read fresh). Anything that changed since the plan skips the close and keeps the workspace's checkout for that run.
 
 "Focused" is the one pane Herdr reports as focused; a second client (the web UI, say) that is viewing another pane does not count, so a pane someone watches from there can be closed. Closing a workspace's last pane lets Herdr close its tab and then the workspace, with no dialog.
 
+</details>
+
 ### The checkout
 
 When every pane of a workspace was closed by one sweep, the plugin waits up to 5 s for Herdr to close the workspace, then reads `git --no-optional-locks status --porcelain --untracked-files=all --ignore-submodules=none` in the checkout (the options keep a repository or user setting such as `status.showUntrackedFiles=no` from hiding files). It also keeps the checkout when `git ls-files -v` shows skip-worktree or assume-unchanged files, whose edits `status` cannot show.
+
+<details>
+<summary>Details</summary>
 
 Right before removing, it lists Herdr's panes and workspaces again and keeps the checkout if any live pane's cwd or foreground cwd is the checkout or below it, or any live workspace has the same checkout path: in the usual pi-herdr-agents layout the worker's pane sits in the parent's workspace, not in the linked worktree's, and it must not lose its directory. A list that cannot be read keeps the checkout too. This applies to checkouts retried from the pending list as well. Three more guards decide, in this order, whether a clean checkout is released.
 
@@ -1860,9 +2533,14 @@ Each keeps it as pending (retried every sweep, with no give-up) and logs `keep c
 
    Each decision is a line in the plugin log with its reason (`close`, `remove checkout`, `keep checkout ... uncommitted changes`, `keep checkout ... pi-herdr-agents child ...`, `skip ... workspace is pinned`).
 
+</details>
+
 ### The parent shell
 
 When a linked-worktree workspace is open, Herdr groups it under the workspace of the repository's main checkout and opens a plain shell workspace for that checkout if none exists. The plugin remembers a non-linked workspace as a parent once a linked worktree workspace with the same `worktree.repo_key` (else `repo_root`) was seen open, in a sweep or by the `workspace.created` hook, within `only_under`; a workspace never seen with a worktree under it is never remembered, so it is never closed.
+
+<details>
+<summary>Details</summary>
 
 After the checkout step of a sweep, on a fresh look at Herdr, a remembered parent is closed (`herdr workspace close`, never the group form, so Herdr refuses if a worktree workspace appeared meanwhile) when no linked workspace of its repository is left and every pane has no agent and an idle shell, none is focused, the workspace is not pinned, and its name is the one Herdr gave it (the repository or checkout directory name) and was never renamed (a rename also pins it).
 
@@ -1872,23 +2550,38 @@ Any one of them keeps the parent, and the parent is not tracked as a candidate m
 
 The log lines are `wait parent <label> (workspace <id>): ...`, `skip parent ...: <reason>` (worktree workspace still open, pinned, name changed, a tower stands in it, agent or running process in a pane, focused pane), and `close parent workspace ...`; a dry run prints `would close parent workspace ...`, counting the worktree workspaces it would close as gone. A child closed by the user rather than the plugin is handled the same way, by the next sweep (up to 10 minutes later) and the confirmation wait.
 
+</details>
+
 ### Pins
 
 The `pin` action is one toggle, in the `workspace` context: it sets or clears the workspace token `pin`, a Nerd Font pin (nf-md-pin, U+F0403), through `workspace.report_metadata` under the source `wayne930242.straw-boss-reaper`. Herdr shows a workspace token only where a row asks for it, so add `{ token = "$pin" }` to `[ui.sidebar.spaces]` rows as the README shows. Bind it with `[[keys.command]]` (`prefix+i` in the README's example: `prefix+P` is Herdr's default `rename_pane`, and `alt` combinations are often taken by window managers such as AeroSpace); a key invokes it in the focused workspace. A pin is also written to the plugin's state file, because Herdr drops workspace tokens when its server restarts, and a sweep puts the token back.
+
+<details>
+<summary>Details</summary>
 
 A linked worktree's pin is keyed by its checkout path, so it outlives the workspace and the checkout is never removed; any other workspace's pin is keyed by its id (`workspace:<id>`) and goes when the workspace closes, so a later workspace on the same main checkout starts unpinned. A sweep moves a main-checkout pin an older version keyed by its path to the ids of the workspaces open on it. A workspace is pinned when either the token or the state entry says so, and a pinned workspace is skipped by every sweep and its checkout is never removed.
 
 A pin does nothing else: closing a pinned workspace closes it, and a linked worktree's pin keeps its checkout from being removed until the checkout is gone or you unpin a workspace on it.
 
+</details>
+
 ### Pinning by renaming
 
 Herdr's `workspace.renamed` event does not say who renamed, but nothing renames a workspace except the user: pi-herdr-agents and Straw Boss set the label when they create the workspace, and `herdr workspace create --label` and `herdr worktree create --label` fire no rename. `herdr worktree open --label` on a worktree whose workspace is already open does fire one, and counts as a rename. So every rename pins the workspace (any workspace, linked worktree or not, within `only_under`) and marks its record `renamed`, even when a sweep recorded the new label first; a workspace already pinned stays as it is. Unpinning clears the token and the state entry and leaves the name alone.
 
+<details>
+<summary>Details</summary>
+
 Herdr reuses the ids of closed workspaces, so a `workspace.created` event replaces any earlier record of its id, the `workspace.closed` event (or a `pane.exited` that took the workspace's last pane) deletes the record and any `workspace:<id>` pin of the id, and a sweep drops the records of the workspaces it closed. Each record also stores the workspace's checkout path, and a record whose checkout differs from the live workspace's belongs to an earlier workspace on a reused id and is ignored.
+
+</details>
 
 ### When it runs
 
 A sweep runs every 10 minutes and again when an agent was released, `CONFIRM_MS` later. Herdr has no timers for plugins, so the startup hook and the event hooks start a ticker, a small detached node process that checks the state file every 15 s and runs the `sweep` action through `herdr plugin action invoke` when one is due, which makes every sweep a normal, logged plugin command. This departs from Herdr's guidance (0.9.5): startup hooks are meant to be one-shot rather than supervised daemons, and plugins are told to stop detached background processes before their command exits.
+
+<details>
+<summary>Details</summary>
 
 The ticker is the only way a plugin can sweep on a schedule, and it limits the departure: it is a single process (a beat file and a lock), it keeps nothing but the beat and its log (`ticker.log` in the state directory, truncated at a start when over 200 KB), and it ends on its own after three failed invocations in a row. After an uninstall, unlink or server exit it therefore lives until its next sweep is due, up to 10 minutes, plus about a minute for the three retries: roughly 11 minutes.
 
@@ -1898,13 +2591,20 @@ The event hooks do bookkeeping only (`workspace.created`, `workspace.renamed`, `
 
 Every `herdr` call has a 30 s timeout and every git call 60 s (5 minutes to remove a checkout), so a hung call fails instead of holding the lock. `bash herdr-reaper/run.sh reaper.mjs dry-run`, run in a terminal inside Herdr, prints what a sweep would do now without changing anything, the state file included; it reads the plugin's state, so its first-sweep rule applies until the plugin has swept once.
 
+</details>
+
 ### Limits
 
 The state is `state.json` in the plugin's state directory. Only a missing file reads as empty; a damaged or unreadable one makes the sweep and the events fail with the file's path in the plugin log (and stops the ticker) instead of bringing back the first-sweep rule and forgetting the pins, so repair or remove the file. A user's shell that outlived its agent in a linked-worktree workspace is closed like a leftover: pin the workspace to keep it. Ignored files (`.env*`, `node_modules`, build output, local databases) do not make a checkout dirty, so they go with it; pin the workspace to keep them.
 
+<details>
+<summary>Details</summary>
+
 A pi-herdr-agents worktree is held by guard 1 whatever it contains; the ignored-file loss is for checkouts nothing holds. pi-herdr-agents keeps no "parent is alive" record, so the hold on its worktrees rests on two signals: a pane in which Herdr sees pi on the parent session, and the idle limit. A parent session that was resumed, forked or restarted with `/new` in its pane is another session id, so its old id no longer counts as open; a parent in a terminal outside Herdr is held only by the idle limit. A pi session of either kind left idle past `retain_idle_hours` and resumed later may find its clean worktree removed (the branch is kept).
 
 The agent event compares its terminal with the pane's only when the payload names one (Herdr 0.9.5 documents `pane_id` and `workspace_id`), so a pane id reused within the hook's latency can still be misread there; the sweep's checks use the terminal id. A Herdr launched from a macOS app has a short PATH; `run.sh` finds node the way the net-view plugin's does. The plugin needs Herdr 0.9.3 or newer, git, node 18 or newer, and a Unix shell, so it runs on macOS and Linux only. `tests/reaper.test.ts` drives the decisions and the sweeps against a fake Herdr and git.
+
+</details>
 
 ## Process hygiene and slots
 
@@ -1920,15 +2620,30 @@ Every pi that loads the `src/hygiene.ts` extension (a main, a worker, any sessio
 
 A pi with `PI_SUBAGENT_ID` set (a pi-herdr-agents worker) sends `procs-hello {pid, started, subagentId, sessionFile, pane, terminal, cwd}` to the sb server over the control socket at `session_start`, beats every 30 s, and sends `procs-bye` when it quits (a reload or a switch of session keeps the process, so it is not a bye). The server finds the pid in its own process table and checks the start time; it finds the worktree root from `cwd` (the nearest `.git` going up is a file with `gitdir:`; a worker in the main checkout has no worktree and gets no cwd rule). Records live in `<slot dir>/procs/owners.json` (mode 600).
 
+<details>
+<summary>Details</summary>
+
 If the server turns a hello down, the worker says so once and what it starts is not reaped; with no server running the hello is tried again at the next beat. The server refuses a hello for a pid that is the Herdr server, a pane's shell, a shell, a server or the broker, or that has Herdr or a pane's shell below it. The folder, session file and notify function of the session are read when it starts, never after an await, so a reload in flight cannot raise on a stale context.
 
 **What the server keeps.** Every 10 s (30 s after a first tick that cost more than a second; the cost is logged once as `procs-tick-cost`) the server snapshots the descendants of each live owner by ppid, as (pid, start time, pgid). A process that reparents later is still known as that owner's. Identity is `(pid, start time)` everywhere, and every action checks it again right before acting.
 
 **When an owner ends.** On `procs-bye`, when its pid is gone or reused, or when Herdr reports `pane.exited` or `pane.closed` for its pane and the terminal id matches (Herdr reuses pane ids, so an event for a pane whose terminal differs is ignored). An owner that ended while the server was down is reaped when the server starts, from `owners.json`.
 
+</details>
+
 ### What is reaped
 
+```mermaid
+flowchart TD
+    e["An owner ends"] --> k["Kill set: its live descendants,<br/>processes with its marker,<br/>orphans in its worktree"]
+    k --> t["SIGTERM to each group,<br/>then each pid"]
+    t --> s["After 10 s, SIGKILL<br/>what is left"]
+```
+
 The kill set of an ended owner is: the snapshot descendants still alive with the same identity, plus the processes that carry its marker, plus the orphans whose working folder is in its worktree or in a removed checkout last seen as that root (an orphan has parent pid 1, or a `systemd --user` on Linux), plus what those started below them. The protected set is subtracted: the Herdr server, every live pane's shell and foreground, an sb server named in a `server.json`, the intercom broker, every other live registered owner with its tree, and processes that carry another live owner's marker.
+
+<details>
+<summary>Details</summary>
 
 A pane that closes in a linked-worktree workspace with no registered owner (an agent that is not pi) gets only the cwd rule, and not into a worktree where another live session works. A main's quit reaps nothing: mains start long-lived daemons on purpose.
 
@@ -1942,9 +2657,14 @@ A pane that closes in a linked-worktree workspace with no registered owner (an a
 | `procs reap --owner <id>` | Run the kill sequence again for an owner that has ended and left something alive. Refused for an owner that is still alive. |
 | `procs reap --checkout <path>` | Kill what works in a linked worktree (or in a removed checkout a worker was known to work in): the orphans and the leftovers of ended owners. Refused while a live owner works there: end that worker or close its pane first. Exit 1 when a process stayed alive; the JSON on stdout says which. |
 
+</details>
+
 ### The removal guard
 
 The extension refuses `worktree_remove` and a bash command with `git worktree remove` or `herdr worktree remove` (also after `cd`, `git -C`, `&&`, `;`, a pipe, or inside `bash -c "…"`) while any process has its working folder in the target checkout. The target is resolved from a path, a branch name or a Herdr workspace id with `git worktree list --porcelain` and Herdr's workspace list. The refusal lists each holder by pid, program name (`comm`; on Linux the file name of its executable, because there `comm` is the main thread's name, which a program sets for itself and node 24 sets to `MainThread`; never the command line), CPU time, age and owner state (live, ended, unknown, or no marker), and gives `cli.mjs procs reap --checkout '<path>'`; after the reap the same call passes.
+
+<details>
+<summary>Details</summary>
 
 A target also resolves by git's unique trailing path components, and `herdr worktree remove` without `--workspace` takes the workspace in `HERDR_WORKSPACE_ID`. A check that cannot run (git or Herdr does not answer) is not a pass. A finished worker's retained idle pane shell (Herdr says it is its pane's foreground) in the target's own workspace does not hold the removal; anything else with its folder there does. The `/worktree remove` slash command does not pass `tool_call`: that is a documented limit, and the reaper plugin still refuses its own removals.
 
@@ -1957,6 +2677,8 @@ A target also resolves by git's unique trailing path components, and `herdr work
 Three limits the replay on macOS showed. (1) The marker is readable only on processes whose program is not an Apple platform binary: node and Homebrew tools show it, `/bin/bash`, `/bin/sleep` and `/usr/bin/perl` do not, because the system hides their environment, and the refusal of the removal guard then says "no owner marker" for them. The snapshot and the cwd rule carry those. The pi itself shows no marker either (it sets the variable after it started; only what it starts inherits it).
 
 (2) The cwd rule does not reach into a worktree where another pane also works (the boss's shell, a main), because that session may own what runs there; a process that escaped every snapshot by a double fork (adopted by launchd within milliseconds) and cannot be read by marker stays in that case, and `cli.mjs procs reap --checkout <path>` is the explicit way to stop it. (3) The server learns the linked-worktree workspaces at its tick (every 10 s): a pane without an owner that closes within 10 s of its workspace being created is not seen as a worktree's.
+
+</details>
 
 ### Timing
 
@@ -1972,6 +2694,9 @@ In this section: [what it is](#what-it-is), [starting](#starting) and [restartin
 
 One server per slot: a (state directory, Herdr socket) pair. The slot of the default Herdr is the primary and keeps its files in `<pi agent dir>/straw-boss/`; a pi on another Herdr socket uses a secondary slot under `servers/<first 16 hex of sha256 of the socket>/`, whose server holds no link; the first 8 hex of that hash (`slot8`) names its tower identities (`sb-tower-<slot8>-w1`) when `towerRuns.enabled` puts the towers in the server. The server is `dist/server/cli.mjs` and `main.mjs`, built from `src/server/` by `npm run build:server` (esbuild, run by `prepack`). The build fails on a value import of `@earendil-works/pi-tui`, `typebox`, or `@earendil-works/pi-coding-agent`, which are peer dependencies that are not on disk where the server runs; type imports are erased.
 
+<details>
+<summary>Details</summary>
+
 The one runtime dependency, `tsx`, is resolved from this package (its ESM entry `dist/esm/api/index.mjs`, read from tsx's `exports`: `tsImport` run from the CommonJS entry fails on Node 22.22.1 and 22.22.2 and works on 22.23.4 and 24) and used only through its scoped `tsImport()` to load pi-intercom's TypeScript client (pi-intercom 0.18.1 or newer, checked at start: this release requires it, and an older pi-intercom stops the server from starting), so the server's own code is never transformed; a load that fails logs one line naming the Node version. The server connects to the broker as `sb-server-<8 hex>` through the headless kit and leaves 60 s after its Herdr stops answering.
 
 **Files** in the slot's folder, all mode 600 in a 700 folder: `server.json` (the record: pid and start time, version, mode `detached` or `serve`, whether the desk switch is on, the control socket or Windows named pipe and its hello secret, the PI_INTERCOM scope and transport the server was started with, `stopped`, `restarting {began, since, reason, by}`, `lastRestart`, `lastError`), `server.lock` (holder pid and start time; a dead holder loses it at the next look, and a lock older than 120 s is taken even from a live holder), `start-error.json` (why the last start failed: `loader`, `intercom`, or `acl`; cleared when a start attempt begins and after `hello`), `openings.json` (the workspaces the page's open/base made, by opening id), `server.log` (5 MB, 3 files; events and errors only, never message text or secrets), and `server.sock` (a socket path over about 100 bytes does not fit `sun_path`, so then the socket is `/tmp/sb-<uid>/<hash>.sock`, in a private folder of the user's own; a server never unlinks a socket that still accepts a connection).
@@ -1984,9 +2709,14 @@ Constrained Language Mode is not supported: the ACL script refuses it, and the s
 
 Whoever starts a server writes `restarting` (reason `starting`) into the record before it spawns and touches it until the server answers, so `status` says `restarting` during a slow cold start and never `gone`; a start waits 60 s for `hello` on Windows (20 s elsewhere). `server.log` has one `phase` line each for the loader, the ACL call, and listening, and `start-requested`, `start-answered`, and `stop-done` lines with their times. A connection that sends a few KB without a complete hello line is closed. `server.log` is rotated by one writer at a time (`server.log.lock`), as the server, sessions, and the CLI all write it.
 
+</details>
+
 ### The server outlives its starter
 
 On macOS and Linux the detached server leads a session of its own, so killing the starter's process group does not end it. On Windows `detached: true` does not leave the starter's job object, and a pane or an ssh session may hold its children in a kill-on-close job, so the server is created through WMI (`Win32_Process.Create`, in one PowerShell start) with `CREATE_BREAKAWAY_FROM_JOB`, hidden and with no console, and with the starter's whole environment as `Win32_ProcessStartup.EnvironmentVariables` (nothing is written to disk).
+
+<details>
+<summary>Details</summary>
 
 The same PowerShell start makes the server's ACL check (the start time of the new pid, the reset and read-back of the state folder) and leaves it in a file only the server's `--acl-token` names; the server checks every SDDL itself before it writes its secret, so the launch and the check are one PowerShell start, not two (`serve` and the plain-spawn fallback still make their own); with the owner read before the first file is created, a cold start on Windows makes two (one if this process has already read this folder's owner, as a pi session restarting a server has). That start is the log phase `breakaway`, with `createMs` and `aclMs`.
 
@@ -2020,9 +2750,14 @@ The stopped record of a server that is gone does not pin the pi-intercom scope f
 
 The system's programs (`powershell`, `whoami`, `icacls`, `cmd`, `clip`) are called from `%SystemRoot%\System32` by absolute path, and every other program the package starts (`herdr`, `git`, `tailscale`, `ps`, `sh`, the opener and clipboard commands) is found by a PATH search that skips empty, `.`, and relative entries and never looks in the current folder, then spawned by the path found, so a `git.exe` planted in a repository is never run.
 
+</details>
+
 ### The owner gate costs PowerShell starts on Windows
 
 Before a request trusts a record, or writes into an existing state folder, one PowerShell reads the owner of the state folder, the slot's folder and the record (a foreign owner is refused with exit 3 and nothing is sent or written; a read that runs out of time is a wait, exit 1, and is read again). A pi session reads it once per folder identity (its first look; later looks cost none); a shell command is a new process and reads it itself.
+
+<details>
+<summary>Details</summary>
 
 Each read is followed by one `icacls /save` that checks the folder is closed (the owner's and SYSTEM's DACL only): a folder that is open is protected right there (`icacls /inheritance:r /grant:r`, then another `/save`; any other explicit grant it still shows, such as the BUILTIN\Administrators ACE of a folder an elevated token made, is taken off by SID with `icacls /remove:g *<SID>` and the folder is read once more, the check itself unchanged), and then remembered.
 
@@ -2030,15 +2765,37 @@ If that protect fails it is told once (a process warning for `cli.mjs`; in a pi 
 
 Before the gate `status`, `stop` and a second `up` cost none, so a shell that polls `status` on Windows pays one start (2 to 5 s) per poll; this is accepted. Where there is no ACL the gate is a stat of the owner (a link's own owner first, then its target's; root counts as the user's), and costs no process. A folder that a `sudo` run made and the user cannot use is told as that (`sudo chown -R` it, or remove it with sudo).
 
+</details>
+
 ### Starting
 
 A pi session with a screen in Herdr looks at session start and every 2 s: when no live server runs for its slot, it starts one detached (`detached: true`, `stdio: "ignore"`, `windowsHide: true`) from its own package, under `server.lock`, and holds the lock until the server's `hello`. The environment it builds drops the session's identity (`PI_INTERCOM_SESSION_ID`, `PI_INTERCOM_STABLE_ID`, `PI_SUBAGENT_*`, `STRAW_BOSS_ROLE`) and keeps `PI_INTERCOM_SCOPE_ID`, `PI_INTERCOM_TRANSPORT`, and `PI_INTERCOM_TCP`, which the record keeps; a session on another scope or transport uses no server and says so once. A failed start is told once with its reason and tried again after a minute. A subagent and a session without a screen start nothing.
 
+<details>
+<summary>Details</summary>
+
 **Versions.** A session never starts a server from an older package than the one that runs; it says so once. A session on a newer package asks the live server to upgrade, which restarts it from the newer package (`restart reason=upgrade` in the log). Going back to an older package happens only through `/boss server restart --downgrade` (or `cli.mjs restart --downgrade`), after a confirm that says it is older.
+
+</details>
 
 ### Restarting
 
+```mermaid
+sequenceDiagram
+    participant R as Requester
+    participant O as Old server
+    participant N as New server
+    R->>O: restart, with a reason (holding server.lock)
+    O->>O: write "restarting" to server.json, exit
+    R->>R: touch "since" every 2 s
+    N-->>R: hello
+    Note over R,N: a record not touched for 10 s counts as gone
+```
+
 Every restart keeps the server's port when it is free and the GUI's token (see [Browser view](#browser-view)). The requester takes `server.lock` and asks the server to restart with a reason; the old server writes `restarting {began, since, reason, by}` into `server.json` and exits (code 75 for a `serve` server), and the requester then touches `since` every 2 s until the new server's `hello` (the starting server touches it too), writing only while the record is still the old server's, so it never overwrites a newer server's record. A `restarting` record not touched for 10 s counts as gone.
+
+<details>
+<summary>Details</summary>
 
 The requester holds the lock until the new server answers, except for a `serve` server: its supervisor starts the next `serve`, which needs the lock, so the requester lets go of it for that wait and takes it again only to start a detached server itself when no supervisor did; if a `serve` holds the lock past the start budget (20 s, 60 s on Windows) while it starts, the requester reports the restart as done once that server answers, not `busy`. A server that is down starts whatever the once-a-minute limit says; a `serve` server that is down while another requester's `restarting` is fresh is waited for the same way instead of being replaced by a detached one.
 
@@ -2059,15 +2816,39 @@ Only a restart someone asked for (an agent, `/boss server restart`, `cli.mjs res
 
 Exit codes: 0 done; 1 a step failed (one JSON line on stderr); 2 usage; 3 the server cannot run (`start-error.json` says why); 4 `serve` found a live `serve`; 5 `stop` found a `serve` server.
 
+</details>
+
 ### In a session
 
 After `cli.mjs stop` the sessions do not restart the server: it was stopped on purpose, and only `up`, `serve`, or `/boss server` start it again. `/boss server` shows the state and starts the server when it is down, also when it was stopped on purpose. `/boss server stop` stops it on purpose after a confirm that says every workspace then loses its live tower and mains are demoted 15 s later. `/boss server restart [--downgrade] [reason]` restarts it after a confirm. The `/boss server restart` command also clears a stop on purpose (it is the boss's own start).
 
+<details>
+<summary>Details</summary>
+
 The `boss_server` tool, registered in a joined session with a screen, gives an agent `status` (works with the server down), `logs` (`lines`, at most 200), and `restart` with a reason of 1 to 200 characters on one line, which goes into the log with the asking session. A restart through the tool is refused while the boss stopped the server on purpose, is taken once a minute for the whole machine, and starts a server that is down. A remote turn cannot call `boss_server` at any level, dispatch included. That block is on the tool only: a peer at `dispatch` level still has `bash`, so it can run `cli.mjs stop` or `restart`, or kill the server's pid. Until the server checks run tokens (the tower steps), the block is not a boundary at that level.
+
+</details>
 
 ### States for a shell
 
+```mermaid
+stateDiagram-v2
+    state "GUI stopped" as gs
+    state "Server stopped" as ss
+    [*] --> live
+    live --> restarting: restart
+    restarting --> live: hello
+    restarting --> gone: 10 s
+    live --> gs: GUI stop
+    live --> ss: stop
+    ss --> live: up
+    gone --> live: up
+```
+
 A program that shows the GUI (the straw-boss-desk shell) tells the stack's state from `server.json` (and `gui.json`), or reads it from `cli.mjs status`. `restarting.since` is touched every 2 s by the server that is starting, so a restart counts as under way only while that touch keeps coming, however long the start takes; there is no fixed overall limit.
+
+<details>
+<summary>Details</summary>
 
 | State | How to tell from the files | `cli.mjs status` | What the shell does |
 |---|---|---|---|
@@ -2082,6 +2863,8 @@ On the happy path the shell reads no file at all: `cli.mjs up` prints everything
 
 **Migration**, in three releases that the shell pins one at a time: S1 (the server ships) writes `gui.json` under the unchanged contract and `server.json` as its documented successor, with `up`, `status`, and `logs`, and nothing has to change in the shell; S2 (one minor later) makes `server.json` the documented contract, which the shell uses through `up`'s output and `status`, keeping `gui.json` as a fallback; S3 (after the shell confirms S2 in its pin) drops the fallback, and `gui.json` stays on disk for older shells, marked deprecated here, and is never removed without a note in the release. No schema version is added: the shell keeps pinning the pi-straw-boss version.
 
+</details>
+
 ### Desk mode: `up --dir`
 
 A shell that shows the page itself (straw-boss-desk) starts `herdr server` with `STRAW_BOSS_DESK=1` and runs one command, which makes the shell's home base and finds its tower ([desk spec](specs/2026-10-26-desk-mode.md), S3 to S6, as [the sb server spec](specs/2026-10-26-sb-backend.md), *Desk mode: what changes*, has them):
@@ -2089,6 +2872,9 @@ A shell that shows the page itself (straw-boss-desk) starts `herdr server` with 
 ```sh
 node <pi-straw-boss>/dist/server/cli.mjs up --dir <folder> --label <name> [--timeout <seconds>] [--exact]
 ```
+
+<details>
+<summary>Details</summary>
 
 The GUI no longer waits for a tower pi: the sb server serves the page from its own start, so `up` returns as soon as the server, the base, and the tower's standing pane are there. **What the shell can count on:**
 
@@ -2116,27 +2902,54 @@ The GUI no longer waits for a tower pi: the sb server serves the page from its o
 - **Stopping** is the shell's: `cli.mjs stop`, then `herdr server stop`. Its next launch runs `up` again. The server `up` starts is detached and recorded in `server.json` (`pid`, `started`), which is what the shell stops with `cli.mjs stop`.
 - **Straw Link** keeps one state directory, so `link/` sits beside `gui.json`; the link holder is the primary server. The home tower works in the shell's folder, so it holds no team's messages (delivery goes to a tower whose folder is inside a team's project); they wait in the inbox until a base in the project is open.
 
+</details>
+
 ### The tower service
 
 One switch, `towerRuns` in `~/.pi/agent/straw-boss/config.json`: `{ "towerRuns": { "enabled": false } }` (`max`, the most pi runs at once, default 4, is for the [local runs](#local-runs)). **It is on by default**: a missing `config.json`, or a `towerRuns` without `enabled: false`, means on. A `config.json` that cannot be read or parsed also means on, but the server says so once: an `error` line with `code=config` in the log and the status's `lastError`, since the file's own `enabled: false` is not obeyed meanwhile. With `enabled: false`, towers stay resident and nothing in this section happens.
 
+<details>
+<summary>Details</summary>
+
 The server reads it at start and at every `ensure-tower`, so changing it needs no restart. Turning it off takes effect for the server within one refresh (4 minutes): it releases its tower identities, clears its `tower` tokens, and purges every `service.json`, queue, and ledger; until then a session that finds the live identity's token still reaches it, and what it sends is queued and never read. A server that starts with the switch off purges the leftovers too. The service stands in for the tower; what wakes a pi for the events it gets is [the local runs](#local-runs) below ([spec](specs/2026-10-26-sb-backend.md), **The tower service**).
 
+</details>
+
 #### A workspace gets one
+
+```mermaid
+flowchart TD
+    c["A promotion, /boss tower,<br/>call_tower from a main"] --> e["ensure-tower<br/>over the control socket"]
+    e --> t["Reuse a marked tab,<br/>or make the tower tab"]
+    t --> i["Register the tower identity<br/>with pi-intercom"]
+    i --> w["Write the tower token<br/>and service.json"]
+```
+
+A workspace's tower is not a pi any more: opening one asks the server `ensure-tower` over the control socket. The server reuses a marked tower tab or makes one, registers the tower identity with pi-intercom, and writes the workspace's `tower` token and `service.json`. A sub workspace is answered with its parent's tower.
+
+<details>
+<summary>Details</summary>
 
 `openTower` (a promotion, a member that dispatches, the two-member rule, `/boss tower`, `call_tower` from a main) asks the server `ensure-tower {workspace}` over the control socket instead of starting a pi; a live tower token is the tower and is not asked about. The server reuses a marked tower tab or a bare one (the radio tower glyph, one shell pane, no agent), else makes the tab with no Straw Boss environment, moves it first, marks its pane `sb_role=tower` (the **standing pane**, left at its shell prompt), registers the **tower identity** with pi-intercom (id `sb-tower-<workspace id in lowercase>`, or `sb-tower-<slot8>-<id>` on a secondary slot; name `tower · <label>`; cwd `<slot>/tower/<workspace id>`, a folder no pi runs in; `herdrPaneId` = the standing pane), and writes the workspace token `tower` and `tower/<workspace id>/service.json`.
 
 A sub workspace is answered with its parent's tower. `/boss tower` is the boss's own command, so it also starts a server that was stopped on purpose; an automatic open against a stopped server fails with "the sb server was stopped on purpose; /boss server starts it again".
 
+</details>
+
 #### An attended device wakes one for a teammate
 
 When a message from a teammate waits for a project that has no tower, the link holder asks the server to wake the tower of a workspace this computer already has: a workspace with a pane inside the project, or the one the sender named. The sender's trust must be `reply` or higher (a member with no `link.trust` entry is at `reply`, so every member of the team qualifies; a sender who left the roster is dropped first).
+
+<details>
+<summary>Details</summary>
 
 The server never makes a workspace or a base for it, and moves no focus and types into no other pane; the one thing it may make is the tower's tab in that existing workspace, when the workspace has none (the boss's ruling of 2026-11-07). With no such workspace it makes nothing and says so. A name the sender wrote that is no workspace of this computer (or is the head or a sub workspace) costs no wake: the holder answers it itself, and so it does when `towerRuns` is switched off.
 
 One wake runs per project and workspace asked for (by its id), a sender has at most 3 in flight, and the next try waits a minute after the last ended, then two, four, and so on up to 30 minutes (10 for a failed one); a wake that found no workspace is tried again at once when a workspace with a pane inside the project appears. The link log has `tower-wake`, `tower-woke`, `tower-wake-none` and `tower-wake-failed` (no message text) when the state changes, not at each try. While a wake is queued or runs, and for two minutes after the first that worked, the Link button and pi show no notice for the message.
 
 They show one only when the wake failed (the reason is in plain words), when no workspace exists or tower runs are off (it says what to do), or when a wake that worked has not got the message taken in two minutes. The message then gets its ally run as for any tower the server runs.
+
+</details>
 
 #### An unattended device opens one for a controller
 
@@ -2150,7 +2963,12 @@ The `tower` token and the pane's `sb_role` and sort key every 4 minutes (their T
 
 A resident tower of an older build keeps its workspace: the service waits while it lives, and a read that fails (the server's own broker connection is not up yet) counts as "may live". A live service checks before each publish and yields to a foreign holder of the token. A hand-over whose first ask failed asks once more.
 
+<details>
+<summary>Details</summary>
+
 A `roles/` record becomes a service only when its pane is in the recorded tab and that tab carries the tower glyph, or the pane carries the live tower's `sb_role=tower` mark and runs the record's own session file (that tab gets the glyph); since 0.75.0 the record and the file alone make none, for a session can write both. Every events reconnection after the first (Herdr restarted) opens the one-minute recovery window, whichever of it and the watch's takeover comes first. The queue keeps at most 1000 events per workspace (the oldest go first) and none older than 24 hours.
+
+</details>
 
 #### When a tower ends
 
@@ -2159,6 +2977,9 @@ Closing the tower's tab (or the pane, or the workspace) in Herdr, or `close-towe
 #### A Herdr restart
 
 A new Herdr server has no tokens. The server finds each tower tab again by the recorded pane and tab, else (for a minute after the takeover or the server's start) by a tab labelled with the glyph that has one pane in the workspace, writes the marks again, and registers the identity again when the pane changed. A tab not back within that minute ends its service. **The ids prove nothing.**
+
+<details>
+<summary>Details</summary>
 
 Herdr numbers workspaces, tabs, and panes with short counters that repeat across Herdr servers, so a Herdr that lost its saved session can give the boss's own new workspace the id the tower's had (the server would type the tower command into the boss's shell, mark it, and start a run there). After a Herdr came back, or when the server starts from `service.json`, a service is **seated** only once the pane under its recorded id is in a tab labelled with the tower glyph (`seatGate` in `typegate.ts`; the glyph is what a restore keeps of a tab the server made, while tokens and the pane's environment are gone).
 
@@ -2170,9 +2991,14 @@ A proof made for a pane the server made a moment ago takes the terminal of the f
 
 A tab that is gone from a service not seated on this Herdr ends it the same way unless the workspace under the recorded id still carries the label the service made: otherwise the workspace gets no `sb_tower_quit` (RVSEAT6-F006). A pane or tab Herdr does not list yet proves nothing either way and is waited for. A tab the boss renames away from the glyph cannot be proven after a restart.
 
+</details>
+
 #### Resident towers
 
 A live resident tower (an older pi holding the `tower` token) keeps its workspace: the service waits and registers only once that session leaves (and ends if it closed its tab). A resident tower of this build, started by an older session or brought back by a Herdr restore, asks `ensure-tower` for its own pane at its start, quits once the server has written the token, and leaves the pane as the standing pane; a server that cannot take it leaves it resident, with a notice.
+
+<details>
+<summary>Details</summary>
 
 The same ask is made at every `session_start` of a tower, whatever its reason, so a live resident tower of this build that the boss reloads (`/reload`), resumes, forks, or replaces with `/new` is retired by that: it asks, the server takes the pane, and the tower quits. Nothing in the build opens a resident tower with the service on: `openTower` (a promotion, `call_tower`, a broadcast to towers, `/boss tower`) asks the server, which makes the tab and starts no pi until an event wakes a run.
 
@@ -2180,11 +3006,18 @@ While the service waits, the page shows the resident, not the service: its own c
 
 `roles/` records with role `tower` whose pane is in this Herdr, in a tower tab or marked as the live tower's, become `service.json` and are deleted (main records are left).
 
+</details>
+
 #### What is queued
 
 A message to the identity is written to `tower/<workspace id>/queue/<seq>-<id>.json`, flushed to disk, with the text as received; the log holds no text. The receipt `queued` goes to the sender only after the fsync, and a message already taken (same sender, base message id with a retry's `~r<n>` cut off, and text hash; `seen.jsonl`, 48 hours, 5,000 per workspace) is not queued again but still gets its receipt. A send to a tower identity that fails is retried for up to 30 seconds by Straw Boss's own sender (`src/reach.ts`), under `<request id>~r<n>`.
 
+<details>
+<summary>Details</summary>
+
 A queue written before `seen.jsonl` existed is read as it is: retry suffixes are cut, events older than a day are dropped, at most 1,000 are kept per workspace. A link message for a tower the server runs waits in `link/inbox/` and is offered to no session; the boss sees one notice (`a Straw Link message waits … ally runs come with the next step`) until B6.
+
+</details>
 
 ### The standing pane
 
@@ -2193,6 +3026,9 @@ Between runs the tower's pane (the **standing pane**) is not a bare shell. The s
 #### The prompt
 
 `node "<cli.mjs>" prompt --workspace <id> --state-dir "<dir>"` (`src/towerprompt/`), a first word every shell takes, so Windows needs no bash and the node on the `PATH` is the one the boss runs pi from. It clears the pane's screen when it has its first state to show, so the command the server typed does not stay on it (the visible screen only; the scrollback keeps the last run's output), and draws a title (the radio tower glyph of the tab and `tower · <label>`, bold), a state line (a glyph and a colour per state, then `standing by`, `3 queued`, `waking up`, `running`, `closing`, or `held`; printed above what the boss is typing when the state changes), five key rows as the hint (`⏎` wakes the tower, `/new`, `/wait`, `/quit` and `⌃D`, `/boss tower <message>` from any pi session), and the prompt `󰐻 ❯ `.
+
+<details>
+<summary>Details</summary>
 
 The lines it says in between (waking the tower, the next conversation is a new session, the server does not answer, the tower did not take it, a command it does not know, leaving the pane) carry a glyph and a colour of their kind. The Nerd Font glyph is the tower tab's own, so the font is assumed to have it. `NO_COLOR` (set and not empty) or `TERM=dumb` takes the colours; `STRAW_BOSS_ASCII=1` in the shell the pane runs takes every glyph outside ASCII (`# tower - <label>`, `o standing by`, `Enter`, `tower> `); `TERM=dumb` also takes the clear.
 
@@ -2219,9 +3055,14 @@ With no terminal (a pipe, a log) the output is plain ASCII with no escape sequen
 - A run that is starting makes the prompt's next poll say so; it prints `waking the tower…` (once: not again when the boss wrote a moment ago), posts what the boss had typed on the line (and the lines in the 40 ms paste window) as their `boss` event first, so nothing they were writing is lost (if the server does not take it, the words are printed under the refusal), and exits 0. Keys the boss types after the prompt has exited, before the run's pi has started, still land in the shell (the prompt cannot hold a terminal it has given to pi); the window is the start of pi, not the second between Enter and the run.
 - When the server has no tower for the workspace (the tower closed), the prompt says so and exits.
 
+</details>
+
 #### What the server does
 
 A look at every standing pane each 3 seconds. It types the command only into a pane whose foreground is its shell at an idle prompt (Herdr's `pane process-info`), that has no agent, was not parked by Ctrl+D, and did not get the command in the last 15 seconds (and not for 15 seconds after the prompt posted the boss's words and exited: a run starts in a second), and no run is about to take the pane (an event waits and its wake is due within 5 seconds: a prompt typed then would have to start, poll, and leave before the run's pi can, 29 s in a PowerShell pane on the VM): a build or an editor the boss left there is theirs.
+
+<details>
+<summary>Details</summary>
 
 "Idle prompt" is proven by the shell's pid and the foreground process group Herdr gives on macOS and Linux (the group is the shell's own). Windows lists the shell alone whether a build runs under it or not (and its `foreground_process_group_id` is always the shell's pid, so the server does not believe it there: a `ping -t` in the pane still looked idle), so a pane without a believed group is typed into only when the server knows it is fresh: the tab it made, a pane a run freed, the pane a resident tower handed over (the hand-over carries the pi's PID: the pane counts as a bare shell once that process is gone, within a minute of the hand-over and for a minute after, so the prompt is typed after a `/reload` too and never while the pi still runs behind a `cmd.exe /c` wrapper that Herdr lists as a shell), or any pane after a Herdr restart, and then only if every foreground process is a shell; an empty list is unknown, never idle.
 
@@ -2241,9 +3082,14 @@ Then, on macOS and Linux, it waits up to 2 seconds for the prompt's process itse
 
 A start that Herdr fails is noted as `herdr <code>: <stderr> | <message>`; a run ends, and the next look types the prompt again, as it does after a Herdr restart (every pane is a fresh shell) or a crashed prompt.
 
+</details>
+
 #### One gate
 
 Whether the server may type the command into a standing pane is decided in one place, `src/server/typegate.ts`: the look (`standing.ts`), a run's end, Retry, and the process-table proof (`runs.ts`) only gather facts about the pane and act on the gate's answer, a type or a no with the rule that said no. A change to when the server types is a change there, and its table test (`tests/typegate.test.ts`) pins every rule.
+
+<details>
+<summary>Details</summary>
 
 The facts are asked in the gate's order, and the prompt's poll is asked again after each await (the stand-in's release, Herdr's process info), so a poll that lands while Herdr answers is never typed over; with a run due within 5 seconds the look answers `run-soon` without re-reading the poll after the release (it logs no `prompt-lost` for a poll that lands then). The process-table proof asks Retry's rule again after its read: an event that came meanwhile leaves the pane to the run.
 
@@ -2251,11 +3097,18 @@ A pane that is not seated (`seatGate`, [A Herdr restart](#the-tower-service)) ge
 
 Two marks are facts and are set where they happen, not by the gate: `fresh` at the pane Herdr just made and after a Herdr restart.
 
+</details>
+
 #### Why a process, and why the label is `tower`
 
 Herdr (0.9.5) drops a reported agent whose label it does not know within a second of finding the pane's foreground at an idle shell; while a process other than a shell holds the foreground, the label stays (52 minutes with no refresh were watched), and it goes 0.3 seconds after that process ends. A known agent kind would stay on a bare shell, but it would put another agent's name on the row. So the prompt is a process that holds the foreground, and the label is the tower's own.
 
+<details>
+<summary>Details</summary>
+
 If Herdr does not keep the stand-in (three reports in a row that the next look does not find), the server logs `standin-unsupported` once and stops reporting for that prompt: the tower has no row between runs, as before, and nothing else changes. The report has no resume command and no session, so a Herdr restore never relaunches it, and a report after pi's exit works at once (Herdr does not bring it back by itself).
+
+</details>
 
 ### When a main calls the tower
 
@@ -2267,15 +3120,25 @@ The boss decided (D18, D19) that coordination goes through the tower, and that a
 | `shared` | Before the main touches anything outside its tab: a port, a database, a shared branch, a deploy target, another app's checkout, a running service. It says what and for how long, then waits for the answer. | Expected. |
 | `blocked` | The main waits on someone outside its tab, or on a decision its authorizations do not cover. A member reports coordination friction the same way. | Expected. |
 
+<details>
+<summary>Details</summary>
+
 Routine progress is on the work board and wakes nothing. The code writes the reason into the header (`why=<kind>` after `reply=`). In pi's tool `why` is required for a main and may be left out by a tower, and without it the header says `why=unspecified` and the event wakes as `blocked` does. A word outside the set is refused before anything is sent.  A tower's `call_tower` takes `why` as optional (it is a `blocked` call); the resident tower prompt (`prompts/tower.md`, `towerRuns` off) is left without `why=` guidance on purpose, to stay in its word budget. Non-blocking incidents go on the work board and wake nothing.
+
+</details>
 
 #### The hold
 
 An intercom event whose header says `why=milestone` and `reply=none`, with no local run live, waits up to 30 seconds (`hold`) for others, counted from the first such event, so mains that finish together land in one run. Every other event (`shared`, `blocked`, unspecified, a reply expected, the boss, a notice, a timer) wakes at 1 second as before and takes any held milestones with it. A live run gets each event at its next idle moment, with no hold. The server reads the header at the very start of the event text only, so a message that spells out `why=milestone` further in, or in a quoted name, is not held.
 
+<details>
+<summary>Details</summary>
+
 The tower's run prompt (`prompts/tower-run.md`) says what to do with each reason: a `milestone` updates its obligations, tells whoever waits on it, and closes a main it opened; a `shared` call (a main writing to or changing something outside its tab, not reading) is checked against the board and its obligations and answered go or wait with the owner named; a main that gets no answer in 10 minutes tells the boss and leaves it alone; a `blocked` call is routed to its owner, except a decision only the boss can make, which the tower names in its handoff note as waiting on the boss and tells the main so, not sending it back.
 
 A main opened by a tower reports its done report with `call_tower` (`why: milestone`, no reply). It never asks a main for progress, since `board_read` has it.
+
+</details>
 
 ### Local runs
 
@@ -2293,11 +3156,21 @@ flowchart TD
     ar --> sp
 ```
 
+<details>
+<summary>Details</summary>
+
 With the tower service on (the default), an event for a tower identity wakes a pi in the tower's standing pane ([spec](specs/2026-10-26-sb-backend.md), **The wake protocol**, **Tower tools in a run**). One local run per workspace at a time and at most `towerRuns.max` (default 4) across the machine; a burst of events starts one run (the wake waits 1 second; a finished milestone waits up to 30 seconds, see [When a main calls the tower](#when-a-main-calls-the-tower)). `boss` events (the GUI's composer, `/boss tower <prompt>`) go first.
 
 **Start.** The server runs the settings check (`assertSettingsSafe`) on the pane's folder before every run and starts nothing when it refuses: the events stay queued, the tower card shows an error notice, and the next try comes with the next event, at most once a minute. It starts `pi --name "tower run · <label> · <run8>" --sb-run <run id> --tools <the run's tools>` in the pane with no Straw Boss environment, and records the run's PID and start time. A boss conversation adds `--session <file>` before `--tools`; an ally run is started without `--tools` (see **No shell in a local run** below).
 
+</details>
+
 #### Claim
+
+A run's pi proves it is the run the server started by **claiming** before it joins anything: it sends its run id, pane, PID, and start time over the control socket. The server answers a run token, the run's kind, and the brief only when all of these are the recorded ones and the run was not claimed already; a refused pi quits with the reason.
+
+<details>
+<summary>Details</summary>
 
 A pi with `--sb-run` asks the server `claim {run id, pane, pid, start time}` over the control socket before it joins anything. The server answers a run token (kept in memory), the run's kind, and the brief, only when the run id is one it started and has not ended, the pane, PID, and start time are the recorded ones (the server finds pi's own process itself, in its process table: when Herdr lists only the wrapper pi was started through, such as `cmd.exe /c pi.cmd` on Windows, the recorded PID is the first process below the wrapper that carries the run id and is not itself a wrapper, and a stop or a timeout ends pi and then the wrapper, each checked in the process table at that moment; a run whose start failed ends only a process in its pane whose command line carries the run id), every Herdr takeover it saw is processed, and the run was not claimed already; a refused pi quits with the reason.
 
@@ -2313,9 +3186,14 @@ A hand run keeps its claim across `/reload`, `/new`, `/resume` and `/fork` (same
 
 A `quit` the server orders while the run's turn is busy is held by the run until the turn ends: pi keeps a deferred quit with no way to take it back, so a server that restarted meanwhile (the run then claims again with its run id) would otherwise end a run it never stopped, as crashed. A claim again drops the held quit.
 
+</details>
+
 #### The run
 
 It joins no net, publishes no tokens, runs no guard. Its role section is `prompts/tower-run.md` and the brief the server built (who and why, mains it supervises, open obligations, the memory, the digest, the last handoff note, the tools, flags; 8,000 characters at most). It polls the server once a second, and at each idle moment takes one waiting event as a `straw-tower` message with `triggerTurn`, then confirms it `taken`.
+
+<details>
+<summary>Details</summary>
 
 Its tools are the tower's own (`boss_status`, `call_tower`, `tower_list`, `board_read`, `tower_send`, `boss_open_main`, `boss_close_main`, `boss_server`) plus `tower_reply`, `tower_memory` ([Tower memory](#tower-memory)), and `tower_done`, each a request to the server over the socket under the run token: the server does the work as the tower identity, so everything leaves under `id=sb-tower-<ws>` and replies come back to the server. pi-intercom's `intercom` tool is blocked with a pointer to `tower_reply`. A run ends with `tower_done {note, wakeAfter?}` (the note, 1 to 1,200 characters, goes to the next local run; `wakeAfter`, 5 to 240 minutes, asks for a follow-up run, one pending per workspace); it is refused while events are still for the run.
 
@@ -2325,9 +3203,14 @@ A run dispatches no subagents (`subagent` and `subagent_resume` are blocked), ta
 
 A pi in a standing pane that Herdr resumed without the flag (even when its pane lost its tokens, if its tab has the tower label) asks the server for its role and waits up to 30 seconds for a live server, so the server's two-minute quit rule reaches it.
 
+</details>
+
 #### No shell in a local run
 
 A run can be handed text that is not the boss's (a main's or a peer's message, a remote board entry, an old conversation), so the sb server starts its pi with `--tools` naming only what a tower needs: the tower tools (`boss_status`, `call_tower`, `boss_server`, `tower_list`, `board_read`, `tower_send`, `boss_open_main`, `boss_close_main`, `tower_memory`, `tower_reply`, `tower_done`, `link_request`) and read-only file access (`read`, `grep`, `find`, `ls`: the merge-train routing reads a project's `.straw-boss/apps.json`, and an answer about where work stands may need a file). pi registers no other tool, so `bash`, `write`, `edit`, `subagent`, and every tool of the boss's other extensions (web search, Linear) are not there, and an extension that calls `setActiveTools` cannot bring one back.
+
+<details>
+<summary>Details</summary>
 
 MCP tools (`mcp__*`) are the exception to "not registered": pi keeps them registered under `--tools`, but they stay inactive (the list has no `tool_search`), and the `tool_call` backstop below refuses them. An extension that registers a tool *named* `read`, `grep`, `find`, or `ls` would replace the built-in and be allowed; the path check sees only that tool's `path`, `pattern`, and `glob`.
 
@@ -2343,17 +3226,27 @@ That is the choice left to the boss: give the ally run the local run's tool list
 
 **Kinds of token.** The server holds every request that carries a run token to the run's kind. A local run may read `status`, use the link holder for `list`, `board-read`, `send`, `confirms`, and the approved-request ops (always as its own tower identity), and `open-main` and `close-main` for its own workspace. An ally run's token gets none of them. `gui`, `gui-remote`, `gui-pair`, `close-tower`, `restart`, and the rest of the control socket are refused to any run token: the hello secret is the credential of a session or a shell, a run token only of a run.
 
+</details>
+
 #### The boss in a run
 
 Once the boss speaks in a run, it does not end on its own. They speak by writing at the [tower prompt](#the-standing-pane) (the run it wakes is theirs from its claim), by typing in the run's pi (its extension tells the server at the first word and at most every 15 seconds after: input from the keyboard only, never an event or a steer of the server's), or by starting pi by hand in the standing pane. While the boss is in the run, `tower_done` answers that they are here, keeps no note, and the run goes on, so the model keeps answering them.
+
+<details>
+<summary>Details</summary>
 
 The run ends when the boss quits it (`/quit` ends it as done with the note `(the boss left the run)`, `(boss quit)` in a [boss conversation](#the-boss-conversation); the events it had not taken wait for the next run; a quit of a run the boss is not in is a crash as ever) or after 10 minutes of their silence (no input, no turn), when the run gets the wrap-up below.
 
 **The bound:** the cap and the idle limits below do not apply while the boss is in the run, in the middle of a turn too, for 4 hours from their first word at the longest (counted from the first word of the run, not restarted by a return after their silence); after that the cap applies at once, and a later sign of the boss changes nothing. After the boss's silence the run has the idle wrap-up to itself (6 minutes), and the cap does not cut it short. A server restart forgets who was in a run until their next word.
 
+</details>
+
 #### Limits
 
 A run that has not polled for 30 seconds is lost and ended as crashed, unless the computer slept: when the server's own watch finds a gap of more than that between the end of one of its ticks and the start of the next (a slow tick is no sleep), no run could poll in it, so every run's silence is counted from that tick.
+
+<details>
+<summary>Details</summary>
 
 A run that settles idle without `tower_done` gets one steer after 60 seconds and `quit` 5 minutes later; at 18 minutes it is asked to wrap up, at 20 minutes it is quit (a pi that has not exited 10 seconds after `quit` gets Escape and `/quit` through Herdr, and 5 seconds later SIGTERM to the PID `herdr pane process-info` reports).
 
@@ -2367,9 +3260,14 @@ The same holds for ally runs, whose message then stays in the inbox for the run 
 
 **`boss_server` and the restart limit.** In a local run `boss_server` goes through the server: it refuses `restart`, `status`, and `logs` for an ally token, and the one-restart-a-minute limit is kept by the server itself, so two agents asking at once cannot both pass it.
 
+</details>
+
 #### The GUI
 
 The tower unit stays on the map as the identity: `working` while a run works, `waiting` on a dialog, **standing by** (待命) when no run is live. The service's own state has its own word on the map, in the dossier, and in the comms header (**waking**, **closing**, **held**, **ally run · device**), followed by how the last run ended (crashed, timed out, quit) and how many runs failed lately; the map card carries a count chip of the messages waiting. Waiting events show as the unit's queued rows (kind, sender, first line), labelled as waiting for the next run, with no Edit (the server's queue is not pi's).
+
+<details>
+<summary>Details</summary>
 
 The notices, with their **Retry**, **Deliver again**, and **Drop** buttons, show on the map card and again in the tower's comms; a button is off and says "Working…" until the server answers, and a refusal shows under the row. A run's events are `custom_message` entries of type `straw-tower`, and the comms read each by the `kind` the server sent it with (`details.kind`: `boss`, `intercom`, `notice`, `timer`, `link`; a steer is a server notice): the boss's own message is a YOU bubble with the server's marker line taken off (a crash flag after it shows as a note inside the bubble), an intercom message, a server notice, and a wake-up call are incoming notes with their labels and no marker line, and a teammate's message (an ally run's input, a main's `link_reply`, an answer from a local session) is labelled by what it is (request from, reply to your ask from, answer from, message from the device) with its text inside and the verified header folded behind "details".
 
@@ -2387,6 +3285,8 @@ The unit's comms are the boss session once there is one (the live conversation's
 
 **`/boss tower <prompt>`.** Ensures the tower as a bare `/boss tower` does, posts the prompt as a `boss` event with `present` (it starts or continues the [boss conversation](#the-boss-conversation), as the GUI's composer does), and answers "Handed to the tower" with no change of focus. `/boss tower status`, `parked`, `retry`, `deliver <id>`, `drop <id>`, `leave`, and `new` are the commands of that section. A bare `/boss tower` still opens and focuses the tab.
 
+</details>
+
 #### `link_request` and asking for a main
 
 A local run has `link_request`: the server opens the request, the boss's approval dialog (the same one a main gets: action, every argument, the reason, the asking session) is shown by this run's pi, and the action is carried out by the holder only on a yes; the server is given the approval's call id and takes it only against an explicit yes (the run's dialog closed with `allow`), so a run cannot approve itself. `tower_send` takes `device`, `reply: true`, and `for`, a live main of the workspace that asked: the server records the ask (`tower/<workspace id>/awaiting.json`, 24 hours) and the device's answer goes to that main directly (see [Ally runs](#ally-runs)). A mailbox flush from pi-intercom's broker is marked delivered without a receipt; the proposed fix is written up in [the pi-intercom proposal](specs/2026-10-27-pi-intercom-mailbox-flush.md).
@@ -2399,43 +3299,71 @@ A **boss conversation** is the local run a `boss` event with `present` (the towe
 
 `tower/<workspace id>/boss-session.json` (`{file, run, startedAt, lastAt, turns, fresh?}`, mode 600) names it. Only a conversation moves it, by its own `run-file` report and only for a `.jsonl` under pi's `sessions` folder (real path, so a link out of it is not followed). pi writes a new session's file only at its first assistant message, after the run reported it, so a `.jsonl` under that folder that is not on disk yet is held back (no error) and kept, with the same checks, at the run's next poll, the boss's next word, or the run's end; a file that never appears leaves no pointer, and a path that could never qualify is refused and logged when it is reported.
 
+<details>
+<summary>Details</summary>
+
 The wait, the turns taken meanwhile, and a New asked meanwhile (`/new` of the tower prompt, the GUI, or pi's own) are kept in the run record, so a server restart does not lose them, and the file is kept marked fresh. An event run never moves it, and neither does the boss typing into an event run's pi. A boss message that arrives while an event run is live goes to that run (it does not wait for the boss), and the tower's comms then show that run until it ends; the run record keeps when the boss first spoke in it (`bossIn`), and the next conversation's brief names the run and its handoff note.
 
 The server starts the conversation with `pi --name "tower · boss · <label>" --sb-run <id> --session <file>` when every one of these holds, else with no `--session` and the brief says why: the file is a regular file under `sessions` with no symlink anywhere in its path below that folder and the boss's own (POSIX uid), it is at most 4 MB, the boss's last turn in it was at most 7 days ago, no live pane's `agent_session` names it, and the boss did not ask for a new one. `turns` counts the boss events the conversation took and the boss's typing in its pi (at most every 15 seconds).
 
 The claim, the run token, and the run mode are the event run's; **an ally run never resumes it**. A run token cannot start, leave, or restart a conversation, or write as the boss: `tower-event`, `tower-leave`, `tower-new`, and the other boss commands are refused to every run token (`rungate.ts`), so a resumed session's agent traffic gains no standing; the run's prompt says only an event that opens with the boss line is the boss's, however old.
 
+</details>
+
 #### During a conversation
 
 The boss is in the run from its claim, so everything under [The boss in a run](#local-runs) holds: events that arrive are delivered to it at its idle moments, `tower_done` is answered with a stay, and the 20-minute cap and the 60-second idle steer do not apply. The brief's first section says `Boss conversation: the boss is at this pane. Resumed session from <date>, <n> boss turns` or `New session: <why>`, and, for a resumed one, `Since you last talked with the boss:` with the first line of up to 3 event-run notes written since (1,200 characters together, 1,400 for the section).
 
+<details>
+<summary>Details</summary>
+
 A live run is given a **newer brief** (a `brief` in the poll's answer) when the memory or the last local note moved; its next turn reads it. The boss's silence for 10 minutes while the run is idle, or the 4-hour cap, gives the wrap-up: a steer ("The boss has left: call tower_done with your handoff note."), then `quit` 5 minutes later with the note `(ended idle)` or `(ended at the 4 h cap)`, recorded `quit` (a conversation is never a timeout, so the cap never counts toward the crash loop). `tower_done`, and the boss's `/quit` in the conversation's pi (note `(boss quit)`, recorded `done`, also after a long silence), end it at once. A server restart keeps a conversation on its feet, counted from its start.
+
+</details>
 
 #### Leave and New
 
 `/boss tower leave` (the GUI's **Leave conversation**, a `/quit` typed in the tower's composer, `tower-leave` on the socket) tells the pi to quit and ends it as `/quit` does; `/boss tower new` (the GUI's **New conversation**, `/new` in the composer or at the tower prompt, `tower-new`) marks the pointer so the next conversation is a new session, and ends a live one the same way. `/new` typed in the conversation's own pi has the same effect. Leave is refused when no conversation is live (an event run is not one) or it has not claimed yet. The words are exactly `/quit` and `/new`: with more words they are a message.
 
+<details>
+<summary>Details</summary>
+
 **`/boss tower`.** `status` (the service state, the conversation with its deadlines, notices, parked events, recent runs), `parked`, `retry`, `deliver <id>`, `drop <id>`, `leave`, `new`; anything else is a message for the tower. Each is one control command the GUI's buttons reach too (`tower-retry`, `tower-deliver`, `tower-drop`, `tower-leave`, `tower-new`, and `status`), with the server's refusals; the writes are refused in a pi with no screen, as `/boss memory`'s are. The words come in English and Traditional Chinese. A prompt that is exactly one of these words is a command.
+
+</details>
 
 #### Another tower, the head, and answering a wait
 
 `/boss tower -w <workspace id | label | head> <command | message>` acts on another workspace's tower: the workspace is found by id or label as `/boss memory -w` finds it (a label two workspaces share is refused with their ids listed: name the id; the head's own Herdr workspace, by id or label, is `head`), every write there asks in pi and names the tower, and a message goes as a `tower-event` with `present` as the GUI's composer sends it, without opening or focusing the tower (it needs the tower runs on).
 
+<details>
+<summary>Details</summary>
+
 `head` is the head tower: its commands are `head-retry`, `head-deliver`, `head-drop`, `head-leave`, and `head-new`, which `/boss head retry | parked | deliver <id> | drop <id>` sends without a confirm; that is the canonical spelling, and `-w head` sends the same commands but asks first and says "the head tower", as every write at another tower does. `-w head <message>` is `/boss head <message>`, and a message that is one head command word alone (`close`) is refused there: write more words, or use `/boss head`.
 
 `--answers W<n>` (before or after `-w`; on `/boss tower` and `/boss head`) sends the message with `answers`: the server marks the wait answered once the tower took the message, as the page's Answer does (`answered` is the id, or false when the memory no longer holds it), and the rest of the line is then always the message; exactly `/quit` or `/new` with `answers` is refused (`A command is not an answer to a wait`), as the page's composer refuses it. A pi with no screen refuses `-w` writes; `parked` and `status` read.
+
+</details>
 
 #### `/boss send` and `/boss stop`
 
 `/boss send <name|key> [--after] <text>` posts `sessions/<key>/input {text, as: "send" | "followUp", guarded: true}` to a tower, main, member, or subagent, as the page's composer does (`--after` is the composer's **After this**; a bare `--after` with no text is usage, not a message). A name with spaces is quoted (`/boss send "fix login" hi`); a name two sessions share lists them.
 
+<details>
+<summary>Details</summary>
+
 The post comes from this computer, but a paired device may have typed the command (its composer, or the key pad letter by letter), so `guarded: true` makes the server hold it to every guard a paired device's own write meets, whatever its address: a local-only text (`localOnlyText`, which also reads the text of a `/boss send`, at any depth, as it reads `/boss open`'s), an open `link_request`, and the `/boss gui lan` screen's mark. The usual guards stay too (a dialog the session waits on, the length limit), and a command that ends or replaces the session is asked in pi, naming the session, before it is sent again with `confirmed`. This session itself is refused.
 
 `/boss stop <name|key>` asks as the page's **Stop** asks (it needs the pi screen), then posts `{keys: ["esc"]}` to `sessions/<key>/keys`; Esc alone needs no `guarded`. Both are the boss's typed input: a tower run or an ally run takes no `/boss` command, and no tool reaches them.
 
+</details>
+
 #### `/boss answer`
 
 `/boss answer` lists the dialogs other sessions wait on; `/boss answer <name|key> [<choice number | text> | --cancel]` answers one, as the page does. The list is the page's own reading: a plain message of the local `events` stream (`readStream`, which closes it again), whose waiting units carry `pending.answer` (the dialog id, its digest, the select or questions).
+
+<details>
+<summary>Details</summary>
 
 The stream sends its cached reading first, after `hello`, and with no page listening that reading is up to 10 s old; so a net that follows `hello` is read on for 0.8 s and the newest one stands (a net that comes before `hello` was read just now and stands at once), and a dialog opened or closed a moment ago is listed as it is. The list and the confirm show each choice's note and each option's description under it, as the page does, and a `problem` the stream reports is shown without its JSON quotes.
 
@@ -2447,23 +3375,47 @@ An answer is built as `/boss link answer` builds one (`bosslink.ts`'s `build`: a
 
 It is the boss's typed input: a tower run or an ally run takes no `/boss` command, no tool reaches it, and `control.ts`'s `BOSS_LOCAL` keeps a paired device's composer from typing it (also inside a `/boss send` or `/boss open` text, as for `link decide`).
 
+</details>
+
 #### The GUI
 
 The tower's comms are the boss session (stable across runs; the live conversation's file while it works): a divider opens each conversation run (`Boss conversation · resumed · 10:04` or `· new session ·`, with how the run ended and its note once it has), and the event runs are chips under the header (`event run · 10:12`, a read-only unit of the net while their session file is known, the outcome and note in the tooltip).
+
+<details>
+<summary>Details</summary>
 
 The state word says `boss conversation · ends after 10 min idle`, `… · waiting for you · …` while the run waits for the boss (the tower then shows idle, not working), or `… · closing`; the box above the composer says how it began (resumed with the turns, or new and why), what it does now, the idle deadline, and the hard cap, with **Leave conversation** and **New conversation**. The composer's `/quit` and `/new` ask for no confirmation in a tower.
 
 The marker line of a boss event (`BOSS_MARK`) is unchanged, byte for byte: a resumed session holds the old lines, and the page reads them by that text; the writer (GUI, prompt, pi) is not told to the model, so there is no `via`.
 
+</details>
+
 ### Tower memory
 
 Event runs start fresh, so what has to outlive a run is kept apart in `tower/<workspace id>/memory.json` ([spec](specs/2026-10-26-sb-backend.md), **Tower memory**): the boss's **standing instructions** (up to 12) and **decisions** (up to 24), each at most 300 characters, the tower's **waits** (up to 12 open; for an agent 200 characters, for the boss a card of short fields), and the **proposals** runs made that the boss has not answered (up to 12). Every local run's brief carries them in a Memory section (4,900 characters at most, after the open obligations; the standing instructions always fit whole, within a 2,400-character budget; the pending proposals come last, labelled as not confirmed).
 
+<details>
+<summary>Details</summary>
+
 When the brief as a whole passes 8,000 characters the memory is cut first, so the tools, the `tower_done` line, the crash flags, and the 20-minute line always stay. An ally run's brief never carries memory, and `server.log` holds only the op and the id of a write.
+
+</details>
 
 #### Who writes
 
+```mermaid
+stateDiagram-v2
+    [*] --> proposal: a run proposes with tower_memory
+    proposal --> live: the boss confirms
+    proposal --> [*]: rejected, or 7 days pass
+    [*] --> live: the boss adds it with /boss memory
+    live --> [*]: retired
+```
+
 The boss does, with **`/boss memory`** in any joined pi session of the workspace: `/boss memory` lists (the tower's proposals first, each with the boss message it cites), `/boss memory confirm P3` and `reject P3` answer a proposal, `add standing|decision <text>`, `edit S2 <text>`, `delete D4`, and `resolve W1 [outcome]` change the rest (`-w <workspace>` names another workspace; the words are English or Traditional Chinese by your locale). pi is the first interface: the **Memory** panel of the tower's comms and the tower card in the GUI call the same server function with the same `rev` check and add nothing of their own.
+
+<details>
+<summary>Details</summary>
 
 A local run, through `tower_memory`, can only **propose** a standing instruction or a decision, or retiring one: the proposal waits, apart from the live entries, for 7 days, and takes effect only when the boss confirms it (a confirm that a full list or a changed entry cannot apply is refused and the proposal stays). The tool has no confirm, the control socket's `tower-memory` command is refused to every run token, and a run takes no `/boss` command but `/boss wait`, which presses a card of the boss's own list and makes no instruction (below), so no run's tool, ally, link envelope, or message can make an instruction.
 
@@ -2499,21 +3451,44 @@ The picker's dialogs are terminal-only (`terminalOnlyOpts`), run as the boss's o
 
 The memory file is the boss's text, so it is kept when the tower service is switched off or its tab is closed; delete its entries with `/boss memory delete` or in the panel to clear it.
 
+</details>
+
 ### Ally runs
+
+```mermaid
+flowchart TD
+    m["A Straw Link message for<br/>a tower this server runs"] --> i["Waits in link/inbox"]
+    i --> s["One run per device,<br/>up to 5 messages"]
+    s --> p["A fresh pi in a pane split<br/>beside the standing pane"]
+    p --> t["Works at the sender's<br/>trust level"]
+```
 
 A Straw Link message for a tower the server runs is worked in an **ally run**: a fresh pi in a pane split off to the right of the tower's standing pane (same tab, no new tab, no new workspace), at the sender's trust level, with no local context ([spec](specs/2026-10-26-sb-backend.md), **Ally runs**). This amends the Straw Link rule that an attended device opens no *session* for a remote message: it opens a session, never a workspace.
 
+<details>
+<summary>Details</summary>
+
 An attended device may add the tower's tab to a workspace it already has (never a workspace or a base, no focus, nothing typed into another pane); a message for a project with no workspace of this computer still waits in `link/inbox/` for 7 days with one notice, and the server opens nothing for it (the wake paragraph of Straw Link has the rules).
+
+</details>
 
 #### Its pane in the net view
 
 The ally pane is a row of the Agents list like a subagent's: the server writes `sb_role=ally` and the four display tokens on it at the split, and writes them again with the tower's 4 minute publish (a run lasts up to 20 minutes, the tokens 10). `sb_order` is the tower's key plus one segment (`000.0` → `000.0.000`, the second ally run's `000.0.001`), so the row sits right under the tower; `sb_mark` is `[ally]` and the device's label (cut to 24 characters); `sb_indent` is `├─` while a later ally pane is marked and `└─` on the last; `sb_name` is `ally run`.
 
+<details>
+<summary>Details</summary>
+
 The server clears them before it closes the pane when the run ends, and the panes of the other ally runs move up. Without them the row fell to the end of the list among the agents the net does not know, and its role token lapsed after 10 minutes.
+
+</details>
 
 #### When the server touches that pane
 
 The pane is marked, started in, and closed only with a fact a stranger under a reused id cannot have (F10). The fact is the terminal the split made, kept in the run record, so a run recovered after a server restart proves its pane too; a recovered run whose record names none is never bound by id alone, and neither is a live run whose split listing never named its pane (the listing is read up to three times): where Herdr lists terminal ids such a run marks and closes nothing by id after a Herdr restart.
+
+<details>
+<summary>Details</summary>
 
 A start that waits on a busy pane asks it before each retry and stops when the run has ended or the pane is in another terminal; a pane in an unknown terminal on a Herdr that lists no terminal ids holds as before (the proof is the glyph's alone). The keys that ask a stuck pi to quit (`esc`, `/quit`, `enter`) go only into a pane proven the run's (an ally's terminal, a local run's tower seat); without the proof they are skipped, and the signal that checks the pid by its start time ends the run.
 
@@ -2525,33 +3500,58 @@ It is answered `quit` when that file is the session file recorded by an ally run
 
 The server takes the client's word for the marker because it grants less than none would: `quit` only makes that pi shut itself down, and no claim, role, or pane action follows from it. The server never touches the pane or sends keys in either case: the resumed ally session leaves by itself, so a teammate's messages never run at the boss's level. A boss pi that itself opens an ally run's session (`/resume`, `/fork`) carries the marker and is quit the same way.
 
+</details>
+
 #### One run per device
 
 The holder leaves the inbox item where it is; the server lists the messages waiting per sender, and starts one run for the device with up to 5 of them, oldest first (a message that comes during the run waits for the next run). The device keeps its run until the run's end has handed its messages back to the holder (a message listed for that moment is not given to a second run), and the server remembers for ten minutes which messages it handed back: a message the holder still lists for a moment after is never admitted again.
 
+<details>
+<summary>Details</summary>
+
 A run reads its messages once more before its pane is split, and one left with none starts nothing (VM recheck A6). One ally run per workspace beside its local run, and it counts toward `towerRuns.max`. A sender that left the roster has its messages dropped and starts nothing; one that leaves during the run gets the run ended with `quit` (the server looks at every watch tick and every tool call) and its tool calls refused meanwhile.
+
+</details>
 
 #### Trust level
 
 The run is claimed at the sender's level, from `link.trust` or the unattended policy; the run's hooks read the policy again and take the lower. The whole session is one remote turn pinned to that sender: the same allowlist, deny list, gate, and `forward` confirm as a tower's remote turn (`src/link/hooks.ts`). A gated call is asked of the boss through the server (the run's pi shows the dialog; at `forward` the confirm goes to the sender's device and its answer comes back at the poll), and the server runs a gated tool call of an ally run only against the gate's recorded yes for that call id over arguments with that digest, once. At `dispatch` the gate is off.
 
+<details>
+<summary>Details</summary>
+
 The server holds the run to the lower of its claimed level and the device's level now (lowering trust takes effect on a running run; a raise does not lift it). A claim that names no sender, or a session that cannot pin the turn, shuts the run down. `tower_done` is free at every level. The server notes the boss's yes from its start, whether or not the GUI listens, so a terminal answer works with the GUI stopped.
+
+</details>
 
 #### Tools an ally run may call
 
 Free at every level: `boss_status`, `tower_list` and `board_read` (both scoped to the sender's team: its project's workspaces and that team's boards), `tower_send` to the sender's device (`device` is required; any other device or target is refused, an Allow or not), `tower_done`, and the run's own `read`, `grep`, `find`, and `ls` inside the project's tracked files, as in a remote turn. Anything else of the tower's own tools (`tower_reply`, `boss_open_main`, `boss_close_main`) the server runs only against the gate's recorded yes (below), except at `dispatch`, where they run without a confirm.
 
+<details>
+<summary>Details</summary>
+
 `call_tower`, `boss_server`, `link_request`, and a `tower_reply` to a tower identity of this computer are refused whatever the level; `close-tower` and the other control commands are refused to every run token, and so are the link holder ops that need a session's identity (`taken`, `gui`, `request-open`, `request-run`, sending as a tower; B3R-F003). `boss_open_main` with `role: "train"` is refused at every level, and with `role: "integrator"` it is taken only for a car slip a main opened for the run's own device sent (below). Everything the run sends to a local session carries `origin=remote:<sender device id>`, stamped by the server.
+
+</details>
 
 #### Questions to local sessions
 
 What a local session says back to an ally run's `tower_reply` (with `reply: true`) or to a main it opened is stored for the device (`ally-routes.json`, `ally-answers.json`, 24 hours), not queued for the local run, and waits for the device's next ally run; the mains an ally run opens have their own ledger (`ally-opened.json`). The local brief never lists them. A main an ally run opened keeps sending its reports to the device, not just the first answer: its route is outside the 40-route cap, it is renewed by each report it relays, and a main silent for 7 days is let go.
 
+<details>
+<summary>Details</summary>
+
 Opened routes are bounded at 8 per device and 20 in all (rows of mains the broker no longer lists go first, then the oldest), a row of a main the broker no longer lists is dropped when the next main opens once it has been silent for 10 minutes, and closing a main drops its row. The device's own `tower_reply` with `reply: true` to its main adds no second route and does not replace the opened one. The terminal's yes of a gated call reaches the server even when the server serves no GUI: it names its session in `hub.json` for the bridges.
+
+</details>
 
 #### A main opened for the device itself
 
 The sender of a request an ally run hands to `boss_open_main` is the device, not a session of this computer, so the run passes the header's `id=` as it stands (`link:<device id>`; the short id after `link:` works too, and a doubled `link:link:` is read as one prefix). The server takes it only when it names the device the run was claimed for (the id comes from the claim, not from the argument), and refuses any other `link:` sender, a bare label, or a short id without `link:` as a device: those are looked up among the live sessions as for a local run.
+
+<details>
+<summary>Details</summary>
 
 Nothing else changes in what the run may do: below `dispatch` the open still needs the boss's confirm, and a device that left the team opens nothing. The main's handoff says the request is a peer's, that it reports to the tower with `call_tower` and cannot reach the sender, and that its report leaves this computer as written. The route that was always made for an opened main (`ally-routes.json`) then does the relay: each report is stored as an answer for that device, never queued for a local run, and wakes a run of that device at once, which sends it with `tower_send`.
 
@@ -2561,9 +3561,14 @@ An ally run's `tower_reply` to a main opened for another device is refused, from
 
 The refusal does not repeat the name; a target that does not exist or is ambiguous is not refused there but goes on to the gate like one that exists, so a run below `dispatch` is told the same of a missing session and an existing one (the gate's confirm, with no Allow spent), and only a main held for another device is told apart. An opened row keeps the main's pane and is dropped as dead only when the broker and Herdr both no longer show the main. The opened route is read first when a session has several rows. The set of asks a run answered is forgotten after 24 hours. With several asks in the run none is kept.
 
+</details>
+
 #### The car slip of that main
 
 A main opened for a device works on this computer, and for an app with `integration` it ends by sending a car slip with `call_tower` `why=shared`, which the route above hands to the device's next ally run. That run has one door to the project's integrator, the same as a local run's: `boss_open_main` with `role: "integrator"`, the slip, and the main as `sender`.
+
+<details>
+<summary>Details</summary>
 
 The server takes it only for a `call_tower` (`why=shared`) this run took from a main opened for the run's own device (the route table says so, and the main's `sb_opened_by` token, when it names a device, must agree), and refuses everything else before the gate, so no Allow is spent: a slip the run made up, a slip of a session that was only written to, a request to open an integrator.
 
@@ -2573,17 +3578,27 @@ The forward carries `origin=remote:<device id>` beside `fwd` and `fwd-from`, and
 
 **Brief and thread.** The run's role section is `prompts/ally-run.md` plus a brief the server builds (who and at which level, what the sender may see of the workspace, the last handoff note for this device, the asks the run carries, the last six rows of the device's thread, and its tools; 4,000 characters at most). The **thread store** (`link/threads/<device id>.jsonl`, mode 600) keeps both directions, the last 20 messages per device, none older than 7 days, and is deleted with the device's roster entry. It holds peer text at rest.
 
+</details>
+
 #### Who the tower sends for
 
 A device's answer never enters a tower run, so a tower that sends work to a device for a local session must make an ask or nobody here gets the answer. `tower_send` with `device` and `reply: true` and no `for` takes the requester itself: the one session that sent the run a `call_tower` expecting an answer (`reply=expected`, from the header the code wrote) among the events the run took, when it is a live main (since 0.58.2 of any workspace on this computer, not only this tower's; see below); the result says so ("The answer will come to <main> directly (the main that called you for this)").
+
+<details>
+<summary>Details</summary>
 
 Two askers, an asker that is a member or is gone, a call that expected no answer, a boss event, and `reply: false` bind nothing; with `reply: true` the result then says that no session is bound (with `reply: false` it adds nothing) and the answer reaches an ally run, so the tower does not promise a relay it cannot make. `for` still wins; it names a main of the workspace, or a main of another workspace on this computer that sent this run a `call_tower` expecting an answer.
 
 A requester or a `for` from another workspace is bound only by that call: the server reads the asker from the same events, checks it against the broker and Herdr's pane token (`sb_role=main`), and refuses `for` for a session outside this workspace that did not call this tower in this run (a main of this workspace needs no call). The requester is looked up by session id only, never by name. The ask is recorded under the tower's workspace for that session id, and the holder offers the answer to the session by id, so nothing in the delivery depends on the workspaces matching. The ask is single-use, 24 hours, bound to the device asked, and dropped with it when the device is revoked, as before.
 
+</details>
+
 #### Replies for a main
 
 `caps` is a team-wide message each holder sends at each stream start, when its build changes, and hourly: the features it takes (`tower.awaitsReply`, `tower-reply`); one older than 2 hours counts as none. `tower_send` with `for` (above) sends a plain 4-field `tower` to a device whose `caps` lack `tower.awaitsReply`, and a `tower` with the ask id as its fifth field to one that has it; the tool's answer says which. A message that carries an ask id shows `asks=<id>` in its header, and the ally run answers it with `tower_send({ device, text, inReplyTo })`; an `inReplyTo` that is not one of its own asks is refused.
+
+<details>
+<summary>Details</summary>
 
 The answer goes as kind `tower-reply` to a device whose `caps` list it, else as a plain `tower` (also when the relay refuses the kind with `unknown-kind`; logged once per device and hour). The asking computer takes a `tower-reply` as a reply only for an open, unused ask from that device, closes the ask, and offers it over `straw-boss/link` to the main that asked, which holds it until idle and puts it into its session as a `straw-link` message with `triggerTurn` under the verified header plus `kind=link_reply` and `for=<tower>`. That main then runs a remote turn at the replying device's level.
 
@@ -2591,16 +3606,27 @@ A main that has gone, or that has not taken the offer within 5 minutes, gets an 
 
 **`boss_server` and the restart limit.** An ally run's `boss_server` is refused by its kind; for any run the server keeps the limit of one restart a minute itself, so two agents asking at once cannot both pass.
 
+</details>
+
 #### A controller's work ends with its dispatch
 
 An ally run claimed at `dispatch` is quit by the watcher when its device has left the team or has fallen below `dispatch` (two ticks in a row, and only while the holder can read the team's roster), with the reason in the end notice. The mains an ally run opened at `dispatch` (the route keeps the run's level; a row without one counts as `dispatch`) are checked every 15 seconds by `revoke.ts` against the roster and the policy, and a main whose device is gone or below `dispatch` is asked to quit like `boss_close_main` does, asked again while it is busy, and let go with its route when it quits; the team's admins are told once that it still runs and once that it ended ([spec](specs/2026-11-05-link-shared-box.md)).
+
+<details>
+<summary>Details</summary>
 
 **Crashes and limits** are the local run's (settles idle, 20 minutes, three failures in 10 minutes hold the service), per device.
 
 **The wire.** `caps`, the 5-field `tower`, and `tower-reply` are in `src/link/kinds.ts` and `tests/link/vectors.json` (the Straw Link spec's **Message kinds** table has the rows); straw-relay carries the same two rows and a copy of the vectors, and is redeployed first.
 
+</details>
 
 ## Tools
+
+Straw Boss gives agents a set of tools (`boss_*`, `tower_*`, `call_tower`, `board_*`) and gives the boss the `/boss` slash commands. Which session may call which tool depends on its role. The tables list who each tool is available to and what it does, then every `/boss` command.
+
+<details>
+<summary>Details</summary>
 
 | Tool | Available to | What it does |
 |---|---|---|
@@ -2652,9 +3678,23 @@ An ally run claimed at `dispatch` is quit by the watcher when its device has lef
 
 `/boss` and `boss_promote` are unavailable in a sub workspace.
 
+</details>
+
 ### Stash and pop
 
+```mermaid
+flowchart TD
+    s["/boss stash"] --> c{"Every pi idle or done,<br/>with a session file,<br/>and no subagent?"}
+    c -->|"no"| r["Refused, naming why"]
+    c -->|"yes"| w["Write stash/name.json,<br/>close the base"]
+    w --> p["/boss pop"]
+    p --> o["New workspace, each pi resumed<br/>with pi --session file"]
+```
+
 `/boss stash` puts a whole base away and `/boss pop` opens it again ([spec](specs/2026-10-22-stash/spec.md)). The stash runs in the sb server's GUI, which `/boss stash` asks to run (no browser opens; a GUI stopped on purpose is not started: the command says so, and `/boss gui` starts it): only the server can ask every session's bridge.
+
+<details>
+<summary>Details</summary>
 
 It first checks, closing nothing: Herdr's view (every pi pane is a tower, main, or member that is `idle` or `done` and has a session file; no subagent in the base or its sub workspaces; no shell with anything but the shell in its foreground; the base is not itself a sub workspace) and each session's own, through its bridge's `stash-check` (no running turn, no queued message, no open dialog, no running monitor). A session that does not answer within three rounds counts as a refusal, so a session on an older pi-straw-boss is never closed by a stash. Every reason is listed in one refusal.
 
@@ -2666,7 +3706,14 @@ Then it writes `stash/<name>.json` in the state directory (the label and folder,
 
 A session that is not in a base on the net closes nothing; an invoker still alive when the server does not answer is told to check what is still open.
 
+</details>
+
 ## What it writes
+
+Straw Boss keeps its state in files in the state directory, starting with the sb server's own files, and in Herdr tokens on panes, tabs, and workspaces. The list names each file or token and what writes it.
+
+<details>
+<summary>Details</summary>
 
 - The sb server's files (`server.json`, `server.lock`, `start-error.json`, `server.log`, `server.sock`) in the state directory, or `servers/<hash>/` for another Herdr's slot, and its intercom identity `sb-server-<8 hex>` ([The sb server](#the-sb-server)).
 - Herdr pane token `sb_duty` (a main's kind: `coordinator`, `integrator`, or `standing`; `null` for every other role, cleared at shutdown), written with `sb_role` (`main`, `member` or `tower`; a tower tab is also marked right after it is created; a tab opened for a request is created with the environment variable `STRAW_BOSS_ROLE=main`, which makes its pi promote itself) and workspace token `tower` (the tower's intercom session id), both refreshed every 4 minutes with a 10 minute TTL, written again at once when a new Herdr server takes over (see [A new Herdr server](#sidebar-net-view)), and cleared at shutdown (a tower that quits then closes its own tab if it holds only that pane).
@@ -2693,6 +3740,8 @@ A session that is not in a base on the net closes nothing; an invoker still aliv
 
 The tower tab is labelled with the radio tower glyph (U+F043B) alone and its Herdr agent is named `tower-<workspace id>` in lowercase (Herdr agent names are unique per server).
 
+</details>
+
 ## From a shell
 
 Read-only discovery works from any shell in a Herdr pane:
@@ -2708,6 +3757,9 @@ Opening a missing tower needs a pi session.
 ## Windows
 
 Windows support is experimental. Herdr's API there is a named pipe, and the file at the socket path (`%APPDATA%\herdr\herdr.sock` by default) is only a marker holding the server's pid and start time. Every client in this package (the extension, its watches, the sidebar plugin) connects to `\\.\pipe\` followed by the socket path, as Herdr's own CLI does. The socket path is found as Herdr finds it: `HERDR_SOCKET_PATH`, else the socket of the `HERDR_SESSION` session, else the default one in Herdr's config directory (`XDG_CONFIG_HOME`, else `%APPDATA%`).
+
+<details>
+<summary>Details</summary>
 
 The sb server's control socket is a named pipe too. Pipe names are one namespace for every account on the machine, and the 700 directory that guards a Unix socket has no part in it, so the server names its pipe at random when it starts (`\\.\pipe\sb-<16 hex>`) and records the name in `server.json`, in your profile, where sessions read it. Another account cannot learn the name before the pipe exists, but the name can be listed once it does, and a server that ends leaves a name free for anyone to take.
 
@@ -2751,7 +3803,11 @@ The worktree reaper stays macOS and Linux only. It closes a pane only when the p
 
 `tests/platform.test.ts` checks these on every platform, and the `Windows` workflow runs it on a Windows runner against real named pipes, after loading every module a session and the sidebar plugin load. Herdr itself does not run in CI, so pi starting inside Herdr on Windows is checked by hand.
 
+</details>
+
 ## Development
+
+`npm run check` type-checks the extension and the page, and `npm test` runs the suite. The page is vanilla TypeScript in `gui/`, built by Vite into `dist/gui`; the sidebar plugin is plain JavaScript in `herdr-plugin/`; prompts are plain markdown in `prompts/`.
 
 ```bash
 npm install
@@ -2763,6 +3819,9 @@ npm test           # node --test, against a fake Herdr and a fake intercom broke
 npm run test:one -- tests/x.test.ts # one file, isolated the same way
 npm run gui:dev    # the page with hot reload against a demo net; see below
 ```
+
+<details>
+<summary>Details</summary>
 
 The dashboard has its own file (`src/dashboard.ts`, budget 162 lines) and its rendering is a pure function of a snapshot, so tests drive it without a terminal. What it shows without drawing (the marks, the rows, and the subagent reading) is in `src/netdata.ts`, which reaches no value import of pi-tui, typebox, or pi-coding-agent so the server can load it; `tests/pure-imports.test.ts` walks the import graph and fails on one. The browser view's data and server (`src/net.ts`, `src/gui.ts`) share a budget of 300 lines; `buildNet` turns sessions, panes, and workspaces into the JSON snapshot as a pure function (and fills the registry of readable session files), and `collectNet` reads Herdr and intercom and reuses the subagent linking of `src/netdata.ts`. The session reader (`src/history.ts`), the entry-to-item mapping (`src/items.ts`), and the stream and API glue (`src/watch.ts`) are tested against fixture files.
 
@@ -2781,3 +3840,5 @@ To point the dev page at a live stream instead, run `/boss gui` and start the de
 To check a checkout in real pi while your own sb server runs (one per state directory), start a scratch pi with `--no-extensions`, `-e` for pi-intercom and your provider, and `-e` for a two-line wrapper that calls this checkout's `createStrawBoss({ stateDir: "<scratch dir>", openUrl: async () => {} })`, with `PI_CODING_AGENT_DIR` and `HOME` pointing at scratch folders and a scratch Herdr. Its `/boss gui` then starts a second sb server from the checkout, recorded in the scratch directory, and opens no browser.
 
 Prompts are plain markdown in `prompts/`, read at session start, so an edit applies after `/reload`.
+
+</details>
