@@ -55,7 +55,11 @@ stateDiagram-v2
   landed --> [*]
   returned --> [*]: 通知協調者
   dropped --> [*]: 通知協調者
+  returned --> received: 同一個 head 再送一次
+  dropped --> received: 同一個 head 再送一次
 ```
+
+被退回或被放棄的車廂，如果協調者把車廂單改好、用同一個 head 再送一次，會像新車廂一樣被接收或退回。已經落地的車廂不會再被接收：一節車廂只落地一次，再送一次的協調者會被告知它已經在 base 上。
 
 整合員：
 

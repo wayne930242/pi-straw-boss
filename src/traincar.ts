@@ -1,5 +1,6 @@
 import { isAbsolute, join, resolve } from "node:path";
 import { Type } from "typebox";
+import { createReturnWatch, type ReturnWatch } from "./carwait.ts";
 import { bodyOf, fieldsOf } from "./headerfields.ts";
 import { makeCtx, trusted } from "./server/client.ts";
 import { slotOf } from "./server/record.ts";
@@ -8,7 +9,7 @@ import { startOf } from "./startof.ts";
 import type { Kit } from "./state.ts";
 import { snapshotOfBranch } from "./todo.ts";
 import { parseSlip } from "./train/accept.ts";
-import { CAR_STATES, type CarState, type CarView, coordinatorWord, forwardsOf, validateStateFields } from "./train/cars.ts";
+import { CAR_STATES, type CarState, type CarView, coordinatorWord, forwardsOf, noticeText, validateStateFields } from "./train/cars.ts";
 import { isName, isObject, type Json } from "./train/spec.ts";
 import { type Manifest, rowsOfSnapshot, slipBlocks, type TrainGuard } from "./trainguard.ts";
 import type { TrainId } from "./trainrole.ts";
@@ -47,7 +48,7 @@ export interface CarClientDeps {
 	held?: Map<string, string>;
 }
 export interface CarSet { state: CarState; car: Json; fields: Json }
-export interface SetAnswer { state: CarState; at: string; file: string; coordinator: string }
+export interface SetAnswer { state: CarState; at: string; file: string; coordinator: string; notice?: string; unchecked?: string }
 
 /** The session's way to the server's book of cars: it registers once, holds the secret in memory, and asks for states and for the cars of a project. */
 export function createCarClient(d: CarClientDeps) {
@@ -116,6 +117,8 @@ export interface CarToolDeps {
 	manifest(ctx: CarCtx): Manifest | undefined;
 	client: Pick<CarClient, "set">;
 	home: string;
+	/** The integrator's wait for the notice of a car it returned (carwait.ts, #13): nothing else waits for that notice, so the session does. */
+	returns?: Pick<ReturnWatch, "add">;
 }
 export interface CarParams { car: string; state: CarState; project?: string; train?: string; departs?: string; reason?: string; round?: number; evidence?: string; version?: string; commit?: string }
 const FIELD_KEYS = ["train", "departs", "reason", "round", "evidence", "version", "commit"] as const;
@@ -179,21 +182,44 @@ export async function trainCar(deps: CarToolDeps, params: CarParams, ctx: CarCtx
 		car = { app, head: mine.head, tickets: mine.row?.tickets ?? slip.tickets, branch: slip.fields.branch ?? "" };
 	}
 	const answer = await deps.client.set({ state, car, fields });
-	const text = `Car ${ticket} is ${state}. sb tells its coordinator (${answer.coordinator || coordinator}) by session id and confirms the delivery; ${state === "received" ? "the train todo" : state === "landed" ? "the land step" : "the assemble that removes it"} waits for that${state === "received" ? " before the manifest goes to the tower" : ""}. You send no notice yourself.`;
+	const told = answer.coordinator || coordinator;
+	// A car returned at receipt is on no train, so no step of a train waits for its notice: this session does, and calls the tower when the server lost it.
+	const waiting = role === "main" && state === "returned" && deps.returns !== undefined;
+	if (waiting) deps.returns!.add({ project: String(car.project), app: String(car.app), head: String(car.head), ticket, coordinator: told, at: answer.at, line: answer.notice ?? noticeText("returned", { ticket, head: String(car.head), reason: String(fields.reason) }) });
+	const waits = waiting ? "this session waits for that and calls the tower itself if the sb server loses the notice" : `${state === "received" ? "the train todo" : state === "landed" ? "the land step" : "the assemble that removes it"} waits for that${state === "received" ? " before the manifest goes to the tower" : ""}`;
+	const text = `Car ${ticket} is ${state}. sb tells its coordinator (${told}) by session id and confirms the delivery; ${waits}. You send no notice yourself.${answer.unchecked ? ` Received unchecked: ${answer.unchecked}.` : ""}`;
 	return { text, details: { car: ticket, ...answer } };
 }
 
-/** The tool of a train and of the integrator. Registered when the session has joined the net, unless the merge train is off. */
-export function trainCarTool(kit: Kit, guard: () => TrainGuard | undefined, link: ReturnType<typeof carLink>) {
-	const { pi, s } = kit, { client } = link;
+const FIRST_LOOK_MS = 3_000;
+
+/** The tool of a train and of the integrator. Registered when the session has joined the net, unless the merge train is off. `callTower` is this session's `blocked` call to its tower, for a returned car whose notice the server lost (carwait.ts). */
+export function trainCarTool(kit: Kit, guard: () => TrainGuard | undefined, link: ReturnType<typeof carLink>, callTower: (text: string) => Promise<unknown>) {
+	const { pi, s, cfg } = kit, { client } = link;
 	let registered = false;
 	return () => {
 		if (s.isTower || registered || !link.enabled()) return;
 		registered = true;
 		link.keepRegistering();
+		// The wait for the notices of the cars this session returned: a look soon after each return, then every 15 s while one is still awaited (also after a /reload, which finds the waits of the module before it).
+		const watch = createReturnWatch({ session: () => kit.me() || undefined, read: (project) => client.read(project), callTower, now: cfg.now });
+		let timer: ReturnType<typeof setTimeout> | undefined, stopped = false;
+		const look = (ms: number) => {
+			if (stopped || timer || !watch.size()) return;
+			timer = setTimeout(() => { timer = undefined; void watch.tick().catch(() => undefined).then(() => look(CHECK_MS)); }, ms);
+			timer.unref?.();
+		};
+		look(FIRST_LOOK_MS);
+		// A reload keeps the waits (the module loaded next goes on with them); any other end of the session hands them to the tower, since nobody waits after it.
+		pi.on("session_shutdown", async (event) => {
+			stopped = true;
+			if (timer) clearTimeout(timer);
+			if (event.reason !== "reload" && watch.size()) await watch.end().catch(() => undefined);
+		});
 		const deps: CarToolDeps = {
 			role: () => (s.isTrain ? "train" : kit.role() === "main" ? "main" : undefined), train: () => (s.isTrain ? s.train : undefined),
 			manifest: (ctx) => guard()?.manifestOf(ctx as never), client, home: process.env.HOME ?? "",
+			returns: { add: (wait) => { watch.add(wait); look(FIRST_LOOK_MS); } },
 		};
 		pi.registerTool({
 			name: "train_car", label: "train_car",

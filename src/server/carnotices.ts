@@ -5,8 +5,8 @@ import { type Attempt, type CarState, RETRY_MS, stateLine, type StateEntry, type
 import type { CarBook } from "./carbook.ts";
 
 // The sb server's sender of car notices (docs/specs/2026-11-07-train-workers.md §5.5, D14): for every car state without a told notice it sends one intercom message to the coordinator's session id under a `car_notice` header, writes what the broker
-// answered, tries again at 30 s, 2 min and 5 min, and when the coordinator is not live, or the retries are spent, tells the tower of the setter's workspace once with a `blocked` call. The records are keyed by (car, state), so a state is sent once and a server that
-// restarts resumes from them. The sender is driven by `tick()` (a 5 s timer and `kick()` after a state is set); a name is never a target, only the session id the slip named and the tower's forward confirmed.
+// answered, tries again at 30 s, 2 min and 5 min, and when the coordinator is not live, or the retries are spent, tells the tower of the setter's workspace once with a `blocked` call. The records are keyed by (car, state), so a state is sent once while the
+// server runs. The sender is driven by `tick()` (a 5 s timer and `kick()` after a state is set); a name is never a target, only the session id the slip named and the tower's forward confirmed.
 
 export const TICK_MS = 5000;
 const KEEP_MS = 24 * 3600_000, TOWER_RETRY_MS = 30_000, TOWER_TRIES = 10, SEND_TRIES = 1 + RETRY_MS.length;
@@ -27,6 +27,11 @@ export interface NoticeDeps {
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const short = (text: string, n = 160) => text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, n);
+/**
+ * The stem of the message ids of one state's notice: the car and the moment the state was set. The broker keeps the ids a sender used for an hour and does not deliver one again, so a state of a car's later life (#14), or one set again after a
+ * restart, needs ids the earlier one did not use; the time the state was set tells them apart.
+ */
+const idStem = (item: { project: string; file: { app: string; car: { head: string } }; entry: { state: string; at: string } }) => `car-${createHash("sha256").update(`${item.project}/${item.file.app}/${item.file.car.head}/${item.entry.at}`).digest("hex").slice(0, 12)}-${item.entry.state}`;
 
 export class CarNotices {
 	private busy = false;
@@ -65,14 +70,15 @@ export class CarNotices {
 		if (record.deliveredAt || now - Date.parse(entry.at) > KEEP_MS) return;
 		const intercom = this.d.intercom();
 		if (!intercom) return;
-		const key = `${project}/${name}/${state}`, gone = this.away.get(key);
+		// Keyed by the state's own life (its id stem names the moment it was set), not by the car's file name, which a new life takes over (car-forward-F001).
+		const key = idStem(item), gone = this.away.get(key);
 		if (gone && now < gone.next) return;
 		let live: boolean;
 		try { live = (await intercom.listSessions()).some((s) => s.id === file.coordinator); } catch { return; } // the broker cannot be asked: not the coordinator's absence
 		if (live) this.away.delete(key);
 		else { const wait = gone ? Math.min(gone.wait * 2, MAX_AWAY_MS) : AWAY_MS; this.away.set(key, { next: now + wait, wait }); }
 		const sends = record.attempts.filter((a) => a.outcome !== "not-live");
-		const change = (fn: (r: StateNotice) => void) => this.d.book.updateNotice(project, name, state, fn);
+		const change = (fn: (r: StateNotice) => void) => this.d.book.updateNotice(project, name, entry, fn);
 		if (!live) {
 			// Not live at an attempt: told to the tower once; a coordinator that comes back live later still gets the notice.
 			if (!record.escalatedAt) {
@@ -84,7 +90,7 @@ export class CarNotices {
 		if (sends.length >= SEND_TRIES) { if (!record.escalatedAt) await this.escalate(item, `${sends.length} sends were not delivered`); return; }
 		const due = sends.length === 0 ? now : Date.parse(sends.at(-1)!.at) + RETRY_MS[sends.length - 1]!;
 		if (now < due) return;
-		const n = sends.length + 1, messageId = `car-${createHash("sha256").update(`${project}/${name}`).digest("hex").slice(0, 12)}-${state}-${n}`;
+		const n = sends.length + 1, messageId = `${idStem(item)}-${n}`;
 		const at = iso(now);
 		// The attempt is written before the send: a server that stops in the middle finds an unknown outcome and tries again, never a send nobody wrote down.
 		change((r) => { r.id = messageId; r.attempts.push({ at, outcome: "unknown" }); });
@@ -119,7 +125,7 @@ export class CarNotices {
 
 	/** One `blocked` call to the tower of the setter's workspace, naming the car, the state, the coordinator and the notice text. It counts once the tower's mailbox has it. */
 	private async escalate(item: ReturnType<CarBook["pending"]>[number], why: string): Promise<void> {
-		const { project, name, file, entry } = item, state = entry.state, record: StateNotice = this.d.book.noticeOf(project, name, state) ?? { attempts: [] };
+		const { project, name, file, entry } = item, state = entry.state, record: StateNotice = this.d.book.noticeOf(project, name, entry) ?? { attempts: [] };
 		if (record.escalatedAt) return;
 		const tries = record.tower ?? [], now = this.d.now();
 		if (tries.length >= TOWER_TRIES) return;
@@ -133,13 +139,13 @@ export class CarNotices {
 		let attempt: Attempt;
 		let taken = false;
 		try {
-			const result = await intercom.send(to, { text: message, messageId: `car-${createHash("sha256").update(`${project}/${name}`).digest("hex").slice(0, 12)}-${state}-tower-${tries.length + 1}` });
+			const result = await intercom.send(to, { text: message, messageId: `${idStem(item)}-tower-${tries.length + 1}` });
 			taken = result.delivered === true;
 			attempt = { at: iso(now), outcome: taken ? "delivered" : "failed", ...(taken ? {} : { answer: short(result.reason ?? "not delivered") }) };
 		} catch (error) {
 			attempt = { at: iso(now), outcome: "failed", answer: short((error as Error).message) };
 		}
-		this.d.book.updateNotice(project, name, state, (r) => {
+		this.d.book.updateNotice(project, name, entry, (r) => {
 			(r.tower ??= []).push(attempt);
 			if (taken) r.escalatedAt = iso(this.d.now());
 		});

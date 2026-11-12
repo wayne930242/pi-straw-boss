@@ -899,7 +899,11 @@ stateDiagram-v2
     landed --> [*]
     returned --> [*]: the coordinator gets a notice
     dropped --> [*]: the coordinator gets a notice
+    returned --> received: the same head is sent again
+    dropped --> received: the same head is sent again
 ```
+
+A car's life ends `returned`, `dropped` or `landed`. A returned or dropped car whose coordinator sends the same head again, its slip put right, starts a new life once the tower has forwarded that slip: the integrator receives or returns it as it would a new car, and the notices go out again. A landed car starts none, because a car lands once: `received` is refused for a head that is already on the base's branch of the project's remote, and the integrator returns the car with that word, so its coordinator is told.
 
 [`prompts/apps-config.md`](../prompts/apps-config.md) holds the `apps.json` fields, [`prompts/integrator.md`](../prompts/integrator.md) the integrator's role, and the design records are [`docs/specs/2026-10-30-merge-train.md`](specs/2026-10-30-merge-train.md), [`docs/specs/2026-11-05-train-stages.md`](specs/2026-11-05-train-stages.md), and [`docs/specs/2026-11-06-seam-bindings.md`](specs/2026-11-06-seam-bindings.md) (which maps every line of the old integrator prompt to its skill location).
 
@@ -1023,12 +1027,16 @@ A train holds a lane (an app's integration branch) or a target from its first st
 
 ##### Car notices
 
-The train and the integrator set each car's state with `train_car` (`received`, `returned`, `landed`, `dropped`); the sb server sends the coordinator one intercom notice per (car, state) under `kind=car_notice`, retries at 30 s, 2 min and 5 min, records `deliveredAt`, and when the coordinator is gone sends the tower one `blocked` and records `escalatedAt`. A train cannot pass `land` before every landed notice is delivered or escalated. The server keeps a tower's forwards, and the door's answer naming a slip's integrators, in memory only and reads neither back from disk (a file there is one a train can write), so an sb server restart loses them.
+The train and the integrator set each car's state with `train_car` (`received`, `returned`, `landed`, `dropped`); the sb server sends the coordinator one intercom notice per (car, state) under `kind=car_notice`, retries at 30 s, 2 min and 5 min, records `deliveredAt`, and when the coordinator is gone sends the tower one `blocked` and records `escalatedAt`. A train cannot pass `land` before every landed notice is delivered or escalated. A car the integrator returns at receipt is on no train, so no train's step waits for its notice: the integrator's own session waits for it, and calls the tower `blocked` with the notice text when the sb server restarted before the notice was delivered. The server keeps a tower's forwards, and the door's answer naming a slip's integrators, in memory only and reads neither back from disk (a file there is one a train can write), so an sb server restart loses them.
 
 <details>
 <summary>Details</summary>
 
 The refusals say so since 0.75.1: within 24 hours of the server's start, the integrator's `train_car` refusal `no forward by a tower carries head ...` names the start time and the way back (the coordinator sends the slip to the tower again and the tower forwards it again), and a tower run whose slip came in before the start is told to ask the door again.
+
+The integrator's wait is the memory of its own pi process (`src/carwait.ts`); nothing is read from disk. It asks the server's book every 15 s until the `returned` notice is delivered or escalated. It hands the notice to the tower when the server no longer holds the car, when the notice stayed undelivered for a day, and when the session ends while it still waits (a reload keeps the wait); a tower that does not take the call is asked again 30 s later, ten times at most. A pi process that is killed hands over nothing.
+
+A new life needs a forward the tower made after the car's end, so the slip the car was returned on gets no second answer (`car <ticket> is already returned`). The server keeps the life before in memory beside the new one: its notice is still sent, and the train that dropped the car still reads the state it set; the car file on disk shows the newest life. At `received` the server runs the git check of `landed` on the car's head, against the remote of the integrator's workspace checkout and the app's `integration.base` in that checkout's `apps.json`: a head on that branch is refused, a project whose remote cannot be read is received unchecked (the tool says so; an open reads no remote there either, so such a train cannot set `landed`), an app whose remote is read but that names no usable `integration.base` is refused, and a fetch that fails refuses the receipt. The check runs before the server takes sets one at a time, so a slow fetch does not hold up a train's `landed`. A car merged by squash or rebase has no head on the base, so the check does not find it.
 
 </details>
 

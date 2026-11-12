@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join, parse, resolve } from "node:path";
 import type { IntercomLike } from "./kit.ts";
 import type { HerdrRun } from "../herdr.ts";
-import { panes } from "../herdr.ts";
+import { panes, workspaces } from "../herdr.ts";
 import { trainFromToken } from "../trainrole.ts";
 import { CarBook, type Look } from "./carbook.ts";
 import { CarNotices } from "./carnotices.ts";
@@ -95,6 +95,8 @@ export function startCars(o: StartCars): Cars {
 	let notices: CarNotices | undefined;
 	const book = new CarBook({
 		stateDir: o.slot.stateDir, dir: o.slot.dir, now: o.now, ...(o.startedAt !== undefined ? { startedAt: o.startedAt } : {}), look: (session) => look(o, session), git: runGit, knownHosts: knownHostsOfUser(), exists: existsSync, log: o.log,
+		// The checkout of the session's workspace, as the tower's open reads it (towers.ts): where the check at `received` finds the project's remote and the app's base.
+		checkoutOf: async (seen) => (seen.workspace ? (await workspaces(o.run)).find((w) => w.workspace_id === seen.workspace)?.worktree?.checkout_path : undefined) ?? seen.cwd,
 		startOf: o.startOf, onChange: () => notices?.kick(), ...o.over,
 	});
 	notices = new CarNotices({ book, now: o.now, intercom: () => o.client(), tower: (workspace) => towerId(o.slot, workspace), log: o.log });

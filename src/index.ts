@@ -87,7 +87,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		// The cars' way to the sb server (traincar.ts): the integrator's and the trains' `train_car` tool, added at the join, and the guard's source for notices.
 		const cars = carLink(kit);
 		let trainGuard: TrainGuard | undefined;
-		const addTrainCar = trainCarTool(kit, () => trainGuard, cars);
+		const addTrainCar = trainCarTool(kit, () => trainGuard, cars, (text) => reach.callTower(text, undefined, false, "blocked"));
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote(), tools.addDuty(), addTrainCar()), onMain: link.look, control: () => control });
 		// `look` (above) starts and upgrades the sb server (src/server/) and is the way to it; a session that is no part of that has none.
 		const tools = createTools(kit, { ...reach, mainDuty, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), link, server: look, boardFill: createBoardFill(kit) });

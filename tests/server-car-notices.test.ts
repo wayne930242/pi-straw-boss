@@ -4,7 +4,7 @@ import { fieldsOf } from "../src/header.ts";
 import { CarBook } from "../src/server/carbook.ts";
 import { CarNotices, type Intercom } from "../src/server/carnotices.ts";
 import { noticeStatus, noticeSatisfied } from "../src/train/cars.ts";
-import { forwardEntry } from "./train-guard-rig.ts";
+import { forwardEntry, slipBlock } from "./train-guard-rig.ts";
 import { type CarCtx, trainCar } from "../src/traincar.ts";
 import { carWorld, type CarWorld, COORD, INTEG, repo } from "./train-car-rig.ts";
 import { SHA_A } from "./train-fixtures.ts";
@@ -202,4 +202,59 @@ test("each state of a car is told on its own: landed after received is a second 
 	assert.match(ic.to(COORD)[1]!.text, new RegExp(`\\] landed in 1\\.2\\.0, your commit is ${pushed}$`));
 	assert.equal(fieldsOf(ic.to(COORD)[1]!.text)!.role, "train");
 	assert.deepEqual(noticeSatisfied([w.book.read("acme")[0]!], ["T-15"], "landed"), []);
+});
+
+test("the message ids of a notice are the state's own: a car returned again in a new life (#14), or set again after a restart, goes out under ids the broker has not seen (it delivers no id twice)", async () => {
+	const w = carWorld();
+	worlds.push(w);
+	const ic = new FakeIntercom();
+	const senderOf = (book: CarBook) => new CarNotices({ book, now: w.now, intercom: () => ic, tower: (ws) => `sb-tower-${ws.toLowerCase()}` });
+	const ctx: CarCtx = { cwd: "/", sessionManager: { getBranch: () => [forwardEntry(COORD)] } };
+	// The same slip, returned with the same words each time: only the moment differs.
+	const returned = (book: CarBook) => (book.noteForward({ fwd: "e".repeat(16), from: COORD, to: [INTEG], text: slipBlock() }), trainCar({ role: () => "main", train: () => undefined, manifest: () => undefined, client: w.integ, home: w.root }, { car: "T-15", state: "returned", reason: "no accept", project: "acme" }, ctx));
+	const first = senderOf(w.book);
+	await returned(w.book);
+	await first.tick();
+	w.tick(60 * SECOND);
+	await returned(w.book);
+	await first.tick();
+	w.tick(60 * SECOND);
+	const again = new CarBook({ ...w.deps } as never);
+	w.cars.book = again;
+	await returned(again);
+	await senderOf(again).tick();
+	const told = ic.to(COORD);
+	assert.deepEqual(told.map((s) => s.text.replace(/^\[[^\]]*\] /, "")), Array.from({ length: 3 }, () => "returned: your car T-15 (aaaaaaaaaaaa): no accept"));
+	assert.ok(told.every((s) => /^car-[0-9a-f]{12}-returned-1$/.test(s.messageId ?? "")), told.map((s) => s.messageId).join(" "));
+	assert.equal(new Set(told.map((s) => s.messageId)).size, 3, told.map((s) => s.messageId).join(" "));
+});
+
+test("car-forward-F001: a new life that takes the car's file name while a send of the life before is in flight does not get its result: the earlier life is delivered, the tick does not throw, and each life is told once", async () => {
+	const w = carWorld();
+	worlds.push(w);
+	const ic = new FakeIntercom();
+	let release!: () => void;
+	const gate = new Promise<void>((r) => (release = r));
+	const send = ic.send;
+	let held = true;
+	ic.send = async (to, options) => { if (held) { held = false; await gate; } return send(to, options); };
+	const sender = new CarNotices({ book: w.book, now: w.now, intercom: () => ic, tower: (ws) => `sb-tower-${ws.toLowerCase()}` });
+	const ctx: CarCtx = { cwd: "/", sessionManager: { getBranch: () => [forwardEntry(COORD)] } };
+	const returned = (reason: string) => (w.book.noteForward({ fwd: "e".repeat(16), from: COORD, to: [INTEG], text: slipBlock() }), trainCar({ role: () => "main", train: () => undefined, manifest: () => undefined, client: w.integ, home: w.root }, { car: "T-15", state: "returned", reason, project: "acme" }, ctx));
+	await returned("no accept");
+	const tick = sender.tick();
+	// The first send waits at the broker; meanwhile the coordinator sends the head again and the integrator returns it in a new life.
+	await new Promise((r) => setImmediate(r));
+	w.tick(60 * SECOND);
+	await returned("the review is missing");
+	release();
+	await tick;
+	const lives = w.book.read("acme");
+	const of = (reason: string) => lives.find((v) => v.file.states[0]!.reason === reason)!;
+	assert.equal(noticeStatus(of("no accept").notice, "returned").kind, "delivered", "the result lands on the life it was sent for");
+	assert.notEqual(noticeStatus(of("the review is missing").notice, "returned").kind, "delivered");
+	await sender.tick();
+	w.tick(10 * 60 * SECOND);
+	await sender.tick();
+	assert.deepEqual(ic.to(COORD).map((s) => s.text.replace(/^\[[^\]]*\] /, "")), ["returned: your car T-15 (aaaaaaaaaaaa): no accept", "returned: your car T-15 (aaaaaaaaaaaa): the review is missing"], "each life told once");
 });

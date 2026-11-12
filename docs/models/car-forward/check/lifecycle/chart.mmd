@@ -1,0 +1,47 @@
+---
+title: "a car's life while the sb server stays up"
+---
+stateDiagram-v2
+  s0: No slip yet
+  s1: Slip waits at the tower
+  s2: Slip with the integrator
+  s3: Returned by the integrator, telling its coordinator
+  s4: Received, telling its coordinator
+  s5: Returned by the integrator, told
+  s6: Received, told
+  s7: Returned by the integrator, told#59; the same head waits at the tower
+  s8: On a train
+  s9: Returned by the integrator, told#59; the integrator holds the same head again
+  s10: Dropped by the train, telling its coordinator
+  s11: On a train, merged to the base
+  s12: Dropped by the train, told
+  s13: Landed, telling its coordinator
+  s14: Dropped by the train, told#59; the same head waits at the tower
+  s15: Landed, told
+  s16: Landed, told#59; the same head waits at the tower
+  s17: Dropped by the train, told#59; the integrator holds the same head again
+  s18: Landed, told#59; the integrator holds the same head again
+  [*] --> s0
+  s0 --> s1: the coordinator sends the car's slip to the tower
+  s1 --> s2: the tower forwards the slip to the integrator
+  s2 --> s3: the integrator returns the car
+  s2 --> s4: the integrator sets the car received
+  s3 --> s5: the coordinator gets the notice
+  s4 --> s6: the coordinator gets the notice
+  s5 --> s7: the coordinator sends the same head again
+  s6 --> s8: the tower opens a train with the car
+  s7 --> s9: the tower forwards the slip to the integrator
+  s8 --> s10: the train drops the car
+  s8 --> s11: the train merges the car to the base
+  s9 --> s3: the integrator returns the car: a new life
+  s9 --> s4: the integrator sets the car received: a new life
+  s10 --> s12: the coordinator gets the notice
+  s11 --> s13: the train sets the car landed
+  s12 --> s14: the coordinator sends the same head again
+  s13 --> s15: the coordinator gets the notice
+  s14 --> s17: the tower forwards the slip to the integrator
+  s15 --> s16: the coordinator sends the same head again
+  s16 --> s18: the tower forwards the slip to the integrator
+  s17 --> s3: the integrator returns the car: a new life
+  s17 --> s4: the integrator sets the car received: a new life
+  s18 --> s3: sb refuses to receive a car that is on the base already, and the integrator returns it with that word
