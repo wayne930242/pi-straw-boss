@@ -162,7 +162,7 @@ A step an agent would have to improvise is not in the model.
 - The tower not taking a `blocked` call. The sender and the waiting session each try ten times, 30 s apart, and then stop; with a coordinator that never comes back, nobody is told.
 - A notice the server leaves undelivered for a day (the sender stops then): the waiting session hands it to the tower, which the model does not show.
 - A car merged by squash or rebase. The model has "merged" or not; the real check at `received` reads the car's head on the base's branch, and a squashed car has no head there. For such a project a restart still lets a landed car be received again.
-- The check at `received` not running: a project whose remote or base the server cannot read is received unchecked.
+- The check at `received` not running: a project whose remote the server cannot read is received unchecked (an app whose remote is read but that names no usable base is refused, car-forward-F003).
 - The tower's side of a forward: the door's answer (`namedFor`), a slip's event that is dropped after 24 h or when its run ends, and an ally run.
 - The sender's own 24 h limit on a notice, the exact retry times (30 s, 2 min, 5 min are one "not delivered yet" state), and the back-off of looking for a coordinator that is away.
 - The registration secret, the `landed` check against the remote beyond "merged" or not, the three failed checks that close a car, and a train reopened by a repeated open (it can drop but not land).

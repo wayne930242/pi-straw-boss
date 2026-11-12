@@ -74,6 +74,8 @@ function makeRepo(world: CarWorld) {
 	writeFileSync(join(clone, "b.txt"), "b");
 	git(clone, "add", "b.txt");
 	git(clone, "commit", "-m", "only here");
+	// A project with a remote names its apps' base (the server refuses a receipt it cannot check against it, car-forward-F003); `appBase` writes another.
+	appBase(world);
 	return { remote, url: PUBLIC_URL, pushed, local: git(clone, "rev-parse", "HEAD") };
 }
 
@@ -84,7 +86,7 @@ export function appBase(world: CarWorld, base = "develop", app = "web") {
 }
 
 /**
- * A bare "remote" (`remote`, read by git as `url`), the tower's checkout and the train's clone of it, with two commits on `develop` in the train's clone: the first pushed, the second only there. Made once per world; call it before `opened()` so the open reads the remote
+ * A bare "remote" (`remote`, read by git as `url`), the tower's checkout (its apps.json names `develop` as app web's base) and the train's clone of it, with two commits on `develop` in the train's clone: the first pushed, the second only there. Made once per world; call it before `opened()` so the open reads the remote
  * from the checkout.
  */
 export function repo(world: CarWorld) {

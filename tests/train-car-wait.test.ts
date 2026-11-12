@@ -211,3 +211,22 @@ test("a session that ends while it still waits hands the notice to the tower, on
 	await open.watch.end();
 	assert.equal(open.calls.length, 1);
 });
+
+test("car-forward-F005: a session that ends while a look is calling the tower lets that look finish: the tower gets one blocked call, not two", async () => {
+	const waits: ReturnWait[] = [], calls: string[] = [];
+	let release!: () => void, entered!: () => void;
+	const gate = new Promise<void>((r) => (release = r)), inside = new Promise<void>((r) => (entered = r));
+	const watch = createReturnWatch({
+		session: () => INTEG, now: () => 0, waits,
+		read: async () => [], // the server holds nothing of the car: the look hands it to the tower
+		callTower: async (text) => { calls.push(text); entered(); await gate; },
+	});
+	watch.add({ project: "acme", app: "web", head: "a".repeat(40), ticket: "T-15", coordinator: COORD, at: "2026-11-07T08:00:00.000Z", line: "returned: your car T-15 (aaaaaaaaaaaa): no accept" });
+	const look = watch.tick();
+	await inside;
+	const ended = watch.end();
+	release();
+	await Promise.all([look, ended]);
+	assert.equal(calls.length, 1, calls.join("\n"));
+	assert.equal(watch.size(), 0);
+});

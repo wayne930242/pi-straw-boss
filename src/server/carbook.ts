@@ -103,8 +103,10 @@ interface Registration { session: string; pid: number; started: string; pane: st
 export interface CarRef { project?: string; app?: string; head: string; tickets?: string[]; branch?: string; coordinator?: string }
 export interface SetRequest { secret: unknown; state: CarState; car: CarRef; fields?: Record<string, unknown> }
 /** `notice` is the line the coordinator is sent for the state: the integrator's wait for a `returned` notice hands it to the tower when this server's book is gone before it was delivered (#13). */
-export interface SetResult { state: CarState; at: string; file: string; coordinator: string; notice?: string }
+export interface SetResult { state: CarState; at: string; file: string; coordinator: string; notice?: string; /** Set on a `received` the server could not check against the base (the remote of the checkout was not read): why. */ unchecked?: string }
 interface Held { file: CarFile; notice?: NoticeRecord }
+/** The check at `received` run before the queue (`precheck`): for which car, and why it was not checked when it could not be. */
+interface Checked { head: string; app: string; unchecked?: string }
 
 const text = (v: unknown, max: number): v is string => typeof v === "string" && v.trim() !== "" && v.length <= max;
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -358,29 +360,62 @@ export class CarBook {
 		}
 		return out.sort((a, b) => a.entry.at.localeCompare(b.entry.at));
 	}
-	/** The notice record of one state of one car file, as it is now. */
-	noticeOf(project: string, name: string, state: CarState): StateNotice | undefined { return this.cars.get(project)?.get(name)?.notice?.states[state]; }
-	/** Changes one notice record (the sender is the only caller) and writes it. */
-	updateNotice(project: string, name: string, state: CarState, change: (record: StateNotice) => void): void {
-		const held = this.cars.get(project)?.get(name);
-		if (!held) return;
+	/**
+	 * The life a state entry belongs to, wherever the book keeps it now: a new life of the car moves the one before to `<name>#<n>` (#14), maybe while the sender awaits a send of that earlier life (car-forward-F001). A life's later states keep the entries of its
+	 * earlier ones (`addState` copies the list, not the entries), so the entry names its life and no other.
+	 */
+	private lifeOf(project: string, name: string, entry: StateEntry): [string, Held] | undefined {
+		for (const [key, held] of this.cars.get(project) ?? []) if ((key === name || key.startsWith(`${name}${PAST}`)) && held.file.states.includes(entry)) return [key, held];
+		return undefined;
+	}
+	/** The notice record of one state of the life `entry` was set in, as it is now. */
+	noticeOf(project: string, name: string, entry: StateEntry): StateNotice | undefined { return this.lifeOf(project, name, entry)?.[1].notice?.states[entry.state]; }
+	/** Changes the notice record of one state of the life `entry` was set in (the sender is the only caller) and writes it. */
+	updateNotice(project: string, name: string, entry: StateEntry, change: (record: StateNotice) => void): void {
+		const life = this.lifeOf(project, name, entry);
+		if (!life) return;
+		const [key, held] = life, state = entry.state;
 		const notice: NoticeRecord = held.notice ?? { v: 1, states: {} };
 		const record: StateNotice = notice.states[state] ?? { attempts: [] };
 		change(record);
 		notice.states[state] = record;
 		held.notice = notice;
-		this.writeCar(project, name, held);
+		this.writeCar(project, key, held);
 	}
 
 	// ---- setting a state
 
+	/**
+	 * Sets are taken one at a time. The git check at `received` (`unlanded`, a fetch of the base) runs before the request joins that queue, since it reads nothing the book holds: a train's `landed` behind a few receipts is not held up by their fetches
+	 * (car-forward-F002). Inside the queue the check runs again only when the book changed in between so that the receipt needs it and it was not run.
+	 */
 	set(req: SetRequest): Promise<SetResult> {
-		const run = this.chain.then(() => this.setNow(req));
-		this.chain = run.catch(() => undefined);
+		const run = this.precheck(req).then((checked) => {
+			const next = this.chain.then(() => this.setNow(req, checked));
+			this.chain = next.catch(() => undefined);
+			return next;
+		});
 		return run;
 	}
+	/** The check at `received` of a receipt that would start a car or a life, run outside the queue. Anything other than the check's own refusal is left for `setNow` to say. */
+	private async precheck(req: SetRequest): Promise<Checked | undefined> {
+		if (req.state !== "received" || !isObject(req.car) || !SHA_RE.test(String(req.car.head))) return undefined;
+		const head = String(req.car.head);
+		let found: { setter: Setter; look: Look } | undefined;
+		try { found = await this.who(req.secret); } catch { return undefined; }
+		const project = req.car.project, sent = this.forwardOf(head, found.setter.session);
+		if (found.setter.role !== "main" || !isName(project) || !sent || sent.slip.over) return undefined;
+		const name = carFileName(sent.slip.app, head);
+		if (!this.startsLife(project, name, sent.at)) return undefined;
+		return { head, app: sent.slip.app, ...(await this.unlanded(project, sent.slip.app, head, sent.slip.tickets[0] ?? name, found.look)) };
+	}
+	/** Whether a receipt now would start the car or a new life of it (no car under `name`, or one that ended before the forward). */
+	private startsLife(project: string, name: string, sentAt: number): boolean {
+		const file = this.cars.get(project)?.get(name)?.file, ended = file ? endOf(file) : undefined;
+		return !file || (ended !== undefined && sentAt > Date.parse(ended.at));
+	}
 
-	private async setNow(req: SetRequest): Promise<SetResult> {
+	private async setNow(req: SetRequest, checked?: Checked): Promise<SetResult> {
 		const { setter, train, look } = await this.who(req.secret);
 		const state = req.state, fields = isObject(req.fields) ? { ...req.fields } : {};
 		const bad = validateStateFields(state, fields);
@@ -394,7 +429,7 @@ export class CarBook {
 		if (setter.role === "main" && (state === "dropped" || state === "landed")) throw refusal(`sb: only a train sets ${state}; the integrator sets received and returned`);
 		if (setter.role === "train" && state === "received") throw refusal("sb: only the integrator sets received");
 
-		let file: CarFile | undefined, name: string, held: Held | undefined, label: string, before: Held | undefined;
+		let file: CarFile | undefined, name: string, held: Held | undefined, label: string, before: Held | undefined, unchecked: string | undefined;
 		if (setter.role === "main") {
 			// The integrator's: the slip arrived as a tower's forward to this session; the car is what that slip says, and the session that sent it to the tower is the coordinator. Nothing of the car comes from the caller.
 			const sent = this.forwardOf(head, setter.session);
@@ -426,7 +461,7 @@ export class CarBook {
 				// A returned car goes to the session that really sent it, with the word.
 				fields.reason = word;
 			}
-			if (state === "received" && !file) await this.unlanded(project, slip.app, head, label, look);
+			if (state === "received" && !file) unchecked = checked && checked.head === head && checked.app === slip.app ? checked.unchecked : (await this.unlanded(project, slip.app, head, label, look)).unchecked;
 			file ??= emptyCar({ project, app: slip.app, tickets: slip.tickets, branch: slip.branch, head, coordinator: sent.from });
 		} else {
 			// A train's claim, limited to its own train: the car is one of the manifest the server was handed at the open, and the integrator received it.
@@ -452,18 +487,19 @@ export class CarBook {
 		const entry = next.states.at(-1)!, stored: Held = { file: next, ...(held?.notice ? { notice: held.notice } : before ? { notice: { v: 1, states: {} } } : {}) };
 		const forProject = this.cars.get(project) ?? new Map<string, Held>();
 		if (before) {
-			// The life before moves to a key of its own, and the new life goes last in the book, where a new car would.
+			// The new life goes last in the book, where a new car would, and the life before right after it under a key of its own: a reader that takes the first entry of a head (a client older than lives, `.find`) gets the life the car lives now (car-forward-F004).
+			const past = `${name}${PAST}${[...forProject.keys()].filter((k) => k.startsWith(`${name}${PAST}`)).length + 1}`;
 			forProject.delete(name);
-			forProject.set(`${name}${PAST}${[...forProject.keys()].filter((k) => k.startsWith(`${name}${PAST}`)).length + 1}`, before);
-		}
-		forProject.set(name, stored);
+			forProject.set(name, stored);
+			forProject.set(past, before);
+		} else forProject.set(name, stored);
 		this.cars.set(project, forProject);
 		this.writeCar(project, name, stored);
 		this.d.log?.("cars-set", { project, state, car: label.slice(0, 40) });
 		queueMicrotask(() => this.d.onChange?.());
 		let notice: string | undefined;
 		try { notice = stateLine(next, entry); } catch { notice = undefined; }
-		return { state, at: entry.at, file: name, coordinator: next.coordinator, ...(notice ? { notice } : {}) };
+		return { state, at: entry.at, file: name, coordinator: next.coordinator, ...(notice ? { notice } : {}), ...(unchecked ? { unchecked } : {}) };
 	}
 
 	/**
@@ -503,12 +539,20 @@ export class CarBook {
 	/**
 	 * A car lands once (#15): `received` is refused for a head that git, run here, finds on the base's branch of the project's remote already. Nothing the book remembers is asked, so it holds after a restart, when the book no longer knows that the car landed, and
 	 * for a head somebody pushed to the base by hand. The remote and the base are read now: the remote of the checkout of the integrator's workspace (where an open reads it) and the app's `integration.base` in that checkout's apps.json. The fetch is the one of
-	 * `landed`, into a mirror of its own. When the remote or the base cannot be read nothing is checked (`cars-received-unchecked` is logged): such a project cannot land a car either. When they are read and git fails, `received` is refused, since the rule is that a car on
-	 * the base is never received. A head that is not in the base's history is the usual car. A car merged by squash or rebase has no head on the base and is not found here.
+	 * `landed`, into a mirror of its own. When the checkout's remote cannot be read nothing is checked (`cars-received-unchecked` is logged, and the integrator's tool says so): an open reads the remote from the same checkout, so a train of such a project has no remote and
+	 * cannot set `landed` either. When the remote is read but the app names no usable `integration.base`, `received` is refused (car-forward-F003; the boss's rule that a car is never landed twice wins), and so it is when git fails. A head that is not in the base's history is the usual car. A car merged by squash or rebase has no head on the base and is not found here.
 	 */
-	private async unlanded(project: string, app: string, head: string, label: string, look: Look): Promise<void> {
+	private async unlanded(project: string, app: string, head: string, label: string, look: Look): Promise<{ unchecked?: string }> {
 		const where = await this.baseOf(look, app);
-		if (!where) return void this.d.log?.("cars-received-unchecked", { project, car: label.slice(0, 40) });
+		if ("unread" in where) {
+			this.d.log?.("cars-received-unchecked", { project, car: label.slice(0, 40) });
+			return { unchecked: `the remote of the integrator's workspace checkout could not be read, so whether head ${head.slice(0, 12)} is on the base already was not checked` };
+		}
+		if ("refused" in where) {
+			const word = `sb: car ${label} is not received: ${where.refused}, so whether its head ${head.slice(0, 12)} is on the base already cannot be checked. A car that is on the base is never received again: the boss sets integration.base of app ${app}`;
+			this.d.log?.("cars-received-refused", { project, car: label.slice(0, 40), reason: word.slice(0, 200) });
+			throw refusal(word);
+		}
 		const { url, base } = where;
 		let on: boolean;
 		try {
@@ -526,17 +570,21 @@ export class CarBook {
 			throw refusal(word);
 		}
 		if (on) throw refusal(landedWord(label, head, `is on ${base} of the project's remote already`));
+		return {};
 	}
-	/** Where a car of `app` lands, read now and from nothing the book holds: the remote of the checkout of the session's workspace (its own folder when the workspace has none) and the app's `integration.base` in that checkout's apps.json. Undefined when either cannot be read. */
-	private async baseOf(look: Look, app: string): Promise<{ url: string; base: string } | undefined> {
+	/** Where a car of `app` lands, read now and from nothing the book holds: the remote of the checkout of the session's workspace (its own folder when the workspace has none) and the app's `integration.base` in that checkout's apps.json. `unread` when the remote cannot be read, `refused` (why) when the remote is read and the base is not there or not usable. */
+	private async baseOf(look: Look, app: string): Promise<{ url: string; base: string } | { unread: true } | { refused: string }> {
 		let checkout: string | undefined;
 		try { checkout = await this.d.checkoutOf?.(look); } catch { checkout = undefined; }
 		checkout ??= look.cwd;
 		const url = await this.remoteOf(checkout);
-		if (!checkout || !url) return undefined;
+		if (!checkout || !url) return { unread: true };
 		const apps = readApps(checkout), entry = apps.ok ? apps.apps.find((a) => a.name === app) : undefined;
-		const base = entry && isObject(entry.integration) ? entry.integration.base : undefined;
-		return typeof base === "string" && BASE_RE.test(base) && !base.includes("..") ? { url, base } : undefined;
+		if (!apps.ok) return { refused: "the apps.json of the integrator's workspace checkout cannot be read" };
+		if (!entry) return { refused: `the apps.json of the integrator's workspace checkout names no app ${app}` };
+		const base = isObject(entry.integration) ? entry.integration.base : undefined;
+		if (typeof base !== "string" || !BASE_RE.test(base) || base.includes("..")) return { refused: `app ${app} names no usable integration.base in the apps.json of the integrator's workspace checkout` };
+		return { url, base };
 	}
 	/**
 	 * The base's branch of a remote, fetched for one check and removed after it: the steps the comment of `landed` gives, which the check at `received` shares. `answer` gets git in the mirror and the tip `ls-remote` read; the mirror is inspected once more after it

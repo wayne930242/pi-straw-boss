@@ -70,14 +70,15 @@ export class CarNotices {
 		if (record.deliveredAt || now - Date.parse(entry.at) > KEEP_MS) return;
 		const intercom = this.d.intercom();
 		if (!intercom) return;
-		const key = `${project}/${name}/${state}`, gone = this.away.get(key);
+		// Keyed by the state's own life (its id stem names the moment it was set), not by the car's file name, which a new life takes over (car-forward-F001).
+		const key = idStem(item), gone = this.away.get(key);
 		if (gone && now < gone.next) return;
 		let live: boolean;
 		try { live = (await intercom.listSessions()).some((s) => s.id === file.coordinator); } catch { return; } // the broker cannot be asked: not the coordinator's absence
 		if (live) this.away.delete(key);
 		else { const wait = gone ? Math.min(gone.wait * 2, MAX_AWAY_MS) : AWAY_MS; this.away.set(key, { next: now + wait, wait }); }
 		const sends = record.attempts.filter((a) => a.outcome !== "not-live");
-		const change = (fn: (r: StateNotice) => void) => this.d.book.updateNotice(project, name, state, fn);
+		const change = (fn: (r: StateNotice) => void) => this.d.book.updateNotice(project, name, entry, fn);
 		if (!live) {
 			// Not live at an attempt: told to the tower once; a coordinator that comes back live later still gets the notice.
 			if (!record.escalatedAt) {
@@ -124,7 +125,7 @@ export class CarNotices {
 
 	/** One `blocked` call to the tower of the setter's workspace, naming the car, the state, the coordinator and the notice text. It counts once the tower's mailbox has it. */
 	private async escalate(item: ReturnType<CarBook["pending"]>[number], why: string): Promise<void> {
-		const { project, name, file, entry } = item, state = entry.state, record: StateNotice = this.d.book.noticeOf(project, name, state) ?? { attempts: [] };
+		const { project, name, file, entry } = item, state = entry.state, record: StateNotice = this.d.book.noticeOf(project, name, entry) ?? { attempts: [] };
 		if (record.escalatedAt) return;
 		const tries = record.tower ?? [], now = this.d.now();
 		if (tries.length >= TOWER_TRIES) return;
@@ -144,7 +145,7 @@ export class CarNotices {
 		} catch (error) {
 			attempt = { at: iso(now), outcome: "failed", answer: short((error as Error).message) };
 		}
-		this.d.book.updateNotice(project, name, state, (r) => {
+		this.d.book.updateNotice(project, name, entry, (r) => {
 			(r.tower ??= []).push(attempt);
 			if (taken) r.escalatedAt = iso(this.d.now());
 		});

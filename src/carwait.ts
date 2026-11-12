@@ -39,7 +39,7 @@ export const handedWord = (wait: Pick<ReturnWait, "ticket" | "project" | "app" |
 
 export function createReturnWatch(d: ReturnWatchDeps) {
 	const waits = d.waits ?? heldWaits();
-	let busy = false;
+	let running: Promise<void> | undefined;
 	const drop = (wait: ReturnWait) => { const i = waits.indexOf(wait); if (i >= 0) waits.splice(i, 1); };
 	const mine = () => { const session = d.session(); return waits.filter((w) => w.session === session); };
 
@@ -58,32 +58,34 @@ export function createReturnWatch(d: ReturnWatchDeps) {
 	}
 
 	/** One look at every wait of this session: told or answered by a later state ends it, a car the server no longer holds is handed to the tower, and a server that does not answer is asked again at the next look. */
-	async function tick(): Promise<void> {
-		if (busy) return;
-		busy = true;
-		try {
-			const now = d.now(), views = new Map<string, CarView[] | undefined>();
-			for (const wait of mine()) {
-				if (!views.has(wait.project)) views.set(wait.project, await d.read(wait.project).catch(() => undefined));
-				const cars = views.get(wait.project);
-				if (!cars) continue; // the server does not answer (it may be starting): the wait stays, however long
-				const lives = livesOf(cars, wait.app, wait.head), life = lives.find((v) => v.file.states.some((s) => s.state === "returned" && s.at === wait.at));
-				if (life) {
-					// The server holds the state: told (delivered, or the tower was told by the server) ends the wait. While it still sends, the wait goes on, for a day: the server stops sending then, so the tower is handed what it left.
-					if (noticeStatus(life.notice, "returned").kind !== "pending") drop(wait);
-					else if (now - wait.since > KEEP_MS) await hand(wait, WHY.stale, now);
-					continue;
-				}
-				// The car is in the book with another state: its coordinator sent the slip again after a restart, and that slip's state is the answer it gets.
-				if (lives.length) { drop(wait); continue; }
-				// The server holds nothing of the car: it started again and the notice went with its book.
-				await hand(wait, WHY.lost, now);
+	function tick(): Promise<void> {
+		if (running) return running;
+		running = look().finally(() => { running = undefined; });
+		return running;
+	}
+	async function look(): Promise<void> {
+		const now = d.now(), views = new Map<string, CarView[] | undefined>();
+		for (const wait of mine()) {
+			if (!views.has(wait.project)) views.set(wait.project, await d.read(wait.project).catch(() => undefined));
+			const cars = views.get(wait.project);
+			if (!cars) continue; // the server does not answer (it may be starting): the wait stays, however long
+			const lives = livesOf(cars, wait.app, wait.head), life = lives.find((v) => v.file.states.some((s) => s.state === "returned" && s.at === wait.at));
+			if (life) {
+				// The server holds the state: told (delivered, or the tower was told by the server) ends the wait. While it still sends, the wait goes on, for a day: the server stops sending then, so the tower is handed what it left.
+				if (noticeStatus(life.notice, "returned").kind !== "pending") drop(wait);
+				else if (now - wait.since > KEEP_MS) await hand(wait, WHY.stale, now);
+				continue;
 			}
-		} finally { busy = false; }
+			// The car is in the book with another state: its coordinator sent the slip again after a restart, and that slip's state is the answer it gets.
+			if (lives.length) { drop(wait); continue; }
+			// The server holds nothing of the car: it started again and the notice went with its book.
+			await hand(wait, WHY.lost, now);
+		}
 	}
 
-	/** The session ends (not a reload): one last look, then every notice still awaited is handed to the tower, once, and the wait is over either way. */
+	/** The session ends (not a reload): the look in flight finishes first (so a wait it hands over is not handed twice, car-forward-F005), one last look, then every notice still awaited is handed to the tower, once, and the wait is over either way. */
 	async function end(): Promise<void> {
+		if (running) await running;
 		await tick();
 		for (const wait of mine()) {
 			drop(wait);

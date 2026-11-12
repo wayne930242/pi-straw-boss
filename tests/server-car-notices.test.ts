@@ -228,3 +228,33 @@ test("the message ids of a notice are the state's own: a car returned again in a
 	assert.ok(told.every((s) => /^car-[0-9a-f]{12}-returned-1$/.test(s.messageId ?? "")), told.map((s) => s.messageId).join(" "));
 	assert.equal(new Set(told.map((s) => s.messageId)).size, 3, told.map((s) => s.messageId).join(" "));
 });
+
+test("car-forward-F001: a new life that takes the car's file name while a send of the life before is in flight does not get its result: the earlier life is delivered, the tick does not throw, and each life is told once", async () => {
+	const w = carWorld();
+	worlds.push(w);
+	const ic = new FakeIntercom();
+	let release!: () => void;
+	const gate = new Promise<void>((r) => (release = r));
+	const send = ic.send;
+	let held = true;
+	ic.send = async (to, options) => { if (held) { held = false; await gate; } return send(to, options); };
+	const sender = new CarNotices({ book: w.book, now: w.now, intercom: () => ic, tower: (ws) => `sb-tower-${ws.toLowerCase()}` });
+	const ctx: CarCtx = { cwd: "/", sessionManager: { getBranch: () => [forwardEntry(COORD)] } };
+	const returned = (reason: string) => (w.book.noteForward({ fwd: "e".repeat(16), from: COORD, to: [INTEG], text: slipBlock() }), trainCar({ role: () => "main", train: () => undefined, manifest: () => undefined, client: w.integ, home: w.root }, { car: "T-15", state: "returned", reason, project: "acme" }, ctx));
+	await returned("no accept");
+	const tick = sender.tick();
+	// The first send waits at the broker; meanwhile the coordinator sends the head again and the integrator returns it in a new life.
+	await new Promise((r) => setImmediate(r));
+	w.tick(60 * SECOND);
+	await returned("the review is missing");
+	release();
+	await tick;
+	const lives = w.book.read("acme");
+	const of = (reason: string) => lives.find((v) => v.file.states[0]!.reason === reason)!;
+	assert.equal(noticeStatus(of("no accept").notice, "returned").kind, "delivered", "the result lands on the life it was sent for");
+	assert.notEqual(noticeStatus(of("the review is missing").notice, "returned").kind, "delivered");
+	await sender.tick();
+	w.tick(10 * 60 * SECOND);
+	await sender.tick();
+	assert.deepEqual(ic.to(COORD).map((s) => s.text.replace(/^\[[^\]]*\] /, "")), ["returned: your car T-15 (aaaaaaaaaaaa): no accept", "returned: your car T-15 (aaaaaaaaaaaa): the review is missing"], "each life told once");
+});

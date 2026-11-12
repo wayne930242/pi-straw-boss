@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { coordinatorWord, landedWord, noticeSatisfied, receivedTold } from "../src/train/cars.ts";
@@ -32,6 +32,7 @@ async function receive(w: CarWorld) {
 
 test("received: the slip is a tower's forward whose sender is the coordinator; the car file and a pending notice follow, and the tool says sb sends it", async () => {
 	const w = world();
+	repo(w);
 	const out = await receive(w);
 	assert.match(out.text, /^Car T-15 is received\. sb tells its coordinator \(sess-coord-1\) by session id and confirms the delivery; the train todo waits for that before the manifest goes to the tower\. You send no notice yourself\.$/);
 	const view = w.book.read("acme");
@@ -351,17 +352,53 @@ test("#15: received is refused for a head that is on the base's remote branch al
 	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-23" }, forward("T-23", SHA_B))).text, /^Car T-23 is received\./);
 });
 
-test("#15: a project whose remote or base the server cannot read is received unchecked, and the log says so", async () => {
-	// No checkout at all, then a checkout whose apps.json names no base for the app.
+test("#15: a project whose remote the server cannot read is received unchecked, the log and the tool say so; one whose remote is read and whose app names no usable base is refused (car-forward-F003)", async () => {
+	// No checkout at all: an open reads no remote there either, so no train of it can land a car.
 	const w = world();
-	await receive(w);
+	assert.match((await receive(w)).text, /Received unchecked: the remote of the integrator's workspace checkout could not be read/);
 	assert.equal(w.logs.filter((l) => l.startsWith("cars-received-unchecked")).length, 1);
-	const w2 = world();
-	const { pushed } = repo(w2);
-	appBase(w2, "develop", "other-app");
-	w2.forwarded(COORD, pushed);
-	assert.match((await trainCar(integratorDeps(w2), received, integratorCtx(forwardEntry(COORD, slipBlock({ head: pushed }))))).text, /^Car T-15 is received\./);
-	assert.equal(w2.logs.filter((l) => l.startsWith("cars-received-unchecked")).length, 1);
+	// A checkout whose apps.json names no base for the app, none at all, or no such app: the head could be on the base, so it is not received.
+	for (const apps of [{ apps: [{ name: "web", dir: ".", integration: {} }] }, { apps: [{ name: "web", dir: ".", integration: { base: "-x" } }] }, { apps: [{ name: "other-app", dir: ".", integration: { base: "develop" } }] }, undefined]) {
+		const w2 = world();
+		const { pushed } = repo(w2);
+		if (apps) writeFileSync(join(w2.checkout, ".straw-boss", "apps.json"), JSON.stringify(apps));
+		else rmSync(join(w2.checkout, ".straw-boss", "apps.json"));
+		w2.forwarded(COORD, pushed);
+		await assert.rejects(trainCar(integratorDeps(w2), received, integratorCtx(forwardEntry(COORD, slipBlock({ head: pushed })))), (e: Error) => /^sb: car T-15 is not received: .*(integration\.base|names no app web|cannot be read).*A car that is on the base is never received again/.test(e.message), JSON.stringify(apps));
+		assert.deepEqual(w2.book.read("acme"), [], "nothing is recorded");
+		assert.equal(w2.logs.filter((l) => l.startsWith("cars-received-unchecked")).length, 0);
+	}
+});
+
+test("car-forward-F002: the git check at received runs before the book's queue: a set of another car is not held while a receipt's fetch is slow", async () => {
+	const w = world();
+	const { local } = repo(w);
+	appBase(w);
+	const real = w.deps.git;
+	let release!: () => void, entered!: () => void;
+	const gate = new Promise<void>((r) => (release = r)), inside = new Promise<void>((r) => (entered = r));
+	let slow = true;
+	w.deps.git = async (cwd: string, args: string[], env?: Record<string, string>) => { if (slow && args.includes("ls-remote")) { slow = false; entered(); await gate; } return real(cwd, args, env); };
+	const forward = (ticket: string, head: string) => { const text = slipBlock({ tickets: ticket, head }); w.book.noteForward({ fwd: "e".repeat(16), from: COORD, to: [INTEG], text }); return integratorCtx(forwardEntry(COORD, text)); };
+	const slowOne = trainCar(integratorDeps(w), { ...received, car: "T-20" }, forward("T-20", local));
+	await inside;
+	// The receipt's check waits at the remote; a return of another car goes through meanwhile.
+	assert.match((await trainCar(integratorDeps(w), { car: "T-21", state: "returned", reason: "no accept", project: "acme" }, forward("T-21", SHA_B))).text, /^Car T-21 is returned\./);
+	release();
+	assert.match((await slowOne).text, /^Car T-20 is received\./);
+});
+
+test("car-forward-F004: cars-read gives a car's current life before the earlier one, so a reader that takes the first entry of a head reads the life the car lives now", async () => {
+	const w = world();
+	w.forwarded();
+	const ctx = integratorCtx(forwardEntry(COORD));
+	await trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "no accept", project: "acme" }, ctx);
+	w.tick(LATER);
+	w.forwarded();
+	await trainCar(integratorDeps(w), received, ctx);
+	const views = await w.integ.read("acme");
+	assert.deepEqual(views.map((v) => v.file.states.map((s) => s.state)), [["received"], ["returned"]]);
+	assert.deepEqual(views.find((v) => v.file.car.head === SHA_A)!.file.states.map((s) => s.state), ["received"]);
 });
 
 // ---- the proof the server asks for

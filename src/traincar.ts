@@ -48,7 +48,7 @@ export interface CarClientDeps {
 	held?: Map<string, string>;
 }
 export interface CarSet { state: CarState; car: Json; fields: Json }
-export interface SetAnswer { state: CarState; at: string; file: string; coordinator: string; notice?: string }
+export interface SetAnswer { state: CarState; at: string; file: string; coordinator: string; notice?: string; unchecked?: string }
 
 /** The session's way to the server's book of cars: it registers once, holds the secret in memory, and asks for states and for the cars of a project. */
 export function createCarClient(d: CarClientDeps) {
@@ -187,7 +187,7 @@ export async function trainCar(deps: CarToolDeps, params: CarParams, ctx: CarCtx
 	const waiting = role === "main" && state === "returned" && deps.returns !== undefined;
 	if (waiting) deps.returns!.add({ project: String(car.project), app: String(car.app), head: String(car.head), ticket, coordinator: told, at: answer.at, line: answer.notice ?? noticeText("returned", { ticket, head: String(car.head), reason: String(fields.reason) }) });
 	const waits = waiting ? "this session waits for that and calls the tower itself if the sb server loses the notice" : `${state === "received" ? "the train todo" : state === "landed" ? "the land step" : "the assemble that removes it"} waits for that${state === "received" ? " before the manifest goes to the tower" : ""}`;
-	const text = `Car ${ticket} is ${state}. sb tells its coordinator (${told}) by session id and confirms the delivery; ${waits}. You send no notice yourself.`;
+	const text = `Car ${ticket} is ${state}. sb tells its coordinator (${told}) by session id and confirms the delivery; ${waits}. You send no notice yourself.${answer.unchecked ? ` Received unchecked: ${answer.unchecked}.` : ""}`;
 	return { text, details: { car: ticket, ...answer } };
 }
 
