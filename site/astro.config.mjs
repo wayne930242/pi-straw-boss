@@ -2,13 +2,18 @@
 // Pages under reference/how-it-works, guide/unattended-device, and releases are generated from docs/ by scripts/sync.mjs.
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
+import mermaid from "astro-mermaid";
 import starlightLinksValidator from "starlight-links-validator";
+import cjkNewlines from "./cjk-newlines.mjs";
 
 export default defineConfig({
 	site: "https://wayne930242.github.io",
 	base: "/pi-straw-boss/docs",
 	trailingSlash: "always",
 	integrations: [
+		// Both before starlight(): they add Sätteri plugins to the processor Starlight then extends.
+		mermaid({ autoTheme: true, enableLog: false }),
+		cjkNewlines(),
 		starlight({
 			title: "pi-straw-boss",
 			description: "Many pi agents, one project, no collisions: a main agent per Herdr tab, a tower per workspace, and a live view of who is doing what.",
