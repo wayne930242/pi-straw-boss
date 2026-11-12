@@ -3705,6 +3705,11 @@ A session that is not in a base on the net closes nothing; an invoker still aliv
 
 ## What it writes
 
+Straw Boss keeps its state in files in the state directory, starting with the sb server's own files, and in Herdr tokens on panes, tabs, and workspaces. The list names each file or token and what writes it.
+
+<details>
+<summary>Details</summary>
+
 - The sb server's files (`server.json`, `server.lock`, `start-error.json`, `server.log`, `server.sock`) in the state directory, or `servers/<hash>/` for another Herdr's slot, and its intercom identity `sb-server-<8 hex>` ([The sb server](#the-sb-server)).
 - Herdr pane token `sb_duty` (a main's kind: `coordinator`, `integrator`, or `standing`; `null` for every other role, cleared at shutdown), written with `sb_role` (`main`, `member` or `tower`; a tower tab is also marked right after it is created; a tab opened for a request is created with the environment variable `STRAW_BOSS_ROLE=main`, which makes its pi promote itself) and workspace token `tower` (the tower's intercom session id), both refreshed every 4 minutes with a 10 minute TTL, written again at once when a new Herdr server takes over (see [A new Herdr server](#sidebar-net-view)), and cleared at shutdown (a tower that quits then closes its own tab if it holds only that pane).
 - Herdr pane tokens `sb_opened_by` (the sender's intercom session id, on a pane a tower opened for a request; `link:<device id>` for a teammate's device, and `integ:<project>` on the integrator a tower opened as its own main; refreshed by its main and cleared at shutdown, so the open limits count only live opened mains) and `sb_open_main` (a one-time mark the opener sets, consumed by the first pi that promotes itself from it).
@@ -3729,6 +3734,8 @@ A session that is not in a base on the net closes nothing; an invoker still aliv
 - The dialog channel `straw-boss/gui/<sha256 prefix of the server's session id>`: registered owner-eligible only by the sb server (its intercom id is `gui.json`'s `ownerSession`), and joined by every session (subagents included) while `gui.json` names a server whose process is alive; each session checks `gui.json` once every 2 s from its start. Besides dialogs it carries the session's document list (pi-herdr-doc-review's ids, paths, display names, reasons, revisions; the bridge asks the owner for the list again when it starts, so a session that reloads lists what is open) and form answers addressed to one document and once per answer id, and the key pad's editor check: the server asks a session's bridge what Enter would submit, and the bridge answers with a class (empty, text, another slash or `!` command, or unknown) and at most the name of a command that ends or replaces the session, never the draft, and only to the server `gui.json` names now whose process is alive.
 
 The tower tab is labelled with the radio tower glyph (U+F043B) alone and its Herdr agent is named `tower-<workspace id>` in lowercase (Herdr agent names are unique per server).
+
+</details>
 
 ## From a shell
 

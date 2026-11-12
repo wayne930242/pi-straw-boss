@@ -3705,6 +3705,11 @@ flowchart TD
 
 ## 它寫入什麼
 
+Straw Boss 把狀態放在 state 目錄的檔案裡（先是 sb server 自己的檔案），以及 Herdr 在 pane、分頁和工作區上的 token。清單列出每個檔案或 token，以及誰寫入它。
+
+<details>
+<summary>細節</summary>
+
 - sb server 的檔案（`server.json`、`server.lock`、`start-error.json`、`server.log`、`server.sock`），在狀態資料夾裡，或對另一個 Herdr 的 slot 是在 `servers/<hash>/` 裡，以及它的 intercom 身分 `sb-server-<8 hex>`（[sb server](#sb-server)）。
 - Herdr pane token `sb_duty`（主智慧體的種類：`coordinator`、`integrator` 或 `standing`；其他每個角色是 `null`，關閉時清除），與 `sb_role`（`main`、`member` 或 `tower`；塔台分頁在建立後也立即被標記；為請求而開的分頁建立時帶有環境變數 `STRAW_BOSS_ROLE=main`，這讓它的 pi 自己升任）及工作區 token `tower`（塔台的 intercom session id）一起寫入，兩者每 4 分鐘更新一次，TTL 為 10 分鐘，新的 Herdr server 接管時立即再寫一次（見[新的 Herdr server](#側邊欄網檢視)），並在關閉時清除（只有那個 pane 的塔台 quit 時，會接著關閉它自己的分頁）。
 - Herdr pane token `sb_opened_by`（發送者的 intercom session id，在塔台為請求開啟的 pane 上；隊友的裝置是 `link:<device id>`，塔台當成自己的主智慧體開啟的整合員是 `integ:<project>`；由它的主智慧體更新並在關閉時清除，所以開啟數量的限制只計存活的已開啟主智慧體）與 `sb_open_main`（開啟者設的一次性標記，由第一個據此自己升任的 pi 消耗）。
@@ -3729,6 +3734,8 @@ flowchart TD
 - 對話頻道 `straw-boss/gui/<sha256 prefix of the server's session id>`：只由 sb server 以具擁有者資格註冊（它的 intercom id 是 `gui.json` 的 `ownerSession`），並在 `gui.json` 指名一個行程存活的 server 期間，由每個 session（包含子智慧體）加入；每個 session 從啟動起每 2 秒檢查一次 `gui.json`。除了對話框之外，它還帶著 session 的文件清單（pi-herdr-doc-review 的 id、路徑、顯示名稱、理由、修訂版；橋接在啟動時再向擁有者要一次清單，所以重新載入的 session 會列出開著的內容）與寄給單一文件、每個答案 id 一次的表單答案，以及按鍵板的編輯器檢查：server 問 session 的橋接 Enter 會送出什麼，而橋接以一個類別回答（空的、文字、另一個 slash 或 `!` 指令，或不明）與至多一個會結束或取代 session 的指令名稱，絕不是草稿，而且只回給 `gui.json` 現在指名、行程存活的 server。
 
 塔台分頁只用無線電塔字形（U+F043B）當標籤，它的 Herdr 智慧體名為小寫的 `tower-<workspace id>`（Herdr 的智慧體名稱在每個 server 裡是唯一的）。
+
+</details>
 
 ## 從 shell 使用
 
