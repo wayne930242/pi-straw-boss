@@ -581,6 +581,27 @@ test("the dismiss-all button counts the finished subagents the server would dism
 	for (const locale of locales) assert.match(m.dismiss_all({ count: 3 }, { locale }), /3/, locale);
 });
 
+test("Dismiss finished takes the ally boxes' finished subagents too: the server's all for this computer's, one key each for a live box that lists dismiss, and the count leaves out what no press can hide", async () => {
+	const { endedSubs, dismissFinished } = await import("../gui/quit.ts");
+	const sub = (key: string, ended?: boolean) => ({ id: key, key, control: true, name: key, role: "subagent" as const, mark: "done" as const, subs: [], ...(ended && { ended: true }) });
+	const main = (key: string, subs: ReturnType<typeof sub>[]) => ({ id: key, key, control: true, name: key, role: "main" as const, mark: "idle" as const, subs });
+	const box = (state: "live" | "unreachable", can: string[]) => ({ device: "d", short: "s", label: "agent-tower-01", team: "t", scope: "team", state, can });
+	const base = (id: string, subs: ReturnType<typeof sub>[], b?: ReturnType<typeof box>) => ({ id, label: id, mark: "idle", tower: null, outposts: [], outside: [], tabs: [{ id: `${id}-t`, label: "a", units: [main(`${id}-m`, subs)] }], ...(b && { box: b }) });
+	const net = { bases: [
+		base("w1", [sub("local-done", true), sub("local-run")]),
+		base("b1", [sub("ally-done-1", true), sub("ally-done-2", true), sub("ally-run")], box("live", ["dismiss", "input"])),
+		base("b2", [sub("deaf-done", true)], box("live", ["input"])),
+		base("b3", [sub("away-done", true)], box("unreachable", ["dismiss"])),
+	] } as unknown as Net;
+	assert.deepEqual(endedSubs(net), ["local-done", "ally-done-1", "ally-done-2"], "a box that does not list dismiss, or is not live, takes none: they are not counted");
+	const sent: unknown[] = [];
+	assert.equal(await dismissFinished(net, (body) => (sent.push(body), Promise.resolve(true))), true);
+	assert.deepEqual(sent, [{ all: true }, { key: "ally-done-1" }, { key: "ally-done-2" }], "this computer's by the server's all, each ally's by its own key, as one row's Dismiss sends");
+	const refused: unknown[] = [];
+	assert.equal(await dismissFinished(net, (body) => (refused.push(body), Promise.resolve("key" in body ? false : true))), false, "a refusal is the answer");
+	assert.deepEqual(refused, [{ all: true }, { key: "ally-done-1" }], "the first refusal says why once and stops the rest");
+});
+
 test("an accepted answer that leaves a step in a terminal opens its card (the one rule, terminalthen.ts): a prompt's for then.terminal and a pane's for then.pane, each with the command the dialog put there and the unit that asked; a pane that could not be told apart says so; a refused, stale, or unconfirmed answer opens nothing", async () => {
 	const opened: unknown[] = [], note = (x: unknown) => void opened.push(x);
 	onStep((step) => note(step));
