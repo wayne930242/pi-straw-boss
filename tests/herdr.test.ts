@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { herdrCall, HerdrError, herdrRun, herdrWorld, panes, place, report, socketRun, tabs, waitFor, workspaces, worldOf } from "../src/herdr.ts";
 import { stallWatch, until } from "./server-world.ts";
-import { cutOff, gone, standIn, STUBBORN, withChild } from "./standin.ts";
+import { cutOff, deadlineFor, gone, standIn, STUBBORN, withChild } from "./standin.ts";
 
 test("report puts the positional id first, adds a TTL only when it sets a token, and clears with --clear-token", async () => {
 	const calls: string[][] = [];
@@ -56,9 +56,8 @@ test("RV8-F001: a herdr command cut off by the timeout rejects as killed with it
 
 // --- todo #155: the deadline holds ---
 
-const DEADLINE = 1500;
 test("todo #155: a herdr that ignores SIGTERM and keeps its stdout open is given up at the deadline, as cut off, and is killed after the grace", { skip: process.platform === "win32" }, async () => {
-	const fake = standIn({ herdr: STUBBORN });
+	const DEADLINE = await deadlineFor(), fake = standIn({ herdr: STUBBORN });
 	const stalls = stallWatch(), began = Date.now();
 	try {
 		await assert.rejects(herdrRun([fake.dir], DEADLINE), cutOff);
@@ -76,7 +75,7 @@ test("todo #155: a herdr that ignores SIGTERM and keeps its stdout open is given
 });
 
 test("todo #155: what a herdr cut off at the deadline had started is ended with it: the SIGTERM and the SIGKILL go to its group", { skip: process.platform === "win32" }, async () => {
-	const fake = withChild(), stalls = stallWatch(), began = Date.now();
+	const DEADLINE = await deadlineFor(), fake = withChild(), stalls = stallWatch(), began = Date.now();
 	try {
 		await assert.rejects(herdrRun([fake.dir, "stay"], DEADLINE), cutOff);
 		const took = Date.now() - began;
@@ -93,7 +92,7 @@ test("todo #155: what a herdr cut off at the deadline had started is ended with 
 });
 
 test("todo #155: a herdr that exited with 0 and left a child holding its stdout is not a failure: the call ends at the deadline with what herdr wrote, as it did before", { skip: process.platform === "win32" }, async () => {
-	const fake = withChild(), stalls = stallWatch(), began = Date.now();
+	const DEADLINE = await deadlineFor(), fake = withChild(), stalls = stallWatch(), began = Date.now();
 	try {
 		assert.equal(await herdrRun([fake.dir, "leave"], DEADLINE), "left\n");
 		const took = Date.now() - began;

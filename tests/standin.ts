@@ -1,4 +1,5 @@
 // A stand-in program that does not end when it is told to, for the tests of a deadline (todo #155): herdr.test.ts, exe.test.ts, balance.test.ts, reaper.test.ts.
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,3 +33,17 @@ export const withChild = () => standIn({
 	herdr: `"$1/holder" "$1" &\nwhile [ ! -s "$1/held" ]; do sleep 0.05; done\necho $$ > "$1/pid"\nif [ "$2" = leave ]; then echo left; exit 0; fi\nwait`,
 	holder: `trap '' TERM\necho $$ > "$1/held"\n${LINGER}`,
 });
+
+/**
+ * A deadline for a stand-in that has to start (a shell, and for some a child script) before it falls: 1.5 s, or five times what one `sh` takes to start and end here now, so a loaded machine
+ * lengthens the wait instead of failing the test. Measured, not guessed: the slowest of two starts.
+ */
+export async function deadlineFor(floor = 1500): Promise<number> {
+	let slowest = 0;
+	for (let i = 0; i < 2; i++) {
+		const began = Date.now();
+		await new Promise<void>((resolve) => spawn("/bin/sh", ["-c", ":"], { stdio: "ignore" }).once("close", () => resolve()).once("error", () => resolve()));
+		slowest = Math.max(slowest, Date.now() - began);
+	}
+	return Math.max(floor, 5 * slowest);
+}
