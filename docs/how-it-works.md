@@ -2257,7 +2257,18 @@ A local tower run's pi (started with `--sb-run`, or marked by the run mode when 
 
 ## Blocked dialogs
 
+```mermaid
+flowchart TD
+    d["An extension opens a dialog"] --> a["herdr:blocked<br/>active: true"]
+    a --> b["Herdr shows the pane as blocked<br/>while the count is above zero"]
+    e["The dialog ends"] --> z["herdr:blocked<br/>active: false"]
+    z --> w["Count back to zero:<br/>the pane shows its state again"]
+```
+
 Herdr's pi integration shows a pane as `blocked` while its count of `herdr:blocked` events (`{active: true, label}` up, `{active: false}` down) is above zero, and pi's own dialogs emit nothing, so a session waiting on one looked as if it were working. A third extension entry, `src/blocked.ts`, closes that for every pi in Herdr, joined or not, subagents included. It relays two sources into `herdr:blocked`:
+
+<details>
+<summary>Details</summary>
 
 - **rpiv's questionnaire**: `rpiv:ask-user:blocked`, once per open `ask_user_question`.
 - **Every `select`, `confirm`, `input` and `editor` dialog of any extension** (an `mp-infra` command review, pi-robot-hand's selector), from pi's `ui_prompt_start` / `ui_prompt_end` events (pi 0.84.4 and later; on an older pi they never fire and nothing is relayed). This relay wraps nothing: pi wraps `ctx.ui` once per runner for all extensions and emits one pair per outermost dialog (the answer relay above wraps the same object again, and calls pi's wrapper, so the pairs are unchanged), so overlapping dialogs make one pair that spans from the first start to the last end, and a dialog that resolves, is cancelled, aborted, times out or throws ends it all the same.
@@ -2267,6 +2278,8 @@ Herdr's pi integration shows a pane as `blocked` while its count of `herdr:block
 Pi emits both events without waiting and walks the extensions one after another, so behind an earlier extension's slow handler a dialog's end can reach this relay before its start (measured against the real runner). The relay therefore keeps a signed count and reports blocked only while it is above zero: an early end and its late start cancel out, and the pairs it emits always alternate and end balanced. `custom` dialogs are left out on purpose: pi's own program status does not count them as blocking either, and the ones that do wait for the user report themselves (`ask_user_question`, `secret_drop`, the pairing QR overlay).
 
 Because pi reports only the outermost dialog, a confirm opened while a `custom` dialog is already open is not reported either. A tool that reports its own dialog as well (pi-robot-hand's `robot_hand` selector, pi-ask-user's input) adds a second, balanced pair while it is open; Herdr counts both and clears them together. Skipping the relay's pair there would drop blocked when the tool's pair closes first while another dialog is still open. A blocked pane has no question to show, so the GUI lists it as waiting with "It waits on a dialog.", and its composer refuses a prompt while Herdr reports the pane `blocked`.
+
+</details>
 
 ## Sidebar net view
 

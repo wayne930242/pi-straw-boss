@@ -2257,7 +2257,18 @@ stateDiagram-v2
 
 ## 被擋住的對話框
 
+```mermaid
+flowchart TD
+    d["擴充功能開啟對話框"] --> a["herdr:blocked<br/>active: true"]
+    a --> b["計數大於零時，Herdr<br/>把 pane 顯示為 blocked"]
+    e["對話框結束"] --> z["herdr:blocked<br/>active: false"]
+    z --> w["計數回到零：<br/>pane 恢復顯示它的狀態"]
+```
+
 Herdr 的 pi 整合在它對 `herdr:blocked` 事件的計數（`{active: true, label}` 加一、`{active: false}` 減一）大於零時，把 pane 顯示為 `blocked`，而 pi 自己的對話框什麼也不發出，所以等著其中之一的 session 看起來像在工作。第三個擴充套件入口 `src/blocked.ts` 為 Herdr 內的每個 pi 補上這個缺口，不論是否加入，包括子智慧體。它把兩個來源轉送成 `herdr:blocked`：
+
+<details>
+<summary>細節</summary>
 
 - **rpiv 的問卷**：`rpiv:ask-user:blocked`，每個開啟的 `ask_user_question` 一次。
 - **任何擴充套件的每個 `select`、`confirm`、`input` 與 `editor` 對話框**（`mp-infra` 的指令審查、pi-robot-hand 的選擇器），來自 pi 的 `ui_prompt_start` / `ui_prompt_end` 事件（pi 0.84.4 及之後；在更舊的 pi 上它們從不觸發，也不轉送任何東西）。這個 relay 不包裝任何東西：pi 為所有擴充套件在每個 runner 上包裝 `ctx.ui` 一次，並對每個最外層的對話框發出一對事件（上面的回答 relay 會再包裝同一個物件，並呼叫 pi 的包裝，所以這些成對事件不變），所以重疊的對話框構成一對，從第一個 start 跨到最後一個 end，而被解決、被取消、被中止、逾時或丟出例外的對話框都同樣會結束它。
@@ -2267,6 +2278,8 @@ Herdr 的 pi 整合在它對 `herdr:blocked` 事件的計數（`{active: true, l
 pi 不等待就發出這兩個事件，並逐一走過各擴充套件，所以在較早的擴充套件的緩慢 handler 之後，對話框的 end 可能比它的 start 先到達這個 relay（以真實的 runner 量測）。因此 relay 保存一個帶正負號的計數，並且只在它大於零時才回報 blocked：提早的 end 與晚到的 start 互相抵銷，而它發出的成對事件總是交替出現並平衡地結束。`custom` 對話框是刻意排除的：pi 自己的程式狀態也不把它們算成阻擋，而真正等待使用者的那些會自己回報（`ask_user_question`、`secret_drop`、配對 QR 覆蓋層）。
 
 因為 pi 只回報最外層的對話框，所以在 `custom` 對話框已開著時開啟的 confirm 也不會被回報。同時也回報自己的對話框的工具（pi-robot-hand 的 `robot_hand` 選擇器、pi-ask-user 的輸入）在它開著時會多加一對平衡的事件；Herdr 兩個都計算，並一起清除它們。在那裡略過 relay 的那一對，會在工具的那一對先關閉、而另一個對話框仍開著時丟失 blocked。被擋住的 pane 沒有可以顯示的問題，所以 GUI 把它列為等待中，並寫著「它在等一個對話框。」，而當 Herdr 回報 pane 為 `blocked` 時，它的輸入框會拒絕提示。
+
+</details>
 
 ## 側邊欄網檢視
 
