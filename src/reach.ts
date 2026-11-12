@@ -252,6 +252,11 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		const net = await read(), stations = reachable(net), notes = new Map<string, string>();
 		let chosen = stations;
 		if (workspace !== undefined) {
+			// The head tower is in no workspace a tower answers for: its workspace, its label, and its session id (`sb-head`, `sb-head-<slot8>`) all name the head, which takes only `head: true` with the ask id (0.77.3).
+			const headWs = net.all.find(isHead), headId = headIdOf(net.all), headName = net.sessions.find((x) => x.id === headId)?.name;
+			if ((headWs && (workspace === headWs.workspace_id || workspace === headWs.label)) || workspace === headId || (headName !== undefined && workspace === headName) || /^sb-head(-[0-9a-f]{8})?$/.test(workspace)) {
+				throw new Error(`"${workspace}" is the head tower: use head: true with inReplyTo (the ask id, H<n>, of its message to you), not workspace`);
+			}
 			const found = net.all.filter((w) => w.workspace_id === workspace || w.label === workspace);
 			if (found.length !== 1) throw new Error(`${found.length ? "Several workspaces match" : "No workspace matches"} "${workspace}". Workspaces: ${net.all.map((w) => `${w.workspace_id} (${w.label})`).join(", ")}`);
 			const asked = found[0]!, target = isSub(asked) ? parentOf(net.all, asked) : asked;

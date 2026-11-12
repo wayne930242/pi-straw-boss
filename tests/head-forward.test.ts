@@ -166,6 +166,19 @@ test("a workspace tower answers the head with tower_send {head: true, inReplyTo}
 	assert.match(String((await tool(s, ally, "tower_send", { head: true, inReplyTo: mine.id, message: "x" })).error), /ally run does not answer the head/);
 });
 
+test("0.77.3 A5: a workspace tower's tower_send that names the head tower by its workspace id, its label, or its session id is told to use head: true, never that it has no tower", async () => {
+	const { s } = await setup();
+	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	const token = await towerRun(s);
+	const headWs = world.herdr.workspaces.find((w) => w.tokens?.sb_head)!;
+	assert.ok(headWs, "the head has a workspace");
+	for (const workspace of [headWs.workspace_id, headWs.label, "sb-head"]) {
+		const r = await tool(s, token, "tower_send", { workspace, message: "routed MP-4129" });
+		assert.equal(r.ok, false);
+		assert.match(String(r.error), /is the head tower: use head: true/, `${workspace}: ${String(r.error)}`);
+	}
+});
+
 test("the head's header names the head and nothing else does: a workspace tower's messages carry no head=yes, whatever the order of workspaces", async () => {
 	const s = await world.start();
 	await s.handle.ready;
