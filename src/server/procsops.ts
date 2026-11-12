@@ -46,6 +46,8 @@ export interface StartProcs {
 	log(event: string, facts: Record<string, number | string | boolean>): void;
 	run: HerdrRun;
 	events: HerdrEvents;
+	/** The stall watch (stallops.ts), which samples the table of each tick. */
+	watch?: ProcsDeps["watch"];
 	/** The seams of a test (the process table, the kill sequence, the tick); the registry reads no table of this machine in a test run unless the test gives one. */
 	over?: Partial<ProcsDeps> & { tickMs?: number };
 	stops: (() => void)[];
@@ -66,7 +68,7 @@ export function startProcs(o: StartProcs): Procs {
 		protect: (table) => protectedSet(table, { run: o.run, stateDir: o.stateDir, agentDir: o.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), self: o.pid }),
 		panes: async () => (await herdrPanes(o.run)).map((p) => ({ pane_id: p.pane_id, ...(p.terminal_id ? { terminal_id: p.terminal_id } : {}), ...(p.cwd ? { cwd: p.cwd } : {}), ...(p.workspace_id ? { workspace_id: p.workspace_id } : {}) })),
 		workspaces: async () => (await herdrWorkspaces(o.run)).flatMap((w) => (w.worktree?.is_linked_worktree && w.worktree.checkout_path ? [{ workspace_id: w.workspace_id, checkout_path: w.worktree.checkout_path }] : [])),
-		...quiet, ...o.over,
+		...(o.watch ? { watch: o.watch } : {}), ...quiet, ...o.over,
 	});
 	if (o.platform === "win32") return procs;
 	try {
