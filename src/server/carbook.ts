@@ -115,6 +115,15 @@ const noticeName = (name: string) => name.replace(/\.json$/, ".notice.json");
 const PAST = "#";
 const changedAt = (held: Held) => held.file.states.at(-1)?.at ?? "";
 const firstLine = (error: unknown) => String((error as { stderr?: unknown }).stderr || (error as Error).message).trim().split("\n")[0]!.slice(0, 200);
+/** Why git could not reach a remote, read from its first line of stderr; undefined for any other failure. Only `received` acts on it (0.77.2). */
+export function reachClass(line: string): "auth" | "connection" | "repository-not-found" | undefined {
+	if (/could not read (?:Username|Password)|terminal prompts disabled|Authentication failed|Access denied|Permission denied \(publickey|returned error: 40[13]|Host key verification failed/i.test(line)) return "auth";
+	if (/Repository not found|does not appear to be a git repository|returned error: 404|not found/i.test(line)) return "repository-not-found";
+	if (/Could not resolve host|Connection refused|Connection timed out|timed out|Failed to connect|Network is unreachable|Could not read from remote repository|unable to access|Connection reset|Connection closed/i.test(line)) return "connection";
+	return undefined;
+}
+/** A refusal of a remote git could not reach: `reach` names the class. */
+const unreached = (text: string, line: string) => Object.assign(refusal(text), { reach: reachClass(line) });
 const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 /** git's settings for the mirror: no commit-graph, multi-pack-index, or automatic gc is read or written, so nothing but the objects the fetch hashed itself decides the answer. */
 const MIRROR_FLAGS = ["-c", "core.commitGraph=false", "-c", "fetch.writeCommitGraph=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.multiPackIndex=false"];
@@ -540,12 +549,13 @@ export class CarBook {
 	 * A car lands once (#15): `received` is refused for a head that git, run here, finds on the base's branch of the project's remote already. Nothing the book remembers is asked, so it holds after a restart, when the book no longer knows that the car landed, and
 	 * for a head somebody pushed to the base by hand. The remote and the base are read now: the remote of the checkout of the integrator's workspace (where an open reads it) and the app's `integration.base` in that checkout's apps.json. The fetch is the one of
 	 * `landed`, into a mirror of its own. When the checkout's remote cannot be read nothing is checked (`cars-received-unchecked` is logged, and the integrator's tool says so): an open reads the remote from the same checkout, so a train of such a project has no remote and
-	 * cannot set `landed` either. When the remote is read but the app names no usable `integration.base`, `received` is refused (car-forward-F003; the boss's rule that a car is never landed twice wins), and so it is when git fails. A head that is not in the base's history is the usual car. A car merged by squash or rebase has no head on the base and is not found here.
+	 * cannot set `landed` either. When the remote is read but the app names no usable `integration.base`, `received` is refused (car-forward-F003; the boss's rule that a car is never landed twice wins), and so it is when git fails for any reason but reaching the remote. When
+	 * `ls-remote` or the fetch fails because the remote cannot be reached or authenticated (the server's git has no credential helper, RR3-F002; repository not found counts), the car is received unchecked with that class as the reason (0.77.2). A head that is not in the base's history is the usual car. A car merged by squash or rebase has no head on the base and is not found here.
 	 */
 	private async unlanded(project: string, app: string, head: string, label: string, look: Look): Promise<{ unchecked?: string }> {
 		const where = await this.baseOf(look, app);
 		if ("unread" in where) {
-			this.d.log?.("cars-received-unchecked", { project, car: label.slice(0, 40) });
+			this.d.log?.("cars-received-unchecked", { project, car: label.slice(0, 40), reason: "unread" });
 			return { unchecked: `the remote of the integrator's workspace checkout could not be read, so whether head ${head.slice(0, 12)} is on the base already was not checked` };
 		}
 		if ("refused" in where) {
@@ -565,6 +575,12 @@ export class CarBook {
 				}
 			});
 		} catch (error) {
+			// The remote could not be reached or would not let the server in (its git has no credential helper, RR3-F002): the boss's 0.77.2 rule receives the car unchecked and says why.
+			const reach = (error as { reach?: string }).reach;
+			if (reach) {
+				this.d.log?.("cars-received-unchecked", { project, car: label.slice(0, 40), reason: reach });
+				return { unchecked: `the server could not reach the project's remote (${reach}: ${(error as Error).message.replace(/^sb: /, "").slice(0, 200)}), so whether head ${head.slice(0, 12)} is on ${base} already was not checked` };
+			}
 			const word = `sb: car ${label} is not received: whether its head ${head.slice(0, 12)} is on ${base} of the project's remote already could not be checked (${(error as Error).message.replace(/^sb: /, "").slice(0, 300)}). A car that is on the base is never received again, so the check has to run: try again`;
 			this.d.log?.("cars-received-refused", { project, car: label.slice(0, 40), reason: word.slice(0, 200) });
 			throw refusal(word);
@@ -610,14 +626,14 @@ export class CarBook {
 		try {
 			// The tip, from no repository: git reads no repository configuration there.
 			let listed: string;
-			try { listed = await this.d.git(parse(this.d.dir).root, [...REMOTE_FLAGS, "ls-remote", "--exit-code", "--", url, ref], env); } catch (error) { throw refusal(`sb: git ls-remote of ${base} from the project's remote failed: ${firstLine(error)}`); }
+			try { listed = await this.d.git(parse(this.d.dir).root, [...REMOTE_FLAGS, "ls-remote", "--exit-code", "--", url, ref], env); } catch (error) { const line = firstLine(error); throw unreached(`sb: git ls-remote of ${base} from the project's remote failed: ${line}`, line); }
 			const tip = listed.split("\n").map((l) => l.split("\t")).find(([, name]) => name === ref)?.[0];
 			if (!tip || !/^[0-9a-f]{40,64}$/.test(tip)) throw refusal(`sb: the project's remote lists no branch ${base}`);
 			try { await this.d.git(mirror, ["init", "--bare", "-q", "--template=", "."]); } catch (error) { throw refusal(`sb: the server's mirror for project ${project} cannot be made: ${firstLine(error)}`); }
 			const inMirror = (...args: string[]) => this.d.git(mirror, ["--git-dir", mirror, ...MIRROR_FLAGS, ...args], env);
 			const fresh = inspectMirror(mirror, code, "init");
 			if (fresh.problems.length) throw tampered(fresh.problems);
-			try { await inMirror(...REMOTE_FLAGS, ...FETCH_FLAGS, "fetch", "--no-tags", "--no-recurse-submodules", "--", url, `+${ref}:${mine}`); } catch (error) { throw refusal(`sb: git fetch of ${base} from the project's remote failed: ${firstLine(error)}`); }
+			try { await inMirror(...REMOTE_FLAGS, ...FETCH_FLAGS, "fetch", "--no-tags", "--no-recurse-submodules", "--", url, `+${ref}:${mine}`); } catch (error) { const line = firstLine(error); throw unreached(`sb: git fetch of ${base} from the project's remote failed: ${line}`, line); }
 			const fetched = inspectMirror(mirror, code, "fetch", fresh.look);
 			if (fetched.problems.length) throw tampered(fetched.problems);
 			const got = (await inMirror("rev-parse", "--verify", "-q", mine)).trim();
