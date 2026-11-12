@@ -67,9 +67,37 @@ stateDiagram-v2
 
 - **`apps.json`**：頂層的 `integration`（`skill`、`maxCars` 4、`maxWaitMin` 60、`maxTrains` 3），以及每個 app 的 `integration`（`base`、`skill`、`stages`、`accept`、`targets`）。[`prompts/apps-config.md`](https://github.com/wayne930242/pi-straw-boss/blob/main/prompts/apps-config.md) 說明每個欄位。
 - **階段。** `merge` 一定有，之後可選 `deploy`。`auto` 目標憑設定裡的長期指示接受每列火車；`strict` 目標（預設）只在每張車廂單都帶著你對它的授權時才接受火車。
-- **專案 skill。** 每項具體檢查都在那裡，放在 pi-anchorloop 的 Project skill contract 的標題底下：`## Light checks`、`## Train assembly`、`## Full gates`、`## Merge`、`## Post-merge`，以及視需要的 `## Deploy`、`## Deploy verify` 與 `## Acceptance`。Straw Boss 設定流程，不指名任何環境。
+- **專案 skill。** 每項具體檢查都在那裡，放在 `integrating` skill 的 Project skill contract 列出的標題底下：`## Light checks`、`## Train assembly`、`## Full gates`、`## Merge`、`## Post-merge`，以及視需要的 `## Deploy`、`## Deploy verify` 與 `## Acceptance`。Straw Boss 設定流程，不指名任何環境。
 
-程序就是 pi-anchorloop 的 `integrating` 與 `deploying` skill（2.11.0 或更新版本）；Straw Boss 把那些 skill 留白的地方補上。
+## 合併火車契約
+
+火車的程序不在 Straw Boss 裡。
+它是兩個 skill：`integrating`（合併）與 `deploying`（部署），Straw Boss 把它們留白的地方補上。
+Straw Boss 不指定套件：pi 載入的這兩個 skill，各自要在 frontmatter 宣告**合併火車契約**第 1 版。
+
+```yaml
+metadata:
+  merge-train-contract: "1"
+```
+
+第 1 版就是 Straw Boss 的 prompt 對這兩個 skill 的假設：
+
+- 它們名為 `integrating` 與 `deploying`，階段是 `merge`，之後可選 `deploy`。
+- 它們從 session 的指示讀一個 `## Seam bindings` 區塊，接縫有 Handoff route、Batch owner、Approval、Record、Escalation route、Settings 與 Step runner。
+- 它們照上面那些 Project skill 標題（另有 `## Urgent lane` 與 `## Load`）找專案的檢查，標題一字不差。
+- 車廂的協調者在交接之前照 `## Acceptance` 跑完驗收；火車沒有任何階段等人。
+- 車廂以 `car:` 車廂單送來，帶著 `auth`、`accept`、`deploy`、`departs` 與 `coordinator`。
+- 設定有 `base`、`skill`、`stages`、`accept`、`targets`（`auto` 或 `strict`）、`maxCars` 與 `maxWaitMin`。
+
+版本是整數，只有在照前一版寫的宿主會出錯時才往上加。
+還能服務舊宿主的 skill 把兩版都列出來：`merge-train-contract: "1 2"`。
+
+Straw Boss 自己檢查這項宣告，因為模型讀 skill 分不出程序是舊的還是新的。
+兩個 skill 都宣告契約之前，火車和整合員每個會改變東西的呼叫都會被拒絕並附上原因，也不會有火車發車。
+
+[pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 是其中一個實作，Straw Boss 也是搭配它開發的。
+它的 skill 從 2.11.0 起實作第 1 版；2.15 各版和更早的版本還沒有這項宣告。
+對這些版本，Straw Boss 接受沒有宣告的 pi-anchorloop 2.11.0 或更新版本；等有宣告的版本成為還在使用的最舊版本，這項例外就會拿掉。
 
 ## 在一台電腦上關掉它
 
