@@ -3,7 +3,7 @@ import { boardSeam } from "../boardview.ts";
 import type { HerdrRun, HerdrWorld, Session } from "../herdr.ts";
 import { netSource } from "../net.ts";
 import type { AutoMode, Period } from "./automode.ts";
-import { type AutoWatch, createAutoWatch, type WatchDeps, type WatchReport, WATCH_TICK_MS, factsOf, watchSection } from "./autowatch.ts";
+import { type AutoWatch, createAutoWatch, type WatchDeps, type WatchReport, WATCH_KEY, WATCH_TICK_MS, factsOf, watchSection } from "./autowatch.ts";
 import { readAsks } from "./headasks.ts";
 import { headSeam } from "./headnet.ts";
 import type { Slot } from "./record.ts";
@@ -34,6 +34,24 @@ export interface StartWatch {
 	over?: Partial<WatchDeps> & { tickMs?: number };
 }
 
+/**
+ * What the switch does for the watch (boss, 11/12): switched on with no head tower open, the server opens one, since the boss is at their switch and the watch has nobody to wake otherwise; a head that is gone later in the
+ * night is not opened again (the readings count it for the morning). Switched off, the watch's notices no run took are dropped: they are stale, and nothing of the watch acts once the boss is back.
+ */
+export function watchSwitch(o: { towers(): Towers | undefined; log: StartWatch["log"] }) {
+	return (change: { from: { on: boolean }; to: { on: boolean } }): void => {
+		const towers = o.towers();
+		if (!towers || change.from.on === change.to.on) return;
+		if (!change.to.on) {
+			const head = towers.head.status()?.workspace, dropped = head ? towers.runs.dropNotices(head, WATCH_KEY) : 0;
+			if (dropped) o.log("watch-dropped", { notices: dropped });
+			return;
+		}
+		if (towers.head.status()) return;
+		void towers.head.ensure().then((got) => o.log("watch-head", { opened: got.opened, workspace: got.workspace }), (cause: Error) => o.log("watch-head", { error: String(cause?.message ?? cause).slice(0, 200) }));
+	};
+}
+
 /** The watch's section of the return list for the period that ends (automode.ts `watch`): the head's asks are read here, so the nudges since the last wake are in it. */
 export const reportWatch = (slot: Slot, now: () => number) => (period: Period, until: string): WatchReport | undefined => watchSection(period.watch, period.since, until, asksOf(slot, now));
 /** The head's asks; none when the file cannot be read (the watch's count of the head's own messages then stands where it was, and the return list is still written). */
@@ -46,6 +64,7 @@ const asksOf = (slot: Slot, now: () => number) => { try { return readAsks(slot, 
 export function startAutoWatch(o: StartWatch): (() => void) | undefined {
 	if (inTestRun() && !o.over) return undefined;
 	const { tickMs, ...over } = o.over ?? {};
+	const offSwitch = o.auto.onSwitch(watchSwitch(o));
 	const net = netSource({
 		services: (workspace) => towerPanel(o.towers).view(workspace), head: headSeam(o.slot, o.now), run: o.run, ...(o.world ? { world: o.world } : {}), sessions: o.sessions,
 		board: boardSeam({ dir: join(o.slot.stateDir, "board"), now: o.now }), trainyard: trainyardSeam({ env: o.env, stateDir: o.slot.stateDir, now: o.now, ...(o.book ? { book: o.book } : {}) }),
@@ -56,9 +75,10 @@ export function startAutoWatch(o: StartWatch): (() => void) | undefined {
 		head: () => ((row) => (row ? { workspace: row.workspace, ...(row.service?.state === "held" ? { held: true } : {}) } : undefined))(o.towers()?.head.status()),
 		facts: async (input) => factsOf(await net.read(), { ...input, stalls: o.stalls() }),
 		asks: () => asksOf(o.slot, o.now),
+		waiting: (workspace) => o.towers()?.runs.noticeWaits(workspace, WATCH_KEY) ?? false,
 		wake: (workspace, text, key) => o.towers()?.runs.notice(workspace, text, key) ?? false,
 		...over,
 	});
 	const timer = setInterval(() => void watch.tick(), tickMs ?? WATCH_TICK_MS);
-	return () => clearInterval(timer);
+	return () => (clearInterval(timer), offSwitch());
 }

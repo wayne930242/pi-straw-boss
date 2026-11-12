@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { secretShaped } from "./waitcard.ts";
-import type { WatchReport, WatchState } from "./autowatch.ts";
+import { type WatchReport, type WatchState, watchOf } from "./autowatch.ts";
 import { type BoxAsk, buildReport, endEvent, type ParkedRow, type Report, reportText } from "./autotower.ts";
 import { REPORT_FILE, AUTO_FILE, type AutoState, type By, isOwn, matchBoss, OWN_FILE, type Own, type Pending, readAuto, readOwn, seal } from "../autostate.ts";
 
@@ -50,8 +50,6 @@ export interface Decided { at: string; run: string; to: string; gist: string; ba
 export const PERIOD_FILE = "auto-period.json", NOTES_MAX = 500;
 const phrase = (v: string, max: number) => v.replace(/\s+/g, " ").trim().slice(0, max);
 /** A gist of the return list: at most 120 characters, and `(withheld)` when it looks like a secret (§5). */
-/** A watch state as the period file may hold it: the counts are numbers and the lists are lists, else the watch starts the period again. */
-const isWatch = (w: unknown): w is WatchState => typeof w === "object" && w !== null && (({ wakes, skipped, nudges, sent, out }) => Number.isSafeInteger(wakes) && Number.isSafeInteger(skipped) && Number.isSafeInteger(nudges) && Array.isArray(sent) && typeof out === "object" && out !== null)(w as Record<string, unknown>);
 const gistOf = (v: unknown) => { const g = phrase(String(v ?? ""), 120); return g && secretShaped(g) ? "(withheld)" : g; };
 
 /** The return list of the last period (`auto-report.json`), when it parses. */
@@ -75,7 +73,7 @@ export function createAutoMode(d: AutoDeps) {
 	const readPeriod = (): Period | undefined => {
 		try {
 			const j = JSON.parse(readFileSync(join(d.dir, PERIOD_FILE), "utf8")) as Partial<Period>;
-			return typeof j.since === "string" && Array.isArray(j.notes) ? { since: j.since, notes: j.notes.slice(-NOTES_MAX), foreign: Array.isArray(j.foreign) ? j.foreign : [], decided: Array.isArray(j.decided) ? j.decided : [], ...(isWatch(j.watch) ? { watch: j.watch } : {}) } : undefined;
+			return typeof j.since === "string" && Array.isArray(j.notes) ? { since: j.since, notes: j.notes.slice(-NOTES_MAX), foreign: Array.isArray(j.foreign) ? j.foreign : [], decided: Array.isArray(j.decided) ? j.decided : [], ...((w) => (w ? { watch: w } : {}))(watchOf(j.watch)) } : undefined;
 		} catch {
 			return undefined;
 		}
@@ -186,7 +184,10 @@ export function createAutoMode(d: AutoDeps) {
 		try {
 			const p = period ?? { since: change.from.since ?? iso(), notes: [], foreign: [], decided: [] };
 			const until = iso();
-			last = buildReport(p, change.from.by, by, until, d.parked?.() ?? [], d.boxes?.() ?? [], d.watch?.(p, until));
+			// The watch's section is the watch's alone: one that cannot be built costs that section, never the list or the unpark.
+			let watch: WatchReport | undefined;
+			try { watch = d.watch?.(p, until); } catch (error) { d.log("auto-watch-report", { text: (error as Error).message }); }
+			last = buildReport(p, change.from.by, by, until, d.parked?.() ?? [], d.boxes?.() ?? [], watch);
 			write(REPORT_FILE, last);
 			text = reportText(last);
 			d.unpark?.();
@@ -228,7 +229,7 @@ export function createAutoMode(d: AutoDeps) {
 		if (!own.state.on || !period) return { ok: false, error: "auto mode is off" };
 		const kind = NOTE_KINDS.find((k) => k === raw.kind);
 		if (!kind) return { ok: false, error: "unknown kind" };
-		period.notes.push({ session: phrase(String(raw.session ?? ""), 80), tool: phrase(String(raw.tool ?? ""), 60), kind, gist: gistOf(raw.gist), at: typeof raw.at === "string" && !Number.isNaN(Date.parse(raw.at)) ? raw.at : iso() });
+		period.notes.push({ session: phrase(String(raw.session ?? ""), 80), tool: phrase(String(raw.tool ?? ""), 60), kind, gist: gistOf(raw.gist), at: typeof raw.at === "string" && Date.parse(raw.at) <= d.now() ? raw.at : iso() });
 		if (period.notes.length > NOTES_MAX) period.notes.splice(0, period.notes.length - NOTES_MAX);
 		savePeriod();
 		return { ok: true };

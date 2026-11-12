@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -41,7 +41,9 @@ function server(over: Partial<WatchDeps> = {}) {
 	});
 	/** The server's timer over `ms` of the clock: a look every 30 s. */
 	const run = async (ms: number) => { for (let t = 0; t < ms; t += 30_000) (clock.advance(30_000), await watch.tick()); };
-	return { auto, watch, sent, asks, run };
+	/** A wait auto mode refused now: something new for the next reading, so it wakes the head. */
+	const refused = (gist = "Which database?") => (clock.advance(1), assert.equal(auto.note({ session: "m1", tool: "ask_user_question", kind: "refused", gist, at: new Date(clock.now()).toISOString() }).ok, true));
+	return { auto, watch, sent, asks, run, refused };
 }
 
 // --- a net to read ------------------------------------------------------------------------------------------------------------------------------------------------
@@ -58,29 +60,34 @@ const quietNet = (): Net => ({ bases: [base("wA", "Alpha", [unit("m1", "docs-mai
 
 // --- the timer ----------------------------------------------------------------------------------------------------------------------------------------------------
 
-test("the timer wakes the head only while auto mode is on, every 15 minutes, and stops when auto mode ends", async () => {
+test("the timer reads only while auto mode is on, every 15 minutes, wakes the head when a reading holds something new, and stops when auto mode ends", async () => {
 	shown = quietNet();
 	const s = server();
 	await s.run(60 * MIN);
 	assert.equal(s.sent.length, 0, "auto mode is off: an hour passes and nothing is sent");
 	s.auto.switchOn(pi);
+	s.refused();
 	await s.run(WATCH_MS - 30_000);
 	assert.equal(s.sent.length, 0, "not before 15 minutes");
 	await s.run(30_000);
 	assert.equal(s.sent.length, 1);
 	assert.equal(s.sent[0]!.workspace, "w-head");
 	assert.match(s.sent[0]!.text, /^Auto watch 1 \(/);
+	s.refused();
 	await s.run(WATCH_MS);
+	s.refused();
 	await s.run(WATCH_MS);
 	assert.deepEqual(s.sent.map((x) => x.text.match(/^Auto watch (\d+)/)![1]), ["1", "2", "3"], "one each 15 minutes, numbered");
 	assert.equal(new Set(s.sent.map((x) => x.key)).size, 3, "each wake is its own event in the head's queue");
-	assert.equal(s.auto.watch()!.wakes, 3);
+	assert.ok(s.sent.every((x) => x.key.startsWith("auto-watch:")));
+	assert.deepEqual([s.auto.watch()!.readings, s.auto.watch()!.wakes], [3, 3]);
 	s.auto.switchOff(pi);
 	await s.run(60 * MIN);
 	assert.equal(s.sent.length, 3, "auto mode ended: the watch stops");
 	assert.equal(s.auto.watch(), undefined);
 	// the next night starts its own count
 	s.auto.switchOn(pi);
+	s.refused();
 	await s.run(WATCH_MS);
 	assert.match(s.sent.at(-1)!.text, /^Auto watch 1 \(/);
 });
@@ -89,22 +96,26 @@ test("a restart while auto mode stays on goes on from the period file: the count
 	shown = quietNet();
 	const a = server();
 	a.auto.switchOn(pi);
+	a.refused();
 	await a.run(WATCH_MS + 5 * MIN); // one wake, then 5 minutes
 	assert.equal(a.sent.length, 1);
 	const b = server(); // the server started again over the same state folder
 	assert.equal(b.auto.view().on, true);
-	assert.equal(b.auto.watch()!.wakes, 1, `the watch's state is in ${PERIOD_FILE}`);
+	assert.deepEqual([b.auto.watch()!.wakes, b.auto.watch()!.readings], [1, 1], `the watch's state is in ${PERIOD_FILE}`);
+	b.refused();
 	await b.run(9 * MIN);
-	assert.equal(b.sent.length, 0, "14 minutes after the last wake: not yet, and not at once after the restart");
+	assert.equal(b.sent.length, 0, "14 minutes after the last reading: not yet, and not at once after the restart");
 	await b.run(1 * MIN);
 	assert.equal(b.sent.length, 1);
 	assert.match(b.sent[0]!.text, /^Auto watch 2 \(/, "the count goes on");
-	// a server that was down past the wake's time (the computer slept) wakes the head once, not once per 15 minutes missed
+	// a server that was down past the reading's time (the computer slept) reads once, not once per 15 minutes missed
 	clock.advance(3 * 3600_000);
 	const c = server();
+	c.refused();
 	await c.run(60_000);
 	assert.equal(c.sent.length, 1);
 	assert.match(c.sent[0]!.text, /^Auto watch 3 \(/);
+	assert.equal(c.auto.watch()!.readings, 3);
 });
 
 test("a wake that cannot reach the head is skipped and counted, not piled up: no head tower, a held one, a net that cannot be read", async () => {
@@ -113,6 +124,7 @@ test("a wake that cannot reach the head is skipped and counted, not piled up: no
 	let fail = false;
 	const s = server({ head: () => head, facts: async (input) => { if (fail) throw new Error("pi-intercom is not connected"); return factsOf(net(), { ...input, stalls: [] }); } });
 	s.auto.switchOn(pi);
+	s.refused();
 	await s.run(WATCH_MS);
 	head = { workspace: "w-head", held: true };
 	await s.run(WATCH_MS);
@@ -173,49 +185,51 @@ test("the facts of a wake are read from the net and the period: waits, parked ca
 	assert.deepEqual(a.open, [{ who: "asker", tool: "robot_hand" }]);
 	assert.deepEqual(a.parked, [{ id: "W3", text: "Deploy to production?", from: "docs-main" }]);
 	assert.deepEqual(a.idle, [{ session: "m1", who: "docs-main", open: 2, now: "wire the route", stale: true, again: true }]);
-	assert.deepEqual(a.tower, ["held (it starts no run), 2 events waiting", "notice: The tower's runs crashed three times", "1 wait the boss answered and it has not resolved (W1)"]);
+	assert.deepEqual(a.tower, ["held (it starts no run), 2 events waiting", 'notice: "The tower\'s runs crashed three times"', "1 wait the boss answered and it has not resolved (W1)"]);
 	assert.deepEqual(a.forwards.map((x) => [x.id, x.state]), [["H7", "not taken by its tower"]], "an ask older than 30 minutes with no act; a fresh one is not stuck");
 	assert.equal(a.lines, 0);
-	assert.deepEqual(b.trains, ["train 1112a (acme): no step moved for 50m"]);
+	assert.deepEqual(b.trains, ['train "1112a" ("acme"): no step moved for 50m']);
 	assert.deepEqual(b.landed, ["MP-1 on 1112a"]);
 	assert.equal(b.lines, 1, "a board line written since the last wake is output");
-	assert.deepEqual(b.stalls, ["api-main (pane p9): cpu+silent"]);
+	assert.deepEqual(b.stalls, ['"api-main" (pane p9): cpu+silent']);
 	assert.deepEqual([c.waits.length, c.idle.length, c.tower.length, c.lines], [0, 0, 0, 1]);
-	assert.deepEqual(facts.elsewhere.trains, ["train 1111z (acme): its writer is gone and it has not ended"], "a train with no live unit is in no workspace");
+	assert.deepEqual(facts.elsewhere.trains, ['train "1111z" ("acme"): its writer is gone and it has not ended'], "a train with no live unit is in no workspace");
 	assert.deepEqual(facts.elsewhere.waits.map((w) => [w.who, w.tool]), [["gone-1", "secret_drop"]]);
-	assert.deepEqual(facts.elsewhere.stalls, ["lost (pane p1): missing"]);
+	assert.deepEqual(facts.elsewhere.stalls, ['"lost" (pane p1): missing']);
 	assert.ok(STUCK_MS === 30 * MIN && WATCH_MS === 15 * MIN && QUIET_MS === 2 * 3600_000, "the constants the docs name");
 });
 
-test("the notice says what to look at per workspace, names the calm ones in one line, and tells how long a workspace showed no output", async () => {
+test("the notice says what to look at per workspace, names the others in one line, and tells how long a workspace showed no output", async () => {
 	shown = quietNet();
 	const s = server();
 	s.auto.switchOn(pi);
 	await s.run(WATCH_MS);
-	assert.match(s.sent[0]!.text, /\nNothing to look at in 2 workspaces\.\nCalm: Alpha, Beta\.\n/);
-	assert.ok(s.sent[0]!.text.endsWith(WATCH_RUNBOOK));
+	assert.equal(s.sent.length, 0, "a calm reading wakes nobody");
+	assert.deepEqual([s.auto.watch()!.readings, s.auto.watch()!.calm], [1, 1]);
 	shown = busyNet(clock.now() + WATCH_MS);
 	await s.run(WATCH_MS);
-	const text = s.sent[1]!.text;
-	assert.match(text, /\nTo look at: 2 of 3 workspaces, and what the server could not place in one\.\nCalm: Gamma\.\n/);
-	assert.match(text, /\nAlpha \(wA\):\n/);
-	assert.match(text, /- waiting on a dialog now \(1\): "asker" robot_hand\n/);
+	const text = s.sent[0]!.text;
+	assert.match(text, /\nTo look at: 2 of 3 workspaces, and what the server could not place in one\.\nNothing new: "Gamma"\.\n/);
+	assert.match(text, /\n"Alpha" \(wA\):\n/);
+	assert.match(text, /- waiting on a dialog now \(1\): "asker" "robot_hand"\n/);
 	assert.match(text, /- parked for the boss \(1\): W3 "Deploy to production\?" from "docs-main"\n/);
 	assert.match(text, /- mains idle with open work \(1\): "docs-main" first seen idle now, 2 open, line not updated for over 2 hours, now: "wire the route"\n/);
-	assert.match(text, /- its tower: held \(it starts no run\), 2 events waiting; notice: /);
+	assert.match(text, /- its tower: held \(it starts no run\), 2 events waiting; notice: "/);
 	assert.match(text, /- your forwards with no answer \(1\): H7 not taken by its tower, sent 40m ago: "nudge docs-main"\n/);
-	assert.match(text, /\nBeta \(wB\):\n- trains \(1\): train 1112a \(acme\): no step moved for 50m\n- output since the last wake: 1 board line written, 1 car landed \(MP-1 on 1112a\)\n/);
-	assert.match(text, /\nIn no workspace the server could name:\n- trains \(1\): train 1111z/);
-	// the same main idle at the next wake is told as such, and a workspace with no output for two hours says so
+	assert.match(text, /\n"Beta" \(wB\):\n- trains \(1\): train "1112a" \("acme"\): no step moved for 50m\n- output since the last wake: 1 board line written, 1 car landed \(MP-1 on 1112a\)\n/);
+	assert.match(text, /\nIn no workspace the server could name:\n- trains \(1\): train "1111z"/);
+	// the same main idle at the next reading is a finding of its own, and the forward told once is left out
 	shown = busyNet(clock.now() + WATCH_MS);
 	shown.board = shown.board!.filter((r) => r.session !== "m2");
 	shown.yards = { projects: [] };
 	await s.run(WATCH_MS);
-	assert.match(s.sent[2]!.text, /"docs-main" idle at the last wake too, 2 open/);
-	assert.match(s.sent[2]!.text, /\nAlpha \(wA\):[^]*?- output since the last wake: none; none seen for 45m\n/, "Alpha showed nothing since auto mode began");
+	assert.equal(s.sent.length, 2);
+	assert.match(s.sent[1]!.text, /"docs-main" idle at the last reading too, 2 open/);
+	assert.match(s.sent[1]!.text, /\n"Alpha" \(wA\):[^]*?- output since the last wake: none; none seen for 45m\n/, "Alpha showed nothing since it was first seen");
+	assert.doesNotMatch(s.sent[1]!.text, /H7/);
 	const { head: _asks, ...rest } = shown;
 	for (let i = 0; i < 7; i++) (shown = { ...rest, board: [] }, await s.run(WATCH_MS));
-	assert.match(s.sent.at(-1)!.text, /\nBeta \(wB\):\n- output since the last wake: none; none seen for 2h 0m\n/, "Beta is to look at once it showed nothing for two hours");
+	assert.match(s.sent.at(-1)!.text, /\n"Beta" \(wB\):\n- output since the last wake: none; none seen for 2h \d+m\n/, "Beta is to look at once it showed nothing for two hours");
 });
 
 test("the notice is bounded: three items of a kind, ten workspaces, 6,000 characters, cleaned words, and the runbook never cut", () => {
@@ -224,7 +238,7 @@ test("the notice is bounded: three items of a kind, ten workspaces, 6,000 charac
 	const board = many.flatMap((b) => b.tabs[0]!.units.map((u) => ({ session: u.key, workspace: b.label, tab: "work", main: u.name, state: "idle", now: evil, items: [{ t: evil, done: false }], updated: now - 5 * 3600_000 })));
 	const notes = Array.from({ length: 400 }, (_, i) => ({ session: `m${i % 30}-${i % 8}`, tool: `tool-${i % 5}`, kind: "refused" as const, gist: "sk-live-0123456789abcdef0123456789abcdef", at: new Date(now - MIN).toISOString() }));
 	const facts = factsOf({ bases: many, board }, { now, since: now - WATCH_MS, notes, stalls: [], idleBefore: new Set() });
-	const text = watchText(facts, { n: 12, since: new Date(now - 4 * 3600_000).toISOString(), out: {} });
+	const text = watchText(facts, { n: 12, since: new Date(now - 4 * 3600_000).toISOString(), out: {}, shown: [] });
 	assert.ok(text.length <= WATCH_TEXT, `the notice has ${text.length} characters`);
 	assert.ok(text.endsWith(WATCH_RUNBOOK), "the runbook is whole");
 	assert.match(text, /\(\+\d+ more lines cut: board_read and tower_list show the rest\)/);
@@ -234,16 +248,16 @@ test("the notice is bounded: three items of a kind, ten workspaces, 6,000 charac
 	// with short words the caps of the lists show: three of a kind, ten workspaces
 	const plain = Array.from({ length: 14 }, (_, i) => base(`w${i}`, `ws${i}`, Array.from({ length: 5 }, (_, j) => unit(`m${i}-${j}`, `main${j}`, { mark: "idle" }))));
 	const rows = plain.flatMap((b) => b.tabs[0]!.units.map((u) => ({ session: u.key, workspace: b.label, tab: "work", main: u.name, state: "idle", items: [{ t: "todo", done: false }] })));
-	const short = watchText(factsOf({ bases: plain, board: rows }, { now, since: now - WATCH_MS, notes: [], stalls: [], idleBefore: new Set() }), { n: 1, since: new Date(now).toISOString(), out: {} });
+	const short = watchText(factsOf({ bases: plain, board: rows }, { now, since: now - WATCH_MS, notes: [], stalls: [], idleBefore: new Set(rows.map((r) => r.session)) }), { n: 1, since: new Date(now).toISOString(), out: {}, shown: [] });
 	assert.ok(short.length <= WATCH_TEXT);
-	assert.equal((short.match(/^ws\d+ \(w\d+\):$/gm) ?? []).length, WATCH_WORKSPACES);
-	assert.match(short, /\(\+4 more workspaces to look at: ws10, ws11, ws12, ws13; board_read and tower_list show them\)/);
-	assert.match(short, new RegExp(`- mains idle with open work \\(5\\): ${Array.from({ length: WATCH_TOP }, (_, j) => `"main${j}" first seen idle now, 1 open`).join("; ")} \\(\\+2 more\\)\\n`));
+	assert.equal((short.match(/^"ws\d+" \(w\d+\):$/gm) ?? []).length, WATCH_WORKSPACES);
+	assert.match(short, /\(\+4 more workspaces to look at: "ws10", "ws11", "ws12", "ws13"; board_read and tower_list show them\)/);
+	assert.match(short, new RegExp(`- mains idle with open work \\(5\\): ${Array.from({ length: WATCH_TOP }, (_, j) => `"main${j}" idle at the last reading too, 1 open`).join("; ")} \\(\\+2 more\\)\\n`));
 });
 
 // --- the morning --------------------------------------------------------------------------------------------------------------------------------------------------
 
-test("the return list gains the watch's section: wakes, the head's own messages, and the workspaces with no output for two hours", async () => {
+test("the return list gains the watch's section: readings, calm ones, wakes, the head's own messages, and the workspaces with no output for two hours", async () => {
 	shown = quietNet();
 	const s = server();
 	s.auto.switchOn(pi);
@@ -261,10 +275,10 @@ test("the return list gains the watch's section: wakes, the head's own messages,
 	const off = s.auto.switchOff(pi) as { report?: string };
 	const report = s.auto.report()!;
 	assert.deepEqual({ ...report.watch!, first: undefined, last: undefined, sent: report.watch!.sent.map((n) => [n.workspace, n.gist]) }, {
-		everyMinutes: 15, wakes: 10, skipped: 0, first: undefined, last: undefined, nudges: 2,
+		everyMinutes: 15, readings: 10, calm: 9, wakes: 1, skipped: 0, first: undefined, last: undefined, nudges: 2,
 		sent: [["Alpha", "Nudge docs-main: it is idle with 2 open items"], ["Beta", "(withheld)"]], quietHours: 2, quiet: [{ workspace: "wA", label: "Alpha", hours: 2.5 }],
-	}, "an ask that relays the boss's instruction, or older than the period, is no nudge; one sent after the last wake is counted");
-	assert.match(off.report!, /\nThe head tower's watch \(every 15 minutes\): 10 wakes; 2 messages it sent on its own\.\n- \d\d:\d\d to Alpha: Nudge docs-main: it is idle with 2 open items\n- \d\d:\d\d to Beta: \(withheld\)\nNo output seen for 2 hours or more:\n- Alpha: 2\.5 h$/);
+	}, "Alpha's two quiet hours were the one wake; an ask that relays the boss's instruction, or older than the period, is no nudge; one sent after the last wake is counted");
+	assert.match(off.report!, /\nThe head tower's watch \(a reading every 15 minutes\): 10 readings, 9 calm \(nobody woken\), 1 wake; 2 messages it sent on its own\.\n- \d\d:\d\d to Alpha: Nudge docs-main: it is idle with 2 open items\n- \d\d:\d\d to Beta: \(withheld\)\nNo output seen for 2 hours or more:\n- Alpha: 2\.5 h$/);
 	assert.equal(reportText({ ...report, watch: undefined }).includes("watch"), false, "a list with no watch section prints none");
 	// a period shorter than one wake has no section
 	s.auto.switchOn(pi);
@@ -282,7 +296,7 @@ test("the head needs no new tool for the watch, and its brief says whose notice 
 
 // --- the server ---------------------------------------------------------------------------------------------------------------------------------------------------
 
-test("in the server: the head's queue gets the notice 15 minutes after auto mode starts, built from the net, and again after a restart", async () => {
+test("in the server: auto mode on opens the head tower, a calm reading wakes nobody, one notice waits at a time, and auto mode off drops the one no run took", async () => {
 	const world = new TowerWorld();
 	try {
 		world.setFlag(true);
@@ -291,35 +305,38 @@ test("in the server: the head's queue gets the notice 15 minutes after auto mode
 		type Reply = Record<string, unknown> & { ok: boolean };
 		const ask = (r: Running, cmd: Record<string, unknown>) => callControl(r.handle.endpoint, world.record()!.secret, cmd as { cmd: string }).then((x) => x.reply as Reply);
 		const who = { name: "a pi", session: "sess-1", pane: "p1", pid: 42 };
-		const s = await world.start({ autoWatch: { now: watchClock.now, tickMs: 10 } });
+		const watchOf = () => (JSON.parse(readFileSync(join(world.slot.stateDir, PERIOD_FILE), "utf8")) as { watch?: { readings: number; calm: number; wakes: number; skipped: number } }).watch;
+		const refused = async (r: Running) => assert.equal((await ask(r, { cmd: "auto-note", session: "m1", tool: "ask_user_question", kind: "refused", gist: "Which database?" })).ok, true);
+		const s = await world.start({ now: watchClock.now, autoWatch: { now: watchClock.now, tickMs: 10 } });
 		await s.handle.ready;
 		await ask(s, { cmd: "ensure-tower", workspace: "wA" });
-		const head = await world.expose!.head.ensure();
 		world.sessions = [{ id: "sb-tower-wa", name: "tower Alpha" }] as never; // the broker lists the tower identity, so the net has its workspace as a base
-		const notices = () => readQueue(world.slot, head.workspace).filter((e) => e.kind === "notice" && e.text.startsWith("Auto watch"));
-		const on = async (r: Running) => {
-			const staged = await ask(r, { cmd: "auto-on", ...who });
-			assert.equal((await ask(r, { cmd: "auto-confirm", id: (staged.pending as { id: string }).id, ...who })).ok, true);
-		};
-		await on(s);
-		// The server's own clock said when auto mode began, a moment after the watch's clock was made: a minute over the 15 covers it.
-		watchClock.advance(WATCH_MS + MIN);
+		assert.equal(world.expose!.head.status(), undefined, "no head tower is open before auto mode");
+		const staged = await ask(s, { cmd: "auto-on", ...who });
+		assert.equal((await ask(s, { cmd: "auto-confirm", id: (staged.pending as { id: string }).id, ...who })).ok, true);
+		await until(() => world.expose!.head.status(), "the head tower opened by the switch on");
+		const head = world.expose!.head.status()!.workspace;
+		const notices = () => readQueue(world.slot, head).filter((e) => e.kind === "notice" && e.text.startsWith("Auto watch"));
+		// The server and its watch share the clock the test moves.
+		watchClock.advance(WATCH_MS);
+		await until(() => watchOf()?.readings === 1, "the first reading");
+		assert.deepEqual([watchOf()!.calm, notices().length], [1, 0], "the net of a workspace with nothing new is calm: the head is not woken");
+		watchClock.advance(1);
+		await refused(s);
+		watchClock.advance(WATCH_MS);
 		await until(() => notices().length === 1, "the first wake");
 		assert.match(notices()[0]!.text, /^Auto watch 1 \(/);
-		assert.match(notices()[0]!.text, /\nNothing to look at in 1 workspace\.\nCalm: Alpha\.\n/, "the workspace whose tower the server stands in for is read from the net");
+		assert.match(notices()[0]!.text, /"m1" "ask_user_question" refused "Which database\?"/);
 		await s.handle.shutdown(0);
-		const again = await world.start({ autoWatch: { now: watchClock.now, tickMs: 10 } });
+		const again = await world.start({ now: watchClock.now, autoWatch: { now: watchClock.now, tickMs: 10 } });
 		await again.handle.ready;
+		watchClock.advance(1);
+		await refused(again);
 		watchClock.advance(WATCH_MS);
-		await until(() => notices().length === 2, "the wake after the restart");
-		assert.match(notices()[1]!.text, /^Auto watch 2 \(/);
+		await until(() => watchOf()?.skipped === 1, "the reading after the restart").catch((e) => { throw new Error(`${e.message}: ${JSON.stringify(watchOf())}`); });
+		assert.deepEqual([watchOf()!.readings, watchOf()!.wakes, notices().length], [3, 1, 1], "the head has not taken the last notice: no second one piles up");
 		assert.equal((await ask(again, { cmd: "auto-off", ...who })).ok, true);
-		// An hour of the watch's clock with auto mode off, then on again: the next notice is the new period's first, so none was sent in between.
-		watchClock.advance(60 * MIN);
-		await on(again);
-		watchClock.advance(WATCH_MS);
-		await until(() => notices().length === 3, "the first wake of the next period");
-		assert.match(notices()[2]!.text, /^Auto watch 1 \(/);
+		assert.equal(notices().length, 0, "auto mode ended: the notice no run took is dropped");
 	} finally {
 		await world.close();
 	}

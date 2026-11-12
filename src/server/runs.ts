@@ -1591,6 +1591,21 @@ export function createRuns(o: RunsOptions) {
 			poke(svc);
 			return true;
 		},
+		/** Whether a notice whose key starts with `prefix` waits in the queue, not yet taken by a run (the auto watch sends no second one over it). */
+		noticeWaits(workspace: string, prefix: string): boolean {
+			const svc = services.get(workspace);
+			return Boolean(svc) && waitingOf(svc!).some((e) => e.kind === "notice" && e.messageId?.startsWith(prefix));
+		},
+		/** Drops the notices whose key starts with `prefix` that no run took, queued or parked (auto mode ended: its watch's notices are stale); one offered to the run in flight stays. Returns how many went. */
+		dropNotices(workspace: string, prefix: string): number {
+			const svc = services.get(workspace);
+			if (!svc) return 0;
+			const ours = (e: QueuedEvent) => e.kind === "notice" && Boolean(e.messageId?.startsWith(prefix));
+			const queued = waitingOf(svc, new Set(svc.run ? svc.run.offered.keys() : [])).filter(ours), parked = readQueue(slot, workspace, true).filter(ours);
+			for (const e of queued) removeEvent(slot, workspace, e);
+			for (const e of parked) dropParked(slot, workspace, e);
+			return queued.length + parked.length;
+		},
 		/** The service is held because the standing pane runs a program of the boss's: it is Retried by itself once the pane is free (standing.ts). */
 		paneBusy(workspace: string) {
 			const svc = services.get(workspace);
