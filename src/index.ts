@@ -7,6 +7,7 @@ import { createAuto } from "./auto.ts";
 import type { Ask } from "./host.ts";
 import { serverAsk } from "./autoask.ts";
 import { registerBoss } from "./boss.ts";
+import { registerChildKind } from "./childkind.ts";
 import { createBoardFill } from "./boardfill.ts";
 import { createBriefing } from "./briefing.ts";
 import { createCloseMain } from "./closemain.ts";
@@ -69,7 +70,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		s.autoOn = auto.on;
 		registerTrust(pi, kit, undefined, auto.trust); // pi's startup trust question reaches the GUI too, before any session has joined the net (trust/ask.ts), subagents included
 		interceptUi(pi, auto); // any extension's select and confirm reach the same bridge, subagents included
-		if (env.PI_SUBAGENT_ID) return void auto.attach();
+		if (env.PI_SUBAGENT_ID) return void (registerChildKind(pi, env), auto.attach()); // a child records its role for the net (childkind.ts)
 		// A pi the sb server started for a tower run (runmode.ts) decides first, at session_start: when it is a run, nothing of the net starts.
 		warmStart(); // Windows tells a process's start time through PowerShell, 2 to 3 s: read this one's now, in the background, so the records written later carry it
 		const roles = createRoles(kit);

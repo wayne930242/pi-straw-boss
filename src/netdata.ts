@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { type Duty, dutyOfAgent } from "./duty.ts";
 import type { Pane, Session } from "./herdr.ts";
@@ -51,7 +51,9 @@ export function readJson(path: string): Record<string, unknown> {
 const RACY_MS = 2000;
 const childPanes = new WeakMap<Pane[], { size: number; index: Map<string, Pane> }>();
 const listings = new Map<string, { mtime: bigint; readAt: number; names: string[] }>();
-const scripts = new Map<string, { mtimeMs: number; session?: string; persistent: boolean; agent?: string }>();
+const scripts = new Map<string, Launch & { mtimeMs: number }>();
+/** What a launch script says: the child's id, its session file, the agent role of a first launch (a resume names none), and whether it is a persistent specialist. */
+interface Launch { id?: string; session?: string; persistent: boolean; agent?: string }
 const SUFFIX = /^(.*)-[0-9a-f]{1,8}-[0-9a-f]{1,8}-[0-9a-f]{1,4}$/;
 
 /** The child ids a pane's session file can belong to: `ownFile` read from the file's side, so one pass over the panes replaces a match per child and pane. */
@@ -92,12 +94,12 @@ function listed(dir: string): string[] {
 	}
 }
 
-/** The session file a launch script names, the agent role it launched (`PI_SUBAGENT_AGENT`), and whether it launched a persistent specialist, read again only when the script changed. */
-function scriptRead(path: string): { session?: string; persistent: boolean; agent?: string } | undefined {
+/** The child id, session file, and agent role a launch script names (`PI_SUBAGENT_ID`, `PI_SUBAGENT_SESSION`, `PI_SUBAGENT_AGENT`), and whether it launched a persistent specialist, read again only when the script changed. */
+function scriptRead(path: string): Launch | undefined {
 	try {
 		const { mtimeMs } = statSync(path), cached = scripts.get(path);
 		if (cached?.mtimeMs === mtimeMs) return cached;
-		const text = readFileSync(path, "utf8"), read = { mtimeMs, session: text.match(/PI_SUBAGENT_SESSION='([^']+)'/)?.[1], persistent: /\bPI_SUBAGENT_PERSISTENT=1\b/.test(text), agent: text.match(/\bPI_SUBAGENT_AGENT='([^']+)'/)?.[1] };
+		const text = readFileSync(path, "utf8"), read = { mtimeMs, id: text.match(/\bPI_SUBAGENT_ID='([^']+)'/)?.[1], session: text.match(/PI_SUBAGENT_SESSION='([^']+)'/)?.[1], persistent: /\bPI_SUBAGENT_PERSISTENT=1\b/.test(text), agent: text.match(/\bPI_SUBAGENT_AGENT='([^']+)'/)?.[1] };
 		if (scripts.size > 500) scripts.clear();
 		scripts.set(path, read);
 		return read;
@@ -106,34 +108,92 @@ function scriptRead(path: string): { session?: string; persistent: boolean; agen
 	}
 }
 
+// A child records its role in its session file at its first turn (childkind.ts): `straw-boss { agent }`, the first such entry wins. AK4 found it within the first 30 KB of every child session sampled, so
+// only the first 64 KB are read. A role, once found, is kept by path; a file read without one is read again only once it has grown, and never once 64 KB of it held none.
+const ROLE_BYTES = 64 * 1024;
+const roles = new Map<string, string>(), roleless = new Map<string, number>();
+
+/** The agent role a child's session file records: its first `straw-boss { agent }` entry in the first 64 KB, or undefined (none yet, a handoff, a bare spawn). */
+export function agentOfSession(file: string | undefined): string | undefined {
+	if (!file) return undefined;
+	const known = roles.get(file);
+	if (known !== undefined) return known;
+	let fd: number | undefined;
+	try {
+		const { size } = statSync(file), missed = roleless.get(file);
+		if (missed !== undefined && (missed >= ROLE_BYTES || missed === size)) return undefined;
+		fd = openSync(file, "r");
+		const buffer = Buffer.alloc(Math.min(size, ROLE_BYTES)), read = readSync(fd, buffer, 0, buffer.length, 0);
+		const lines = buffer.subarray(0, read).toString("utf8").split("\n");
+		lines.pop(); // the last piece is a line cut off by the read, or the empty tail after the last newline
+		for (const line of lines) {
+			if (!line.includes('"straw-boss"') || !line.includes('"agent"')) continue;
+			try {
+				const e = JSON.parse(line) as { type?: unknown; customType?: unknown; data?: { agent?: unknown } };
+				if (e.type !== "custom" || e.customType !== "straw-boss" || typeof e.data?.agent !== "string") continue;
+				if (roles.size > 2000) roles.clear();
+				roles.set(file, e.data.agent);
+				return e.data.agent;
+			} catch { /* a line pi is still writing, or not JSON: the next one is read */ }
+		}
+		if (roleless.size > 2000) roleless.clear();
+		roleless.set(file, read >= ROLE_BYTES ? ROLE_BYTES : size);
+	} catch { /* no session file yet: pi writes it with the first message */ } finally {
+		if (fd !== undefined) closeSync(fd);
+	}
+	return undefined;
+}
+
+/** The pane whose pi runs the session file `file`: how a resumed child, whose new id its session file's name does not carry, is found. */
+const paneOfSession = (all: Pane[], file: string | undefined) => (file ? all.find((p) => p.agent === "pi" && p.agent_session?.value === file) : undefined);
+
 /** The subagents a pi session launched: live ones, plus those that finished in the last 10 minutes. The dashboard shows the first `limit`. */
 export function subagents(parent: Pane | undefined, all: Pane[], now: number, limit = MAX_CHILDREN): Row[] {
 	const file = parent?.agent_session?.value;
 	if (!file) return [];
-	const dir = artifacts(file), launched = listed(join(dir, "subagent-scripts"));
-	return listed(join(dir, "subagent-activity"))
+	const dir = artifacts(file), scriptDir = join(dir, "subagent-scripts"), launched = listed(scriptDir).filter((f) => f.endsWith(".sh"));
+	// A first launch's script is named `<name>-<id>.sh`; a resume's is `<name>-resume-<ts>.sh` and names a new id inside only (pi-herdr-agents launch-resume.ts), so it is found by what it carries.
+	const launchOf = (id: string) => {
+		const own = launched.find((f) => f.endsWith(`-${id}.sh`));
+		if (own) return { script: own, name: own.slice(0, -`-${id}.sh`.length), launch: scriptRead(join(scriptDir, own)) };
+		for (const f of launched) {
+			const launch = scriptRead(join(scriptDir, f));
+			if (launch?.id === id) return { script: f, name: f.replace(/-resume-[^-]*\.sh$/, "").replace(/\.sh$/, ""), launch };
+		}
+		return undefined;
+	};
+	// Before the child's first turn its session file holds no role yet: the first launch's script for that session file stands in.
+	const firstLaunchAgent = (session: string | undefined) => (session ? launched.map((f) => scriptRead(join(scriptDir, f))).find((l) => l?.session === session && l.agent)?.agent : undefined);
+	const rows = listed(join(dir, "subagent-activity"))
 		.flatMap((name) => {
 			const id = name.replace(/\.json$/, ""), path = join(dir, "subagent-activity", name);
 			try {
-				const child = { id, path, pane: paneOfChild(all, id), age: now - statSync(path).mtimeMs };
-				return child.pane || child.age < RECENT_MS ? [child] : [];
+				const at = statSync(path).mtimeMs, found = launchOf(id);
+				const child = { id, path, at, found, pane: paneOfChild(all, id) ?? paneOfSession(all, found?.launch?.session) };
+				return child.pane || now - at < RECENT_MS ? [child] : [];
 			} catch {
 				return []; // the activity file went away since the directory was listed
 			}
 		})
-		.map(({ id, path, pane }) => {
-			const activity = readJson(path);
+		.map(({ id, path, at, found, pane }) => {
+			const activity = readJson(path), launch = found?.launch;
 			// A child whose pane is gone, or back at a shell prompt, has finished.
-			const live: Mark = pane?.agent === "pi" ? markOf(pane.agent_status) : "done", script = launched.find((f) => f.endsWith(`-${id}.sh`)), launch = script ? scriptRead(join(dir, "subagent-scripts", script)) : undefined;
+			const live: Mark = pane?.agent === "pi" ? markOf(pane.agent_status) : "done";
 			const recordedDone = activity.phase === "done" && !(launch?.persistent && (live === "working" || live === "commanding")); // a persistent specialist stays available after done and its recorder stops writing: its phase stays done while a later subagent_send task runs
 			const mark: Mark = recordedDone && (live === "working" || live === "commanding") ? "done" : live; // a pi pane still working after the child recorded done is winding down: the map, the drawer's tag and the badge follow `ended`
 			// Only a pi pane's session file is the child's transcript; a reused pane running another agent is not read.
 			const file = (pane?.agent === "pi" ? pane.agent_session?.value : undefined) ?? launch?.session;
-			const name = pane?.label || (script?.slice(0, -`-${id}.sh`.length) ?? id.slice(0, 8));
+			const name = pane?.label || (found?.name ?? id.slice(0, 8));
 			const doing = activity.toolActive ? String(activity.toolName) : String(activity.phase ?? "");
-			const ended = pane?.agent !== "pi" || recordedDone, duty = dutyOfAgent(launch?.agent);
-			return { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", ...(duty ? { duty } : {}), workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, ...(ended && { ended }), ...(recordedDone && { finished: true }), note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] };
-		})
+			const ended = pane?.agent !== "pi" || recordedDone, duty = dutyOfAgent(agentOfSession(file) ?? launch?.agent ?? firstLaunchAgent(file));
+			return { at, row: { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", ...(duty ? { duty } : {}), workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, ...(ended && { ended }), ...(recordedDone && { finished: true }), note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] } };
+		});
+	// A session file resumed under a new id has two launches here; the newest activity is the child as it runs now.
+	const newest = new Map<string, number>();
+	for (const { at, row } of rows) if (row.file) newest.set(row.file, Math.max(newest.get(row.file) ?? -Infinity, at));
+	return rows
+		.filter(({ at, row }) => !row.file || newest.get(row.file) === at)
+		.map(({ row }) => row)
 		.sort((a, b) => Number(a.mark === "done") - Number(b.mark === "done") || a.text.localeCompare(b.text))
 		.slice(0, limit);
 }
