@@ -163,7 +163,7 @@ export function opener(env: OpenerEnv) {
 			if (!slips.length) throw new OpenLimitError("An integrator is opened on a car slip: the request carries none (car: <app> | tickets: … | branch: … | head: <40 hex>)");
 			// A field the parse could not take (a key that is no slip field, `app:` and `car:` naming two apps) is refused here with the parse's words, not dropped: the slip goes back to its sender as written (0.77.3).
 			const unread = slips.flatMap((s) => s.problems ?? []);
-			if (unread.length) throw new OpenLimitError(`The car slip cannot be taken as written: ${unread.join("; ")}. The slip's car: names the car's app (app: is the same field), and its tickets go in tickets:.`);
+			if (unread.length) throw new OpenLimitError(`The car slip cannot be taken as written: ${unread.join("; ")}. The slip's car: names the car's app (app: is the same field), and its tickets go in tickets:. A slip ends at a blank line: words of your own (\`Note: …\`) go after one, never on the line below the slip.`);
 			const apps = [...new Set(slips.map((s) => s.app))], config = noTrainRefusal(dir, apps);
 			if (config) throw new OpenLimitError(config);
 			const own = checkoutProject(dir);

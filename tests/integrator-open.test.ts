@@ -238,6 +238,7 @@ test("an integrator is opened on a car slip of an app that takes the train, and 
 	await assert.rejects(open(car({ car: "ghost" })), /has no app named ghost, so its car takes no train \(the slip's car: names the car's app/);
 	await assert.rejects(open({ ...car(), request: `app: web | ${slip({ coordinator: "sender-1", car: "T-15" })}` }), /cannot be taken as written: .*app: "web" and car: "T-15" name two apps/, "0.77.3 A3: an inline app: is read, and one that differs from car: is refused with the reason");
 	await assert.rejects(open(car({ colour: "blue" })), /cannot be taken as written: .*colour is not a slip field/, "0.77.3 A3: an unknown field is refused, not dropped");
+	await assert.rejects(open({ ...car(), request: `${slip({ coordinator: "sender-1" })}\nNote: urgent` }), /note is not a slip field.*A slip ends at a blank line: words of your own \(`Note: …`\) go after one/, "R0773-F003: the refusal says how to send prose with a slip");
 	await assert.rejects(open({ ...car(), sender: "nobody" }), /No live session is named or has the id "nobody"/);
 	await assert.rejects(open({ ...car(), peer: { id: "link:d1", label: "Ann's laptop", short: "ab12" } }), /not for a teammate's device/);
 	await assert.rejects(towerOpener("wA", true)(car()), /integration is off on this computer/);
