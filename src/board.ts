@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { CoordinatorDuty } from "./duty.ts";
 
 // The work board (docs/specs/2026-10-25-straw-link.md, Work board): each main writes one small entry about its own work, and towers read them all.
 // This file holds the entry rules, the files under `<state dir>/board/`, and the reader's join with the live net. It knows nothing of Straw Link: the
@@ -150,7 +151,7 @@ export function forAllies(e: { now: string; items: BoardItem[]; src: Src; count?
 export const wireId = (device: string, session: string): string => createHash("sha256").update(device).update(session).digest().subarray(0, 8).toString("hex");
 
 /** A live main as the join needs it (the net reading `tower_list` already does). `role`: "train" for a train, whose line fills from its todos as a main's does. */
-export interface LiveMain { role?: "train"; session: string; name: string; workspaceId: string; workspace: string; tab: string; state: string; cwd?: string; /** It commands work (a subagent of it runs): its entry is not stale. */ commanding?: boolean }
+export interface LiveMain { role?: "train"; session: string; name: string; workspaceId: string; workspace: string; tab: string; state: string; cwd?: string; /** It commands work (a subagent of it runs): its entry is not stale. */ commanding?: boolean; /** Its kind (`sb_duty`): a standing main minds one system with no end, so its entry is never stale (docs/specs/2026-11-09-agent-kinds.md Phase 2). */ duty?: CoordinatorDuty }
 export interface LocalRow {
 	role?: "train";
 	session: string;
@@ -173,7 +174,7 @@ export interface LocalRow {
 /**
  * The local board: the entries joined with the live mains. A live main shows with its name and tab and the entry it wrote, if any; an entry whose session
  * is not a live main shows as `ended` until 30 minutes after its last update, then not at all. A finished auto entry (all todos done) of a live main is not shown
- * 30 minutes after it was written, and the entry of a main that is idle now, and commands nothing, shows as `stale` once it is over 2 hours old.
+ * 30 minutes after it was written, and the entry of a main that is idle now, commands nothing, and is not standing shows as `stale` once it is over 2 hours old.
  * `keepEnded` (the boss's own view, docs/specs/2026-11-09-board-view.md): an ended entry shows for as long as its file exists, not 30 minutes; what towers get does not change.
  */
 export function joinLocal(entries: Entry[], mains: LiveMain[], now: number, o: { keepEnded?: boolean } = {}): LocalRow[] {
@@ -182,7 +183,7 @@ export function joinLocal(entries: Entry[], mains: LiveMain[], now: number, o: {
 		const found = byId.get(m.session), e = found && finished(found) && now - found.updated > ENDED_MS ? undefined : found;
 		return {
 			session: m.session, ...(m.role ? { role: m.role } : {}), workspaceId: m.workspaceId, workspace: m.workspace, tab: m.tab, main: m.name, state: m.state, items: e?.items ?? [],
-			...(e ? { now: e.now, src: e.src, ...(e.count ? { count: e.count } : {}), ...(e.who ? { who: e.who } : {}), updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)), ...(m.state === "idle" && !m.commanding && now - e.updated > STALE_MS ? { stale: true as const } : {}) } : {}), ...(m.cwd ? { cwd: m.cwd } : {}),
+			...(e ? { now: e.now, src: e.src, ...(e.count ? { count: e.count } : {}), ...(e.who ? { who: e.who } : {}), updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)), ...(m.state === "idle" && !m.commanding && m.duty !== "standing" && now - e.updated > STALE_MS ? { stale: true as const } : {}) } : {}), ...(m.cwd ? { cwd: m.cwd } : {}),
 		};
 	});
 	const gone = entries.filter((e) => !mains.some((m) => m.session === e.session) && (o.keepEnded || now - e.updated <= ENDED_MS)).map((e): LocalRow => ({

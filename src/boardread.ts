@@ -24,7 +24,7 @@ export interface BoardReadInput {
 export function liveMains(net: BoardReadInput["net"], now: number, label: (text: string) => string): LiveMain[] {
 	return netMembers(net.sessions, net.ps).filter((m) => m.role === "main" || m.role === "train").map((m): LiveMain => {
 		const pane = net.ps.find((p) => p.pane_id === m.s.herdrLocation?.paneId);
-		return { session: m.s.id, ...(m.role === "train" ? { role: "train" as const } : {}), name: label(nameOf(m.s)), workspaceId: m.workspace.id, workspace: label(m.workspace.label), tab: label(m.tab.label), state: sessionMark(m.s, pane), commanding: commanding(sessionMark(m.s, pane), subagents(pane, net.ps, now).map((r) => r.mark)) === "commanding", ...(pane?.cwd ? { cwd: pane.cwd } : {}) };
+		return { session: m.s.id, ...(m.role === "train" ? { role: "train" as const } : {}), name: label(nameOf(m.s)), workspaceId: m.workspace.id, workspace: label(m.workspace.label), tab: label(m.tab.label), state: sessionMark(m.s, pane), commanding: commanding(sessionMark(m.s, pane), subagents(pane, net.ps, now).map((r) => r.mark)) === "commanding", ...(m.duty ? { duty: m.duty } : {}), ...(pane?.cwd ? { cwd: pane.cwd } : {}) };
 	});
 }
 

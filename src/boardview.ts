@@ -1,6 +1,7 @@
 import { statSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { type BoardItem, clean, type Count, type Entry, joinLocal, type LiveMain, readEntries, type Src } from "./board.ts";
+import { isCoordinatorDuty } from "./duty.ts";
 import type { Net } from "./net.ts";
 
 type Keyed = { key: string; subs: Keyed[] };
@@ -38,7 +39,7 @@ export const MAX_ENDED = 100;
 /** The live mains of the net snapshot the server already built (units of this computer's own bases; a box this computer operates is another computer's board). */
 export function mainsOfNet(net: Pick<Net, "bases">): LiveMain[] {
 	return net.bases.filter((b) => !b.box).flatMap((b) => b.tabs.flatMap((t) => t.units.filter((u) => u.role === "main" || u.role === "train").map((u): LiveMain => ({
-		session: u.key, ...(u.role === "train" ? { role: "train" as const } : {}), name: clean(u.name, 40), workspaceId: b.id, workspace: clean(b.label, 40), tab: clean(t.label, 40), state: u.mark, commanding: u.mark === "commanding",
+		session: u.key, ...(u.role === "train" ? { role: "train" as const } : {}), name: clean(u.name, 40), workspaceId: b.id, workspace: clean(b.label, 40), tab: clean(t.label, 40), state: u.mark, commanding: u.mark === "commanding", ...(u.role === "main" && isCoordinatorDuty(u.duty) ? { duty: u.duty } : {}),
 	}))));
 }
 
