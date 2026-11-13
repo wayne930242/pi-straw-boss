@@ -2307,6 +2307,12 @@ pi 不等待就發出這兩個事件，並逐一走過各擴充套件，所以�
 
 </details>
 
+## 角色包
+
+sb 隨附它的智慧體所用的 pi-herdr-agents 角色：`roles/` 裡的 `worker`、`scout`、`planner`、`reviewer`、`visual-tester` 與 `adversarial-reviewer`。第五個擴充入口 `src/rolepack.ts` 在每個 pi（子智慧體也一樣）把這個資料夾登記到 pi-herdr-agents 的探索事件（`pi-herdr-subagents:roles:discover:v1`，API 版本 1），並在 `session_shutdown` 時撤掉。pi-herdr-roles 帶著同樣的名稱，兩者會衝突，pi-herdr-agents 會停用這些角色：請解除安裝它。全域（`~/.pi/agent/agents/`）或專案裡的同名角色，仍然優先於角色包。
+
+每個角色的 `tools:` 列會成為子智慧體的工具允許清單。`worker` 與 `adversarial-reviewer` 沒有這一列，可用所有工具。`/boss roles-check [folder]` 把列出的每個名稱，和它所在 session 的工具、以及只有子智慧體才有的 `caller_ping` 與 `subagent_done` 比對。session 沒有的名稱算失敗，只有上層才有的名稱也算失敗：sb 自己的工具（`src/tools.ts` 的 `PARENT_ONLY`，全都在子智慧體之外登記）以及 pi-herdr-agents 的 `worktree_list` 與 `worktree_remove`。它預設讀 sb 自己的 `roles/`，不啟動任何程序；以 `--tools` 或 `--exclude-tools` 啟動、工具清單被縮小的 session 會拒絕執行。
+
 ## 側邊欄網檢視
 
 `herdr-plugin/` 裡的選用 Herdr 外掛（id `wayne930242.straw-boss`，動作 `net`）可以在側邊欄的 Agents 清單中，於 Herdr 自己的檢視與網檢視之間切換。網檢視先列出主塔台的工作區（若存在；它的那一列是皇冠分頁的 pane，聚焦它會顯示常駐 pane，在那裡按 Enter 即可與主塔台對話），再依 Herdr 的順序列出其他工作區。每個工作區裡，塔台排第一，接著依順序列出各分頁；每個分頁裡先列主智慧體，再列成員。每個子智慧體都直接掛在啟動它的 session 底下，包括 pi-herdr-agents 在 worktree 子工作區開出來的子智慧體。

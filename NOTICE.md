@@ -112,3 +112,36 @@ INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
 OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
 TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
+
+## Role definitions (`roles/`)
+
+The role pack in `roles/` (docs/specs/2026-11-09-agent-kinds.md §9) is derived from two sources.
+
+- `roles/worker.md`, `roles/scout.md`, `roles/reviewer.md`, `roles/visual-tester.md`, and `roles/adversarial-reviewer.md` start from the role overrides of [weihung-basic-agent](https://github.com/wayne930242/weihung-basic-agent) (`agents/`), MIT License, Copyright (c) 2026 wayne930242. Those overrides in turn derive from the pi-herdr-roles definitions below.
+- `roles/planner.md` derives from [pi-herdr-roles](https://www.npmjs.com/package/pi-herdr-roles) 0.1.0 `roles/planner.md` alone.
+
+pi-herdr-roles' role definitions were moved from [giuseppecrj/pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) at commit `c2177dff835da44937e614e8a03d0405d442e848`, whose MIT notice is retained from its upstream lineage, [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents) and [0xRichardH/pi-herdr-subagents](https://github.com/0xRichardH/pi-herdr-subagents). pi-herdr-roles 0.1.0 carries this notice:
+
+```text
+MIT License
+
+Copyright (c) 2026 HazAT
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

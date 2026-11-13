@@ -29,7 +29,7 @@ pi-straw-boss 讓它們能找到彼此、互相協調，不需要排程器，也
 pi install npm:pi-straw-boss
 ```
 
-需要在 [Herdr](https://herdr.dev) 0.9.4 以上的版本裡執行 pi、安裝 Herdr 的 pi 整合（`herdr integration install pi`），以及 [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.18.1 以上。合併火車另外需要宣告了[合併火車契約](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/merge-train/#合併火車契約)的 `integrating` 與 `deploying` skill。Windows 支援仍屬實驗性質。可搭配的選用套件見[安裝](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/install/)。
+需要在 [Herdr](https://herdr.dev) 0.9.4 以上的版本裡執行 pi、安裝 Herdr 的 pi 整合（`herdr integration install pi`），以及 [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.18.1 以上。合併火車另外需要宣告了[合併火車契約](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/merge-train/#合併火車契約)的 `integrating` 與 `deploying` skill。Windows 支援仍屬實驗性質。sb 隨附它的智慧體所用的 pi-herdr-agents 角色（`worker`、`scout`、`planner`、`reviewer`、`visual-tester`、`adversarial-reviewer`）；請解除安裝 pi-herdr-roles，它的同名角色會互相衝突。可搭配的選用套件見[安裝](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/install/)。
 
 ## 快速開始
 
@@ -51,6 +51,7 @@ pi install npm:pi-straw-boss
 | `/boss auto on`、`/boss auto off` | 自動模式，你不在時用。 |
 | `/boss stash`、`/boss pop` | 把整個工作區（塔台、主智慧體和成員）收起來，之後再接回。 |
 | `/boss server` | sb server：每台電腦一個的背景程序，負責執行塔台和提供網頁。 |
+| `/boss roles-check [資料夾]` | 把每個角色 `tools:` 列的工具名稱，和這個 session 的工具比對。 |
 
 所有工具和指令見[指令](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/reference/commands/)。
 

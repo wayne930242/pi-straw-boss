@@ -2307,6 +2307,12 @@ Because pi reports only the outermost dialog, a confirm opened while a `custom` 
 
 </details>
 
+## The role pack
+
+sb ships the pi-herdr-agents roles its agents run as: `worker`, `scout`, `planner`, `reviewer`, `visual-tester`, and `adversarial-reviewer`, in `roles/`. A fifth extension entry, `src/rolepack.ts`, registers that folder on pi-herdr-agents' discovery event (`pi-herdr-subagents:roles:discover:v1`, API version 1) in every pi, subagents included, and drops it at `session_shutdown`. pi-herdr-roles carries the same names, so the two would collide and pi-herdr-agents would disable those roles: uninstall it. A global (`~/.pi/agent/agents/`) or project role of the same name still wins over the pack.
+
+Each role's `tools:` line becomes the child's tool allowlist. `worker` and `adversarial-reviewer` have none and run with every tool. `/boss roles-check [folder]` compares every listed name with the tools of the session it runs in, plus `caller_ping` and `subagent_done`, which only a child has. A name the session lacks fails, and so does a name only a parent has: sb's own tools (`PARENT_ONLY` in `src/tools.ts`, all registered outside a child) and pi-herdr-agents' `worktree_list` and `worktree_remove`. It reads sb's own `roles/` by default, starts no process, and refuses in a session started with `--tools` or `--exclude-tools`, whose tool list is narrowed.
+
 ## Sidebar net view
 
 The optional Herdr plugin in `herdr-plugin/` (id `wayne930242.straw-boss`, action `net`) toggles the sidebar's Agents list between Herdr's own view and a net view. The net view lists the head tower's workspace first when it exists (its row is the crown tab's pane, and focusing it shows the standing pane, where Enter talks to the head tower), then the other workspaces in Herdr's order. In each workspace the tower comes first, then the tabs in their order, and in each tab the main agent and then the members. Every subagent sits directly under the session that launched it, including one that pi-herdr-agents opened in a worktree sub workspace.
