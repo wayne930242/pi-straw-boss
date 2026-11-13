@@ -174,8 +174,12 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number, li
 	// Only the resumes are read for that, once while the folder lists the same names.
 	const resumeOf = (id: string) => {
 		if (!folder.resumes) {
-			folder.resumes = new Map();
-			for (const f of launched) if (/-resume-[^-]*\.sh$/.test(f)) { const launch = read(f); if (launch?.id && !folder.resumes.has(launch.id)) folder.resumes.set(launch.id, { script: f, launch }); }
+			const index = new Map<string, { script: string; launch: Launch }>();
+			let whole = true;
+			for (const f of launched) if (/-resume-[^-]*\.sh$/.test(f)) { const launch = read(f); if (launch?.id) index.has(launch.id) || index.set(launch.id, { script: f, launch }); else whole = false; }
+			// A script that names no id yet is still being written (R0790-D001): the index is not kept, so the next read looks again.
+			if (whole) folder.resumes = index;
+			else return index.get(id);
 		}
 		return folder.resumes.get(id);
 	};

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -154,4 +154,24 @@ test("a first launch and its resume of one session file, with the same activity 
 	assert.equal(rows.length, 1, JSON.stringify(rows));
 	assert.equal(rows[0]!.id, "ktie-r");
 	assert.equal(rows[0]!.duty, "worker", "the first launch's script names the role");
+});
+
+// Review R0790-D001: a resume script listed while still being written names no id yet; the index of resumes must not keep that miss once the script is whole.
+test("a resume script read before it names its id is read again once it does: the resumed child gets its file, pane and name", () => {
+	const file = kidFile("dorig");
+	const parent = artifacts("pdrace", [
+		{ id: "dorig", scriptName: "rev-dorig.sh", session: file, agent: "reviewer", name: "rev", phase: "done" },
+		{ id: "dfresh", scriptName: "rev-resume-1731456000009.sh", session: file, name: "rev" },
+	]);
+	const path = join(sessions, "artifacts", "pdrace", "subagent-scripts", "rev-resume-1731456000009.sh"), whole = readFileSync(path, "utf8");
+	writeFileSync(path, "#!/bin/bash\ncd '/x' && ");
+	const t1 = Date.now() / 1000 - 30;
+	utimesSync(path, t1, t1);
+	const live = pane("wD:p3", { agent_status: "working", agent_session: { value: file } });
+	assert.equal(subagents(parent, [parent, live], Date.now()).find((r) => r.id === "dfresh")?.text, "dfresh".slice(0, 8), "while the script is partial the child has no name from it");
+	writeFileSync(path, whole);
+	utimesSync(path, t1 + 10, t1 + 10);
+	const row = subagents(parent, [parent, live], Date.now()).find((r) => r.id === "dfresh")!;
+	assert.equal(row.text, "rev", "its name is the script's once the script is whole");
+	assert.equal(row.pane, "wD:p3");
 });
