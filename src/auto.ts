@@ -118,10 +118,10 @@ export function createAuto({ pi, cfg, s, guiDir, me }: Kit, d: AutoDeps = {}) {
 		}
 		const texts = [...new Set([...ended.cancelled, ...ended.stuck].map((e) => cancelledText(st.since, e.tool, kind())))];
 		if (first && !d.silent?.()) texts.push(onNotice(st.since));
-		// An owner that took the cancel closes the ui.custom it drew (rpiv), which the wrap counts as a dialog nobody relays: those do not need the turn aborted (AMC-F001).
+		// An owner that took the cancel closes the ui.custom it drew (rpiv, robot_hand 0.8.0), which the wrap counts as a dialog nobody relays: those do not need the turn aborted (AMC-F001).
 		const open = Math.max(0, unrelayed - ended.cancelled.length);
 		if (!ended.stuck.length && !open) return void (texts.length && tell(texts.join("\n")));
-		// A wait that cannot be ended (robot_hand and secret_drop ignore a cancel, as does a dialog nobody relays) goes with the turn: abort it, and once pi has settled, a message starts the next turn with sb's text (AM-F004).
+		// A wait that cannot be ended (secret_drop and a robot_hand before 0.8.0 take no cancel, nor does a dialog nobody relays) goes with the turn: abort it, and once pi has settled, a message starts the next turn with sb's text (AM-F004).
 		if (d.bridge?.turn?.running()) (queued = texts.length ? texts : [cancelledText(st.since, "dialog", kind())], d.bridge.turn.abort());
 		else if (texts.length) send(texts.join("\n"), true);
 	}

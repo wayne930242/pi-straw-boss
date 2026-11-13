@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { guiNamespace, MAX_QUEUED, QUEUED_TEXT, REGISTER } from "./bridgewire.ts";
 import { answerOk, type BlockAnswer, type Doc, type Fields, fieldsOk, listenDocs, submitAnswer, submitForm } from "./documents.ts";
-import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, type Verdict } from "./owners.ts";
+import { type Answer, type Bus, type Dialog, OWNERS, type OwnerAdapter, takesCancel, type Verdict } from "./owners.ts";
 import { type Cmd, listCommands, MAX_PREFIX } from "./commands.ts";
 import type { Queued } from "./net.ts";
 import { type Editor, probeEditor } from "./probe.ts";
@@ -94,7 +94,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 	};
 	const push = (final = false) => {
 		if (!target()) return;
-		const dialogs = final ? [] : open().filter((r) => !r.d.secret).map((r) => ({ ...r.d, ...(r.adapter.cancellable ? { cancellable: true as const } : {}), ...(r.state !== "open" ? { busy: true as const } : {}) }));
+		const dialogs = final ? [] : open().filter((r) => !r.d.secret).map((r) => ({ ...r.d, ...(takesCancel(r.adapter, r.d) ? { cancellable: true as const } : {}), ...(r.state !== "open" ? { busy: true as const } : {}) }));
 		const closed = final ? [] : [...recs.values()].filter((r) => r.state === "closed").map((r) => ({ id: r.d.id, by: r.by!, ...(r.by === "remote" && r.answerId ? { answerId: r.answerId } : {}), ...(r.allow ? { allow: true as const } : {}) }));
 		const queue = final ? [] : queued.slice(0, MAX_QUEUED).map((q) => ({ ...q, text: clipQueued(q.text) }));
 		const mons = final ? [] : (monitors?.list() ?? []);
@@ -190,7 +190,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 		for (const r of open()) {
 			if (r.state !== "open" || skip(r.d)) continue;
 			const ended = { tool: (r.d.toolCallId ? calls.get(r.d.toolCallId)?.tool : undefined) ?? r.adapter.tool ?? r.d.owner, dialog: r.d, ...(r.d.toolCallId ? { toolCallId: r.d.toolCallId } : {}) };
-			if (r.adapter.cancellable && !r.d.secret) (deliver({ version: 1, type: "answer", to: bridgeId, id: r.d.id, answerId: `auto-${randomUUID()}`, digest: r.d.digest, cancel: true }, () => {}), cancelled.push(ended));
+			if (takesCancel(r.adapter, r.d) && !r.d.secret) (deliver({ version: 1, type: "answer", to: bridgeId, id: r.d.id, answerId: `auto-${randomUUID()}`, digest: r.d.digest, cancel: true }, () => {}), cancelled.push(ended));
 			else stuck.push(ended);
 		}
 		return { cancelled, stuck };
@@ -243,7 +243,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 		if (r.state === "closed") return reply(ack(r, a, r.by === "remote" && r.answerId === a.answerId ? "accepted" : "stale", { by: r.by }));
 		if (r.state !== "open") return r.answerId !== a.answerId ? reply(ack(r, a, "busy")) : r.last ? reply(r.last) : void r.waiting.push(reply);
 		if (r.d.secret) return reply(ack(r, a, "rejected", { reason: "terminal_only" })); // whatever it carries, a secret is never taken from a relayed answer
-		if (a.cancel !== undefined && (a.cancel !== true || !r.adapter.cancellable || a.choice !== undefined || a.answers !== undefined)) return reply(ack(r, a, "rejected", { reason: r.adapter.cancellable ? "malformed" : "not-allowed" })); // a cancel only for an owner that takes one, and carrying nothing else; the dialog stays open
+		if (a.cancel !== undefined && (a.cancel !== true || !takesCancel(r.adapter, r.d) || a.choice !== undefined || a.answers !== undefined)) return reply(ack(r, a, "rejected", { reason: takesCancel(r.adapter, r.d) ? "malformed" : "not-allowed" })); // a cancel only for an owner that takes one, and carrying nothing else; the dialog stays open
 		[r.state, r.answerId] = ["settling", a.answerId];
 		let off: (() => void) | undefined, timer: ReturnType<typeof setTimeout> | undefined, done = false;
 		const finish = (v?: Verdict) => {

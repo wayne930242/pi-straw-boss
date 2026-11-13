@@ -1431,7 +1431,7 @@ flowchart TD
 
 **送出答案**交給開啟該對話框的套件，由它像終端機答案一樣處理，所以終端機的對話框會關閉，agent 只收到一次答案。面板接著顯示「Answered.」；終端機先答時顯示「It was already answered in the terminal.」；套件拒絕時顯示擁有者的理由（對話框仍可回答）；沒有收到確認時顯示「Not confirmed. Check the terminal」和**再檢查一次**（重送同一個答案，絕不送新的）。
 
-**取消**（在送出旁邊；在標準、極客和手機版面中，手機上是 44 px 的點按目標）以和終端機中按 Escape 相同的方式結束對話框，不選任何東西：rpiv 收到 `{cancel: true}`，它的工具呼叫以它自己的已取消結果結束；`ctx.ui` 的 select 解析為 `undefined`，confirm 解析為 `false`；link gate 與 link 核可把它當成拒絕。它走和答案相同的答案路由，所以第一個答案獲勝、重送會重播，卡片顯示「Cancelled.」。沒有取消路徑的擁有者（`robot_hand`、pi-code 的 gate、`secret_drop`）沒有這顆按鈕：什麼都不送、沒有按鍵、不讀畫面。
+**取消**（在送出旁邊；在標準、極客和手機版面中，手機上是 44 px 的點按目標）以和終端機中按 Escape 相同的方式結束對話框，不選任何東西：rpiv 收到 `{cancel: true}`，它的工具呼叫以它自己的已取消結果結束；`ctx.ui` 的 select 解析為 `undefined`，confirm 解析為 `false`；link gate 與 link 核可把它當成拒絕；pi-robot-hand 0.8.0 的 `robot_hand` 收到帶著對話框 digest 的 `{cancel: true}`，只限 `pending` 說了 `cancellable: true` 的對話框（0.7.x 不說，也就不收），它的工具呼叫以已取消返回，不結束這一輪。它走和答案相同的答案路由，所以第一個答案獲勝、重送會重播，卡片顯示「Cancelled.」。沒有取消路徑的擁有者（pi-code 的 gate、`secret_drop`、0.8.0 之前的 `robot_hand`）沒有這顆按鈕：什麼都不送、沒有按鍵、不讀畫面。
 
 頁面上的 Escape 仍然只關閉對話框檢視，不會取消問題。取消是一種拒絕，所以已配對的裝置在它能選某個選項的地方都可以取消。選項全是 `hereOnly` 的對話框（`/boss` link 核可、它的 confirm 和它的措辭 select，以及 `gui rotate`、`gui unpair all`、`server stop` 和 `restart` 的 confirm）會被拒絕來自已配對裝置的請求（403 `local_only`），在那裡也不顯示取消。信任、移除、角色、輪替或離開的 link 核可保有一個已配對裝置可以選的拒絕，所以它可以取消（也就是拒絕）。
 
