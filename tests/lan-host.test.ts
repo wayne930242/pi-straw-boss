@@ -179,9 +179,11 @@ test("pairing end to end: a face mints the QR, the phone redeems it and shows a 
 	const log = readFileSync(fileOf(h.slot, "log"), "utf8");
 	assert.match(log, /lan-pair-pending/);
 	assert.match(log, /lan-paired label=/);
-	// The number is four random digits: look for it as a token of its own, outside the timestamps, so a year or a time in the log is no false hit.
-	const bare = log.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, "");
-	assert.ok(!new RegExp(`(?<!\\d)${number}(?!\\d)`).test(bare) && !log.includes(cookie!), "no number or cookie in the log");
+	// The number is four random digits, so the whole log (a year, a port, a pid) can hold it by chance. The pairing writes only the lan-pair, lan-paired, lan-approve and lan-code lines,
+	// whose facts (peer address, label, why, counts) hold no four-digit token: look for it there, as a token of its own, after the line's timestamp.
+	const pairing = log.split("\n").filter((line) => / lan-(pair|paired|approve|code)\b/.test(line)).map((line) => line.replace(/^\S+Z /, ""));
+	assert.ok(pairing.length >= 2, "the pairing lines are there");
+	assert.ok(!pairing.some((line) => new RegExp(`(?<!\\d)${number}(?!\\d)`).test(line)) && !log.includes(cookie!), "no number or cookie in the log");
 });
 
 test("a paired phone has a paired device's reach and no more: lan/*, server/*, and remote/* are local_only (403) for it, with the page's own origin and CSRF", async () => {
