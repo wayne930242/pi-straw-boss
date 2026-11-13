@@ -230,8 +230,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 		closed(id: string, by?: string, allow?: true) {
 			const r = recs.get(id);
 			if (!r || r.state === "closed") return;
-			// A close by "cancel" after the owner accepted this bridge's own answer is that answer winning (robot_hand 0.8.0 reports a remote cancel so, without its answerId): a resend gets "accepted" (RC-F002).
-			[r.state, r.at, r.by] = ["closed", Date.now(), by === "cancel" && r.accepted ? "remote" : (by ?? (r.accepted ? "remote" : "local"))];
+			[r.state, r.at, r.by] = ["closed", Date.now(), by === "cancel" && r.accepted ? "remote" : (by ?? (r.accepted ? "remote" : "local"))]; // A close by "cancel" after the owner accepted this bridge's own answer is that answer winning (robot_hand 0.8.0 reports a remote cancel so, without its answerId): a resend gets "accepted" (RC-F002).
 			if (allow) r.allow = true;
 			changed();
 		},

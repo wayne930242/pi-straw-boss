@@ -100,8 +100,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		pi.appendEntry(ENTRY, { openedBy: s.openedBy ?? null, openedPane: s.at.paneId }); // null, not undefined: a later claim (a pop) overrides an earlier opener
 		// The kind the tower opened it with (docs/specs/2026-11-09-agent-kinds.md §6) is consumed with the claim: the entry, `s.duty`, and, at the promotion below, the role record, which a restore before the first message reads.
 		const duty = mine.tokens.sb_open_duty;
-		// `integrator` only while integration is on, as the door (opener.ts) requires: a token written by anything else gets no hidden integrator entry (R0790-F003).
-		if (isCoordinatorDuty(duty) && s.duty !== duty && (duty !== "integrator" || mainDuty.integrationOn())) {
+		if (isCoordinatorDuty(duty) && s.duty !== duty && (duty !== "integrator" || mainDuty.integrationOn())) { // `integrator` only while integration is on, as the door (opener.ts) requires: a token written by anything else gets no hidden integrator entry (R0790-F003).
 			const tower = (await workspaces(run).catch(() => [])).find((w) => w.workspace_id === s.at.workspaceId)?.tokens?.tower;
 			mainDuty.write(duty, `opened by tower ${tower ?? `of workspace ${s.at.workspaceId}`} as ${duty}`);
 		}
