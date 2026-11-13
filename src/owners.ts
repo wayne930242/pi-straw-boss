@@ -20,7 +20,7 @@ export interface Question { question: string; header?: string; multiple: boolean
 /** secret_drop's masked dialog: what it asks for and where the value goes. Never the value itself. */
 export interface Secret { label: string; instructions: string[]; url?: string; destination: string }
 /** An open dialog as the bridge relays it: a `select` (labelled choices), `questions` (a questionnaire), or a `secret`; `big` when too long to relay, `busy` while an answer is on its way. */
-export interface Dialog { owner: string; id: string; toolCallId?: string; digest: string; select?: Select; questions?: Question[]; secret?: Secret; big?: true; busy?: true; /** The dialog is one of sb's own `/boss` command confirms (a hint, not hashed): auto mode's backstop leaves it to the boss. */ command?: true; cancellable?: true /* the bridge's own word that it takes a cancel; an older bridge sends none */ }
+export interface Dialog { owner: string; id: string; toolCallId?: string; digest: string; select?: Select; questions?: Question[]; secret?: Secret; big?: true; busy?: true; /** The dialog is one of sb's own `/boss` command confirms (a hint, not hashed): auto mode's backstop leaves it to the boss. */ command?: true; cancellable?: true /* the bridge's own word that it takes a cancel; an older bridge sends none */; /** The owner's own word in its `pending` that this dialog takes a cancel (pi-robot-hand 0.8.0); read only for an adapter with `cancelAsked`. */ ownerCancel?: true }
 /** What the page may answer, carried on a waiting unit's `pending`. */
 export interface Answerable { dialog: string; digest: string; command?: true; select?: Select; questions?: Question[]; twin?: true; cancel?: true }
 /** One question's answer: chosen option indexes, own words, a note. */
@@ -41,6 +41,8 @@ export interface OwnerAdapter {
 	twin?: true;
 	/** The owner takes a cancel for its dialog (`Answer.cancel`) and ends it the way Escape does in the terminal. An owner without one gets no cancel button: nothing is sent, no key, no screen read. */
 	cancellable?: true;
+	/** The owner says per dialog whether it takes a cancel (`cancellable: true` in its `pending`, `Dialog.ownerCancel`): an older owner says nothing and gets no cancel (#140 task 6). */
+	cancelAsked?: true;
 	listen(bus: Bus, report: Report): () => void;
 	/** Hands one answer to the owner; `done` gets the verdict (synchronously when the owner answers inside its listener). Returns the cleanup. */
 	answer(bus: Bus, d: Dialog, a: Answer, done: (v: Verdict) => void): () => void;
@@ -62,7 +64,7 @@ export function selectOf(owner: string, raw: unknown): Dialog | undefined {
 	if (p?.version !== 1 || !str(p.id) || p.id.length > 64 || !str(p.digest) || !str(p.select?.title) || !choices?.length || (p.toolCallId !== undefined && !str(p.toolCallId))) return;
 	if (!choices.every((c) => str(c?.label) && (c.note === undefined || str(c.note)))) return;
 	const select = { title: p.select.title, choices: choices.map((c) => ({ label: c.label, ...(c.note ? { note: c.note } : {}), ...(c.localOnly === true ? { localOnly: true as const } : {}), ...(c.hereOnly === true ? { hereOnly: true as const } : {}), ...(NEXT.includes(c.next) ? { next: c.next as Next } : {}), ...(c.next === "pane" && c.tagged === true ? { tagged: true as const } : {}) })), ...(str(p.select.copy) ? { copy: p.select.copy } : {}), ...((p.select as { confirm?: unknown }).confirm === true ? { confirm: true as const } : {}) };
-	return { owner, id: p.id, ...(p.toolCallId ? { toolCallId: p.toolCallId as string } : {}), digest: p.digest, ...(p.command === true ? { command: true as const } : {}), select };
+	return { owner, id: p.id, ...(p.toolCallId ? { toolCallId: p.toolCallId as string } : {}), digest: p.digest, ...(p.command === true ? { command: true as const } : {}), ...((p as { cancellable?: unknown }).cancellable === true ? { ownerCancel: true as const } : {}), select };
 }
 
 /** A contract-v1 secret dialog (at most 20 instructions of 2000 characters, a label and destination of 500, a url of 2000), or undefined; one over those limits is left to the terminal, since cutting it would break its digest. It must name its tool call. */
@@ -80,8 +82,8 @@ const SELECT_SHAPE: Shape = { parse: selectOf, body: (a) => (a.cancel ? { cancel
 const SECRET_SHAPE: Shape = { parse: secretOf, body: (a) => ({ value: a.value }) };
 
 /** An owner that speaks contract v1 under `prefix` (pi-robot-hand; pi-mcp-adapter's fork once it emits). */
-const contract = (name: string, prefix: string, tool?: string, gate?: true, shape = SELECT_SHAPE, twin?: true, cancellable?: true): OwnerAdapter => ({
-	name, tool, ...(gate ? { gate } : {}), ...(twin ? { twin } : {}), ...(cancellable ? { cancellable } : {}),
+const contract = (name: string, prefix: string, tool?: string, gate?: true, shape = SELECT_SHAPE, twin?: true, cancellable?: true, cancelAsked?: true): OwnerAdapter => ({
+	name, tool, ...(gate ? { gate } : {}), ...(twin ? { twin } : {}), ...(cancellable ? { cancellable } : {}), ...(cancelAsked ? { cancelAsked } : {}),
 	listen(bus, report) {
 		const self = this, offs = [
 			bus.on(`${prefix}:pending`, (raw) => { const d = shape.parse(name, raw); if (d) report.open(self, d); }),
@@ -144,7 +146,10 @@ export const rpiv: OwnerAdapter = {
 /** pi-robot-hand 0.3.2 sends no `next`: its three terminal-bound choices are told by the labels it shows (hand.ts `options`); an owner that sends its own word keeps it. */
 const HAND_NEXT: [RegExp, Next][] = [[/^Put it in my prompt\b/, "terminal"], [/^Type it into a new Herdr pane\b/, "pane"], [/^Run it in a new Herdr pane\b/, "pane"]];
 const HAND_SHAPE: Shape = { ...SELECT_SHAPE, parse: (owner, raw) => { const d = selectOf(owner, raw); if (d?.select) d.select.choices = d.select.choices.map((c) => (c.next ? c : ((next) => (next ? { ...c, next } : c))(HAND_NEXT.find(([re]) => re.test(c.label))?.[1]))); return d; } };
-export const robotHand = contract("robot-hand", "robot-hand", "robot_hand", undefined, HAND_SHAPE);
+/** pi-robot-hand 0.8.0 takes a cancel (sent with the dialog's digest) and says so in each `pending`; 0.7.x says nothing and gets none. */
+export const robotHand = contract("robot-hand", "robot-hand", "robot_hand", undefined, HAND_SHAPE, undefined, true, true);
+/** Whether this dialog takes a cancel: its adapter takes one, and, for an adapter whose owner says so per dialog, the dialog's `pending` said so. */
+export const takesCancel = (adapter: Pick<OwnerAdapter, "cancellable" | "cancelAsked">, d: Pick<Dialog, "ownerCancel">): boolean => adapter.cancellable === true && (adapter.cancelAsked !== true || d.ownerCancel === true);
 /** pi-robot-hand's secret_drop masked dialog (prefix `robot-hand:secret`): the one owner whose answer carries a secret, which this adapter hands to the owner and nothing else. */
 export const secretDrop = contract("robot-hand-secret", "robot-hand:secret", "secret_drop", undefined, SECRET_SHAPE);
 /** pi-mcp-adapter's tool approval and project trust (its fork, spec task 4): inert until that package emits. */

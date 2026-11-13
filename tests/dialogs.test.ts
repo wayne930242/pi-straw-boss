@@ -643,7 +643,10 @@ test("F004: Cancel is offered only when the bridge says its owner takes one: a d
 	assert.equal((await read(x, path)).unit.pending?.answer?.cancel, true, "a bridge that advertises it");
 	const hand = file([["c1", "robot_hand"]]);
 	x.h.receive("S", x.list([dialog({ cancellable: true })], { file: hand }));
-	assert.equal((await read(x, hand)).unit.pending?.answer?.cancel, undefined, "a flag on an owner with no cancel path changes nothing");
+	assert.equal((await read(x, hand)).unit.pending?.answer?.cancel, true, "robot_hand takes a cancel since pi-robot-hand 0.8.0 (#140 task 6); its bridge sets the flag only when the dialog's pending said so");
+	const mcp = file([["c3", "mcp"]]);
+	x.h.receive("S", x.list([dialog({ owner: "pi-mcp-adapter", id: "m1", toolCallId: undefined, cancellable: true })], { file: mcp }));
+	assert.equal((await read(x, mcp)).unit.pending?.answer?.cancel, undefined, "a flag on an owner with no cancel path changes nothing");
 });
 
 test("a dialog whose choice is tagged (robot_hand 0.4.0) stays valid and visible, and the stored answer keeps tagged (ATP3-F001, mutant T10)", async () => {

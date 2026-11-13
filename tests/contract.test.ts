@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { checkAnswer } from "../src/dialogs.ts";
 import { checkProbe, probeEditor } from "../src/probe.ts";
 import { lineMac } from "../src/runs.ts";
-import { type Bus, type Dialog, digestOf, linkGate, linkRequest, mcpAdapter, OWNERS, piCode, questionsDigest, robotHand, rpiv, secretDigest, secretDrop, secretOf, selectDigest, selectOf, UI_PREFIX, uiPrompt } from "../src/owners.ts";
+import { type Bus, type Dialog, digestOf, linkGate, linkRequest, mcpAdapter, OWNERS, piCode, questionsDigest, robotHand, rpiv, secretDigest, secretDrop, secretOf, selectDigest, selectOf, takesCancel, UI_PREFIX, uiPrompt } from "../src/owners.ts";
 
 /** pi's event bus as far as owners use it: listeners run synchronously inside emit. */
 function bus() {
@@ -254,7 +254,7 @@ test("the wrap of ctx.ui is a contract v1 gate under straw-boss:ui that yields t
 });
 
 test("cancel: only the owners with a cancel path take one (rpiv, the ctx.ui wrap, the link gate and request); it goes out as {cancel: true} under the page's answerId, and checkAnswer takes it for those alone and with nothing else", () => {
-	assert.deepEqual(OWNERS.map((o) => [o.name, o.cancellable]), [["robot-hand", undefined], ["robot-hand-secret", undefined], ["rpiv", true], ["pi-mcp-adapter", undefined], ["pi-code", undefined], ["pi-ui", true], ["straw-link-gate", true], ["straw-link-request", true]]);
+	assert.deepEqual(OWNERS.map((o) => [o.name, o.cancellable]), [["robot-hand", true], ["robot-hand-secret", undefined], ["rpiv", true], ["pi-mcp-adapter", undefined], ["pi-code", undefined], ["pi-ui", true], ["straw-link-gate", true], ["straw-link-request", true]]);
 	assert.deepEqual([rpiv.cancellable, uiPrompt.cancellable, linkGate.cancellable, linkRequest.cancellable], [true, true, true, true]);
 	// rpiv: the cancel is the page's, under its answerId (the abort's own cancel keeps its `cancel-` id), and the owner's verdict comes back as for an answer.
 	const b = bus(), opened: Dialog[] = [], verdicts: unknown[] = [];
@@ -308,4 +308,24 @@ test("a choice's `tagged` hint travels from the owner's pending into the stored 
 	b.emit("robot-hand:pending", raw([{ label: "Run it in a new Herdr pane", next: "pane", tagged: true }, { label: "No, thanks" }]));
 	assert.deepEqual(opened[0]!.select!.choices, [{ label: "Run it in a new Herdr pane", next: "pane", tagged: true }, { label: "No, thanks" }]);
 	assert.equal(selectDigest({ title: "T", choices: [{ label: "A", next: "pane", tagged: true }] }), selectDigest({ title: "T", choices: [{ label: "A" }] }), "a hint, not hashed");
+});
+
+test("#140 task 6: robot_hand takes a cancel only when its pending says so (pi-robot-hand 0.8.0); the cancel goes out with the dialog's digest and nothing else", () => {
+	const b = bus(), opened: Dialog[] = [], verdicts: unknown[] = [];
+	const stop = robotHand.listen(b, { open: (_a, d) => opened.push(d), closed: () => {} });
+	const select = { title: "T", choices: [{ label: "A" }, { label: "B" }] };
+	b.emit("robot-hand:pending", { version: 1, id: "old", toolCallId: "c1", digest: selectDigest(select), select });
+	b.emit("robot-hand:pending", { version: 1, id: "new", toolCallId: "c2", digest: selectDigest(select), cancellable: true, select });
+	b.emit("robot-hand:pending", { version: 1, id: "odd", toolCallId: "c3", digest: selectDigest(select), cancellable: "yes", select });
+	stop();
+	assert.deepEqual(opened.map((d) => [d.id, d.ownerCancel, takesCancel(robotHand, d)]), [["old", undefined, false], ["new", true, true], ["odd", undefined, false]]);
+	assert.equal(robotHand.cancelAsked, true);
+	// Every other owner is read as before: the adapter's word alone.
+	assert.equal(takesCancel(rpiv, {}), true);
+	assert.equal(takesCancel(secretDrop, { ownerCancel: true }), false);
+	const d = opened[1]!, off = b.on("robot-hand:answer", (a) => b.emit("robot-hand:answer-result", { version: 1, id: "new", answerId: (a as { answerId: string }).answerId, accepted: true }));
+	robotHand.answer(b, d, { id: "new", answerId: "c".repeat(16), digest: d.digest, cancel: true }, (v) => verdicts.push(v));
+	assert.deepEqual(b.seen.find(([c]) => c === "robot-hand:answer")?.[1], { version: 1, id: "new", answerId: "c".repeat(16), digest: d.digest, cancel: true });
+	assert.deepEqual(verdicts, [{ accepted: true }]);
+	off();
 });
