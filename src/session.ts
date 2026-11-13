@@ -9,7 +9,7 @@ import { isHead, isSub, type Place, panes, place, report, tabs, TOWER_LABEL, wai
 import type { createHost } from "./host.ts";
 import type { IntegrationWatch } from "./integration.ts";
 import { CONNECT_MS, type Membership } from "./membership.ts";
-import { dutyOfAgent, isCoordinatorDuty } from "./duty.ts";
+import { type CoordinatorDuty, dutyOfAgent, isCoordinatorDuty } from "./duty.ts";
 import type { MainDuty } from "./mainduty.ts";
 import { plannedInMessage } from "./planmsg.ts";
 import { orphans } from "./orphan.ts";
@@ -98,7 +98,13 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		if (mine?.tokens?.sb_open_main !== "1") return false;
 		s.openedBy = mine.tokens.sb_opened_by;
 		pi.appendEntry(ENTRY, { openedBy: s.openedBy ?? null, openedPane: s.at.paneId }); // null, not undefined: a later claim (a pop) overrides an earlier opener
-		await report(run, "pane", s.at.paneId, { sb_open_main: null }).catch(() => {});
+		// The kind the tower opened it with (docs/specs/2026-11-09-agent-kinds.md §6) is consumed with the claim: the entry, `s.duty`, and, at the promotion below, the role record, which a restore before the first message reads.
+		const duty = mine.tokens.sb_open_duty;
+		if (isCoordinatorDuty(duty) && s.duty !== duty) {
+			const tower = (await workspaces(run).catch(() => [])).find((w) => w.workspace_id === s.at.workspaceId)?.tokens?.tower;
+			mainDuty.write(duty, `opened by tower ${tower ?? `of workspace ${s.at.workspaceId}`} as ${duty}`);
+		}
+		await report(run, "pane", s.at.paneId, { sb_open_main: null, ...(mine.tokens.sb_open_duty !== undefined ? { sb_open_duty: null } : {}) }).catch(() => {});
 		return true;
 	};
 
@@ -135,7 +141,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		// connects only after this handler returns. Until the answer comes the session counts as barred: a join waits for the answer first (`s.recheck`, membership.ts), and a promotion needs the join, so nothing joins or promotes early.
 		s.barred = CHECKING;
 		const once = onceOf();
-		let keepRestored = false, failed = false, retries = 0, decided: { resumed: boolean; opener: string | undefined } | undefined, proceeding: Promise<void> | undefined, asking: Promise<boolean> | undefined;
+		let keepRestored = false, failed = false, retries = 0, decided: { resumed: boolean; opener: string | undefined; duty: CoordinatorDuty | undefined } | undefined, proceeding: Promise<void> | undefined, asking: Promise<boolean> | undefined;
 		// This start is the one in progress: a newer start or a shutdown ends it, and what it still has in flight must neither tell, retry, nor join.
 		const live = () => start === started && !s.stopped;
 		// A step that failed for want of Herdr or intercom is asked again after 1 s, 2 s, 5 s, then every 15 s; no timer outlives a shutdown or a newer start.
@@ -183,10 +189,13 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 				const resumed = Boolean(placed) && roles.held(placed!) === "main";
 				// The tower that opened it may close it again, as before the restore; the record names the opener, and the promotion below writes it into the new record.
 				const opener = roles.openerOf(resumed ? placed : undefined);
+				// So may its kind: a restore before the first message has no entry to read it from (pi had written no file), and the record has it (§6).
+				const duty = resumed ? roles.dutyOf(placed!) : undefined;
 				// A pi started in the shell of a main that quit is no restore, and the record must not claim the next one.
 				if (!resumed && event.reason === "startup" && placed && roles.sameShell(placed)) roles.forget();
-				return { resumed, opener };
+				return { resumed, opener, duty };
 			})();
+			if (decided.duty && s.duty === undefined) s.duty = decided.duty; // the entries win; the record speaks only where they hold none
 			const { resumed } = decided;
 			s.restoredOpener = decided.opener;
 			s.restored = resumed; // consumed by the promotion that makes this session the tab's main (membership.ts), also when the guard makes it; each attempt sets it again, the one that failed having reset it

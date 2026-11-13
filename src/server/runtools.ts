@@ -423,7 +423,7 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 		case "boss_open_main": {
 			if (args.role === INTEGRATOR) return openIntegrator(host, args, ally);
 			const sender = str(args, "sender", 300), peer = ally ? peerSender(host.who, sender) : undefined;
-			const opened = await host.open({ request: str(args, "request"), sender: peer?.id ?? sender, ...(peer ? { peer } : {}), ...(opt(args, "label") ? { label: opt(args, "label")! } : {}), ...(opt(args, "role") ? { role: opt(args, "role")! } : {}) });
+			const opened = await host.open({ request: str(args, "request"), sender: peer?.id ?? sender, ...(peer ? { peer } : {}), ...(opt(args, "label") ? { label: opt(args, "label")! } : {}), ...(opt(args, "role") ? { role: opt(args, "role")! } : {}), ...(opt(args, "duty") ? { duty: opt(args, "duty")! } : {}) });
 			if (opened.train) return { text: opened.repeated ? `A train was already opened for this request (tab ${opened.tab}); nothing new opened.` : `Opened tab ${opened.tab} with ${trainLabel(opened.train.code)} (session ${opened.main}) and handed it the manifest. It reports to you; close it with boss_close_main after its milestone report.`, details: opened };
 			const text = opened.repeated ? `A main was already opened for this request (tab ${opened.tab}); nothing new opened.` : `Opened tab ${opened.tab} with a main agent (session ${opened.main}) and handed it the request. ${peer ? `It reports to the tower only; each report wakes a run for ${peer.label} that sends it to the sender.` : `It reports to ${opened.sender} and to you.`}`;
 			return { text, details: opened };

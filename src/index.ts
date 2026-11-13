@@ -81,7 +81,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		auto.running(() => runMode.active());
 		runKind = () => runMode.kind;
 		mainDuty.promptsOff(() => briefing.off());
-		mainDuty.onWrite(({ from, to, why }) => (briefing.rebrief(), void presence.publish(), void digest.note(kit.s.at.workspaceId, `${kit.s.ownName || pi.getSessionName() || kit.me().slice(0, 8)} kind ${from ?? "none"}→${to}: ${why}`).catch(() => {})));
+		mainDuty.onWrite(({ from, to, why }) => (kit.s.isMain && roles.remember("main"), briefing.rebrief(), void presence.publish(), void digest.note(kit.s.at.workspaceId, `${kit.s.ownName || pi.getSessionName() || kit.me().slice(0, 8)} kind ${from ?? "none"}→${to}: ${why}`).catch(() => {})));
 		look?.holdWhile(() => runMode.mode === "run" || Boolean(pi.getFlag("sb-run")));
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower, roles });
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.

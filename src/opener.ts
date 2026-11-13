@@ -5,6 +5,7 @@ import { alive } from "./remote.ts";
 import { boardState, readTrainboards, trainboardDir } from "./train/board.ts";
 import { createTab, report, panes, startPi, type HerdrRun, type Pane, type Session, type Sleep, workspaces } from "./herdr.ts";
 import { ForwardAsBefore, INTEGRATOR, integMark, integratorHandoff, integratorOf, keptIntegrators, ledgerProjects, liveIntegrator, MAX_OPENED_INTEGRATORS } from "./integrator.ts";
+import { type CoordinatorDuty, isCoordinatorDuty } from "./duty.ts";
 import { assertSettingsSafe, SettingsRefused } from "./trust/settings.ts";
 import { inside } from "./link/routing.ts";
 import { checkoutProject, noTrainRefusal, openRefusal, repoRoot } from "./train/appsconfig.ts";
@@ -59,7 +60,7 @@ export interface PeerSender { id: string; label: string; short: string }
 /**
  * `role`: "train" opens a train on an integrator's manifest (docs/specs/2026-11-07-train-workers.md §3.3); "integrator" finds the one integrator of `project` or opens it, on the car slip the request carries; anything else is refused.
  */
-export interface OpenRequest { request: string; sender: string; label?: string; peer?: PeerSender; role?: string; /** `role: "integrator"`: the project as the caller words it. The code reads the project from the checkout (appsconfig.ts `checkoutProject`), and another word is refused. */ project?: string; /** `role: "integrator"`, an ally run's: the folder its team binds on this computer, which the workspace's checkout must be inside. */ within?: string; /** `role: "integrator"`: only the refusals are wanted, and nothing opens. */ dry?: true }
+export interface OpenRequest { request: string; sender: string; label?: string; peer?: PeerSender; role?: string; /** `role: "integrator"`: the project as the caller words it. The code reads the project from the checkout (appsconfig.ts `checkoutProject`), and another word is refused. */ project?: string; /** `role: "integrator"`, an ally run's: the folder its team binds on this computer, which the workspace's checkout must be inside. */ within?: string; /** `role: "integrator"`: only the refusals are wanted, and nothing opens. */ dry?: true; /** The new main's kind (docs/specs/2026-11-09-agent-kinds.md §6): `coordinator` or `standing`; an integrator comes only through `role: "integrator"`, and a train's kind is fixed. */ duty?: string }
 export interface Opened { tab: string; pane: string; main: string; sender: string; /** Nothing opened: an earlier open of the same request, or the project's integrator that already runs. */ repeated?: true; /** Set for a train: its project and code. */ train?: TrainId; /** Set for an integrator: its project. */ integrator?: string }
 
 /** The text the new main starts from: who asked, and what, with nothing summarised. The main answers the sender and the tower that opened it, then waits to be closed. */
@@ -116,9 +117,14 @@ export function opener(env: OpenerEnv) {
 		const turn: { end?: () => void } = {};
 		try { return await openHeld(input, turn); } finally { turn.end?.(); }
 	};
-	const openHeld = async ({ request, sender: asked, label: asked_label, peer, role, project, within, dry }: OpenRequest, turn: { end?: () => void }): Promise<Opened> => {
+	const openHeld = async ({ request, sender: asked, label: asked_label, peer, role, project, within, dry, duty }: OpenRequest, turn: { end?: () => void }): Promise<Opened> => {
 		const { run, sleep } = env;
 		if (role !== undefined && role !== TRAIN && role !== INTEGRATOR) throw new OpenLimitError(`role must be "train" or "integrator" when given, not ${JSON.stringify(role).slice(0, 40)}`);
+		// The kind the new main starts with (§6): it reaches the pi as `sb_open_duty`, consumed with `sb_open_main` (session.ts). A project's integrator is opened by the door alone, which keeps one per project.
+		if (duty !== undefined && !isCoordinatorDuty(duty)) throw new OpenLimitError(`duty must be "coordinator" or "standing" when given, not ${JSON.stringify(duty).slice(0, 40)}`);
+		if (duty !== undefined && role === TRAIN) throw new OpenLimitError("A train's kind is fixed: train; open it with no duty");
+		if (duty === INTEGRATOR && role !== INTEGRATOR) throw new OpenLimitError("An integrator is opened with role \"integrator\" on a car slip, which keeps one per project; duty takes coordinator or standing");
+		const openDuty: CoordinatorDuty | undefined = role === INTEGRATOR ? INTEGRATOR : (duty as CoordinatorDuty | undefined);
 		// A train is opened on the tower's own reading of an integrator's manifest, and only while the merge train is on; its name is its code, whatever label the caller sent.
 		let train: TrainId | undefined, label = asked_label;
 		if (role === TRAIN) {
@@ -229,7 +235,7 @@ export function opener(env: OpenerEnv) {
 		const { tabId, paneId } = await createTab(run, workspace.workspace_id, dir, [`STRAW_BOSS_ROLE=${train ? TRAIN : "main"}`], label);
 		try {
 			// The marker counts toward the limits at once; sb_open_main authorises exactly one pi in this shell to promote itself (it consumes the token).
-			await report(run, "pane", paneId, { sb_opened_by: integ ? integMark(integ) : sender.id, sb_open_main: "1", ...(train ? { sb_train: trainToken(train) } : {}) });
+			await report(run, "pane", paneId, { sb_opened_by: integ ? integMark(integ) : sender.id, sb_open_main: "1", ...(train ? { sb_train: trainToken(train) } : {}), ...(openDuty ? { sb_open_duty: openDuty } : {}) });
 			// Herdr agent names are unique across workspaces and lowercase only.
 			await startPi(run, sleep, `${train ? TRAIN : integ ? "integ" : "main"}-${randomUUID().slice(0, 8)}`, paneId, ["--name", train || integ ? label! : `main · ${label ?? workspace.label}`]);
 			// The pi is the tab's main (or the train) once it has published its role, and an integrator once it has published its kind too; only then does it get the request, so its first prompt is its own role's.
