@@ -391,7 +391,7 @@ test("RC-F002: a robot_hand cancel that closes by cancel after its own accepted 
 	s.open("d1", "c1", { cancellable: true });
 	s.own();
 	const to = bridgeIdOf(s), id = "m".repeat(16);
-	// pi-robot-hand 0.8.0: answer-result accepted, then closed {by: "cancel"} (its adapter carries no answerId).
+	// pi-robot-hand 0.8.0: answer-result accepted, then closed {by: "cancel"} (sb's close path drops its answerId).
 	s.events.on("robot-hand:answer", (raw) => {
 		const a = raw as { id: string; answerId: string };
 		s.events.emit("robot-hand:answer-result", { version: 1, id: a.id, answerId: a.answerId, accepted: true });
