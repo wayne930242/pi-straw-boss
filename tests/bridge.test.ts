@@ -385,6 +385,26 @@ test("cancel: an owner with a cancel path (rpiv) hears it under the page's answe
 	assert.deepEqual([t.acks().at(-1)!.outcome, t.acks().at(-1)!.reason, heard], ["rejected", "not-allowed", []]);
 });
 
+test("RC-F002: a robot_hand cancel that closes by cancel after its own accepted ack is the winning answer, so a resend of it (the first ack was lost) is accepted, not stale", () => {
+	const s = session();
+	s.own();
+	s.open("d1", "c1", { cancellable: true });
+	s.own();
+	const to = bridgeIdOf(s), id = "m".repeat(16);
+	// pi-robot-hand 0.8.0: answer-result accepted, then closed {by: "cancel"} (its adapter carries no answerId).
+	s.events.on("robot-hand:answer", (raw) => {
+		const a = raw as { id: string; answerId: string };
+		s.events.emit("robot-hand:answer-result", { version: 1, id: a.id, answerId: a.answerId, accepted: true });
+		s.events.emit("robot-hand:closed", { version: 1, id: a.id, by: "cancel" });
+	});
+	s.message({ version: 1, type: "answer", to, id: "d1", answerId: id, digest: DIGEST, cancel: true });
+	assert.equal(s.acks().at(-1)!.outcome, "accepted");
+	s.message({ version: 1, type: "answer", to, id: "d1", answerId: id, digest: DIGEST, cancel: true });
+	assert.equal(s.acks().at(-1)!.outcome, "accepted", "the same cancel again after a lost ack");
+	s.message({ version: 1, type: "answer", to, id: "d1", answerId: "n".repeat(16), digest: DIGEST, cancel: true });
+	assert.equal(s.acks().at(-1)!.outcome, "stale", "another answer id is still stale");
+});
+
 test("without pi-intercom, or with a broker that drops, nothing breaks and the dialog stays terminal-only", () => {
 	const s = session({ intercom: false });
 	s.open();
