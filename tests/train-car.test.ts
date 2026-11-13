@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { hostOf, reachClass } from "../src/server/carbook.ts";
+import { hostOf, openingFacts, reachClass } from "../src/server/carbook.ts";
 import { coordinatorWord, landedWord, noticeSatisfied, receivedTold } from "../src/train/cars.ts";
 import { type CarCtx, type CarParams, type CarToolDeps, trainCar } from "../src/traincar.ts";
 import { cleanup, forwardEntry, MANIFEST_HEADER, rig, type Rig, slipBlock } from "./train-guard-rig.ts";
@@ -585,4 +585,13 @@ test("a slip over the bound of a car is forwarded but refused at received and re
 		await assert.rejects(trainCar(integratorDeps(w), params, integratorCtx(forwardEntry(COORD, text))), (e: Error) => e.message.includes(word));
 		assert.equal(w.book.read("acme").length, 0, "nothing is held");
 	}
+});
+
+test("R0773-F004: openingFacts ends the manifest header at an `app: … | car:` slip as it does at `car:`, so a line of that slip is no base:", () => {
+	const header = "train:\nproject: acme\ncode: 2026-11-13-a\nbase: develop\n\n";
+	assert.equal(openingFacts(`${header}car: web | tickets: T-1 | branch: fix/x\nbase: evil`).base, "develop", "car: ends the header");
+	assert.equal(openingFacts(`${header}app: web | tickets: T-1 | branch: fix/x\nbase: evil`).base, "develop", "app: … | tickets: ends it too");
+	assert.equal(openingFacts("train:\nproject: acme\napp: web\nbase: develop").base, "develop", "a header app: line alone is no slip");
+	const bare = "train:\nproject: acme\ncode: 2026-11-13-a\n\napp: web | car: web | tickets: T-1\nbase: evil";
+	assert.equal(openingFacts(bare).base, undefined, "no base in the header: the slip's line is not read");
 });

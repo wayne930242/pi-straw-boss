@@ -60,7 +60,7 @@ export const hostOf = (url: string): string | undefined => {
 };
 /** What the server reads from the manifest text the tower opens a train on: the base it names and the heads of its cars. */
 export function openingFacts(request: string): { base?: string; heads: string[] } {
-	const head = request.split(/\r?\n(?=\s*car:)/i)[0] ?? request;
+	const head = request.split(/\r?\n(?=\s*(?:car:|app:[^|\n]*\|\s*(?:car|tickets):))/i)[0] ?? request;
 	const base = /(?:^|\n)[ \t>*-]*["']?base["']?[ \t]*[:=][ \t]*["']?([A-Za-z0-9][A-Za-z0-9._/-]{0,199})/i.exec(head)?.[1];
 	return { ...(base ? { base } : {}), heads: headsIn(request).slice(0, 64) };
 }
