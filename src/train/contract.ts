@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { legacyContract } from "./contract-legacy.ts";
 
 // The merge-train contract (docs/specs/2026-11-07-train-workers.md §14.1, TB-F008). The train's and the integrator's prompts follow two skills by name, `integrating` and `deploying`, and assume what version 1 of the contract
 // holds (the seven seams read from one `## Seam bindings` block, the Project skill headings with `## Acceptance`, the car slip); a model cannot tell a stale procedure from a current one by reading the skill. So a skill declares
@@ -41,7 +40,7 @@ export function checkContract(commands: readonly SkillCommand[] | undefined, nee
 		if (!file) return refuse(`pi loaded no skill named \`${name}\`; install a package that provides it and /reload`);
 		let text: string;
 		try { text = readFileSync(file, "utf8"); } catch (error) { return refuse(`${file} cannot be read (${(error as Error).message}); fix it and /reload`); }
-		const said = declaredContract(text) ?? legacyContract(file);
+		const said = declaredContract(text);
 		if (said === undefined) return refuse(`${file} declares none (its frontmatter needs \`metadata:\` with \`merge-train-contract: "${need}"\` under it); update the package that ships it and /reload`);
 		const versions = said.split(/[\s,]+/).filter(Boolean);
 		if (!versions.length || versions.some((v) => !/^\d+$/.test(v))) return refuse(`${file} declares ${JSON.stringify(said)}; its value lists the contract versions the skill implements, such as "${need}"`);

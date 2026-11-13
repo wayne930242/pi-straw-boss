@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { checkContract, CONTRACT, declaredContract, type SkillCommand } from "../src/train/contract.ts";
 
 // The merge-train contract (src/train/contract.ts, docs/specs/2026-11-07-train-workers.md §14.1): Straw Boss asks pi which `integrating` and `deploying` skills it loaded and reads the contract each declares.
-// It names no package: a skill from any package passes when its frontmatter declares the contract, and the one transition rule lives in src/train/contract-legacy.ts.
+// It names no package: a skill from any package passes when its frontmatter declares the contract.
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const roots: string[] = [];
@@ -69,46 +69,16 @@ test("declaredContract reads only the frontmatter's `metadata:` block", () => {
 	assert.equal(declaredContract('---\ndescription: |\n  metadata:\n    merge-train-contract: "1"\n---\n'), undefined, "inside another key's text");
 });
 
-// ---- the transition (src/train/contract-legacy.ts): the one package that implemented the contract before it could declare it
+// ---- no transition: a skill with no declaration is refused, whichever package ships it
 
-const packaged = (pkg: string, name: string, version: string) => writeFileSync(join(pkg, "package.json"), JSON.stringify({ name, version }));
-
-test("transition: a skill with no declaration counts as contract 1 only inside the one package and from the version that implemented it", () => {
-	const pkg = scratch(), legacy = ["pi", "anchorloop"].join("-");
-	const undeclared = both(pkg, "");
-	packaged(pkg, legacy, "2.11.0");
-	assert.deepEqual(checkContract(undeclared), { ok: true, contract: 1 });
-	packaged(pkg, legacy, "2.15.1");
-	assert.deepEqual(checkContract(undeclared), { ok: true, contract: 1 });
-	for (const older of ["2.10.1", "2.11.0-rc.1", "1.99.0", "x"]) {
-		packaged(pkg, legacy, older);
-		assert.match(refusal(undeclared), /skills\/integrating\/SKILL\.md declares none/, `${older} never implemented it`);
-	}
-	packaged(pkg, "some-other-skills", "2.15.1");
-	assert.match(refusal(undeclared), /declares none/, "no other package gets the pass");
-	packaged(pkg, legacy, "2.15.1");
-	assert.match(refusal(both(pkg, 'metadata:\n  merge-train-contract: "2"\n')), /declares "2"; update pi-straw-boss/, "a declaration always wins over the pass");
-	writeFileSync(join(pkg, "package.json"), "{");
-	assert.match(refusal(both(pkg, "")), /declares none/, "a package.json that cannot be parsed gives no pass");
+test("an undeclared skill is refused, also inside a pi-anchorloop 2.15.x package (the old pass is gone)", () => {
+	const pkg = scratch();
+	writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: ["pi", "anchorloop"].join("-"), version: "2.15.2" }));
+	assert.match(refusal(both(pkg, "")), /skills\/integrating\/SKILL\.md declares none/);
 });
 
-test("transition: a skill folder reached through a symlink is judged by the package it really sits in", () => {
-	const pkg = scratch(), agent = scratch(), legacy = ["pi", "anchorloop"].join("-");
-	both(pkg, "");
-	packaged(pkg, legacy, "2.15.2");
-	mkdirSync(join(agent, "skills"), { recursive: true });
-	const linked = ["integrating", "deploying"].map((name): SkillCommand => {
-		symlinkSync(join(pkg, "skills", name), join(agent, "skills", name));
-		return { name: `skill:${name}`, source: "skill", sourceInfo: { path: join(agent, "skills", name, "SKILL.md") } };
-	});
-	assert.deepEqual(checkContract(linked), { ok: true, contract: 1 });
-});
-
-test("src and prompts name no skills package: the one that needs the transition is named in src/train/contract-legacy.ts alone, which only contract.ts imports", () => {
+test("src and prompts name no skills package", () => {
 	const files = (dir: string): string[] => readdirSync(join(root, dir), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : [join(dir, e.name)]));
 	const naming = [...files("src"), ...files("prompts")].filter((file) => /pi-anchorloop/i.test(readFileSync(join(root, file), "utf8")));
-	assert.deepEqual(naming, ["src/train/contract-legacy.ts"]);
-	const importing = files("src").filter((file) => /contract-legacy/.test(readFileSync(join(root, file), "utf8")) && file !== "src/train/contract-legacy.ts");
-	assert.deepEqual(importing, ["src/train/contract.ts"], "removing the transition is deleting that file and its one call");
-	for (const file of files("prompts")) assert.doesNotMatch(readFileSync(join(root, file), "utf8"), /anchorloop/i, `${file} names the contract, not who implements it`);
+	assert.deepEqual(naming, []);
 });
