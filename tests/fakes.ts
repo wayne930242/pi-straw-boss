@@ -579,6 +579,7 @@ export class Agent {
 			},
 			getSessionName: () => this.name,
 			getCommands: () => world.commands,
+			getAllTools: () => [...this.tools.values()].map((t) => ({ name: t.name, description: t.description })),
 			sendMessage: (message: { customType: string; content: string }, options?: { deliverAs?: string; triggerTurn?: boolean }) => void this.sent.push({ ...message, deliverAs: options?.deliverAs, triggerTurn: options?.triggerTurn }),
 		} as unknown as ExtensionAPI;
 		// pi-intercom's side of the extension API.

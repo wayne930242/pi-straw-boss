@@ -103,6 +103,14 @@ The GUI's Memory panel does the same as `/boss memory`. See [Tower memory](/pi-s
 | `/boss server restart [reason]` | Restart it on the same port, after a confirm. Open pages reconnect by themselves. |
 | `/boss server logs [n]` | The last `n` lines of its log (default and most 200). |
 
+## Roles
+
+| Command | What it does |
+| --- | --- |
+| `/boss roles-check [folder]` | Check each role's `tools:` names against this session's tools, plus the names only a subagent has (`caller_ping`, `subagent_done`). A name the session lacks, or one only a parent has (sb's own tools, pi-herdr-agents' worktree tools), fails. With no folder it reads sb's own `roles/`; before a release, name the checkout's `roles/`. It starts nothing, and refuses in a session started with `--tools` or `--exclude-tools`. |
+
+See [The role pack](/pi-straw-boss/docs/reference/how-it-works/the-role-pack/).
+
 ## The browser view
 
 | Command | What it does |

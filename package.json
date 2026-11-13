@@ -24,6 +24,7 @@
     "dist/gui",
     "dist/server",
     "prompts",
+    "roles",
     "README.md",
     "NOTICE.md",
     "LICENSE"
@@ -33,7 +34,8 @@
       "./src/index.ts",
       "./src/balance.ts",
       "./src/blocked.ts",
-      "./src/hygiene.ts"
+      "./src/hygiene.ts",
+      "./src/rolepack.ts"
     ]
   },
   "scripts": {

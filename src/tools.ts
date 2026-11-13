@@ -36,6 +36,9 @@ export const linkRequestParameters = () => Type.Object({
 	reason: Type.String({ description: "One line: why you ask. The boss reads it in the dialog." }),
 });
 
+/** Every tool sb registers, all of them after the child return (index.ts): a role that lists one fails `/boss roles-check` (rolescheck.ts). tests/roles-check.test.ts pins it to the recorded registry. */
+export const PARENT_ONLY: readonly string[] = ["board_read", "board_set", "boss_auto", "boss_broadcast", "boss_close_main", "boss_duty", "boss_open_main", "boss_promote", "boss_rename", "boss_server", "boss_status", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send", "train_car"];
+
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
 export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, promote, digest, closeMain, link, server, towerCall, boardFill }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill }) {
 	// A main says why it calls (required); a tower's call is a blocked one, so it may leave it out and the header says unspecified.

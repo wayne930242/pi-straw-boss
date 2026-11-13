@@ -103,6 +103,14 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 | `/boss server restart [reason]` | 確認後在同一個 port 重新啟動它。開著的頁面會自己重新連線。 |
 | `/boss server logs [n]` | 它的 log 最後 `n` 行（預設與上限都是 200）。 |
 
+## 角色
+
+| 指令 | 做什麼 |
+| --- | --- |
+| `/boss roles-check [資料夾]` | 把每個角色 `tools:` 列的名稱，和這個 session 的工具、以及只有子智慧體才有的名稱（`caller_ping`、`subagent_done`）比對。這個 session 沒有的名稱，或只有上層才有的名稱（sb 自己的工具、pi-herdr-agents 的 worktree 工具），都算失敗。不給資料夾時讀 sb 自己的 `roles/`；發版前請指名 checkout 裡的 `roles/`。它不啟動任何東西；以 `--tools` 或 `--exclude-tools` 啟動的 session 會拒絕執行。 |
+
+見[角色包](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-role-pack/)。
+
 ## 瀏覽器檢視
 
 | 指令 | 做什麼 |
