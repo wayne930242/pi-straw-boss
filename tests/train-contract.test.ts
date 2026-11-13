@@ -81,4 +81,5 @@ test("src and prompts name no skills package", () => {
 	const files = (dir: string): string[] => readdirSync(join(root, dir), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : [join(dir, e.name)]));
 	const naming = [...files("src"), ...files("prompts")].filter((file) => /pi-anchorloop/i.test(readFileSync(join(root, file), "utf8")));
 	assert.deepEqual(naming, []);
+	for (const file of files("prompts")) assert.doesNotMatch(readFileSync(join(root, file), "utf8"), /anchorloop/i, `${file} names the contract, not who implements it`);
 });
