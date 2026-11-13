@@ -15,7 +15,7 @@ Herdr worktree 工作區裡的子智慧體與 session 不會加入網：由啟�
 - **在 Herdr 0.9.4 或更新版本裡執行的 pi。**
 - **Herdr 的 pi 整合**，即 `herdr integration install pi`。沒有它，Herdr 不會為 pane 裡的 pi session 命名，該 session 也就無法加入網。缺少這個整合時，每個 session 會在啟動 20 秒後警告一次。
 - **[pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.18.1 或更新版本。** 網的頻道與訊息、GUI 的對話框轉送，以及 sb server 的連線，都透過它進行。server 在啟動時檢查版本，並把過舊或缺少的 pi-intercom 寫進 `start-error.json` 與 `boss_server status`。
-- **宣告了[合併火車契約](/pi-straw-boss/docs/zh-tw/guide/merge-train/#合併火車契約)的 skill**，只有[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)需要。`integrating` 與 `deploying` skill 就是火車的程序，[pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 2.11.0 或更新版本提供這兩個 skill。沒有它們，遇到車廂單的主智慧體或整合員會回報 `blocked` 並指名這份契約，且不會合併任何東西。
+- **宣告了[合併火車契約](/pi-straw-boss/docs/zh-tw/guide/merge-train/#合併火車契約)的 skill**，只有[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)需要。`integrating` 與 `deploying` skill 就是火車的程序，[pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 2.16.3 或更新版本提供這兩個 skill。沒有它們，遇到車廂單的主智慧體或整合員會回報 `blocked` 並指名這份契約，且不會合併任何東西。
 
 Windows 支援還在實驗階段。
 有哪些不同，見 [Windows](/pi-straw-boss/docs/zh-tw/reference/how-it-works/windows/)。

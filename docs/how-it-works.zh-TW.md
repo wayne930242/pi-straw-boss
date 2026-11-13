@@ -922,7 +922,7 @@ stateDiagram-v2
 
 #### 需要宣告合併火車契約的 skill
 
-Straw Boss 不指名任何 skill 套件。火車的 prompt 假設 `integrating` 和 `deploying` skill 符合合併火車契約第 1 版（[合併火車指南](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/merge-train/#合併火車契約)列出它的內容），而 skill 在 frontmatter 的 `metadata:` 底下以 `merge-train-contract: "1"` 宣告它實作的版本。擴充會檢查（`src/train/contract.ts`）：它問 pi 這個 session 載入了哪些 skill（`pi.getCommands()`，所以讀到的就是模型會讀的那份 `SKILL.md`，不論是哪個套件帶來的），再讀每一個的宣告。pi 沒有載入 `integrating` 或 `deploying`、檔案讀不到、skill 沒有宣告，或宣告的版本不含 1 時，火車和整合員會改變東西的 `todo` 和 `MonitorCreate` 呼叫都會被拒絕並附上原因；通過的結果最多每分鐘讀一次，被拒絕時則每次呼叫都重讀。有一項例外，涵蓋宣告出現之前發布的版本（`src/train/contract-legacy.ts`，唯一指名套件的地方）：pi-anchorloop 2.11.0 或更新版本裡沒有宣告的 skill 算作第 1 版。無法載入 `integrating` 或 `deploying` 的主智慧體或整合員，會以 `why=blocked` 呼叫塔台並指名合併火車契約，而且什麼都不派出。火車關閉時，這些都不會載入。
+Straw Boss 不指名任何 skill 套件。火車的 prompt 假設 `integrating` 和 `deploying` skill 符合合併火車契約第 1 版（[合併火車指南](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/merge-train/#合併火車契約)列出它的內容），而 skill 在 frontmatter 的 `metadata:` 底下以 `merge-train-contract: "1"` 宣告它實作的版本。擴充會檢查（`src/train/contract.ts`）：它問 pi 這個 session 載入了哪些 skill（`pi.getCommands()`，所以讀到的就是模型會讀的那份 `SKILL.md`，不論是哪個套件帶來的），再讀每一個的宣告。pi 沒有載入 `integrating` 或 `deploying`、檔案讀不到、skill 沒有宣告，或宣告的版本不含 1 時，火車和整合員會改變東西的 `todo` 和 `MonitorCreate` 呼叫都會被拒絕並附上原因；通過的結果最多每分鐘讀一次，被拒絕時則每次呼叫都重讀。無法載入 `integrating` 或 `deploying` 的主智慧體或整合員，會以 `why=blocked` 呼叫塔台並指名合併火車契約，而且什麼都不派出。火車關閉時，這些都不會載入。
 
 #### 接縫綁定
 
@@ -1074,7 +1074,7 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 #### 把專案遷移到 0.65.0
 
-1. 先安裝宣告合併火車契約的 skill（pi-anchorloop 2.11.0 或更新的版本）。
+1. 先安裝宣告合併火車契約的 skill（pi-anchorloop 2.16.3 或更新的版本）。
 2. 在 `apps.json` 裡，從每個 app 的 `integration.stages` 移除 `uat`（仍列著它的 app 是設定錯誤：塔台不為它開火車，整合員的 `train` todo 被拒絕，而且什麼都不出發）。為要求驗收的 app 加上 `integration.accept`，如果 3 不合適，再加上 `integration.maxTrains`。
 3. 在專案 skill 裡，把 `## UAT` 改名為 `## Acceptance`：它現在告訴協調者怎麼在它的分支上驗收。替 `## Load` 給一個數字，把 `## Full gates` 逐項列出，並用一行是 pipeline 結論或目標版本的文字，結束 `## Post-merge` 和 `## Deploy verify`。
 4. 協調者送出 `departs:` 和 `accept:` 行；有 `uat:` 而沒有 `accept:` 的車廂單會被退回。

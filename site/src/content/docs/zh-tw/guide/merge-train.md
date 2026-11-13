@@ -100,8 +100,7 @@ Straw Boss 自己檢查這項宣告，因為模型讀 skill 分不出程序是�
 兩個 skill 都宣告契約之前，火車和整合員會改變東西的 `todo` 與 `MonitorCreate` 呼叫都會被拒絕並附上原因，也不會有火車發車。
 
 [pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 是其中一個實作，Straw Boss 也是搭配它開發的。
-它的 skill 從 2.11.0 起實作第 1 版；2.15 各版和更早的版本還沒有這項宣告。
-對這些版本，Straw Boss 接受沒有宣告的 pi-anchorloop 2.11.0 或更新版本；等有宣告的版本成為還在使用的最舊版本，這項例外就會拿掉。
+2.16.3 是第一個在 skill 裡宣告第 1 版的版本；更早的版本沒有宣告，Straw Boss 會拒絕。
 
 ## 在一台電腦上關掉它
 

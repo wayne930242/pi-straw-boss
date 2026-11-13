@@ -15,7 +15,7 @@ Subagents and sessions in Herdr worktree workspaces never join the net: the sess
 - **pi inside Herdr 0.9.4 or newer.**
 - **Herdr's pi integration**, `herdr integration install pi`. Without it Herdr does not name a pane's pi session, and the session cannot join the net. Each session warns once, 20 s after its start, when the integration is missing.
 - **[pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.18.1 or newer.** The net's channels and messages, the GUI's dialog relay, and the sb server's connection run over it. The server checks the version at start and reports an older or missing pi-intercom in `start-error.json` and in `boss_server status`.
-- **Skills that declare the [merge-train contract](/pi-straw-boss/docs/guide/merge-train/#the-merge-train-contract)**, only for the [merge train](/pi-straw-boss/docs/guide/merge-train/). The `integrating` and `deploying` skills are the train's procedure, and [pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 2.11.0 or newer provides them. Without them, a main or integrator that meets a car slip reports `blocked` naming the contract and merges nothing.
+- **Skills that declare the [merge-train contract](/pi-straw-boss/docs/guide/merge-train/#the-merge-train-contract)**, only for the [merge train](/pi-straw-boss/docs/guide/merge-train/). The `integrating` and `deploying` skills are the train's procedure, and [pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) 2.16.3 or newer provides them. Without them, a main or integrator that meets a car slip reports `blocked` naming the contract and merges nothing.
 
 Windows support is experimental.
 See [Windows](/pi-straw-boss/docs/reference/how-it-works/windows/) for what differs.

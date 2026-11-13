@@ -100,8 +100,7 @@ Straw Boss checks the declaration itself, because a model cannot tell a stale pr
 Until both skills declare the contract, a train's and the integrator's `todo` and `MonitorCreate` calls that change something are refused with the reason, and nothing departs.
 
 [pi-anchorloop](https://www.npmjs.com/package/pi-anchorloop) is one implementation, and the one Straw Boss is developed with.
-Its skills implement version 1 since 2.11.0; the 2.15 releases and those before them carry no declaration yet.
-For those, Straw Boss accepts pi-anchorloop 2.11.0 or newer without the declaration; that exception goes once a release that declares the contract is the oldest in use.
+2.16.3 is the first release that declares version 1 in its skills; earlier releases carry no declaration, and Straw Boss refuses them.
 
 ## Turning it off on a computer
 
