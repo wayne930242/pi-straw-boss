@@ -18,7 +18,7 @@ Agents call the **tools**; you type the **`/boss` commands** in any pi session i
 | Tool | Who has it | What it does |
 | --- | --- | --- |
 | `boss_promote` | joined sessions | Become this tab's main agent; refused while the tab has a live main. |
-| `boss_status` | joined sessions and towers | The main agent of each tab, this workspace's tower, the head tower, and the other towers. |
+| `boss_status` | joined sessions and towers | The main agent of each tab and its kind, this workspace's tower, the head tower, and the other towers. |
 | `boss_duty` | a tab's main | Set its kind with a reason: `coordinator`, `integrator`, or `standing`. The kind is the prompt it runs and shows on the page. |
 | `boss_rename` | joined sessions | Name the session with a short phrase for its current work; a main's tab takes it as its label. A role label (a tower's glyph, `train <MMDDx>`) is refused. |
 | `call_tower` | joined sessions and towers | Message this workspace's tower, or another workspace's, under a header. `why` is `milestone`, `shared`, or `blocked`; `reply: false` for a notice. |
@@ -26,9 +26,9 @@ Agents call the **tools**; you type the **`/boss` commands** in any pi session i
 | `board_set` | a tab's main | Override its own work board entry (one line and up to 8 checklist items); `auto: true` hands it back to the auto-fill, `clear: true` deletes it. |
 | `boss_server` | joined sessions | The sb server's `status` (also with it down), its `logs` (up to 200 lines), or `restart` with a reason. Refused while the boss stopped the server, at most once a minute, and never in a remote turn. |
 | `link_request` | every session on an attended computer, and a local tower run | Ask for a Straw Link action (create, invite, join, trust, leave, remove, role, rotate) with a reason. It never runs unasked: the boss approves it in a dialog. |
-| `boss_open_main` | towers | Open a tab with a new main agent for a request no session owns. `role: "train"` opens a train; `role: "integrator"` sends a car slip to the project's one integrator, opening it when none runs. See [Merge train](/pi-straw-boss/docs/guide/merge-train/). |
+| `boss_open_main` | towers | Open a tab with a new main agent for a request no session owns. `role: "train"` opens a train; `role: "integrator"` sends a car slip to the project's one integrator, opening it when none runs. `duty: "standing"` opens a main of kind standing (default coordinator). See [Merge train](/pi-straw-boss/docs/guide/merge-train/). |
 | `boss_close_main` | towers | Close a main this tower opened, once nothing runs in it. |
-| `tower_list` | towers | Every workspace's tower, who a message for it reaches, its state, and what its tabs work on. |
+| `tower_list` | towers | Every workspace's tower, who a message for it reaches, its state, and what its tabs work on (each tab's main with its kind). |
 | `tower_send` | towers | Message one other tower (by workspace id or label) or all of them; with `device`, the tower of a teammate's computer. |
 | `board_read` | towers | The work board: what each main is doing and how far it is, here and on teammates' computers. |
 | `tower_memory` | local tower runs | Keep what outlives the run: a standing instruction or a decision quoted from the boss's own message, and the tower's waits, including a wait on the boss as a card. |

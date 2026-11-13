@@ -41,7 +41,7 @@ flowchart TD
 | `integrator`（整合員） | 專案的合併火車：接收車廂、組成火車 | `boss_duty`，或名稱 `integ <project>` |
 | `standing`（值守） | 看顧一個系統或一台機器，沒有終點 | `boss_duty` |
 
-**子智慧體的種類**（讀自 pi-herdr-agents 給它的角色名稱；其他角色維持一般子智慧體）
+**子智慧體的種類**（讀自 pi-herdr-agents 給它的角色名稱，子智慧體在第一個 turn 把它記進自己的 session 檔；其他角色維持一般子智慧體）
 
 | 種類 | 角色名稱 | 用途 | 協調者派出它時 |
 |---|---|---|---|
@@ -174,7 +174,7 @@ stateDiagram-v2
 
 名稱裡的控制字元和連續空白會折成一個空格，名稱含有空格、引號、`]`、`=` 或 `;` 時，會用雙引號包起來，裡面的引號換成 `'`。
 
-**`tower_list`**（只有塔台能用）讀一次網，並針對每個不是子工作區的工作區回答：它的 id 和標籤、`head`、`self`、`reach`（`tower`、`main`、`member` 或 `none`：送給它的訊息會到誰那裡，見下）、它觸及的 session 及其狀態（和儀表板同一種標記：`idle`、`working`、`waiting`），以及它的分頁，附上標籤、主智慧體的名稱和成員的名稱。主智慧體會用 `boss_rename` 以目前的工作替自己取名，分頁就採用這個名稱，所以分頁顯示的就是工作區正在做什麼。回答是 JSON，和 `boss_status` 一樣。
+**`tower_list`**（只有塔台能用）讀一次網，並針對每個不是子工作區的工作區回答：它的 id 和標籤、`head`、`self`、`reach`（`tower`、`main`、`member` 或 `none`：送給它的訊息會到誰那裡，見下）、它觸及的 session 及其狀態（和儀表板同一種標記：`idle`、`working`、`waiting`），以及它的分頁，附上標籤、主智慧體的名稱和它的種類（`kind`，取自主智慧體的 `sb_duty`；沒有主智慧體的分頁為 null），以及成員的名稱；`boss_status` 也以同樣方式在每個分頁的主智慧體旁給出 `kind`。主智慧體會用 `boss_rename` 以目前的工作替自己取名，分頁就採用這個名稱，所以分頁顯示的就是工作區正在做什麼。回答是 JSON，和 `boss_status` 一樣。
 
 **`tower_send`**（只有塔台能用）接受一則訊息、可選的 `workspace`（id 或完全一致的標籤；子工作區會送到它的上層工作區），以及 `reply`（預設 false）。沒有指定工作區時，會送給其他每一座塔台。它從不開啟塔台。在主塔台的執行裡，它只接受 `workspace`，而伺服器會在該工作區沒有塔台時開啟它（[轉發與回答](#主塔台)）；工作區塔台以 `head: true` 和 `inReplyTo`（一個 ask id）回答主塔台。`workspace` 指向主塔台（它工作區的 id 或標籤，或它的 session id `sb-head`）時會被拒絕，並說明要用 "use head: true"，因為主塔台不是任何工作區的塔台。
 
@@ -649,7 +649,7 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 #### 到期
 
-主智慧體的 `session_shutdown` 在 `quit`、`new`、`resume` 和 `fork` 時刪除它自己的檔案，在 `reload` 時保留；重新載入的 session 仍會在它自己 quit 時刪除它。session 已不在運作、或不再是所在分頁的主智慧體的檔案，顯示為 `state: "ended"`，直到它最後一次更新後 30 分鐘，之後就完全不顯示。`idle` 而且條目最後更新已超過 2 小時的運作中主智慧體，會以 `stale: true` 顯示它（`board_read` 和塔台的簡報這樣說）：文字很可能不是它現在在做的事。
+主智慧體的 `session_shutdown` 在 `quit`、`new`、`resume` 和 `fork` 時刪除它自己的檔案，在 `reload` 時保留；重新載入的 session 仍會在它自己 quit 時刪除它。session 已不在運作、或不再是所在分頁的主智慧體的檔案，顯示為 `state: "ended"`，直到它最後一次更新後 30 分鐘，之後就完全不顯示。`idle` 而且條目最後更新已超過 2 小時的運作中主智慧體，會以 `stale: true` 顯示它（`board_read` 和塔台的簡報這樣說）：文字很可能不是它現在在做的事。值守（standing）主智慧體的條目永遠不會 stale：它看守一個沒有終點的系統，它的那一行說的就是那個系統現在的狀態。
 
 <details>
 <summary>細節</summary>
@@ -660,7 +660,7 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 #### `board_read({ scope?, device? })`
 
-`board_read({ scope?, device? })`（只有塔台能用，與 `tower_list` 一起登記）回答 JSON：一則說明遠端條目是資料的 `note`、`local`（每個運作中主智慧體的工作區、分頁、名稱、狀態、`now`、`items`、`updatedSecondsAgo`；沒有條目的運作中主智慧體只顯示它的名稱和分頁；閒置主智慧體的舊條目帶 `stale: true`），以及只在設定了 Straw Link 時才有的 `remote`（每個隊友裝置一列：`origin: "remote"`、團隊在這台電腦上的名稱、裝置的 id、短 id 和**取自名冊的**標籤、`online`、`boardSecondsAgo`，以及它的條目）。`scope` 是 `local`、`remote` 或 `all`；`device` 讀一個隊友（和 `tower_send` 的解析方式相同，所以未知或有歧義的名稱是一個錯誤，並列出候選者），並略過本機的部分。遠端文字保留它的字元，但會失去控制和格式字元，並再截斷一次。
+`board_read({ scope?, device? })`（只有塔台能用，與 `tower_list` 一起登記）回答 JSON：一則說明遠端條目是資料的 `note`、`local`（每個運作中主智慧體的工作區、分頁、名稱、狀態、`now`、`items`、`updatedSecondsAgo`；沒有條目的運作中主智慧體只顯示它的名稱和分頁；閒置主智慧體的舊條目帶 `stale: true`，值守主智慧體的不會），以及只在設定了 Straw Link 時才有的 `remote`（每個隊友裝置一列：`origin: "remote"`、團隊在這台電腦上的名稱、裝置的 id、短 id 和**取自名冊的**標籤、`online`、`boardSecondsAgo`，以及它的條目）。`scope` 是 `local`、`remote` 或 `all`；`device` 讀一個隊友（和 `tower_send` 的解析方式相同，所以未知或有歧義的名稱是一個錯誤，並列出候選者），並略過本機的部分。遠端文字保留它的字元，但會失去控制和格式字元，並再截斷一次。
 
 #### 在遠端輪次裡
 
@@ -783,7 +783,7 @@ sb server 把它啟動的 pane 清單（每個 pane 附它的資料夾）留在�
 
 限制是從運作中的 Herdr pane 計數的，所以塔台重新啟動後仍然有效：工具用一個 token（`sb_opened_by=<sender session id>`，由開啟的主智慧體保持新鮮）標記新的 pane，當工作區已經有 2 個由塔台開啟的運作中主智慧體、或寄件者已經有一個時，會以錯誤拒絕，由塔台轉達給寄件者（開啟是串行的，所以進行中的一個也算）。拒絕不會被記住，所以一個主智慧體結束後，同樣的請求可以再試。
 
-`STRAW_BOSS_ROLE=main` 會留在新分頁的 shell 裡，所以 pi 只有在 pane 也帶有一次性 token `sb_open_main` 時才會自己升任，第一個這樣的 pi 會消耗它；之後在那個 shell 裡啟動的 pi 維持成員。
+`STRAW_BOSS_ROLE=main` 會留在新分頁的 shell 裡，所以 pi 只有在 pane 也帶有一次性 token `sb_open_main` 時才會自己升任，第一個這樣的 pi 會消耗它；之後在那個 shell 裡啟動的 pi 維持成員。可選的 `duty`（`coordinator` 或 `standing`；整合員只能經由 `role: "integrator"` 開，火車不接受）會以 `sb_open_duty` 寫在它旁邊，由同一個 pi 隨認領一起消耗：它附加種類條目（`opened by tower <id> as <duty>`），並把種類記進它的角色紀錄，所以在第一則訊息之前的 Herdr 還原也會帶著種類把這個 main 帶回來。整合員的門自己寫 `sb_open_duty=integrator`。
 
 任何失敗（啟動、等待、遞送）都會關閉工具所建立的分頁，沒有任何東西被交出去，並以錯誤的形式到達塔台的模型，它的 prompt 要它轉達給寄件者。塔台在它 session 的存續期間記住每位寄件者和請求：同樣的請求絕不會開啟第二個主智慧體，不論第一次嘗試還在執行、已成功（重複的請求會回答已開啟過一個主智慧體），還是失敗（重複的請求被拒絕，不重試）。期間重新啟動的塔台會忘記，而不同的措辭就是不同的請求。
 
@@ -2258,7 +2258,7 @@ stateDiagram-v2
 <details>
 <summary>細節</summary>
 
-被派出的子智慧體的種類以 `Unit.duty` 傳到頁面，讀自它啟動腳本所指名的 agent 角色。鴉閣對這些種類畫標準檢視的符號，如同對火車，極客也畫標準的。
+被派出的子智慧體的種類以 `Unit.duty` 傳到頁面，讀自它 session 檔前 64 KB 中第一個 `straw-boss { agent }` 條目（在它的第一個 turn 之前，由啟動腳本的 `PI_SUBAGENT_AGENT` 代替）。被續跑的子智慧體會從 pi-herdr-agents 拿到新的 id 和一支不帶角色的 `<name>-resume-<ts>.sh` 腳本，它靠帶有其 `PI_SUBAGENT_ID` 的那支腳本找到，再經由那支腳本的 session 檔與執行它的 pane，所以它保有自己的名稱、運作中的標記和種類。鴉閣對這些種類畫標準檢視的符號，如同對火車，極客也畫標準的。
 
 </details>
 
