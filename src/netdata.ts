@@ -51,7 +51,14 @@ export function readJson(path: string): Record<string, unknown> {
 const RACY_MS = 2000;
 const childPanes = new WeakMap<Pane[], { size: number; index: Map<string, Pane> }>();
 const listings = new Map<string, { mtime: bigint; readAt: number; names: string[] }>();
-const scripts = new Map<string, Launch & { mtimeMs: number }>();
+/**
+ * A parent's launch scripts, kept per scripts folder so one parent with many launches cannot evict another's (review R0790-F001): the scripts read, and the
+ * resumes by the child id they carry, both kept while the folder lists the same names. Only a resume's script is read to find a child; a first launch is found by its name.
+ */
+interface Scripts { names: string[]; reads: Map<string, Launch & { mtimeMs: number }>; resumes?: Map<string, { script: string; launch: Launch }> }
+const folders = new Map<string, Scripts>();
+/** How many launch scripts were read from disk: the cost tests/kinds-net.test.ts bounds for a parent with many old launches. */
+export const scriptReads = { count: 0 };
 /** What a launch script says: the child's id, its session file, the agent role of a first launch (a resume names none), and whether it is a persistent specialist. */
 interface Launch { id?: string; session?: string; persistent: boolean; agent?: string }
 const SUFFIX = /^(.*)-[0-9a-f]{1,8}-[0-9a-f]{1,8}-[0-9a-f]{1,4}$/;
@@ -94,14 +101,24 @@ function listed(dir: string): string[] {
 	}
 }
 
+/** The scripts kept for `dir` while it lists `names`; a folder that lists other names starts afresh. */
+function scriptsOf(dir: string, names: string[]): Scripts {
+	const kept = folders.get(dir);
+	if (kept && kept.names.length === names.length && kept.names.every((n, i) => n === names[i])) return kept;
+	if (folders.size > 200) folders.clear();
+	const fresh: Scripts = { names, reads: new Map() };
+	folders.set(dir, fresh);
+	return fresh;
+}
+
 /** The child id, session file, and agent role a launch script names (`PI_SUBAGENT_ID`, `PI_SUBAGENT_SESSION`, `PI_SUBAGENT_AGENT`), and whether it launched a persistent specialist, read again only when the script changed. */
-function scriptRead(path: string): Launch | undefined {
+function scriptRead(folder: Scripts, path: string): Launch | undefined {
 	try {
-		const { mtimeMs } = statSync(path), cached = scripts.get(path);
+		const { mtimeMs } = statSync(path), cached = folder.reads.get(path);
 		if (cached?.mtimeMs === mtimeMs) return cached;
+		scriptReads.count++;
 		const text = readFileSync(path, "utf8"), read = { mtimeMs, id: text.match(/\bPI_SUBAGENT_ID='([^']+)'/)?.[1], session: text.match(/PI_SUBAGENT_SESSION='([^']+)'/)?.[1], persistent: /\bPI_SUBAGENT_PERSISTENT=1\b/.test(text), agent: text.match(/\bPI_SUBAGENT_AGENT='([^']+)'/)?.[1] };
-		if (scripts.size > 500) scripts.clear();
-		scripts.set(path, read);
+		folder.reads.set(path, read);
 		return read;
 	} catch {
 		return undefined; // the launch script is only a fallback source for the name and the session file
@@ -152,25 +169,37 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number, li
 	const file = parent?.agent_session?.value;
 	if (!file) return [];
 	const dir = artifacts(file), scriptDir = join(dir, "subagent-scripts"), launched = listed(scriptDir).filter((f) => f.endsWith(".sh"));
+	const folder = scriptsOf(scriptDir, launched), read = (f: string) => scriptRead(folder, join(scriptDir, f));
 	// A first launch's script is named `<name>-<id>.sh`; a resume's is `<name>-resume-<ts>.sh` and names a new id inside only (pi-herdr-agents launch-resume.ts), so it is found by what it carries.
+	// Only the resumes are read for that, once while the folder lists the same names.
+	const resumeOf = (id: string) => {
+		if (!folder.resumes) {
+			folder.resumes = new Map();
+			for (const f of launched) if (/-resume-[^-]*\.sh$/.test(f)) { const launch = read(f); if (launch?.id && !folder.resumes.has(launch.id)) folder.resumes.set(launch.id, { script: f, launch }); }
+		}
+		return folder.resumes.get(id);
+	};
 	const launchOf = (id: string) => {
 		const own = launched.find((f) => f.endsWith(`-${id}.sh`));
-		if (own) return { script: own, name: own.slice(0, -`-${id}.sh`.length), launch: scriptRead(join(scriptDir, own)) };
-		for (const f of launched) {
-			const launch = scriptRead(join(scriptDir, f));
-			if (launch?.id === id) return { script: f, name: f.replace(/-resume-[^-]*\.sh$/, "").replace(/\.sh$/, ""), launch };
+		if (own) return { script: own, name: own.slice(0, -`-${id}.sh`.length), launch: read(own) };
+		const resume = resumeOf(id);
+		return resume && { script: resume.script, name: resume.script.replace(/-resume-[^-]*\.sh$/, ""), launch: resume.launch };
+	};
+	// Before the child's first turn its session file holds no role yet: the first launch's script stands in, found by the id the session file's name carries (`ownFile`).
+	const firstLaunchAgent = (session: string | undefined) => {
+		for (const id of childIds(session)) {
+			const own = launched.find((f) => f.endsWith(`-${id}.sh`)), launch = own === undefined ? undefined : read(own);
+			if (launch && launch.session === session && launch.agent) return launch.agent;
 		}
 		return undefined;
 	};
-	// Before the child's first turn its session file holds no role yet: the first launch's script for that session file stands in.
-	const firstLaunchAgent = (session: string | undefined) => (session ? launched.map((f) => scriptRead(join(scriptDir, f))).find((l) => l?.session === session && l.agent)?.agent : undefined);
+	// A child is kept when a pane runs it or it was active in the last 10 minutes; its launch script is read only then, so a parent's old launches cost a stat each.
 	const rows = listed(join(dir, "subagent-activity"))
 		.flatMap((name) => {
 			const id = name.replace(/\.json$/, ""), path = join(dir, "subagent-activity", name);
 			try {
-				const at = statSync(path).mtimeMs, found = launchOf(id);
-				const child = { id, path, at, found, pane: paneOfChild(all, id) ?? paneOfSession(all, found?.launch?.session) };
-				return child.pane || now - at < RECENT_MS ? [child] : [];
+				const at = statSync(path).mtimeMs, pane = paneOfChild(all, id) ?? paneOfSession(all, resumeOf(id)?.launch.session);
+				return pane || now - at < RECENT_MS ? [{ id, path, at, pane, found: launchOf(id) }] : [];
 			} catch {
 				return []; // the activity file went away since the directory was listed
 			}
@@ -186,13 +215,16 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number, li
 			const name = pane?.label || (found?.name ?? id.slice(0, 8));
 			const doing = activity.toolActive ? String(activity.toolName) : String(activity.phase ?? "");
 			const ended = pane?.agent !== "pi" || recordedDone, duty = dutyOfAgent(agentOfSession(file) ?? launch?.agent ?? firstLaunchAgent(file));
-			return { at, row: { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", ...(duty ? { duty } : {}), workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, ...(ended && { ended }), ...(recordedDone && { finished: true }), note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] } };
+			return { at, resumed: found?.script.includes("-resume-") ?? false, row: { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", ...(duty ? { duty } : {}), workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, ...(ended && { ended }), ...(recordedDone && { finished: true }), note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] } };
 		});
-	// A session file resumed under a new id has two launches here; the newest activity is the child as it runs now.
-	const newest = new Map<string, number>();
-	for (const { at, row } of rows) if (row.file) newest.set(row.file, Math.max(newest.get(row.file) ?? -Infinity, at));
+	// A session file resumed under a new id has two launches here; the newest activity is the child as it runs now, and on a tie the resume (review R0790-F002).
+	const newest = new Map<string, (typeof rows)[number]>();
+	for (const r of rows) {
+		const held = r.row.file === undefined ? undefined : newest.get(r.row.file);
+		if (r.row.file !== undefined && (!held || r.at > held.at || (r.at === held.at && r.resumed && !held.resumed))) newest.set(r.row.file, r);
+	}
 	return rows
-		.filter(({ at, row }) => !row.file || newest.get(row.file) === at)
+		.filter((r) => r.row.file === undefined || newest.get(r.row.file) === r)
 		.map(({ row }) => row)
 		.sort((a, b) => Number(a.mark === "done") - Number(b.mark === "done") || a.text.localeCompare(b.text))
 		.slice(0, limit);

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import type { Pane } from "../src/herdr.ts";
-import { agentOfSession, subagents } from "../src/netdata.ts";
+import { agentOfSession, scriptReads, subagents } from "../src/netdata.ts";
 import { World } from "./fakes.ts";
 
 // docs/specs/2026-11-09-agent-kinds.md §8, Phase 2 "The role read": a child records its role in its session file at its first turn, and the net links a resumed child (new id, a
@@ -114,4 +114,44 @@ test("an unknown role name, a handoff, and a bare spawn get no duty", () => {
 	]);
 	const rows = subagents(parent, [parent], Date.now());
 	assert.deepEqual(Object.fromEntries(rows.map((r) => [r.text, r.duty])), { a: undefined, b: undefined, c: undefined });
+});
+
+// Review R0790-F001: a parent with hundreds of launches read every script on every net read (27 ms to 4.8 s for 983 scripts and 60 resumes).
+test("a parent's old launches cost no script read: only the resumes are read, once, and another parent's many launches do not evict them", () => {
+	const old = Date.now() / 1000 - 3600;
+	const many = (parent: string, n: number, resumes: number) => {
+		const kids = Array.from({ length: n }, (_, i) => {
+			const id = `${parent}k${i}`, resumed = i < resumes;
+			return { id, scriptName: resumed ? `w${i}-resume-17${i}.sh` : `w${i}-${id}.sh`, session: kidFile(id), ...(resumed ? {} : { agent: "worker" }), name: `w${i}`, phase: "done" };
+		});
+		const p = artifacts(parent, kids);
+		for (const k of kids) utimesSync(join(sessions, "artifacts", parent, "subagent-activity", `${k.id}.json`), old, old);
+		return p;
+	};
+	const a = many("pbig", 600, 60), b = many("pother", 600, 0), panes = [a, b];
+	// Past the racy window, so the listings are kept from one call to the next.
+	const until = Date.now() + 2100;
+	while (Date.now() < until) { /* wait */ }
+	scriptReads.count = 0;
+	assert.deepEqual(subagents(a, panes, Date.now()), [], "no child of it is live or recent");
+	assert.ok(scriptReads.count <= 60, `the first read reads only the 60 resumes, not ${scriptReads.count}`);
+	scriptReads.count = 0;
+	subagents(b, panes, Date.now());
+	subagents(a, panes, Date.now());
+	assert.equal(scriptReads.count, 0, "nothing is read again, and the other parent's 600 launches evicted nothing");
+});
+
+// Review R0790-F002: a first launch and its resume with the same activity time showed the child twice.
+test("a first launch and its resume of one session file, with the same activity time, show as one row: the resume", () => {
+	const file = kidFile("ktie");
+	const parent = artifacts("ptie", [
+		{ id: "ktie", scriptName: "fix-ktie.sh", session: file, agent: "worker", name: "fix" },
+		{ id: "ktie-r", scriptName: "fix-resume-1700.sh", session: file, name: "fix" },
+	]);
+	const at = Date.now() / 1000 - 60;
+	for (const id of ["ktie", "ktie-r"]) utimesSync(join(sessions, "artifacts", "ptie", "subagent-activity", `${id}.json`), at, at);
+	const rows = subagents(parent, [parent, pane("wA:pt", { agent_status: "working", agent_session: { value: file } })], Date.now());
+	assert.equal(rows.length, 1, JSON.stringify(rows));
+	assert.equal(rows[0]!.id, "ktie-r");
+	assert.equal(rows[0]!.duty, "worker", "the first launch's script names the role");
 });

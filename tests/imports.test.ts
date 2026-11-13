@@ -76,7 +76,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Unreleased to 138: a subagent that recorded done is `done` even while its pi pane still says working (one line more).
 	// Kinds (todo #152) to 139: a subagent row carries the kind its launch script names (+1 net).
 	// Agent kinds phase 2 (steps 1; measured) to 199: the role a child's session file records (`agentOfSession`, its first 64 KB, cached by path), the resumed child found by the script that carries its id and by its session file's pane, the first launch's script standing in, and one row per session file.
-	assert.ok(count("src/netdata.ts") <= 199, `src/netdata.ts has ${count("src/netdata.ts")} lines`);
+	// 0.79.0 review R0790-F001/F002 (measured) 199 to 231: the launch scripts kept per parent folder (`scriptsOf`), the resumes read once by the id they carry, a script read only for a live or recent child, `scriptReads`, and the tie between a launch and its resume.
+	assert.ok(count("src/netdata.ts") <= 231, `src/netdata.ts has ${count("src/netdata.ts")} lines`);
 	// 0.5.0 raised the server's figure from 300 to 320 for the CSRF meta, the POST routing into control.ts, and the remote access check (pairing, remote streams);
 	// 0.6.0 to 325 for the hub's start and stop with the server, the answer route's fresh reading, gui.json's ownerSession, and the sessions a reading binds dialogs with;
 	// 0.7.0 to 330 for the terminal mirror (Phase 3 task 1): each stream's `hello` with its id, and the mirrors it holds created, closed with it, and stopped with the server.
