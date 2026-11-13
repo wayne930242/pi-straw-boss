@@ -137,7 +137,7 @@ export async function gatherMains(d: GatherDeps): Promise<{ rows: MainRow[]; ope
 	const paneOf = (s: Session): Pane | undefined => ps.find((p) => p.pane_id === s.herdrLocation?.paneId);
 	// For an ally run every label goes through the one gate (scrubbed from the raw text, cut last).
 	const label = (t: string) => (d.within ? allyLabel(t) : clean(t, 40));
-	const live: LiveMain[] = here.filter((m) => m.role === "main" || m.role === "train").map((m) => ({ session: m.s.id, ...(m.role === "train" ? { role: "train" as const } : {}), name: label(nameOf(m.s)), workspaceId: ws, workspace: label(d.workspace.label), tab: label(m.tab.label), state: sessionMark(m.s, paneOf(m.s)), commanding: commanding(sessionMark(m.s, paneOf(m.s)), subagents(paneOf(m.s), ps, d.now()).map((r) => r.mark)) === "commanding" }));
+	const live: LiveMain[] = here.filter((m) => m.role === "main" || m.role === "train").map((m) => ({ session: m.s.id, ...(m.role === "train" ? { role: "train" as const } : {}), name: label(nameOf(m.s)), workspaceId: ws, workspace: label(d.workspace.label), tab: label(m.tab.label), state: sessionMark(m.s, paneOf(m.s)), commanding: commanding(sessionMark(m.s, paneOf(m.s)), subagents(paneOf(m.s), ps, d.now()).map((r) => r.mark)) === "commanding", ...(m.duty ? { duty: m.duty } : {}) }));
 	const board = joinLocal(readEntries(d.boardDir), live, d.now());
 	const tabs = Object.values(Object.groupBy(here, (m) => m.tab.id));
 	const rows = tabs.map((group = []): MainRow => {

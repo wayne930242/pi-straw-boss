@@ -70,8 +70,11 @@ test("a car slip opens the project's integrator as the tower's own main: its tab
 	const pane = paneOf(opened.pane);
 	assert.equal(pane.tokens.sb_opened_by, "integ:acme", "the marker names the project, not the slip's sender");
 	assert.equal(pane.tokens.sb_role, "main");
-	assert.equal(pane.tokens.sb_duty, "integrator", "the name migrates the opened main to the kind before it is handed anything");
+	assert.equal(pane.tokens.sb_duty, "integrator", "the opened main is of kind integrator before it is handed anything");
 	assert.equal(pane.tokens.sb_open_main, undefined, "the one-time token was consumed");
+	assert.equal(pane.tokens.sb_open_duty, undefined, "and the kind it was opened with (docs/specs/2026-11-09-agent-kinds.md §6), with it");
+	const kinds = world.agents.find((a) => a.id === opened.main)!.entries.flatMap((e) => (e.customType === "straw-boss" && typeof (e.data as { dutyWhy?: unknown }).dutyWhy === "string" ? [(e.data as { dutyWhy: string }).dutyWhy] : []));
+	assert.deepEqual(kinds, ["opened by tower of workspace wA as integrator"], "its kind comes from the opener, not from a migration by name");
 	assert.deepEqual(opened, { tab: pane.tab_id, pane: pane.pane_id, main: `opened-${pane.pane_id}`, sender: "sender-1", integrator: "acme" });
 	assert.equal(handed.length, 1);
 	assert.equal(handed[0]!.to, opened.main);

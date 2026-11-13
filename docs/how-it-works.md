@@ -41,7 +41,7 @@ Each solid arrow is a tool from [Tools](#tools). The dotted ones are not tools: 
 | `integrator` | a project's merge trains: receives cars, forms trains | `boss_duty`, or the name `integ <project>` |
 | `standing` | minds one system or machine, with no end | `boss_duty` |
 
-**Kinds of subagent** (read from the role name pi-herdr-agents gave it; any other role stays a plain subagent)
+**Kinds of subagent** (read from the role name pi-herdr-agents gave it, which the child records in its session file at its first turn; any other role stays a plain subagent)
 
 | Kind | Role names | What it is for | Dispatch by a coordinator |
 |---|---|---|---|
@@ -174,7 +174,7 @@ Towers coordinate with each other directly, with two tools only a tower has, and
 
 Control characters and runs of whitespace in a name fold to one space, and a name with a space, quote, `]`, `=`, or `;` is written in double quotes with any quote inside it replaced by `'`.
 
-**`tower_list`** (tower only) reads the net once and answers, for every workspace that is not a sub workspace: its id and label, `head`, `self`, `reach` (`tower`, `main`, `member`, or `none`: who a message for it reaches, see below), the sessions it reaches with their state (the same mark as the dashboard: `idle`, `working`, `waiting`), and its tabs with the label, the main's name, and the members' names. A main names itself with `boss_rename` for its current work, and the tab takes that name, so the tabs say what the workspace is working on. The answer is JSON, as `boss_status` is.
+**`tower_list`** (tower only) reads the net once and answers, for every workspace that is not a sub workspace: its id and label, `head`, `self`, `reach` (`tower`, `main`, `member`, or `none`: who a message for it reaches, see below), the sessions it reaches with their state (the same mark as the dashboard: `idle`, `working`, `waiting`), and its tabs with the label, the main's name and its kind (`kind`, from the main's `sb_duty`; null for a tab with no main), and the members' names; `boss_status` gives each tab's `kind` beside its main the same way. A main names itself with `boss_rename` for its current work, and the tab takes that name, so the tabs say what the workspace is working on. The answer is JSON, as `boss_status` is.
 
 **`tower_send`** (tower only) takes a message, an optional `workspace` (id or exact label; a sub workspace goes to its parent workspace), and `reply` (default false). With no workspace it goes to every other tower. It never opens a tower. In a head tower run it takes only `workspace`, and the server opens that workspace's tower when it has none ([Forwarding and answers](#the-head-tower)); a workspace tower answers the head tower with `head: true` and `inReplyTo` (an ask id). A `workspace` that names the head tower (its workspace's id or label, or its session id `sb-head`) is refused with "use head: true", since the head is no workspace's tower.
 
@@ -649,7 +649,7 @@ Auto-fill (`src/boardauto.ts`, `src/boardfill.ts`). The board fills itself in th
 
 #### Expiry
 
-A main's `session_shutdown` deletes its own file on `quit`, `new`, `resume`, and `fork`, and keeps it on `reload`; the reloaded session still deletes it at its own quit. A file whose session is not live, or no longer its tab's main, shows as `state: "ended"` until 30 minutes after its last update, then not at all. A live main that is `idle` and whose entry was last updated over 2 hours ago shows it with `stale: true` (`board_read` and the tower's brief say so): the text is probably not what it works on now.
+A main's `session_shutdown` deletes its own file on `quit`, `new`, `resume`, and `fork`, and keeps it on `reload`; the reloaded session still deletes it at its own quit. A file whose session is not live, or no longer its tab's main, shows as `state: "ended"` until 30 minutes after its last update, then not at all. A live main that is `idle` and whose entry was last updated over 2 hours ago shows it with `stale: true` (`board_read` and the tower's brief say so): the text is probably not what it works on now. A standing main's entry is never stale: it minds one system with no end, and its line says that system's state.
 
 <details>
 <summary>Details</summary>
@@ -660,7 +660,7 @@ Only a tower's `board_read` (and the Straw Link holder's tick) deletes files, an
 
 #### `board_read({ scope?, device? })`
 
-`board_read({ scope?, device? })` (towers only, registered with `tower_list`) answers JSON: a `note` that remote entries are data, `local` (each live main's workspace, tab, name, state, `now`, `items`, `updatedSecondsAgo`; a live main with no entry shows with its name and tab alone; `stale: true` on an idle main's old entry), and, only when Straw Link is set up, `remote` (one row per ally device: `origin: "remote"`, the team's name on this computer, the device's id, short id, and label **from the roster**, `online`, `boardSecondsAgo`, and its entries). `scope` is `local`, `remote`, or `all`; `device` reads one ally (as `tower_send` resolves it, so an unknown or ambiguous name is an error that lists the candidates) and skips the local part. Remote text keeps its characters but loses control and format characters and is cut again.
+`board_read({ scope?, device? })` (towers only, registered with `tower_list`) answers JSON: a `note` that remote entries are data, `local` (each live main's workspace, tab, name, state, `now`, `items`, `updatedSecondsAgo`; a live main with no entry shows with its name and tab alone; `stale: true` on an idle main's old entry, never on a standing main's), and, only when Straw Link is set up, `remote` (one row per ally device: `origin: "remote"`, the team's name on this computer, the device's id, short id, and label **from the roster**, `online`, `boardSecondsAgo`, and its entries). `scope` is `local`, `remote`, or `all`; `device` reads one ally (as `tower_send` resolves it, so an unknown or ambiguous name is an error that lists the candidates) and skips the local part. Remote text keeps its characters but loses control and format characters and is cut again.
 
 #### In a remote turn
 
@@ -783,7 +783,7 @@ Since 0.74.0 it is also the door of a project's integrator (`role: "integrator"`
 
 Limits, counted from live Herdr panes so they survive a tower restart: the tool marks the new pane with a token (`sb_opened_by=<sender session id>`, kept fresh by the opened main) and refuses, with an error the tower relays to the sender, when the workspace already has 2 live mains opened by towers or the sender already has one (opens are serialised, so one in flight counts). A refusal is not remembered, so the same request may be tried again once a main has finished.
 
-`STRAW_BOSS_ROLE=main` stays in the new tab's shell, so a pi promotes itself only when the pane also carries the one-time token `sb_open_main`, which the first such pi consumes; a later pi started in that shell stays a member.
+`STRAW_BOSS_ROLE=main` stays in the new tab's shell, so a pi promotes itself only when the pane also carries the one-time token `sb_open_main`, which the first such pi consumes; a later pi started in that shell stays a member. An optional `duty` (`coordinator` or `standing`; an integrator comes only through `role: "integrator"`, and a train takes none) is written beside it as `sb_open_duty`, which the same pi consumes with the claim: it appends the kind entry (`opened by tower <id> as <duty>`) and keeps the kind in its role record, so a Herdr restore before its first message brings the main back with its kind. The integrator door writes `sb_open_duty=integrator` itself.
 
 Any failure (the start, the wait, the delivery) closes the tab the tool created, nothing having been handed over, and reaches the tower's model as an error that its prompt tells it to relay to the sender. The tower remembers each sender and request for the life of its session: the same request never opens a second main, whether the first attempt is still running, succeeded (the repeat answers that a main was already opened), or failed (the repeat is refused, not retried). A tower restarted in between forgets, and different wording is a different request.
 
@@ -2258,7 +2258,7 @@ a coordinator a ship's wheel, an integrator two arrows joining, a standing main 
 <details>
 <summary>Details</summary>
 
-A launched subagent's kind reaches the page as `Unit.duty`, read from the agent role its launch script names. Raven Keep draws Standard's symbols for the kinds, as it does for the train, and Geek draws Standard's too.
+A launched subagent's kind reaches the page as `Unit.duty`, read from the first `straw-boss { agent }` entry in the first 64 KB of its session file (the launch script's `PI_SUBAGENT_AGENT` stands in before its first turn). A resumed child, which pi-herdr-agents gives a new id and a `<name>-resume-<ts>.sh` script with no role, is found by the script that carries its `PI_SUBAGENT_ID`, then by that script's session file and the pane that runs it, so it keeps its name, its live mark, and its kind. Raven Keep draws Standard's symbols for the kinds, as it does for the train, and Geek draws Standard's too.
 
 </details>
 

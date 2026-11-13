@@ -51,7 +51,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		});
 	return {
 		addNetTools() {
-			tool("boss_status", "Show this workspace's Straw Boss coordinators: each tab's main agent, this workspace's tower, the head tower, and the other towers.", Type.Object({}), async () => {
+			tool("boss_status", "Show this workspace's Straw Boss coordinators: each tab's main agent and its kind, this workspace's tower, the head tower, and the other towers.", Type.Object({}), async () => {
 				// In a remote turn the answer is for the senders, so its labels and names are scrubbed.
 				const scope = link.remoteScope();
 				const result = await status(scope ? { project: scope.project } : undefined);
@@ -194,6 +194,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 					label: Type.Optional(Type.String({ description: "A short label for the new tab. A train's tab is named by its code, an integrator's by its project, whatever label is given." })),
 					role: Type.Optional(Type.Union([Type.Literal("train"), Type.Literal("integrator")], { description: "\"train\": open a train on an integrator's manifest (the request, verbatim: it must carry project: and code:) in a tab of its own. A train counts against the project's maxTrains, not against the two mains, and has no per-sender limit. \"integrator\" (a run of the sb server only): a car slip goes to its project's one integrator. Give the slip as it came as the request and the session that sent it as the sender; the code finds the call_tower (why=shared) it came in among the messages this run took, reads the project from the checkout's apps.json, finds the project's integrator or opens it as this tower's own main (kind integrator, outside the two mains and the sender's one), and forwards the slip as its sender wrote it, stamped with that sender; where the project already runs integrators of its own it opens nothing and answers with their names and the event id to forward with (tower_reply, forward). Omit it for a main." })),
 					project: Type.Optional(Type.String({ description: "With role \"integrator\", optional: the code reads the project from the workspace's checkout (apps.json integration.project, else its repository's folder name), and another word is refused." })),
+					duty: Type.Optional(Type.Union([Type.Literal("coordinator"), Type.Literal("standing")], { description: "The new main's kind: \"standing\" for a request to mind one system or machine with no end; default coordinator. Not with a role: an integrator is of kind integrator, a train is a train." })),
 				}),
 				async (input) => {
 					if (input.role === INTEGRATOR) throw new Error("role integrator works in a tower run of the sb server (the server holds the call_tower messages a slip came in, and forwards it)");
@@ -206,7 +207,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		},
 		// Tower only. Towers talk to each other with these: who is out there, and one message to one tower or all. Closing is for the mains a tower opened itself.
 		addTowerComms() {
-			tool("tower_list", "List every workspace's tower: its workspace, whether it is the head tower or you, who a message for it reaches (its tower; in a workspace without one, its mains, else its members), that session's state (idle or working), and what its tabs are working on (each tab's main and members by the names they gave themselves). When Straw Link is set up, `remote` lists the towers of teammates' computers from their last presence: device label and id, whether it is online, the workspace and tower state, and its tabs. Send to one with tower_send and its device.", Type.Object({}), async () => {
+			tool("tower_list", "List every workspace's tower: its workspace, whether it is the head tower or you, who a message for it reaches (its tower; in a workspace without one, its mains, else its members), that session's state (idle or working), and what its tabs are working on (each tab's main, with its kind, and members by the names they gave themselves). When Straw Link is set up, `remote` lists the towers of teammates' computers from their last presence: device label and id, whether it is online, the workspace and tower state, and its tabs. Send to one with tower_send and its device.", Type.Object({}), async () => {
 				// In a remote turn the list is scoped like board_read: the senders' teams, and the workspaces inside the project they bind.
 				const scope = link.remoteScope();
 				const local = await towerList(scope ? { project: scope.project } : undefined);

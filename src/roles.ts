@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { type CoordinatorDuty, isCoordinatorDuty } from "./duty.ts";
 import { TOWER_LABEL } from "./herdr.ts";
 import type { Kit } from "./state.ts";
 import { TRAIN, type TrainId, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
@@ -23,7 +24,7 @@ import { TRAIN, type TrainId, trainFromToken, trainLabel, trainToken } from "./t
 // (docs/specs/2026-11-07-train-workers.md §29).
 
 const KEEP_MS = 90 * 24 * 3600_000;
-export interface RoleRecord { role: "tower" | "main" | "train"; pane: string; tab: string; workspace: string; terminal?: string; file?: string; openedBy?: string; /** A train's project and code (docs/specs/2026-11-07-train-workers.md §3.3). */ train?: TrainId; at: number }
+export interface RoleRecord { role: "tower" | "main" | "train"; pane: string; tab: string; workspace: string; terminal?: string; file?: string; openedBy?: string; /** A train's project and code (docs/specs/2026-11-07-train-workers.md §3.3). */ train?: TrainId; /** A main's kind, for a restore before its first message, when pi has written no entry yet (docs/specs/2026-11-09-agent-kinds.md §6). */ duty?: CoordinatorDuty; at: number }
 /** Where a session runs now: the pane, tab, and workspace of the record must all be these. `tabLabel` is the label Herdr lists for the tab now, the proof of a tower's or a train's tab; left out, neither role is given back. */
 export interface Here { paneId?: string; tabId?: string; workspaceId?: string; terminalId?: string; tabLabel?: string }
 
@@ -44,6 +45,7 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 		}
 		try {
 			const r = JSON.parse(raw) as Partial<RoleRecord>;
+			if (r.duty !== undefined && !isCoordinatorDuty(r.duty)) delete r.duty; // a kind that is none says nothing; the role still stands
 			if (r.role === TRAIN && !(r.train && trainFromToken(trainToken(r.train as TrainId)))) return undefined; // a train record names its project and code, or proves nothing
 			return (r.role === "tower" || r.role === "main" || r.role === TRAIN) && typeof r.pane === "string" && typeof r.tab === "string" && typeof r.workspace === "string" && (r.terminal === undefined || typeof r.terminal === "string") && (r.file === undefined || typeof r.file === "string") && (r.openedBy === undefined || typeof r.openedBy === "string") ? (r as RoleRecord) : undefined;
 		} catch {
@@ -99,6 +101,11 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 			const record = here && within(here);
 			return record && (record.role === "main" || record.role === TRAIN) ? record.openedBy : undefined;
 		},
+		/** The kind a main recorded for the pane, tab, and workspace it is in now: read when `held` says main (session.ts). */
+		dutyOf(here: Here): CoordinatorDuty | undefined {
+			const record = within(here);
+			return record?.role === "main" ? record.duty : undefined;
+		},
 		/** The project and code a train recorded for the pane, tab, and workspace it is in now. */
 		trainOf(here: Here): TrainId | undefined {
 			const record = within(here);
@@ -112,7 +119,7 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 				try {
 					mkdirSync(dir, { recursive: true, mode: 0o700 });
 					const file = path(s.file), temp = `${file}.${process.pid}.tmp`, at = cfg.now();
-					writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, ...(s.at.terminalId ? { terminal: s.at.terminalId } : {}), file: s.file, ...(openedBy ? { openedBy } : {}), ...(role === TRAIN && s.train ? { train: s.train } : {}), at } satisfies RoleRecord), { mode: 0o600 });
+					writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, ...(s.at.terminalId ? { terminal: s.at.terminalId } : {}), file: s.file, ...(openedBy ? { openedBy } : {}), ...(role === TRAIN && s.train ? { train: s.train } : {}), ...(role === "main" && isCoordinatorDuty(s.duty) ? { duty: s.duty } : {}), at } satisfies RoleRecord), { mode: 0o600 });
 					renameSync(temp, file);
 				} catch (error) {
 					return void tell(`Straw Boss: could not record this session's role, so a Herdr restore will not bring it back: ${(error as Error).message}`, "warning");

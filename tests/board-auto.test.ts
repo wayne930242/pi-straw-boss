@@ -9,7 +9,7 @@ import { deriveBoard, scrubBoard } from "../src/boardauto.ts";
 import type { Todo } from "../src/items.ts";
 import { gatherMains } from "../src/server/towerbrief.ts";
 import { panes } from "../src/herdr.ts";
-import { type Agent, World } from "./fakes.ts";
+import { type Agent, until, World } from "./fakes.ts";
 
 // The work board fills itself (docs/specs/2026-10-25-straw-link.md, Work board, Auto-fill): the derivation, the scrub, the override, and what allies get.
 
@@ -401,6 +401,13 @@ test("a live idle main's entry shows as stale after 2 hours; a working main's an
 	assert.equal(joinLocal([e(T - STALE_MS - 1000)], [{ ...main("idle")[0]!, commanding: true }], T)[0]!.stale, undefined, "a commanding main is never stale");
 });
 
+test("a standing main's entry is never stale, however old: it minds one system with no end (docs/specs/2026-11-09-agent-kinds.md Phase 2)", () => {
+	const T = 1_800_000_000_000, old: Entry = { v: 1, session: "m", now: "backup host green", items: [], updated: T - 5 * STALE_MS, src: "set" };
+	const main = (duty?: "standing" | "coordinator" | "integrator") => [{ session: "m", name: "main", workspaceId: "wA", workspace: "Alpha", tab: "t", state: "idle", ...(duty ? { duty } : {}) }];
+	assert.equal(joinLocal([old], main("standing"), T)[0]!.stale, undefined);
+	assert.deepEqual([joinLocal([old], main("coordinator"), T)[0]!.stale, joinLocal([old], main("integrator"), T)[0]!.stale, joinLocal([old], main(), T)[0]!.stale], [true, true, true], "every other kind, and a main of an older sb with none, still goes stale");
+});
+
 test("board_read marks a stale entry of an idle live main, and a tower's brief says so", async () => {
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
 	const a = await main();
@@ -413,6 +420,13 @@ test("board_read marks a stale entry of an idle live main, and a tower's brief s
 	const run = world.herdr.runFor("wA:p1");
 	const g = await gatherMains({ run, now: Date.now, sessions: () => world.broker.sessionList(), boardDir: boardDir(), workspace: { workspace_id: "wA", label: "Alpha" } as never, ledger: [] });
 	assert.equal(g.rows.find((r) => r.main?.name === "api-main")!.main!.stale, true);
+	// The same main declared standing: board_read and the brief read its kind from its pane, and its old line is not stale.
+	await a.tool("boss_duty", { duty: "standing", reason: "minds the api host" });
+	await until(() => world.herdr.pane("wA:p1").tokens.sb_duty === "standing", "the main publishes its kind");
+	writeEntry(boardDir(), "a1", { now: "old news", items: [] }, Date.now() - STALE_MS - 60_000);
+	assert.equal((await read()).stale, undefined, "a standing main is never stale");
+	const h = await gatherMains({ run, now: Date.now, sessions: () => world.broker.sessionList(), boardDir: boardDir(), workspace: { workspace_id: "wA", label: "Alpha" } as never, ledger: [] });
+	assert.equal(h.rows.find((r) => r.main?.name === "api-main")!.main!.stale, undefined);
 });
 
 test("a member and a demoted main write nothing, and a member's board_set auto is refused", async () => {

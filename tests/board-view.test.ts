@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { ENDED_MS, joinLocal, readEntries, STALE_MS, writeEntry } from "../src/board.ts";
-import { boardRows, boardSeam, boardText } from "../src/boardview.ts";
+import { boardRows, boardSeam, boardText, mainsOfNet } from "../src/boardview.ts";
 import type { Pane, Session, Workspace } from "../src/herdr.ts";
 import { type Net, netSource } from "../src/net.ts";
 import { sliceNet } from "../src/operateslice.ts";
@@ -72,6 +72,13 @@ test("stale and clearable: a live idle main whose line is over 2 hours old; neve
 	assert.deepEqual([by["train-1"]!.state, by["train-1"]!.stale, by["train-1"]!.clearable], ["working", undefined, undefined]);
 	const asked = (await netSource({ run: async (args) => JSON.stringify({ result: args[0] === "pane" ? { panes: panes.map((p) => (p.pane_id === "wB:p1" ? { ...p, agent_status: "blocked" } : p)) } : { workspaces } }), sessions: async () => sessions(), sessionDir: "/s", board: boardSeam({ dir, now: () => NOW }) }).read()).board!;
 	assert.deepEqual([asked.find((r) => r.session === "main-b")!.state, asked.find((r) => r.session === "main-b")!.clearable], ["waiting", undefined], "a main that waits on a question is not idle");
+});
+
+test("the page's board takes a main's kind from its unit: a standing main's old line is not stale", () => {
+	const unit = (key: string, duty: string) => ({ id: key, key, control: true, name: key, role: "main", duty, mark: "idle", subs: [] });
+	const net = { bases: [{ id: "wA", label: "Alpha", mark: "idle", tower: null, tabs: [{ id: "wA:t1", label: "api", units: [unit("s1", "standing"), unit("c1", "coordinator")] }], outposts: [], outside: [] }] } as unknown as Net;
+	const entries = ["s1", "c1"].map((id) => ({ v: 1 as const, session: id, now: "old", items: [], updated: NOW - 5 * HOUR, src: "set" as const }));
+	assert.deepEqual(boardRows(entries, mainsOfNet(net), NOW).map((r) => [r.session, r.stale]), [["s1", undefined], ["c1", true]]);
 });
 
 test("an idle main that commands work (a subagent of it runs) is never stale, however old its line", () => {

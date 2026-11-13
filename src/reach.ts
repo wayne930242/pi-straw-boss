@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { allyLabel } from "./boardauto.ts";
+import { isCoordinatorDuty } from "./duty.ts";
 import { autoSummary } from "./autostate.ts";
 import { sessionMark } from "./netdata.ts";
 import { createHeadReach, headIdOf, headInfo } from "./reachhead.ts";
@@ -27,8 +28,10 @@ const TOWER_RETRY_AT = [2000, 5000, 10_000, 20_000], TOWER_POLL_MS = 500;
 export function netMembers(sessions: Session[], ps: Pane[]) {
 	return sessions.flatMap((s) => {
 		const { workspace, tab, paneId } = s.herdrLocation ?? {};
-		const role = ps.find((p) => p.pane_id === paneId)?.tokens?.sb_role;
-		return workspace && tab && role ? [{ s, role, tab, workspace }] : [];
+		const tokens = ps.find((p) => p.pane_id === paneId)?.tokens, role = tokens?.sb_role;
+		// A main's kind is its pane's `sb_duty` (presence.ts); an unknown value, or a main of an older sb that publishes none, has none.
+		const duty = role === "main" && isCoordinatorDuty(tokens?.sb_duty) ? tokens.sb_duty : undefined;
+		return workspace && tab && role ? [{ s, role, tab, workspace, ...(duty ? { duty } : {}) }] : [];
 	});
 }
 type Member = ReturnType<typeof netMembers>[number];
@@ -139,6 +142,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 			id: group[0]?.tab.id,
 			label: L(group[0]?.tab.label),
 			main: group.find((m) => m.role === "main")?.s.id ?? null,
+			kind: group.find((m) => m.role === "main")?.duty ?? null,
 			...(group.find((m) => m.role === "train") ? { train: group.find((m) => m.role === "train")!.s.id } : {}),
 			sessions: group.length,
 		}));
@@ -241,7 +245,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		const mine = net.all.find((w) => w.workspace_id === s.at.workspaceId);
 		const { bound, here } = scopeOf(within, net.ps);
 		const towers = stationsOf(net).filter((st) => bound(st.workspace.workspace_id)).map((st) => {
-			const tabs = Object.values(Object.groupBy(st.members.filter((m) => here(m.s)), (m) => m.tab.id)).map((group = []) => ({ label: L(group[0]!.tab.label), main: L(nameOf(group.find((m) => m.role === "main")?.s)) || null, ...(group.some((m) => m.role === "train") ? { train: L(nameOf(group.find((m) => m.role === "train")!.s)) } : {}), members: group.filter((m) => m.role === "member").map((m) => L(nameOf(m.s))) }));
+			const tabs = Object.values(Object.groupBy(st.members.filter((m) => here(m.s)), (m) => m.tab.id)).map((group = []) => ({ label: L(group[0]!.tab.label), main: L(nameOf(group.find((m) => m.role === "main")?.s)) || null, kind: group.find((m) => m.role === "main")?.duty ?? null, ...(group.some((m) => m.role === "train") ? { train: L(nameOf(group.find((m) => m.role === "train")!.s)) } : {}), members: group.filter((m) => m.role === "member").map((m) => L(nameOf(m.s))) }));
 			return { workspace: { id: st.workspace.workspace_id, label: L(st.workspace.label) }, self: st.self, reach: st.via, sessions: st.sessions.filter(here).map(mark), tabs };
 		});
 		const result = { me: { id: me(), role: role(), workspace: { id: s.at.workspaceId, label: L(mine?.label) } }, head: within ? null : headInfo(net.sessions, net.ps, net.all), towers };
