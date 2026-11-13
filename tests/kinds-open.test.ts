@@ -74,3 +74,19 @@ test("a main opened as standing that a Herdr restore brings back before its firs
 	await until(() => tokens(OPENED.pane).sb_duty === "standing", "and standing again, from its record");
 	assert.match((await back.run())["straw-boss"] ?? "", /## Kind: standing/);
 });
+
+test("R0790-F003: a pane token that says integrator is taken only while integration is on; off, the claim writes no duty and the main stays a coordinator", async () => {
+	const { tower } = await net();
+	const tokenOf = (env: Record<string, string>, id: string) => {
+		world.herdr.onAgentStart = (pane) => {
+			Object.assign(world.herdr.pane(pane.pane_id).tokens, { sb_open_duty: "integrator" });
+			void pi({ id, name: "main · opened", pane: pane.pane_id, env: { STRAW_BOSS_ROLE: "main", ...env } }, OPENED.file);
+		};
+	};
+	tokenOf({ STRAW_BOSS_INTEGRATION: "off" }, OPENED.id);
+	await tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1", duty: "standing" });
+	await until(() => tokens(OPENED.pane).sb_role === "main", "the opened pi is the main");
+	await world.quiet();
+	assert.deepEqual(dutyEntries(opened()), [], "no integrator entry while integration is off");
+	assert.notEqual(tokens(OPENED.pane).sb_duty, "integrator");
+});
