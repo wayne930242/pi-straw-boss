@@ -108,6 +108,30 @@ test("a robot_hand that takes no cancel goes with the turn: the turn is aborted,
 	assert.match(result.content[0]!.text, /cancelled by sb/);
 });
 
+test("RC-F004: a robot_hand whose pending says cancellable gets {cancel: true, digest} under an auto- answerId, the turn is not aborted, sb's text replaces the result, and no Esc note is added", async () => {
+	const auto = server();
+	const a = await member(auto);
+	const heard: Record<string, unknown>[] = [], digest = "d".repeat(64);
+	void a.fire("tool_execution_start", { toolCallId: "h3", toolName: "robot_hand", args: {} });
+	a.on("robot-hand:answer", (raw) => {
+		heard.push(raw as Record<string, unknown>);
+		const { id, answerId } = raw as { id: string; answerId: string };
+		a.emit("robot-hand:answer-result", { version: 1, id, answerId, accepted: true });
+		a.emit("robot-hand:closed", { version: 1, id, by: "cancel", answerId });
+	});
+	a.emit("robot-hand:pending", { version: 1, id: "d3", toolCallId: "h3", digest, cancellable: true, select: { title: "Robot Hand — List it\n\n  ! ls", choices: [{ label: "Run it in a new Herdr pane" }, { label: "No, thanks" }] } });
+	await settle();
+	auto.switchOn(pi);
+	await until(() => heard.length === 1, "the cancel");
+	assert.deepEqual({ ...heard[0], answerId: undefined }, { version: 1, id: "d3", answerId: undefined, digest, cancel: true });
+	assert.match(String(heard[0]!.answerId), /^auto-[A-Za-z0-9-]+$/);
+	const result = (await a.fireResult("tool_result", { toolName: "robot_hand", toolCallId: "h3", input: {}, content: [{ type: "text", text: "Robot Hand was dismissed" }], isError: false })) as { content: { text: string }[] };
+	assert.equal(result.content.length, 1, "sb's text replaces the result");
+	assert.match(result.content[0]!.text, /this robot_hand was cancelled by sb, not by the boss/);
+	assert.ok(!result.content[0]!.text.includes("slipped Esc"), "no Esc note");
+	assert.equal(a.aborted, 0, "the turn was not aborted");
+});
+
 test("a wait with nothing to abort and no turn running is told with a message that starts the next turn", async () => {
 	const auto = server();
 	const a = await member(auto);
