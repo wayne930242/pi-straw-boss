@@ -179,7 +179,9 @@ test("pairing end to end: a face mints the QR, the phone redeems it and shows a 
 	const log = readFileSync(fileOf(h.slot, "log"), "utf8");
 	assert.match(log, /lan-pair-pending/);
 	assert.match(log, /lan-paired label=/);
-	assert.ok(!log.includes(number!) && !log.includes(cookie!), "no number or cookie in the log");
+	// The number is four random digits: look for it as a token of its own, outside the timestamps, so a year or a time in the log is no false hit.
+	const bare = log.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, "");
+	assert.ok(!new RegExp(`(?<!\\d)${number}(?!\\d)`).test(bare) && !log.includes(cookie!), "no number or cookie in the log");
 });
 
 test("a paired phone has a paired device's reach and no more: lan/*, server/*, and remote/* are local_only (403) for it, with the page's own origin and CSRF", async () => {
