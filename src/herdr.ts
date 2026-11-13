@@ -123,15 +123,17 @@ export async function panes(run: HerdrRun, workspace?: string): Promise<Pane[]> 
 const READS = new Set(["workspace.list", "pane.list", "tab.list", "pane.current", "pane.get", "pane.read", "pane.process_info", "pane.layout", "session.snapshot"]);
 const RETRY_MS = 250;
 const RETRIED = new Set(["timeout", "closed"]);
+/** A reset, a broken pipe, or a refusal arrives as `error` before `close`, so it fails first as a socket_error: the same loss as a closed connection (R0773-F002). */
+const retried = (error: HerdrError) => RETRIED.has(error.code) || (error.code === "socket_error" && /\b(?:ECONNRESET|EPIPE|ECONNREFUSED)\b/.test(error.message));
 
-/** Herdr's socket API: one request on a connection of its own, and for a read (`READS`) one more try after a timeout or a closed connection. */
+/** Herdr's socket API: one request on a connection of its own, and for a read (`READS`) one more try after a timeout, a closed connection, or a reset. */
 export const herdrCall = (socketPath = herdrSocket()): HerdrCall => {
 	const once = callOnce(socketPath);
 	return async (method, params, timeoutMs) => {
 		try {
 			return await once(method, params, timeoutMs);
 		} catch (error) {
-			if (!READS.has(method) || !(error instanceof HerdrError) || !RETRIED.has(error.code)) throw error;
+			if (!READS.has(method) || !(error instanceof HerdrError) || !retried(error)) throw error;
 			await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
 			return once(method, params, timeoutMs);
 		}

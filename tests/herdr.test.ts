@@ -56,6 +56,34 @@ test("RV8-F001: a herdr command cut off by the timeout rejects as killed with it
 
 // --- todo #155: the deadline holds ---
 
+test("R0773-F002: a read whose connection Herdr resets (ECONNRESET or EPIPE before the close) is asked once more, like a closed one; a write is not", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-sock-")), path = join(dir, "herdr.sock"), seen: string[] = [];
+	let connections = 0;
+	// A connection that is dropped with the request unread: the client's write or read fails with a reset before any close.
+	const server = createServer((c) => {
+		c.on("error", () => {});
+		if (++connections % 2 === 1) return void c.destroy();
+		let text = "";
+		c.on("data", (chunk) => {
+			text += chunk;
+			if (!text.includes("\n")) return;
+			const request = JSON.parse(text.split("\n")[0]!) as { id: string; method: string };
+			seen.push(request.method);
+			c.write(`${JSON.stringify({ id: request.id, result: { ok: request.method } })}\n`);
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(path, resolve));
+	try {
+		const call = herdrCall(path);
+		assert.deepEqual(await call("pane.list", {}, 60_000), { ok: "pane.list" }, "a reset, then the answer");
+		await assert.rejects(call("pane.send_text", { pane_id: "wA:p1", text: "x" }, 60_000), (e: HerdrError) => e.code === "socket_error" || e.code === "closed", "what changes something is sent once");
+		assert.equal(connections, 3, "the read took two connections, the write one");
+	} finally {
+		server.close();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("todo #155: a herdr that ignores SIGTERM and keeps its stdout open is given up at the deadline, as cut off, and is killed after the grace", { skip: process.platform === "win32" }, async () => {
 	const DEADLINE = await deadlineFor(), fake = standIn({ herdr: STUBBORN });
 	const stalls = stallWatch(), began = Date.now();
