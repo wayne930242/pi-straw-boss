@@ -115,6 +115,21 @@ test("tower_list names every workspace's tower, who a message for it reaches, th
 	assert.equal(again.towers.find((t) => t.workspace.id === "wD")!.reach, "none");
 });
 
+test("boss_status and tower_list show each main's kind (docs/specs/2026-11-09-agent-kinds.md Phase 2): a declared standing main, a coordinator by default, none for a tab with no main", async () => {
+	const { towerB, a1, c1 } = await town();
+	await a1.tool("boss_duty", { duty: "standing", reason: "minds the api host" });
+	await until(() => world.herdr.pane("wA:p1").tokens.sb_duty === "standing", "a1 publishes its kind");
+	const list = (await towerB.tool("tower_list")).details as { towers: { workspace: { id: string }; tabs: { label: string; main: string | null; kind?: string | null }[] }[] };
+	const by = (id: string) => list.towers.find((t) => t.workspace.id === id)!;
+	assert.deepEqual(by("wA").tabs.map((t) => [t.main, t.kind]), [["api-main", "standing"], ["docs-writer", "coordinator"]]);
+	assert.deepEqual(by("wC").tabs.map((t) => [t.main, t.kind]), [["kb-main", "coordinator"]]);
+	const status = (await a1.tool("boss_status")).details as { tabs: { main: string | null; kind?: string | null }[] };
+	assert.deepEqual(status.tabs.map((t) => [t.main, t.kind]).sort(), [["a1", "standing"], ["a2", "coordinator"]]);
+	await c1.stop();
+	const towerless = (await towerB.tool("tower_list")).details as typeof list;
+	assert.deepEqual(towerless.towers.find((t) => t.workspace.id === "wC")!.tabs.map((t) => [t.main, t.kind]), [[null, null]], "a tab with no main shows no kind");
+});
+
 test("tower_send reaches one tower by workspace id or label, says whether a reply is expected, and refuses itself, unknown workspaces, and an empty one", async () => {
 	const { towerA, towerB } = await town();
 	await towerA.tool("tower_send", { message: "by label", workspace: "Beta", reply: true });

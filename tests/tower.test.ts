@@ -275,7 +275,7 @@ test("boss_status names the main agent of each tab and this workspace's tower; t
 	const b = await main("b", "wA:p2", "wA:t1");
 	const status = (await a.tool("boss_status")).details as Record<string, any>;
 	assert.deepEqual(status.me, { id: "a", role: "main" });
-	assert.deepEqual(status.tabs, [{ id: "wA:t1", label: "work", main: "a", sessions: 2 }]);
+	assert.deepEqual(status.tabs, [{ id: "wA:t1", label: "work", main: "a", kind: "coordinator", sessions: 2 }]);
 	assert.equal(status.head, null);
 	assert.deepEqual([status.tower.id, status.tower.head, status.towers.map((t: any) => [t.id, t.head])], ["tower-wA", undefined, [["tower-wB", undefined]]]);
 	assert.equal(((await b.tool("boss_status")).details as any).me.role, "member");

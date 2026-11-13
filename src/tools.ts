@@ -51,7 +51,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		});
 	return {
 		addNetTools() {
-			tool("boss_status", "Show this workspace's Straw Boss coordinators: each tab's main agent, this workspace's tower, the head tower, and the other towers.", Type.Object({}), async () => {
+			tool("boss_status", "Show this workspace's Straw Boss coordinators: each tab's main agent and its kind, this workspace's tower, the head tower, and the other towers.", Type.Object({}), async () => {
 				// In a remote turn the answer is for the senders, so its labels and names are scrubbed.
 				const scope = link.remoteScope();
 				const result = await status(scope ? { project: scope.project } : undefined);
@@ -207,7 +207,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		},
 		// Tower only. Towers talk to each other with these: who is out there, and one message to one tower or all. Closing is for the mains a tower opened itself.
 		addTowerComms() {
-			tool("tower_list", "List every workspace's tower: its workspace, whether it is the head tower or you, who a message for it reaches (its tower; in a workspace without one, its mains, else its members), that session's state (idle or working), and what its tabs are working on (each tab's main and members by the names they gave themselves). When Straw Link is set up, `remote` lists the towers of teammates' computers from their last presence: device label and id, whether it is online, the workspace and tower state, and its tabs. Send to one with tower_send and its device.", Type.Object({}), async () => {
+			tool("tower_list", "List every workspace's tower: its workspace, whether it is the head tower or you, who a message for it reaches (its tower; in a workspace without one, its mains, else its members), that session's state (idle or working), and what its tabs are working on (each tab's main, with its kind, and members by the names they gave themselves). When Straw Link is set up, `remote` lists the towers of teammates' computers from their last presence: device label and id, whether it is online, the workspace and tower state, and its tabs. Send to one with tower_send and its device.", Type.Object({}), async () => {
 				// In a remote turn the list is scoped like board_read: the senders' teams, and the workspaces inside the project they bind.
 				const scope = link.remoteScope();
 				const local = await towerList(scope ? { project: scope.project } : undefined);
