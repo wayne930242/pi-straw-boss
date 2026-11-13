@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { reachClass } from "../src/server/carbook.ts";
+import { hostOf, reachClass } from "../src/server/carbook.ts";
 import { coordinatorWord, landedWord, noticeSatisfied, receivedTold } from "../src/train/cars.ts";
 import { type CarCtx, type CarParams, type CarToolDeps, trainCar } from "../src/traincar.ts";
 import { cleanup, forwardEntry, MANIFEST_HEADER, rig, type Rig, slipBlock } from "./train-guard-rig.ts";
@@ -347,7 +347,7 @@ test("#15: received is refused for a head that is on the base's remote branch al
 	assert.deepEqual(readdirSync(w.dir).filter((n) => n.startsWith("cars-mirror-")), [], "each check removes the mirror it made");
 	// A remote that is gone, or that asks for credentials the server's git has none of (0.77.2): received unchecked, with the class logged and the reason in the tool's text.
 	w.rewrites.splice(0, w.rewrites.length, [PUBLIC_URL, join(w.root, "gone.git")]);
-	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-23" }, forward("T-23", SHA_B))).text, /Received unchecked: the server could not reach the project's remote \(repository-not-found: /);
+	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-23" }, forward("T-23", SHA_B))).text, /Received unchecked: the server could not reach the project's remote at git\.example\.test \(repository-not-found: /);
 	assert.ok(w.logs.some((l) => l.startsWith("cars-received-unchecked") && l.includes("repository-not-found")), w.logs.join("\n"));
 	w.rewrites.splice(0, w.rewrites.length, [PUBLIC_URL, remote]);
 	const real = w.deps.git;
@@ -356,7 +356,7 @@ test("#15: received is refused for a head that is on the base's remote branch al
 		return real(cwd, args, env);
 	};
 	w.deps.git = failing("fatal: could not read Username for 'https://gitlab.example': terminal prompts disabled");
-	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-24" }, forward("T-24", "c".repeat(40)))).text, /Received unchecked: the server could not reach the project's remote \(auth: git ls-remote of develop from the project's remote failed: fatal: could not read Username/);
+	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-24" }, forward("T-24", "c".repeat(40)))).text, /Received unchecked: the server could not reach the project's remote at git\.example\.test \(auth: git ls-remote of develop from the project's remote failed: fatal: could not read Username/);
 	assert.ok(w.logs.some((l) => l.startsWith("cars-received-unchecked") && l.includes("auth")));
 	// Any other failure of git is still refused: the check has to run.
 	w.deps.git = failing("fatal: protocol error: bad line length character");
@@ -392,7 +392,7 @@ test("0.77.3 R0772-F001/F002: a fetch that fails after the mirror's config was r
 		if (args.includes("fetch")) throw Object.assign(new Error("Command failed"), { stderr: "fatal: unable to access 'https://x.invalid/a.git/': Could not resolve host: x.invalid\n" });
 		return real(cwd, args, env);
 	};
-	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-31" }, forward("T-31", "c".repeat(40)))).text, /Received unchecked: the server could not reach the project's remote \(connection: git fetch/);
+	assert.match((await trainCar(integratorDeps(w), { ...received, car: "T-31" }, forward("T-31", "c".repeat(40)))).text, /Received unchecked: the server could not reach the project's remote at git\.example\.test \(connection: git fetch/);
 	// F002: git names the URL with its userinfo; the text blanks it.
 	w.deps.git = async (cwd, args, env) => {
 		if (args.includes("ls-remote")) throw Object.assign(new Error("Command failed"), { stderr: "fatal: could not read Password for 'https://SECRETTOKEN@github.com': terminal prompts disabled\n" });
@@ -409,6 +409,11 @@ test("0.77.3 R0772-F001/F002: a fetch that fails after the mirror's config was r
 	const timed = (await trainCar(integratorDeps(w), { ...received, car: "T-33" }, forward("T-33", "e".repeat(40)))).text;
 	assert.match(timed, /\(connection: .*https:\/\/\*\*\*@example\.com/);
 	assert.ok(!timed.includes("pass@"), timed);
+	// U1: the notice names the remote's host and nothing else of the URL.
+	assert.equal(hostOf("https://TOKEN@Git.Example.com:8443/a/b.git"), "git.example.com");
+	assert.equal(hostOf("git@github.com:o/r.git"), "github.com");
+	assert.equal(hostOf("ssh://git@host.example/o/r.git"), "host.example");
+	assert.equal(hostOf("/tmp/local.git"), undefined);
 });
 
 test("0.77.3 R0772-F003: only a repository git says is not there counts as not found; a missing ssh, or any other \"not found\", is no class and still refuses", () => {

@@ -53,6 +53,11 @@ export const safeUrl = (url: string): string | undefined => {
 	}
 	return undefined;
 };
+/** The host of a remote `safeUrl` accepts, and nothing else of it: no userinfo, port, or path (the unchecked notice names it, U1). */
+export const hostOf = (url: string): string | undefined => {
+	for (const re of URL_OK) { const host = re.exec(url)?.groups?.host; if (host !== undefined) return host.toLowerCase(); }
+	return undefined;
+};
 /** What the server reads from the manifest text the tower opens a train on: the base it names and the heads of its cars. */
 export function openingFacts(request: string): { base?: string; heads: string[] } {
 	const head = request.split(/\r?\n(?=\s*car:)/i)[0] ?? request;
@@ -588,7 +593,7 @@ export class CarBook {
 			const reach = (error as { reach?: string }).reach;
 			if (reach) {
 				this.d.log?.("cars-received-unchecked", { project, car: label.slice(0, 40), reason: reach });
-				return { unchecked: `the server could not reach the project's remote (${reach}: ${(error as Error).message.replace(/^sb: /, "").slice(0, 200)}), so whether head ${head.slice(0, 12)} is on ${base} already was not checked` };
+				return { unchecked: `the server could not reach the project's remote${hostOf(url) ? ` at ${hostOf(url)}` : ""} (${reach}: ${(error as Error).message.replace(/^sb: /, "").slice(0, 200)}), so whether head ${head.slice(0, 12)} is on ${base} already was not checked` };
 			}
 			const word = `sb: car ${label} is not received: whether its head ${head.slice(0, 12)} is on ${base} of the project's remote already could not be checked (${(error as Error).message.replace(/^sb: /, "").slice(0, 300)}). A car that is on the base is never received again, so the check has to run: try again`;
 			this.d.log?.("cars-received-refused", { project, car: label.slice(0, 40), reason: word.slice(0, 200) });
