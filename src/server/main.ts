@@ -29,7 +29,7 @@ import { operateWire, type OperateWire } from "./operatewire.ts";
 import { createLog, tailLog } from "./log.ts";
 import { type Cars, carsReply, startCars } from "./carops.ts";
 import { procsReply, startProcs, type StartProcs } from "./procsops.ts";
-import { startWatchdog, type Watchdog, watchdogReply } from "./watchdogops.ts";
+import { type StartWatchdog, startWatchdog, type Watchdog, watchdogReply } from "./watchdogops.ts";
 import { startStall, type StartStall } from "./stallops.ts";
 import { reportWatch, startAutoWatch, type StartWatch } from "./watchops.ts";
 import { gateRun, type RunInfo } from "./rungate.ts";
@@ -119,6 +119,7 @@ export interface ServerOptions {
 	stall?: StartStall["over"];
 	/** The auto watch's seams (watchops.ts), for tests: without them a test run has no watch. */
 	autoWatch?: StartWatch["over"];
+	/** The watchdog routes' seams (watchdogops.ts), for tests: the hold's length, the read interval, the timer. */ watchdog?: StartWatchdog["over"];
 	touchMs?: number;
 	brokerMs?: number;
 	herdrGoneMs?: number;
@@ -620,7 +621,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		if (read.problem !== toldConfig) (toldConfig = read.problem ?? "", read.problem && recordError("config", read.problem));
 		return read;
 	};
-	dog = startWatchdog({ net: guiHost.watchNet(), env, now, client: () => (client?.isConnected() ? client : undefined), log: (event, facts) => log.line(event, facts), stops });
+	dog = startWatchdog({ net: guiHost.watchNet(), env, now, client: () => (client?.isConnected() ? client : undefined), log: (event, facts) => log.line(event, facts), stops, ...(o.watchdog ? { over: o.watchdog } : {}) });
 	cars = startCars({ slot, run: cfg.run, now, startedAt, client: () => (client?.isConnected() ? client : undefined), startOf, log: (event, facts) => log.line(event, facts), stops });
 	towers = createTowers({
 		ally: allyPort(() => link), allows, asks, cars: cars.book,
