@@ -1,7 +1,7 @@
 import { graphOf } from "./duty.ts";
 
 // docs/specs/2026-11-09-agent-kinds.md §2a, "A plan in the same message": pi prepares every tool call of an assistant message before any runs, so a `todo` call beside a `subagent` call has not written its state yet.
-// The dispatch gate therefore reads the newest assistant message on the branch, which pi appends at `message_end`, before tools run (pinned pi 1.3.0; tests/duty-pinned-pi.test.ts is the tripwire for a bump).
+// The dispatch gate therefore reads the newest assistant message on the branch, which pi appends at `message_end`, before tools run (pinned pi 1.3.0; tests/duty-planmsg.test.ts is the tripwire for a bump).
 
 interface Block { type?: string; id?: string; name?: string; arguments?: unknown }
 const decode = (v: unknown): unknown => { if (typeof v !== "string") return v; try { return JSON.parse(v) as unknown; } catch { return undefined; } }; // models send `tasks` and `metadata` as JSON strings too (rpiv-todo normalises them)

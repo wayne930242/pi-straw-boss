@@ -36,6 +36,8 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `tower_done` | 塔台 run | 附一份交接筆記（一項一行，最多 1,200 字元）結束這次 run，留給下一次 run；`wakeAfter`（5 到 240 分鐘，僅限本機 run）要求稍後再跑一次。事件仍在等這次 run 時會被拒絕。 |
 | `boss_auto` | 主塔台 | 依老闆自己的話，在它回答的那個 turn 裡開始或結束[自動模式](/pi-straw-boss/docs/zh-tw/guide/auto-mode/)。 |
 | `train_car` | 整合員與火車 | 設定車廂的狀態（`received`、`returned`、`dropped`、`landed`）；sb server 會通知該車廂的協調者。它的 `car` 是車廂的第一張票；車廂單的 `car:`（或 `app:`）指名 app。 |
+| `watch_read` | `watchdog` 子智慧體 | 等網裡的一個單位發生變化。回覆是 `changed`、`stalled`、`load`、`unchanged`、`expired` 或 `gone`，並附上單位的狀態。見[用監控者盯著一件事](/pi-straw-boss/docs/zh-tw/guide/concepts/#用監控者盯著一件事)。 |
+| `watch_report` | `watchdog` 子智慧體 | 把一項發現送給派出它的 session，別人都收不到：每 30 秒最多一則，不能連續兩次送同樣的內容。 |
 
 完整的表格與每個參數，見[工具](/pi-straw-boss/docs/zh-tw/reference/how-it-works/tools/)。
 
@@ -107,7 +109,7 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 
 | 指令 | 做什麼 |
 | --- | --- |
-| `/boss roles-check [資料夾]` | 把每個角色 `tools:` 列的名稱，和這個 session 的工具、以及只有子智慧體才有的名稱（`caller_ping`、`subagent_done`）比對。這個 session 沒有的名稱，或只有上層才有的名稱（sb 自己的工具、pi-herdr-agents 的 worktree 工具），都算失敗。不給資料夾時讀 sb 自己的 `roles/`；發版前請指名 checkout 裡的 `roles/`。它不啟動任何東西；以 `--tools` 或 `--exclude-tools` 啟動的 session 會拒絕執行。 |
+| `/boss roles-check [資料夾]` | 把每個角色 `tools:` 列的名稱，和這個 session 的工具、以及只有子智慧體才有的名稱（`caller_ping`、`subagent_done`、`watch_read`、`watch_report`）比對。這個 session 沒有的名稱，或只有上層才有的名稱（sb 自己的工具、pi-herdr-agents 的 worktree 工具），都算失敗。不給資料夾時讀 sb 自己的 `roles/`；發版前請指名 checkout 裡的 `roles/`。它不啟動任何東西；以 `--tools` 或 `--exclude-tools` 啟動的 session 會拒絕執行。 |
 
 見[角色包](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-role-pack/)。
 

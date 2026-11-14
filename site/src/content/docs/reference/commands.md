@@ -36,6 +36,8 @@ Agents call the **tools**; you type the **`/boss` commands** in any pi session i
 | `tower_done` | tower runs | End this run with a handoff note (one item per line, up to 1,200 characters) for the next run; `wakeAfter` (5 to 240 minutes, local runs only) asks for a follow-up run. Refused while events are still waiting for the run. |
 | `boss_auto` | the head tower | Start or end [auto mode](/pi-straw-boss/docs/guide/auto-mode/) on the boss's own words in the turn it answers. |
 | `train_car` | the integrator and trains | Set a car's state (`received`, `returned`, `dropped`, `landed`); the sb server tells the car's coordinator. Its `car` is the car's first ticket; the slip's `car:` (or `app:`) names the app. |
+| `watch_read` | a `watchdog` subagent | Wait for one unit of the net to change. The reply is `changed`, `stalled`, `load`, `unchanged`, `expired`, or `gone`, with the unit's state. See [Watching with a watchdog](/pi-straw-boss/docs/guide/concepts/#watching-with-a-watchdog). |
+| `watch_report` | a `watchdog` subagent | Send one finding to the session that dispatched it and to nobody else: at most one every 30 s, and never the same text twice in a row. |
 
 The full table, with every argument, is in [Tools](/pi-straw-boss/docs/reference/how-it-works/tools/).
 
@@ -107,7 +109,7 @@ The GUI's Memory panel does the same as `/boss memory`. See [Tower memory](/pi-s
 
 | Command | What it does |
 | --- | --- |
-| `/boss roles-check [folder]` | Check each role's `tools:` names against this session's tools, plus the names only a subagent has (`caller_ping`, `subagent_done`). A name the session lacks, or one only a parent has (sb's own tools, pi-herdr-agents' worktree tools), fails. With no folder it reads sb's own `roles/`; before a release, name the checkout's `roles/`. It starts nothing, and refuses in a session started with `--tools` or `--exclude-tools`. |
+| `/boss roles-check [folder]` | Check each role's `tools:` names against this session's tools, plus the names only a subagent has (`caller_ping`, `subagent_done`, `watch_read`, `watch_report`). A name the session lacks, or one only a parent has (sb's own tools, pi-herdr-agents' worktree tools), fails. With no folder it reads sb's own `roles/`; before a release, name the checkout's `roles/`. It starts nothing, and refuses in a session started with `--tools` or `--exclude-tools`. |
 
 See [The role pack](/pi-straw-boss/docs/reference/how-it-works/the-role-pack/).
 

@@ -49,7 +49,7 @@ flowchart TD
 | `scout`（偵察） | `scout` | 調查並回報 | 不需要計畫就放行 |
 | `planner`（規劃） | `planner` | 寫計畫或設計 | 不需要計畫就放行 |
 | `reviewer`（審查） | `reviewer`、`visual-tester`、`adversarial-reviewer` | 審查變更或檢查 UI | 不需要計畫就放行 |
-| `watchdog`（監控者） | `watchdog` | 監看另一個 session 或 Herdr 狀態，只回報 | 和工作者一樣被拒絕 |
+| `watchdog`（監控者） | `watchdog` | 監看網裡的一個單位，只向派出它的 session 回報（[監控者](#監控者)） | 不需要計畫就放行 |
 
 **塔台 run的種類**（喚醒塔台的東西；規則在[本機 run](#本機 run)、[老闆對話](#老闆對話)與[隊友 run](#隊友-run)）
 
@@ -106,7 +106,7 @@ stateDiagram-v2
 4. 主智慧體不會降級。它的 session 結束後，分頁就沒有主智慧體，直到有成員升任為止（這時成員的 prompt 會提議升任）。`/boss` 是使用者手動接手：即使已經有別的主智慧體，它也會讓這個 session 成為分頁的主智慧體。
 5. 主智慧體有一種**類型**：`coordinator`（預設：規劃並派工）、`integrator`（專案的合併火車）、`standing`（負責一個系統或一台機器，沒有結束的時候）。類型就是這個主智慧體執行的 prompt：`main.md`，加上 `integrator.md` 或 `duty-standing.md`，再加 `dispatch.md`。協調者要等到自己的 todo 在 `metadata.graph` 裡指名某個圖（`single-loop`、`fan-out/fan-in`、`orchestrator-worker`；由 `planGraph` 讀取，取最新的未完成者），才會拿到 `dispatch.md` 和該圖的附錄（`graph-fan-out.md`、`graph-orchestrator-worker.md`）；整合員和 standing 主智慧體永遠帶著 `dispatch.md`。
 
-   協調者沒有這樣的計畫就派 `worker`（或未知的角色，或單純的 spawn），會被拒絕並回 `sb: plan first: …`；scout、planner、reviewer 和 `subagent_resume` 可以通過，同一則 assistant 訊息裡更早的 `todo` 呼叫如果指名了某個圖，也算數。主智慧體用 `boss_duty` 改變類型（附一行理由；切換時它的 context 會重讀一次；它會寫下一筆 `straw-boss` 條目 `{ duty, dutyFrom, dutyWhy, dutyAt }`，記進塔台的摘要，並顯示在頁面上）。
+   協調者沒有這樣的計畫就派 `worker`（或未知的角色，或單純的 spawn），會被拒絕並回 `sb: plan first: …`；scout、planner、reviewer、watchdog 和 `subagent_resume` 可以通過，同一則 assistant 訊息裡更早的 `todo` 呼叫如果指名了某個圖，也算數。主智慧體用 `boss_duty` 改變類型（附一行理由；切換時它的 context 會重讀一次；它會寫下一筆 `straw-boss` 條目 `{ duty, dutyFrom, dutyWhy, dutyAt }`，記進塔台的摘要，並顯示在頁面上）。
 
    尚未宣告類型、且名稱是 `integ <project>`（在啟動時，或任何一次改名時：`boss_rename`、`/name`、其他擴充），或持有 `train` todo 的主智慧體，會遷移為 `integrator` 一次，條目為 `migrated: name` 或 `migrated: train todos`。已宣告的類型絕不遷移。每次 `/reload`、`/new`、`/resume`、`/fork` 都會重讀整合開關；整合關閉時，整合員會以協調者的身分執行並發布 `coordinator`。頁面在每種主題下都以同一個詞顯示類型（協調者、整合員、值守 / coordinator, integrator, on watch），後面接計畫的圖（單一迴圈、分支匯流、多工編排 / single loop, fan-out, orchestrated），切換則是時間軸上的一個事件。
 5. 智慧體開始互相碰撞時，工作區塔台就會開啟：成員派出子智慧體（它先自己升任，升任會開啟塔台）、工作區有兩位成員而另一個工作區已經有運作中的塔台，或是 `/boss tower` 要求開啟。主智慧體和塔台是一起的。每個分頁頻道的擁有者（它最早的成員）會在這些時機檢查：Herdr 回報可能改變答案的事件時（任何工作區的 `workspace.metadata_updated`、自己工作區的 `pane.closed` 和 `pane.agent_detected`，每個 session 一條 `events.subscribe` 連線）、分頁頻道的擁有者換人或有 session 離開時，以及每 4 分鐘一次，用來涵蓋沒有事件會回報的情況（崩潰的塔台）；加入的成員會檢查一次兩位成員的規則。
@@ -162,10 +162,10 @@ stateDiagram-v2
 <details>
 <summary>細節</summary>
 
-**標頭**。程式會在每則 `call_tower`、`boss_broadcast`、`tower_send` 和交接訊息的文字前寫一行（絕不是模型寫的，所以名稱或訊息都改不了它）：
+**標頭**。程式會在每則 `call_tower`、`boss_broadcast`、`tower_send` 和交接訊息，以及監控者的 `watch_report` 的文字前寫一行（絕不是模型寫的，所以名稱或訊息都改不了它）：
 
 ```text
-[straw net from=<name> id=<session id> role=<tower|main|member|session> [head=yes] workspace=<label> kind=<call_tower|broadcast|tower_send|handoff> scope=<scope> to=<recipients> reply=<expected|none> [why=<milestone|shared|blocked|unspecified>] [ask=H<n>] [relay=boss:<event id>] [in-reply-to=H<n>]] <message>
+[straw net from=<name> id=<session id> role=<tower|main|member|session> [head=yes] workspace=<label> kind=<call_tower|broadcast|tower_send|handoff|watch_report> scope=<scope> to=<recipients> reply=<expected|none> [why=<milestone|shared|blocked|unspecified>] [ask=H<n>] [relay=boss:<event id>] [in-reply-to=H<n>]] <message>
 ```
 
 `role` 是寄件者的角色，由它的 pane 的 `sb_role` token 發布（沒有加入網的 pi 是 `session`，只有範圍為 `all` 的廣播才找得到它）；`head=yes` 只標記主塔台，不標記其他任何人（`role` 仍是 `tower`，所以只認得四種角色的讀者照常運作）。`ask=` 和 `relay=` 只出現在主塔台的轉發上，`in-reply-to=` 則只出現在工作區塔台對轉發的回答上（[轉發與回答](#主塔台)）。`scope` 對廣播和送給所有塔台的 `tower_send` 是 `tab`、`workspace`、`towers` 或 `all`，對送給單一塔台的訊息是 `tower`，對交接則是 `main`。
@@ -2309,9 +2309,45 @@ pi 不等待就發出這兩個事件，並逐一走過各擴充套件，所以�
 
 ## 角色包
 
-sb 隨附它的智慧體所用的 pi-herdr-agents 角色：`roles/` 裡的 `worker`、`scout`、`planner`、`reviewer`、`visual-tester` 與 `adversarial-reviewer`。第五個擴充入口 `src/rolepack.ts` 在每個 pi（子智慧體也一樣）把這個資料夾登記到 pi-herdr-agents 的探索事件（`pi-herdr-subagents:roles:discover:v1`，API 版本 1），並在 `session_shutdown` 時撤掉。pi-herdr-roles 帶著同樣的名稱，兩者會衝突，pi-herdr-agents 會停用這些角色：請解除安裝它。全域（`~/.pi/agent/agents/`）或專案裡的同名角色，仍然優先於角色包。
+sb 隨附它的智慧體所用的 pi-herdr-agents 角色：`roles/` 裡的 `worker`、`scout`、`planner`、`reviewer`、`visual-tester`、`adversarial-reviewer` 與 `watchdog`。第五個擴充入口 `src/rolepack.ts` 在每個 pi（子智慧體也一樣）把這個資料夾登記到 pi-herdr-agents 的探索事件（`pi-herdr-subagents:roles:discover:v1`，API 版本 1），並在 `session_shutdown` 時撤掉。pi-herdr-roles 帶著同樣的名稱，兩者會衝突，pi-herdr-agents 會停用這些角色：請解除安裝它。全域（`~/.pi/agent/agents/`）或專案裡的同名角色，仍然優先於角色包。
 
-每個角色的 `tools:` 列會成為子智慧體的工具允許清單。`worker` 與 `adversarial-reviewer` 沒有這一列，可用所有工具。`/boss roles-check [folder]` 把列出的每個名稱，和它所在 session 的工具、以及只有子智慧體才有的 `caller_ping` 與 `subagent_done` 比對。session 沒有的名稱算失敗，只有上層才有的名稱也算失敗：sb 自己的工具（`src/tools.ts` 的 `PARENT_ONLY`，全都在子智慧體之外登記）以及 pi-herdr-agents 的 `worktree_list` 與 `worktree_remove`。它預設讀 sb 自己的 `roles/`，不啟動任何程序；以 `--tools` 或 `--exclude-tools` 啟動、工具清單被縮小的 session 會拒絕執行。
+每個角色的 `tools:` 列會成為子智慧體的工具允許清單。`worker` 與 `adversarial-reviewer` 沒有這一列，可用所有工具。`/boss roles-check [folder]` 把列出的每個名稱，和它所在 session 的工具、以及只有子智慧體才有的名稱比對：pi-herdr-agents 的 `caller_ping` 與 `subagent_done`，和 sb 的 `watch_read` 與 `watch_report`。session 沒有的名稱算失敗，只有上層才有的名稱也算失敗：sb 自己的工具（`src/tools.ts` 的 `PARENT_ONLY`，全都在子智慧體之外登記）以及 pi-herdr-agents 的 `worktree_list` 與 `worktree_remove`。它預設讀 sb 自己的 `roles/`，不啟動任何程序；以 `--tools` 或 `--exclude-tools` 啟動、工具清單被縮小的 session 會拒絕執行。
+
+### 監控者
+
+`watchdog`（監控者）是一種子智慧體：它監看網裡的一個單位（帶著 monitor 和 todo 的主智慧體、一列火車、另一個子智慧體），出狀況時告訴派出它的 session。它有三個工具：`read`，以及 sb 只在 pi-herdr-agents 子智慧體裡登記的兩個，`watch_read` 與 `watch_report`。協調者不需要計畫就能派出監控者，和派偵察一樣；standing 主智慧體的 prompt 也把它和 `MonitorCreate` 並列為監看的辦法。它需要 0.80.0 以上的 sb server。角色檔不指定模型，並設 `thinking: low`，因為判定由 server 計算；監控者跑哪個模型，由每台機器自己的 pi-herdr-agents 設定（`models.agents.watchdog`）決定。
+
+<details>
+<summary>細節</summary>
+
+**`watch_read({ key, since?, waitMs?, deadline?, quietMs?, loadMax? })`** 等一個單位發生變化。`key` 是這台電腦的網裡某個單位的鍵或 session id，`since` 是上一次回覆給的戳記（第一次呼叫沒有）。工具經控制 socket 向 sb server 送出 `watch-read`。server 把請求最多留住 45 秒，在第一次讀網得出 `unchanged` 以外的判定時回答；工具在同一次呼叫裡繼續再問，直到 `waitMs` 過去（預設 600000；上限 3000000，即 50 分鐘）。回覆是 `{ state, since, now, unit?, successor?, server? }`：
+
+| `state` | 什麼時候 |
+|---|---|
+| `changed` | 單位的標記、某個 monitor 的狀態或結束碼、todo 進度、火車的狀態、步驟或等待事項、某個子智慧體的標記，和 `since` 記下的不同。沒有 `since` 的呼叫，以及戳記出自另一個 server 實例的呼叫（server 重啟過），會立刻得到回答。 |
+| `stalled` | 呼叫給了 `quietMs`（至少 60000），而單位已經這麼久沒有動靜：標記和備註沒變、沒有新的 tick、monitor 沒有新的輸出行。每段安靜期只回一次。兩次讀網相隔超過 60 秒（電腦睡眠）時，計時重新開始。子智慧體只有標記和備註可以算動靜。 |
+| `load` | 某個 monitor 最新的進度行帶著超過 `loadMax` 的負載（預設用那個 monitor 自己的上限；實際上這種 monitor 是火車的 gate 包裝）。每次越線只回一次。 |
+| `unchanged` | 到 `waitMs` 為止什麼都沒發生，或者呼叫期間有訊息送到監控者。 |
+| `expired` | `deadline` 已過；它是任務給的絕對時間，單位毫秒。 |
+| `gone` | 單位離開了網；有 session 接替它時，`successor` 是接替者的鍵。 |
+
+同時符合好幾項時，順序是 `gone`、`expired`、`changed`、`load`、`stalled`。輸出行、monitor 的最後一行、備註、tick，以及沒有超過上限的負載讀數，都不會喚醒等待。`unit` 帶著 `mark`、`note`、`duty`、`todo`，每個 monitor 的 `status`、`exit`、`last`、`load` 與 `ageMs`，火車的 `status`、`step` 與 `waits`，以及它的子智慧體的名稱和標記（`subs`）；裡面沒有對話紀錄、沒有路徑，也沒有 monitor 的指令。`now` 是當下的時間（毫秒），沒有 shell 的監控者靠它知道現在幾點。
+
+server 用 GUI 讀網的結果來判定（有頁面開著時每 2 秒讀一次，其他時候每 10 秒）。GUI 停掉時，這條路由自己每 10 秒讀一次網，而且只在有請求被留住時才讀。網裡沒有的鍵會讓呼叫失敗，錯誤是 `unknown key <key>`；中止和超過上限的 `waitMs` 也會讓它失敗，其他情況都不會。失敗的請求（server 重啟、socket 關閉）2 秒後重送。到了 `waitMs` server 還是沒有回答時，回覆是 `unchanged` 加上 `server: "unreachable"`；sb server 比 0.80.0 舊、不認得這個指令時，回覆帶著 `server: "outdated"`。每送一次新請求，工具就更新一次進度，所以等得再久，pi-herdr-agents 的卡住提醒也不會出現。
+
+**`watch_report({ text })`** 送一則 1 到 2,000 個純文字字元的訊息給派出監控者的 session。這個工具沒有收件者參數。子智慧體的 sb 向 server 送出 `watch-report`，附上 pi-herdr-agents 的啟動腳本或 resume 腳本放進它環境裡的三個值：`PI_SUBAGENT_SESSION`、`PI_SUBAGENT_ID` 與 `PI_SUBAGENT_ACTIVITY_FILE`。server 用 pi-herdr-agents 自己的檔案把三者對起來：
+
+1. 兩個路徑解析後都在 pi 的 sessions 資料夾底下，活動檔是 `<parent artifacts>/subagent-activity/<child>.json`，而且內容沒有寫 `done`。那個 artifacts 資料夾以哪個 session 命名，派出者就是那個 session。
+2. 那個派出者的某支啟動腳本或 resume 腳本帶著子智慧體的 id，並指名這個 session 檔。
+3. session 檔裡第一筆 `straw-boss { agent }` 條目寫著 `watchdog`。pi 還沒寫出檔案或條目之前，由指名這個 session、且帶著 `PI_SUBAGENT_AGENT='watchdog'` 的啟動腳本代替。
+
+接著 server 在[標頭](#塔台之間的對話)之下送給派出者一則 intercom 訊息，帶著 `kind=watch_report`、`from=watchdog <child name>`、`id=<child id>`、`role=session` 與 `reply=none`，並回答 `delivered`、`queued` 或 `gone`（派出者已經結束，什麼都沒送）。同一個 session 檔每 30 秒最多送一則回報，內容也不能和上一則相同；被拒絕或沒送達的回報，兩項都不計。server 拒絕時的錯誤是 `outside the sessions folder`、`no launch script ties <child> to that session`、`that child is done`、`not a watchdog's session`、`rate: one report every 30 s` 或 `same text as the last report`，訊息送不出去也算錯誤（`pi-intercom is not connected`、`not delivered: <reason>`）；每一種都成為工具的錯誤。這些檢查不能驗證呼叫者的身分，因為控制 socket 不帶對端的憑證：同一個使用者底下有 shell 的行程，可以冒用某個監控者的名義送回報，但只送得到那個監控者自己的派出者，害處是一則假訊息。
+
+**邊界**。子智慧體在兩種情況下算監控者：它的啟動指名了這個角色（`PI_SUBAGENT_AGENT=watchdog`），或它的 session 裡第一筆 `straw-boss { agent }` 條目寫著這個角色；resume 不指名角色，所以 resume 回來的監控者靠這筆條目辨認。工具清單從來不算依據：啟動時工具裡帶著 `watch_read` 的偵察仍是偵察。對監控者，sb 會擋下 `read`、`watch_read`、`watch_report`、`caller_ping` 與 `subagent_done` 以外的每個工具呼叫，理由是 `sb: a watchdog only reads and reports`，不論啟動或 resume 傳了什麼工具清單；每次執行之前，它也把作用中的工具縮回這五個。sb 在每個 pi-herdr-agents 子智慧體裡都登記這套機制，Herdr 之外也一樣（pi-herdr-agents 的 Core 後端啟動的子智慧體沒有 pane）。在不是監控者的子智慧體裡它什麼都不做，兩個工具也維持停用，除非那個子智慧體的工具清單指名它們。
+
+啟動時傳入的工具清單少了 `watch_read` 或 `watch_report` 的監控者無法監看，因為清單沒有指名的工具，pi 不會放進登記表。第一次執行之前，它向派出者回報 `sb: watchdog <name> cannot start: its tool list lacks watch_read/watch_report (a spawn tools override?)`（session 檔還不存在時 server 也接受這則回報），然後結束（`ctx.abort()`、`ctx.shutdown()`）。
+
+</details>
 
 ## 側邊欄網檢視
 
@@ -3650,7 +3686,7 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 
 ## 工具
 
-Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`board_*`），也給老闆 `/boss` 斜線指令。哪個 session 可以呼叫哪個工具，取決於它的角色。表格列出每個工具適用於誰、做什麼，再列出每個 `/boss` 指令。
+Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`board_*`），給監控者子智慧體它專用的兩個（`watch_read`、`watch_report`），也給老闆 `/boss` 斜線指令。哪個 session 可以呼叫哪個工具，取決於它的角色。表格列出每個工具適用於誰、做什麼，再列出每個 `/boss` 指令。
 
 <details>
 <summary>細節</summary>
@@ -3675,6 +3711,8 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 | `boss_broadcast` | 已加入的 session 與塔台 | 在標頭（指名每個收件者）之下，送一則訊息給某個範圍內的每個其他 session。`tab`、`workspace` 與 `towers` 只觸及加入網的 session（Herdr 裡幾乎每個 pi，不含子工作區的 session；`towers` 透過主智慧體觸及沒有塔台的工作區，否則透過它的成員）；`all` 觸及這台機器上每個 pi session，不論有沒有加入（用於像是要去睡覺之類的通知）。預設 `workspace`。塔台對其他塔台用 `tower_send`。 |
 | `boss_server` | Herdr 裡每個有畫面且已加入的 session | sb server 的 `status`（它關著時也可以）、`logs`，或附理由的 `restart`（見 [sb server](#sb-server)）。遠端輪次裡不可用。 |
 | `tower_memory` | 僅本機塔台 run | 保存比執行活得更久的東西：長期指示或決定，須是執行取走的某則老闆訊息的逐字引用（server 會檢查），撤銷一條用同樣的證明，以及塔台自己的等待事項（add、resolve、drop；給老闆的等待事項是一張有欄位的卡片，見[塔台記憶](#塔台記憶)）。隊友 run 會被拒絕。見[塔台記憶](#塔台記憶)。 |
+| `watch_read` | 只有 `watchdog` 子智慧體（在每個 pi-herdr-agents 子智慧體裡都有登記，工具清單沒有指名它就停用） | 等網裡的一個單位發生變化：對 sb server 的長輪詢，回答 `changed`、`stalled`、`load`、`unchanged`、`expired` 或 `gone`（見[監控者](#監控者)）。 |
+| `watch_report` | 只有 `watchdog` 子智慧體 | 把一項發現送給派出它的 session，別人都收不到：1 到 2,000 個字元，每 30 秒最多一則，不能連續兩次送同樣的內容。回答是 `delivered`、`queued` 或 `gone`。 |
 
 | 指令 | 效果 |
 |---|---|

@@ -81,8 +81,27 @@ The roles come from pi-herdr-agents and its role packs; what a role does is in i
 
 Any other role name stays a plain subagent.
 
-A coordinator may dispatch scouts, planners, and reviewers at once.
-Any other dispatch (a worker, a watchdog, an unlisted role) is refused with `sb: plan first` until its todos name a plan graph: `single-loop`, `fan-out/fan-in`, or `orchestrator-worker`.
+A coordinator may dispatch scouts, planners, reviewers, and watchdogs at once.
+Any other dispatch (a worker, an unlisted role) is refused with `sb: plan first` until its todos name a plan graph: `single-loop`, `fan-out/fan-in`, or `orchestrator-worker`.
+
+### Watching with a watchdog
+
+A `watchdog` watches one unit of the net for the session that dispatched it: a main with its monitors and todos, a train, or another subagent.
+It can only read and report, and its report reaches its dispatcher and nobody else, as a message marked `kind=watch_report`.
+
+Dispatch it like any subagent, and say in the task:
+
+- which unit to watch, by its session id or its key in the net;
+- how long without activity counts as stalled (`quietMs`, at least one minute), when a stall matters;
+- the time limit as an absolute time (`deadline`), and for a train's gates the load limit (`loadMax`).
+
+It reports a stall, a load over the limit, and a unit or a monitor that turns to waiting, error, or stale.
+It ends when the unit's work ends, when the time limit passes, or when its dispatcher is gone.
+A standing main dispatches one in place of checking in its own turns.
+
+A watchdog needs an sb server of 0.80.0 or newer; a main's `/reload` upgrades an older one.
+Which model it runs on is set per machine, in pi-herdr-agents' configuration (`models.agents.watchdog`). A small model fits, because the server computes the verdicts.
+The rules are in [The watchdog](/pi-straw-boss/docs/reference/how-it-works/the-role-pack/#the-watchdog).
 
 ## How a tower runs
 

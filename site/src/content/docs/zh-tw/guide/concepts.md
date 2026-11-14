@@ -81,8 +81,27 @@ Straw Boss 從子智慧體啟動時用的 pi-herdr-agents 角色名稱，讀出�
 
 其他角色名稱仍是一般的子智慧體。
 
-協調者可以隨時派出偵察、規劃與審查。
-其他任何派出（工作者、監控者、未列出的角色）在它的 todo 寫出計畫圖之前，都會被 `sb: plan first` 拒絕；計畫圖是 `single-loop`、`fan-out/fan-in` 或 `orchestrator-worker`。
+協調者可以隨時派出偵察、規劃、審查與監控者。
+其他任何派出（工作者、未列出的角色）在它的 todo 寫出計畫圖之前，都會被 `sb: plan first` 拒絕；計畫圖是 `single-loop`、`fan-out/fan-in` 或 `orchestrator-worker`。
+
+### 用監控者盯著一件事
+
+`watchdog`（監控者）替派出它的 session 監看網裡的一個單位：帶著 monitor 和 todo 的主智慧體、一列火車，或另一個子智慧體。
+它只能讀取和回報。回報只送給派出它的 session，別人收不到，訊息上標著 `kind=watch_report`。
+
+派出它的方式和其他子智慧體一樣，任務裡要寫：
+
+- 監看哪個單位，用它的 session id 或它在網裡的鍵；
+- 多久沒有動靜算停滯（`quietMs`，至少一分鐘），在意停滯時才需要；
+- 時限，寫成絕對時間（`deadline`）；監看火車的 gate 時，再加上負載上限（`loadMax`）。
+
+它會回報停滯、負載超過上限，以及單位或 monitor 變成等待、錯誤或過期。
+單位的工作結束、時限已過，或派出它的 session 不在了，它就結束。
+值守的主智慧體可以派出監控者，省去在自己的輪次裡反覆查看。
+
+監控者需要 0.80.0 以上的 sb server；較舊的 server 在主智慧體 `/reload` 時升級。
+它跑哪個模型由每台機器各自設定，寫在 pi-herdr-agents 的設定裡（`models.agents.watchdog`）。判定由 server 計算，小模型就夠用。
+規則見[監控者](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-role-pack/#監控者)。
 
 ## 塔台怎麼運作
 

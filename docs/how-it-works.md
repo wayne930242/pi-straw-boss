@@ -49,7 +49,7 @@ Each solid arrow is a tool from [Tools](#tools). The dotted ones are not tools: 
 | `scout` | `scout` | investigates and reports | passes without a plan |
 | `planner` | `planner` | writes a plan or a design | passes without a plan |
 | `reviewer` | `reviewer`, `visual-tester`, `adversarial-reviewer` | reviews a change or checks the UI | passes without a plan |
-| `watchdog` | `watchdog` | watches another session or Herdr state and only reports back | refused like a worker |
+| `watchdog` | `watchdog` | watches one unit of the net and reports only to its dispatcher ([The watchdog](#the-watchdog)) | passes without a plan |
 
 **Kinds of tower run** (what wakes a tower; the rules are in [Local runs](#local-runs), [The boss conversation](#the-boss-conversation), and [Ally runs](#ally-runs))
 
@@ -106,7 +106,7 @@ The numbered rules below are the whole behavior.
 4. A main never demotes. When its session ends, the tab has no main until a member promotes (the members' prompt then offers promotion). `/boss` is the user's manual takeover: it makes this session the tab's main even when another is.
 5. A main has a **kind**: `coordinator` (the default: it plans and dispatches), `integrator` (a project's merge trains), or `standing` (one system or machine, no end). The kind is the prompt the main runs: `main.md`, plus `integrator.md` or `duty-standing.md`, and `dispatch.md`. A coordinator gets `dispatch.md` and its graph's addendum (`graph-fan-out.md`, `graph-orchestrator-worker.md`) only once its own todos name a graph in `metadata.graph` (`single-loop`, `fan-out/fan-in`, `orchestrator-worker`; read by `planGraph`, the newest open one wins); an integrator and a standing main always carry `dispatch.md`.
 
-   A coordinator that dispatches a `worker` (or an unknown role, or a bare spawn) with no such plan is refused with `sb: plan first: …`; scouts, planners, reviewers, and `subagent_resume` pass, and a `todo` call earlier in the same assistant message that names a graph counts. The main changes its kind with `boss_duty` (a reason, one line; a switch re-reads its context once; it writes a `straw-boss` entry `{ duty, dutyFrom, dutyWhy, dutyAt }`, notes the tower's digest, and shows on the page).
+   A coordinator that dispatches a `worker` (or an unknown role, or a bare spawn) with no such plan is refused with `sb: plan first: …`; scouts, planners, reviewers, watchdogs, and `subagent_resume` pass, and a `todo` call earlier in the same assistant message that names a graph counts. The main changes its kind with `boss_duty` (a reason, one line; a switch re-reads its context once; it writes a `straw-boss` entry `{ duty, dutyFrom, dutyWhy, dutyAt }`, notes the tower's digest, and shows on the page).
 
    A main that has declared none and is named `integ <project>` (at start, or at any rename: `boss_rename`, `/name`, another extension), or holds `train` todos, is migrated to `integrator` once, with the entry `migrated: name` or `migrated: train todos`. A declared kind is never migrated. Each `/reload`, `/new`, `/resume`, and `/fork` reads the integration switch again, and with integration off an integrator runs as a coordinator and publishes `coordinator`. The page shows the kind word (協調者, 整合員, 值守 / coordinator, integrator, on watch) the same in every theme, with the plan's graph after it (單一迴圈, 分支匯流, 多工編排 / single loop, fan-out, orchestrated), and a switch is an event on the timeline.
 5. The workspace tower opens when agents start to collide: a member dispatches a subagent (it promotes itself first, and a promotion opens the tower), the workspace has two members while another workspace already has a live tower, or `/boss tower` asks for it. Mains and the tower go together. The owner of each tab channel (its earliest member) checks when Herdr reports an event that can change the answer (`workspace.metadata_updated` for any workspace, `pane.closed` and `pane.agent_detected` in its own, over one `events.subscribe` connection per session), when the tab channel's owner changes or a session leaves it, and once every 4 minutes for what no event reports (a tower that crashed); a member that joins checks the two-member rule once.
@@ -162,10 +162,10 @@ Towers coordinate with each other directly, with two tools only a tower has, and
 <details>
 <summary>Details</summary>
 
-**The header.** The code writes a line before the text of every `call_tower`, `boss_broadcast`, `tower_send`, and handoff message (never the model, so a name or a message cannot change it):
+**The header.** The code writes a line before the text of every `call_tower`, `boss_broadcast`, `tower_send`, and handoff message, and of a watchdog's `watch_report` (never the model, so a name or a message cannot change it):
 
 ```text
-[straw net from=<name> id=<session id> role=<tower|main|member|session> [head=yes] workspace=<label> kind=<call_tower|broadcast|tower_send|handoff> scope=<scope> to=<recipients> reply=<expected|none> [why=<milestone|shared|blocked|unspecified>] [ask=H<n>] [relay=boss:<event id>] [in-reply-to=H<n>]] <message>
+[straw net from=<name> id=<session id> role=<tower|main|member|session> [head=yes] workspace=<label> kind=<call_tower|broadcast|tower_send|handoff|watch_report> scope=<scope> to=<recipients> reply=<expected|none> [why=<milestone|shared|blocked|unspecified>] [ask=H<n>] [relay=boss:<event id>] [in-reply-to=H<n>]] <message>
 ```
 
 `role` is the sender's role as its pane's `sb_role` token publishes it (`session` for a pi that did not join the net, which only a scope `all` broadcast reaches); `head=yes` marks the head tower and nobody else (`role` stays `tower`, so readers that know four roles keep working). `ask=` and `relay=` are on the head tower's forwards only, and `in-reply-to=` on a workspace tower's answer to one ([Forwarding and answers](#the-head-tower)). `scope` is `tab`, `workspace`, `towers`, or `all` for a broadcast and a `tower_send` to all, `tower` for a message to one tower, and `main` for a handoff.
@@ -2309,9 +2309,45 @@ Because pi reports only the outermost dialog, a confirm opened while a `custom` 
 
 ## The role pack
 
-sb ships the pi-herdr-agents roles its agents run as: `worker`, `scout`, `planner`, `reviewer`, `visual-tester`, and `adversarial-reviewer`, in `roles/`. A fifth extension entry, `src/rolepack.ts`, registers that folder on pi-herdr-agents' discovery event (`pi-herdr-subagents:roles:discover:v1`, API version 1) in every pi, subagents included, and drops it at `session_shutdown`. pi-herdr-roles carries the same names, so the two would collide and pi-herdr-agents would disable those roles: uninstall it. A global (`~/.pi/agent/agents/`) or project role of the same name still wins over the pack.
+sb ships the pi-herdr-agents roles its agents run as: `worker`, `scout`, `planner`, `reviewer`, `visual-tester`, `adversarial-reviewer`, and `watchdog`, in `roles/`. A fifth extension entry, `src/rolepack.ts`, registers that folder on pi-herdr-agents' discovery event (`pi-herdr-subagents:roles:discover:v1`, API version 1) in every pi, subagents included, and drops it at `session_shutdown`. pi-herdr-roles carries the same names, so the two would collide and pi-herdr-agents would disable those roles: uninstall it. A global (`~/.pi/agent/agents/`) or project role of the same name still wins over the pack.
 
-Each role's `tools:` line becomes the child's tool allowlist. `worker` and `adversarial-reviewer` have none and run with every tool. `/boss roles-check [folder]` compares every listed name with the tools of the session it runs in, plus `caller_ping` and `subagent_done`, which only a child has. A name the session lacks fails, and so does a name only a parent has: sb's own tools (`PARENT_ONLY` in `src/tools.ts`, all registered outside a child) and pi-herdr-agents' `worktree_list` and `worktree_remove`. It reads sb's own `roles/` by default, starts no process, and refuses in a session started with `--tools` or `--exclude-tools`, whose tool list is narrowed.
+Each role's `tools:` line becomes the child's tool allowlist. `worker` and `adversarial-reviewer` have none and run with every tool. `/boss roles-check [folder]` compares every listed name with the tools of the session it runs in, plus the names only a child has: pi-herdr-agents' `caller_ping` and `subagent_done`, and sb's `watch_read` and `watch_report`. A name the session lacks fails, and so does a name only a parent has: sb's own tools (`PARENT_ONLY` in `src/tools.ts`, all registered outside a child) and pi-herdr-agents' `worktree_list` and `worktree_remove`. It reads sb's own `roles/` by default, starts no process, and refuses in a session started with `--tools` or `--exclude-tools`, whose tool list is narrowed.
+
+### The watchdog
+
+A `watchdog` is a subagent that watches one unit of the net (a main with its monitors and todos, a train, another subagent) and tells the session that dispatched it what goes wrong. It has three tools: `read`, and two that sb registers only in a pi-herdr-agents child, `watch_read` and `watch_report`. A coordinator dispatches one without a plan, as it does a scout, and a standing main's prompt names it beside `MonitorCreate` as a way to watch. It needs an sb server of 0.80.0 or newer. The role file names no model and sets `thinking: low`, since the server computes the verdicts; which model a watchdog runs on is set in each machine's pi-herdr-agents configuration (`models.agents.watchdog`).
+
+<details>
+<summary>Details</summary>
+
+**`watch_read({ key, since?, waitMs?, deadline?, quietMs?, loadMax? })`** waits for one unit to change. `key` is a unit key or a session id of this computer's net, and `since` is the stamp of the last reply (none on the first call). The tool sends `watch-read` to the sb server over its control socket. The server holds the request for at most 45 s and answers at the first reading of the net whose verdict is not `unchanged`; the tool asks again inside the same call until `waitMs` has passed (default 600000; at most 3000000, which is 50 minutes). The reply is `{ state, since, now, unit?, successor?, server? }`:
+
+| `state` | When |
+|---|---|
+| `changed` | The unit's mark, a monitor's status or exit code, the todo progress, a train's state, step or wait, or a subagent's mark differs from what `since` recorded. A call with no `since`, and one whose stamp another server instance wrote (the server restarted), are answered at once. |
+| `stalled` | The call names `quietMs` (at least 60000) and the unit has not moved for that long: no change of its mark or note, no new tick, no new monitor line. It comes once per quiet spell. A gap of more than 60 s between two readings (a sleeping Mac) starts the clock again. A subagent has only its mark and note to move. |
+| `load` | A monitor's newest progress line carries a load over `loadMax` (by default the monitor's own maximum; in practice the monitor is a train's gate wrapper). It comes once per crossing. |
+| `unchanged` | Nothing happened by `waitMs`, or a message for the watchdog arrived during the call. |
+| `expired` | `deadline`, an absolute time in ms that the task gives, has passed. |
+| `gone` | The unit left the net; `successor` is the key of the session that took its place, when one did. |
+
+When several apply, the order is `gone`, `expired`, `changed`, `load`, `stalled`. Output lines, a monitor's last line, a note, ticks, and load readings under the limit wake nothing. `unit` holds `mark`, `note`, `duty`, `todo`, each monitor's `status`, `exit`, `last`, `load` and `ageMs`, a train's `status`, `step` and `waits`, and its subagents' names and marks (`subs`); it holds no transcript, no path, and no monitor command. `now` is the time in ms, so a watchdog, which has no shell, knows what time it is.
+
+The server judges on the readings the GUI takes of the net (every 2 s while a page is open, every 10 s otherwise). With the GUI stopped, the route reads the net itself every 10 s, only while a hold is open. A key the net does not know fails the call with `unknown key <key>`; an abort and a `waitMs` over the limit fail it too, and nothing else does. A request that fails (the server restarts, the socket closes) is sent again after 2 s. When the server still does not answer at `waitMs`, the reply is `unchanged` with `server: "unreachable"`; with an sb server older than 0.80.0, which does not know the command, it carries `server: "outdated"`. Each new request updates the tool's progress, so pi-herdr-agents' hang advisory stays quiet through a long wait.
+
+**`watch_report({ text })`** sends one message of 1 to 2,000 plain characters to the session that dispatched the watchdog. The tool has no recipient parameter. The child's sb sends the server `watch-report` with the three values that pi-herdr-agents' launch or resume script put in its environment: `PI_SUBAGENT_SESSION`, `PI_SUBAGENT_ID`, and `PI_SUBAGENT_ACTIVITY_FILE`. The server ties them together by pi-herdr-agents' own files:
+
+1. Both paths resolve under pi's sessions folder, and the activity file is `<parent artifacts>/subagent-activity/<child>.json` and does not say `done`. The dispatcher is the session that artifacts folder is named after.
+2. A launch or resume script of that dispatcher carries the child's id and names the session file.
+3. The session file's first `straw-boss { agent }` entry says `watchdog`. Before pi has written the file or the entry, a launch script that names the session and carries `PI_SUBAGENT_AGENT='watchdog'` stands in.
+
+The server then sends the dispatcher one intercom message under the [header](#talking-between-towers), with `kind=watch_report`, `from=watchdog <child name>`, `id=<child id>`, `role=session`, and `reply=none`, and answers `delivered`, `queued`, or `gone` (the dispatcher ended, and nothing was sent). A session file sends at most one report every 30 s and never the same text as its last one; a refused or undelivered report counts for neither. The server refuses with `outside the sessions folder`, `no launch script ties <child> to that session`, `that child is done`, `not a watchdog's session`, `rate: one report every 30 s`, or `same text as the last report`, and a message that cannot go out is an error too (`pi-intercom is not connected`, `not delivered: <reason>`); each is the tool's error. The checks do not authenticate the caller, because the control socket carries no peer credentials: a process of the same user that has a shell can send a report in a watchdog's name, to that watchdog's own dispatcher only, and the harm is a false message.
+
+**The boundary.** A child is a watchdog when its launch names the role (`PI_SUBAGENT_AGENT=watchdog`) or the first `straw-boss { agent }` entry of its session does; a resume names no role, so the entry is what a resumed watchdog is known by. A tool list is never a sign: a scout spawned with `watch_read` among its tools stays a scout. For a watchdog, sb blocks every tool call outside `read`, `watch_read`, `watch_report`, `caller_ping`, and `subagent_done` with `sb: a watchdog only reads and reports`, whatever tool list the spawn or the resume passed, and narrows the active tools to those five before each run. sb registers this in every pi-herdr-agents child, outside Herdr too (a child that pi-herdr-agents' Core backend launched has no pane). In a child that is not a watchdog it does nothing, and the two tools stay inactive unless the child's tool list names them.
+
+A watchdog whose spawn passed a tool list without `watch_read` or `watch_report` cannot watch, because pi keeps a tool the list does not name out of the registry. Before its first run it reports `sb: watchdog <name> cannot start: its tool list lacks watch_read/watch_report (a spawn tools override?)` to its dispatcher, which the server accepts before the session file exists, and then ends (`ctx.abort()`, `ctx.shutdown()`).
+
+</details>
 
 ## Sidebar net view
 
@@ -3650,7 +3686,7 @@ An ally run claimed at `dispatch` is quit by the watcher when its device has lef
 
 ## Tools
 
-Straw Boss gives agents a set of tools (`boss_*`, `tower_*`, `call_tower`, `board_*`) and gives the boss the `/boss` slash commands. Which session may call which tool depends on its role. The tables list who each tool is available to and what it does, then every `/boss` command.
+Straw Boss gives agents a set of tools (`boss_*`, `tower_*`, `call_tower`, `board_*`), gives a watchdog subagent two of its own (`watch_read`, `watch_report`), and gives the boss the `/boss` slash commands. Which session may call which tool depends on its role. The tables list who each tool is available to and what it does, then every `/boss` command.
 
 <details>
 <summary>Details</summary>
@@ -3675,6 +3711,8 @@ Straw Boss gives agents a set of tools (`boss_*`, `tower_*`, `call_tower`, `boar
 | `boss_broadcast` | joined sessions and towers | One message to every other session in a scope, under a header naming every recipient. `tab`, `workspace` and `towers` reach only sessions that joined the net (nearly every pi in Herdr, not sub workspace sessions; `towers` reaches a workspace without a tower through its mains, else its members); `all` reaches every pi session on the machine, joined or not (for notices such as going to sleep). Default `workspace`. Towers use `tower_send` for other towers. |
 | `boss_server` | every joined session with a screen in Herdr | `status` of the sb server (also with it down), `logs`, or `restart` with a reason (see [The sb server](#the-sb-server)). Not in a remote turn. |
 | `tower_memory` | local tower runs only | Keep what outlives the run: a standing instruction or a decision as a verbatim quote of a boss message the run took (the server checks it), the same proof to retire one, and the tower's own waits (add, resolve, drop; a wait for the boss is a card with fields, see [Tower memory](#tower-memory)). Refused to an ally run. See [Tower memory](#tower-memory). |
+| `watch_read` | a `watchdog` subagent only (registered in every pi-herdr-agents child, inactive unless its tool list names it) | Wait for one unit of the net to change: a long poll on the sb server that answers `changed`, `stalled`, `load`, `unchanged`, `expired`, or `gone` (see [The watchdog](#the-watchdog)). |
+| `watch_report` | a `watchdog` subagent only | Send one finding to the session that dispatched it and to nobody else: 1 to 2,000 characters, at most one every 30 s, never the same text twice in a row. The answer is `delivered`, `queued`, or `gone`. |
 
 | Command | Effect |
 |---|---|
