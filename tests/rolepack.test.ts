@@ -8,7 +8,7 @@ import rolePack, { ROLE_DISCOVERY_EVENT, ROLES_DIR } from "../src/rolepack.ts";
 
 // sb ships the role pack (docs/specs/2026-11-09-agent-kinds.md §9, D11; phase 2 step 5.1).
 const root = fileURLToPath(new URL("..", import.meta.url));
-const ROLES = ["adversarial-reviewer", "planner", "reviewer", "scout", "visual-tester", "worker"];
+const ROLES = ["adversarial-reviewer", "planner", "reviewer", "scout", "visual-tester", "watchdog", "worker"];
 const text = (name: string) => readFileSync(join(root, "roles", `${name}.md`), "utf8");
 
 /** A pi with an event bus and lifecycle handlers, as the role pack sees it. */
@@ -81,12 +81,15 @@ test("each role carries the tools: line of §9's table (worker and adversarial-r
 	assert.deepEqual(toolsOf("planner"), ["read", "grep", "find", "ls", "bash", "write", "edit", "subagent", "ask_user_question", "show_doc", "mcp"]);
 	assert.deepEqual(toolsOf("reviewer"), ["read", "grep", "find", "ls", "bash", "write", "show_doc"]);
 	assert.deepEqual(toolsOf("visual-tester"), ["read", "write", "bash", "show_doc", "ask_user_question", "find_roots", "observe_ui", "act_ui", "inspect_ui", "search_ui", "expand_ui", "read_text", "wait_for", "launch_browser", "navigate_browser", "evaluate_browser"]);
+	assert.deepEqual(toolsOf("watchdog"), ["read", "watch_read", "watch_report"]);
 });
 
 test("what the overrides carried stays: the reviewers' Blocking line, the worker's Stay in the turn, the scout's thinking: low", () => {
 	for (const role of ["reviewer", "adversarial-reviewer"]) assert.match(text(role), /Blocking: P0=<n> P1=<m>/, role);
 	assert.match(text("worker"), /^## Stay in the turn$/m);
 	assert.match(text("scout"), /^thinking: low$/m);
+	assert.match(text("watchdog"), /^thinking: low$/m);
+	assert.doesNotMatch(text("watchdog"), /^model:/m, "the role names no model: models differ per machine");
 });
 
 test("each role names its brief fields and its way to the user (§9)", () => {
@@ -100,10 +103,11 @@ test("each role names its brief fields and its way to the user (§9)", () => {
 	assert.match(text("visual-tester"), /show_doc/);
 	assert.match(text("visual-tester"), /playwriter session new/);
 	assert.match(text("visual-tester"), /login route/);
+	for (const word of ["`watch_read`", "`watch_report`", "`quietMs`", "`loadMax`", "time limit", "`stalled`", "`gone`"]) assert.ok(text("watchdog").includes(word), `watchdog: ${word}`);
 });
 
-// D7: concise role prompts. A sentence said twice in a file says nothing the first did not; each file stays at or under the length it had at the pack's first release (0.79.0).
-const PINNED: Record<string, number> = { "adversarial-reviewer": 154, planner: 88, reviewer: 132, scout: 80, "visual-tester": 54, worker: 38 };
+// D7: concise role prompts. A sentence said twice in a file says nothing the first did not; each file stays at or under the length it had at the pack's first release (0.79.0; the watchdog's at its own, phase 3).
+const PINNED: Record<string, number> = { "adversarial-reviewer": 154, planner: 88, reviewer: 132, scout: 80, "visual-tester": 54, watchdog: 17, worker: 38 };
 test("the D7 role checks: no repeated sentence within a file, and each file at or under its pinned length", () => {
 	for (const role of ROLES) {
 		const lines = text(role).trimEnd().split("\n").length;
@@ -145,4 +149,5 @@ SOFTWARE.`));
 	for (const lineage of ["giuseppecrj/pi-herdr-agents", "c2177dff", "HazAT/pi-interactive-subagents", "0xRichardH/pi-herdr-subagents", "Copyright (c) 2026 wayne930242"]) assert.ok(section.includes(lineage), lineage);
 	for (const role of ["worker", "scout", "reviewer", "visual-tester", "adversarial-reviewer"]) assert.ok(section.split("\n").some((line) => line.includes("weihung-basic-agent") && line.includes(`\`roles/${role}.md\``)), role);
 	assert.match(section, /`roles\/planner\.md`[^\n]*pi-herdr-roles/);
+	assert.ok(section.split("\n").some((line) => line.includes("`roles/watchdog.md`") && /Straw Boss's own/.test(line)), "the watchdog is sb's own, derived from neither source");
 });

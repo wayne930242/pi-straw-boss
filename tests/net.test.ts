@@ -12,16 +12,17 @@ afterEach(async () => {
 const prompt = (name: string) => readFileSync(`${PROMPT_DIR}/${name}.md`, "utf8").trim();
 const hex = (id: string) => `straw-boss/tab/${Buffer.from(id).toString("hex")}`;
 
-test("outside Herdr nothing registers; a pi-herdr-agents worker runs only the dialog bridge, the trust relay, and auto mode's guard (a worker in a new folder asks for trust too); neither injects anything", async () => {
+test("outside Herdr nothing registers; a pi-herdr-agents worker runs only the dialog bridge, the trust relay, auto mode's guard (a worker in a new folder asks for trust too), and the watchdog's side, whose two tools are inactive and whose handlers do nothing in a worker (watchdog.ts); neither injects anything", async () => {
 	const outside = world.agent({ id: "out", pane: "none", outsideHerdr: true });
 	const worker = world.agent({ id: "worker", pane: "wA:p9", tab: "wA:t1", env: { PI_SUBAGENT_ID: "run-1" } });
 	for (const agent of [outside, worker]) {
 		await agent.start();
-		assert.deepEqual(agent.registered, agent === worker ? ["input", "message_start", "turn_end", "session_tree", "session_compact", "agent_settled", "session_start", "tool_execution_start", "tool_execution_end", "session_shutdown", "tool_result", "tool_call", "project_trust", "agent_end"] : [], `${agent.id} registered handlers`);
-		assert.equal(agent.tools.size, 0);
+		assert.deepEqual(agent.registered, agent === worker ? ["session_start", "tool_call", "before_agent_start", "input", "message_start", "turn_end", "session_tree", "session_compact", "agent_settled", "tool_execution_start", "tool_execution_end", "session_shutdown", "tool_result", "project_trust", "agent_end"] : [], `${agent.id} registered handlers`);
+		assert.deepEqual([...agent.tools.values()].map((t) => [t.name, (t as { defaultActive?: boolean }).defaultActive]), agent === worker ? [["watch_read", false], ["watch_report", false]] : []);
 		assert.equal(agent.commands.size, 0);
 		assert.deepEqual(await agent.run(), {});
 	}
+	assert.equal(await worker.fireResult("tool_call", { toolName: "bash", toolCallId: "c1", input: { command: "ls" } }), undefined, "a worker's bash is not blocked");
 	assert.deepEqual(world.broker.registrations, []);
 	assert.deepEqual(world.herdr.panes[0]?.tokens, {});
 });

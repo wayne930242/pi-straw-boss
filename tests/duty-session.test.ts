@@ -169,6 +169,26 @@ test("dispatch follows the plan: a coordinator with no graph may not dispatch a 
 	assert.equal(await call(a, { agent: "worker" }, "subagent_resume"), undefined);
 });
 
+test("dispatch: a watchdog needs no plan: a coordinator with no graph, and a standing main, dispatch one with no refusal and no steer (AK7-F004)", async () => {
+	world = new World();
+	const a = await main("Docs");
+	await text(a);
+	const before = steers(a).length;
+	assert.equal(await call(a, { agent: "watchdog", task: "watch wA:p3" }), undefined, "a coordinator with no graph");
+	await settle();
+	assert.equal(steers(a).length, before, "no steer");
+	assert.match((await call(a, { agent: "worker", task: "x" }))?.reason ?? "", /a scout, a planner, a reviewer, or a watchdog may run now\./, "the refusal names the watchdog among what may run");
+	world = new World();
+	const s = await main("Docs");
+	await s.tool("boss_duty", { duty: "standing", reason: "w" });
+	await settle();
+	const held = steers(s).length;
+	assert.equal(await call(s, { agent: "watchdog", task: "watch wA:p3" }), undefined, "a standing main");
+	await settle();
+	assert.equal(steers(s).length, held, "no steer");
+	assert.match(await text(s), /- Watch with `MonitorCreate` or a `watchdog` subagent, not by checking in your own turns\./, "the standing addendum names the watchdog");
+});
+
 test("dispatch: integrators and standing mains are never gated; a graph lets a coordinator's worker through", async () => {
 	world = new World();
 	const i = await main("integ FE2");

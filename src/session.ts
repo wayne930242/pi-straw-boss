@@ -308,11 +308,11 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			tell(`Straw Boss: ${(error as Error).message}`, "warning");
 		}
 		mainDuty.migrate(pi.getSessionName()); // the promotion above may have just made this an `integ <project>` main whose migration had not run: it is never asked for a plan
-		// A coordinator's worker waits for a plan that names a graph (§2a); scouts, planners and reviewers, a resume, an integrator, and a standing main never wait.
+		// A coordinator's worker waits for a plan that names a graph (§2a); scouts, planners, reviewers and watchdogs, a resume, an integrator, and a standing main never wait.
 		if (event.toolName !== "subagent" || role() !== "main" || mainDuty.now() !== "coordinator" || mainDuty.graph() || plannedInMessage(ctx.sessionManager.getBranch(), event.toolCallId, (event as { parentToolCallId?: string }).parentToolCallId)) return;
 		const agent = (event.input as { agent?: unknown } | undefined)?.agent;
-		if (typeof agent === "string" && ["scout", "planner", "reviewer"].includes(dutyOfAgent(agent) ?? "") ) return;
-		return { block: true, reason: `sb: plan first: a worker needs a plan whose todos name a graph (${briefing.dir()}/planning.md). Write the plan's todos, then dispatch; a scout, a planner, or a reviewer may run now. If your job is a project's merge trains or minding one system, call boss_duty with integrator or standing instead.` };
+		if (typeof agent === "string" && ["scout", "planner", "reviewer", "watchdog"].includes(dutyOfAgent(agent) ?? "") ) return;
+		return { block: true, reason: `sb: plan first: a worker needs a plan whose todos name a graph (${briefing.dir()}/planning.md). Write the plan's todos, then dispatch; a scout, a planner, a reviewer, or a watchdog may run now. If your job is a project's merge trains or minding one system, call boss_duty with integrator or standing instead.` };
 	});
 
 	// A launched subagent is marked within seconds, once its pane shows its session file, instead of at the next 4 minute refresh.

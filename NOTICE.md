@@ -119,6 +119,7 @@ The role pack in `roles/` (docs/specs/2026-11-09-agent-kinds.md §9) is derived 
 
 - `roles/worker.md`, `roles/scout.md`, `roles/reviewer.md`, `roles/visual-tester.md`, and `roles/adversarial-reviewer.md` start from the role overrides of [weihung-basic-agent](https://github.com/wayne930242/weihung-basic-agent) (`agents/`), MIT License, Copyright (c) 2026 wayne930242. Those overrides in turn derive from the pi-herdr-roles definitions below.
 - `roles/planner.md` derives from [pi-herdr-roles](https://www.npmjs.com/package/pi-herdr-roles) 0.1.0 `roles/planner.md` alone.
+- `roles/watchdog.md` is Straw Boss's own, derived from neither source.
 
 pi-herdr-roles' role definitions were moved from [giuseppecrj/pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) at commit `c2177dff835da44937e614e8a03d0405d442e848`, whose MIT notice is retained from its upstream lineage, [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents) and [0xRichardH/pi-herdr-subagents](https://github.com/0xRichardH/pi-herdr-subagents). pi-herdr-roles 0.1.0 carries this notice:
 
