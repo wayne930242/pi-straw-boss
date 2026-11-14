@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { run } from "../src/server/cli.ts";
@@ -118,9 +118,13 @@ test("train check --accept in the project's root, and in a linked worktree of th
 });
 
 test("carRepos names no folder outside the project's root, and only the folder asked before for an app the file does not name or gives no dir", () => {
-	const r = rig({ main: true, train: false, apps: JSON.stringify({ apps: [{ name: "out", dir: "../web-origin", integration: { base: "develop" } }, { name: "abs", dir: join("/", "tmp"), integration: { base: "develop" } }, { name: "nodir", integration: { base: "develop" } }] }) });
+	const r = rig({ main: true, train: false, apps: JSON.stringify({ apps: [{ name: "out", dir: "../web-origin", integration: { base: "develop" } }, { name: "abs", dir: join("/", "tmp"), integration: { base: "develop" } }, { name: "nodir", integration: { base: "develop" } }, { name: "link", dir: "apps/link", integration: { base: "develop" } }, { name: "ptr", dir: "apps/ptr", integration: { base: "develop" } }] }) });
 	mkdirSync(join(r.root, "web-origin"));
 	git(join(r.root, "web-origin"), "init", "-q");
 	git(r.cwd, "init", "-q");
-	for (const app of ["out", "abs", "nodir", "unnamed", undefined]) assert.deepEqual(carRepos(r.cwd, app, "/before"), ["/before"], String(app));
+	// R0801-F001/F003: a symlink out of the project, and a folder whose `.git` file points at a repository outside it.
+	mkdirSync(join(r.cwd, "apps", "ptr"), { recursive: true });
+	symlinkSync(join(r.root, "web-origin"), join(r.cwd, "apps", "link"));
+	writeFileSync(join(r.cwd, "apps", "ptr", ".git"), `gitdir: ${join(r.root, "web-origin", ".git")}\n`);
+	for (const app of ["out", "abs", "nodir", "link", "ptr", "unnamed", undefined]) assert.deepEqual(carRepos(r.cwd, app, "/before"), ["/before"], String(app));
 });

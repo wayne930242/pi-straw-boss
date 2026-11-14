@@ -115,12 +115,21 @@ export function repoRoot(dir: string): string {
 export function carRepos(dir: string, app: string | undefined, fallback = dir): string[] {
 	const read = readApps(dir), at = read.ok ? read.apps.find((a) => a.name === app)?.dir : undefined;
 	if (typeof at !== "string") return [fallback];
+	const home = repoRoot(dir);
+	// R0801-F001: inside the root after realpath, and its git dir (a submodule's `.git` file names one under the repository's `.git`) inside the repository, so a symlink or a `gitdir:` pointer leads git to no folder outside the project.
+	const inside = (path: string, root: string) => path.startsWith(root + sep);
+	const ownGitDir = (folder: string): boolean => {
+		const dot = join(folder, ".git");
+		if (statSync(dot).isDirectory()) return true;
+		const named = /^gitdir:\s*(.+)$/m.exec(readFileSync(dot, "utf8"))?.[1]?.trim();
+		return named !== undefined && inside(realpathSync(resolve(folder, named)), home);
+	};
 	const own = (root: string): string[] => {
 		const folder = resolve(root, at);
-		if (!folder.startsWith(root + sep) || !existsSync(join(folder, ".git"))) return [];
-		try { return [realpathSync(folder)]; } catch { return []; }
+		if (!inside(folder, root) || !existsSync(join(folder, ".git"))) return [];
+		try { const real = realpathSync(folder); return inside(real, realpathSync(root)) && ownGitDir(real) ? [real] : []; } catch { return []; }
 	};
-	const found = [...new Set([...own(resolve(gitRoot(dir))), ...own(repoRoot(dir))])];
+	const found = [...new Set([...own(resolve(gitRoot(dir))), ...own(home)])];
 	return found.length ? found : [fallback];
 }
 
