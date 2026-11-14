@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdirSync, rmSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { run } from "../src/server/cli.ts";
@@ -237,4 +239,24 @@ test("R0802-F003: a graft file in the app's repository does not make a commit an
 	assert.equal(await run(["train", "check", "--accept", side, "--slip", slip], { out: (t) => out.push(t), err: () => {}, stateDir: r.stateDir, train: { cwd: r.cwd } }), 2);
 	assert.deepEqual((JSON.parse(out.join("")) as { refusals: string[] }).refusals, ["sb: evidence entry 1: on.head is not the car's head"]);
 	await ok(r.create(trainTodo("web", p.web.head, evidenceFile(r, "good", "web", p.web.head, p.web.base))));
+});
+
+test("R0802D-F002: a commit-graph that gives the car's head another parent does not make a commit an ancestor: the guard and train check ask git with the commit-graph off", async () => {
+	const r = rig({ main: true, train: false, apps: APPS }), p = project(r);
+	const gitDir = git(p.web.dir, "rev-parse", "--absolute-git-dir"), file = join(gitDir, "objects", "info", "commit-graph");
+	execFileSync("git", ["commit-graph", "write", "--stdin-commits"], { cwd: p.web.dir, input: `${p.web.head}\n${p.web.side}\n`, stdio: ["pipe", "ignore", "ignore"] });
+	const buf = readFileSync(file), chunks = buf[6]!, table = new Map<string, number>();
+	for (let i = 0; i < chunks; i++) table.set(buf.subarray(8 + i * 12, 12 + i * 12).toString("latin1"), Number(buf.readBigUInt64BE(12 + i * 12)));
+	const oidl = table.get("OIDL")!, cdat = table.get("CDAT")!, n = (table.get("CDAT")! - table.get("OIDL")!) / 20;
+	const at = (sha: string) => { for (let i = 0; i < n; i++) if (buf.subarray(oidl + i * 20, oidl + i * 20 + 20).toString("hex") === sha) return i; throw new Error(`${sha} is not in the graph`); };
+	buf.writeUInt32BE(at(p.web.side), cdat + at(p.web.head) * 36 + 24);
+	rmSync(file);
+	writeFileSync(file, Buffer.concat([buf.subarray(0, buf.length - 20), createHash("sha1").update(buf.subarray(0, buf.length - 20)).digest()]));
+	assert.doesNotThrow(() => git(p.web.dir, "--no-replace-objects", "merge-base", "--is-ancestor", p.web.side, p.web.head), "the forged graph is in place");
+	const side = evidenceFile(r, "side", "web", p.web.head, p.web.side);
+	await refused(r.create(trainTodo("web", p.web.head, side)), /^sb: evidence entry 1: on\.head is not the car's head$/);
+	const slip = join(r.root, "slip.txt"), out: string[] = [];
+	writeFileSync(slip, slipBlock({ head: p.web.head, accept: side }));
+	assert.equal(await run(["train", "check", "--accept", side, "--slip", slip], { out: (t) => out.push(t), err: () => {}, stateDir: r.stateDir, train: { cwd: r.cwd } }), 2);
+	assert.deepEqual((JSON.parse(out.join("")) as { refusals: string[] }).refusals, ["sb: evidence entry 1: on.head is not the car's head"]);
 });

@@ -171,7 +171,7 @@ export function gitmodulesPaths(root: string): string[] {
 /**
  * The folders git is asked in about the commits of a car of `app` (0.80.1): the app's own repository when it is one (`appRepos`), else `fallback`, where git was asked before, because the app's commits are then the project's (its folder holds no `.git` of its own, is the
  * root, or leaves it; no app is named). Whether a delta's `on.head` is an ancestor of the car's head was asked in the project's root, where a submodule's commits do not exist. Which folder answers decides only whether git knows the two commits: a commit's ancestors are
- * fixed by its hash, and the callers ask with replace refs off (`--no-replace-objects`) and no graft file (`GIT_GRAFT_FILE` is the null device; R0802-F003), the two ways a repository can give a commit other parents.
+ * fixed by its hash, and the callers ask with replace refs off (`--no-replace-objects`), no graft file (`GIT_GRAFT_FILE` is the null device; R0802-F003) and no commit-graph (`core.commitGraph=false`; R0802D-F002), the three ways a repository can give a commit other parents.
  */
 export function carRepos(dir: string, app: string | undefined, fallback = dir): string[] {
 	const found = appRepos(dir, app);

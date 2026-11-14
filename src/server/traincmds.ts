@@ -113,7 +113,7 @@ function check(flags: Record<string, string | true>, io: TrainIo): number {
 			const isAncestor = io.isAncestor ?? ((older: string, newer: string) => repos.some((at) => {
 				try {
 					// Replace refs off and no graft file, as the guard asks (RD0801-F002, R0802-F003).
-					execFileSyncExe("git", ["--no-replace-objects", "merge-base", "--is-ancestor", older, newer], { cwd: at, stdio: "ignore", timeout: 15_000, killSignal: "SIGKILL", env: { ...process.env, GIT_GRAFT_FILE: devNull } });
+					execFileSyncExe("git", ["--no-replace-objects", "-c", "core.commitGraph=false", "merge-base", "--is-ancestor", older, newer], { cwd: at, stdio: "ignore", timeout: 15_000, killSignal: "SIGKILL", env: { ...process.env, GIT_GRAFT_FILE: devNull } });
 					return true;
 				} catch {
 					return false;

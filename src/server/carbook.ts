@@ -99,7 +99,7 @@ export interface BookDeps {
  * A train the tower opened: what the server read from the manifest it was handed (the base and the heads of the cars) and from the tower's checkout (the remote), both before the train's process existed, and the open's own result.
  * `url` is absent for a train the server only learns of from a repeated open after a restart: the checkout may have been changed by the train since.
  */
-export interface TrainRecord { project: string; code: string; session: string; pane: string; integrator: string; base?: string; heads: string[]; url?: string; /** The remote of each app that is a repository of its own (`appRemotesOf`), read with `url`; absent when `url` would be. */ appUrls?: Record<string, string | null>; at: string }
+export interface TrainRecord { project: string; code: string; session: string; pane: string; integrator: string; base?: string; heads: string[]; url?: string; /** The remote of each app that is a repository of its own (`appRemotesOf`), read with `url`; absent when `url` would be. */ appUrls?: Record<string, string | null>; /** The names the checkout's apps.json listed at that open (R0802D-F001). */ apps?: string[]; at: string }
 /** A forward the tower's code stamped (runtools.ts): the event it came in, the session that sent it there, the sessions it went to, and the slips it carries as the server read them. */
 export interface ForwardRecord { fwd: string; from: string; to: string[]; slips: SlipFacts[]; at: number }
 interface Registration { session: string; pid: number; started: string; pane: string; at: number }
@@ -232,8 +232,8 @@ export class CarBook {
 	private readonly trains = new Map<string, TrainRecord>();
 	/** The remote the first train of each project was opened on in this server's life: a later open that read another one is not trusted for `landed`. An app that is a repository of its own has a remote of its own, kept under `<project>/<app>` (a project's name holds no slash), so the two are never compared with each other. */
 	private readonly remotes = new Map<string, string>();
-	/** Which apps of each project were repositories of their own at the first open of this server's life that read them, with the remote read then (the whole `appUrls` of that open, null entries too; R0802-F001). An app that is one now and was not then, or was and is not now, is not trusted for `landed`: its remote has no first value to differ from. */
-	private readonly owns = new Map<string, Record<string, string | null>>();
+	/** The first kind of each app (`<project>/<app>`) at the first open of this server's life that listed it, with the remote read then (R0802-F001, R0802D-F001): own repository (with its remote or null) or the project's. An app that changes kind later is not trusted for `landed`: its remote has no first value to differ from. An app no open listed yet holds none. */
+	private readonly kinds = new Map<string, { own: boolean; url: string | null }>();
 	/** When each failed `landed` check of a car (project/train/head) happened, within the window. */
 	private readonly failures = new Map<string, number[]>();
 	private chain: Promise<unknown> = Promise.resolve();
@@ -293,7 +293,7 @@ export class CarBook {
 			// An entry of the index at exactly this path (a folder of the project has none), then its mode: one line, whatever the folder holds.
 			try {
 				await this.d.git(root, ["rev-parse", "--verify", "-q", `:0:${path}`]);
-				if ((await this.d.git(root, ["--literal-pathspecs", "ls-files", "-s", "--", path])).split("\n").some((line) => line.startsWith("160000 ") && line.split("\t")[1] === path)) return true;
+				if ((await this.d.git(root, ["--literal-pathspecs", "ls-files", "-s", "-z", "--", path])).split("\0").some((line) => line.startsWith("160000 ") && line.split("\t")[1] === path)) return true;
 			} catch { /* no entry at this path */ }
 		}
 		return false;
@@ -313,13 +313,22 @@ export class CarBook {
 		}
 		return Object.fromEntries(out);
 	}
+	/** The names the checkout's apps.json lists (none when it is missing or unreadable). */
+	async appNamesOf(checkout: string | undefined): Promise<string[]> {
+		if (!checkout || !isAbsolute(checkout)) return [];
+		const apps = readApps(checkout);
+		return [...new Set(apps.ok ? apps.apps.flatMap((a) => (typeof a.name === "string" ? [a.name] : [])) : [])];
+	}
 	/** A train the tower opened. The first note of a code is kept: a repeated open (the opener's ledger answers it) does not change what was read at the first. */
 	noteTrain(t: Omit<TrainRecord, "at">): void {
 		const key = `${t.project}/${t.code}`;
 		if (this.trains.has(key)) return;
 		this.trains.set(key, { ...t, heads: [...new Set(t.heads)].slice(0, 64), at: iso(this.d.now()) });
 		if (t.url && !this.remotes.has(t.project)) this.remotes.set(t.project, t.url);
-		if (t.appUrls && !this.owns.has(t.project)) this.owns.set(t.project, { ...t.appUrls });
+		for (const app of new Set([...(t.apps ?? []), ...Object.keys(t.appUrls ?? {})])) {
+			const k = `${t.project}/${app}`;
+			if (!this.kinds.has(k)) this.kinds.set(k, t.appUrls && Object.hasOwn(t.appUrls, app) ? { own: true, url: t.appUrls[app] ?? null } : { own: false, url: null });
+		}
 		for (const [app, url] of Object.entries(t.appUrls ?? {})) if (url && !this.remotes.has(`${t.project}/${app}`)) this.remotes.set(`${t.project}/${app}`, url);
 	}
 	trainOf(project: string, code: string): TrainRecord | undefined { return this.trains.get(`${project}/${code}`); }
@@ -602,9 +611,9 @@ export class CarBook {
 		const url = mine ? own ?? undefined : record.url, remote = remoteWord(mine ? app : undefined);
 		if (!url) throw refusal(`sb: the remote of ${of} was not read when train ${code} opened (the open names none or none that is safe to fetch from, or this server learned of the train after a restart), so ${label}'s commit cannot be checked`);
 		// R0802-F001: the app was the project's at the first open of this server's life and is a repository of its own now, or the other way round: neither remote has a first value of its kind to differ from, so the change itself is the refusal.
-		const then = this.owns.get(project);
-		if (then && Object.hasOwn(then, app) !== mine) {
-			const was = mine ? this.remotes.get(project) : then[app], word = (u: string | null | undefined, its: boolean) => `${its ? "its own repository's" : "the project's"}${u ? `, ${blankUser(u).slice(0, 120)}` : ""}`;
+		const then = this.kinds.get(`${project}/${app}`);
+		if (then && then.own !== mine) {
+			const was = mine ? this.remotes.get(project) : then.url, word = (u: string | null | undefined, its: boolean) => `${its ? "its own repository's" : "the project's"}${u ? `, ${blankUser(u).slice(0, 120)}` : ""}`;
 			throw refusal(`sb: the remote of app ${app.slice(0, 64)} of project ${project} changed between two opens of this server (${word(was, !mine)}, then ${word(url, mine)}); landed is not checked against a remote that moved`);
 		}
 		const first = this.remotes.get(mine ? `${project}/${app}` : project);

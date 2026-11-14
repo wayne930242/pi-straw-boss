@@ -46,7 +46,7 @@ const slipA = slip({ coordinator: "main-1", accept: "none" }), slipB = slip({ co
 
 /** A server whose tower opens tabs the way Herdr and pi would: the pi of a new tab joins under the name `--name` gave it, as a main, and as an integrator when that name is an integrator's. */
 async function started(over: { startedAt?: number } = {}) {
-	const s = await world.start({ towers: { ...world.options().options.towers, ...over, cars: { noteForward: (f: never) => void noted.push(f), noteTrain() {}, remoteOf: async () => undefined, appRemotesOf: async () => ({}) } as never } });
+	const s = await world.start({ towers: { ...world.options().options.towers, ...over, cars: { noteForward: (f: never) => void noted.push(f), noteTrain() {}, remoteOf: async () => undefined, appRemotesOf: async () => ({}), appNamesOf: async () => [] } as never } });
 	await s.handle.ready;
 	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
 	const orig = world.herdr.onAgentStart!;

@@ -248,7 +248,7 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 		return text === undefined ? undefined : (manifest = parseManifest(text, readText(ctx), manifestCheck(ctx)));
 	};
 	const appsDir = (ctx: Ctx) => ctx.cwd ?? process.cwd();
-	const isAncestorIn = (ctx: Ctx, app: string | undefined) => (older: string, newer: string): boolean => carRepos(appsDir(ctx), app).some((dir) => { try { git(dir, ["--no-replace-objects", "merge-base", "--is-ancestor", older, newer], { GIT_GRAFT_FILE: devNull }); return true; } catch { return false; } }); // replace refs off (GIT_NO_REPLACE_OBJECTS; RD0801-F002) and no graft file (R0802-F003): neither makes a commit an ancestor in the repository asked
+	const isAncestorIn = (ctx: Ctx, app: string | undefined) => (older: string, newer: string): boolean => carRepos(appsDir(ctx), app).some((dir) => { try { git(dir, ["--no-replace-objects", "-c", "core.commitGraph=false", "merge-base", "--is-ancestor", older, newer], { GIT_GRAFT_FILE: devNull }); return true; } catch { return false; } }); // replace refs off (GIT_NO_REPLACE_OBJECTS; RD0801-F002) and no graft file (R0802-F003): neither makes a commit an ancestor in the repository asked
 	const manifestCheck = (ctx: Ctx): ManifestCheck => ({ config: (app) => (app ? readAppIntegration(appsDir(ctx), app) : { ok: false, refusal: "sb: the manifest names no app, so integration.accept of the app is unknown" }), exists: (path) => existsSync(expand(path, ctx)), isAncestor: (older, newer, app) => isAncestorIn(ctx, app)(older, newer) });
 	const writer = (): Writer => {
 		const pid = env.pid ?? process.pid, said = startOf(pid), at = said ? startMs(said) : Number.NaN;

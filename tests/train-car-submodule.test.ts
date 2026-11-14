@@ -71,7 +71,7 @@ async function ridden(x: World, o: { app?: string; head?: string; repeated?: tru
 	return { landed, receipt };
 }
 /** An earlier train of this server's life, opened on what the tower's checkout says now. */
-const openedBefore = async (w: CarWorld) => w.book.noteTrain({ project: "acme", code: "2026-11-06-a", session: "sess-train-0", pane: "wA:p9", integrator: INTEG, base: "develop", heads: [], url: (await w.book.remoteOf(w.checkout))!, appUrls: await w.book.appRemotesOf(w.checkout) });
+const openedBefore = async (w: CarWorld) => w.book.noteTrain({ project: "acme", code: "2026-11-06-a", session: "sess-train-0", pane: "wA:p9", integrator: INTEG, base: "develop", heads: [], url: (await w.book.remoteOf(w.checkout))!, appUrls: await w.book.appRemotesOf(w.checkout), apps: await w.book.appNamesOf(w.checkout) });
 const states = (w: CarWorld) => w.book.read("acme").flatMap((v) => v.file.states.map((s) => s.state));
 
 test("received, for a submodule app: a head on the base's branch of the app's own remote is refused (a car lands once), and one that is not there is received; the project's remote is never asked for it", async () => {
@@ -267,3 +267,23 @@ for (const [by, strip] of [["the index (mode 160000)", (x: World) => rmSync(join
 		await assert.rejects(x.receive("T-51", x.project.pushed, "api"), (e: Error) => e.message === landedWord("T-51", x.project.pushed, "is on develop of the project's remote already"));
 	});
 }
+
+for (const [what, first] of [["added to apps.json after the first open", JSON.stringify({ apps: [{ name: "site", dir: ".", integration: { base: "develop" } }] })], ["apps.json missing at the first open", undefined]] as const) {
+	test(`R0802D-F001: an app the first open did not list (${what}) is pinned at the first open that lists it: landed is accepted`, async () => {
+		const x = world(), { w } = x, file = join(w.checkout, ".straw-boss", "apps.json"), full = readFileSync(file, "utf8");
+		if (first) writeFileSync(file, first); else rmSync(file);
+		await openedBefore(w);
+		writeFileSync(file, full);
+		const { landed } = await ridden(x);
+		git(x.webWork, "push", "-q", "origin", `${x.head}:develop`);
+		const reply = await landed(x.head);
+		assert.equal(reply?.ok, true, String(reply?.error));
+	});
+}
+
+test("R0802D-F004: a gitlink known by the index only, at a path git quotes (non-ASCII), is a submodule with no checkout", async () => {
+	const x = world(), { w } = x, path = "apps/網站";
+	writeFileSync(join(w.checkout, ".straw-boss", "apps.json"), JSON.stringify({ apps: [{ name: "zh", dir: path, integration: { base: "develop" } }] }));
+	git(w.checkout, "update-index", "--add", "--cacheinfo", `160000,${x.head},${path}`);
+	assert.deepEqual(await w.book.appRemotesOf(w.checkout), { zh: null });
+});
