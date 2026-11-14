@@ -125,6 +125,9 @@ function scriptRead(folder: Scripts, path: string): Launch | undefined {
 	}
 }
 
+/** Every launch script of a parent's artifacts folder `dir`, as watch-report's checks read them (src/server/watchreport.ts): the script's name and the child id, session file, and agent role it carries. */
+export const launchScripts = (dir: string, scriptDir = join(dir, "subagent-scripts"), names = listed(scriptDir).filter((f) => f.endsWith(".sh")), folder = scriptsOf(scriptDir, names)) => names.flatMap((script) => ((l) => (l ? [{ script, id: l.id, session: l.session, agent: l.agent }] : []))(scriptRead(folder, join(scriptDir, script))));
+
 // A child records its role in its session file at its first turn (childkind.ts): `straw-boss { agent }`, the first such entry wins. AK4 found it within the first 30 KB of every child session sampled, so
 // only the first 64 KB are read. A role, once found, is kept by path; a file read without one is read again only once it has grown, and never once 64 KB of it held none.
 const ROLE_BYTES = 64 * 1024;

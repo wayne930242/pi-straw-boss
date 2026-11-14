@@ -7,7 +7,7 @@
 
 import { restrictLabel } from "./link/text.ts";
 
-export type Kind = "call_tower" | "broadcast" | "tower_send" | "tower_reply" | "handoff" | "link_reply" | "wait_card" | "car_notice" | "board_clear" | "auto_notice" | "wait_parked";
+export type Kind = "call_tower" | "broadcast" | "tower_send" | "tower_reply" | "handoff" | "link_reply" | "wait_card" | "car_notice" | "board_clear" | "auto_notice" | "wait_parked" | "watch_report";
 /** The roles a joined session publishes in its pane's `sb_role` token, and so the roles a header names (`train`: the worker the tower opened for an integrator's manifest). */
 export const ROLE_WORDS = ["tower", "main", "member", "train"] as const;
 /** `session` is a pi session that did not join the net (a scope `all` broadcast reaches it). `head`: the tower of the head workspace. */

@@ -29,6 +29,7 @@ import { operateWire, type OperateWire } from "./operatewire.ts";
 import { createLog, tailLog } from "./log.ts";
 import { type Cars, carsReply, startCars } from "./carops.ts";
 import { procsReply, startProcs, type StartProcs } from "./procsops.ts";
+import { startWatchdog, type Watchdog, watchdogReply } from "./watchdogops.ts";
 import { startStall, type StartStall } from "./stallops.ts";
 import { reportWatch, startAutoWatch, type StartWatch } from "./watchops.ts";
 import { gateRun, type RunInfo } from "./rungate.ts";
@@ -186,7 +187,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const follower = slot.primary ? undefined : createAutoFollower({ dir: slot.stateDir, primary: { ...slot, primary: true, dir: slot.stateDir }, log: (event, facts) => log.line(event, facts), unpark: () => towers?.unpark(), tellHead: (text) => { const workspace = towers?.head.status()?.workspace; if (workspace) towers!.runs.notice(workspace, text, `auto:${now()}`); } });
 	// An unattended device has no boss at it (autoops.ts): the link holder says which this computer is.
 	const unattended = () => Boolean(link?.holder) && !link!.attended();
-	let cars: Cars | undefined; // the book of cars and the notice sender (carops.ts), assigned before the first request is taken
+	let dog: Watchdog | undefined, cars: Cars | undefined; // the watchdog routes (watchdogops.ts), assigned with the GUI host; the book of cars and the notice sender (carops.ts), assigned before the first request is taken
 	// The Allows the dialog hub gave (a gate or an approval closed with a yes) and the asks the towers made for their mains: both are held for the tower service (B6).
 	const allows = createAllows({ now }), asks = createAsks(slot, now);
 
@@ -434,7 +435,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		}
 		const followed = follower?.reply(request); if (followed) return followed;
 		const autoAnswer = autoReply(auto, request, unattended); if (autoAnswer) return autoAnswer;
-		const owners = procsReply(procs, request); if (owners) return owners;
+		const owners = procsReply(procs, request) ?? watchdogReply(dog, request); if (owners) return owners;
 		const carsAnswer = carsReply(cars, request); if (carsAnswer) return carsAnswer;
 		const tower = towerCommand(request);
 		if (tower) return tower;
@@ -619,6 +620,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		if (read.problem !== toldConfig) (toldConfig = read.problem ?? "", read.problem && recordError("config", read.problem));
 		return read;
 	};
+	dog = startWatchdog({ net: guiHost.watchNet(), env, now, client: () => (client?.isConnected() ? client : undefined), log: (event, facts) => log.line(event, facts), stops });
 	cars = startCars({ slot, run: cfg.run, now, startedAt, client: () => (client?.isConnected() ? client : undefined), startOf, log: (event, facts) => log.line(event, facts), stops });
 	towers = createTowers({
 		ally: allyPort(() => link), allows, asks, cars: cars.book,
