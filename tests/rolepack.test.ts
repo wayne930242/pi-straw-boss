@@ -103,11 +103,11 @@ test("each role names its brief fields and its way to the user (§9)", () => {
 	assert.match(text("visual-tester"), /show_doc/);
 	assert.match(text("visual-tester"), /playwriter session new/);
 	assert.match(text("visual-tester"), /login route/);
-	for (const word of ["`watch_read`", "`watch_report`", "`quietMs`", "`loadMax`", "time limit", "`stalled`", "`gone`", "`server`", "`caller_ping`"]) assert.ok(text("watchdog").includes(word), `watchdog: ${word}`);
+	for (const word of ["`watch_read`", "`watch_report`", "`quietMs`", "`loadMax`", "time limit", "`stalled`", "`gone`"]) assert.ok(text("watchdog").includes(word), `watchdog: ${word}`);
 });
 
-// D7: concise role prompts. A sentence said twice in a file says nothing the first did not; each file stays at or under the length it had at the pack's first release (0.79.0; the watchdog's at its own, phase 3, plus the line for a server that does not answer, RP3-F003).
-const PINNED: Record<string, number> = { "adversarial-reviewer": 154, planner: 88, reviewer: 132, scout: 80, "visual-tester": 54, watchdog: 18, worker: 38 };
+// D7: concise role prompts. A sentence said twice in a file says nothing the first did not; each file stays at or under the length it had at the pack's first release (0.79.0; the watchdog's at its own, phase 3; RP3-F003's caller_ping line was dropped by RD3-F001: caller_ping ends a non-persistent child).
+const PINNED: Record<string, number> = { "adversarial-reviewer": 154, planner: 88, reviewer: 132, scout: 80, "visual-tester": 54, watchdog: 17, worker: 38 };
 test("the D7 role checks: no repeated sentence within a file, and each file at or under its pinned length", () => {
 	for (const role of ROLES) {
 		const lines = text(role).trimEnd().split("\n").length;

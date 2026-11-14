@@ -310,7 +310,7 @@ test("watch_report sends the child's own session, id, and activity file with the
 	await assert.rejects(c.tool("watch_report", { text: "again" }), /^Error: rate: one report every 30 s$/);
 	await assert.rejects(c.tool("watch_report", { text: "lost" }), /^Error: not delivered: pi-intercom is not connected$/, "a report that did not go out says why");
 	await assert.rejects(c.tool("watch_report", { text: "old" }), /older than this watchdog/);
-	await assert.rejects(child({ deps: { call: async () => undefined } }).tool("watch_report", { text: "x" }), /did not answer in time, so the report may or may not have been delivered\. Call watch_report again with the same text: a `rate` or `same text` refusal means it went out/);
+	await assert.rejects(child({ deps: { call: async () => undefined } }).tool("watch_report", { text: "x" }), /did not answer in time, so the report may or may not have been delivered\. Call watch_report again with the same text: a `same text` refusal means it went out; on `rate`, call it again after 30 s/);
 	const schema = (c.registry.get("watch_report") as unknown as { parameters: { properties: Record<string, { minLength?: number; maxLength?: number }> } }).parameters.properties;
 	assert.deepEqual([Object.keys(schema), schema.text!.minLength, schema.text!.maxLength], [["text"], 1, 2000]);
 });
