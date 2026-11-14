@@ -12,7 +12,8 @@ import { until } from "./server-world.ts";
 
 // The watchdog end to end (docs/specs/2026-11-09-agent-kinds.md §10, Phase 3): a coordinator's dispatch passes the gate, the child's own module (src/watchdog.ts, loaded as pi loads it, through src/index.ts) asks the running sb server over
 // its real control socket (`callServer`: the record, the gate, the secret), the server's routes (src/server/watchread.ts, watchreport.ts) read the net of a fake Herdr and tie the child to its dispatcher by pi-herdr-agents' files, and the
-// report reaches the dispatcher through the broker under a `watch_report` header. Nothing between the tool call and the broker is replaced. The child has no pane (a Core-launched child, D3), so its role entry is the watchdog module's own.
+// report reaches the dispatcher through the broker under a `watch_report` header. Nothing between the tool call and the broker is replaced. The child of the first two tests has no pane (a Core-launched child, D3), so its role entry is the
+// watchdog module's own; the third loads the module with everything a pane's child loads.
 // No wait here is on the clock: each ends with the server's answer, with the tool's own `waitMs`, or when the server is seen to hold the request.
 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), "psb-dog-")));
@@ -164,4 +165,19 @@ test("a watchdog whose spawn passed a tool list without the watch tools tells it
 	assert.deepEqual([f.kind, f.from, f.id, f.reply], ["watch_report", "watchdog dog-ci", "kid3", "none"]);
 	assert.ok(c.reports()[0]!.message.endsWith("] sb: watchdog dog-ci cannot start: its tool list lacks watch_read/watch_report (a spawn tools override?)"), c.reports()[0]!.message);
 	assert.deepEqual(await dog.toolCall("bash"), { block: true, reason: WATCHDOG_BLOCK }, "and a turn pi starts anyway reaches no tool");
+});
+
+test("in a Herdr pane, loaded with the rest of the extension (the dialog bridge, auto mode, the trust relay), a watchdog child is held and has its two tools, and a worker child beside it is not held", async () => {
+	world = new World();
+	world.herdr.addTab("wA:t1", "work");
+	const call = (a: Agent, toolName: string) => a.fireResult("tool_call", { toolName, toolCallId: "c1", input: {} });
+	const dog = world.agent({ id: "kid4", pane: "wA:p1", tab: "wA:t1", env: { PI_SUBAGENT_ID: "kid4", PI_SUBAGENT_NAME: "dog-ci", PI_SUBAGENT_AGENT: "watchdog" } });
+	await dog.start();
+	assert.deepEqual([...dog.tools.keys()], ["watch_read", "watch_report"], "a child gets no tool of sb's but the watch tools");
+	assert.deepEqual(await call(dog, "bash"), { block: true, reason: WATCHDOG_BLOCK });
+	assert.deepEqual(await call(dog, "subagent"), { block: true, reason: WATCHDOG_BLOCK });
+	for (const name of ["read", "watch_read", "watch_report", "caller_ping"]) assert.equal(await call(dog, name), undefined, name);
+	const worker = world.agent({ id: "kid5", pane: "wA:p2", tab: "wA:t1", env: { PI_SUBAGENT_ID: "kid5", PI_SUBAGENT_NAME: "fix", PI_SUBAGENT_AGENT: "worker" } });
+	await worker.start();
+	for (const name of ["bash", "write", "read", "intercom"]) assert.equal(await call(worker, name), undefined, `a worker's ${name}`);
 });
