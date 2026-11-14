@@ -40,6 +40,7 @@ import { createTower } from "./tower.ts";
 import { registerTrainGuard, registerTrainSigns, type TrainGuard } from "./trainguard.ts";
 import { carLink, trainCarTool } from "./traincar.ts";
 import { registerTrust } from "./trust/ask.ts";
+import { registerWatchdog } from "./watchdog.ts";
 
 export type { Deps } from "./state.ts";
 
@@ -57,6 +58,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. Every session in Herdr relays its dialogs to the GUI (bridge.ts), subagents too: they ask
 		// questions as well. A pi-herdr-agents worker never joins: its parent represents it.
+		if (env.PI_SUBAGENT_ID) registerWatchdog(pi, env); // every child, a Core-launched one with no pane too: the watch tools and a watchdog's boundary (watchdog.ts), inert in any other child
 		if (!env.HERDR_PANE_ID) return;
 		const kit = createKit(pi, cfg), { s, guiDir } = kit;
 		// Closing is this session's own: the GUI asks its bridge, /boss close asks here, and only a session that runs this extension can (not a subagent).

@@ -36,7 +36,7 @@ test("runRolesCheck refuses a session started with --tools or --exclude-tools, a
 	}
 	const own = runRolesCheck("", { argv: ["node", "pi"], tools: () => ["read", "grep", "find", "ls", "bash", "write", "edit", "mcp", "subagent", "ask_user_question", "show_doc", "find_roots", "observe_ui", "act_ui", "inspect_ui", "search_ui", "expand_ui", "read_text", "wait_for", "launch_browser", "navigate_browser", "evaluate_browser"] });
 	assert.equal(own.ok, true, own.text);
-	assert.deepEqual(readRoles().map((r) => r.name).sort(), ["adversarial-reviewer", "planner", "reviewer", "scout", "visual-tester", "worker"]);
+	assert.deepEqual(readRoles().map((r) => r.name).sort(), ["adversarial-reviewer", "planner", "reviewer", "scout", "visual-tester", "watchdog", "worker"]);
 	const dir = mkdtempSync(join(tmpdir(), "roles-"));
 	writeFileSync(join(dir, "solo.md"), "---\nname: solo\ndescription: d\ntools: read, boss_rename\n---\nbody\n");
 	const other = runRolesCheck(dir, { argv: ["node", "pi"], tools: () => ["read", "boss_rename"] });
@@ -64,8 +64,8 @@ test("/boss roles-check runs in the session: it starts no process and answers wi
 test("sb's tools registered outside a child, less those in a child, equal PARENT_ONLY", async () => {
 	const child = world.agent({ id: "c", pane: "wA:p9", tab: "wA:t1", env: { PI_SUBAGENT_ID: "run-1" } });
 	await child.start();
-	assert.deepEqual([...child.tools.keys()], [], "a child registers no sb tool");
-	assert.ok(!child.tools.has("watch_read") && !child.tools.has("watch_report"), "the watch tools arrive with phase 3");
+	assert.deepEqual([...child.tools.keys()].sort(), ["watch_read", "watch_report"], "a child registers the two watch tools (§10) and no other sb tool");
+	assert.deepEqual([...child.tools.values()].map((t) => (t as { defaultActive?: boolean }).defaultActive), [false, false], "inactive unless --tools names them");
 	const seen = new Set<string>();
 	world.herdr.addTab("wA:t7", "🗼 tower", "wA:p7");
 	const tower = world.agent({ id: "tower-1", pane: "wA:p7", tab: "wA:t7", env: { STRAW_BOSS_ROLE: "tower" } });
@@ -74,6 +74,7 @@ test("sb's tools registered outside a child, less those in a child, equal PARENT
 	await main.start();
 	await main.promote();
 	for (const agent of [tower, main]) for (const name of agent.tools.keys()) seen.add(name);
+	assert.ok(!seen.has("watch_read") && !seen.has("watch_report"), "a top-level pane never has the watch tools (AK8-F006)");
 	// The tower runs register theirs (runmode.ts, runhead.ts): a local run and a head run (an ally run registers a subset of a local run's, runmode.ts ALLY_REGISTERED).
 	for (const kind of ["local", "head"] as const) {
 		const run = world.agent({ id: `run-${kind}`, pane: "wA:p3", tab: "wA:t1", deps: { stateDir: world.stateDir, runSide: { ask: async (request: { cmd?: string }) => request.cmd === "claim" ? { ok: true, token: "T", kind, run: "R", workspace: "wA", identity: "sb-tower-wa", label: "Alpha", brief: "B" } : { ok: true, waits: [], auto: false }, pollMs: 20, claimWaitMs: 300 } } });
