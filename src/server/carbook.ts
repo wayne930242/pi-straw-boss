@@ -3,7 +3,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, w
 import { hostname } from "node:os";
 import { isAbsolute, join, parse } from "node:path";
 import { carsDir, trainboardDir } from "../train/board.ts";
-import { appRepos, readApps } from "../train/appsconfig.ts";
+import { appLinkPaths, appRepos, gitmodulesPaths, readApps } from "../train/appsconfig.ts";
 import { addState, type CarFile, carFileName, type CarState, type CarView, coordinatorWord, emptyCar, endOf, headsIn, landedWord, type NoticeRecord, type Setter, type SlipFacts, slipsInText, type StateEntry, stateLine, type StateNotice, validateStateFields } from "../train/cars.ts";
 import { isCode, isName, isObject, SHA_RE } from "../train/spec.ts";
 import { writePrivate } from "../trainboard.ts";
@@ -232,6 +232,8 @@ export class CarBook {
 	private readonly trains = new Map<string, TrainRecord>();
 	/** The remote the first train of each project was opened on in this server's life: a later open that read another one is not trusted for `landed`. An app that is a repository of its own has a remote of its own, kept under `<project>/<app>` (a project's name holds no slash), so the two are never compared with each other. */
 	private readonly remotes = new Map<string, string>();
+	/** Which apps of each project were repositories of their own at the first open of this server's life that read them, with the remote read then (the whole `appUrls` of that open, null entries too; R0802-F001). An app that is one now and was not then, or was and is not now, is not trusted for `landed`: its remote has no first value to differ from. */
+	private readonly owns = new Map<string, Record<string, string | null>>();
 	/** When each failed `landed` check of a car (project/train/head) happened, within the window. */
 	private readonly failures = new Map<string, number[]>();
 	private chain: Promise<unknown> = Promise.resolve();
@@ -279,8 +281,26 @@ export class CarBook {
 		return undefined;
 	}
 	/**
+	 * Whether the project's own git says `app` is a submodule though no checkout of it is found (R0802-F002: `git submodule deinit`, a clone without `--recurse-submodules`): the app's `dir`, or a folder above it below the root, is a gitlink in the index of `checkout` (mode 160000) or a
+	 * `path` of its `.gitmodules`. Such an app's commits are not the project's, and no remote of its own can be read: it is its own repository with no remote, and the project's remote does not stand in.
+	 */
+	private async gitlink(checkout: string, app: string): Promise<boolean> {
+		const { root, paths } = appLinkPaths(checkout, app);
+		if (!paths.length) return false;
+		const named = new Set(gitmodulesPaths(root));
+		if (paths.some((p) => named.has(p))) return true;
+		for (const path of paths) {
+			// An entry of the index at exactly this path (a folder of the project has none), then its mode: one line, whatever the folder holds.
+			try {
+				await this.d.git(root, ["rev-parse", "--verify", "-q", `:0:${path}`]);
+				if ((await this.d.git(root, ["--literal-pathspecs", "ls-files", "-s", "--", path])).split("\n").some((line) => line.startsWith("160000 ") && line.split("\t")[1] === path)) return true;
+			} catch { /* no entry at this path */ }
+		}
+		return false;
+	}
+	/**
 	 * The remote of each app of the checkout's apps.json that is a repository of its own (`appRepos`: a git submodule of the project, whose commits are not on the project's remote; R0801-F004): `remote.origin.url` of the app's checkout inside the project's, read the way
-	 * `remoteOf` reads the project's, and null when that names none that is safe to fetch from. An app that is not listed has the project's commits and the project's remote. Read at the open with `remoteOf`, before the train exists.
+	 * `remoteOf` reads the project's, and null when that names none that is safe to fetch from, or when the app is a submodule with no checkout (`gitlink`). An app that is not listed has the project's commits and the project's remote. Read at the open with `remoteOf`, before the train exists.
 	 */
 	async appRemotesOf(checkout: string | undefined): Promise<Record<string, string | null>> {
 		if (!checkout || !isAbsolute(checkout)) return {};
@@ -289,6 +309,7 @@ export class CarBook {
 		for (const name of new Set(apps.ok ? apps.apps.flatMap((a) => (typeof a.name === "string" ? [a.name] : [])) : [])) {
 			const repos = appRepos(checkout, name);
 			if (repos.length) out.push([name, (await this.ownRemote(repos)) ?? null]);
+			else if (await this.gitlink(checkout, name)) out.push([name, null]);
 		}
 		return Object.fromEntries(out);
 	}
@@ -298,6 +319,7 @@ export class CarBook {
 		if (this.trains.has(key)) return;
 		this.trains.set(key, { ...t, heads: [...new Set(t.heads)].slice(0, 64), at: iso(this.d.now()) });
 		if (t.url && !this.remotes.has(t.project)) this.remotes.set(t.project, t.url);
+		if (t.appUrls && !this.owns.has(t.project)) this.owns.set(t.project, { ...t.appUrls });
 		for (const [app, url] of Object.entries(t.appUrls ?? {})) if (url && !this.remotes.has(`${t.project}/${app}`)) this.remotes.set(`${t.project}/${app}`, url);
 	}
 	trainOf(project: string, code: string): TrainRecord | undefined { return this.trains.get(`${project}/${code}`); }
@@ -579,6 +601,12 @@ export class CarBook {
 		const own = record.appUrls && Object.hasOwn(record.appUrls, app) ? record.appUrls[app] : undefined, mine = own !== undefined, of = mine ? `app ${app.slice(0, 64)} of project ${project}` : `project ${project}`;
 		const url = mine ? own ?? undefined : record.url, remote = remoteWord(mine ? app : undefined);
 		if (!url) throw refusal(`sb: the remote of ${of} was not read when train ${code} opened (the open names none or none that is safe to fetch from, or this server learned of the train after a restart), so ${label}'s commit cannot be checked`);
+		// R0802-F001: the app was the project's at the first open of this server's life and is a repository of its own now, or the other way round: neither remote has a first value of its kind to differ from, so the change itself is the refusal.
+		const then = this.owns.get(project);
+		if (then && Object.hasOwn(then, app) !== mine) {
+			const was = mine ? this.remotes.get(project) : then[app], word = (u: string | null | undefined, its: boolean) => `${its ? "its own repository's" : "the project's"}${u ? `, ${blankUser(u).slice(0, 120)}` : ""}`;
+			throw refusal(`sb: the remote of app ${app.slice(0, 64)} of project ${project} changed between two opens of this server (${word(was, !mine)}, then ${word(url, mine)}); landed is not checked against a remote that moved`);
+		}
 		const first = this.remotes.get(mine ? `${project}/${app}` : project);
 		if (first !== undefined && first !== url) throw refusal(`sb: the remote of ${of} changed between two opens of this server (${blankUser(first).slice(0, 120)}, then ${blankUser(url).slice(0, 120)}); landed is not checked against a remote that moved`);
 		await this.withBase({ project, url, base, key: code, state: "landed", remote }, async (git, tip) => {
@@ -631,13 +659,14 @@ export class CarBook {
 	}
 	/**
 	 * Where a car of `app` lands, read now and from nothing the book holds: the remote of the checkout of the session's workspace (its own folder when the workspace has none) and the app's `integration.base` in that checkout's apps.json. `own` says the app is a repository of its
-	 * own there (`appRepos`): the remote is then that of the app's checkout, and never the project's. `unread` when the remote cannot be read, `refused` (why) when the remote is read and the base is not there or not usable.
+	 * own there (`appRepos`, or a submodule with no checkout: `gitlink`): the remote is then that of the app's checkout, and never the project's. `unread` when the remote cannot be read, `refused` (why) when the remote is read and the base is not there or not usable.
 	 */
 	private async baseOf(look: Look, app: string): Promise<{ own: boolean } & ({ url: string; base: string } | { unread: true } | { refused: string })> {
 		let checkout: string | undefined;
 		try { checkout = await this.d.checkoutOf?.(look); } catch { checkout = undefined; }
 		checkout ??= look.cwd;
-		const repos = checkout && isAbsolute(checkout) ? appRepos(checkout, app) : [], own = repos.length > 0;
+		// A submodule with no checkout is still a repository of its own, with no remote to read (R0802-F002).
+		const repos = checkout && isAbsolute(checkout) ? appRepos(checkout, app) : [], own = repos.length > 0 || (!!checkout && isAbsolute(checkout) && (await this.gitlink(checkout, app)));
 		const url = own ? await this.ownRemote(repos) : await this.remoteOf(checkout);
 		if (!checkout || !url) return { own, unread: true };
 		const apps = readApps(checkout), entry = apps.ok ? apps.apps.find((a) => a.name === app) : undefined;

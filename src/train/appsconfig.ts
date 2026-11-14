@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { checkStages, parseAppAccept } from "./accept.ts";
 import { isName, isObject } from "./spec.ts";
 
@@ -123,7 +123,8 @@ function commonOf(gitdir: string): string {
  * The folders of the repository of `app` when the app is a repository of its own (a git submodule of the project, or a clone inside it), none when its commits are the project's (0.80.1, 0.80.2). They are the nearest folder holding a `.git`, from the app's `dir` of the
  * apps.json of `dir` up to below the root (R0801-F002: an app may be a folder inside a submodule), under the git root of `dir` and under the main checkout of that repository: in a linked worktree of the project the submodule may not be checked out, or keeps objects of
  * its own. No folder outside the project answers (R0801-F001, RD0801-F001, RD0801-F002): the folder is inside the root after realpath; the git dir its `.git` is or names (a folder, a `gitdir:` file, or a symlink to one), and the common dir that one names, are after realpath inside the checkout,
- * the main checkout, or the project's own git dir or common dir (a project that is itself a submodule, or was cloned with `--separate-git-dir`, keeps its submodules' git dirs there and not in its folder).
+ * the main checkout, or the project's own git dir or common dir (a project that is itself a submodule, or was cloned with `--separate-git-dir`, keeps its submodules' git dirs there and not in its folder). A `.git` that is no git dir (it holds no `HEAD`: git walks past it
+ * to the project's) and a git dir whose common dir is the project's own (a linked worktree of the project inside it: its commits and its remote are the project's) answer none (R0802-F004).
  */
 export function appRepos(dir: string, app: string | undefined): string[] {
 	const read = readApps(dir), at = read.ok ? read.apps.find((a) => a.name === app)?.dir : undefined;
@@ -134,14 +135,15 @@ export function appRepos(dir: string, app: string | undefined): string[] {
 		const folder = resolve(root, at);
 		if (!inside(folder, root)) return [];
 		try {
-			const real = realpathSync(root), allowed = [real, home, ...gitDirs(top)], within = (path: string) => allowed.some((a) => path === a || inside(path, a));
+			const real = realpathSync(root), mine = gitDirs(top), allowed = [real, home, ...mine], within = (path: string) => allowed.some((a) => path === a || inside(path, a));
 			for (let d = realpathSync(folder); inside(d, real); d = dirname(d)) {
 				const dot = join(d, ".git"), stat = statSync(dot, { throwIfNoEntry: false });
 				if (!stat) continue;
 				const named = stat.isDirectory() ? dot : stat.isFile() ? /^gitdir:\s*(.+)$/m.exec(readFileSync(dot, "utf8"))?.[1]?.trim() : undefined;
 				if (named === undefined) return [];
-				const gitdir = realpathSync(resolve(d, named));
-				return within(gitdir) && within(commonOf(gitdir)) ? [d] : [];
+				const gitdir = realpathSync(resolve(d, named)), common = commonOf(gitdir);
+				if (common === mine[1] || !existsSync(join(gitdir, "HEAD"))) return [];
+				return within(gitdir) && within(common) ? [d] : [];
 			}
 		} catch { /* a folder or a git dir that is not there answers nothing */ }
 		return [];
@@ -150,9 +152,26 @@ export function appRepos(dir: string, app: string | undefined): string[] {
 }
 
 /**
+ * Where the project's own git would hold a gitlink for `app` (R0802-F002): the git root of `dir`, and the app's `dir` of its apps.json with every folder above it below that root, as the index names them (relative, with `/`). None when the app names no folder inside the root, or the root itself.
+ * A submodule that is not checked out has no `.git` for `appRepos` to find, and the index (mode 160000) and `.gitmodules` still say that the app's commits are not the project's.
+ */
+export function appLinkPaths(dir: string, app: string | undefined): { root: string; paths: string[] } {
+	const read = readApps(dir), at = read.ok ? read.apps.find((a) => a.name === app)?.dir : undefined, root = resolve(gitRoot(dir)), paths: string[] = [];
+	if (typeof at !== "string") return { root, paths };
+	for (let d = resolve(root, at); d.startsWith(root + sep); d = dirname(d)) paths.push(relative(root, d).split(sep).join("/"));
+	return { root, paths };
+}
+/** The `path` of each submodule the `.gitmodules` of the checkout at `root` names; none when the file is not there or cannot be read. */
+export function gitmodulesPaths(root: string): string[] {
+	let text: string;
+	try { text = readFileSync(join(root, ".gitmodules"), "utf8"); } catch { return []; }
+	return [...text.matchAll(/^[ \t]*path[ \t]*=[ \t]*(.*?)[ \t]*$/gm)].map((m) => m[1]!.replace(/^"(.*)"$/, "$1").replace(/\/+$/, "")).filter(Boolean);
+}
+
+/**
  * The folders git is asked in about the commits of a car of `app` (0.80.1): the app's own repository when it is one (`appRepos`), else `fallback`, where git was asked before, because the app's commits are then the project's (its folder holds no `.git` of its own, is the
  * root, or leaves it; no app is named). Whether a delta's `on.head` is an ancestor of the car's head was asked in the project's root, where a submodule's commits do not exist. Which folder answers decides only whether git knows the two commits: a commit's ancestors are
- * fixed by its hash, and the callers ask with replace refs off.
+ * fixed by its hash, and the callers ask with replace refs off (`--no-replace-objects`) and no graft file (`GIT_GRAFT_FILE` is the null device; R0802-F003), the two ways a repository can give a commit other parents.
  */
 export function carRepos(dir: string, app: string | undefined, fallback = dir): string[] {
 	const found = appRepos(dir, app);

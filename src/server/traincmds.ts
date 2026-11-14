@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { availableParallelism, loadavg, userInfo } from "node:os";
+import { availableParallelism, devNull, loadavg, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { execFileSyncExe } from "../exe.mjs";
 import { checkAcceptRef, checkCar, checkEvidence, parseAppAccept, parseSlip } from "../train/accept.ts";
@@ -112,8 +112,8 @@ function check(flags: Record<string, string | true>, io: TrainIo): number {
 			const exists = io.exists ?? ((path: string) => existsSync(resolve(cwd, path)));
 			const isAncestor = io.isAncestor ?? ((older: string, newer: string) => repos.some((at) => {
 				try {
-					// Replace refs off, as the guard asks (RD0801-F002).
-					execFileSyncExe("git", ["--no-replace-objects", "merge-base", "--is-ancestor", older, newer], { cwd: at, stdio: "ignore", timeout: 15_000, killSignal: "SIGKILL" });
+					// Replace refs off and no graft file, as the guard asks (RD0801-F002, R0802-F003).
+					execFileSyncExe("git", ["--no-replace-objects", "merge-base", "--is-ancestor", older, newer], { cwd: at, stdio: "ignore", timeout: 15_000, killSignal: "SIGKILL", env: { ...process.env, GIT_GRAFT_FILE: devNull } });
 					return true;
 				} catch {
 					return false;

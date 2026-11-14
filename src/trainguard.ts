@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
-import { availableParallelism, homedir, loadavg } from "node:os";
+import { availableParallelism, devNull, homedir, loadavg } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { execFileSyncExe } from "./exe.mjs";
 import { startMs, writerAlive } from "./server/traingate.ts";
@@ -191,7 +191,7 @@ export interface GuardEnv {
 	node: string; cli: string; home: string;
 	tell(text: string, level?: "info" | "warning" | "error"): void;
 	/** Seams: git, the load, the age of a board's writer, this process's start (tests replace them). */
-	git?(cwd: string, args: string[]): string;
+	git?(cwd: string, args: string[], env?: Record<string, string>): string;
 	load?(): { now: number; cores: number } | undefined;
 	alive?(writer: Writer): boolean;
 	pid?: number;
@@ -204,9 +204,10 @@ export interface GuardEnv {
 export interface CarSource { read(project: string): Promise<CarView[]> }
 type Block = { block: true; reason: string } | undefined;
 const GIT_ENV = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_EXEC_PATH"];
-const realGit = (cwd: string, args: string[]): string => {
+const realGit = (cwd: string, args: string[], extra: Record<string, string> = {}): string => {
 	const env = { ...process.env };
 	for (const key of GIT_ENV) delete env[key];
+	Object.assign(env, extra);
 	return String(execFileSyncExe("git", ["-c", "core.fsmonitor=false", "-C", cwd, ...args], { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "pipe"], env })).trim();
 };
 const shortError = (error: unknown) => String((error as { stderr?: unknown }).stderr || (error as Error).message).trim().split("\n")[0]!.slice(0, 200);
@@ -248,7 +249,7 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 		return text === undefined ? undefined : (manifest = parseManifest(text, readText(ctx), manifestCheck(ctx)));
 	};
 	const appsDir = (ctx: Ctx) => ctx.cwd ?? process.cwd();
-	const isAncestorIn = (ctx: Ctx, app: string | undefined) => (older: string, newer: string): boolean => carRepos(appsDir(ctx), app).some((dir) => { try { git(dir, ["--no-replace-objects", "merge-base", "--is-ancestor", older, newer]); return true; } catch { return false; } }); // replace refs off (GIT_NO_REPLACE_OBJECTS; RD0801-F002): a graft in the repository asked makes no commit an ancestor
+	const isAncestorIn = (ctx: Ctx, app: string | undefined) => (older: string, newer: string): boolean => carRepos(appsDir(ctx), app).some((dir) => { try { git(dir, ["--no-replace-objects", "merge-base", "--is-ancestor", older, newer], { GIT_GRAFT_FILE: devNull }); return true; } catch { return false; } }); // replace refs off (GIT_NO_REPLACE_OBJECTS; RD0801-F002) and no graft file (R0802-F003): neither makes a commit an ancestor in the repository asked
 	const manifestCheck = (ctx: Ctx): ManifestCheck => ({ config: (app) => (app ? readAppIntegration(appsDir(ctx), app) : { ok: false, refusal: "sb: the manifest names no app, so integration.accept of the app is unknown" }), exists: (path) => existsSync(expand(path, ctx)), isAncestor: (older, newer, app) => isAncestorIn(ctx, app)(older, newer) });
 	const writer = (): Writer => {
 		const pid = env.pid ?? process.pid, said = startOf(pid), at = said ? startMs(said) : Number.NaN;

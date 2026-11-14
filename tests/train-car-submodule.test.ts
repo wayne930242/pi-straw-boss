@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { landedWord } from "../src/train/cars.ts";
@@ -58,18 +58,20 @@ function world() {
 type World = ReturnType<typeof world>;
 const onWeb = "the remote of app web's repository";
 
-/** The tower opens train CODE on a manifest of one car of `web`, through the opener's own note (`noteTrains`): the remotes are read from the tower's checkout before the train exists. Then the integrator receives the car and the train's shell registers. */
-async function ridden(x: World) {
-	const { w } = x, errors: string[] = [];
-	const manifest = `train:\n  project: acme\n  app: web\n  code: ${CODE}\n  base: develop\n\ncar: web | tickets: T-15 | branch: fix/t-15 | head: ${x.head}\n`;
-	const open = async () => ({ tab: "t", pane: "wA:p2", main: TRAIN, sender: INTEG, train: { project: "acme", code: CODE } });
+/** The tower opens train CODE on a manifest of one car of `app` (`web` and the app's head, unless given), through the opener's own note (`noteTrains`): the remotes are read from the tower's checkout before the train exists. Then the integrator receives the car and the train's shell registers. `repeated` is an open the opener's ledger answered. */
+async function ridden(x: World, o: { app?: string; head?: string; repeated?: true } = {}) {
+	const { w } = x, errors: string[] = [], app = o.app ?? "web", head = o.head ?? x.head;
+	const manifest = `train:\n  project: acme\n  app: ${app}\n  code: ${CODE}\n  base: develop\n\ncar: ${app} | tickets: T-15 | branch: fix/t-15 | head: ${head}\n`;
+	const open = async () => ({ tab: "t", pane: "wA:p2", main: TRAIN, sender: INTEG, train: { project: "acme", code: CODE }, ...(o.repeated ? { repeated: true } : {}) });
 	await noteTrains(open as never, { cars: w.book, checkout: async () => w.checkout, error: (what, message) => void errors.push(`${what}: ${message}`) })({ request: manifest, sender: INTEG, role: "train" });
 	assert.deepEqual(errors, []);
-	await x.receive("T-15", x.head);
+	const receipt = (await x.receive("T-15", head, app)).text;
 	const shell = (await w.call({ cmd: "cars-register", session: TRAIN, pid: 222, pane: "wA:p2", started: startOf(222) }))?.secret;
-	const landed = (commit: string): Promise<Reply> => w.call({ cmd: "cars-set", secret: shell, state: "landed", car: { app: "web", head: x.head }, fields: { version: "1", commit } });
-	return { landed };
+	const landed = (commit: string): Promise<Reply> => w.call({ cmd: "cars-set", secret: shell, state: "landed", car: { app, head }, fields: { version: "1", commit } });
+	return { landed, receipt };
 }
+/** An earlier train of this server's life, opened on what the tower's checkout says now. */
+const openedBefore = async (w: CarWorld) => w.book.noteTrain({ project: "acme", code: "2026-11-06-a", session: "sess-train-0", pane: "wA:p9", integrator: INTEG, base: "develop", heads: [], url: (await w.book.remoteOf(w.checkout))!, appUrls: await w.book.appRemotesOf(w.checkout) });
 const states = (w: CarWorld) => w.book.read("acme").flatMap((v) => v.file.states.map((s) => s.state));
 
 test("received, for a submodule app: a head on the base's branch of the app's own remote is refused (a car lands once), and one that is not there is received; the project's remote is never asked for it", async () => {
@@ -171,3 +173,97 @@ test("landed, for a submodule app whose checkout named no remote the server fetc
 	assert.match(String(reply?.error), /^sb: the remote of app web of project acme was not read when train \S+ opened \(.*\), so T-15's commit cannot be checked$/);
 	assert.deepEqual([x.asked("ls-remote"), x.asked("fetch")], [[], []]);
 });
+
+test("R0802-F005: a repeated open carries no remote of the app either: landed of a submodule app's car is refused with the open's word", async () => {
+	const x = world(), { w } = x, { landed } = await ridden(x, { repeated: true });
+	assert.deepEqual([w.book.trainOf("acme", CODE)?.url, w.book.trainOf("acme", CODE)?.appUrls], [undefined, undefined]);
+	git(x.webWork, "push", "-q", "origin", `${x.head}:develop`);
+	x.calls.length = 0;
+	const reply = await landed(x.head);
+	assert.equal(reply?.ok, false);
+	assert.match(String(reply?.error), /^sb: the remote of project acme was not read when train \S+ opened \(.*this server learned of the train after a restart\), so T-15's commit cannot be checked$/);
+	assert.deepEqual([x.asked("ls-remote"), x.asked("fetch")], [[], []]);
+});
+
+test("R0802-F005: received in a linked worktree of the project where the submodule is not checked out reads the app's remote from the main checkout's copy", async () => {
+	const x = world(), { w } = x, wt = join(w.root, "wt");
+	git(w.checkout, "commit", "-qm", "the web app, a submodule");
+	git(w.checkout, "worktree", "add", "-q", wt, "-b", "integ");
+	mkdirSync(join(wt, ".straw-boss"));
+	copyFileSync(join(w.checkout, ".straw-boss", "apps.json"), join(wt, ".straw-boss", "apps.json"));
+	assert.throws(() => readFileSync(join(wt, "apps", "web", ".git")), "the worktree has no checkout of the app");
+	(w.deps as { checkoutOf: () => Promise<string> }).checkoutOf = async () => wt;
+	await assert.rejects(x.receive("T-41", x.onBase), (e: Error) => e.message === landedWord("T-41", x.onBase, `is on develop of ${onWeb} already`));
+	assert.match((await x.receive("T-40", x.head)).text, /^Car T-40 is received\.(?!.*unchecked)/);
+	assert.deepEqual([...new Set(x.asked("ls-remote"))], [WEB_URL]);
+});
+
+test("R0802-F001: an app of the project's repository whose folder became a repository of its own after the first open of this server's life is not trusted for landed", async () => {
+	const x = world(), { w } = x, EVIL_URL = "https://git.example.test/evil.git", evilRemote = join(w.root, "evil.git"), evilWork = join(w.root, "evil-work"), folder = join(w.checkout, "services", "site");
+	writeFileSync(join(w.checkout, ".straw-boss", "apps.json"), JSON.stringify({ apps: [{ name: "web", dir: "apps/web", integration: { base: "develop" } }, { name: "site", dir: "services/site", integration: { base: "develop" } }] }));
+	mkdirSync(folder, { recursive: true });
+	await openedBefore(w);
+	assert.deepEqual(await w.book.appRemotesOf(w.checkout), { web: WEB_URL }, "at the first open `site` is the project's");
+	// Something that writes the tower's checkout makes the folder a clone of another repository.
+	execFileSync("git", ["init", "-q", "--bare", "-b", "develop", evilRemote]);
+	execFileSync("git", ["clone", "-q", evilRemote, evilWork], { stdio: "ignore" });
+	writeFileSync(join(evilWork, "one"), "one");
+	git(evilWork, "add", "one");
+	git(evilWork, "commit", "-qm", "one");
+	git(evilWork, "push", "-q", "origin", "HEAD:develop");
+	writeFileSync(join(evilWork, "two"), "two");
+	git(evilWork, "add", "two");
+	git(evilWork, "commit", "-qm", "two");
+	const head = git(evilWork, "rev-parse", "HEAD");
+	rmSync(folder, { recursive: true });
+	execFileSync("git", ["clone", "-q", evilRemote, folder], { stdio: "ignore" });
+	git(folder, "remote", "set-url", "origin", EVIL_URL);
+	w.rewrites.push([EVIL_URL, evilRemote]);
+	const { landed } = await ridden(x, { app: "site", head });
+	assert.deepEqual(w.book.trainOf("acme", CODE)?.appUrls, { web: WEB_URL, site: EVIL_URL });
+	git(evilWork, "push", "-q", "origin", `${head}:develop`);
+	x.calls.length = 0;
+	const reply = await landed(head);
+	assert.equal(reply?.ok, false, "a commit that is only on the new repository's base");
+	assert.equal(reply?.error, `sb: the remote of app site of project acme changed between two opens of this server (the project's, ${PUBLIC_URL}, then its own repository's, ${EVIL_URL}); landed is not checked against a remote that moved`);
+	assert.deepEqual([x.asked("ls-remote"), x.asked("fetch")], [[], []]);
+	// The app that did not change kind is checked as before.
+	assert.ok(!states(w).includes("landed"));
+});
+
+test("R0802-F001, the other way: an app that was a repository of its own at the first open and is the project's now is not trusted for landed", async () => {
+	const x = world(), { w } = x;
+	await openedBefore(w);
+	// The submodule is taken out of the checkout: no `.git`, no gitlink, no `.gitmodules` entry. The app's folder is a folder of the project now.
+	rmSync(join(x.web, ".git"));
+	git(w.checkout, "update-index", "--force-remove", "apps/web");
+	writeFileSync(join(w.checkout, ".gitmodules"), "");
+	assert.deepEqual(await w.book.appRemotesOf(w.checkout), {});
+	const { landed } = await ridden(x, { head: x.project.local });
+	const reply = await landed(x.project.pushed);
+	assert.equal(reply?.ok, false, "a commit of the project, on the project's base");
+	assert.equal(reply?.error, `sb: the remote of app web of project acme changed between two opens of this server (its own repository's, ${WEB_URL}, then the project's, ${PUBLIC_URL}); landed is not checked against a remote that moved`);
+});
+
+for (const [by, strip] of [["the index (mode 160000)", (x: World) => rmSync(join(x.w.checkout, ".gitmodules"))], [".gitmodules", (x: World) => { const text = readFileSync(join(x.w.checkout, ".gitmodules"), "utf8"); git(x.w.checkout, "rm", "-q", "--cached", "apps/web"); writeFileSync(join(x.w.checkout, ".gitmodules"), text); }]] as const) {
+	test(`R0802-F002: a submodule app with no checkout, known by ${by}, is a repository of its own with no remote: received unchecked, landed refused, the project's remote not asked`, async () => {
+		const x = world(), { w } = x;
+		writeFileSync(join(w.checkout, ".straw-boss", "apps.json"), JSON.stringify({ apps: [{ name: "web", dir: "apps/web", integration: { base: "develop" } }, { name: "pkg", dir: "apps/web/packages/ui", integration: { base: "develop" } }, { name: "site", dir: ".", integration: { base: "develop" } }, { name: "api", dir: "services/api", integration: { base: "develop" } }] }));
+		mkdirSync(join(w.checkout, "services", "api"), { recursive: true });
+		git(w.checkout, "submodule", "deinit", "-q", "-f", "apps/web");
+		assert.throws(() => readFileSync(join(x.web, ".git")), "the app has no checkout");
+		strip(x);
+		assert.deepEqual(await w.book.appRemotesOf(w.checkout), { web: null, pkg: null });
+		// The project's base holds this commit: checked against the project's remote, the receipt was let in unsaid and `landed` passed.
+		const { landed, receipt } = await ridden(x, { head: x.project.local });
+		assert.match(receipt, /Received unchecked: the remote of app web's own repository in the integrator's workspace checkout could not be read, so whether head [0-9a-f]{12} is on the base already was not checked\./);
+		assert.ok(w.logs.some((l) => l.startsWith("cars-received-unchecked") && l.includes('"reason":"unread"')));
+		const reply = await landed(x.project.pushed);
+		assert.equal(reply?.ok, false);
+		assert.match(String(reply?.error), /^sb: the remote of app web of project acme was not read when train \S+ opened \(.*\), so T-15's commit cannot be checked$/);
+		assert.match((await x.receive("T-50", x.stray, "pkg")).text, /Received unchecked: the remote of app pkg's own repository/);
+		assert.deepEqual([x.asked("ls-remote"), x.asked("fetch")], [[], []]);
+		// Apps of the project's own repository beside it are checked against the project's remote, as before.
+		await assert.rejects(x.receive("T-51", x.project.pushed, "api"), (e: Error) => e.message === landedWord("T-51", x.project.pushed, "is on develop of the project's remote already"));
+	});
+}

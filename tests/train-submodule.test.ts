@@ -197,9 +197,44 @@ test("RD0801-F002: a `.git` that is a symlink out of the project, a git dir outs
 	writeFileSync(join(r.root, "away", "HEAD"), "ref: refs/heads/main\n");
 	writeFileSync(join(r.root, "away", "commondir"), `${join(r.cwd, ".git")}\n`);
 	writeFileSync(join(app("away"), ".git"), `gitdir: ${join(r.root, "away")}\n`);
-	gitDirOf("held", "../.git");
-	writeFileSync(join(app("kept"), ".git"), "gitdir: ../../held\n");
 	git(app("clone"), "init", "-q");
+	gitDirOf("held", "../apps/clone/.git");
+	writeFileSync(join(app("kept"), ".git"), "gitdir: ../../held\n");
 	for (const name of ["dotlink", "chain", "away"]) assert.deepEqual(carRepos(r.cwd, name, "/before"), ["/before"], name);
 	for (const name of ["kept", "clone"]) assert.deepEqual(carRepos(r.cwd, name, "/before"), [join(r.cwd, "apps", name)], name);
+});
+
+test("R0802-F004: a `.git` that is no git dir, and a git dir whose common dir is the project's own (a linked worktree of the project inside it), are no repository of the app's own: its commits and its remote are the project's", () => {
+	const named = (name: string, dir = `apps/${name}`) => ({ name, dir, integration: { base: "develop" } });
+	const r = rig({ main: true, train: false, apps: JSON.stringify({ apps: [named("junk"), named("nest", "apps/nestwt/sub"), named("ptr")] }) });
+	git(r.cwd, "init", "-q", "-b", "main");
+	git(r.cwd, "commit", "-q", "--allow-empty", "-m", "project");
+	// An empty `.git` folder: git walks past it and answers with the project's repository.
+	mkdirSync(join(r.cwd, "apps", "junk", ".git"), { recursive: true });
+	git(r.cwd, "worktree", "add", "-q", join(r.cwd, "apps", "nestwt"), "-b", "nested");
+	mkdirSync(join(r.cwd, "apps", "nestwt", "sub"));
+	assert.match(readFileSync(join(r.cwd, "apps", "nestwt", ".git"), "utf8"), /^gitdir: .*\/\.git\/worktrees\/nestwt\s*$/);
+	// A git dir of plain files with a `HEAD`, whose `commondir` names the project's own.
+	mkdirSync(join(r.cwd, "held"));
+	writeFileSync(join(r.cwd, "held", "HEAD"), "ref: refs/heads/main\n");
+	writeFileSync(join(r.cwd, "held", "commondir"), "../.git\n");
+	mkdirSync(join(r.cwd, "apps", "ptr"));
+	writeFileSync(join(r.cwd, "apps", "ptr", ".git"), "gitdir: ../../held\n");
+	for (const name of ["junk", "nest", "ptr"]) assert.deepEqual(carRepos(r.cwd, name, "/before"), ["/before"], name);
+});
+
+test("R0802-F003: a graft file in the app's repository does not make a commit an ancestor: the guard and train check ask git with no graft file", async () => {
+	const r = rig({ main: true, train: false, apps: APPS }), p = project(r);
+	// `info/grafts` gives the car's head the side commit as a second parent; `--no-replace-objects` does not turn it off.
+	const gitDir = git(p.web.dir, "rev-parse", "--absolute-git-dir");
+	mkdirSync(join(gitDir, "info"), { recursive: true });
+	writeFileSync(join(gitDir, "info", "grafts"), `${p.web.head} ${p.web.base} ${p.web.side}\n`);
+	assert.doesNotThrow(() => git(p.web.dir, "--no-replace-objects", "merge-base", "--is-ancestor", p.web.side, p.web.head), "the graft is in place");
+	const side = evidenceFile(r, "side", "web", p.web.head, p.web.side);
+	await refused(r.create(trainTodo("web", p.web.head, side)), /^sb: evidence entry 1: on\.head is not the car's head$/);
+	const slip = join(r.root, "slip.txt"), out: string[] = [];
+	writeFileSync(slip, slipBlock({ head: p.web.head, accept: side }));
+	assert.equal(await run(["train", "check", "--accept", side, "--slip", slip], { out: (t) => out.push(t), err: () => {}, stateDir: r.stateDir, train: { cwd: r.cwd } }), 2);
+	assert.deepEqual((JSON.parse(out.join("")) as { refusals: string[] }).refusals, ["sb: evidence entry 1: on.head is not the car's head"]);
+	await ok(r.create(trainTodo("web", p.web.head, evidenceFile(r, "good", "web", p.web.head, p.web.base))));
 });
