@@ -3,7 +3,7 @@ import { availableParallelism, loadavg, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { execFileSyncExe } from "../exe.mjs";
 import { checkAcceptRef, checkCar, checkEvidence, parseAppAccept, parseSlip } from "../train/accept.ts";
-import { appsFile, projectAppsDir, readAppIntegration, repoRoot } from "../train/appsconfig.ts";
+import { appsFile, carRepos, projectAppsDir, readAppIntegration, repoRoot } from "../train/appsconfig.ts";
 import { type Board, boardPath, boardState, MAX_TRAINS, trainboardDir, factsOf, MAX_CLEARS, readBoard, readTrainboards, type Writer, writeBoard } from "../train/board.ts";
 import { isName, isObject, validateStep } from "../train/spec.ts";
 import { noticeStatus, stateLine, type Attempt } from "../train/cars.ts";
@@ -26,7 +26,7 @@ export interface TrainIo {
 	now?: () => number;
 	alive?: (writer: Writer) => boolean;
 	user?: string;
-	/** `git merge-base --is-ancestor` in `cwd`, and whether a file is there: replaced by tests. */
+	/** `git merge-base --is-ancestor` in `cwd` (in the app's own repository when the app is a submodule of the project), and whether a file is there: replaced by tests. */
 	isAncestor?: (older: string, newer: string) => boolean;
 	exists?: (path: string) => boolean;
 	load?: () => { now: number; cores: number } | undefined;
@@ -95,7 +95,8 @@ function check(flags: Record<string, string | true>, io: TrainIo): number {
 		// What the app requires is the file's (TB-F001): the project's apps.json, for the app `--app` names, else the slip's `car:` (or `app:`), else the evidence's `car.app`. `--app-accept` can only add to it. The file is this folder's, else
 		// that of the repository's main checkout (a coordinator's linked worktree may have none, and the tower reads the project's). When neither has one, a named app could not be checked, and the check says so instead of ok (0.77.3);
 		// with no app named, the flag alone is checked.
-		let required: string[] = setting.ok ? setting.accept : [];
+		// Where git answers about the car's commits: `cwd`, or the app's own repository when the app is one (a submodule of the project, `carRepos`; 0.80.1).
+		let required: string[] = setting.ok ? setting.accept : [], repos = [cwd];
 		if (!accept.refusal && !slip?.refusal && setting.ok) {
 			const app = typeof flags.app === "string" ? flags.app : slip ? parseSlip(slip.text!).fields.car : evidenceApp(accept.text);
 			const dir = projectAppsDir(cwd);
@@ -103,20 +104,20 @@ function check(flags: Record<string, string | true>, io: TrainIo): number {
 				if (app) refusals.push(`sb: app ${app} could not be checked: ${noAppsWhere(cwd)}; run train check in the project's checkout`);
 			} else {
 				const found = app ? readAppIntegration(dir, app) : { ok: false as const, refusal: "sb: the project has an apps.json, so name the app to check against: --app <name>" };
-				if (found.ok) required = [...new Set([...required, ...found.accept])];
+				if (found.ok) (required = [...new Set([...required, ...found.accept])], repos = carRepos(dir, app, cwd));
 				else refusals.push(found.refusal);
 			}
 		}
 		if (!accept.refusal && !slip?.refusal && setting.ok && !refusals.length) {
 			const exists = io.exists ?? ((path: string) => existsSync(resolve(cwd, path)));
-			const isAncestor = io.isAncestor ?? ((older: string, newer: string) => {
+			const isAncestor = io.isAncestor ?? ((older: string, newer: string) => repos.some((at) => {
 				try {
-					execFileSyncExe("git", ["merge-base", "--is-ancestor", older, newer], { cwd, stdio: "ignore", timeout: 15_000, killSignal: "SIGKILL" });
+					execFileSyncExe("git", ["merge-base", "--is-ancestor", older, newer], { cwd: at, stdio: "ignore", timeout: 15_000, killSignal: "SIGKILL" });
 					return true;
 				} catch {
 					return false;
 				}
-			});
+			}));
 			const options = { appAccept: required, exists, isAncestor };
 			refusals.push(...(slip ? checkCar(slip.text!, accept.text, options) : none ? checkAcceptRef("none", required) : checkEvidence(accept.text!, options)));
 		}

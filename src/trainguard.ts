@@ -9,7 +9,7 @@ import { startOf } from "./startof.ts";
 import { snapshotOfBranch } from "./todo.ts";
 import { type Acceptance, acceptanceOf, checkAcceptRef, checkCar, checkEvidence, type EvidenceOptions, parseSlip, slipBlocks } from "./train/accept.ts";
 import { checkContract, type Contract, type SkillCommand } from "./train/contract.ts";
-import { type AppIntegration, readAppIntegration } from "./train/appsconfig.ts";
+import { type AppIntegration, carRepos, readAppIntegration } from "./train/appsconfig.ts";
 import { type BoardRead, type BoardStep, boardPath, capBoard, type CarRow, factsOf, readBoard, readTrainboards, validateTrainTodo, type Writer, writeBoard, writeYard } from "./train/board.ts";
 import { type CarView, coordinatorWord, forwardsFor, forwardsOf, noticeSatisfied, receivedTold, type TerminalState } from "./train/cars.ts";
 import { fieldsOf } from "./headerfields.ts";
@@ -71,7 +71,7 @@ export function manifestText(entries: readonly unknown[]): string | undefined {
 export { slipBlocks };
 
 /** What the manifest check needs besides the text: the app's `integration` from apps.json, and the files and git of the train's own folder. */
-export interface ManifestCheck { config(app: string | undefined): AppIntegration; exists(path: string): boolean; isAncestor(older: string, newer: string): boolean }
+export interface ManifestCheck { config(app: string | undefined): AppIntegration; exists(path: string): boolean; /** `app` is the manifest's: git is asked in that app's own repository when it is one (a submodule). */ isAncestor(older: string, newer: string, app?: string): boolean }
 /** The refusals of a slip against what its app requires (TB-F001): the kinds the evidence lacks, `accept: none` where something is required, and an evidence file that did not read. */
 const OWED = /^sb: (acceptance evidence lacks |accept: none is allowed only |accept: .* names an evidence file, but it was not read)/;
 
@@ -87,7 +87,7 @@ export function parseManifest(text: string, read: (path: string) => string | und
 		const owed = config.ok ? (appAccept.length ? refusals.find((r) => OWED.test(r)) : undefined) : config.refusal;
 		const word = asked ?? (owed ? `sb: car ${ticket}: ${owed.replace(/^sb: /, "")}` : undefined);
 		const head = /^[0-9a-f]{40}$/.test(parsed.fields.head ?? "") ? parsed.fields.head! : undefined;
-		const shown: Acceptance = config.ok ? acceptanceOf(accept ?? "none", evidence, { appAccept, ...(head ? { head } : {}), exists: check.exists, isAncestor: check.isAncestor }) : { unverified: true };
+		const shown: Acceptance = config.ok ? acceptanceOf(accept ?? "none", evidence, { appAccept, ...(head ? { head } : {}), exists: check.exists, isAncestor: (older, newer) => check.isAncestor(older, newer, app) }) : { unverified: true };
 		const f = parsed.fields, row: CarRow = { tickets: parsed.tickets, branch: f.branch ?? "", head: head ?? "", coordinator: f.coordinator ?? "", departs: f.departs ?? "next", accept: accept ?? "none", ...shown };
 		cars.push({ ticket, slip, ...(head ? { head } : {}), ...(evidence ? { evidence } : {}), ...(row.tickets.length && row.branch && row.head && row.coordinator ? { row } : {}) });
 		if (word) leftOut.push({ ticket, head: head ?? "", word });
@@ -248,8 +248,8 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 		return text === undefined ? undefined : (manifest = parseManifest(text, readText(ctx), manifestCheck(ctx)));
 	};
 	const appsDir = (ctx: Ctx) => ctx.cwd ?? process.cwd();
-	const isAncestorIn = (ctx: Ctx) => (older: string, newer: string): boolean => { try { git(appsDir(ctx), ["merge-base", "--is-ancestor", older, newer]); return true; } catch { return false; } };
-	const manifestCheck = (ctx: Ctx): ManifestCheck => ({ config: (app) => (app ? readAppIntegration(appsDir(ctx), app) : { ok: false, refusal: "sb: the manifest names no app, so integration.accept of the app is unknown" }), exists: (path) => existsSync(expand(path, ctx)), isAncestor: isAncestorIn(ctx) });
+	const isAncestorIn = (ctx: Ctx, app: string | undefined) => (older: string, newer: string): boolean => carRepos(appsDir(ctx), app).some((dir) => { try { git(dir, ["merge-base", "--is-ancestor", older, newer]); return true; } catch { return false; } });
+	const manifestCheck = (ctx: Ctx): ManifestCheck => ({ config: (app) => (app ? readAppIntegration(appsDir(ctx), app) : { ok: false, refusal: "sb: the manifest names no app, so integration.accept of the app is unknown" }), exists: (path) => existsSync(expand(path, ctx)), isAncestor: (older, newer, app) => isAncestorIn(ctx, app)(older, newer) });
 	const writer = (): Writer => {
 		const pid = env.pid ?? process.pid, said = startOf(pid), at = said ? startMs(said) : Number.NaN;
 		return { session: env.session().id, ...(env.session().pane ? { pane: env.session().pane } : {}), pid, started: Number.isNaN(at) ? created : new Date(at).toISOString() };
@@ -418,7 +418,7 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 			if (!refusals.length && isObject(sb) && isObject(sb.spec)) {
 				// What the app requires is read from its apps.json here and in the train's manifest check, never from a flag a model passes (TB-F001); a file that cannot be read refuses (TB-F002 too: stages that list uat).
 				const cars = (sb.spec.cars as CarRow[]) ?? [], config = readAppIntegration(appsDir(ctx), String(sb.app));
-				refusals.push(...(config.ok ? [...claimedRefusals(cars), ...evidenceRefusals(cars, ctx, config.accept)] : [config.refusal]));
+				refusals.push(...(config.ok ? [...claimedRefusals(cars), ...evidenceRefusals(cars, ctx, String(sb.app), config.accept)] : [config.refusal]));
 			}
 			// The manifest goes to the tower only when every car is received, its slip came from the coordinator the tower's forward names, and sb has told that coordinator (§5.5, §7.4).
 			if (!refusals.length && effect.status === "in_progress" && rows.find((r) => r.id === effect.id)?.status !== "in_progress" && isObject(sb) && isObject(sb.spec)) {
@@ -445,13 +445,13 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 	/** A car's acceptance is what the checked evidence shows; the yard states it from there (TB-F003), so a todo that carries a word of its own about it is refused. */
 	const claimedRefusals = (cars: readonly CarRow[]): string[] => cars.flatMap((car) => (car.accepted !== undefined || car.unverified !== undefined ? [`sb: car ${car.tickets[0]}: accepted is set by Straw Boss from the checked evidence; leave accepted and unverified out of the car`] : []));
 	/** `train check --accept` on each car's evidence, with the kinds the app requires: the evidence is complete for what the file says and for what the app asks, names the car's head, and asks the train for nothing (§5.2, §5.4). */
-	function evidenceRefusals(cars: readonly CarRow[], ctx: Ctx, appAccept: readonly string[]): string[] {
+	function evidenceRefusals(cars: readonly CarRow[], ctx: Ctx, app: string, appAccept: readonly string[]): string[] {
 		const out: string[] = [], read = readText(ctx);
 		for (const car of cars) {
 			if (car.accept.trim().toLowerCase() === "none") { out.push(...checkAcceptRef("none", appAccept).map((r) => `sb: car ${car.tickets[0]}: ${r.replace(/^sb: /, "")}`)); continue; }
 			const text = read(car.accept);
 			if (text === undefined) { out.push(`sb: car ${car.tickets[0]}: cannot read the evidence file ${car.accept}`); continue; }
-			const options: EvidenceOptions = { appAccept, head: car.head, exists: (path) => existsSync(expand(path, ctx)), isAncestor: isAncestorIn(ctx) };
+			const options: EvidenceOptions = { appAccept, head: car.head, exists: (path) => existsSync(expand(path, ctx)), isAncestor: isAncestorIn(ctx, app) };
 			out.push(...checkEvidence(text, options));
 		}
 		return out;
@@ -463,7 +463,7 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 			if (!configs.has(app)) configs.set(app, readAppIntegration(appsDir(ctx), app));
 			const config = configs.get(app)!;
 			if (!config.ok) return { unverified: true };
-			return acceptanceOf(car.accept, car.accept.trim().toLowerCase() === "none" ? undefined : read(car.accept), { appAccept: config.accept, head: car.head, exists: (path) => existsSync(expand(path, ctx)), isAncestor: isAncestorIn(ctx) });
+			return acceptanceOf(car.accept, car.accept.trim().toLowerCase() === "none" ? undefined : read(car.accept), { appAccept: config.accept, head: car.head, exists: (path) => existsSync(expand(path, ctx)), isAncestor: isAncestorIn(ctx, app) });
 		};
 	}
 

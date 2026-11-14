@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { checkStages, parseAppAccept } from "./accept.ts";
 import { isName, isObject } from "./spec.ts";
 
@@ -104,6 +104,24 @@ export function repoRoot(dir: string): string {
 		const gitdir = resolve(root, /^gitdir:\s*(.+)$/m.exec(readFileSync(dot, "utf8"))![1]!.trim()), common = resolve(gitdir, readFileSync(join(gitdir, "commondir"), "utf8").trim());
 		return real(basename(common) === ".git" ? dirname(common) : common);
 	} catch { return real(root); }
+}
+
+/**
+ * The folders git is asked in about the commits of a car of `app` (0.80.1). When the app is a repository of its own (a git submodule of the project, or a clone inside it), they are the app's `dir` of the apps.json of `dir`, under the git root of `dir` and under the
+ * main checkout of that repository: in a linked worktree of the project the submodule may not be checked out, or keeps objects of its own. Otherwise (the app's folder holds no `.git` of its own, is the root, or leaves it; no app is named) the app's commits are the
+ * project's, and the one folder is `fallback`, where git was asked before. Whether a delta's `on.head` is an ancestor of the car's head was asked in the project's root, where a submodule's commits do not exist. Which folder answers decides only whether git knows
+ * the two commits: a commit's ancestors are fixed by its hash.
+ */
+export function carRepos(dir: string, app: string | undefined, fallback = dir): string[] {
+	const read = readApps(dir), at = read.ok ? read.apps.find((a) => a.name === app)?.dir : undefined;
+	if (typeof at !== "string") return [fallback];
+	const own = (root: string): string[] => {
+		const folder = resolve(root, at);
+		if (!folder.startsWith(root + sep) || !existsSync(join(folder, ".git"))) return [];
+		try { return [realpathSync(folder)]; } catch { return []; }
+	};
+	const found = [...new Set([...own(resolve(gitRoot(dir))), ...own(repoRoot(dir))])];
+	return found.length ? found : [fallback];
 }
 
 export type CheckoutProject = { ok: true; project: string; /** Where the name is from, in words. */ from: string; file: string } | { ok: false; refusal: string };
