@@ -113,7 +113,7 @@ export interface TowersOptions {
 	/** The asks the towers made for their mains. */
 	asks?: Asks;
 	/** The car book (carbook.ts): a forward the tower stamps and a train it opens are noted there, for the checks of the server to rest on. */
-	cars?: Pick<CarBook, "noteForward" | "noteTrain" | "remoteOf">;
+	cars?: Pick<CarBook, "noteForward" | "noteTrain" | "remoteOf" | "appRemotesOf">;
 	/** Auto mode (automode.ts): the head's `boss_auto` acts through it. Absent on a secondary server. */
 	auto?: Pick<AutoMode, "view" | "decided" | "bossAuto" | "onSwitch">;
 	/** Hands the service to a test as soon as it is built. */

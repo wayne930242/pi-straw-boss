@@ -916,7 +916,7 @@ stateDiagram-v2
     dropped --> received: 同一個 head 再送一次
 ```
 
-車廂的一輪以 `returned`、`dropped` 或 `landed` 結束。被退回或被丟下的車廂，如果協調者把車廂單改好、用同一個 head 再送一次，等塔台轉發了那張車廂單，車廂就開始新的一輪：整合員像處理新車廂一樣接收或退回它，通知也會再送出。已經 landed 的車廂沒有新的一輪，因為一節車廂只落地一次：head 已經在專案 remote 的 base 分支上時，`received` 會被拒絕，整合員用那句拒絕訊息把車廂退回，協調者因此會被告知。
+車廂的一輪以 `returned`、`dropped` 或 `landed` 結束。被退回或被丟下的車廂，如果協調者把車廂單改好、用同一個 head 再送一次，等塔台轉發了那張車廂單，車廂就開始新的一輪：整合員像處理新車廂一樣接收或退回它，通知也會再送出。已經 landed 的車廂沒有新的一輪，因為一節車廂只落地一次：head 已經在專案 remote 的 base 分支上時（app 是專案的 git submodule 時，看的是 app 自己的 remote），`received` 會被拒絕，整合員用那句拒絕訊息把車廂退回，協調者因此會被告知。
 
 [`prompts/apps-config.md`](../prompts/apps-config.md) 放 `apps.json` 的欄位，[`prompts/integrator.md`](../prompts/integrator.md) 放整合員的角色，設計紀錄是 [`docs/specs/2026-10-30-merge-train.md`](specs/2026-10-30-merge-train.md)、[`docs/specs/2026-11-05-train-stages.md`](specs/2026-11-05-train-stages.md) 和 [`docs/specs/2026-11-06-seam-bindings.md`](specs/2026-11-06-seam-bindings.md)（它把舊整合員 prompt 的每一行，對應到它在 skill 裡的位置）。
 
@@ -1049,7 +1049,7 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 整合員的等待放在它自己 pi 行程的記憶體裡（`src/carwait.ts`），不從磁碟讀任何東西。它每 15 秒問一次 server 的帳本，直到 `returned` 通知送達或升級。server 已經不再持有那節車廂、通知過了一天仍未送達，或 session 在還等著的時候結束（reload 會保留等待），它就把通知交給塔台；塔台沒有收下時，30 秒後再問一次，最多十次。被強制終止的 pi 行程什麼也交不出去。
 
-新的一輪需要一則在車廂結束之後才由塔台轉發的車廂單，所以車廂被退回時所依據的那張車廂單不會得到第二次回答（`car <ticket> is already returned`）。server 把前一輪和新的一輪一起留在記憶體裡：前一輪的通知照樣送出，丟下那節車廂的火車也仍然讀得到自己設定的狀態；磁碟上的車廂檔顯示最新的一輪。在 `received` 時，server 對車廂的 head 執行 `landed` 的 git 檢查，對象是整合員工作區 checkout 的 remote，以及那個 checkout 的 `apps.json` 裡該 app 的 `integration.base`：head 已在那個分支上就拒絕，remote 讀不到的專案不經檢查就接收（工具會說明；開啟火車時在那裡也讀不到 remote，所以這種火車不能設定 `landed`），remote 讀得到、但 app 沒有可用的 `integration.base` 時拒絕接收，remote 連不上或無法認證時（`ls-remote` 或 fetch 因認證失敗，包括金鑰或主機金鑰被拒、HTTP 401 或 403；因連線失敗，包括 DNS、連線被拒或重設、TLS 錯誤、HTTP 5xx、代理伺服器的 407，以及 server 自己的 60 秒逾時；或因 remote 說儲存庫不存在而失敗，其他的「not found」不算，所以缺少 `ssh` 會被拒絕；server 的 git 沒有 credential helper），不經檢查就接收並註明原因，URL 裡的 userinfo 會被遮掉，其他 git 失敗則拒絕接收，server 的 mirror 被別的東西寫過之後 fetch 失敗也一樣拒絕。這項檢查在 server 逐一處理設定之前執行，所以緩慢的 fetch 不會拖住火車的 `landed`。以 squash 或 rebase 合併的車廂，head 不在 base 上，這項檢查找不到它。
+新的一輪需要一則在車廂結束之後才由塔台轉發的車廂單，所以車廂被退回時所依據的那張車廂單不會得到第二次回答（`car <ticket> is already returned`）。server 把前一輪和新的一輪一起留在記憶體裡：前一輪的通知照樣送出，丟下那節車廂的火車也仍然讀得到自己設定的狀態；磁碟上的車廂檔顯示最新的一輪。在 `received` 時，server 對車廂的 head 執行 `landed` 的 git 檢查，對象是整合員工作區 checkout 的 remote，以及那個 checkout 的 `apps.json` 裡該 app 的 `integration.base`（app 自己就是一個儲存庫，也就是專案的 git submodule 時，remote 是那個 checkout 裡 app 自己的 checkout 的 `origin`，不會是專案的 remote，因為 app 的 commit 不在專案 remote 的任何分支上；火車的 `landed` 問的也是這個 remote，用的是 server 在火車開啟時讀到的值）：head 已在那個分支上就拒絕，remote 讀不到的專案或這種 app 不經檢查就接收（工具會說明；開啟火車時在那裡也讀不到 remote，所以這種火車不能設定 `landed`），remote 讀得到、但 app 沒有可用的 `integration.base` 時拒絕接收，remote 連不上或無法認證時（`ls-remote` 或 fetch 因認證失敗，包括金鑰或主機金鑰被拒、HTTP 401 或 403；因連線失敗，包括 DNS、連線被拒或重設、TLS 錯誤、HTTP 5xx、代理伺服器的 407，以及 server 自己的 60 秒逾時；或因 remote 說儲存庫不存在而失敗，其他的「not found」不算，所以缺少 `ssh` 會被拒絕；server 的 git 沒有 credential helper），不經檢查就接收並註明原因，URL 裡的 userinfo 會被遮掉，其他 git 失敗則拒絕接收，server 的 mirror 被別的東西寫過之後 fetch 失敗也一樣拒絕。這項檢查在 server 逐一處理設定之前執行，所以緩慢的 fetch 不會拖住火車的 `landed`。以 squash 或 rebase 合併的車廂，head 不在 base 上，這項檢查找不到它。
 
 </details>
 

@@ -115,6 +115,56 @@ test("train check --accept in the project's root, and in a linked worktree of th
 	assert.deepEqual(carRepos(r.cwd, "web"), [realpathSync(p.web.dir)]);
 	assert.deepEqual(await go(wt, good, slipFile("slip-wt", { head: p.web.head, accept: good })), { code: 0, ok: true, refusals: [] });
 	assert.equal((await go(wt, side, slipFile("slip-wt-side", { head: p.web.head, accept: side }))).code, 2);
+	// RD0801-F003: the worktree checks the submodule out itself. Its git dir is under the repository's `.git/worktrees/<name>/modules`, and both checkouts of the app answer.
+	git(wt, "-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init");
+	assert.match(readFileSync(join(wt, "apps", "web", ".git"), "utf8"), /^gitdir: .*\/worktrees\/wt\/modules\/apps\/web\s*$/);
+	assert.deepEqual(carRepos(wt, "web"), [realpathSync(join(wt, "apps", "web")), realpathSync(p.web.dir)]);
+	assert.deepEqual(await go(wt, good, slipFile("slip-wt-own", { head: p.web.head, accept: good })), { code: 0, ok: true, refusals: [] });
+});
+
+test("RD0801-F001: a project whose own git dir is outside its folder (a submodule of another repository, a clone with --separate-git-dir) still has its submodule app answer", () => {
+	const r = rig({ main: true, train: false, apps: APPS }), p = project(r);
+	// The project as a submodule of another repository: the app's git dir is under `<super>/.git/modules/proj/modules`, outside the project's folder and inside its git dir.
+	const above = join(r.root, "super"), inSuper = join(above, "proj");
+	mkdirSync(above);
+	git(above, "init", "-q", "-b", "main");
+	git(above, "-c", "protocol.file.allow=always", "submodule", "add", "-q", r.cwd, "proj");
+	git(inSuper, "-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init");
+	assert.match(readFileSync(join(inSuper, "apps", "web", ".git"), "utf8"), /^gitdir: .*\/modules\/proj\/modules\/apps\/web\s*$/);
+	assert.deepEqual(carRepos(inSuper, "web", "/before"), [realpathSync(join(inSuper, "apps", "web"))]);
+	assert.deepEqual(carRepos(inSuper, "api", "/before"), ["/before"], "a plain folder of that project is still the project's");
+	// A clone that keeps its git dir elsewhere: the app's git dir is under that one.
+	const apart = join(r.root, "apart"), gitDir = join(r.root, "apart-git");
+	git(r.root, "clone", "-q", "--separate-git-dir", gitDir, r.cwd, apart);
+	git(apart, "-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init");
+	assert.equal(readFileSync(join(apart, "apps", "web", ".git"), "utf8").trim(), "gitdir: ../../../apart-git/modules/apps/web");
+	assert.deepEqual(carRepos(apart, "web", "/before"), [realpathSync(join(apart, "apps", "web"))]);
+	assert.equal(git(carRepos(apart, "web")[0]!, "rev-parse", "HEAD"), p.web.head, "git answers there with the app's commits");
+});
+
+test("R0801-F002: an app whose dir is a folder inside a submodule is asked in that submodule, the nearest repository above it; a folder inside a plain folder stays the project's", async () => {
+	const apps = JSON.stringify({ apps: [...(JSON.parse(APPS) as { apps: unknown[] }).apps, { name: "pkg", dir: "apps/web/packages/ui", integration: { base: "develop", stages: ["merge"], accept: ["e2e"] } }, { name: "deep", dir: "services/api/src", integration: { base: "main", stages: ["merge"], accept: ["e2e"] } }] });
+	const r = rig({ main: true, train: false, apps }), p = project(r);
+	mkdirSync(join(p.web.dir, "packages", "ui"), { recursive: true });
+	mkdirSync(join(r.cwd, "services", "api", "src"));
+	assert.deepEqual(carRepos(r.cwd, "pkg", "/before"), [realpathSync(p.web.dir)]);
+	assert.deepEqual(carRepos(r.cwd, "deep", "/before"), ["/before"]);
+	await ok(r.create(trainTodo("pkg", p.web.head, evidenceFile(r, "good", "pkg", p.web.head, p.web.base))));
+	await refused(r.create(trainTodo("pkg", p.web.head, evidenceFile(r, "side", "pkg", p.web.head, p.web.side))), /^sb: evidence entry 1: on\.head is not the car's head$/);
+});
+
+test("RD0801-F002: a replace ref in the app's repository does not make a commit an ancestor: the guard and train check ask git with replace refs off", async () => {
+	const r = rig({ main: true, train: false, apps: APPS }), p = project(r);
+	// The graft gives the car's head the side commit as its parent; with replace refs read, git answers that `side` is an ancestor of the head.
+	git(p.web.dir, "replace", "--graft", p.web.head, p.web.side);
+	assert.doesNotThrow(() => git(p.web.dir, "merge-base", "--is-ancestor", p.web.side, p.web.head), "the graft is in place");
+	const side = evidenceFile(r, "side", "web", p.web.head, p.web.side);
+	await refused(r.create(trainTodo("web", p.web.head, side)), /^sb: evidence entry 1: on\.head is not the car's head$/);
+	const slip = join(r.root, "slip.txt"), out: string[] = [];
+	writeFileSync(slip, slipBlock({ head: p.web.head, accept: side }));
+	assert.equal(await run(["train", "check", "--accept", side, "--slip", slip], { out: (t) => out.push(t), err: () => {}, stateDir: r.stateDir, train: { cwd: r.cwd } }), 2);
+	assert.deepEqual((JSON.parse(out.join("")) as { refusals: string[] }).refusals, ["sb: evidence entry 1: on.head is not the car's head"]);
+	await ok(r.create(trainTodo("web", p.web.head, evidenceFile(r, "good", "web", p.web.head, p.web.base))));
 });
 
 test("carRepos names no folder outside the project's root, and only the folder asked before for an app the file does not name or gives no dir", () => {
@@ -127,4 +177,29 @@ test("carRepos names no folder outside the project's root, and only the folder a
 	symlinkSync(join(r.root, "web-origin"), join(r.cwd, "apps", "link"));
 	writeFileSync(join(r.cwd, "apps", "ptr", ".git"), `gitdir: ${join(r.root, "web-origin", ".git")}\n`);
 	for (const app of ["out", "abs", "nodir", "link", "ptr", "unnamed", undefined]) assert.deepEqual(carRepos(r.cwd, app, "/before"), ["/before"], String(app));
+});
+
+test("RD0801-F002: a `.git` that is a symlink out of the project, a git dir outside it, and a git dir whose commondir leads out of it are not used; the same pointer with a common dir inside the project is, and so is a clone inside it", () => {
+	const named = (name: string) => ({ name, dir: `apps/${name}`, integration: { base: "develop" } });
+	const r = rig({ main: true, train: false, apps: JSON.stringify({ apps: ["dotlink", "chain", "away", "kept", "clone"].map(named) }) });
+	const outside = join(r.root, "web-origin"), app = (name: string) => (mkdirSync(join(r.cwd, "apps", name), { recursive: true }), join(r.cwd, "apps", name));
+	mkdirSync(outside);
+	git(outside, "init", "-q");
+	git(r.cwd, "init", "-q");
+	// `.git` is a symlink to the git dir of a repository outside: git would read that repository in the app's folder.
+	symlinkSync(join(outside, ".git"), join(app("dotlink"), ".git"));
+	// A git dir of plain files inside the project (a commit can carry them) whose `commondir` names the outside repository's: git reads its objects and refs there.
+	const gitDirOf = (folder: string, common: string) => { mkdirSync(join(r.cwd, folder)); writeFileSync(join(r.cwd, folder, "HEAD"), "ref: refs/heads/main\n"); writeFileSync(join(r.cwd, folder, "commondir"), `${common}\n`); };
+	gitDirOf("fake", join(outside, ".git"));
+	writeFileSync(join(app("chain"), ".git"), "gitdir: ../../fake\n");
+	// A git dir outside the project that names the project's own as its common dir: git still reads that folder's HEAD and configuration.
+	mkdirSync(join(r.root, "away"));
+	writeFileSync(join(r.root, "away", "HEAD"), "ref: refs/heads/main\n");
+	writeFileSync(join(r.root, "away", "commondir"), `${join(r.cwd, ".git")}\n`);
+	writeFileSync(join(app("away"), ".git"), `gitdir: ${join(r.root, "away")}\n`);
+	gitDirOf("held", "../.git");
+	writeFileSync(join(app("kept"), ".git"), "gitdir: ../../held\n");
+	git(app("clone"), "init", "-q");
+	for (const name of ["dotlink", "chain", "away"]) assert.deepEqual(carRepos(r.cwd, name, "/before"), ["/before"], name);
+	for (const name of ["kept", "clone"]) assert.deepEqual(carRepos(r.cwd, name, "/before"), [join(r.cwd, "apps", name)], name);
 });

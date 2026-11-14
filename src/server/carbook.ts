@@ -3,7 +3,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, w
 import { hostname } from "node:os";
 import { isAbsolute, join, parse } from "node:path";
 import { carsDir, trainboardDir } from "../train/board.ts";
-import { readApps } from "../train/appsconfig.ts";
+import { appRepos, readApps } from "../train/appsconfig.ts";
 import { addState, type CarFile, carFileName, type CarState, type CarView, coordinatorWord, emptyCar, endOf, headsIn, landedWord, type NoticeRecord, type Setter, type SlipFacts, slipsInText, type StateEntry, stateLine, type StateNotice, validateStateFields } from "../train/cars.ts";
 import { isCode, isName, isObject, SHA_RE } from "../train/spec.ts";
 import { writePrivate } from "../trainboard.ts";
@@ -99,7 +99,7 @@ export interface BookDeps {
  * A train the tower opened: what the server read from the manifest it was handed (the base and the heads of the cars) and from the tower's checkout (the remote), both before the train's process existed, and the open's own result.
  * `url` is absent for a train the server only learns of from a repeated open after a restart: the checkout may have been changed by the train since.
  */
-export interface TrainRecord { project: string; code: string; session: string; pane: string; integrator: string; base?: string; heads: string[]; url?: string; at: string }
+export interface TrainRecord { project: string; code: string; session: string; pane: string; integrator: string; base?: string; heads: string[]; url?: string; /** The remote of each app that is a repository of its own (`appRemotesOf`), read with `url`; absent when `url` would be. */ appUrls?: Record<string, string | null>; at: string }
 /** A forward the tower's code stamped (runtools.ts): the event it came in, the session that sent it there, the sessions it went to, and the slips it carries as the server read them. */
 export interface ForwardRecord { fwd: string; from: string; to: string[]; slips: SlipFacts[]; at: number }
 interface Registration { session: string; pid: number; started: string; pane: string; at: number }
@@ -130,6 +130,8 @@ export function reachClass(line: string): "auth" | "connection" | "repository-no
 	if (/Could not resolve host|Connection refused|Connection timed out|timed out|Failed to connect|Network is unreachable|Could not read from remote repository|unable to access|Connection reset|Connection closed/i.test(line)) return "connection";
 	return undefined;
 }
+/** The remote a check fetches from, in the refusals' words: the project's, or that of an app that is a repository of its own (a submodule of the project, 0.80.2). */
+const remoteWord = (own: string | undefined) => (own === undefined ? "the project's remote" : `the remote of app ${own.slice(0, 64)}'s repository`);
 /** A refusal of a remote git could not reach: `reach` names the class. */
 const unreached = (text: string, line: string) => Object.assign(refusal(text), { reach: reachClass(line) });
 const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -228,7 +230,7 @@ export class CarBook {
 	private readonly bySession = new Map<string, string>();
 	private forwards: ForwardRecord[] = [];
 	private readonly trains = new Map<string, TrainRecord>();
-	/** The remote the first train of each project was opened on in this server's life: a later open that read another one is not trusted for `landed`. */
+	/** The remote the first train of each project was opened on in this server's life: a later open that read another one is not trusted for `landed`. An app that is a repository of its own has a remote of its own, kept under `<project>/<app>` (a project's name holds no slash), so the two are never compared with each other. */
 	private readonly remotes = new Map<string, string>();
 	/** When each failed `landed` check of a car (project/train/head) happened, within the window. */
 	private readonly failures = new Map<string, number[]>();
@@ -271,12 +273,32 @@ export class CarBook {
 		if (!checkout || !isAbsolute(checkout)) return undefined;
 		try { return safeUrl((await this.d.git(checkout, ["config", "--get", "remote.origin.url"])).trim()); } catch { return undefined; }
 	}
+	/** The first remote `remoteOf` reads in the folders of an app's own repository (`appRepos`: the checkout's, then the main checkout's). */
+	private async ownRemote(repos: readonly string[]): Promise<string | undefined> {
+		for (const repo of repos) { const url = await this.remoteOf(repo); if (url) return url; }
+		return undefined;
+	}
+	/**
+	 * The remote of each app of the checkout's apps.json that is a repository of its own (`appRepos`: a git submodule of the project, whose commits are not on the project's remote; R0801-F004): `remote.origin.url` of the app's checkout inside the project's, read the way
+	 * `remoteOf` reads the project's, and null when that names none that is safe to fetch from. An app that is not listed has the project's commits and the project's remote. Read at the open with `remoteOf`, before the train exists.
+	 */
+	async appRemotesOf(checkout: string | undefined): Promise<Record<string, string | null>> {
+		if (!checkout || !isAbsolute(checkout)) return {};
+		const apps = readApps(checkout), out: [string, string | null][] = [];
+		// One git at a time: a project of many submodule apps starts no burst of processes at an open.
+		for (const name of new Set(apps.ok ? apps.apps.flatMap((a) => (typeof a.name === "string" ? [a.name] : [])) : [])) {
+			const repos = appRepos(checkout, name);
+			if (repos.length) out.push([name, (await this.ownRemote(repos)) ?? null]);
+		}
+		return Object.fromEntries(out);
+	}
 	/** A train the tower opened. The first note of a code is kept: a repeated open (the opener's ledger answers it) does not change what was read at the first. */
 	noteTrain(t: Omit<TrainRecord, "at">): void {
 		const key = `${t.project}/${t.code}`;
 		if (this.trains.has(key)) return;
 		this.trains.set(key, { ...t, heads: [...new Set(t.heads)].slice(0, 64), at: iso(this.d.now()) });
 		if (t.url && !this.remotes.has(t.project)) this.remotes.set(t.project, t.url);
+		for (const [app, url] of Object.entries(t.appUrls ?? {})) if (url && !this.remotes.has(`${t.project}/${app}`)) this.remotes.set(`${t.project}/${app}`, url);
 	}
 	trainOf(project: string, code: string): TrainRecord | undefined { return this.trains.get(`${project}/${code}`); }
 	/**
@@ -502,7 +524,7 @@ export class CarBook {
 			if (receipt.train !== train!.code) throw refusal(`sb: car ${label} was not received for train ${train!.code} (the integrator received it for ${String(receipt.train).slice(0, 40)}), so this train does not set it`);
 			if (receipt.by.session !== record.integrator) throw refusal(`sb: car ${label} was not received by this train's integrator, so this train does not set it`);
 			if (state === "dropped" && (!isAbsolute(String(fields.evidence)) || !this.d.exists(String(fields.evidence)))) throw refusal(`sb: dropped.evidence ${String(fields.evidence).slice(0, 200)} is not a file that exists (give its absolute path)`);
-			if (state === "landed") await this.landed(project, record, head, String(fields.commit), label);
+			if (state === "landed") await this.landed(project, record, head, String(fields.commit), label, file.app);
 		}
 		let next: CarFile;
 		try { next = addState(file, { state, fields, by: setter, at: iso(this.d.now()) }); } catch (error) { throw refusal((error as Error).message); }
@@ -526,13 +548,14 @@ export class CarBook {
 	}
 
 	/**
-	 * A commit is landed when git, run here, finds it on the real remote's branch of the base. The remote is the one the server read from the tower's checkout at the open; the base is the one the manifest named. The tip of that branch is read by `git ls-remote` run
+	 * A commit is landed when git, run here, finds it on the real remote's branch of the base. The remote is the one the server read from the tower's checkout at the open, and for a car of an app that is a repository of its own (a submodule of the project) the one it read
+	 * from that app's checkout there (`appRemotesOf`, 0.80.2): the app's commits are on no branch of the project's remote. The base is the one the manifest named. The tip of that branch is read by `git ls-remote` run
 	 * with no repository (cwd the file system's root, no GIT_DIR, a ceiling there), so no repository configuration is read. The fetch goes into a bare repository the server makes for this check alone under its folder (mode 700), with an empty template, and the folder is
 	 * removed after it, so nothing a train wrote there earlier decides the answer (RR-F001, RR-F004). The fetch must bring exactly that tip, every object is checked as it comes in, and the mirror must hold nothing but what init and fetch wrote: the same config, no alternates,
 	 * no loose object, packs git wrote (RR2-F001). Not proof against a train that wins a race inside the few seconds of a check, and a refusal does not say it did not: it is the bar, and the refusals are logged. A push the train makes itself to the base counts: the train runs
 	 * the merge (§3.3). Failed checks of one car are limited (RR2-F001): three in ten minutes close it until the window passes.
 	 */
-	private async landed(project: string, record: TrainRecord, head: string, commit: string, label: string): Promise<void> {
+	private async landed(project: string, record: TrainRecord, head: string, commit: string, label: string, app: string): Promise<void> {
 		const key = `${project}/${record.code}/${head}`, now = this.d.now();
 		const failed = (this.failures.get(key) ?? []).filter((t) => now - t < FAIL_WINDOW_MS);
 		this.failures.set(key, failed);
@@ -543,34 +566,38 @@ export class CarBook {
 			log(word, true);
 			throw refusal(word);
 		}
-		try { await this.checkLanded(project, record, commit, label); } catch (error) {
+		try { await this.checkLanded(project, record, commit, label, app); } catch (error) {
 			failed.push(now);
 			log((error as Error).message, false);
 			throw error;
 		}
 	}
-	private async checkLanded(project: string, record: TrainRecord, commit: string, label: string): Promise<void> {
+	private async checkLanded(project: string, record: TrainRecord, commit: string, label: string, app: string): Promise<void> {
 		const code = record.code, base = record.base;
 		if (!base || !BASE_RE.test(base) || base.includes("..")) throw refusal(`sb: the manifest of train ${code} names no usable base (base: <branch>)`);
-		if (!record.url) throw refusal(`sb: the remote of project ${project} was not read when train ${code} opened (the open names none or none that is safe to fetch from, or this server learned of the train after a restart), so ${label}'s commit cannot be checked`);
-		const url = record.url, first = this.remotes.get(project);
-		if (first !== undefined && first !== url) throw refusal(`sb: the remote of project ${project} changed between two opens of this server (${blankUser(first).slice(0, 120)}, then ${blankUser(url).slice(0, 120)}); landed is not checked against a remote that moved`);
-		await this.withBase({ project, url, base, key: code, state: "landed" }, async (git, tip) => {
-			try { await git("merge-base", "--is-ancestor", commit, tip); } catch { throw refusal(`sb: landed.commit ${commit.slice(0, 12)} is not on ${base} of the project's remote: a car has landed only when its commit is on the base's branch there`); }
+		// The app was a repository of its own when the train opened: its remote is the one read then, and the project's remote is never asked in its place.
+		const own = record.appUrls && Object.hasOwn(record.appUrls, app) ? record.appUrls[app] : undefined, mine = own !== undefined, of = mine ? `app ${app.slice(0, 64)} of project ${project}` : `project ${project}`;
+		const url = mine ? own ?? undefined : record.url, remote = remoteWord(mine ? app : undefined);
+		if (!url) throw refusal(`sb: the remote of ${of} was not read when train ${code} opened (the open names none or none that is safe to fetch from, or this server learned of the train after a restart), so ${label}'s commit cannot be checked`);
+		const first = this.remotes.get(mine ? `${project}/${app}` : project);
+		if (first !== undefined && first !== url) throw refusal(`sb: the remote of ${of} changed between two opens of this server (${blankUser(first).slice(0, 120)}, then ${blankUser(url).slice(0, 120)}); landed is not checked against a remote that moved`);
+		await this.withBase({ project, url, base, key: code, state: "landed", remote }, async (git, tip) => {
+			try { await git("merge-base", "--is-ancestor", commit, tip); } catch { throw refusal(`sb: landed.commit ${commit.slice(0, 12)} is not on ${base} of ${remote}: a car has landed only when its commit is on the base's branch there`); }
 		});
 	}
 	/**
 	 * A car lands once (#15): `received` is refused for a head that git, run here, finds on the base's branch of the project's remote already. Nothing the book remembers is asked, so it holds after a restart, when the book no longer knows that the car landed, and
-	 * for a head somebody pushed to the base by hand. The remote and the base are read now: the remote of the checkout of the integrator's workspace (where an open reads it) and the app's `integration.base` in that checkout's apps.json. The fetch is the one of
+	 * for a head somebody pushed to the base by hand. The remote and the base are read now: the remote of the checkout of the integrator's workspace (where an open reads it), or of the app's own checkout inside it when the app is a repository of its own (a submodule of the
+	 * project: its commits are on its own remote, and on the project's remote this check found none of them, so it let a landed car in; R0801-F004, 0.80.2), and the app's `integration.base` in that checkout's apps.json. The fetch is the one of
 	 * `landed`, into a mirror of its own. When the checkout's remote cannot be read nothing is checked (`cars-received-unchecked` is logged, and the integrator's tool says so): an open reads the remote from the same checkout, so a train of such a project has no remote and
 	 * cannot set `landed` either. When the remote is read but the app names no usable `integration.base`, `received` is refused (car-forward-F003; the boss's rule that a car is never landed twice wins), and so it is when git fails for any reason but reaching the remote. When
 	 * `ls-remote` or the fetch fails because the remote cannot be reached or authenticated (the server's git has no credential helper, RR3-F002; repository not found counts), the car is received unchecked with that class as the reason (0.77.2). A head that is not in the base's history is the usual car. A car merged by squash or rebase has no head on the base and is not found here.
 	 */
 	private async unlanded(project: string, app: string, head: string, label: string, look: Look): Promise<{ unchecked?: string }> {
-		const where = await this.baseOf(look, app);
+		const where = await this.baseOf(look, app), remote = remoteWord(where.own ? app : undefined);
 		if ("unread" in where) {
 			this.d.log?.("cars-received-unchecked", { project, car: label.slice(0, 40), reason: "unread" });
-			return { unchecked: `the remote of the integrator's workspace checkout could not be read, so whether head ${head.slice(0, 12)} is on the base already was not checked` };
+			return { unchecked: `the remote of ${where.own ? `app ${app.slice(0, 64)}'s own repository in ` : ""}the integrator's workspace checkout could not be read, so whether head ${head.slice(0, 12)} is on the base already was not checked` };
 		}
 		if ("refused" in where) {
 			const word = `sb: car ${label} is not received: ${where.refused}, so whether its head ${head.slice(0, 12)} is on the base already cannot be checked. A car that is on the base is never received again: the boss sets integration.base of app ${app}`;
@@ -580,7 +607,7 @@ export class CarBook {
 		const { url, base } = where;
 		let on: boolean;
 		try {
-			on = await this.withBase({ project, url, base, key: "receipt", state: "received" }, async (git, tip) => {
+			on = await this.withBase({ project, url, base, key: "receipt", state: "received", remote }, async (git, tip) => {
 				if (tip === head) return true;
 				try { await git("cat-file", "-e", `${head}^{commit}`); } catch { return false; }
 				try { await git("merge-base", "--is-ancestor", head, tip); return true; } catch (error) {
@@ -593,35 +620,39 @@ export class CarBook {
 			const reach = (error as { reach?: string }).reach;
 			if (reach) {
 				this.d.log?.("cars-received-unchecked", { project, car: label.slice(0, 40), reason: reach });
-				return { unchecked: `the server could not reach the project's remote${hostOf(url) ? ` at ${hostOf(url)}` : ""} (${reach}: ${(error as Error).message.replace(/^sb: /, "").slice(0, 200)}), so whether head ${head.slice(0, 12)} is on ${base} already was not checked` };
+				return { unchecked: `the server could not reach ${remote}${hostOf(url) ? ` at ${hostOf(url)}` : ""} (${reach}: ${(error as Error).message.replace(/^sb: /, "").slice(0, 200)}), so whether head ${head.slice(0, 12)} is on ${base} already was not checked` };
 			}
-			const word = `sb: car ${label} is not received: whether its head ${head.slice(0, 12)} is on ${base} of the project's remote already could not be checked (${(error as Error).message.replace(/^sb: /, "").slice(0, 300)}). A car that is on the base is never received again, so the check has to run: try again`;
+			const word = `sb: car ${label} is not received: whether its head ${head.slice(0, 12)} is on ${base} of ${remote} already could not be checked (${(error as Error).message.replace(/^sb: /, "").slice(0, 300)}). A car that is on the base is never received again, so the check has to run: try again`;
 			this.d.log?.("cars-received-refused", { project, car: label.slice(0, 40), reason: word.slice(0, 200) });
 			throw refusal(word);
 		}
-		if (on) throw refusal(landedWord(label, head, `is on ${base} of the project's remote already`));
+		if (on) throw refusal(landedWord(label, head, `is on ${base} of ${remote} already`));
 		return {};
 	}
-	/** Where a car of `app` lands, read now and from nothing the book holds: the remote of the checkout of the session's workspace (its own folder when the workspace has none) and the app's `integration.base` in that checkout's apps.json. `unread` when the remote cannot be read, `refused` (why) when the remote is read and the base is not there or not usable. */
-	private async baseOf(look: Look, app: string): Promise<{ url: string; base: string } | { unread: true } | { refused: string }> {
+	/**
+	 * Where a car of `app` lands, read now and from nothing the book holds: the remote of the checkout of the session's workspace (its own folder when the workspace has none) and the app's `integration.base` in that checkout's apps.json. `own` says the app is a repository of its
+	 * own there (`appRepos`): the remote is then that of the app's checkout, and never the project's. `unread` when the remote cannot be read, `refused` (why) when the remote is read and the base is not there or not usable.
+	 */
+	private async baseOf(look: Look, app: string): Promise<{ own: boolean } & ({ url: string; base: string } | { unread: true } | { refused: string })> {
 		let checkout: string | undefined;
 		try { checkout = await this.d.checkoutOf?.(look); } catch { checkout = undefined; }
 		checkout ??= look.cwd;
-		const url = await this.remoteOf(checkout);
-		if (!checkout || !url) return { unread: true };
+		const repos = checkout && isAbsolute(checkout) ? appRepos(checkout, app) : [], own = repos.length > 0;
+		const url = own ? await this.ownRemote(repos) : await this.remoteOf(checkout);
+		if (!checkout || !url) return { own, unread: true };
 		const apps = readApps(checkout), entry = apps.ok ? apps.apps.find((a) => a.name === app) : undefined;
-		if (!apps.ok) return { refused: "the apps.json of the integrator's workspace checkout cannot be read" };
-		if (!entry) return { refused: `the apps.json of the integrator's workspace checkout names no app ${app}` };
+		if (!apps.ok) return { own, refused: "the apps.json of the integrator's workspace checkout cannot be read" };
+		if (!entry) return { own, refused: `the apps.json of the integrator's workspace checkout names no app ${app}` };
 		const base = isObject(entry.integration) ? entry.integration.base : undefined;
-		if (typeof base !== "string" || !BASE_RE.test(base) || base.includes("..")) return { refused: `app ${app} names no usable integration.base in the apps.json of the integrator's workspace checkout` };
-		return { url, base };
+		if (typeof base !== "string" || !BASE_RE.test(base) || base.includes("..")) return { own, refused: `app ${app} names no usable integration.base in the apps.json of the integrator's workspace checkout` };
+		return { own, url, base };
 	}
 	/**
 	 * The base's branch of a remote, fetched for one check and removed after it: the steps the comment of `landed` gives, which the check at `received` shares. `answer` gets git in the mirror and the tip `ls-remote` read; the mirror is inspected once more after it
 	 * answered. `key` names the mirror's one ref, and `state` the state the refusals speak of.
 	 */
-	private async withBase<T>(o: { project: string; url: string; base: string; key: string; state: "landed" | "received" }, answer: (git: (...args: string[]) => Promise<string>, tip: string) => Promise<T>): Promise<T> {
-		const { project, url, base, key: code, state } = o;
+	private async withBase<T>(o: { project: string; url: string; base: string; key: string; state: "landed" | "received"; /** The remote in the refusals' words (`remoteWord`). */ remote: string }, answer: (git: (...args: string[]) => Promise<string>, tip: string) => Promise<T>): Promise<T> {
+		const { project, url, base, key: code, state, remote } = o;
 		let work: string | undefined, mirror = "", hosts = "";
 		try {
 			mkdirSync(this.d.dir, { recursive: true, mode: 0o700 });
@@ -640,9 +671,9 @@ export class CarBook {
 		try {
 			// The tip, from no repository: git reads no repository configuration there.
 			let listed: string;
-			try { listed = await this.d.git(parse(this.d.dir).root, [...REMOTE_FLAGS, "ls-remote", "--exit-code", "--", url, ref], env); } catch (error) { const line = firstLine(error); throw unreached(`sb: git ls-remote of ${base} from the project's remote failed: ${line}`, line); }
+			try { listed = await this.d.git(parse(this.d.dir).root, [...REMOTE_FLAGS, "ls-remote", "--exit-code", "--", url, ref], env); } catch (error) { const line = firstLine(error); throw unreached(`sb: git ls-remote of ${base} from ${remote} failed: ${line}`, line); }
 			const tip = listed.split("\n").map((l) => l.split("\t")).find(([, name]) => name === ref)?.[0];
-			if (!tip || !/^[0-9a-f]{40,64}$/.test(tip)) throw refusal(`sb: the project's remote lists no branch ${base}`);
+			if (!tip || !/^[0-9a-f]{40,64}$/.test(tip)) throw refusal(`sb: ${remote} lists no branch ${base}`);
 			try { await this.d.git(mirror, ["init", "--bare", "-q", "--template=", "."]); } catch (error) { throw refusal(`sb: the server's mirror for project ${project} cannot be made: ${firstLine(error)}`); }
 			const inMirror = (...args: string[]) => this.d.git(mirror, ["--git-dir", mirror, ...MIRROR_FLAGS, ...args], env);
 			const fresh = inspectMirror(mirror, code, "init");
@@ -651,7 +682,7 @@ export class CarBook {
 				const line = firstLine(error);
 				// A fetch that failed as unreachable may have been made to fail by a rewritten mirror (an `insteadOf` in its config): that is a tampered mirror, refused, not a remote out of reach (R0772-F001).
 				if (reachClass(line)) { const moved = mirrorMoved(mirror, fresh.look); if (moved.length) throw tampered(moved); }
-				throw unreached(`sb: git fetch of ${base} from the project's remote failed: ${line}`, line);
+				throw unreached(`sb: git fetch of ${base} from ${remote} failed: ${line}`, line);
 			}
 			const fetched = inspectMirror(mirror, code, "fetch", fresh.look);
 			if (fetched.problems.length) throw tampered(fetched.problems);
