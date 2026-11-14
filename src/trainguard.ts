@@ -207,8 +207,7 @@ const GIT_ENV = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIREC
 const realGit = (cwd: string, args: string[], extra: Record<string, string> = {}): string => {
 	const env = { ...process.env };
 	for (const key of GIT_ENV) delete env[key];
-	Object.assign(env, extra);
-	return String(execFileSyncExe("git", ["-c", "core.fsmonitor=false", "-C", cwd, ...args], { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "pipe"], env })).trim();
+	return String(execFileSyncExe("git", ["-c", "core.fsmonitor=false", "-C", cwd, ...args], { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "pipe"], env: { ...env, ...extra } })).trim();
 };
 const shortError = (error: unknown) => String((error as { stderr?: unknown }).stderr || (error as Error).message).trim().split("\n")[0]!.slice(0, 200);
 const STATUS = ["pending", "in_progress", "completed"];
