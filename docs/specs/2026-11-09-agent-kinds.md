@@ -523,10 +523,10 @@ Watch the unit your task names: call `watch_read` with the last `since` and the 
 - **One server hold.** It is at most 45 s, by the hold's own timer, which answers with the last reading and waits for no further one. That fits inside the control socket's 60 s idle close, which counts from the request's arrival (`src/server/socket.ts:20`, `:89`). `socket.ts` is unchanged.
   - The client's request timeout is 55 s.
   - A hold whose client has gone ends at its 45 s limit.
-  - There is no cap and no refusal. A hold costs one stamp compare per net reading, and the net is read every 2 s or 10 s regardless (`src/gui.ts:74`, `:321`).
-- **The tool's loop.** Inside one `execute`, the tool re-polls with the same `since` until `waitMs` passes or the reply is anything but `unchanged`.
+  - There is no cap and no refusal. A hold costs one stamp compare per net reading. The readings are the GUI host's (every 2 s while a page is open, every 10 s otherwise); while the GUI is off, the route reads the net itself every 10 s, only while a hold is open (2026-11-14 note, 1).
+- **The tool's loop.** Inside one `execute`, the tool re-polls until `waitMs` passes or the reply is anything but `unchanged`, each time with the newest `since` an `unchanged` reply gave (2026-11-14 note, 2).
   - **On each re-poll it calls `onUpdate`.** That moves the activity file's `updatedAt`, so pi-herdr-agents' hang advisory never fires. The boss's `hangWarningMinutes` is 15, and a silent hold would trip it (`observation.ts:157-223`).
-  - **It returns `unchanged` early only for a message that arrives during the call.** That is, `ctx.hasPendingMessages()` turned true after being false when the call started. A steer is consumed at the turn boundary before the next call, so a message already pending at the start is a follow-up: it waits, and the loop does not spin (AK4-F005). A dispatcher's steer or `subagent_send` lands within one hold, at most 45 s.
+  - **It returns `unchanged` early only for a message that arrives during the call.** That is, `ctx.hasPendingMessages()` turned true after being false when the call started. A steer is consumed at the turn boundary before the next call, so a message already pending at the start is a follow-up: it waits, and the loop does not spin (AK4-F005). A dispatcher's steer or `subagent_send` lands within one hold, at most 45 s; while the server does not answer, within one 2 s retry.
   - **A failed hold is retried.** A server restart or upgrade (`socket.ts:40`), a socket error, or a request cut off by a sleep is retried after 2 s. The loop keeps retrying within `waitMs`, and `waitMs` and `deadline` are judged by the wall clock, so a sleep counts. If the server is still unreachable when `waitMs` ends, the reply is `unchanged` with `server: "unreachable"`.
   - **Only two things fail the call:** an unknown key, and an abort.
 - **Token cost.** These are estimates, assuming a reply of about 300 tokens, a call of about 80, and a cached context. That holds while `waitMs` stays under the cache's life of about an hour (AK3-F004, measured on claude-bridge).
@@ -549,7 +549,7 @@ Watch the unit your task names: call `watch_read` with the last `since` and the 
 
 **Holding D3.**
 
-- **Registration.** sb registers both tools under `if (env.PI_SUBAGENT_ID)`, with `defaultActive: false`, just before the child return (`src/index.ts:62`), so a top-level pane never has them (AK8-F006). In a child they are active only where `--tools` names them.
+- **Registration.** sb registers both tools under `if (env.PI_SUBAGENT_ID)`, with `defaultActive: false`, before the return for a session outside Herdr (`registerWatchdog` in `src/index.ts`; 2026-11-14 note, 3), so a top-level pane never has them (AK8-F006) and a Core-launched child, which has no pane, does. In a child they are active only where `--tools` names them.
 - **Which child is a watchdog.** At `session_start`, either of these makes a child a watchdog:
   - `PI_SUBAGENT_AGENT=watchdog` (a first launch);
   - its session's `{ agent: "watchdog" }` entry (it survives a resume, which restores the spawn's `--tools` anyway, `launch-resume.ts:136-147`).
@@ -563,6 +563,18 @@ Watch the unit your task names: call `watch_read` with the last `since` and the 
   2. it calls `ctx.abort()` and `ctx.shutdown()`;
   3. it returns a `systemPrompt` that asks for an empty reply, so if pi starts the run anyway, it is one short turn whose tools are all blocked.
 - **No escape.** A process with `bash` already reaches the socket and every session file, so passing itself off as a watchdog gains it nothing.
+
+**2026-11-14 (0.80.0): as built.** Where this section and the code differed, the code stands; [how it works](../how-it-works.md#the-watchdog) describes it in full.
+
+1. **Readings.** The server reads the net only while the GUI host runs. With the GUI stopped, or never started, the route makes its own reading every 10 s, only while a hold is open, and a request whose last reading is 20 s old or older reads once before it is judged. When no reading can be made the reply is the error `the net could not be read; ask again`, which the tool retries as a failed hold.
+2. **`since` on a re-poll.** The tool sends the newest `since` the server gave, not the call's own. An `unchanged` reply's stamp can differ from the request's: a load that fell back under its limit is forgotten in it. Sent again, the old stamp would hide that monitor's next crossing.
+3. **Registration.** `registerWatchdog` runs for every `PI_SUBAGENT_ID` before the `HERDR_PANE_ID` return, so a child of pi-herdr-agents' Core backend is held by D3 too. Outside Herdr a first-launch watchdog also writes its `{ agent: "watchdog" }` entry there, so its resume is still known.
+4. **Verdict order.** One reading gives one verdict, in this order: `gone`, `expired`, `changed`, `load`, `stalled`. `changed` does not count a load as told, so a load already over the limit at the first call comes as `load` on the next.
+5. **`stalled` is judged on readings.** The quiet spell is the last reading less the start of the quiet, not the wall clock: with no reading nothing is claimed. A move seen across a reading gap is a move, so a `stalled` told before it comes again.
+6. **Keys.** A key the registry knows that is no unit of the net (the head tower, a run's read-only view) is `unknown key` after one more reading. A unit that leaves mid-hold with no trace in the registry is `gone` with no successor.
+7. **A failed hold.** Any `ok: false` reply but `unknown key` is retried every 2 s; at `waitMs` the reply is `unchanged` with `server: "unreachable"` and the server's `error`, or `server: "outdated"` for a server older than 0.80.0. A deadline that passes with no answer gives `expired` with `server`. The request's timeout is the lesser of 55 s and the time left. An `unchanged` that comes back in under 2 s is followed by a 2 s pause. An abort ends the call at once. A message that arrives during the call ends it at the next retry as well as at the next hold.
+8. **`watch_report`.** One attempt with a 10 s timeout. With no answer in time the report may or may not have been delivered, and the tool says so: a `rate` or `same text` refusal of the same text sent again means it went out. More errors than the list above: `pi-intercom is not connected`, `pi-intercom cannot list its sessions: …`, `not delivered: …`, and `text is 1 to 2000 plain characters` (plain: no control or format character but a line break or a tab). The checks run in the order outside, no tying script, done, not a watchdog, rate, repeat. Only a report that went out counts for the rate and the repeat; of two sent at once, the second meets the rate.
+9. **A blind watchdog.** On a second reply in a row that carries `server`, the role has the watchdog tell its dispatcher once with `caller_ping`, which does not go through the sb server, and keep calling.
 
 ### 11. The page (D9)
 

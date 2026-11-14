@@ -150,6 +150,24 @@ test("a reading gap of 5 minutes (a sleeping Mac) restarts the quiet clock and g
 	assert.equal(w.clock.elapsed() - began, 60_000, "a whole quietMs after the gap");
 });
 
+test("a move seen across a reading gap is a move: `stalled` told before it comes again once the unit is quiet anew (RP3-F004)", async () => {
+	const quiet = netOf([unit({ monitors: [monitor({ lines: 5 })] })]), w = world(quiet), q = { quietMs: 60_000 };
+	const first = await w.ask(q);
+	const stalled = await w.follow({ ...q, since: first.since }, () => quiet, 120_000);
+	assert.equal(stalled?.state, "stalled");
+	// The server stood still for 5 minutes while the unit worked on: the reading after the gap shows more lines.
+	const moved = netOf([unit({ monitors: [monitor({ lines: 9 })] })]);
+	// No hold is open across the gap, so the route's own read (which this world answers with the reading before) stays out of it.
+	await w.beat(moved, 300_000);
+	const began = w.clock.elapsed();
+	const again = await w.follow({ ...q, since: stalled!.since }, () => moved, 120_000);
+	assert.equal(again?.state, "stalled");
+	assert.equal(w.clock.elapsed() - began, 60_000, "a whole quietMs after the gap");
+	// A gap with no move in it is no move: nothing more is told.
+	await w.beat(moved, 300_000);
+	assert.equal(await w.follow({ ...q, since: again!.since }, () => moved, 120_000), undefined);
+});
+
 test("a subagent target's quiet clock moves on its mark and on its note", async () => {
 	const sub = (over: Partial<Unit> = {}) => netOf([unit({ subs: [unit({ id: "s1", key: "s1", name: "worker-a", role: "subagent", mark: "working", note: "a", ...over })] })]);
 	const w = world(sub()), q = { key: "s1", quietMs: 60_000 };

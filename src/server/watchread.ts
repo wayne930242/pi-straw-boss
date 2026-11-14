@@ -96,8 +96,10 @@ export function createWatchRead(d: WatchReadDeps) {
 	const follow = (key: string, unit: Holder, at: number, asked?: number) => {
 		const lines = new Map((unit.monitors ?? []).map((m) => [m.id, m.lines])), tick = unit.ticks?.at(-1)?.at, was = quiets.get(key);
 		if (!was) return void (asked !== undefined && quiets.set(key, { at, from: at, move: at, mark: unit.mark, note: unit.note, tick, lines, asked }));
-		if (at - was.at > GAP_MS) was.from = at;
-		else if (was.mark !== unit.mark || was.note !== unit.note || was.tick !== tick || [...lines].some(([id, n]) => (was.lines.get(id) ?? -1) < n)) was.from = was.move = at;
+		const moved = was.mark !== unit.mark || was.note !== unit.note || was.tick !== tick || [...lines].some(([id, n]) => (was.lines.get(id) ?? -1) < n);
+		// A move seen across a gap is still a move, so the `stalled` told before it comes again (RP3-F004).
+		if (moved) was.from = was.move = at;
+		else if (at - was.at > GAP_MS) was.from = at;
 		Object.assign(was, { at, mark: unit.mark, note: unit.note, tick, lines }, asked !== undefined ? { asked } : {});
 	};
 

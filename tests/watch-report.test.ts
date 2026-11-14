@@ -148,3 +148,17 @@ test("the text is 1 to 2000 plain characters, and the three paths and the id are
 	assert.deepEqual(await r.send(l, `two lines\n${"x".repeat(1990)}`), { ok: true, delivery: "delivered" });
 	assert.deepEqual(await watchdogReply(undefined, { cmd: "watch-report" }), { ok: false, error: "the server is still starting" });
 });
+
+test("two reports sent at once (one assistant message, run in parallel) are one report: the second is refused by the rate, the same text included; a slot whose report did not go out is given back (RP3-F001)", async () => {
+	const l = lay(), r = reporter(l.sessions, { live: [l.parent] });
+	const both = await Promise.all([r.send(l, "tests stalled"), r.send(l, "tests stalled")]);
+	assert.deepEqual(both, [{ ok: true, delivery: "delivered" }, { ok: false, error: "rate: one report every 30 s" }]);
+	assert.equal(r.sent.length, 1);
+	// A report that did not go out holds no slot: the next one goes out at once, and its text is not "the last".
+	const g = lay(), gone = reporter(g.sessions, { live: [] });
+	assert.deepEqual(await Promise.all([gone.send(g, "x"), gone.send(g, "y")]), [{ ok: true, delivery: "gone" }, { ok: false, error: "rate: one report every 30 s" }]);
+	assert.deepEqual(await gone.send(g, "x"), { ok: true, delivery: "gone" }, "the slot is given back");
+	const f = lay(), failing = reporter(f.sessions, { live: [f.parent], delivery: "failed" });
+	assert.deepEqual(await failing.send(f, "x"), { ok: false, error: "not delivered: no such session" });
+	assert.deepEqual(await failing.send(f, "x"), { ok: false, error: "not delivered: no such session" }, "not `rate`, not `same text`");
+});

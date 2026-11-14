@@ -78,6 +78,8 @@ export function registerWatchdog(pi: ExtensionAPI, env: NodeJS.ProcessEnv, deps:
 				if (error?.startsWith("unknown key")) throw new Error(error);
 				// A hold cut short at `end` by this call's own timeout is no failure of the server.
 				if (reply || left >= REQUEST_MS || now() - began < left) trouble = error?.startsWith("unknown command") ? { server: "outdated" } : { server: "unreachable", ...(error ? { error } : {}) };
+				// A message that arrived during the call ends it here too, or a steer would wait out `waitMs` exactly while the server is down or old (RP3-F002).
+				if (!pendingAtStart && ctx.hasPendingMessages()) break;
 				// A server that restarts or upgrades, a socket error, a request cut off by a sleep: asked again, within the wait.
 				if (now() < end) await Promise.race([sleep(Math.min(RETRY_MS, end - now())), aborted]);
 			}
@@ -90,7 +92,7 @@ export function registerWatchdog(pi: ExtensionAPI, env: NodeJS.ProcessEnv, deps:
 		parameters: Type.Object({ text: Type.String({ minLength: 1, maxLength: 2000, description: "What happened, since when, and the fields that show it: 1 to 2000 plain characters." }) }),
 		execute: async (_id, params) => {
 			const reply = await report(params.text).catch(() => undefined);
-			if (!reply) throw new Error("sb: the sb server did not answer, so the report was not sent. Call watch_report again.");
+			if (!reply) throw new Error("sb: the sb server did not answer in time, so the report may or may not have been delivered. Call watch_report again with the same text: a `rate` or `same text` refusal means it went out.");
 			if (!reply.ok) throw new Error(String(reply.error ?? "the sb server refused the report").startsWith("unknown command") ? "sb: the sb server is older than this watchdog and takes no report; a main's /reload upgrades it. Call watch_report again later." : String(reply.error ?? "the sb server refused the report"));
 			return answer({ delivery: reply.delivery });
 		},

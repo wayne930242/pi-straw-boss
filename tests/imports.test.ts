@@ -508,7 +508,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The role pack (0.79.0, measured) +85: rolepack.ts (16, the registration on pi-herdr-agents' discovery event) and rolescheck.ts (69, `/boss roles-check`); both together with agent kinds phase 2: 3610 to 3716. Cap = measured.
 	// 0.79.1 (measured) 3716 to 3718: the remote host in the unchecked notice (carbook.ts), the retry of a reset (herdr.ts).
 	// Agent kinds phase 3, the child's side (measured) 3718 to 3859 (+141): watchdog.ts (139, new: `watch_read`'s long poll with its retries, `watch_report`, which child is a watchdog, the block, the narrowing, and the refusal to start) and its registration in index.ts (+2, before the Herdr return). Cap = measured.
-	assert.ok(rest <= 3859, `the rest of src has ${rest} lines`);
+	// Phase 3 review fixes (measured) 3859 to 3861 (+2): watchdog.ts 141, the check for a message that arrived while the server does not answer (RP3-F002).
+	assert.ok(rest <= 3861, `the rest of src has ${rest} lines`);
 	// Unreleased (settings check, probe): settings.ts is the lstat gate, the child's program (refuses a link it cannot follow, stats before opening; review SR5), and its runner (160); it no longer walks links. settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
 	// Unreleased raised trust/ask.ts from 182 to 183 (RC3-F001): the recorded server's start time is read when the handler registers.
 	// Unreleased raised trust/ask.ts from 183 to 201 (RC4-F001, F002): `warmServerStart` (the early read only for a live server that reads trust requests) and `guiUp` (what the handler's `up` asks) are exported for their tests, and `registerTrust` takes the terminal it answers on.

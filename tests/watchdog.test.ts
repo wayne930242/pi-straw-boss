@@ -263,6 +263,23 @@ test("watch_read: a server still down at waitMs gives unchanged with server: unr
 	assert.equal((await child({ deps: hung.deps }).tool("watch_read", { key: "k", waitMs: 120_000 })).details.server, "unreachable");
 });
 
+test("watch_read: a message that arrives while the server is unreachable or outdated ends the call at the next retry; one already waiting at its start does not (RP3-F002)", async () => {
+	for (const [reply, word] of [[undefined, "unreachable"], [{ ok: false, error: "unknown command watch-read" }, "outdated"]] as const) {
+		let c: ReturnType<typeof child>;
+		const s = server((_request, n) => {
+			if (n === 2) c.state.pending = true; // a steer lands at the third try
+			return { after: 0, ...(reply ? { reply } : {}) };
+		});
+		c = child({ deps: s.deps });
+		const early = await c.tool("watch_read", { key: "k", since: "s0" });
+		assert.deepEqual(early.details, { state: "unchanged", since: "s0", now: 1_004_000, server: word });
+		assert.equal(s.calls.length, 3);
+		const again = await c.tool("watch_read", { key: "k", since: "s0", waitMs: 20_000 });
+		assert.equal(s.clock.elapsed(), 24_000, "a follow-up already waiting: the whole wait");
+		assert.equal(again.details.server, word);
+	}
+});
+
 test("watch_read: the deadline is judged by the clock even with no server: expired, with now", async () => {
 	const down = server(() => ({ after: 0 }));
 	const result = await child({ deps: down.deps }).tool("watch_read", { key: "k", since: "s0", deadline: 1_030_000 });
@@ -293,7 +310,7 @@ test("watch_report sends the child's own session, id, and activity file with the
 	await assert.rejects(c.tool("watch_report", { text: "again" }), /^Error: rate: one report every 30 s$/);
 	await assert.rejects(c.tool("watch_report", { text: "lost" }), /^Error: not delivered: pi-intercom is not connected$/, "a report that did not go out says why");
 	await assert.rejects(c.tool("watch_report", { text: "old" }), /older than this watchdog/);
-	await assert.rejects(child({ deps: { call: async () => undefined } }).tool("watch_report", { text: "x" }), /did not answer/);
+	await assert.rejects(child({ deps: { call: async () => undefined } }).tool("watch_report", { text: "x" }), /did not answer in time, so the report may or may not have been delivered\. Call watch_report again with the same text: a `rate` or `same text` refusal means it went out/);
 	const schema = (c.registry.get("watch_report") as unknown as { parameters: { properties: Record<string, { minLength?: number; maxLength?: number }> } }).parameters.properties;
 	assert.deepEqual([Object.keys(schema), schema.text!.minLength, schema.text!.maxLength], [["text"], 1, 2000]);
 });

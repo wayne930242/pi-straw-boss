@@ -16,7 +16,7 @@ import type { Reply } from "./socket.ts";
 // None of this authenticates the caller: the control socket has no peer credentials, so any process of the same user can send a report in a watchdog's name to that watchdog's parent, and the harm is a false message. A watchdog cannot name
 // another parent: it has no shell and its environment is fixed. There is no target parameter: the message goes to the parent and nowhere else.
 //
-// One report every 30 s per session file, and never the same text as the last one; a refused or undelivered report counts for neither.
+// One report every 30 s per session file, and never the same text as the last one; a refused or undelivered report counts for neither, and of two sent at once the second meets the rate.
 
 export const RATE_MS = 30_000, MAX_TEXT = 2000;
 const ID = /^[A-Za-z0-9_.:@-]{1,128}$/;
@@ -63,19 +63,22 @@ export function createWatchReport(d: WatchReportDeps) {
 			if (was?.text === text) return no("same text as the last report");
 			const intercom = d.intercom();
 			if (!intercom) return no("pi-intercom is not connected");
+			// The slot is taken before the first await, so a second report sent at once (pi runs one message's tool calls in parallel) meets the rate; a report that does not go out gives it back (RP3-F001).
+			const mine = { at: now, text };
+			if (last.size > 2000) last.clear();
+			last.set(session, mine);
+			const back = <R extends Reply>(reply: R): R => { if (last.get(session) === mine) (was ? last.set(session, was) : last.delete(session)); return reply; };
 			let to: { id: string; name?: string } | undefined;
-			try { to = (await intercom.listSessions()).find((s) => s.id === parent); } catch (error) { return no(`pi-intercom cannot list its sessions: ${(error as Error).message}`); }
-			if (!to) return { ok: true, delivery: "gone" };
+			try { to = (await intercom.listSessions()).find((s) => s.id === parent); } catch (error) { return back(no(`pi-intercom cannot list its sessions: ${(error as Error).message}`)); }
+			if (!to) return back({ ok: true, delivery: "gone" });
 			// A first launch's script is `<name>-<id>.sh`, a resume's `<name>-resume-<ts>.sh` (netdata.ts `subagents`).
 			const name = tie.script.endsWith(`-${q.child}.sh`) ? tie.script.slice(0, -`-${q.child}.sh`.length) : tie.script.replace(/-resume-[^-]*\.sh$/, "").replace(/\.sh$/, "");
 			const message = stamp({ from: { name: `watchdog ${name}`, id: q.child, role: "session" }, kind: "watch_report", scope: "session", to: [{ name: to.name ?? to.id, id: to.id, role: "session" }], reply: false }, q.text);
 			let sent: Awaited<ReturnType<IntercomLike["send"]>>;
-			try { sent = await intercom.send(to.id, { text: message, messageId: `watch-report-${randomUUID()}` }); } catch (error) { return no(`not delivered: ${(error as Error).message}`); }
+			try { sent = await intercom.send(to.id, { text: message, messageId: `watch-report-${randomUUID()}` }); } catch (error) { return back(no(`not delivered: ${(error as Error).message}`)); }
 			const delivery = !sent.delivered ? undefined : sent.delivery === "queued" ? "queued" : sent.delivery === undefined || sent.delivery === "socket_delivered" ? "delivered" : undefined;
 			d.log?.("watch-report", { child: q.child, parent, delivery: delivery ?? "failed" });
-			if (!delivery) return no(`not delivered: ${sent.reason ?? String(sent.delivery ?? "the broker did not take it")}`);
-			if (last.size > 2000) last.clear();
-			last.set(session, { at: now, text });
+			if (!delivery) return back(no(`not delivered: ${sent.reason ?? String(sent.delivery ?? "the broker did not take it")}`));
 			return { ok: true, delivery };
 		},
 	};
