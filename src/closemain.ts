@@ -16,6 +16,13 @@ export const CONTROL = "straw-boss/control";
 const ASK_MS = 10_000, RETRY_MS = 15_000, RETRY_STEP_MS = 3000, QUIT_MS = 30_000;
 type Event = { type: string; fromSessionId?: string; payload?: Record<string, unknown> };
 interface Answer { from: string; accepted: boolean; reason?: string; busy?: boolean }
+/** The word a tower's `boss_close_main` answers for a main of kind standing: it has no end and no done report, so only the boss closes it. Checked in the tools, not in `closeMain`: revoke.ts and a signed stop end a peer's main through it. */
+export const STANDING_CLOSE = "is a standing main: it has no end and sends no done report, so only the boss closes it";
+export function refuseStanding(net: { sessions: { id: string; name?: string; herdrLocation?: { paneId?: string } }[]; ps: { pane_id: string; tokens?: Record<string, unknown> }[] }, query: string) {
+	const named = net.sessions.filter((x) => x.id === query || x.name === query);
+	if (named.length !== 1) return;
+	if (net.ps.find((p) => p.pane_id === named[0]!.herdrLocation?.paneId)?.tokens?.sb_duty === "standing") throw new Error(`${named[0]!.name ?? named[0]!.id} ${STANDING_CLOSE}`);
+}
 interface Closed { text: string; main: string; name: string; closed: boolean }
 /** `interrupt` (a stop's mode, docs/specs/2026-11-07-link-remote-stop.md, section 5): a main that is working aborts its turn and answers busy, so the next ask finds it idle; the tower skips its own idle pre-check for it. */
 export type CloseMain = (query: string, opts?: { interrupt?: boolean }) => Promise<Closed>;

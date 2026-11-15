@@ -97,6 +97,18 @@ test("boss_close_main and boss_open_main relay the opener's and the control chan
 	assert.match(String(closed.error), /No live session is named or has the id "ghost"/);
 });
 
+test("boss_close_main in a run refuses a standing main before it asks the control channel, and a coordinator main reaches it", async () => {
+	world.sessions = [{ id: "main-1", name: "docs-main", herdrLocation: { status: "ok", workspace: { id: "wA", label: "Alpha" }, tab: { id: "wA:t1", label: "work" }, paneId: "wA:p1" } }];
+	world.herdr.addPane("wA:p1", "wA:t1", "pi").tokens.sb_duty = "standing";
+	const s = await started();
+	const token = await localToken(s);
+	const refused = await tool(s, token, "boss_close_main", { main: "docs-main" });
+	assert.equal(refused.ok, false);
+	assert.match(String(refused.error), /docs-main is a standing main: it has no end and sends no done report, so only the boss closes it/);
+	world.herdr.pane("wA:p1").tokens.sb_duty = "coordinator";
+	assert.doesNotMatch(String((await tool(s, token, "boss_close_main", { main: "docs-main" })).error), /standing main/);
+});
+
 test("boss_server: status, logs, and a restart with a reason once a minute, decided by the server; the reason and the run go to the log", async () => {
 	const s = await started();
 	const token = await localToken(s);

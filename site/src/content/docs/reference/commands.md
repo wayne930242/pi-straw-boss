@@ -27,7 +27,7 @@ Agents call the **tools**; you type the **`/boss` commands** in any pi session i
 | `boss_server` | joined sessions | The sb server's `status` (also with it down), its `logs` (up to 200 lines), or `restart` with a reason. Refused while the boss stopped the server, at most once a minute, and never in a remote turn. |
 | `link_request` | every session on an attended computer, and a local tower run | Ask for a Straw Link action (create, invite, join, trust, leave, remove, role, rotate) with a reason. It never runs unasked: the boss approves it in a dialog. |
 | `boss_open_main` | towers | Open a tab with a new main agent for a request no session owns. `role: "train"` opens a train; `role: "integrator"` sends a car slip to the project's one integrator, opening it when none runs. `duty: "standing"` opens a main of kind standing (default coordinator). See [Merge train](/pi-straw-boss/docs/guide/merge-train/). |
-| `boss_close_main` | towers | Close a main this tower opened, once nothing runs in it. |
+| `boss_close_main` | towers | Close a main this tower opened, once nothing runs in it; never a standing main, which only the boss closes. |
 | `tower_list` | towers | Every workspace's tower, who a message for it reaches, its state, and what its tabs work on (each tab's main with its kind). |
 | `tower_send` | towers | Message one other tower (by workspace id or label) or all of them; with `device`, the tower of a teammate's computer. |
 | `board_read` | towers | The work board: what each main is doing and how far it is, here and on teammates' computers. |

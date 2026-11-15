@@ -246,7 +246,7 @@ test("two panes of one parent's session file show its children twice, as before:
 
 test("the across-parents join drops a loser before the limit, and a parent's own rows are as `subagents` gives them when no file is shared", () => {
 	const file = kidFile("xp5o");
-	const first = artifacts("xp5a", [{ id: "xp5o", scriptName: "fix-xp5o.sh", session: file, agent: "worker", name: "fix", phase: "done" }, { id: "xp5x", scriptName: "other-xp5x.sh", session: kidFile("xp5x"), agent: "scout", name: "other" }]);
+	const first = artifacts("xp5a", [{ id: "xp5o", scriptName: "fix-xp5o.sh", session: file, agent: "worker", name: "fix", phase: "active" }, { id: "xp5x", scriptName: "other-xp5x.sh", session: kidFile("xp5x"), agent: "scout", name: "other" }]);
 	const second = artifacts("xp5b", [{ id: "xp5r", scriptName: "fix-resume-1731456000200.sh", session: file, name: "fix" }]);
 	const now = Date.now() / 1000;
 	utimesSync(join(sessions, "artifacts", "xp5a", "subagent-activity", "xp5o.json"), now - 120, now - 120);

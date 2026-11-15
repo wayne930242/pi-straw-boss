@@ -8,7 +8,7 @@ import type { Digest } from "./digest.ts";
 import { COORDINATOR_DUTIES, isCoordinatorDuty } from "./duty.ts";
 import { INTEG_NAME, type MainDuty } from "./mainduty.ts";
 import type { Membership } from "./membership.ts";
-import type { CloseMain } from "./closemain.ts";
+import { type CloseMain, refuseStanding } from "./closemain.ts";
 import type { Link } from "./link/runtime.ts";
 import { INTEGRATOR } from "./integrator.ts";
 import { opener } from "./opener.ts";
@@ -190,7 +190,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		addOpenMain() {
 			// The request reaches the new main under a header, and names the tower the main reports to as well as the sender.
 			const open = opener({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd: process.cwd(), sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), tower: () => ({ id: me(), name: s.ownName || me() }), trustDir: trustDir(guiDir), integrationOff: () => integrationOff(cfg.env, guiDir), stateDir: guiDir });
-			tool("boss_open_main", "Open a new tab in this workspace with a new pi as its main agent and hand it a request that no session owns. Does not ask the boss and does not take focus. Opens at most one main per request; when it fails, tell the sender. The main reports its outcome to the sender and to you; close it with boss_close_main after its done report.",
+			tool("boss_open_main", "Open a new tab in this workspace with a new pi as its main agent and hand it a request that no session owns. Does not ask the boss and does not take focus. Opens at most one main per request; when it fails, tell the sender. The main reports its outcome to the sender and to you; close it with boss_close_main after its done report. With duty standing it tells the sender once, sends no done report, and is closed only by the boss: do not close it.",
 				Type.Object({
 					request: Type.String({ description: "The sender's request exactly as it reached you, with every boss decision it quotes kept verbatim." }),
 					sender: Type.String({ description: "The intercom name or session id of the session that made the request; the new main reports back to it. For a request from a teammate's device (an ally run): the message header's id= value as it stands (it reads link:<device id>)." }),
@@ -204,7 +204,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 					const opened = await open(input);
 					const text = opened.train
 						? opened.repeated ? `A train was already opened for this request (tab ${opened.tab}); nothing new opened.` : `Opened tab ${opened.tab} with ${trainLabel(opened.train.code)} (session ${opened.main}) and handed it the manifest. It reports to you; close it with boss_close_main after its milestone report.`
-						: opened.repeated ? `A main was already opened for this request (tab ${opened.tab}); nothing new opened.` : `Opened tab ${opened.tab} with a main agent (session ${opened.main}) and handed it the request. It reports to ${opened.sender} and to you.`;
+						: opened.repeated ? `A main was already opened for this request (tab ${opened.tab}); nothing new opened.` : input.duty === "standing" ? `Opened tab ${opened.tab} with a standing main (session ${opened.main}) and handed it the request. It tells ${opened.sender} once and sends no done report; do not close it, only the boss does.` : `Opened tab ${opened.tab} with a main agent (session ${opened.main}) and handed it the request. It reports to ${opened.sender} and to you.`;
 					return { text, details: opened };
 				});
 		},
@@ -251,10 +251,10 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 					if (forMain !== undefined || inReplyTo !== undefined) throw new Error("for and inReplyTo work in a tower run of the sb server (the run tools ask the server)");
 					return device === undefined ? towerSend(message, workspace, reply ?? false) : link.send({ device, text: message, reply: reply ?? false, ...(workspace !== undefined ? { workspace } : {}) });
 				});
-			tool("boss_close_main", "Close a main you opened with boss_open_main: ask it to quit as /boss close would, so its pane and tab close. Only mains opened by a tower in your workspace, never one the boss opened. Refused while it has a running turn, a queued message, an open dialog, a monitor, or a subagent; try again later. Close an opened main after its done report, unless it waits for a boss decision.",
+			tool("boss_close_main", "Close a main you opened with boss_open_main: ask it to quit as /boss close would, so its pane and tab close. Only mains opened by a tower in your workspace, never one the boss opened. Refused while it has a running turn, a queued message, an open dialog, a monitor, or a subagent; try again later. Close an opened coordinator main after its done report, unless it waits for a boss decision. A standing main is refused: only the boss closes it.",
 				Type.Object({ main: Type.String({ description: "The opened main's intercom name or session id." }) }),
 				async ({ main }) => {
-					const closed = await closeMain(main);
+					const closed = (refuseStanding(await read(), main), await closeMain(main));
 					return { text: closed.text, details: closed };
 				});
 		},

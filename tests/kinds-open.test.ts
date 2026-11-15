@@ -108,6 +108,7 @@ test("the handoff of a standing main promises no close and no done report; a coo
 	}
 	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, undefined, "standing"), /Sender: docs-main \(session id sender-1\)/);
 	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, PEER, "standing"), /Sender: alice's laptop \(a teammate's device, short id ab12, over Straw Link\)/);
+	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, PEER, "standing"), /not close this tab after a report.*box also ends it when the device that asked leaves the team or sends a signed stop/, "it names who else ends the tab");
 	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, PEER, "standing"), /no secrets, tokens, or private paths/, "a peer's standing main still writes a report that can leave this computer");
 });
 
@@ -118,4 +119,13 @@ test("boss_open_main sends a main opened as standing the standing handoff", asyn
 	const body = world.broker.delivered.find((d) => d.to === OPENED.id)!.message;
 	assert.doesNotMatch(body, /closes this tab/, "a standing main is not told the tower closes its tab");
 	assert.match(body, /does not close this tab/);
+});
+
+test("boss_open_main of a standing main answers with no done report, and boss_close_main refuses it", async () => {
+	const { tower } = await net();
+	const result = await tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1", duty: "standing" });
+	assert.match(JSON.stringify(result), /sends no done report; do not close it/);
+	assert.doesNotMatch(JSON.stringify(result), /reports to/);
+	await until(() => tokens(OPENED.pane).sb_duty === "standing", "the opened main is standing");
+	await assert.rejects(tower.tool("boss_close_main", { main: OPENED.id }), /standing main: it has no end and sends no done report, so only the boss closes it/);
 });
