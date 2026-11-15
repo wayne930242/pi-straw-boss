@@ -189,7 +189,7 @@ test("the tower prompt lets it open a main without asking the boss, and keeps it
 	assert.match(text, /open a main with boss_open_main without asking the boss/);
 	assert.match(text, /verbatim/);
 	assert.match(text, /Do no work yourself: no commands, process signals, edits, or subagents/);
-	assert.match(text, /Never ask the boss \(no ask_user, robot_hand, focus changes\)/);
+	assert.match(text, /Never ask the boss \(no questions, robot_hand, focus changes\)/);
 });
 
 test("a workspace folder whose .pi/settings.json pi must not read opens no tab, says why, and the same request may be tried again once it is fixed", async () => {

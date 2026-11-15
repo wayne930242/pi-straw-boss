@@ -62,7 +62,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 			});
 			tool("call_tower", "Send a message to the tower of your workspace, or of another workspace by id or exact label. Opens the tower tab when none is running. why: milestone (something landed; reply false unless you need an answer), shared (before you change something outside your tab; wait for the answer), or blocked (you wait on someone outside your tab). Routine progress goes on your work board, not here. The message goes out under a header the code writes (your name, role, and workspace, the recipient, whether you expect a reply, and why). A tower replies through intercom unless you say reply is false.",
 				Type.Object({
-					message: Type.String({ description: "What the tower needs to know or do: at most two sentences, details by reference." }),
+					message: Type.String({ description: "What the tower needs to know or do, stated briefly with details by reference. A block the tower forwards or acts on (a car slip, a train: manifest) goes whole and verbatim." }),
 					why: whyField,
 					workspace: Type.Optional(Type.String({ description: "Another workspace's id or exact label. Omit for your own." })),
 					reply: Type.Optional(Type.Boolean({ description: "Whether you wait for the tower's answer. Default true; false for a milestone or a notice." })),
@@ -134,8 +134,8 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 				});
 			// The session's name is what the net and the GUI show for it. A main agent names its tab too: the tab is its squad, and pi-auto-tab-name
 			// leaves a tab alone once anyone else labelled it. A tower keeps its own name.
-			if (!s.isTower) tool("boss_rename", "Name this session with a short phrase for the work it is doing now, at most 16 characters (e.g. \"MP-3584 cost mask\", \"重構通知模組\"). The net and the GUI show it, and a main agent's Herdr tab takes it as its label.",
-				Type.Object({ name: Type.String({ description: "The phrase: what this session works on now, at most 16 characters so the tab label shows it whole." }) }),
+			if (!s.isTower) tool("boss_rename", "Name this session with a short phrase for the work it is doing now (e.g. \"MP-3584 mask\", \"重構通知模組\"). The net and the GUI show it whole; a main agent's Herdr tab takes it as its label, cut to 16 characters. More than 40 characters is refused.",
+				Type.Object({ name: Type.String({ description: "The phrase: what this session works on now. 16 characters or fewer show whole in the tab label; at most 40." }) }),
 				async ({ name }) => {
 					if (s.isTrain) throw new Error(`A train is named by its code (${s.ownName || pi.getSessionName()}) and keeps it`);
 					const phrase = name.replace(/\s+/g, " ").trim();

@@ -30,7 +30,7 @@ small request.
    relevant error paths, tests, documentation, rollout, and risk only when the
    task warrants them.
 5. **Write the plan.** Write the plan at the brief's plan path, normally
-   `.pi/plans/<run>/plan.md`, and open it with `show_doc` when the user confirms it. End with the path, ordered tasks, open questions,
+   `.pi/plans/<run>/plan.md`, and open it with `show_doc` when the user is to confirm it. End with the path, ordered tasks, open questions,
    and decisions that still need user approval.
 
 ## Scope

@@ -198,10 +198,10 @@ test("wait cards: tower.md says the boss is not an agent, and the card's words a
 	assert.ok(tower.indexOf("The boss is not an agent:") > tower.indexOf("caveman-style"), "after the terse line");
 });
 
-test("wait cards: tower-run.md records a boss wait as a card (fields, language, refusals, the press, legacy, no double notice), with the fonstar example, and the one-line rule is gone", () => {
+test("wait cards: tower-run.md records a boss wait as a card (fields, language, refusals, the press, no double notice), with the fonstar example, and the one-line rule is gone", () => {
 	const run = readFileSync(`${PROMPT_DIR}/tower-run.md`, "utf8");
 	assert.ok(!run.includes("write what they have to do in one line they can act on"), "the old one-line rule is replaced");
-	for (const term of ["Record a wait for the boss as a card", "`type` (action", "choice when they pick", "secret when a session needs a secret from them", "`happened`", "`do`", "`url` or `command`", "`after`", "`options`", "`secret.name`", "never the value", "`from`", "the `[intercom from ...]` line", "or `self`", "the language the brief's Memory section names (sb's locale)", "who has not followed the work", "A refusal lists what to fix. Fix every line and call again.", "The boss pressed", "chose", "declined", "A declined wait is over: tell the raiser what happens instead", "old free-text wait", "`restates`", "Do not send the raiser the same news yourself", "fonstar-staging", "tailscale"]) assert.ok(run.toLowerCase().includes(term.toLowerCase()), `tower-run.md names ${term}`);
+	for (const term of ["Record a wait for the boss as a card", "`type` (action", "choice when they pick", "secret when a session needs a secret from them", "`happened`", "`do`", "`url` or `command`", "`after`", "`options`", "`secret.name`", "never the value", "`from`", "the `[intercom from ...]` line", "or `self`", "the language your brief names (sb's locale)", "who has not followed the work", "A refusal lists what to fix. Fix every line and call again.", "The boss pressed", "chose", "declined", "A declined wait is over: tell the raiser what happens instead", "Do not send the raiser the same news yourself", "fonstar-staging", "tailscale"]) assert.ok(run.toLowerCase().includes(term.toLowerCase()), `tower-run.md names ${term}`);
 });
 
 test("wait cards: head-run.md and main.md say the same in their words", () => {
@@ -254,7 +254,7 @@ test("train workers: no uat stage and no UAT page in the integrator or the train
 	for (const file of ["integrator.md", "train.md"]) {
 		const text = read(file).replace(/- A train in your ledger with no trainboard[^\n]*/, "");
 		assert.doesNotMatch(text, /`uat`|UAT page|accepted in UAT|\bshow_doc\b/, `${file} has no uat stage or page`);
-		const bare = text.replace(D13_WORD, "").replace("A car that asks it for UAT, e2e, or any acceptance", "").replace("You never wait on a person and run no UAT, e2e, or acceptance.", "").replace("still list the old uat stage", "");
+		const bare = text.replace(D13_WORD, "").replace("A car that asks it for UAT, e2e, or any acceptance", "").replace("You never wait on a person and run no UAT, e2e, or acceptance.", "").replace("list a uat stage", "");
 		assert.doesNotMatch(bare, /\buat\b/i, `${file} runs no uat stage, backticked or not`);
 		assert.doesNotMatch(text, /tower_reply|tower_send|tell (?:the|a|each) coordinator|notify (?:the|a|each) coordinator/i, `${file} has no way to tell a coordinator by itself`);
 		assert.ok(text.includes(D13_WORD), `${file} states D13's word`);
@@ -334,7 +334,7 @@ test("train workers: every state a prompt names with fields names exactly the fi
 
 test("TB-F006, F008, F009: the prompts give the code's form, the todo order, absolute evidence paths, the version refusal and the car with no forward", () => {
 	const integrator = read("integrator.md"), train = read("train.md");
-	for (const term of ["`YYYY-MM-DD-<letters>`", "`in_progress` first", "(absolute paths)", "sb refuses your `train` todos while either does not declare the contract", "A slip with no tower forward (queued before 0.65.0) cannot be received"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
+	for (const term of ["`YYYY-MM-DD-<letters>`", "`in_progress` first", "(absolute paths)", "sb refuses your `train` todos while either does not declare the contract", "A slip with no tower forward cannot be received"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
 	assert.ok(train.includes("sb refuses your `todo` and `MonitorCreate` calls while either does not declare the contract"), "train.md says the contract is sb's check, not the model's");
 	assert.ok(strip(read("planning.md"), false).includes("absolute paths in `accept:` and `evidence`"), "the coordinator writes absolute paths");
 });
