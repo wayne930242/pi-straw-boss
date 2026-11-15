@@ -222,7 +222,8 @@ async function allyTool(host: ToolHost, name: string, args: Record<string, unkno
 		if (await host.isTower(to)) throw new Error("An ally run may not write to a tower identity of this computer: it would carry a peer's text into a local run");
 		await refuseTarget(host, to);
 	}
-	if (name === "boss_close_main") await refuseClose(host, str(args, "main", 300));
+	// rev-0803d-F002: a standing main is refused before the gate, so no one confirms a close the code refuses.
+	if (name === "boss_close_main") refuseStanding(await host.reach.read(), await refuseClose(host, str(args, "main", 300)));
 	// The sender's own device is the one write the allowlist lets through; everything else outside the free reads needs the Allow of the gate.
 	if (gated && name !== "tower_send") {
 		if (!extra.toolCallId) throw new Error(`${name} needs the boss's confirm in this run, and the call carried no tool call id`);
@@ -425,7 +426,7 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 			const sender = str(args, "sender", 300), peer = ally ? peerSender(host.who, sender) : undefined;
 			const opened = await host.open({ request: str(args, "request"), sender: peer?.id ?? sender, ...(peer ? { peer } : {}), ...(opt(args, "label") ? { label: opt(args, "label")! } : {}), ...(opt(args, "role") ? { role: opt(args, "role")! } : {}), ...(opt(args, "duty") ? { duty: opt(args, "duty")! } : {}) });
 			if (opened.train) return { text: opened.repeated ? `A train was already opened for this request (tab ${opened.tab}); nothing new opened.` : `Opened tab ${opened.tab} with ${trainLabel(opened.train.code)} (session ${opened.main}) and handed it the manifest. It reports to you; close it with boss_close_main after its milestone report.`, details: opened };
-			const text = opened.repeated ? `A main was already opened for this request (tab ${opened.tab}); nothing new opened.` : opt(args, "duty") === "standing" ? `Opened tab ${opened.tab} with a standing main (session ${opened.main}) and handed it the request. It tells the tower once and sends no done report; do not close it, only the boss does.` : `Opened tab ${opened.tab} with a main agent (session ${opened.main}) and handed it the request. ${peer ? `It reports to the tower only; each report wakes a run for ${peer.label} that sends it to the sender.` : `It reports to ${opened.sender} and to you.`}`;
+			const text = opened.repeated ? `A main was already opened for this request (tab ${opened.tab}); nothing new opened.` : opt(args, "duty") === "standing" ? `Opened tab ${opened.tab} with a standing main (session ${opened.main}) and handed it the request. It tells ${peer ? "the tower" : sender} once and sends no done report; do not close it, only the boss does.` : `Opened tab ${opened.tab} with a main agent (session ${opened.main}) and handed it the request. ${peer ? `It reports to the tower only; each report wakes a run for ${peer.label} that sends it to the sender.` : `It reports to ${opened.sender} and to you.`}`;
 			return { text, details: opened };
 		}
 		case "boss_close_main": {

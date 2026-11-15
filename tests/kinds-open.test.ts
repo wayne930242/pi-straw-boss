@@ -108,7 +108,7 @@ test("the handoff of a standing main promises no close and no done report; a coo
 	}
 	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, undefined, "standing"), /Sender: docs-main \(session id sender-1\)/);
 	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, PEER, "standing"), /Sender: alice's laptop \(a teammate's device, short id ab12, over Straw Link\)/);
-	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, PEER, "standing"), /not close this tab after a report.*box also ends it when the device that asked leaves the team or sends a signed stop/, "it names who else ends the tab");
+	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, PEER, "standing"), /not close this tab after a report.*box also ends it when the device that asked leaves the team or loses `dispatch`, or on a signed stop/, "it names who else ends the tab");
 	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, PEER, "standing"), /no secrets, tokens, or private paths/, "a peer's standing main still writes a report that can leave this computer");
 });
 

@@ -848,7 +848,7 @@ pi 修掉 #11421 之後，這道防護就可以移除。pi 比 1.4.0 新的時�
 <details>
 <summary>細節</summary>
 
-由塔台開啟（`boss_open_main`）的主智慧體，在它的工作完成時告訴寄件者和塔台，然後等待；塔台用 `boss_close_main` 關閉它，除非主智慧體說它在等老闆的決定。交接訊息指名兩者（`Sender:` 和 `Tower:`，附上它們的 session id），並說要用 `intercom send` 向寄件者、用 `call_tower`（`why: milestone`，不回覆）向塔台回報結果；主智慧體的 prompt 對塔台開啟的分頁會重複這一點。值守主智慧體是例外：它的交接訊息不承諾關閉，也不要求完成報告，而上面塔台的規則只適用於回報完成的主智慧體。`boss_close_main` 會拒絕值守主智慧體（session 工具與塔台 run 都一樣），帶 `duty: "standing"` 的 `boss_open_main` 則回答不會有完成報告；只有老闆能關閉值守主智慧體，不過對方裝置離開團隊或收到簽署的停止時，box 仍會結束由對等端開啟的那一個。這個工具只在塔台登記，接受主智慧體的 intercom 名稱或 session id。塔台先從 Herdr 的角度檢查：
+由塔台開啟（`boss_open_main`）的主智慧體，在它的工作完成時告訴寄件者和塔台，然後等待；塔台用 `boss_close_main` 關閉它，除非主智慧體說它在等老闆的決定。交接訊息指名兩者（`Sender:` 和 `Tower:`，附上它們的 session id），並說要用 `intercom send` 向寄件者、用 `call_tower`（`why: milestone`，不回覆）向塔台回報結果；主智慧體的 prompt 對塔台開啟的分頁會重複這一點。值守主智慧體是例外：它的交接訊息不承諾關閉，也不要求完成報告，而上面塔台的規則只適用於回報完成的主智慧體。`boss_close_main` 會拒絕值守主智慧體（session 工具與塔台 run 都一樣），帶 `duty: "standing"` 的 `boss_open_main` 則回答不會有完成報告；只有老闆能關閉值守主智慧體，不過對方裝置離開團隊或失去 `dispatch`，或收到簽署的停止時，box 仍會結束由對等端開啟的那一個。這個工具只在塔台登記，接受主智慧體的 intercom 名稱或 session id。塔台先從 Herdr 的角度檢查：
 
 - session 在塔台自己的工作區裡，而且是主智慧體（`sb_role=main`）；
 - 它的 pane 帶有 `sb_opened_by`，所以是塔台開啟的它：老闆自己開的主智慧體絕不會被塔台關閉；

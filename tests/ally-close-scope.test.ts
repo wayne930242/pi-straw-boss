@@ -13,14 +13,15 @@ const sessions = [
 	{ id: "s-dup1", name: "Dup", herdrLocation: { paneId: "p4" } },
 	{ id: "s-dup2", name: "Dup", herdrLocation: { paneId: "p5" } },
 	{ id: "s-forged", name: "Forged", herdrLocation: { paneId: "p6" } },
+	{ id: "s-stand", name: "Stand", herdrLocation: { paneId: "p7" } },
 ];
-const routes: Record<string, string> = { "s-mine": DEV, "s-theirs": OTHER, "s-dup1": DEV, "s-dup2": DEV, "s-forged": DEV };
+const routes: Record<string, string> = { "s-mine": DEV, "s-theirs": OTHER, "s-dup1": DEV, "s-dup2": DEV, "s-forged": DEV, "s-stand": DEV };
 const tokens: Record<string, string> = { p6: `link:${OTHER}` };
 
 function host(level: string) {
 	const allows: unknown[] = [], closes: string[] = [];
 	const h = {
-		reach: { read: async () => ({ sessions, ps: Object.entries(tokens).map(([pane_id, t]) => ({ pane_id, tokens: { sb_opened_by: t } })) }) },
+		reach: { read: async () => ({ sessions, ps: [...Object.entries(tokens).map(([pane_id, t]) => ({ pane_id, tokens: { sb_opened_by: t } })), { pane_id: "p7", tokens: { sb_role: "main", sb_duty: "standing" } }] }) },
 		closeMain: async (q: string) => (closes.push(q), { text: "closed", main: q }),
 		allow: async (q: unknown) => (allows.push(q), { ok: true }),
 		who: { device: DEV, team: TEAM, level, pane: "px" },
@@ -42,6 +43,12 @@ for (const level of ["dispatch", "forward"]) {
 		const { h, closes, allows } = host(level);
 		for (const q of ["s-theirs", "Theirs", "s-box", "BoxMain", "Dup", "nobody", "s-forged"]) await assert.rejects(close(h, q), /boss_close_main has no such target/, q);
 		assert.equal(allows.length, 0, "no Allow spent");
+		assert.deepEqual(closes, [], "closeMain never reached");
+	});
+	test(`at ${level}: a standing main opened for its own device is refused before the gate, so no one confirms a close the code refuses (rev-0803d-F002)`, async () => {
+		const { h, closes, allows } = host(level);
+		await assert.rejects(close(h, "Stand"), /is a standing main: it has no end and sends no done report, so only the boss closes it/);
+		assert.equal(allows.length, 0, "no Allow asked");
 		assert.deepEqual(closes, [], "closeMain never reached");
 	});
 }
