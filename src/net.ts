@@ -2,7 +2,7 @@ import type { Stashed } from "./stash.ts";
 import type { LinkSummary } from "./link/holder.ts";
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
-import { commanding, type Mark, markOf, type Row, sessionMark, subagents } from "./netdata.ts";
+import { commanding, type Mark, markOf, type Row, sessionMark, subagentsOfAll } from "./netdata.ts";
 import { cutCards } from "./waitbudget.ts";
 import { type HeadChapter, type HeadSeam, type HeadUnit, headUnit, serviceMark } from "./nethead.ts";
 import { type HerdrRun, type HerdrWorld, isHead, isSub, type Pane, parentOf, type Session, type Workspace, worldOf } from "./herdr.ts";
@@ -175,7 +175,7 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, servi
 /** One reading of Herdr and intercom as a net. */
 export async function collectNet({ run, world = worldOf(run), sessions, now = Date.now(), refs, sessionDir, trust, services, head }: { services?(workspace: string): TowerView | undefined; head?: HeadSeam; run: HerdrRun; world?: HerdrWorld; sessions(): Promise<Session[]>; now?: number; refs?: Map<string, Ref>; sessionDir?: string; trust?: { asks(panes: Pane[], workspaces: Workspace[]): TrustAsk[] } }): Promise<Net> {
 	const [live, { panes: ps, workspaces: all }] = await Promise.all([sessions(), world()]);
-	const net = buildNet({ sessions: live, panes: ps, workspaces: all, children: (pane) => subagents(pane, ps, now), sessionDir, ...(services ? { services } : {}), ...(head ? { head } : {}) }, refs), asks = trust?.asks(ps, all) ?? [];
+	const net = buildNet({ sessions: live, panes: ps, workspaces: all, children: subagentsOfAll(ps, now), sessionDir, ...(services ? { services } : {}), ...(head ? { head } : {}) }, refs), asks = trust?.asks(ps, all) ?? [];
 	return asks.length ? { ...net, trust: asks } : net;
 }
 

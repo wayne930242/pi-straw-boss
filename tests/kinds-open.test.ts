@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { TOWER_LABEL } from "../src/herdr.ts";
+import { handoff } from "../src/opener.ts";
 import { type Agent, until, World } from "./fakes.ts";
 
 // docs/specs/2026-11-09-agent-kinds.md §6, Phase 2 "The opener": `boss_open_main` takes an optional `duty`; the opener writes `sb_open_duty` beside `sb_open_main`, the new pi consumes both,
@@ -89,4 +90,32 @@ test("R0790-F003: a pane token that says integrator is taken only while integrat
 	await world.quiet();
 	assert.deepEqual(dutyEntries(opened()), [], "no integrator entry while integration is off");
 	assert.notEqual(tokens(OPENED.pane).sb_duty, "integrator");
+});
+
+// A standing main has no end (docs/specs/2026-11-09-agent-kinds.md §1, D10): the handoff it receives must not say the tower closes its tab after a done report.
+const SENDER = { id: "sender-1", name: "docs-main" }, TOWER = { id: "tower-1", name: "tower · tower-1" }, PEER = { id: "dev-1", label: "alice's laptop", short: "ab12" };
+test("the handoff of a standing main promises no close and no done report; a coordinator's, and one with no duty, keep their text", () => {
+	const coordinator = handoff("Alpha", SENDER, REQUEST, TOWER), peerCoordinator = handoff("Alpha", SENDER, REQUEST, TOWER, PEER);
+	assert.match(coordinator, /Then wait; the tower closes this tab after your done report/);
+	assert.match(peerCoordinator, /the tower closes this tab after your done report/);
+	assert.equal(handoff("Alpha", SENDER, REQUEST, TOWER, undefined, "coordinator"), coordinator, "an explicit coordinator reads as before");
+	assert.equal(handoff("Alpha", SENDER, REQUEST, TOWER, PEER, "coordinator"), peerCoordinator);
+	for (const text of [handoff("Alpha", SENDER, REQUEST, TOWER, undefined, "standing"), handoff("Alpha", SENDER, REQUEST, TOWER, PEER, "standing")]) {
+		assert.doesNotMatch(text.split("Sender:")[0]!, /closes this tab|end it with the result/, "no close is promised");
+		assert.match(text, /no end/, "it says the watch has no end");
+		assert.match(text, /does not close this tab/, "and that the tower leaves the tab open");
+		assert.match(text, /Tower: tower · tower-1 \(session id tower-1\)\nRequest, verbatim:\nMind the nightly backup host\.$/, "the facts and the request are unchanged");
+	}
+	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, undefined, "standing"), /Sender: docs-main \(session id sender-1\)/);
+	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, PEER, "standing"), /Sender: alice's laptop \(a teammate's device, short id ab12, over Straw Link\)/);
+	assert.match(handoff("Alpha", SENDER, REQUEST, TOWER, PEER, "standing"), /no secrets, tokens, or private paths/, "a peer's standing main still writes a report that can leave this computer");
+});
+
+test("boss_open_main sends a main opened as standing the standing handoff", async () => {
+	const { tower } = await net();
+	await tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1", duty: "standing" });
+	await until(() => world.broker.delivered.some((d) => d.to === OPENED.id), "the handoff arrived");
+	const body = world.broker.delivered.find((d) => d.to === OPENED.id)!.message;
+	assert.doesNotMatch(body, /closes this tab/, "a standing main is not told the tower closes its tab");
+	assert.match(body, /does not close this tab/);
 });

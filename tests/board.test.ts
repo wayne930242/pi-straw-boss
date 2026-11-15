@@ -193,7 +193,7 @@ test("board_read (towers only): the output shape, a live main with no entry besi
 	assert.equal(typeof api[1], "string");
 	assert.ok(rows.some((r) => r[0] === "ops-main" && r[4] === null), "a live main with no entry shows with its name and tab and no now");
 	assert.ok(!rows.some((r) => r[0] === "helper"), "a member is no main");
-	assert.deepEqual(result.local.find((r) => r.state === "ended"), { workspace: "", tab: "", main: "", state: "ended", now: "left half done", items: [{ t: "x", done: true }], updatedSecondsAgo: 300 });
+	assert.deepEqual(result.local.find((r) => r.state === "ended"), { workspace: "", tab: "", main: "", kind: null, state: "ended", now: "left half done", items: [{ t: "x", done: true }], updatedSecondsAgo: 300 });
 	assert.equal(result.local.filter((r) => r.state === "ended").length, 1, "an entry 60 minutes old is gone");
 	assert.equal(result.local.find((r) => r.main === "api-main")!.updatedSecondsAgo !== undefined, true);
 	assert.ok(member && main);

@@ -660,11 +660,11 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 #### `board_read({ scope?, device? })`
 
-`board_read({ scope?, device? })`（只有塔台能用，與 `tower_list` 一起登記）回答 JSON：一則說明遠端條目是資料的 `note`、`local`（每個運作中主智慧體的工作區、分頁、名稱、狀態、`now`、`items`、`updatedSecondsAgo`；沒有條目的運作中主智慧體只顯示它的名稱和分頁；閒置主智慧體的舊條目帶 `stale: true`，值守主智慧體的不會），以及只在設定了 Straw Link 時才有的 `remote`（每個隊友裝置一列：`origin: "remote"`、團隊在這台電腦上的名稱、裝置的 id、短 id 和**取自名冊的**標籤、`online`、`boardSecondsAgo`，以及它的條目）。`scope` 是 `local`、`remote` 或 `all`；`device` 讀一個隊友（和 `tower_send` 的解析方式相同，所以未知或有歧義的名稱是一個錯誤，並列出候選者），並略過本機的部分。遠端文字保留它的字元，但會失去控制和格式字元，並再截斷一次。
+`board_read({ scope?, device? })`（只有塔台能用，與 `tower_list` 一起登記）回答 JSON：一則說明遠端條目是資料的 `note`、`local`（每個運作中主智慧體的工作區、分頁、名稱、`kind`、狀態、`now`、`items`、`updatedSecondsAgo`；沒有條目的運作中主智慧體只顯示它的名稱和分頁；閒置主智慧體的舊條目帶 `stale: true`，值守主智慧體的不會；`kind` 是 `coordinator`、`integrator` 或 `standing`，取自主智慧體的 `sb_duty`，和 `tower_list`、`boss_status` 讀到的相同，火車、已結束的條目，以及沒有發布種類的主智慧體為 null；隊友的 `remote` 列沒有它），以及只在設定了 Straw Link 時才有的 `remote`（每個隊友裝置一列：`origin: "remote"`、團隊在這台電腦上的名稱、裝置的 id、短 id 和**取自名冊的**標籤、`online`、`boardSecondsAgo`，以及它的條目）。`scope` 是 `local`、`remote` 或 `all`；`device` 讀一個隊友（和 `tower_send` 的解析方式相同，所以未知或有歧義的名稱是一個錯誤，並列出候選者），並略過本機的部分。遠端文字保留它的字元，但會失去控制和格式字元，並再截斷一次。
 
 #### 在遠端輪次裡
 
-在遠端輪次裡（任何層級），`board_read` 和 `tower_list` 都在允許清單上，而且只回答這次執行的寄件者本來就會收到的內容：`local` 只含 pane 資料夾在寄件者的團隊所綁定的專案之內的主智慧體（寄件者的團隊綁定不同專案時，一個也沒有；已結束的條目沒有資料夾可證明，所以不列入），每個自動填入的條目照隊友所得到的樣子（名稱和完成數），`remote` 只含那些團隊的看板，而 `tower_list` 只含那個專案和寄件者的團隊之內的工作區。`board_read` 的結果會和任何工具結果一樣，留在塔台之後各次執行的 context 裡；每一行遠端文字最多 120 個字元，放在 `origin: "remote"` 底下、說明文字之下。
+在遠端輪次裡（任何層級），`board_read` 和 `tower_list` 都在允許清單上，而且只回答這次執行的寄件者本來就會收到的內容：`local` 只含 pane 資料夾在寄件者的團隊所綁定的專案之內的主智慧體（寄件者的團隊綁定不同專案時，一個也沒有；已結束的條目沒有資料夾可證明，所以不列入），每個自動填入的條目照隊友所得到的樣子（名稱和完成數；它的 `kind` 是 `tower_list` 給同一次執行的那個詞），`remote` 只含那些團隊的看板，而 `tower_list` 只含那個專案和寄件者的團隊之內的工作區。`board_read` 的結果會和任何工具結果一樣，留在塔台之後各次執行的 context 裡；每一行遠端文字最多 120 個字元，放在 `origin: "remote"` 底下、說明文字之下。
 
 #### 分享
 
@@ -775,7 +775,7 @@ sb server 把它啟動的 pane 清單（每個 pane 附它的資料夾）留在�
 1. 把寄件者解析成一個運作中的 session；沒有該名稱或 id 的運作中 session 時，會在開啟任何東西之前就失敗，因為新的主智慧體無法回報。
 2. 在塔台自己的工作區裡建立一個分頁，位置在工作區的 checkout 路徑（沒有時用塔台的 cwd），帶 `--no-focus` 和 `STRAW_BOSS_ROLE=main`。它絕不切換使用者的焦點，也絕不往已存在的 pane 裡打字。給另一個工作區的工作，用 `call_tower` 交給那個工作區的塔台；這個工具不會在其他地方開啟。
 3. 在那個分頁的 pane 裡，以 Herdr 的智慧體名稱 `main-<8 hex>` 啟動 pi，用 pi 的預設模型（`towerModel` 設定只給塔台用）。以 `STRAW_BOSS_ROLE=main` 啟動的 pi 和任何 session 一樣加入，然後像 `boss_promote` 那樣自己升任：已有運作中主智慧體的分頁會拒絕它，而這個 pi 帶著警告維持成員。
-4. 最多等 60 秒讓那個 pane 發布 `sb_role=main`，然後在[標頭](#塔台之間的對話)之下（`kind=handoff`、`reply=expected`），送給新的主智慧體一則 intercom 訊息，附上寄件者的名稱和 session id、塔台的名稱和 session id，以及原文的請求，所以它的第一個 prompt 就是主智慧體的。訊息要主智慧體把結果回報給寄件者和開啟它的塔台，然後等待：由塔台關閉它（[關閉開啟的主智慧體](#關閉開啟的主智慧體)）。
+4. 最多等 60 秒讓那個 pane 發布 `sb_role=main`，然後在[標頭](#塔台之間的對話)之下（`kind=handoff`、`reply=expected`），送給新的主智慧體一則 intercom 訊息，附上寄件者的名稱和 session id、塔台的名稱和 session id，以及原文的請求，所以它的第一個 prompt 就是主智慧體的。訊息要主智慧體把結果回報給寄件者和開啟它的塔台，然後等待：由塔台關閉它（[關閉開啟的主智慧體](#關閉開啟的主智慧體)）。以 `duty: "standing"` 開啟的主智慧體沒有終點，所以它的交接訊息說的不一樣：設好監看、向寄件者（隊友的請求則向塔台）說一次它在看什麼和目前狀態，並且別指望被關閉，因為塔台會讓這個分頁一直開著，直到老闆關閉它。
 
 這個工具也開啟火車（`role: "train"`，以清單作為請求，每份程式碼一次；見[合併火車](#合併火車)）。火車坐在自己的分頁裡，不算進下面的兩個主智慧體，也沒有每位寄件者的限制；改由專案的 `integration.maxTrains`（預設 3，涵蓋每個工作區）限制，而合併火車關閉時，開啟會被拒絕。
 
@@ -848,7 +848,7 @@ pi 修掉 #11421 之後，這道防護就可以移除。pi 比 1.4.0 新的時�
 <details>
 <summary>細節</summary>
 
-由塔台開啟（`boss_open_main`）的主智慧體，在它的工作完成時告訴寄件者和塔台，然後等待；塔台用 `boss_close_main` 關閉它，除非主智慧體說它在等老闆的決定。交接訊息指名兩者（`Sender:` 和 `Tower:`，附上它們的 session id），並說要用 `intercom send` 向寄件者、用 `call_tower`（`why: milestone`，不回覆）向塔台回報結果；主智慧體的 prompt 對塔台開啟的分頁會重複這一點。這個工具只在塔台登記，接受主智慧體的 intercom 名稱或 session id。塔台先從 Herdr 的角度檢查：
+由塔台開啟（`boss_open_main`）的主智慧體，在它的工作完成時告訴寄件者和塔台，然後等待；塔台用 `boss_close_main` 關閉它，除非主智慧體說它在等老闆的決定。交接訊息指名兩者（`Sender:` 和 `Tower:`，附上它們的 session id），並說要用 `intercom send` 向寄件者、用 `call_tower`（`why: milestone`，不回覆）向塔台回報結果；主智慧體的 prompt 對塔台開啟的分頁會重複這一點。值守主智慧體是例外：它的交接訊息不承諾關閉，也不要求完成報告，而上面塔台的規則只適用於回報完成的主智慧體。這個工具只在塔台登記，接受主智慧體的 intercom 名稱或 session id。塔台先從 Herdr 的角度檢查：
 
 - session 在塔台自己的工作區裡，而且是主智慧體（`sb_role=main`）；
 - 它的 pane 帶有 `sb_opened_by`，所以是塔台開啟的它：老闆自己開的主智慧體絕不會被塔台關閉；

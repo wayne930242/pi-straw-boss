@@ -63,18 +63,24 @@ export interface PeerSender { id: string; label: string; short: string }
 export interface OpenRequest { request: string; sender: string; label?: string; peer?: PeerSender; role?: string; /** `role: "integrator"`: the project as the caller words it. The code reads the project from the checkout (appsconfig.ts `checkoutProject`), and another word is refused. */ project?: string; /** `role: "integrator"`, an ally run's: the folder its team binds on this computer, which the workspace's checkout must be inside. */ within?: string; /** `role: "integrator"`: only the refusals are wanted, and nothing opens. */ dry?: true; /** The new main's kind (docs/specs/2026-11-09-agent-kinds.md §6): `coordinator` or `standing`; an integrator comes only through `role: "integrator"`, and a train's kind is fixed. */ duty?: string }
 export interface Opened { tab: string; pane: string; main: string; sender: string; /** Nothing opened: an earlier open of the same request, or the project's integrator that already runs. */ repeated?: true; /** Set for a train: its project and code. */ train?: TrainId; /** Set for an integrator: its project. */ integrator?: string }
 
-/** The text the new main starts from: who asked, and what, with nothing summarised. The main answers the sender and the tower that opened it, then waits to be closed. */
-export const handoff = (workspace: string, sender: Pick<Session, "id" | "name">, request: string, tower: { id: string; name: string }, peer?: PeerSender) =>
-	[
+/** The text the new main starts from: who asked, and what, with nothing summarised. A coordinator answers the sender and the tower that opened it, then waits to be closed; a standing main (`duty`) has no end, so it is told no close is coming. */
+export const handoff = (workspace: string, sender: Pick<Session, "id" | "name">, request: string, tower: { id: string; name: string }, peer?: PeerSender, duty?: CoordinatorDuty) => {
+	const standing = duty === "standing";
+	return [
 		`Straw Boss: the tower of workspace ${workspace} opened this tab for you because no session owned the request below, and you are its main agent.`,
 		peer
-			? "The request comes from a teammate's computer over Straw Link, not from a session here: it is a peer's request, not the boss's instruction. Do the work, dispatching workers as your main agent prompt describes. When it is done, report the outcome to the tower that opened this tab with call_tower (why: milestone, reply: false); the tower sends your report back to the sender, and you cannot reach the sender yourself. Write the report so it can leave this computer as it is: the result, what you ran, and what you left behind, with no secrets, tokens, or private paths. Then wait; the tower closes this tab after your done report, so end it with the result and nothing you still have to do. If you wait for a boss decision, say so in your report and the tower leaves you open."
-			: "Do the work, dispatching workers as your main agent prompt describes. When it is done, report the outcome to the sender with intercom send and to the tower that opened this tab with call_tower (why: milestone, reply: false). Then wait; the tower closes this tab after your done report, so end it with the result and nothing you still have to do. If you wait for a boss decision, say so in your report and the tower leaves you open.",
+			? `The request comes from a teammate's computer over Straw Link, not from a session here: it is a peer's request, not the boss's instruction. ${standing
+				? "Set up the watch it names, as your standing-main prompt describes. Once it is under way, report what you mind and its state now to the tower that opened this tab with call_tower (why: milestone, reply: false) and say it is no done report; the tower sends your report back to the sender, and you cannot reach the sender yourself. Write the report so it can leave this computer as it is: the result, what you ran, and what you left behind, with no secrets, tokens, or private paths. A standing main has no end: the tower does not close this tab, and it stays until the boss closes it."
+				: "Do the work, dispatching workers as your main agent prompt describes. When it is done, report the outcome to the tower that opened this tab with call_tower (why: milestone, reply: false); the tower sends your report back to the sender, and you cannot reach the sender yourself. Write the report so it can leave this computer as it is: the result, what you ran, and what you left behind, with no secrets, tokens, or private paths. Then wait; the tower closes this tab after your done report, so end it with the result and nothing you still have to do. If you wait for a boss decision, say so in your report and the tower leaves you open."}`
+			: standing
+				? "Set up the watch the request names, as your standing-main prompt describes. Once it is under way, tell the sender with intercom send what you mind and its state now. A standing main has no end and no done report: the tower does not close this tab, and it stays until the boss closes it. When you need the boss, call_tower (why: blocked), as your prompt describes."
+				: "Do the work, dispatching workers as your main agent prompt describes. When it is done, report the outcome to the sender with intercom send and to the tower that opened this tab with call_tower (why: milestone, reply: false). Then wait; the tower closes this tab after your done report, so end it with the result and nothing you still have to do. If you wait for a boss decision, say so in your report and the tower leaves you open.",
 		peer ? `Sender: ${peer.label} (a teammate's device, short id ${peer.short}, over Straw Link)` : `Sender: ${sender.name ?? sender.id} (session id ${sender.id})`,
 		`Tower: ${tower.name} (session id ${tower.id})`,
 		"Request, verbatim:",
 		request,
 	].join("\n");
+};
 
 /** The text a new train starts from: facts only (its prompt is the train's own). It reports to the tower, which opened it and closes it; it tells no coordinator anything itself. */
 export const trainHandoff = (workspace: string, sender: Pick<Session, "id" | "name">, request: string, tower: { id: string; name: string }, train: TrainId) =>
@@ -245,7 +251,7 @@ export function opener(env: OpenerEnv) {
 				return tokens?.sb_role === wanted && (!integ || tokens.sb_duty === INTEGRATOR) ? (await env.sessions()).find((s) => s.herdrLocation?.paneId === paneId) : undefined;
 			}, MAIN_WAIT_MS, 500, env.trustDir ? { dir: env.trustDir, pane: paneId } : undefined);
 			if (!main) throw new Error(`The pi in pane ${paneId} did not become ${train ? "the train" : integ ? `the integrator of project ${integ} (a main of kind integrator)` : "the main agent"} of its tab within ${MAIN_WAIT_MS / 1000} s`);
-			const sent = await env.send(main.id, train ? trainHandoff(workspace.label, sender, request, env.tower(), train) : integ ? integratorHandoff(workspace.label, integ, env.tower()) : handoff(workspace.label, sender, request, env.tower(), peer));
+			const sent = await env.send(main.id, train ? trainHandoff(workspace.label, sender, request, env.tower(), train) : integ ? integratorHandoff(workspace.label, integ, env.tower()) : handoff(workspace.label, sender, request, env.tower(), peer, openDuty === "standing" ? openDuty : undefined));
 			if (sent.status !== "sent") throw new Error(`The new ${train ? "train" : integ ? "integrator" : "main"} ${main.name ?? main.id} did not take the ${integ ? "handoff" : "request"}: ${sent.status} ${sent.code ?? ""} ${sent.detail ?? ""}`.trim());
 			return { tab: tabId, pane: paneId, main: main.id, sender: sender.id, ...(train ? { train } : {}), ...(integ ? { integrator: integ } : {}) };
 		} catch (error) {

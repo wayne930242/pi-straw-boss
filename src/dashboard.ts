@@ -2,7 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { type Duty, isCoordinatorDuty, isWorkerDuty } from "./duty.ts";
 import { ARROW, headOf, type HerdrRun, type HerdrWorld, isHead, isSub, KIND_MARK, MARK, parentOf, type Session, TOWER_LABEL, worldOf } from "./herdr.ts";
-import { commanding, type Mark, markOf, type Row, sessionMark, subagents } from "./netdata.ts";
+import { commanding, type Mark, markOf, type Row, sessionMark, subagentsOfAll } from "./netdata.ts";
 
 // The tower's monitoring screen: a widget above the editor, never focused, animated only while something is working and the tower's tab is on screen.
 //
@@ -79,11 +79,11 @@ export async function collect({ run, world = worldOf(run), sessions, workspaceId
 		const role = pane?.tokens?.sb_role;
 		return role === "main" || role === "member" || role === "train" ? [{ s, pane, role, tab: s.herdrLocation!.tab! }] : [];
 	});
-	const rows: Row[] = [];
+	const rows: Row[] = [], childrenOf = subagentsOfAll(ps, now); // a session file resumed by another session shows once
 	for (const group of Object.values(Object.groupBy(joined, (j) => j.tab.id))) {
 		rows.push({ group: "net", depth: 0, mark: "unknown", text: `tab ${group![0]!.tab.label}` });
 		for (const { s, pane, role } of group!.sort((a, b) => Number(b.role === "main") - Number(a.role === "main"))) {
-			const kids = subagents(pane, ps, now);
+			const kids = childrenOf(pane);
 			rows.push(sessionRow(s, role, kids, role === "main" && isCoordinatorDuty(pane?.tokens?.sb_duty) ? pane!.tokens!.sb_duty : undefined), ...kids);
 		}
 	}

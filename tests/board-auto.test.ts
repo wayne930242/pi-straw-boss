@@ -413,8 +413,9 @@ test("board_read marks a stale entry of an idle live main, and a tower's brief s
 	const a = await main();
 	await tower.start();
 	await a.tool("board_set", { now: "old news" });
-	const read = async () => (JSON.parse(textOf(await tower.tool("board_read", {}))) as { local: { main: string; stale?: boolean }[] }).local.find((r) => r.main === "api-main")!;
+	const read = async () => (JSON.parse(textOf(await tower.tool("board_read", {}))) as { local: { main: string; kind: string | null; stale?: boolean }[] }).local.find((r) => r.main === "api-main")!;
 	assert.equal((await read()).stale, undefined, "fresh");
+	assert.equal((await read()).kind, "coordinator", "a main that never declared one publishes the default kind");
 	writeEntry(boardDir(), "a1", { now: "old news", items: [] }, Date.now() - STALE_MS - 60_000);
 	assert.equal((await read()).stale, true, "idle and over 2 hours old");
 	const run = world.herdr.runFor("wA:p1");
@@ -425,6 +426,7 @@ test("board_read marks a stale entry of an idle live main, and a tower's brief s
 	await until(() => world.herdr.pane("wA:p1").tokens.sb_duty === "standing", "the main publishes its kind");
 	writeEntry(boardDir(), "a1", { now: "old news", items: [] }, Date.now() - STALE_MS - 60_000);
 	assert.equal((await read()).stale, undefined, "a standing main is never stale");
+	assert.equal((await read()).kind, "standing", "board_read names the kind the pane publishes, as tower_list does");
 	const h = await gatherMains({ run, now: Date.now, sessions: () => world.broker.sessionList(), boardDir: boardDir(), workspace: { workspace_id: "wA", label: "Alpha" } as never, ledger: [] });
 	assert.equal(h.rows.find((r) => r.main?.name === "api-main")!.main!.stale, undefined);
 });

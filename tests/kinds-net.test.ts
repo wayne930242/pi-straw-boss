@@ -3,8 +3,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import type { Pane } from "../src/herdr.ts";
-import { agentOfSession, scriptReads, subagents } from "../src/netdata.ts";
+import { writeEntry } from "../src/board.ts";
+import { readBoard } from "../src/boardread.ts";
+import type { Pane, Session } from "../src/herdr.ts";
+import { agentOfSession, scriptReads, subagents, subagentsOfAll } from "../src/netdata.ts";
 import { World } from "./fakes.ts";
 
 // docs/specs/2026-11-09-agent-kinds.md §8, Phase 2 "The role read": a child records its role in its session file at its first turn, and the net links a resumed child (new id, a
@@ -174,4 +176,81 @@ test("a resume script read before it names its id is read again once it does: th
 	const row = subagents(parent, [parent, live], Date.now()).find((r) => r.id === "dfresh")!;
 	assert.equal(row.text, "rev", "its name is the script's once the script is whole");
 	assert.equal(row.pane, "wD:p3");
+});
+
+// Shared contract 8 (docs/specs/2026-11-09-agent-kinds.md): `board_read` rows show each main's kind, read from the pane's `sb_duty` as tower_list and boss_status read it.
+test("board_read rows carry each main's kind: coordinator, integrator, standing, and null for a main with none, a train, and an ended entry", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-kinds-board-")), NOW = 1_800_000_000_000;
+	try {
+		const live = (id: string, tab: string, tokens: Record<string, string>) => ({
+			s: { id, name: id, status: "idle", herdrLocation: { status: "current", paneId: `p-${id}`, workspace: { id: "wA", label: "Alpha" }, tab: { id: tab, label: tab } } } as Session,
+			pane: { pane_id: `p-${id}`, tab_id: tab, workspace_id: "wA", cwd: dir, tokens } as Pane,
+		});
+		const members = [live("coord", "t1", { sb_role: "main", sb_duty: "coordinator" }), live("integ", "t2", { sb_role: "main", sb_duty: "integrator" }), live("watch", "t3", { sb_role: "main", sb_duty: "standing" }), live("old", "t4", { sb_role: "main" }), live("odd", "t5", { sb_role: "main", sb_duty: "wizard" }), live("tr", "t6", { sb_role: "train", sb_duty: "integrator" }), live("kid", "t7", { sb_role: "member", sb_duty: "standing" })];
+		writeEntry(dir, "gone", { now: "left half done", items: [] }, NOW - 5 * 60_000);
+		const net = { sessions: members.map((m) => m.s), ps: members.map((m) => m.pane) };
+		const out = await readBoard({ dir, now: NOW, net, link: { boards: async () => [], remoteScope: () => undefined }, scope: "local" }) as { local: { main: string; kind?: unknown; role?: string; state: string }[] };
+		const rows = Object.fromEntries(out.local.map((r) => [r.main || r.state, r.kind]));
+		assert.deepEqual(rows, { coord: "coordinator", integ: "integrator", watch: "standing", old: null, odd: null, tr: null, ended: null }, "a member is no row; a value the net does not know is null, as tower_list reads it");
+		assert.ok(out.local.every((r) => "kind" in r), "the key is on every row, null when unknown");
+		assert.equal(out.local.find((r) => r.main === "tr")!.role, "train", "a train keeps its role and has no kind");
+		// A remote turn gets the same word tower_list gives it, on the rows it may see.
+		const remote = await readBoard({ dir, now: NOW, net, link: { boards: async () => [], remoteScope: () => ({ teams: ["t"], project: dir }) }, scope: "local" }) as { local: { main: string; kind?: unknown }[] };
+		assert.deepEqual(Object.fromEntries(remote.local.map((r) => [r.main, r.kind])), { coord: "coordinator", integ: "integrator", watch: "standing", old: null, odd: null, tr: null });
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+// A session file resumed by another parent (agent kinds phase 2 leftover): the resume lives in the other parent's artifacts, so the first launch stays in the original parent's, recorded done, beside a pane that runs on.
+/** A child launched by `first` and resumed by `second`: one session file, two launches in two parents' artifacts. `at`: seconds ago each launch last wrote its activity. */
+function resumedAcross(tag: string, at: { first: number; second: number }) {
+	const file = kidFile(`${tag}o`), now = Date.now() / 1000;
+	writeFileSync(file, [header(`${tag}o`), entry({ agent: "worker" }), message("work")].join("\n") + "\n");
+	const first = artifacts(`${tag}a`, [{ id: `${tag}o`, scriptName: `fix-${tag}o.sh`, session: file, agent: "worker", name: "fix", phase: "done" }]);
+	const second = artifacts(`${tag}b`, [{ id: `${tag}r`, scriptName: "fix-resume-1731456000100.sh", session: file, name: "fix" }]);
+	for (const [parent, id, ago] of [[`${tag}a`, `${tag}o`, at.first], [`${tag}b`, `${tag}r`, at.second]] as const) utimesSync(join(sessions, "artifacts", parent, "subagent-activity", `${id}.json`), now - ago, now - ago);
+	const live = pane(`wA:p-${tag}`, { agent_status: "working", agent_session: { value: file } });
+	return { file, first, second, all: [first, second, live] };
+}
+const ofFile = (rows: ReturnType<typeof subagents>, file: string) => rows.filter((r) => r.file === file);
+
+test("a session file resumed by another parent shows once across parents: the launch with the newest activity wins, and the old parent no longer shows it as done", () => {
+	const { file, first, second, all } = resumedAcross("xp1", { first: 300, second: 5 });
+	const now = Date.now();
+	// Alone, each parent still sees its own launch: the original shows it ended (recorded done beside a pane that runs on), the resumer shows it working.
+	assert.deepEqual(ofFile(subagents(first, all, now), file).map((r) => [r.id, r.mark]), [["xp1o", "done"]], "the per-parent reading is unchanged");
+	assert.deepEqual(ofFile(subagents(second, all, now), file).map((r) => [r.id, r.mark]), [["xp1r", "working"]]);
+	const kids = subagentsOfAll(all, now);
+	assert.deepEqual(ofFile(kids(first), file), [], "the original parent shows no stale `done` beside the resumer's running row");
+	assert.deepEqual(ofFile(kids(second), file).map((r) => [r.id, r.mark, r.text, r.duty]), [["xp1r", "working", "fix", "worker"]]);
+});
+
+test("across parents the newer activity wins whichever parent it is, and on a tie the resume", () => {
+	const older = resumedAcross("xp2", { first: 5, second: 300 }), now = Date.now();
+	const kids = subagentsOfAll(older.all, now);
+	assert.deepEqual(ofFile(kids(older.first), older.file).map((r) => r.id), ["xp2o"], "the original's launch is the newest: the resumer's older launch is the one hidden");
+	assert.deepEqual(ofFile(kids(older.second), older.file), []);
+	const tie = resumedAcross("xp3", { first: 60, second: 60 }), kidsTie = subagentsOfAll(tie.all, now);
+	assert.deepEqual([ofFile(kidsTie(tie.first), tie.file).length, ofFile(kidsTie(tie.second), tie.file).map((r) => r.id)], [0, ["xp3r"]], "a tie goes to the resume");
+});
+
+test("two panes of one parent's session file show its children twice, as before: only different launches of one session file compete", () => {
+	const file = kidFile("xp4o");
+	const parent = artifacts("xp4a", [{ id: "xp4o", scriptName: "fix-xp4o.sh", session: file, agent: "worker", name: "fix" }]);
+	const twin = pane("wA:p-xp4twin", { agent_session: parent.agent_session });
+	const live = pane("wA:p-xp4", { agent_status: "working", agent_session: { value: file } });
+	const kids = subagentsOfAll([parent, twin, live], Date.now());
+	assert.deepEqual([kids(parent).length, kids(twin).length], [1, 1]);
+});
+
+test("the across-parents join drops a loser before the limit, and a parent's own rows are as `subagents` gives them when no file is shared", () => {
+	const file = kidFile("xp5o");
+	const first = artifacts("xp5a", [{ id: "xp5o", scriptName: "fix-xp5o.sh", session: file, agent: "worker", name: "fix", phase: "done" }, { id: "xp5x", scriptName: "other-xp5x.sh", session: kidFile("xp5x"), agent: "scout", name: "other" }]);
+	const second = artifacts("xp5b", [{ id: "xp5r", scriptName: "fix-resume-1731456000200.sh", session: file, name: "fix" }]);
+	const now = Date.now() / 1000;
+	utimesSync(join(sessions, "artifacts", "xp5a", "subagent-activity", "xp5o.json"), now - 120, now - 120);
+	const all = [first, second, pane("wA:p-xp5", { agent_status: "working", agent_session: { value: file } }), pane("wA:p-xp5x", { agent_status: "working", label: "other", agent_session: { value: kidFile("xp5x") } })];
+	assert.deepEqual(subagentsOfAll(all, Date.now(), 1)(first).map((r) => r.text), ["other"], "the loser does not take the one slot of its parent's limit");
+	assert.deepEqual(subagentsOfAll(all, Date.now())(first).map((r) => r.text), subagents(first, all, Date.now()).filter((r) => r.file !== file).map((r) => r.text));
 });

@@ -271,6 +271,28 @@ test("subagents are grouped under the session that launched them wherever they r
 	assert.deepEqual(rows.map((r) => [r.depth, r.text]), [[0, "tab work"], [1, "Main"], [2, "farchild"], [2, "wtchild"], [0, "plain-sub"]], "children sit under Main; the worktree child's workspace is not listed again; Beta, where a child runs, is not a tower");
 });
 
+test("a child another session resumed shows once, under the session whose launch moved last: in the tower's dashboard and the GUI net alike, and the original launcher no longer shows it done", async () => {
+	const kidFile = join(scratch, "sessions", "2026-10-17T00-00-01-000Z_xkid-1a2b3c4d-5e6f7a8b-9c0d.jsonl");
+	const fileA = launch("xres-a", [{ id: "xkid", name: "fix", ageMs: 5 * 60_000, activity: { phase: "done" } }]), fileB = launch("xres-b", []);
+	// The resumer's launch lives in its own folder, under a new id the session file's name does not carry; its activity is newer.
+	const b = join(scratch, "sessions", "artifacts", "xres-b");
+	writeFileSync(join(b, "subagent-activity", "xkidr.json"), JSON.stringify({ phase: "active" }));
+	writeFileSync(join(b, "subagent-scripts", "fix-resume-1731456000300.sh"), `#!/bin/bash\ncd '/x' && PI_SUBAGENT_ID='xkidr' PI_SUBAGENT_SESSION='${kidFile}' pi\n`);
+	world.herdr.addTab("wA:t2", "docs", "wA:p2");
+	const [ma, mb] = [world.agent({ id: "xres-a", name: "Alpha main", pane: "wA:p1", tab: "wA:t1" }), world.agent({ id: "xres-b", name: "Beta main", pane: "wA:p2", tab: "wA:t2" })];
+	await Promise.all([ma.start(), mb.start()]);
+	await Promise.all([ma.promote(), mb.promote()]);
+	world.herdr.pane("wA:p1").agent_session = { value: fileA };
+	world.herdr.pane("wA:p2").agent_session = { value: fileB };
+	Object.assign(world.herdr.addPane("wA:p20", "wA:t1"), { agent_status: "working", label: "fix", agent_session: { value: kidFile } });
+	const [run, sessions] = [world.herdr.runFor("wA:p1"), () => world.broker.sessionList()];
+	const kids = (rows: Row[], parent: string) => rows.slice(rows.findIndex((r) => r.text === parent) + 1).filter((r, i, all) => r.depth === 2 && all.slice(0, i).every((x) => x.depth === 2)).map((r) => [r.text, r.mark]);
+	const { rows } = await collect({ run, sessions, workspaceId: "wA" });
+	assert.deepEqual([kids(rows, "Alpha main"), kids(rows, "Beta main")], [[], [["fix", "working"]]], "the dashboard: the resumer shows it running, and the original launcher shows nothing");
+	const units = (await collectNet({ run, sessions, sessionDir: join(scratch, "sessions") })).bases[0]!.tabs.flatMap((t) => t.units);
+	assert.deepEqual(units.map((u) => [u.name, u.subs.map((c) => [c.name, c.mark, c.ended ?? false])]), [["Alpha main", []], ["Beta main", [["fix", "working", false]]]], "the GUI net says the same");
+});
+
 test("a member that launched subagents keeps them when it is promoted: the dashboard and the GUI net count them under it as main, with no re-registration", async () => {
 	const file = launch("parent-3", [{ id: "kid-1", name: "builder", activity: { phase: "active" } }]);
 	const member = world.agent({ id: "parent-3", name: "Solo", pane: "wA:p1", tab: "wA:t1" });

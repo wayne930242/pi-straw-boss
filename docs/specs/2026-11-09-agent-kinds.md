@@ -634,7 +634,7 @@ Watch the unit your task names: call `watch_read` with the last `since` and the 
    - The migration runs only while `s.duty` is unset and integration is on: by name at start and on `session_info_changed`, by train todos at start and before each run. It writes at most one entry per session.
    - `integrator` counts only while both the guard and the prompts have integration on.
 8. **Phase 2.**
-   - `board_read` rows, if they show the duty.
+   - `board_read` rows, if they show the duty. They do since 0.80.3: each `local` row carries `kind`, the same word `tower_list` gives (`coordinator`, `integrator`, `standing`), null for a train, an ended entry, and a main that publishes none.
    - The role pack: sb registers on pi-herdr-agents' discovery protocol. Its role names would collide with pi-herdr-roles', so commit A removes pi-herdr-roles while the global layer still holds every role.
 9. **Phase 3.**
    - The routes `watch-read` (45 s hold, no cap, 55 s client timeout, `deadline`, `now`) and `watch-report` (linked by session file; a session file that does not exist yet is accepted when its watchdog script names it).

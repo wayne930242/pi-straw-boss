@@ -167,8 +167,47 @@ export function agentOfSession(file: string | undefined): string | undefined {
 /** The pane whose pi runs the session file `file`: how a resumed child, whose new id its session file's name does not carry, is found. */
 const paneOfSession = (all: Pane[], file: string | undefined) => (file ? all.find((p) => p.agent === "pi" && p.agent_session?.value === file) : undefined);
 
+/** One launch of a parent: its row, when its activity file last moved, whether it is a resume's, and which launch it is (its parent's artifacts folder and its id). */
+interface Candidate { at: number; resumed: boolean; launch: string; row: Row }
+
 /** The subagents a pi session launched: live ones, plus those that finished in the last 10 minutes. The dashboard shows the first `limit`. */
 export function subagents(parent: Pane | undefined, all: Pane[], now: number, limit = MAX_CHILDREN): Row[] {
+	return shape(settle(candidates(parent, all, now)), limit);
+}
+
+/**
+ * The subagents of every parent of one reading of Herdr, a session file shown once across them. When another parent resumes a child, the resume lives in its folder under a new id, and the original parent still holds the
+ * first launch, recorded done beside a pane that runs on: `subagents` alone showed it `done` next to the resumer's running row. Of the launches of one session file the newest activity wins, a resume on a tie, as within one
+ * parent (R0790-F002), and the loser goes before the parent's `limit`. Two panes on one session file hold the same launches, which do not compete. Read once, on the first call, over every pane with a session file.
+ */
+export function subagentsOfAll(all: Pane[], now: number, limit = MAX_CHILDREN): (parent: Pane | undefined) => Row[] {
+	let kept: Map<string, Row[]> | undefined;
+	return (parent) => {
+		if (!parent?.agent_session?.value) return [];
+		if (!kept) {
+			const parents = all.filter((p) => p.agent_session?.value), per = parents.map((p) => candidates(p, all, now)), winners = winnersOf(per.flat());
+			kept = new Map(parents.map((p, i) => [p.pane_id, shape(settle(per[i]!, winners), limit)]));
+		}
+		return kept.get(parent.pane_id) ?? subagents(parent, all, now, limit); // a parent the reading does not hold is read alone
+	};
+}
+
+/** Per session file, the launch with the newest activity (the first on a tie, a resume before a launch). */
+function winnersOf(cands: Candidate[]): Map<string, Candidate> {
+	const newest = new Map<string, Candidate>();
+	for (const c of cands) {
+		const held = c.row.file === undefined ? undefined : newest.get(c.row.file);
+		if (c.row.file !== undefined && (!held || c.at > held.at || (c.at === held.at && c.resumed && !held.resumed))) newest.set(c.row.file, c);
+	}
+	return newest;
+}
+/** The candidates that show their session file: those that name none, and the winning launch. */
+const settle = (cands: Candidate[], winners = winnersOf(cands)) => cands.filter((c) => c.row.file === undefined || winners.get(c.row.file)?.launch === c.launch);
+/** The rows, running first and then by name, the first `limit`. */
+const shape = (cands: Candidate[], limit: number): Row[] => cands.map(({ row }) => row).sort((a, b) => Number(a.mark === "done") - Number(b.mark === "done") || a.text.localeCompare(b.text)).slice(0, limit);
+
+/** Every launch of a session that a pane runs or that was active in the last 10 minutes. */
+function candidates(parent: Pane | undefined, all: Pane[], now: number): Candidate[] {
 	const file = parent?.agent_session?.value;
 	if (!file) return [];
 	const dir = artifacts(file), scriptDir = join(dir, "subagent-scripts"), launched = listed(scriptDir).filter((f) => f.endsWith(".sh"));
@@ -222,17 +261,7 @@ export function subagents(parent: Pane | undefined, all: Pane[], now: number, li
 			const name = pane?.label || (found?.name ?? id.slice(0, 8));
 			const doing = activity.toolActive ? String(activity.toolName) : String(activity.phase ?? "");
 			const ended = pane?.agent !== "pi" || recordedDone, duty = dutyOfAgent(agentOfSession(file) ?? launch?.agent ?? firstLaunchAgent(file));
-			return { at, resumed: found?.script.includes("-resume-") ?? false, row: { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", ...(duty ? { duty } : {}), workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, ...(ended && { ended }), ...(recordedDone && { finished: true }), note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] } };
+			return { at, resumed: found?.script.includes("-resume-") ?? false, launch: `${dir}/${id}`, row: { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", ...(duty ? { duty } : {}), workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, ...(ended && { ended }), ...(recordedDone && { finished: true }), note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] } };
 		});
-	// A session file resumed under a new id has two launches here; the newest activity is the child as it runs now, and on a tie the resume (review R0790-F002).
-	const newest = new Map<string, (typeof rows)[number]>();
-	for (const r of rows) {
-		const held = r.row.file === undefined ? undefined : newest.get(r.row.file);
-		if (r.row.file !== undefined && (!held || r.at > held.at || (r.at === held.at && r.resumed && !held.resumed))) newest.set(r.row.file, r);
-	}
-	return rows
-		.filter((r) => r.row.file === undefined || newest.get(r.row.file) === r)
-		.map(({ row }) => row)
-		.sort((a, b) => Number(a.mark === "done") - Number(b.mark === "done") || a.text.localeCompare(b.text))
-		.slice(0, limit);
+	return rows;
 }
