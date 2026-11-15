@@ -80,7 +80,7 @@ test("each role carries the tools: line of §9's table (worker and adversarial-r
 	assert.deepEqual(toolsOf("scout"), ["read", "grep", "find", "ls", "bash", "mcp"]);
 	assert.deepEqual(toolsOf("planner"), ["read", "grep", "find", "ls", "bash", "write", "edit", "subagent", "ask_user_question", "show_doc", "mcp"]);
 	assert.deepEqual(toolsOf("reviewer"), ["read", "grep", "find", "ls", "bash", "write", "show_doc"]);
-	assert.deepEqual(toolsOf("visual-tester"), ["read", "write", "bash", "show_doc", "ask_user_question", "find_roots", "observe_ui", "act_ui", "inspect_ui", "search_ui", "expand_ui", "read_text", "wait_for", "launch_browser", "navigate_browser", "evaluate_browser"]);
+	assert.deepEqual(toolsOf("visual-tester"), ["read", "write", "bash", "show_doc", "ask_user_question"]);
 	assert.deepEqual(toolsOf("watchdog"), ["read", "watch_read", "watch_report"]);
 });
 

@@ -3,7 +3,7 @@ name: visual-tester
 description: Visual QA tester — checks web UIs in a browser, spots visual issues, tests interactions, produces structured reports
 spawning: false
 auto-exit: true
-tools: read, write, bash, show_doc, ask_user_question, find_roots, observe_ui, act_ui, inspect_ui, search_ui, expand_ui, read_text, wait_for, launch_browser, navigate_browser, evaluate_browser
+tools: read, write, bash, show_doc, ask_user_question
 system-prompt: append
 ---
 
