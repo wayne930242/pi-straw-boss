@@ -34,7 +34,7 @@ test("runRolesCheck refuses a session started with --tools or --exclude-tools, a
 		assert.equal(r.ok, false);
 		assert.equal(r.text, "roles-check needs a session started without --tools or --exclude-tools");
 	}
-	const own = runRolesCheck("", { argv: ["node", "pi"], tools: () => ["read", "grep", "find", "ls", "bash", "write", "edit", "mcp", "subagent", "ask_user_question", "show_doc", "find_roots", "observe_ui", "act_ui", "inspect_ui", "search_ui", "expand_ui", "read_text", "wait_for", "launch_browser", "navigate_browser", "evaluate_browser"] });
+	const own = runRolesCheck("", { argv: ["node", "pi"], tools: () => ["read", "grep", "find", "ls", "bash", "write", "edit", "mcp", "subagent", "ask_user_question", "show_doc"] }); // 0.80.4: no computer-use tools (basic df66439 retired the package), so a role that names one again fails here (rev-vt0804-F001)
 	assert.equal(own.ok, true, own.text);
 	assert.deepEqual(readRoles().map((r) => r.name).sort(), ["adversarial-reviewer", "planner", "reviewer", "scout", "visual-tester", "watchdog", "worker"]);
 	const dir = mkdtempSync(join(tmpdir(), "roles-"));
