@@ -70,16 +70,16 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 	};
 	return {
 		pick,
-		async poll(): Promise<Polled> {
+		async poll(answering = false): Promise<Polled> {
 			let reply;
 			try {
-				reply = await ask({ cmd: "prompt-poll", workspace, pid }, POLL_MS);
+				reply = await ask({ cmd: "prompt-poll", workspace, pid, ...(answering ? { answering: true } : {}) }, POLL_MS);
 			} catch (cause) {
 				return { kind: "wait", why: (cause as Error).message };
 			}
 			if (reply.ok === true && typeof reply.label === "string" && typeof reply.state === "string" && typeof reply.queued === "number" && typeof reply.leave === "boolean") {
 				// SAFETY: a state word this build does not know is shown as the server sent it (prompt.ts cleans it of control characters), not made into one it does.
-				return { kind: "state", answer: { label: reply.label, state: reply.state as ServiceState, queued: reply.queued, leave: reply.leave, ...(reply.head === true ? { head: true as const } : {}), ...(Array.isArray(reply.waits) ? { waits: reply.waits as never[] } : {}), ...(typeof reply.auto === "boolean" ? { auto: reply.auto } : {}) } };
+				return { kind: "state", answer: { label: reply.label, state: reply.state as ServiceState, queued: reply.queued, leave: reply.leave, ...(reply.head === true ? { head: true as const } : {}), ...(Array.isArray(reply.waits) ? { waits: reply.waits as never[] } : {}), ...(typeof reply.auto === "boolean" ? { auto: reply.auto } : {}), ...(reply.holding === true ? { holding: true as const } : {}), ...(reply.unattended === true ? { unattended: true as const } : {}) } };
 			}
 			const error = String(reply.error ?? "no usable answer");
 			return reply.gone === true ? { kind: "gone", error } : { kind: "wait", why: error };

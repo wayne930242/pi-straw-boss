@@ -81,8 +81,8 @@ export interface StandingOptions {
 	/** Whether a process runs (the resident tower that handed a pane over); the PID check of `remote.ts` by default. */
 	alive?: (pid: number) => boolean;
 }
-/** What a prompt's poll is answered. */
-export type PromptReply = { ok: true; label: string; state: ServiceStatus["state"]; queued: number; leave: boolean; head?: true } | { ok: false; error: string; gone?: true };
+/** What a prompt's poll is answered. `holding`: events wait, and the wake is held while the boss answers wait cards at the prompt (runs.ts `answering`; towers.ts adds it). */
+export type PromptReply = { ok: true; label: string; state: ServiceStatus["state"]; queued: number; leave: boolean; head?: true; holding?: true } | { ok: false; error: string; gone?: true };
 
 interface Mine {
 	target: StandingTarget;

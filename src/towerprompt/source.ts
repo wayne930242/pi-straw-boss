@@ -17,6 +17,10 @@ export interface PollAnswer {
 	/** The open wait cards of this tower (waitlist.ts `DigestRow`, at most 12), and whether auto mode is on: what the block under the state line shows. A server that sends none is an older one. */
 	waits?: DigestRow[];
 	auto?: boolean;
+	/** Events wait, and the server holds the tower's wake because this prompt's polls say the boss is answering cards (runs.ts `answering`). */
+	holding?: true;
+	/** The device is unattended (no boss at it): the cards are shown as a block, and the card view takes the keys only when `/wait` asks for it. */
+	unattended?: true;
 }
 /** The answer of one poll: the state; the server stands in for no tower here any more (the prompt ends for good); or no usable answer yet (the server is down, restarting, or still loading). */
 export type Polled = { kind: "state"; answer: PollAnswer } | { kind: "gone"; error?: string } | { kind: "wait"; why: string };
@@ -36,7 +40,8 @@ export interface PickSource {
 export interface PromptSource {
 	/** The picker's source; a source with none cannot press cards. */
 	pick?: PickSource;
-	poll(): Promise<Polled>;
+	/** `answering`: the boss is at the card view's keys (cardview.ts); the server holds the tower's wake while the polls say so. */
+	poll(answering?: boolean): Promise<Polled>;
 	/** Posts the boss's words to the tower as a `boss` event; rejects with the server's own words when it does not take them. */
 	post(text: string): Promise<void>;
 	/** The boss typed `/new`: the next boss conversation is a new session (the server's `tower-new`, the function `/boss tower new` and the GUI's New reach); rejects with the server's own words. */

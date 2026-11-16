@@ -39,6 +39,21 @@ test("poll answers the tower's state; a workspace the server stands in for no to
 	assert.equal(none.kind, "wait");
 });
 
+test("a poll that says the boss is answering cards holds the tower's wake: the event waits and the answer says so; a poll that says they are done lets the run start", async () => {
+	await setup();
+	const source = serverSource(world.ctx(), "wA", 4100);
+	await source.poll(true);
+	world.client("sb-tower-wa")!.incoming({ id: "main-1", name: "docs-main" }, { id: "m1", content: { text: "one" } });
+	let held: Awaited<ReturnType<typeof source.poll>> | undefined;
+	await until(async () => ((held = await source.poll(true)), held.kind === "state" && held.answer.queued === 1), "the event queued");
+	assert.equal(held!.kind === "state" && held!.answer.holding, true, "the answer says the wake is held");
+	assert.equal(held!.kind === "state" && held!.answer.state, "standing");
+	assert.equal(world.pis.size, 0, "no run while the boss answers");
+	const done = await source.poll(false);
+	assert.equal(done.kind === "state" && done.answer.holding, undefined);
+	await until(() => world.pis.size === 1, "the run once the boss is done");
+});
+
 test("post is the boss's event over the same door as /boss tower: the tower wakes with it; a refusal rejects with the server's words", async () => {
 	await setup();
 	const source = serverSource(world.ctx(), "wA", 4100);

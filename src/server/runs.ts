@@ -64,8 +64,11 @@ export interface Timers {
 	bossAway: number;
 	/** The most a boss's time in one run holds off the run cap; then the cap applies again. */
 	bossMax: number;
+	/** The boss answers wait cards at the tower prompt (its polls say so): the service's wake is held this long after the last such poll, and `answerMax` after the first of a stretch at the most (docs/specs/2026-11-16-wait-cards-flow.md, A). */
+	answer: number;
+	answerMax: number;
 }
-export const TIMERS: Timers = { wake: 1000, hold: 30_000, claim: 60_000, watch: 2000, idleSteer: 60_000, idleEnd: 300_000, steerAt: 18 * 60_000, quitAt: RUN_CAP_MINUTES * 60_000, quitGrace: 10_000, signal: 5000, lost: 30_000, refuse: 60_000, loop: 600_000, restored: 120_000, stopGrace: 1500, bossAway: 10 * 60_000, bossMax: 4 * 3_600_000 };
+export const TIMERS: Timers = { wake: 1000, hold: 30_000, claim: 60_000, watch: 2000, idleSteer: 60_000, idleEnd: 300_000, steerAt: 18 * 60_000, quitAt: RUN_CAP_MINUTES * 60_000, quitGrace: 10_000, signal: 5000, lost: 30_000, refuse: 60_000, loop: 600_000, restored: 120_000, stopGrace: 1500, bossAway: 10 * 60_000, bossMax: 4 * 3_600_000, answer: 10_000, answerMax: 5 * 60_000 };
 /**
  * Windows ends nothing by force if it can help it: a pi ended with TerminateProcess leaves its pane's console in a mode where the next `agent start` there types a mangled command and times out (VM pass B6,
  * x6a-x6i; 0 of 5 starts failed after a graceful /quit, 5 of 5 after a kill). So the quit command, and Escape and /quit after it, get a longer wait before any signal, and a stopping server waits longer for its runs.
@@ -304,6 +307,8 @@ interface Svc {
 	waiting?: boolean;
 	/** The boss wrote at the tower prompt: the run these events wake is one they are in. */
 	bossAt?: number;
+	/** The boss is answering wait cards at the tower prompt: the first poll of this stretch that said so, and the last. Memory only: a server restart forgets it, and the prompt's next poll says it again. */
+	answer?: { since: number; last: number };
 	/** The ally runs of the service: one per device. */
 	allies: Map<string, Active>;
 	allyWake?: ReturnType<typeof setTimeout>;
@@ -421,8 +426,14 @@ export function createRuns(o: RunsOptions) {
 		return (fields?.why === "milestone" && fields.reply === "none") || (isHeadSvc(svc) && fields?.["in-reply-to"] !== undefined);
 	};
 	/**
+	 * Until when the boss's answering at the tower prompt holds the wake (0: nothing is held): `answer` after the last poll that said so, and never past `answerMax` after the first of the stretch. The prompt renews it every
+	 * poll; one that died stops, and the hold lapses by itself.
+	 */
+	const heldUntil = (svc: Svc) => (svc.answer ? Math.min(svc.answer.last + t.answer, svc.answer.since + t.answerMax) : 0);
+	/**
 	 * The wake comes `wake` after an event that cannot wait, and for events that can (`holdable`) `hold` after the first of them, so mains that finish together land in one run. A burst of milestones does not
-	 * extend the hold, and an event that arrives during it ends it at `wake`: the run takes every event that waits.
+	 * extend the hold, and an event that arrives during it ends it at `wake`: the run takes every event that waits. While the boss answers wait cards at the tower prompt no wake comes at all, whatever waits (`heldUntil`):
+	 * a run would take the pane from under the next card. `wakeAt` is never before the end of that hold, so `startsWithin` says a run starts soon only when one does.
 	 */
 	const poke = (svc: Svc) => {
 		pokeAlly(svc);
@@ -431,11 +442,13 @@ export function createRuns(o: RunsOptions) {
 		const waiting = waitingOf(svc);
 		if (!waiting.length) return;
 		const holds = holdable(svc), at = now(), first = Math.min(...waiting.filter(holds).map((e) => Date.parse(e.at)).filter(Number.isFinite), at);
-		const due = waiting.some((e) => !holds(e)) ? at + t.wake : Math.max(at + t.wake, first + t.hold);
-		if (svc.wake && svc.wakeAt! <= due) return;
+		const held = heldUntil(svc), due = Math.max(waiting.some((e) => !holds(e)) ? at + t.wake : Math.max(at + t.wake, first + t.hold), held);
+		// A wake that is due no later is kept, unless the boss's answering now holds it past its time.
+		if (svc.wake && svc.wakeAt! <= due && svc.wakeAt! >= held) return;
 		clearTimeout(svc.wake);
 		svc.wakeAt = due;
-		svc.wake = setTimeout(() => ((svc.wake = undefined), void begin(svc).catch((cause: Error) => (error("run-begin", cause.message), (svc.state = "standing")))), due - at);
+		// A held wake is looked at again at the watcher's pace, and the hold is read off the clock then: no run begins while it stands, however late or early the timer fires.
+		svc.wake = setTimeout(() => ((svc.wake = undefined), now() < heldUntil(svc) ? poke(svc) : void begin(svc).catch((cause: Error) => (error("run-begin", cause.message), (svc.state = "standing")))), held > at ? Math.min(due - at, t.watch) : due - at);
 		svc.wake.unref();
 	};
 	const release = () => {
@@ -1533,6 +1546,18 @@ export function createRuns(o: RunsOptions) {
 		attach, detach, poke: (workspace: string) => { const s = services.get(workspace); if (s) poke(s); },
 		/** Whether a run of this workspace starts within `ms`: its wake is due by then (the standing pane types no prompt that run would have to wait for, B6 VM F6). */
 		startsWithin: (workspace: string, ms: number) => { const s = services.get(workspace); return Boolean(s && !s.run && s.wake && s.wakeAt !== undefined && s.wakeAt - now() <= ms); },
+		/**
+		 * The tower prompt's poll says whether the boss is answering wait cards in the standing pane. While they are, the service's wake is held (`heldUntil`); a poll that says they are done ends the hold at once, and the
+		 * events that waited wake one run. A stretch of answering is the polls that follow each other within `answer`. Returns whether a wake is held now: events wait, and no run begins for them yet.
+		 */
+		answering(workspace: string, on: boolean): boolean {
+			const svc = services.get(workspace);
+			if (!svc || (!on && !svc.answer)) return false;
+			const at = now();
+			svc.answer = on ? { since: svc.answer && at - svc.answer.last <= t.answer ? svc.answer.since : at, last: at } : undefined;
+			poke(svc);
+			return at < heldUntil(svc) && !svc.run && svc.state === "standing" && waitingOf(svc).length > 0;
+		},
 		/** An ally run asked its sender's device to confirm a call at `forward`: the answer is handed to it at its next poll. */
 		watchConfirm(token: unknown, dialogId: string) {
 			const a = of(token);

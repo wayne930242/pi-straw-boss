@@ -159,7 +159,7 @@ export interface Towers {
 		event(text: string, requester?: Requester): Promise<{ workspace: string; id: string }>;
 	};
 	/** The tower prompt in a standing pane (standing.ts): its poll, Ctrl+D, and exit. */
-	prompt(cmd: "prompt-poll" | "prompt-leave" | "prompt-gone", workspace: string, pid: number): Promise<PromptReply | { ok: true }>;
+	prompt(cmd: "prompt-poll" | "prompt-leave" | "prompt-gone", workspace: string, pid: number, answering?: boolean): Promise<PromptReply | { ok: true }>;
 	/** Messages wait in the link inbox for this tower identity: ally runs are started for them. */
 	allyWaiting(identity: string): void;
 	/** The GUI panel's request on a workspace's memory (`POST tower/<workspace>/memory`, towermemory.ts `memoryRequest`). */
@@ -1307,10 +1307,11 @@ export function createTowers(o: TowersOptions): Towers {
 			},
 		},
 		runs,
-		async prompt(cmd, workspace, pid) {
+		async prompt(cmd, workspace, pid, answering = false) {
 			if (cmd === "prompt-poll") {
 				const polled = standing.poll(workspace, pid);
-				return polled.ok ? { ...polled, ...api.waitDigest(workspace) } : polled;
+				// The boss answers wait cards at this prompt (its poll says so): the tower's wake is held meanwhile (runs.ts `answering`). A prompt that is told to leave holds nothing.
+				return polled.ok ? { ...polled, ...api.waitDigest(workspace), ...(runs.answering(workspace, answering && !polled.leave) ? { holding: true as const } : {}) } : polled;
 			}
 			return cmd === "prompt-leave" ? standing.leave(workspace, pid) : standing.gone(workspace, pid);
 		},

@@ -511,7 +511,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				const pid = request.pid;
 				if (!towers || !towers.loaded()) return Promise.resolve({ ok: false, error: "the server is still starting" });
 				if (!workspace || typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return Promise.resolve({ ok: false, error: `${request.cmd} needs a workspace and the prompt's pid` });
-				return towers.prompt(request.cmd, workspace, pid);
+				// `answering`: the boss is at the prompt's wait cards, so the tower's wake is held (runs.ts). An unattended device has no boss at it: its prompt is told, and shows no card on its own.
+				return towers.prompt(request.cmd, workspace, pid, request.answering === true).then((reply) => (unattended() && "label" in reply ? { ...reply, unattended: true } : reply));
 			}
 			// The boss's memory (towermemory.ts `memoryRequest`): `/boss memory` in a pi session is the GUI panel's request on the same function. A run's token never gets here (rungate.ts refuses it).
 			case "tower-memory": return workspace && typeof request.json === "object" && request.json !== null ? answer(async (t) => ({ ...(await t.memory(workspace, request.json as Record<string, unknown>, request.via === "prompt" || request.via === "run-pane" ? request.via : "pi")) })) : Promise.resolve({ ok: false, error: "tower-memory needs a workspace and a request" });
