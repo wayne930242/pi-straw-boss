@@ -348,7 +348,7 @@ The child's **session file** is what ties a resumed child to its kind and its pa
   - **`/plan`.** It leaves with pi-herdr-roles, together with the `plan` skill (D15, Q9 「讓它們消失」). A main plans by `planning.md` and dispatches `planner` directly.
 - **The train** is `prompts/train.md`.
 
-**Preloaded context** comes from three places: sb's rendered section (`{{tab}}`, `{{tower}}`, `{{state}}`, `{{cli}}`, `{{dir}}`), static lines in the role prompt, and the brief fields the role prompt names.
+**Preloaded context** comes from three places: sb's rendered section (`{{tab}}`, `{{tower}}`, `{{state}}`, `{{cli}}`, `{{dir}}`), static lines in the role prompt, and the brief fields the role prompt names. (`{{tower}}` left the section on 2026-11-16, with a member's `{{main}}`: the name flipped with every tower run and rewrote the section, so `boss_status` names the tower instead; docs/how-it-works.md, The role section stays put.)
 
 | Kind | Prompt | Preloaded context | Tools | The user | Reports to |
 |---|---|---|---|---|---|

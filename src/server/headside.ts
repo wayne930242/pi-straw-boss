@@ -6,7 +6,7 @@ import { type Incoming } from "./kit.ts";
 import { WATCH_BRIEF } from "./autowatch.ts";
 import { answerAsk, asked, openAsks } from "./headasks.ts";
 import type { Locale } from "../towerprompt/messages.ts";
-import { buildHeadBrief, headTools, type HeadWorkspace } from "./headbrief.ts";
+import { buildHeadBrief, buildHeadSplit, type HeadBriefInput, headTools, type HeadWorkspace } from "./headbrief.ts";
 import { headGate } from "./headgate.ts";
 import { refuseHead } from "./head.ts";
 import type { Log } from "./log.ts";
@@ -91,8 +91,11 @@ export interface HeadBriefDeps {
 	/** sb's locale: the brief names it as the language of a wait for the boss. */
 	locale: Locale;
 }
-/** The brief of a head run: the chapter, the workspaces now (each base's tower and mains), the open asks, the memory, and the last handoff note (headbrief.ts). */
-export async function headBrief(d: HeadBriefDeps, input: { woken: number; run: RunRecord }): Promise<{ text: string; digestKeys: string[]; expired?: string[] }> {
+/**
+ * The brief of a head run: the chapter, the workspaces now (each base's tower and mains), the open asks, the memory, and the last handoff note (headbrief.ts). `split`: the run takes it in two texts, so `text` is what
+ * stays in its system section and `live` what it is given as a message.
+ */
+export async function headBrief(d: HeadBriefDeps, input: { woken: number; run: RunRecord; split?: boolean }): Promise<{ text: string; live?: string; digestKeys: string[]; expired?: string[] }> {
 	const ws = d.record().workspace, all = await workspaces(d.run), at = new Date(input.woken);
 	const rows: HeadWorkspace[] = [];
 	for (const w of all.filter((x) => !isSub(x) && !isHead(x)).slice(0, 20)) {
@@ -101,14 +104,13 @@ export async function headBrief(d: HeadBriefDeps, input: { woken: number; run: R
 	}
 	const kept = readMemory(d.slot, ws, d.now()), section = memorySection(kept.memory, d.now(), kept.problem), note = lastNote(d.slot, ws, "local");
 	const chapter = input.run.chapter ?? { n: 1, since: input.run.startedAt, turns: 0, resumed: false };
-	return {
-		digestKeys: [],
-		expired: section.expired,
-		text: buildHeadBrief({
-			identity: d.record().id, woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, boss: Boolean(input.run.conversation), chapter,
-			workspaces: rows, ...(d.auto?.() ? { auto: `${d.auto()!}\n${WATCH_BRIEF}` } : {}),
-			asks: openAsks(d.slot, d.now()).map((a) => ({ id: a.id, label: phrase(a.label, 60), age: ageOf(d.now() - a.at), first: a.first, ...(a.answers.at(-1) ? { answer: a.answers.at(-1)!.first } : {}) })),
-			memory: section.text, lapsed: kept.memory.entries.filter((e) => e.for === "boss" && lapsed(e, d.now())).map((e) => e.id), ...(note ? { note: { text: note.note, age: ageOf(d.now() - Date.parse(note.at)) } } : {}), tools: headTools(d.locale), flags: [],
-		}),
+	const brief: HeadBriefInput = {
+		identity: d.record().id, woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, boss: Boolean(input.run.conversation), chapter,
+		workspaces: rows, ...(d.auto?.() ? { auto: `${d.auto()!}\n${WATCH_BRIEF}` } : {}),
+		asks: openAsks(d.slot, d.now()).map((a) => ({ id: a.id, label: phrase(a.label, 60), age: ageOf(d.now() - a.at), first: a.first, ...(a.answers.at(-1) ? { answer: a.answers.at(-1)!.first } : {}) })),
+		memory: section.text, lapsed: kept.memory.entries.filter((e) => e.for === "boss" && lapsed(e, d.now())).map((e) => e.id), ...(note ? { note: { text: note.note, age: ageOf(d.now() - Date.parse(note.at)) } } : {}), tools: headTools(d.locale), flags: [],
 	};
+	if (!input.split) return { digestKeys: [], expired: section.expired, text: buildHeadBrief(brief) };
+	const { fixed, live } = buildHeadSplit(brief);
+	return { digestKeys: [], expired: section.expired, text: fixed, live };
 }

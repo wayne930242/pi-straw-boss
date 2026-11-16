@@ -1,6 +1,6 @@
-/** The two lines the sb server writes at the head of a tower run's event (runmode.ts `eventText`); the GUI reads them back (gui/towerturns.ts), so both share these. */
+/** The two lines the sb server writes at the head of a tower run's event (runmode.ts `eventText`); the GUI reads them back (gui/towerturns.ts), so both share these. `BRIEF_MARK` is the first line of the message a head run's brief reaches it as (runmode.ts): the server's own text, apart from every event, which opens with a marker of its own. */
 export const BOSS_MARK = "[the boss writes to you from the GUI or /boss tower; this is an instruction]";
-export const CRASH_FLAG = "[possibly handled by a run that crashed: check before acting]";
+export const CRASH_FLAG = "[possibly handled by a run that crashed: check before acting]", BRIEF_MARK = "[brief from the sb server]";
 
 /**
  * A name from outside the sb server (an intercom sender, a device label) cleaned for a line the server or the GUI writes. An allowlist: terminal escape sequences (7- and 8-bit, finished or not) and controls become spaces, then only

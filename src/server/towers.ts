@@ -249,8 +249,8 @@ export function createTowers(o: TowersOptions): Towers {
 			const { memory, problem } = readMemory(slot, l.record.workspace, now());
 			return { ...memorySummary(memory, isHeadL(l) ? now() : undefined), ...(problem ? { problem } : {}) };
 		},
-		// A live run is given a new brief when the memory moved or a run left a note (runs.ts `refreshed`): what a conversation of an hour would otherwise not see.
-		briefVersion: () => `${readMemory(slot, l.record.workspace, now()).memory.rev}:${o.auto?.view().on ? `auto${o.auto.view().since}:` : ""}${lastNote(slot, l.record.workspace, "local")?.at ?? ""}${isHeadL(l) ? `:${openAsks(slot, now()).map((a) => `${a.id}.${a.answers.length}`).join(",")}` : ""}`,
+		// A live run is given a new brief when the memory moved or a run left a note (runs.ts `refreshed`): what a conversation of an hour would otherwise not see. A head run that takes its brief as a message (`split`) is not given one for its asks: it opened them itself, and each answer reaches it as an event, so the brief would only say again what the run was just told.
+		briefVersion: (split) => `${readMemory(slot, l.record.workspace, now()).memory.rev}:${o.auto?.view().on ? `auto${o.auto.view().since}:` : ""}${lastNote(slot, l.record.workspace, "local")?.at ?? ""}${isHeadL(l) && !split ? `:${openAsks(slot, now()).map((a) => `${a.id}.${a.answers.length}`).join(",")}` : ""}`,
 		liveSessions: async () => (await panes(run).catch(() => [])).flatMap((p) => (p.agent_session?.value ? [p.agent_session.value] : [])),
 		allyLine: (item) => {
 			const mine = { name: allyLabel(l.record.name), id: l.record.id, role: "tower" as const, workspace: allyLabel(l.record.label) };
@@ -277,10 +277,10 @@ export function createTowers(o: TowersOptions): Towers {
 				}),
 			};
 		},
-		async brief({ events, woken, run: rec, refresh }) {
+		async brief({ events, woken, run: rec, refresh, split }) {
 			const ws = l.record.workspace, all = await workspaces(run), target = all.find((w) => w.workspace_id === ws);
 			if (!target || !l.client) throw new Error("the tower's workspace or its intercom connection is gone");
-			if (isHeadL(l)) return headBrief({ slot, run, now, auto: autoLine, record: () => l.record, sessions: () => l.client!.listSessions(), towerState, locale: localeOf(o.env) }, { woken, run: rec });
+			if (isHeadL(l)) return headBrief({ slot, run, now, auto: autoLine, record: () => l.record, sessions: () => l.client!.listSessions(), towerState, locale: localeOf(o.env) }, { woken, run: rec, ...(split ? { split } : {}) });
 			const mains = await gatherMains({ run, now, sessions: () => l.client!.listSessions(), boardDir: join(slot.stateDir, "board"), workspace: target, ledger: readLedger(slot, ws, now()) });
 			const lines = await digest.peek(ws).catch(() => []), note = lastNote(slot, ws, "local"), timer = readTimer(slot, ws);
 			const counts: Record<string, number> = {};

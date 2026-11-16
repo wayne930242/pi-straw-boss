@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { BOSS_MARK, CRASH_FLAG, cleanLabel } from "./eventmarks.ts";
+import { BOSS_MARK, BRIEF_MARK, CRASH_FLAG, cleanLabel } from "./eventmarks.ts";
 import { panes, type Place, TOWER_LABEL, tabs, workspaces } from "./herdr.ts";
 import { createHereMark } from "./heremark.ts";
 import { every } from "./lanface.ts";
@@ -63,7 +63,8 @@ const PANE_ASK = Symbol.for("pi-straw-boss.pane-ask");
 interface PaneAsk { asked: Promise<Found | undefined>; /** The session start that acts on the answer: an earlier one has ended and leaves it alone. */ owner?: symbol; /** That session's handling of the answer, which a quit waits for. */ settled?: Promise<void>; /** The ask ended without an answer: the process stays a plain session. */ plain?: boolean }
 const globalMarks = globalThis as Record<symbol, unknown>;
 interface Peer { device: string; label: string; short: string; team: string; teamName: string }
-interface Claim { token: string; kind: "local" | "ally" | "head"; level?: string; peer?: Peer; run: string; workspace: string; identity: string; label: string; brief: string; hand?: boolean }
+/** `brief` goes into the run's system section; `live` (a head run's: headbrief.ts `buildHeadSplit`) is the part that differs from run to run, given to the model as a message so the section stays the same bytes. */
+interface Claim { token: string; kind: "local" | "ally" | "head"; level?: string; peer?: Peer; run: string; workspace: string; identity: string; label: string; brief: string; live?: string; hand?: boolean }
 /** A pi without the flag in a standing pane: the server says whether to quit, wait, or take the pane as a run of the boss's own. */
 type Found = { role: "none" | "quit" | "hand"; reason?: string; claim?: Claim };
 interface Event { id: string; kind: string; text: string; from?: { id: string; name?: string }; flag?: string }
@@ -111,7 +112,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	let typedSeq = 0, startedTyped: { text: string; seq: number } | undefined, turnTyped: { text: string; seq: number } | undefined;
 	// A quit the server ordered while the turn runs. pi would keep `ctx.shutdown()` itself and honour it at its next idle moment with no way to take it back, so the run holds the order instead: a server that restarted meanwhile (the run claims again) never ordered it, and the run goes on.
 	let quitOrdered = false;
-	let registered = false, bossSign: number | undefined, bossTyped = false, bossTurn = false, signing: Promise<unknown> | undefined;
+	// `briefSent`: the live brief (`claim.live`) the session was last given as a message; a turn that starts with another one is given it, once.
+	let registered = false, bossSign: number | undefined, bossTyped = false, bossTurn = false, signing: Promise<unknown> | undefined, briefSent: string | undefined;
 	// The pane-role ask of a pi with STRAW_BOSS_ROLE=tower that did not come back within `towerAskMs` is still in flight: the session is undecided, neither a run nor a normal session (so it joins nothing, hands nothing
 	// over and quits nothing) until the answer comes. `epoch` counts session starts and shutdowns, so an answer for a session that is gone is released instead of acted on; `afterNormal` holds the session start that waits for a `none`.
 	let epoch = 0, deciding: (() => void)[] | undefined;
@@ -150,7 +152,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	async function claimRun(runId: string): Promise<Claim> {
 		const end = cfg.now() + claimWaitMs, started = startOf(process.pid);
 		for (;;) {
-			const answer = await ask({ cmd: "claim", runId, pane: env.HERDR_PANE_ID ?? "", pid: process.pid, ...(started ? { started } : {}) });
+			const answer = await ask({ cmd: "claim", runId, pane: env.HERDR_PANE_ID ?? "", pid: process.pid, liveBrief: true, ...(started ? { started } : {}) }); // `liveBrief`: this build takes a brief in two texts; an older server ignores the word and answers one
 			if (!answer.ok) throw new Error(String(answer.error ?? "the claim was refused"));
 			if (!answer.wait) {
 				// SAFETY: a claim answered `ok` and not `wait` carries the Claim fields (runs.ts, ClaimReply).
@@ -189,7 +191,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 			if (carried) return { role: "late", ask: carried };
 			const started = startOf(process.pid);
 			// An ask that fails is no answer: resident when it fails within the bound (no server), a plain session when it fails after it (`late` settles undefined).
-			const asked = ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}), ...(file ? { file } : {}), ...(ally ? { ally: true } : {}) }).then((answer): Found | undefined => {
+			const asked = ask({ cmd: "pane-role", pane, pid: process.pid, liveBrief: true, ...(started ? { started } : {}), ...(file ? { file } : {}), ...(ally ? { ally: true } : {}) }).then((answer): Found | undefined => {
 				// SAFETY: same `pane-role` answer shape as below (runs.ts, paneRole).
 				return answer?.ok && (answer.role === "hand" || answer.role === "quit") ? (answer as unknown as Found) : { role: "none" };
 			}, () => undefined);
@@ -208,7 +210,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (!marked && !glyph) return { role: "none" };
 		const end = cfg.now() + (glyph ? glyphWaitMs : claimWaitMs), started = startOf(process.pid);
 		for (;;) {
-			const answer = await ask({ cmd: "pane-role", pane, pid: process.pid, ...(started ? { started } : {}), ...(file ? { file } : {}), ...(ally ? { ally: true } : {}) }).catch(() => undefined);
+			const answer = await ask({ cmd: "pane-role", pane, pid: process.pid, liveBrief: true, ...(started ? { started } : {}), ...(file ? { file } : {}), ...(ally ? { ally: true } : {}) }).catch(() => undefined);
 			// No server to ask: a marked pane's pi is what it was before; one in a tower tab keeps asking until its wait is over.
 			if (!answer?.ok && !glyph) return { role: "none" };
 			if (answer?.ok && answer.role !== "wait") {
@@ -353,6 +355,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 
 	// --- living off the server's queue ----------------------------------------------------------------------------------------------------------------------------
 
+	/** The brief as the message a head run is given, noted as given: the marker line is this code's, and no event opens with it (`eventText`). */
+	const liveBrief = (live: string) => ((briefSent = live), keep(), { customType: MESSAGE, content: `${BRIEF_MARK}\n${live}`, display: false, details: { brief: true } });
 	const send = (message: string, details: unknown) => {
 		triggered = cfg.now();
 		pi.sendMessage({ customType: MESSAGE, content: message, display: true, details }, { triggerTurn: true, deliverAs: "steer" });
@@ -361,7 +365,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		const command = answer.command as Command | undefined, event = answer.event as Event | undefined;
 		// A run that lives long is given a newer brief when what it is made of moved (runs.ts `refreshed`): `before_agent_start` reads it at the next turn.
 		if (typeof answer.brief === "string" && answer.brief && claim) {
-			claim = { ...claim, brief: answer.brief };
+			claim = { ...claim, brief: answer.brief, ...(typeof answer.live === "string" ? { live: answer.live } : {}) };
 			keep();
 		}
 		if (command?.type === "quit") return void ((quitOrdered = true), flushQuit());
@@ -428,7 +432,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		end("this ally run names no sender it can be pinned to, so it cannot run");
 		void ask({ cmd: "run-release", token: claim?.token, reason: "unpinned" }).catch(() => {});
 	}
-	const keep = () => void ((globalThis as Record<symbol, unknown>)[KEPT] = claim ? { claim } : undefined);
+	const keep = () => void ((globalThis as Record<symbol, unknown>)[KEPT] = claim ? { claim, ...(briefSent !== undefined ? { briefSent } : {}) } : undefined);
 	function end(reason: string) {
 		if (ending) return;
 		ending = true;
@@ -481,7 +485,13 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		const head = /head tower: ([^\n;.]+)/.exec(claim.brief)?.[1]?.trim() ?? "none yet";
 		const role = promptSet({ promptDir: cfg.promptDir, stateDir: guiDir, env, warn: (text) => process.stderr.write(`straw-boss: ${text}\n`) }).read(claim.kind === "ally" ? "ally-run" : claim.kind === "head" ? "head-run" : "tower-run").replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ workspace: claim!.label, head })[key] ?? "none yet");
 		sections[ENTRY] = `${role}\n\n${claim.brief}`;
+		// A head run resumes the one conversation, so its section holds only what every run shares (headbrief.ts): what this run was woken to is a message at the start of the first turn that has not had it, appended
+		// to the conversation and never rewritten. Not shown: the boss never saw the brief in the section either, and the head page lists the conversation.
+		if (claim.live === undefined || claim.live === briefSent) return;
+		return { message: liveBrief(claim.live) };
 	});
+	// A compaction folds the brief into its summary with the rest: the session is given it again, behind the summary (stored when idle, before the next model call when a turn is under way).
+	pi.on("session_compact", () => void (mode === "run" && claim?.live !== undefined && briefSent !== undefined && pi.sendMessage(liveBrief(claim.live), { deliverAs: "steer" })));
 	/** A pane the server owns: this pi quits with the server's reason. */
 	const quitPane = (context: ExtensionContext, reason?: string) => {
 		mode = "run";
@@ -542,8 +552,9 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		epoch++;
 		deciding = undefined;
 		if (mode === "run") return; // a /reload of a run: the claim is kept
-		const kept = (globalThis as Record<symbol, { claim?: Claim } | undefined>)[KEPT]?.claim;
+		const record = (globalThis as Record<symbol, { claim?: Claim; briefSent?: string } | undefined>)[KEPT], kept = record?.claim;
 		const flag = pi.getFlag("sb-run");
+		briefSent = event.reason === "reload" ? record?.briefSent : undefined; // a /reload keeps the session, and with it the brief it was given; any other start is a session that has not had it
 		try {
 			// A hand run (no flag: the boss started pi in the standing pane) keeps its claim across /reload, /new, /resume and /fork: it is the same process in the same pane, and asking again would be told the pane is taken.
 			if (kept && typeof flag === "string" && kept.run === flag && event.reason === "reload") claim = kept;

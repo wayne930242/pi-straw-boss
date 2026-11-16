@@ -172,10 +172,13 @@ export interface ServiceRef {
 	yieldPane(): Promise<void>;
 	/** A local run ended: the pane is free for the prompt again. `keepParked`: the give-back of a Retry or of the tower's own proof, which never ends the boss's Ctrl+D park. `fresh: false`: pi was never started in it (Herdr refused the start), so it is not known to be a bare shell, and on Windows nothing is typed into it. */
 	freed(over?: { fresh?: boolean; keepParked?: boolean }): void;
-	/** The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. `refresh`: a live run is given the newest, not a new one. */
-	brief(input: { events: QueuedEvent[]; woken: number; run: RunRecord; refresh?: true }): Promise<{ text: string; digestKeys: string[]; expired?: string[] }>;
-	/** What a refreshed brief would differ by, cheap to compute: a live run is given a new brief when it moves (the memory, a handoff note). */
-	briefVersion?(): string;
+	/**
+	 * The brief for a run: the server builds it from the net, the opener's ledger, the digest, and the last note. `refresh`: a live run is given the newest, not a new one. `split`: the run takes a brief in two texts
+	 * (its claim said so), and a service whose runs resume one session (the head) then answers `text` for the system section, the same bytes for every run, and `live` for the message the run is given (headbrief.ts).
+	 */
+	brief(input: { events: QueuedEvent[]; woken: number; run: RunRecord; refresh?: true; split?: boolean }): Promise<{ text: string; live?: string; digestKeys: string[]; expired?: string[] }>;
+	/** What a refreshed brief would differ by, cheap to compute: a live run is given a new brief when it moves (the memory, a handoff note). `split` as for `brief`: what moves a brief the run takes as a message. */
+	briefVersion?(split?: boolean): string;
 	/** The session files the live panes report (Herdr's `agent_session`): the boss conversation does not resume one another pi has open. */
 	liveSessions?(): Promise<string[]>;
 	/** The expired waits a brief showed are shown now: the run took its first poll. */
@@ -271,6 +274,8 @@ interface Active {
 	capped?: boolean;
 	/** The boss asked for a new session (`/new`) while this conversation had not reported its file yet: the pointer is marked when it does. */
 	fresh?: boolean;
+	/** The run's claim said it takes a brief in two texts (`liveBrief`): a head run's brief is then split (ServiceRef `brief`). Memory only: the run says it again at each claim. */
+	split?: boolean;
 	/** The brief version the run has (`briefVersion`), and a refresh under way. */
 	briefV?: string;
 	refreshing?: boolean;
@@ -365,7 +370,8 @@ const PRIORITY: Record<string, number> = { boss: 0, notice: 1, timer: 1, interco
 export type ClaimRequest = Record<string, unknown>
 /** The sender an ally run serves, as its claim names it: the run's remote-turn hooks pin the turn to it. */
 export interface Peer { device: string; label: string; short: string; team: string; teamName: string }
-export type ClaimReply = { ok: true; wait: true } | { ok: false; error: string } | { ok: true; token: string; kind: "local" | "ally" | "head"; level?: string; peer?: Peer; run: string; workspace: string; identity: string; label: string; brief: string; hand?: true };
+/** `live`: the part of a brief the run is given as a message and not in its system section (a head run whose claim said `liveBrief`). */
+export type ClaimReply = { ok: true; wait: true } | { ok: false; error: string } | { ok: true; token: string; kind: "local" | "ally" | "head"; level?: string; peer?: Peer; run: string; workspace: string; identity: string; label: string; brief: string; live?: string; hand?: true };
 
 export function createRuns(o: RunsOptions) {
 	const platform = o.platform ?? process.platform, win = platform === "win32";
@@ -1163,12 +1169,14 @@ export function createRuns(o: RunsOptions) {
 
 	const refuse = (error: string): ClaimReply => ({ ok: false, error });
 	/** Issues the run's token and its brief. */
-	const issue = async (a: Active, hand?: true): Promise<ClaimReply> => {
+	const issue = async (a: Active, req: Record<string, unknown>, hand?: true): Promise<ClaimReply> => {
 		const svc = a.svc, ally = a.rec.kind === "ally";
-		const built = ally ? { ...(await svc.ref.allyBrief({ run: a.rec, items: itemsOf(a, true), woken: a.started })), digestKeys: [] as string[], expired: [] as string[] } : await svc.ref.brief({ events: waitingOf(svc), woken: a.started, run: a.rec });
+		// What the pi that claims can take is its own to say, at each claim: a run of an older build says nothing and gets the whole brief in one text.
+		a.split = req.liveBrief === true;
+		const built: { text: string; live?: string; digestKeys: string[]; expired?: string[] } = ally ? { ...(await svc.ref.allyBrief({ run: a.rec, items: itemsOf(a, true), woken: a.started })), digestKeys: [], expired: [] } : await svc.ref.brief({ events: waitingOf(svc), woken: a.started, run: a.rec, split: a.split });
 		a.digestKeys = built.digestKeys;
 		a.expired = built.expired?.length ? built.expired : undefined;
-		a.briefV = ally ? undefined : svc.ref.briefVersion?.();
+		a.briefV = ally ? undefined : svc.ref.briefVersion?.(a.split);
 		a.token = randomBytes(24).toString("hex");
 		a.lastPoll = now();
 		a.recovering = undefined;
@@ -1193,7 +1201,7 @@ export function createRuns(o: RunsOptions) {
 		log.line("run-claim", { workspace: a.rec.workspace, run: a.rec.id, ...(hand ? { hand: true } : {}) });
 		const r = svc.ref.record();
 		const peer: Peer | undefined = ally && a.rec.device && a.rec.team ? { device: a.rec.device, label: a.rec.deviceLabel ?? a.rec.device.slice(0, 6), short: a.rec.deviceShort ?? a.rec.device.slice(0, 6), team: a.rec.team, teamName: a.rec.teamName ?? a.rec.team.slice(0, 6) } : undefined;
-		return { ok: true, token: a.token, kind: headRun(a) ? "head" : a.rec.kind, ...(a.rec.level ? { level: a.rec.level } : {}), ...(peer ? { peer } : {}), run: a.rec.id, workspace: a.rec.workspace, identity: r.id, label: r.label, brief: built.text, ...(hand ? { hand } : {}) };
+		return { ok: true, token: a.token, kind: headRun(a) ? "head" : a.rec.kind, ...(a.rec.level ? { level: a.rec.level } : {}), ...(peer ? { peer } : {}), run: a.rec.id, workspace: a.rec.workspace, identity: r.id, label: r.label, brief: built.text, ...(built.live !== undefined ? { live: built.live } : {}), ...(hand ? { hand } : {}) };
 	};
 	const heldReply = (): ClaimReply => ({ ok: true, wait: true });
 
@@ -1210,7 +1218,7 @@ export function createRuns(o: RunsOptions) {
 		if (a.token) return refuse("this run was claimed already");
 		// The identity is not registered with pi-intercom yet (a server that has just started): the brief cannot be built, so the run is told to wait, not refused (B5R-F002).
 		if (!a.svc.ref.live()) return heldReply();
-		return issue(a);
+		return issue(a, req);
 	}
 	/** A pi without the flag in a pane the server lists as a standing pane (or an ally pane): quit, or take the pane as a run of the boss's own. */
 	async function paneRole(req: Record<string, unknown>): Promise<{ ok: true; role: "none" | "quit" | "wait" | "hand"; reason?: string; claim?: ClaimReply }> {
@@ -1244,7 +1252,7 @@ export function createRuns(o: RunsOptions) {
 		byRun.set(id, a);
 		writeRun(slot, rec);
 		ensureWatcher();
-		return { ok: true, role: "hand", claim: await issue(a, true) };
+		return { ok: true, role: "hand", claim: await issue(a, req, true) };
 	}
 
 	// --- the run's requests -------------------------------------------------------------------------------------------------------------------------------------------
@@ -1261,16 +1269,16 @@ export function createRuns(o: RunsOptions) {
 	const allyText = (a: Active, i: AllyItem): string => a.svc.ref.allyLine(i);
 	const unknown = { ok: false as const, error: "unknown_token" };
 	/** The newest brief for a live local run whose brief version moved since it had one, else undefined. A brief that cannot be built is tried again at the next change. */
-	const refreshed = async (a: Active): Promise<string | undefined> => {
-		const version = a.rec.kind === "local" ? a.svc.ref.briefVersion?.() : undefined;
+	const refreshed = async (a: Active): Promise<{ text: string; live?: string } | undefined> => {
+		const version = a.rec.kind === "local" ? a.svc.ref.briefVersion?.(a.split) : undefined;
 		if (version === undefined || version === a.briefV || a.refreshing) return undefined;
 		a.refreshing = true;
 		try {
-			const built = await a.svc.ref.brief({ events: [], woken: a.started, run: a.rec, refresh: true });
+			const built = await a.svc.ref.brief({ events: [], woken: a.started, run: a.rec, refresh: true, split: a.split });
 			a.briefV = version;
 			a.digestKeys = built.digestKeys;
 			if (built.expired?.length) a.expired = built.expired;
-			return built.text;
+			return { text: built.text, ...(built.live !== undefined ? { live: built.live } : {}) };
 		} catch (cause) {
 			a.briefV = version;
 			error("run-brief", `${a.rec.id}: ${(cause as Error).message}`);
@@ -1288,13 +1296,13 @@ export function createRuns(o: RunsOptions) {
 		settlePointer(a);
 		// The run is up and asking: what its brief showed as expired is shown (a run that never gets here shows it again to the next).
 		// Marking them shown moves the memory, which is the brief's own doing: the run has that brief already.
-		if (a.expired) (a.svc.ref.shown?.(a.expired), (a.expired = undefined), (a.briefV = a.svc.ref.briefVersion?.() ?? a.briefV));
+		if (a.expired) (a.svc.ref.shown?.(a.expired), (a.expired = undefined), (a.briefV = a.svc.ref.briefVersion?.(a.split) ?? a.briefV));
 		const command = a.commands.shift();
 		if (command) return { ok: true as const, command };
 		if (a.terminating !== undefined || a.closing !== undefined) return { ok: true as const };
 		// A long-lived run (a conversation may last an hour) is given a new brief when what it is made of moved: it reads the newest at its next turn (runmode.ts `before_agent_start`).
 		const fresh = await refreshed(a);
-		if (fresh) return { ok: true as const, brief: fresh };
+		if (fresh) return { ok: true as const, brief: fresh.text, ...(fresh.live !== undefined ? { live: fresh.live } : {}) };
 		if (req.idle !== true) return (a.idleSince = undefined, { ok: true as const });
 		// An event offered and not yet taken is offered again (the run did not confirm it); then the next one waiting.
 		const again = [...a.offered.values()][0], next = again ?? (a.rec.kind === "ally" ? allyEvents(a).find((e) => !a.offered.has(e.id)) : waitingOf(a.svc, new Set(a.offered.keys()))[0]);

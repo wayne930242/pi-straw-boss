@@ -113,6 +113,7 @@ The tower store resolves a service's folder from its key (`towerDir(slot, worksp
   2. **Workspaces now**: for each base workspace in Herdr's order, its label and id, its checkout folder, its tower's state (`standing by`, `running`, `none`), each tab's main with its name, state, and board `now`, stale marks as `board_read` gives them (2,400 characters). This saves a `tower_list` and a `board_read` per message; both stay available.
   3. **Open asks**: id, workspace, age, first line, the first line of the last answer (1,200 characters).
   4. the head's memory (as `memorySection`), the last handoff note, its tools, and the limits line.
+  Since 2026-11-16 the brief is two texts (`buildHeadSplit`), for a run that says `liveBrief` at its claim. Every run resumes the one session, so a brief in the system section rewrote it at each run and each refresh, and every rewrite read the conversation uncached (41 strict cache misses and 6.9M tokens in three days). The section keeps what no run changes: who the head is, how its brief reaches it, and its tools. The chapter, who woke the run, **Workspaces now**, **Open asks**, the memory, the note, and the limits line are a `straw-tower` message that opens with `[brief from the sb server]`, given at the start of a run's first turn, again when the memory, the auto mode, or the note moved (not for the head's own asks or their answers, which are events), and again after a compaction.
 - **Its prompt** (`prompts/head-run.md`, the gist; the wording is written and tuned in H2):
 
 ```text
