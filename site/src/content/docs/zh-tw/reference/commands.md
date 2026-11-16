@@ -32,6 +32,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `tower_send` | 塔台 | 發訊息給另一座塔台（用工作區 id 或標籤）或全部；附 `device` 則發給隊友電腦上的塔台。 |
 | `board_read` | 塔台 | 工作看板：每位主智慧體在做什麼、做到哪裡，包括這裡與隊友的電腦。 |
 | `tower_memory` | 本機塔台 run | 保存 run 結束後還要留著的內容：引用自老闆自己訊息的長期指示或決定，以及塔台的等待事項，包括對老闆的等待（以卡片呈現）。 |
+| `boss_wait_ask` | 主智慧體、本機塔台 run、主塔台 | 讓 sb 在終端機裡把開著的等待卡片一張接一張拿給你看：`ids`（1 到 4 個 `W<n>`），或不指名，代表它範圍內每一張開著的卡片（主智慧體是它提出的，塔台 run 是它那座塔台的，主塔台是任何一張）。sb 照 `/boss wait` 的畫法畫每一張卡片；智慧體不寫字也不選，只有你的按鍵能按。自動模式開著、無人值守的裝置、沒有畫面時都被拒絕；在塔台 run 裡，只有你在這個 run 裡最後說的話來自它的 pane 才會畫。 |
 | `tower_reply` | 塔台 run，不含主塔台的 | 用 intercom 名稱或 session id 回答一個本機 session（主智慧體或成員），掛在塔台的標頭之下。`forward` 把車廂單的事件 id 轉給整合員。 |
 | `tower_done` | 塔台 run | 附一份交接筆記（一項一行，最多 1,200 字元）結束這次 run，留給下一次 run；`wakeAfter`（5 到 240 分鐘，僅限本機 run）要求稍後再跑一次。事件仍在等這次 run 時會被拒絕。 |
 | `boss_auto` | 主塔台 | 依老闆自己的話，在它回答的那個 turn 裡開始或結束[自動模式](/pi-straw-boss/docs/zh-tw/guide/auto-mode/)。 |
@@ -74,7 +75,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `/boss memory confirm P1`、`reject P1` | 確認或拒絕塔台的提案。 |
 | `/boss memory add standing\|decision <text>`、`edit S1 <text>`、`delete D1`、`resolve W1` | 自己修改記憶。 |
 | `/boss memory done\|choose\|decline W<n>` | 處理一個等待事項，例如被自動模式擱置的那種。 |
-| `/boss wait [-w workspace \| label \| head]` | 列出等你處理的等待卡片，並按下其中一張：完成、選一個選項、略過、回覆塔台，或開始輸入機密。它送出頁面本身的 press。塔台的常駐 pane 用 `/wait` 做同樣的事。 |
+| `/boss wait [-w workspace \| label \| head]` | 列出等你處理的等待卡片，並按下其中一張：完成、選一個選項、略過、回覆塔台，或開始輸入機密。它送出頁面本身的 press，按下、略過或回覆之後直接開下一張還在等的卡片（卡片的動作裡有**下一張**與**全部卡片**）。塔台的常駐 pane 會自己把卡片一張接一張畫出來：↑↓ 或數字標記一列，Enter 按下，←→ 換張，Esc 把按鍵還給訊息列，`/wait` 把卡片叫回來；你回答的期間不會啟動塔台 run（到最後一個卡片按鍵之後約一分鐘為止，總共最多 5 分鐘）。不回報按鍵的地方（管線、`TERM=dumb`、Windows），`/wait` 是數字選擇器。 |
 | `/boss auto` | 顯示自動模式的狀態與上一份回來清單。 |
 | `/boss auto on`、`/boss auto confirm`、`/boss auto off` | 請求自動模式並在終端機確認；確認主塔台擬好的請求；結束它並印出回來清單。 |
 

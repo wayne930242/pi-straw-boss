@@ -32,6 +32,7 @@ Agents call the **tools**; you type the **`/boss` commands** in any pi session i
 | `tower_send` | towers | Message one other tower (by workspace id or label) or all of them; with `device`, the tower of a teammate's computer. |
 | `board_read` | towers | The work board: what each main is doing and how far it is, here and on teammates' computers. |
 | `tower_memory` | local tower runs | Keep what outlives the run: a standing instruction or a decision quoted from the boss's own message, and the tower's waits, including a wait on the boss as a card. |
+| `boss_wait_ask` | mains, local tower runs, the head tower | Have sb show you open wait cards in the terminal, one after another: `ids` (1 to 4 `W<n>`), or none for every open card in its scope (a main the cards it raised, a tower run its tower's, the head any). sb draws each card as `/boss wait` does; the agent words and chooses nothing, and only your keys press. Refused while auto mode is on, on an unattended device, without a screen, and in a tower run unless your last words in it came from its pane. |
 | `tower_reply` | tower runs, not the head tower's | Answer one local session (a main or a member) by its intercom name or session id, under the tower's header. `forward` carries a car slip's event id to an integrator. |
 | `tower_done` | tower runs | End this run with a handoff note (one item per line, up to 1,200 characters) for the next run; `wakeAfter` (5 to 240 minutes, local runs only) asks for a follow-up run. Refused while events are still waiting for the run. |
 | `boss_auto` | the head tower | Start or end [auto mode](/pi-straw-boss/docs/guide/auto-mode/) on the boss's own words in the turn it answers. |
@@ -74,7 +75,7 @@ The full table, with every argument, is in [Tools](/pi-straw-boss/docs/reference
 | `/boss memory confirm P1`, `reject P1` | Confirm or reject a tower's proposal. |
 | `/boss memory add standing\|decision <text>`, `edit S1 <text>`, `delete D1`, `resolve W1` | Change the memory yourself. |
 | `/boss memory done\|choose\|decline W<n>` | Act on a wait, such as one parked by auto mode. |
-| `/boss wait [-w workspace \| label \| head]` | List the wait cards open for you, and press one: done, an option, skip, reply to the tower, or start entering a secret. It sends the page's own press. The tower's standing pane takes the same as `/wait`. |
+| `/boss wait [-w workspace \| label \| head]` | List the wait cards open for you, and press one: done, an option, skip, reply to the tower, or start entering a secret. It sends the page's own press, and after a press, a skip, or a reply opens the next card that still waits (**Next card** and **All cards** are among a card's acts). The tower's standing pane shows the cards by itself, one after another: ↑↓ or a digit marks a row, Enter presses it, ←→ go to another card, Esc gives the keys back to the message line, and `/wait` brings the cards back; no tower run starts while you answer (until about a minute after your last card key, 5 minutes at most). Where keys are not reported (a pipe, `TERM=dumb`, Windows) `/wait` is the numbered picker. |
 | `/boss auto` | Show the auto mode state and the last return list. |
 | `/boss auto on`, `/boss auto confirm`, `/boss auto off` | Ask for auto mode and confirm it in the terminal; confirm a request the head tower staged; end it and print the return list. |
 

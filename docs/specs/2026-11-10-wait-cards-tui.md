@@ -5,7 +5,7 @@ Status: spec, not implemented. Base: `main` f807db69 (0.70.0). Related: [2026-11
 ## Boss decision (2026-11-10, all three)
 
 1. **`/boss wait` in any pi.** It lists the open wait cards (every tower and the head, or one with `-w`). The boss picks a card, then an act (done, an option, decline with an optional reason, restate, secret start) in `ctx.ui.select`. Nobody types or remembers a `W<n>`. It uses the server's `press` op, the one behind `/boss memory done|choose|decline|restate W1` (`src/memorycmd.ts:175-195`, `src/server/waitpress.ts`). `/boss memory …` keeps working.
-2. **The tower's standing pane.** It shows the open cards, and the boss presses them there. Only the human's typed input may press. The pane holds either the stand-in prompt or a tower run's pi. A run's model gets no press.
+2. **The tower's standing pane.** It shows the open cards, and the boss presses them there. Only the human's typed input may press. The pane holds either the stand-in prompt or a tower run's pi. A run's model gets no press. *Amended 2026-11-16 ([wait cards flow](2026-11-16-wait-cards-flow.md), D3): a model may have sb show a card with `boss_wait_ask`; it words and presses nothing, and only the boss's keys choose.*
 3. **GUI.** The wait card uses the alert confirm card's component and style (the dock dialog's question panel, `gui/ask.ts`) in Standard, Geek, Raven, and Zen. It keeps auto mode's parked label and the 44 px phone targets.
 
 ## What sb has today
