@@ -87,7 +87,7 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 		async post(text: string) {
 			let reply;
 			try {
-				reply = await ask({ cmd: "tower-event", workspace, text, present: true }, POST_MS);
+				reply = await ask({ cmd: "tower-event", workspace, text, present: true, door: "pane" }, POST_MS); // `door`: written at this tower's own pane, so the run it wakes may show the boss a card here (runmode.ts, `boss_wait_ask`)
 			} catch (cause) {
 				throw new Error(cause instanceof Unreachable ? `the sb server did not answer: ${cause.message}` : (cause as Error).message);
 			}

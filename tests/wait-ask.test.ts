@@ -15,6 +15,7 @@ import type { Slot } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
 import { type Entry, iso, loadMemory, updateMemory } from "../src/server/towermemory.ts";
 import { waitList } from "../src/server/waitlist.ts";
+import { serverSource } from "../src/towerprompt/serversource.ts";
 import { askRefused, pressRequest } from "../src/server/waitpress.ts";
 import { PARENT_ONLY } from "../src/tools.ts";
 import { createWaitAsk, type Scope, WAIT_ASK, type WaitAskDeps, waitAskParameters } from "../src/waitask.ts";
@@ -350,6 +351,9 @@ test("on a running server: the ask's press is logged by its door, the memory and
 		assert.deepEqual(await taken(), ["boss", "pane", undefined]);
 		assert.equal((await ask({ cmd: "tower-event", workspace: "wA", text: "from another pi", present: true, door: "gui" })).ok, true);
 		assert.deepEqual(await taken(), ["boss", undefined, undefined], "any other word names no door, whatever it says");
+		// the standing pane's own prompt (towerprompt/serversource.ts) says it of every line the boss writes there
+		await serverSource(tw.ctx(), "wA", 4100).post("typed at the tower prompt");
+		assert.deepEqual(await taken(), ["boss", "pane", undefined]);
 	} finally {
 		await tw.close();
 	}
