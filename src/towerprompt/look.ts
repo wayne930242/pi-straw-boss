@@ -97,5 +97,11 @@ export function draw(look: Look) {
 		prompt: () => (look.ascii ? "tower> " : paint(["accent", "bold"], `${TOWER} ❯ `)),
 		/** The prompt string of the pick mode (`wait ❯`; `wait> ` in ASCII, whatever the language: nothing outside ASCII is drawn). */
 		pickPrompt: (word: string) => (look.ascii ? "wait> " : paint(["accent", "bold"], `${word} ❯ `)),
+		/** The prompt string of a field of the card view (`原因 ❯`; in ASCII its English word, `reason> `). */
+		fieldPrompt: (word: string, plain: string) => (look.ascii ? `${plain}> ` : paint(["accent", "bold"], `${word} ❯ `)),
+		/** The mark before the row the boss has marked in the card view. */
+		pointer: () => (look.ascii ? ">" : "❯"),
+		/** A row of the card view: the marked one in the accent colour, the key hint dim. */
+		row: (text: string, kind: "marked" | "plain" | "hint") => (kind === "marked" ? paint(["accent", "bold"], text) : kind === "hint" ? paint(["dim"], text) : text),
 	};
 }

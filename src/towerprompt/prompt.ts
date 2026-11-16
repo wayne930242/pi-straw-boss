@@ -1,5 +1,6 @@
 import { clearLine, createInterface, cursorTo, type Interface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
+import { createCardView } from "./cardview.ts";
 import { CLEAR, draw, type Look, lookOf, PLAIN } from "./look.ts";
 import { type Locale, textsFor } from "./messages.ts";
 import { createPick } from "./pick.ts";
@@ -49,6 +50,10 @@ export interface PromptOptions {
 	pasteCapMs?: number;
 	/** The clock of the polling (tests set it): the time of a post and the timer of the next poll. The real clock by default. */
 	clock?: PromptClock;
+	/** The platform the prompt runs on (tests set it): on win32 the card view is off and the numbered picker stays, until its console's keys and pastes are checked there. */
+	platform?: NodeJS.Platform;
+	/** How long readline waits after a lone Escape byte for the rest of a key's sequence (tests set it); readline's own 500 ms by default. */
+	escapeMs?: number;
 }
 /** What `after` returns: the clock's own timer, given back to `cancel`. */
 type ClockHandle = object;
@@ -88,6 +93,14 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	const terminal = (o.output as Partial<NodeJS.WriteStream>).isTTY === true;
 	const look = o.look ?? (o.env ? lookOf(o.env, terminal) : PLAIN), d = draw({ ...look, color: look.color && terminal, clear: look.clear && terminal });
 	let begun = false;
+	// The rows of the card view (cardview.ts) as drawn last, while they stand right above the message line: a line said meanwhile goes above them, and a row that changes is drawn over them. An Enter (its echo is a line of its own) ends that.
+	let region: string[] = [];
+	// What the input's last read was, seen before readline had it: one typed key and no part of a paste (`lone`), and the message line as it was before that key.
+	let lone = false, lineBefore = "";
+	// The polls: one is on its way, and the next comes at once after it (the card view said the boss is done). The card view reads the cards only once the message line is there (`ready`).
+	let polling = false, again = false, ready = false, syncFirst = false;
+	// An Enter came while the card view was opening the pane's mark: it was typed before the pane was this computer's alone (a paired phone's key pad could have sent it), so the view presses nothing with it.
+	let early = false;
 	// The block of cards that wait for the boss (waitblock.ts): printed when the digest of a poll changes, and a bracketed paste seen since the last flush (a paste is no pick).
 	let shownWaits: string | undefined, sawPaste = false;
 	let rl: Interface | undefined, closed = false, finished = false, posting = false, silent = false, shown: string | undefined, shownLabel: string | undefined, wokeAt: number | undefined;
@@ -112,13 +125,56 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	 * and none is drawn on an interface that was closed (Ctrl+D closes it before this runs: a prompt on it throws ERR_USE_AFTER_CLOSE, which a pane showed and a test with no terminal did not).
 	 */
 	const say = (line: string, again = true) => {
+		const live = again && terminal && rl !== undefined && !closed && !finished;
+		// The card view's rows stand above the message line: the line goes above them, so they stay where a key draws them again. Not while what the boss typed takes more than one terminal line (the cursor is then not on the prompt's own).
+		if (live && region.length && rl!.getCursorPos().rows === 0) {
+			o.output.write(`\x1b[${region.length}A\r\x1b[2K${line}\n${region.map((l) => `\x1b[2K${l}\n`).join("")}`);
+			return rl!.prompt(true);
+		}
+		region = [];
 		if (terminal) {
 			cursorTo(o.output, 0);
 			clearLine(o.output, 0);
 		}
 		o.output.write(`${line}\n`);
-		if (again && terminal && rl && !closed && !finished) rl.prompt(true);
+		if (live) rl!.prompt(true);
 	};
+	/** The card view's rows: over the ones drawn last when they still stand above the message line and are as many (the cursor goes up over them, each is written again, and the line is drawn under them), else as new lines. As for a line said: not while what the boss typed takes more than one terminal line. */
+	const drawRows = (lines: string[]) => {
+		if (!lines.length) return void (region = []);
+		if (region.length === lines.length && rl && !closed && !finished && rl.getCursorPos().rows === 0) {
+			o.output.write(`\x1b[${lines.length}A\r${lines.map((l) => `\x1b[2K${l}\n`).join("")}`);
+			rl.prompt(true);
+		} else {
+			region = [];
+			for (const line of lines) say(line);
+		}
+		region = terminal && rl && !closed && !finished ? lines : [];
+	};
+	/** The next poll comes now: the card view said the boss stopped answering, and the server's hold of the wake ends with the poll that says so. */
+	const soon = () => {
+		if (finished) return;
+		if (polling) return void (again = true);
+		if (timer) clock.cancel(timer);
+		timer = clock.after(() => void poll(), 0);
+	};
+	// The card view (cardview.ts): where the terminal reports keys, the open wait cards are drawn one after another and answered with the arrows, a digit, and Enter, with no command typed. A pipe, TERM=dumb, and Windows (until its console's
+	// keys and pastes are checked) keep the block and the numbered picker.
+	const keys = terminal && (o.input as Partial<NodeJS.ReadStream>).isTTY === true && o.env?.TERM !== "dumb" && (o.platform ?? process.platform) !== "win32";
+	const cards = keys && source.pick ? createCardView({
+		source: source.pick, locale: o.locale, ascii: look.ascii, pointer: d.pointer(), paint: d.row, now: () => clock.now(), columns: () => (o.output as Partial<NodeJS.WriteStream>).columns ?? 80,
+		say: (line, kind = "plain") => say(kind === "plain" ? line : d.note(kind, line)),
+		rows: drawRows,
+		fresh: () => void (region = []),
+		field: (f) => {
+			if (!rl || closed || finished) return;
+			rl.setPrompt(f ? d.fieldPrompt(f.word, f.plain) : d.prompt());
+			// What a field left on the line is not the boss's words to the tower: the line is emptied, from its end.
+			if (!f && rl.line !== "") (rl.write(null, { ctrl: true, name: "e" }), rl.write(null, { ctrl: true, name: "u" }));
+			rl.prompt(true);
+		},
+		idle: soon,
+	}) : undefined;
 	/** The first thing on the pane: its screen is cleared, so the command the server typed to start this prompt does not stay on it. Not before there is something to show (a run that is already starting needs no clear). */
 	const begin = () => {
 		if (begun) return;
@@ -135,13 +191,14 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		rl?.close();
 		try {
 			await pick.stop();
+			await cards?.stop();
 			await after();
 		} catch {
 			// The server may be gone: the prompt ends all the same.
 		}
 		finish(0);
 	};
-	const lineOf = (a: PollAnswer) => ({ state: clean(a.state), words: text.state({ state: clean(a.state) as PollAnswer["state"], queued: Number.isFinite(a.queued) ? a.queued : 0 }) });
+	const lineOf = (a: PollAnswer) => ({ state: clean(a.state), words: `${text.state({ state: clean(a.state) as PollAnswer["state"], queued: Number.isFinite(a.queued) ? a.queued : 0 })}${a.holding === true ? text.holding : ""}` });
 
 	/** What one poll does to the screen; returns whether the prompt goes on. */
 	const handle = async (polled: Awaited<ReturnType<PromptSource["poll"]>>): Promise<boolean> => {
@@ -164,8 +221,10 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 			// The boss's line is on its way (the post ends the prompt, or refuses and the prompt goes on).
 			if (posting) return true;
 			// A press the boss already sent is answered first: its result is printed before the pane is given up (the press queues the wake, and the order to leave waits a second).
-			const picking = pick.active();
-			if (picking) await pick.whenIdle();
+			// The same holds at the card view while the boss is at its keys: the press is answered first, and what is on the line (the text of a field) is dropped.
+			const picking = pick.active() || (cards?.engaged() ?? false);
+			if (pick.active()) await pick.whenIdle();
+			await cards?.whenIdle();
 			// A run is starting in this pane while the boss is typing: their words are for the tower, and the pane is a shell in a moment, where they must not land. What they entered (the paste window) and what is on the line go first.
 			const entered = [...batch, rl?.line ?? ""];
 			if (entered.at(-1) === "" && entered.length > 1) entered.pop();
@@ -208,7 +267,15 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		}
 		// The block of waiting cards, printed again only when its digest changes (and never over the picker); it makes no bell.
 		const waits = Array.isArray(polled.answer.waits) ? polled.answer.waits : [], key = JSON.stringify(waits);
-		if (key !== shownWaits && !pick.active()) {
+		cards?.attend(polled.answer.unattended !== true);
+		// Where the card view shows the cards, it reads them when the digest changes, and at every poll while the boss answers (a card of another tower is not in this digest).
+		if (cards?.shows()) {
+			if (key !== shownWaits || cards.engaged()) {
+				shownWaits = key;
+				if (ready) void cards.sync();
+				else syncFirst = true;
+			}
+		} else if (key !== shownWaits && !pick.active()) {
 			const first = shownWaits === undefined;
 			shownWaits = key;
 			if (waits.length) waitBlock(waits, o.locale, "/wait").forEach((l, i) => say(i === 0 ? d.note("ask", l) : l));
@@ -218,9 +285,15 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	};
 	const poll = async () => {
 		if (finished) return;
-		const polled = await source.poll().catch((cause: Error) => ({ kind: "wait" as const, why: cause.message }));
-		if (finished || !(await handle(polled))) return;
-		timer = clock.after(() => void poll(), nextPoll());
+		polling = true;
+		try {
+			const polled = await source.poll(cards?.answering() ?? false).catch((cause: Error) => ({ kind: "wait" as const, why: cause.message }));
+			if (finished || !(await handle(polled))) return;
+		} finally {
+			polling = false;
+		}
+		timer = clock.after(() => void poll(), again ? 0 : nextPoll());
+		again = false;
 	};
 	/** Fast while a wake is pending: the run starts in about a second, and the prompt must be told to leave then, not seconds later. */
 	const nextPoll = () => (wokeAt !== undefined ? wakingMs : pollMs);
@@ -233,6 +306,11 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		const pasted = sawPaste || lines.length > 1;
 		sawPaste = false;
 		if (pick.active()) return void (pasted ? await pick.paste() : await pick.line(lines[0] ?? ""));
+		// At the card view, Enter presses the marked row and ends a field; with no row marked the line is the boss's, as below.
+		const wasEarly = early;
+		early = false;
+		if (cards && (await cards.entered(lines, pasted, wasEarly))) return;
+		if (finished) return;
 		// A batch of one line that starts with `/` is for the prompt, never the tower (a `/reload` typed from habit is no message): `/new` alone starts a new boss session, `/quit` alone leaves the pane to the shell
 		// as Ctrl+D does, and any other is refused with what the prompt takes. `//` at the start, or a space before the `/`, keeps the line a message (posted as typed; the space is trimmed with the rest of the message's
 		// edges). A paste of several lines is one message whatever its first line is, and its `/` lines are never obeyed (a log that starts with a path, a file list with `/quit` in it).
@@ -240,10 +318,12 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		if (word !== undefined) {
 			if (word === "/new") return void (await startOver());
 			if (word === "/quit") return leave();
-			if (/^\/(?:boss )?wait$/.test(word.replace(/\s+/g, " "))) return void (await pick.start());
+			if (/^\/(?:boss )?wait$/.test(word.replace(/\s+/g, " "))) return void (cards ? await cards.focus() : await pick.start());
 			return void say(d.note("ask", text.unknownCommand(clean(word.split(/\s+/)[0], 40))));
 		}
 		const message = lines.join("\n").trim() || NO_MESSAGE;
+		// The boss writes to the tower: they are no longer at the cards, and the run this wakes is not held.
+		void cards?.letGo();
 		posting = true;
 		try {
 			await source.post(message);
@@ -300,10 +380,12 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		const joins = pasting || (near && (typed ? unfinished : true));
 		if (!joins) chunks++;
 		if (decoded !== "") unfinished = typed && !joins ? false : !/[\r\n]$/.test(decoded);
+		lone = typed && !joins;
+		lineBefore = rl?.line ?? "";
 		lastDataAt = at;
 		if (pasting) armPasteCap();
 	});
-	rl = createInterface({ input: o.input, output: o.output, prompt: d.prompt(), terminal });
+	rl = createInterface({ input: o.input, output: o.output, prompt: d.prompt(), terminal, ...(o.escapeMs !== undefined ? { escapeCodeTimeout: o.escapeMs } : {}) });
 	/**
 	 * The paste window closes: what was entered goes as one message. Two things keep it open (B6 VM round 3c, Windows PowerShell: a paste of three lines and the Enter sent a moment later were two messages): a bracketed
 	 * paste that has not ended (the terminal says where it ends, however far apart its pieces arrive), and a line the boss is still writing after lines that arrived with it (a paste whose last line has no line end yet;
@@ -328,14 +410,19 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		clearTimeout(pasteTimer);
 		pasteTimer = setTimeout(endPaste, pasteCapMs);
 	};
+	// A terminal that changed its width may have wrapped the rows of the card view: they are not drawn over again.
+	o.output.on("resize", () => void (region = []));
 	rl.on("line", (raw) => {
+		// The Enter's echo is a line of its own under the card view's rows: they are not drawn over again.
+		region = [];
 		if (finished || posting) return;
+		if (cards?.opening()) early = true;
 		batch.push(raw);
 		lineChunk = chunks;
 		armFlush();
 	});
 	// Only a terminal's readline reports keys; a piped input has no markers to honour.
-	o.input.on("keypress", (_text: string | undefined, key?: { name?: string }) => {
+	o.input.on("keypress", (_text: string | undefined, key?: { name?: string; sequence?: string; ctrl?: boolean; meta?: boolean }) => {
 		if (finished || posting) return;
 		if (key?.name === PASTE_START) {
 			pasting = true;
@@ -343,7 +430,29 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 			clearTimeout(batchTimer);
 			armPasteCap();
 		} else if (key?.name === PASTE_END) endPaste();
+		else if (cards && !pick.active()) cardKey(key);
 	});
+	/**
+	 * A key at the card view. This runs after readline has had the key (its listener is the older one). A key is the view's only when its read was that one typed key (never a part of a paste) and the message line was empty before it; what
+	 * readline did with it on the line is then undone (an arrow up recalls the last message, a digit is written), so no card key is ever the boss's words. In a field the keys are text, and only Esc is the view's. Any other typed key
+	 * that leaves text on the line is the boss writing to the tower: the view lets go of a marked row.
+	 */
+	const cardKey = (key: { name?: string; sequence?: string; ctrl?: boolean; meta?: boolean } | undefined) => {
+		const line = () => rl?.line ?? "";
+		// Ctrl+L clears the screen: the rows are gone from above the line.
+		if (key?.ctrl && key.name === "l") region = [];
+		// A lone Escape is reported with `meta` (readline's reading of the byte); any other key with Ctrl or Alt is none of the view's.
+		const name = key?.name === "escape" ? "escape" : key?.ctrl || key?.meta ? "" : /^\d$/.test(key?.sequence ?? "") ? key!.sequence! : (key?.name ?? "");
+		// Pasted input is never a card key, and it leaves a marked row as it is: the Enter that follows it ends the view with nothing pressed (cardview.ts `entered`).
+		if (!lone || pasting) return;
+		if (cards!.field()) return void (name === "escape" ? cards!.escape() : cards!.touch());
+		if (lineBefore === "" && cards!.takes(name)) {
+			if (name === "up" && line() !== "") rl!.write(null, { name: "down" });
+			if (line() !== "") rl!.write(null, { ctrl: true, name: "u" });
+			return void cards!.key(name);
+		}
+		if (line() !== "") void cards!.typed();
+	};
 	// Ctrl+D (the end of the input) and Ctrl+C both leave the pane to the boss: a prompt that came back at once would be in the way of whatever they wanted a shell for.
 	// It always ends the prompt as a park, whatever is held: a paste or a line the boss has not sent is dropped with the pane (Ctrl+C cancels it, nothing is posted later), and a close of the input is the same end, since a
 	// prompt that went on with dead input would be killed by the next Ctrl+C without the server being told (RV16-F001).
@@ -356,6 +465,8 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	rl.on("close", () => void ((closed = true), leave()));
 	rl.on("SIGINT", leave);
 	rl.prompt();
+	ready = true;
+	if (syncFirst && !finished) void cards?.sync();
 	if (!finished) timer = clock.after(() => void poll(), pollMs);
 	return done;
 }

@@ -43,6 +43,8 @@ export interface Texts {
 	pickWoke: string;
 	/** The block of cards that wait for the boss emptied: its last print is out of date. */
 	waitsNone: string;
+	/** After the queued count, while the server holds the tower's wake because the boss is answering cards here. */
+	holding: string;
 }
 
 const EN: Texts = {
@@ -67,6 +69,7 @@ const EN: Texts = {
 	pickWord: "wait",
 	pickWoke: "the tower woke: press the cards in the pane's running pi with /boss wait.",
 	waitsNone: "no wait card is open for you now.",
+	holding: " (they wait until you finish the cards)",
 };
 const ZH: Texts = {
 	title: (label) => `塔台 · ${label}`,
@@ -90,6 +93,7 @@ const ZH: Texts = {
 	pickWord: "等待",
 	pickWoke: "塔台醒了，到執行中的窗格用 /boss wait 處理。",
 	waitsNone: "目前沒有等你處理的卡片。",
+	holding: "（等你回答完卡片）",
 };
 
 /** The state in words: what stands alone says it; a tower that waits with events says how many, and a running one adds them. A word this build does not know is shown as the server sent it. */
