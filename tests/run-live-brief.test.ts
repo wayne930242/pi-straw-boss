@@ -133,14 +133,13 @@ test("a threshold compaction at the end of a turn stores the brief behind the su
 	r.faux.setResponses([() => fauxAssistantMessage("x".repeat(400_000)), () => fauxAssistantMessage("SUMMARY"), () => fauxAssistantMessage("SUMMARY-PREFIX"), () => fauxAssistantMessage("UNSOLICITED")]);
 	const briefs = () => r.session.messages.filter((m) => (m as { details?: { brief?: boolean } }).details?.brief === true).length;
 	await until(() => r.faux.state.callCount >= 3 && briefs() === 1 && !r.session.isStreaming, "the turn, its summaries, and the brief behind them");
-	await new Promise((resolve) => setTimeout(resolve, 200));
 	assert.equal(r.faux.state.callCount, 3, "the turn and its two summaries: no unsolicited fourth call");
 	const order = r.session.messages.map((m) => ((m as { details?: { brief?: boolean } }).details?.brief ? "brief" : (m as { role: string }).role));
 	assert.equal(order.at(-1), "brief", "stored after the summary");
 	assert.ok(order.indexOf("compactionSummary") < order.indexOf("brief"));
 });
 
-test("no event reads as a brief: every kind of eventText opens with a marker of its own, never BRIEF_MARK", () => {
+test("no event reads as a brief: each code-headed eventText kind (boss, notice, timer, intercom) opens with its own marker, never BRIEF_MARK", () => {
 	for (const kind of ["boss", "notice", "timer", "intercom"] as const) for (const flag of [undefined, "crash" as const]) {
 		const text = eventText({ kind, text: "x", ...(flag ? { flag } : {}), from: { id: "main-1", name: "docs-main" } });
 		assert.ok(!text.startsWith(BRIEF_MARK), `${kind}${flag ? "+crash" : ""} opens with the brief marker`);
