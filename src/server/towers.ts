@@ -156,7 +156,7 @@ export interface Towers {
 		close(): Promise<{ workspace: string; id: string } | undefined>;
 		status(): TowerRow | undefined;
 		/** The boss's words to the head, from any channel: the head workspace is made when it is missing, and a boss event with `present` wakes a run (or goes into the live one). */
-		event(text: string, requester?: Requester): Promise<{ workspace: string; id: string }>;
+		event(text: string, requester?: Requester, door?: "pane"): Promise<{ workspace: string; id: string }>;
 	};
 	/** The tower prompt in a standing pane (standing.ts): its poll, Ctrl+D, and exit. */
 	prompt(cmd: "prompt-poll" | "prompt-leave" | "prompt-gone", workspace: string, pid: number, answering?: boolean): Promise<PromptReply | { ok: true }>;
@@ -1293,9 +1293,9 @@ export function createTowers(o: TowersOptions): Towers {
 		status: () => [...services.values()].filter((l) => !isHeadL(l)).map(row),
 		head: {
 			ensure: ensureHead,
-			event: async (text, requester) => {
+			event: async (text, requester, door) => {
 				const got = await ensureHead();
-				return { workspace: got.workspace, id: runs.boss(got.workspace, text, "the boss", { present: true, ...(requester ? { requester } : {}) }).id };
+				return { workspace: got.workspace, id: runs.boss(got.workspace, text, "the boss", { present: true, ...(door ? { door } : {}), ...(requester ? { requester } : {}) }).id };
 			},
 			close: async () => {
 				const l = headLive();

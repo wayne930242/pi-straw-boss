@@ -52,6 +52,7 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 	// The picker's own asks: token-less requests with the state folder's secret, as the posts are. The here mark is asked as a session asks it (the pane's own id). Only a server that is not there marks nothing, as no page can type then; a server that is slow
 	// to answer, refuses, or sits in a folder that is not the boss's refuses the mode (heremark.ts: any other refusal refuses the screen).
 	const here: Here = createHereMark({ ask: (request) => ask(request, TELL_MS).then((reply) => ({ ok: reply.ok === true, ...reply }), (cause: Error) => ({ ok: false, error: cause instanceof Absent ? "no server" : cause.message })), pane, every });
+	let head = false; // the last poll said this prompt stands in for the head tower
 	const pick: PickSource = {
 		waits: async () => {
 			const reply = await sure({ cmd: "boss-waits", own: workspace });
@@ -63,8 +64,8 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 			return { ...(typeof reply.status === "number" ? { status: reply.status } : {}), ...(typeof reply.body === "object" && reply.body !== null ? { body: reply.body as Record<string, unknown> } : {}) };
 		},
 		reply: async (tower, text, answers) => {
-			// `door`: a reply to this pane's own tower is written at its pane, as a posted line is (D4); another tower's run is in a pane the boss is not at.
-			const reply = await sure(tower.head ? { cmd: "head-event", text, answers } : { cmd: "tower-event", workspace: tower.workspace, text, present: true, answers, ...(tower.workspace === workspace ? { door: "pane" } : {}) });
+			// `door`: a reply to this pane's own tower (the head, when the last poll said this pane is the head's) is written at its pane, as a posted line is (D4); another tower's run is in a pane the boss is not at.
+			const reply = await sure(tower.head ? { cmd: "head-event", text, answers, ...(head ? { door: "pane" } : {}) } : { cmd: "tower-event", workspace: tower.workspace, text, present: true, answers, ...(tower.workspace === workspace ? { door: "pane" } : {}) });
 			return typeof reply.answered === "string" ? { answered: reply.answered } : {};
 		},
 		here,
@@ -79,6 +80,7 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 				return { kind: "wait", why: (cause as Error).message };
 			}
 			if (reply.ok === true && typeof reply.label === "string" && typeof reply.state === "string" && typeof reply.queued === "number" && typeof reply.leave === "boolean") {
+				head = reply.head === true;
 				// SAFETY: a state word this build does not know is shown as the server sent it (prompt.ts cleans it of control characters), not made into one it does.
 				return { kind: "state", answer: { label: reply.label, state: reply.state as ServiceState, queued: reply.queued, leave: reply.leave, ...(reply.head === true ? { head: true as const } : {}), ...(Array.isArray(reply.waits) ? { waits: reply.waits as never[] } : {}), ...(typeof reply.auto === "boolean" ? { auto: reply.auto } : {}), ...(reply.holding === true ? { holding: true as const } : {}), ...(reply.unattended === true ? { unattended: true as const } : {}) } };
 			}

@@ -473,7 +473,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				if (request.answers !== undefined && !answers) return Promise.resolve({ ok: false, error: "answers names a wait: W and its number" });
 				const refusal = request.cmd === "head-event" ? notAnAnswer(answers, text(request.text, 16_384)) : undefined;
 				if (refusal) return Promise.resolve(refusal);
-				return answer((t) => headCommand(t, request.cmd, text(request.text, 16_384), { ...(requesterFrom(request) ? { requester: requesterFrom(request)! } : {}), ...(answers ? { answers } : {}), ...(text(request.id, 64) ? { id: text(request.id, 64)! } : {}) }));
+				return answer((t) => headCommand(t, request.cmd, text(request.text, 16_384), { ...(request.door === "pane" ? { door: "pane" as const } : {}), ...(requesterFrom(request) ? { requester: requesterFrom(request)! } : {}), ...(answers ? { answers } : {}), ...(text(request.id, 64) ? { id: text(request.id, 64)! } : {}) }));
 			}
 			case "close-tower":
 				return workspace ? answer((t) => t.close(workspace)) : Promise.resolve({ ok: false, error: "close-tower needs a workspace" });

@@ -24,10 +24,10 @@ const BRIEF = "You are a run of the tower of workspace Alpha (wA); head tower: A
 
 type Digest = { id: string; type: string; do: string; from?: string; parked?: true }[];
 /** The server a run talks to: scripted, every request kept. */
-function fakeServer(over: { kind?: "local" | "head"; hand?: boolean; workspace?: string; cards?: number } = {}) {
+function fakeServer(over: { kind?: "local" | "head"; hand?: boolean; workspace?: string; cards?: number; headRow?: boolean } = {}) {
 	const requests: Request[] = [];
 	let digest: Digest = [];
-	const waits = [{ workspace: over.workspace ?? "wA", label: "Alpha", own: true, waits: Array.from({ length: over.cards ?? 1 }, (_, i) => ({ id: `W${i + 1}`, text: CARD.do, at: new Date(Date.now() - 5 * 60_000).toISOString(), state: "open", card: i ? { ...CARD, do: `Card ${i + 1}.` } : CARD })) }];
+	const waits = [{ ...(over.headRow ? { workspace: HEAD_KEY, head: true } : { workspace: over.workspace ?? "wA" }), label: "Alpha", own: true, waits: Array.from({ length: over.cards ?? 1 }, (_, i) => ({ id: `W${i + 1}`, text: CARD.do, at: new Date(Date.now() - 5 * 60_000).toISOString(), state: "open", card: i ? { ...CARD, do: `Card ${i + 1}.` } : CARD })) }];
 	return {
 		requests, digest: (rows: Digest) => void (digest = rows),
 		ask: async (request: Request): Promise<Answer> => {
@@ -111,6 +111,19 @@ test("a reply from a run's pane is the boss's words as a session's request, nami
 	await done;
 	const event = srv.requests.find((r) => r.cmd === "tower-event")!;
 	assert.deepEqual({ ...event }, { cmd: "tower-event", workspace: "wA", text: "typed", present: true, answers: "W1", session: "run1", pane: "wA:p1", pid: process.pid, door: "pane" });
+});
+
+test("a reply to the head's card names the pane as its door only from the head run's own pane: a local run's pane is not the head's", async () => {
+	for (const [over, door] of [[{ kind: "head" as const, workspace: "wH", headRow: true }, "pane"], [{ kind: "local" as const, headRow: true }, undefined]] as const) {
+		const srv = fakeServer(over), agent = await runAgent(srv);
+		const done = agent.command("wait");
+		await pick(agent, 0, /^Reply to the/);
+		await done;
+		const event = srv.requests.find((r) => r.cmd === "head-event")!;
+		assert.deepEqual({ ...event }, { cmd: "head-event", text: "typed", answers: "W1", session: "run1", pane: "wA:p1", pid: process.pid, ...(door ? { door } : {}) }, over.kind);
+		await agent.stop("reload");
+		world = new World();
+	}
 });
 
 test("every other /boss command stays refused in a run: memory, tower, head, send, a bare /boss, and a word that only starts with wait; nothing is asked or drawn", async () => {

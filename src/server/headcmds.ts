@@ -9,15 +9,15 @@ export async function markWaitAnswered(t: Towers, workspace: string, id: string)
 	return (await t.memory(workspace, { op: "answer", id })).status === 200 ? id : false;
 }
 const NOT_OPEN = "The head tower is not open: its first message opens it.";
-/** `head-open` makes the head workspace when there is none and names its tab; `head-event` is the boss's words (a boss event with `present`); `head-leave`, `head-new`, and `head-close` are the conversation's buttons, and `head-retry`, `head-deliver`, and `head-drop` the notices' (with `answers` a `head-event` marks the wait answered once the head took it). */
-export async function headCommand(t: Towers, cmd: string, text: string | undefined, extra: { answers?: string; id?: string; requester?: Requester } = {}): Promise<Record<string, unknown>> {
+/** `head-open` makes the head workspace when there is none and names its tab; `head-event` is the boss's words (a boss event with `present`); `head-leave`, `head-new`, and `head-close` are the conversation's buttons, and `head-retry`, `head-deliver`, and `head-drop` the notices' (with `answers` a `head-event` marks the wait answered once the head took it; with `door` it was written at the head's own pane, as a `tower-event` says of a tower's). */
+export async function headCommand(t: Towers, cmd: string, text: string | undefined, extra: { answers?: string; id?: string; requester?: Requester; door?: "pane" } = {}): Promise<Record<string, unknown>> {
 	if (cmd === "head-open") {
 		const got = await t.head.ensure();
 		return { workspace: got.workspace, tab: got.tab, pane: got.pane, label: got.label, opened: got.opened };
 	}
 	if (cmd === "head-event") {
 		if (!text) throw new Error("head-event needs text");
-		const queued = (await t.head.event(text, extra.requester)).id;
+		const queued = (await t.head.event(text, extra.requester, extra.door)).id;
 		return { queued, ...(extra.answers ? { answered: await markWaitAnswered(t, HEAD_KEY, extra.answers) } : {}) };
 	}
 	if (cmd === "head-close") return { closed: Boolean(await t.head.close()) };

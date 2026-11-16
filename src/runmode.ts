@@ -242,8 +242,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	// `/boss wait` in the run's own pane (waitcmd.ts): the one /boss command a run takes, typed by the boss. It makes the requests a session makes (the hello secret, never this run's token: `tower-memory` and `boss-waits` stay refused to a run
 	// token) and draws its dialogs terminal-only, under the here mark. The run's model is given no tool that presses, and an event reaches it as a message, never as typed input, so nothing a model or a peer writes can run the command.
 	const bossHere = createHereMark({ ask: (request) => ask(request), pane: env.HERDR_PANE_ID ?? null, every: cfg.face?.every ?? every });
-	// A session's request from this pane's dialogs: the boss's reply to a card names this pane as its sender, and one to this run's own tower says it was written here (`door`), as the pane's prompt says of its posts.
-	const paneAsk = (request: Record<string, unknown>) => ask(request.cmd === "tower-event" || request.cmd === "head-event" ? { ...request, session: env.PI_INTERCOM_SESSION_ID, pane: env.HERDR_PANE_ID, pid: process.pid, ...(request.cmd === "tower-event" && request.workspace === claim?.workspace ? { door: "pane" } : {}) } : request);
+	// A session's request from this pane's dialogs: the boss's reply to a card names this pane as its sender, and one to this run's own tower (the head's, for the head's run) says it was written here (`door`), as the pane's prompt says of its posts.
+	const paneAsk = (request: Record<string, unknown>) => ask(request.cmd === "tower-event" || request.cmd === "head-event" ? { ...request, session: env.PI_INTERCOM_SESSION_ID, pane: env.HERDR_PANE_ID, pid: process.pid, ...((request.cmd === "tower-event" ? request.workspace === claim?.workspace : claim?.kind === "head") ? { door: "pane" } : {}) } : request);
 	async function waits(args: string, context: ExtensionContext): Promise<void> {
 		if (mode !== "run" || !claim || claim.kind === "ally") return tell("An ally run takes no /boss command: the boss is not its sender, and it ends with its message.", "warning");
 		await runWaitCommand(args, {
