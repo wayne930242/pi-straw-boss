@@ -974,7 +974,7 @@ A main an ally run opened sends its car slip the same way, and its `call_tower` 
 
 #### Integrator
 
-Its prompt keeps only what is Straw Boss's: the role (a main, not the tower, and the exception to "never merge into an integration base"), the name `integ <project>` (16 characters at most, never renamed), the ledger at `trains/<project>/<app>.json` in the state folder (`$PI_CODING_AGENT_DIR/straw-boss`, `~/.pi/agent/straw-boss` by default; the role prompt names the resolved path), one `train` todo per forming train (the guard checks it; the yard is drawn from it), the tower calls (no `shared` call for its own merges, pushes, and merge-triggered deploys, whose slips' `auth` covers them; a `shared` call naming the target for a deploy it starts itself; `blocked`; the idle `milestone`), and the `reviewer` role for a step it briefs.
+Its prompt keeps only what is Straw Boss's: the role (a main, not the tower, and the exception to "never merge into an integration base"), the name `integ <project>` (16 characters at most, never renamed), the ledger at `trains/<project>/<app>.json` in the state folder (`$PI_CODING_AGENT_DIR/straw-boss`, `~/.pi/agent/straw-boss` by default; the role prompt names the resolved path), one `train` todo per forming train (the guard checks it; the yard is drawn from it), and the tower calls (`shared` with a `train:` block to depart; `blocked`; the idle `milestone`).
 
 <details>
 <summary>Details</summary>
