@@ -142,17 +142,27 @@ const failure = (cause: unknown): { status: number; body: Record<string, unknown
 };
 
 /** The notice of a press whose raiser asked it itself (`asked`), kept in memory for `lateNotice`: the tool's result is that notice, unless its turn was stopped and the result never came (R-F006). A restart forgets them. */
-const held = new Map<string, string>();
+const held = new Map<string, { text: string; at: number; act: string; pressAt: string | undefined }>();
+/** A held notice older than this is dropped: the stopped turn's raiser is not sent a decision that old. */
+export const HELD_MS = 5 * 60_000;
 
 /** `{ op: "wait-notice", id, asker }` at the `ask` door: the asker's turn was stopped after its press, so the raiser (the asker) is sent the notice the result would have been. Once, and only to the session that asked. */
 export async function lateNotice(d: PressDeps, workspace: string, json: Record<string, unknown>, via: PressDoor = "pi"): Promise<{ status: number; body: Record<string, unknown> }> {
-	const key = `${workspace}\n${String(json.id)}`, notice = held.get(key);
+	const key = `${workspace}\n${String(json.id)}`, hold = held.get(key);
+	if (via !== "ask") return { status: 409, body: { error: "refused", reason: "no notice is held for that session" } };
+	// `clear`: the tool's own result came back, so the held notice is not needed.
+	if (json.clear === true) return (held.delete(key), { status: 200, body: { cleared: hold !== undefined } });
 	const raiser = updateMemory(d.slot, workspace, d.now(), () => undefined).memory.entries.find((e) => e.id === json.id)?.card?.from?.id;
-	if (via !== "ask" || !notice || !raiser || json.asker !== raiser) return { status: 409, body: { error: "refused", reason: "no notice is held for that session" } };
+	if (!hold || !raiser || json.asker !== raiser || d.now() - hold.at > HELD_MS) return (held.delete(key), { status: 409, body: { error: "refused", reason: "no notice is held for that session" } });
 	held.delete(key);
-	const status = await d.live(raiser).then(async (live) => (live ? deliveryOf((await d.send(raiser, notice, String(json.id))).status) : "gone"), () => "failed" as const);
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const cutOff = new Promise<{ status?: string }>((resolve) => { timer = setTimeout(() => resolve({ status: "failed" }), d.waitMs ?? NOTICE_WAIT_MS); timer.unref?.(); });
+	const status = await d.live(raiser).then(async (live) => (live ? deliveryOf((await Promise.race([d.send(raiser, hold.text, String(json.id)), cutOff])).status) : "gone"), () => "failed" as const).finally(() => clearTimeout(timer));
 	try {
-		updateMemory(d.slot, workspace, d.now(), (m) => void (m.entries.find((x) => x.id === json.id)?.press && Object.assign(m.entries.find((x) => x.id === json.id)!.press!, { main: { status, at: iso(d.now()) } })));
+		updateMemory(d.slot, workspace, d.now(), (m) => {
+			const e = m.entries.find((x) => x.id === json.id);
+			if (e?.press && e.press.act === hold.act && e.press.at === hold.pressAt) e.press.main = { status, at: iso(d.now()) };
+		});
 	} catch { /* the wait is gone meanwhile */ }
 	return { status: 200, body: { delivery: status } };
 }
@@ -178,7 +188,7 @@ export async function pressRequest(d: PressDeps, workspace: string, json: Record
 		const asked = via === "ask" && json.asker === raiser;
 		status = await (async (): Promise<Delivery> => {
 			try {
-				if (asked) return (held.set(`${workspace}\n${plan.entry.id}`, plan.notice!), [...held.keys()].slice(0, -64).forEach((k) => held.delete(k)), "asked");
+				if (asked) return (held.set(`${workspace}\n${plan.entry.id}`, { text: plan.notice!, at: d.now(), act: plan.act, pressAt: plan.entry.press?.at }), [...held.keys()].slice(0, -64).forEach((k) => held.delete(k)), "asked");
 				if (!(await d.live(raiser))) return "gone";
 				let timer: ReturnType<typeof setTimeout> | undefined;
 				const cutOff = new Promise<{ status?: string }>((resolve) => { timer = setTimeout(() => resolve({ status: "failed" }), d.waitMs ?? NOTICE_WAIT_MS); timer.unref?.(); });

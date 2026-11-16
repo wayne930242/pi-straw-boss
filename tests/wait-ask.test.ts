@@ -569,3 +569,53 @@ test("R-F006: the asker is the raiser and its turn was stopped after the press: 
 	await ok.callWith(new AbortController().signal, { ids: ["W1"] }, /1\) Deploy/);
 	assert.deepEqual(ok.notices, []);
 });
+
+test("R2-F001: the 60 s quiet end is the option select's own, reset when a select reopens; a text field and the confirm wait up to 5 min per card", async () => {
+	const h = harness();
+	h.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	// a boss who has gone into the skip reason and types for 2 minutes is not cut off
+	const pending = h.text({}, "Skip", HOLD);
+	await until(() => h.dialogs.length === 2, "the reason field");
+	h.advance(120_000);
+	await h.look();
+	assert.equal(h.dialogs[1]!.opts!.signal!.aborted, false, "a reason being typed is not quiet");
+	h.advance(181_000);
+	await h.look();
+	assert.equal(h.dialogs[1]!.opts!.signal!.aborted, true, "5 minutes on a card is the cap");
+	assert.match(await pending, /^W1: no answer/);
+	// the select's age restarts when it reopens after a field the boss left (a skip not gone through with)
+	const again = harness();
+	again.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	const p2 = again.text({}, "Skip", () => (again.advance(50_000), undefined), HOLD);
+	await until(() => again.dialogs.length >= 3, "the select again");
+	again.advance(50_000);
+	await again.look();
+	assert.equal(again.dialogs.at(-1)!.opts!.signal!.aborted, false, "50 s after the select reopened is not quiet");
+	again.advance(11_000);
+	await again.look();
+	assert.equal(again.dialogs.at(-1)!.opts!.signal!.aborted, true);
+	await p2;
+});
+
+test("R2-F002: a held notice expires after 5 min, goes once when the tool's result came back (cleared), and a stopped turn's notice is not worded as 'no wait_card follows'", async () => {
+	const main = harness({ scope: { kind: "raised", by: "main-1" } });
+	main.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	const ac = new AbortController();
+	const out = await main.callWith(ac.signal, { ids: ["W1"] }, (d) => (ac.abort(), d.options!.find((o) => o.includes("Deploy"))));
+	assert.doesNotMatch(String((out as { text?: string }).text ?? out), /no wait_card message follows/);
+	// expiry: a notice held for more than 5 minutes is not sent
+	const old = harness({ scope: { kind: "raised", by: "main-1" } });
+	old.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	await old.press("wA", { id: "W1", act: "choose", option: 0, asker: "main-1" }, "ask");
+	old.advance(6 * 60_000);
+	const gone = await lateNotice({ slot: old.slot, now: () => NOW + 6 * 60_000, log: { line() {}, hide() {} }, locale: "en", live: async () => true, send: async (to, text) => (old.notices.push(`${to}: ${text}`), { status: "sent" }), boss: () => {}, autoOn: () => false }, "wA", { op: "wait-notice", id: "W1", asker: "main-1" }, "ask");
+	assert.equal(gone.status, 409, "a notice older than 5 minutes is dropped");
+	assert.deepEqual(old.notices, []);
+	// a normal result clears the held notice, so a later wait-notice sends nothing
+	const ok = harness({ scope: { kind: "raised", by: "main-1" } });
+	ok.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	await ok.callWith(new AbortController().signal, { ids: ["W1"] }, /1\) Deploy/);
+	const late = await lateNotice({ slot: ok.slot, now: () => NOW, log: { line() {}, hide() {} }, locale: "en", live: async () => true, send: async (to, text) => (ok.notices.push(`${to}: ${text}`), { status: "sent" }), boss: () => {}, autoOn: () => false }, "wA", { op: "wait-notice", id: "W1", asker: "main-1" }, "ask");
+	assert.equal(late.status, 409);
+	assert.deepEqual(ok.notices, []);
+});

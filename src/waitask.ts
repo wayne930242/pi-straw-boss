@@ -17,7 +17,7 @@ import { type Listed, pending, pressedWord } from "./waitview.ts";
 // neither words it nor presses it. The first answer wins everywhere: while a dialog is open the list is read again every 2 s, and a card pressed or resolved elsewhere, or auto mode starting, aborts the dialog through its signal.
 
 export const WAIT_ASK = "boss_wait_ask";
-export const WAIT_ASK_DESCRIPTION = "Have sb show the boss open wait cards (the cards a tower recorded for him) in this terminal, one after another, and return what he did with each. You only name cards: ids (W<n>, 1 to 4), or none for every open card in your scope. sb draws each card as it is recorded, with its own buttons; you cannot word it, add an option, or choose, and only the boss's keys press. Scope: a main asks only the cards it raised, a tower run its tower's, the head tower any. His answer resolves the card everywhere (the GUI, other panes, the tower), and the first answer wins: a card answered elsewhere meanwhile says so. Refused while auto mode is on, on an unattended device, in a session without a screen, and in a tower run unless the boss's last words came from this pane. A dialog he leaves untouched for 60 seconds ends as unanswered, and a card he left unanswered is not shown again for 10 minutes: do not ask it again before then. Use it, never ask_user_question, to ask again a decision that is a wait card.";
+export const WAIT_ASK_DESCRIPTION = "Have sb show the boss open wait cards (the cards a tower recorded for him) in this terminal, one after another, and return what he did with each. You only name cards: ids (W<n>, 1 to 4), or none for every open card in your scope. sb draws each card as it is recorded, with its own buttons; you cannot word it, add an option, or choose, and only the boss's keys press. Scope: a main asks only the cards it raised, a tower run its tower's, the head tower any. His answer resolves the card everywhere (the GUI, other panes, the tower), and the first answer wins: a card answered elsewhere meanwhile says so. Refused while auto mode is on, on an unattended device, in a session without a screen, and in a tower run unless the boss's last words came from this pane. A card left 60 seconds without a choice (its option list open and untouched) ends as unanswered, and one he keeps over 5 minutes, typing included, does too, and a card he left unanswered is not shown again for 10 minutes: do not ask it again before then. Use it, never ask_user_question, to ask again a decision that is a wait card.";
 export const waitAskParameters = () => Type.Object({
 	ids: Type.Optional(Type.Array(Type.String({ pattern: "^W[0-9]+$", description: "A wait card's id: W and its number, as the card, your wait, or the return list names it." }), { minItems: 1, maxItems: 4, description: "The cards to show, 1 to 4. Omit to show every open card in your scope." })),
 });
@@ -40,7 +40,7 @@ export interface WaitAskDeps {
 	tell(text: string, level?: "info" | "warning" | "error"): void;
 }
 type Row = Listed["rows"][number];
-const LOOK_MS = 2000, LEFT_MS = 10 * 60_000, QUIET_MS = 60_000;
+const LOOK_MS = 2000, LEFT_MS = 10 * 60_000, QUIET_MS = 60_000, CAP_MS = 5 * 60_000;
 const STAYS = "it stays open for the GUI and /boss wait; do not ask it again for 10 minutes.";
 const NOT_OPEN: Record<Scope["kind"], string> = { raised: "not an open wait card you raised.", tower: "not an open wait card of your tower.", all: "not an open wait card of any tower." };
 const none = async () => [];
@@ -88,13 +88,17 @@ export function createWaitAsk(d: WaitAskDeps) {
 		/** One card's dialog, with the look at the list beside it: how it ended as the result's line, and why the round ends there, if it does. */
 		const show = async (row: Row, more: boolean): Promise<{ line: string; stop?: string }> => {
 			const ac = new AbortController(), id = name(row), key = keyOf(row);
-			let cut: { line: string; stop?: string } | undefined, looking = false, opened = d.now();
+			let cut: { line: string; stop?: string } | undefined, looking = false, opened = d.now(), selecting = false;
+			const began = d.now();
+			// The 60 s quiet end is the option select's alone (its age restarts when it reopens); a reason, a reply, and the confirm are the boss typing or reading, bounded by `CAP_MS` per card.
+			const shown: WaitUi = { select: (...a) => ((selecting = true), (opened = d.now()), ctx.ui.select(...a)), input: (...a) => ((selecting = false), ctx.ui.input(...a)), confirm: (...a) => ((selecting = false), ctx.ui.confirm(...a)) };
 			const end = (why: { line: string; stop?: string }) => void (cut ??= why, ac.abort());
 			const stopped = () => end({ line: `${id}: not answered (the turn was stopped).`, stop: "the turn was stopped" });
 			const look = async () => {
 				if (d.auto.on()) return end({ line: `${id}: ${cancelledText(d.auto.since?.(), WAIT_ASK, kind())}`, stop: "auto mode started" });
 				// A dialog no key touched for `QUIET_MS` (the boss is not at the screen) ends: the turn is not held for ever, and the tower's events go on. The card stays open.
-				if (d.now() - opened >= QUIET_MS) return (left.set(key, d.now()), end({ line: `${id}: no answer (the dialog stood ${Math.round((d.now() - opened) / 1000)} s with no key); ${STAYS}`, stop: "the dialog stood quiet" }));
+				if (selecting && d.now() - opened >= QUIET_MS) return (left.set(key, d.now()), end({ line: `${id}: no answer (the dialog stood ${Math.round((d.now() - opened) / 1000)} s with no key); ${STAYS}`, stop: "the dialog stood quiet" }));
+				if (d.now() - began >= CAP_MS) return (left.set(key, d.now()), end({ line: `${id}: no answer (the card stood ${Math.round((d.now() - began) / 60_000)} min open); ${STAYS}`, stop: "the dialog stood quiet" }));
 				// A server that does not answer changes nothing: the dialog stays, and a press that lost the race is refused by the server.
 				const now = (await list().catch(() => undefined))?.rows.find((r) => keyOf(r) === key);
 				if (now && pending(now.wait)) return;
@@ -105,8 +109,7 @@ export function createWaitAsk(d: WaitAskDeps) {
 			const unwatch = d.every(() => void (!looking && !cut && ((looking = true), look().catch(() => {}).finally(() => (looking = false)))), LOOK_MS);
 			try {
 				for (;;) {
-					opened = d.now();
-					const done: CardEnd = await card({ lang: d.lang, tell: d.tell, ask: d.ask, memory, ui: ctx.ui, workspaces: none, tabs: none, focus: async () => {} }, listed.auto, row.tower, row.wait, { ask: true, ...(more ? { next: true } : {}) }, { ...terminalOnlyOpts(), signal: ac.signal });
+					const done: CardEnd = await card({ lang: d.lang, tell: d.tell, ask: d.ask, memory, ui: shown, workspaces: none, tabs: none, focus: async () => {} }, listed.auto, row.tower, row.wait, { ask: true, ...(more ? { next: true } : {}) }, { ...terminalOnlyOpts(), signal: ac.signal });
 					if (done.kind === "pressed") return (pressed = true), (pressedAt.push({ workspace: row.tower.workspace, id: row.wait.id }), void 0), { line: `${id}: ${pressedLine(row, done.json, asker !== undefined)}` };
 					if (done.kind === "replied") return { line: `${id}: the boss replied to the tower: "${done.text}"${done.marked ? "" : " (the wait was not marked answered: the memory no longer has it as a wait for him)"}` };
 					if (done.kind === "refused") return { line: `${id}: ${/already|no longer|not a wait/.test(done.why) ? "answered elsewhere first" : "the press was refused"}: ${done.why}` };
@@ -131,9 +134,10 @@ export function createWaitAsk(d: WaitAskDeps) {
 				break;
 			}
 		}));
-		// The raiser that asked is told by this result alone: the server sends it no `wait_card` for its own ask. A turn stopped after the press never gets the result: sb sends the notice then.
-		if (asker && signal?.aborted) for (const p of pressedAt) await memory(p.workspace, { op: "wait-notice", id: p.id }).catch(() => undefined);
-		return { text: [...lines, ...(asker && pressed ? ["This is the boss's answer: no wait_card message follows."] : [])].join("\n"), details: { asked: queue.length } };
+		// The raiser that asked is told by this result alone: the server sends it no `wait_card` for its own ask. A turn stopped after the press never gets the result: sb sends the notice then, and drops what it held once the result does come.
+		let late = false;
+		if (asker) for (const p of pressedAt) late = ((await memory(p.workspace, { op: "wait-notice", id: p.id, ...(signal?.aborted ? {} : { clear: true }) }).catch(() => undefined))?.ok === true && signal?.aborted === true) || late;
+		return { text: [...lines, ...(asker && pressed && !late ? ["This is the boss's answer: no wait_card message follows."] : [])].join("\n"), details: { asked: queue.length } };
 	};
 }
 
