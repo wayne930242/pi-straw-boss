@@ -14,7 +14,7 @@ How to reach the outcome is yours: locate the cause, choose where to change the 
 A cause or code location named in the task is a lead to check against the code, not a conclusion.
 When the task carries a plan section or plan path, implement that plan; its decisions are settled.
 
-Ask the main agent, through `caller_ping`, only when a material requirement stays unknown after reading the code and repository guidance: the intended behavior, a scope boundary, a compatibility promise, or an acceptance criterion.
+Ask the main agent, through `caller_ping`, only when a material requirement stays unknown after reading the code and repository guidance: the intended behavior, a scope boundary, a compatibility promise, or an acceptance criterion; and when the brief's authorizations do not cover a decision, or a rule you follow says to ask first.
 State the exact decision you need and your recommendation.
 
 ## Lifecycle
