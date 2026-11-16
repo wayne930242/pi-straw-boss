@@ -63,7 +63,8 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 			return { ...(typeof reply.status === "number" ? { status: reply.status } : {}), ...(typeof reply.body === "object" && reply.body !== null ? { body: reply.body as Record<string, unknown> } : {}) };
 		},
 		reply: async (tower, text, answers) => {
-			const reply = await sure(tower.head ? { cmd: "head-event", text, answers } : { cmd: "tower-event", workspace: tower.workspace, text, present: true, answers });
+			// `door`: a reply to this pane's own tower is written at its pane, as a posted line is (D4); another tower's run is in a pane the boss is not at.
+			const reply = await sure(tower.head ? { cmd: "head-event", text, answers } : { cmd: "tower-event", workspace: tower.workspace, text, present: true, answers, ...(tower.workspace === workspace ? { door: "pane" } : {}) });
 			return typeof reply.answered === "string" ? { answered: reply.answered } : {};
 		},
 		here,
