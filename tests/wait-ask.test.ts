@@ -647,3 +647,19 @@ test("R3-F002: a press on card 1, more than 5 min on later cards, then a stop: t
 	await m2.callWith(ac2.signal, { ids: ["W1"] }, (d) => d.options!.find((o) => o.includes("Deploy")));
 	assert.equal(m2.notices.length, 1, "the held notice is recovered and sent");
 });
+
+test("RV-F001: two pressed cards, the stop lands during card 2's clear: the raiser gets both wait_cards once each; no stop, none", async () => {
+	const ac = new AbortController();
+	let clears = 0;
+	const m = harness({ scope: { kind: "raised", by: "main-1" }, onClear: () => void (++clears === 2 && ac.abort()) });
+	m.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	m.plant("wA", { id: "W2", card: card(CHOICE) as never });
+	await m.callWith(ac.signal, { ids: ["W1", "W2"] }, (d) => d.options!.find((o) => o.includes("Deploy")), (d) => d.options!.find((o) => o.includes("Deploy")));
+	assert.equal(m.notices.filter((n) => n.includes("W1")).length, 1, "card 1 recovered once");
+	assert.equal(m.notices.filter((n) => n.includes("W2")).length, 1, "card 2 recovered once");
+	const n = harness({ scope: { kind: "raised", by: "main-1" } });
+	n.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	n.plant("wA", { id: "W2", card: card(CHOICE) as never });
+	await n.callWith(new AbortController().signal, { ids: ["W1", "W2"] }, (d) => d.options!.find((o) => o.includes("Deploy")), (d) => d.options!.find((o) => o.includes("Deploy")));
+	assert.deepEqual(n.notices, []);
+});

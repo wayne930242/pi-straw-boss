@@ -91,8 +91,9 @@ export function createWaitAsk(d: WaitAskDeps) {
 			const call = (extra: Record<string, unknown>) => memory(workspace, { op: "wait-notice", id, ...extra }).catch(() => undefined);
 			if (signal?.aborted) return void ((await call({}))?.ok === true && (late = true));
 			await call({ clear: true });
-			if (signal?.aborted) (await call({ recover: true }))?.ok === true && (late = true);
+			cleared.push({ workspace, id });
 		};
+		const cleared: { workspace: string; id: string }[] = [];
 		/** One card's dialog, with the look at the list beside it: how it ended as the result's line, and why the round ends there, if it does. */
 		const show = async (row: Row, more: boolean): Promise<{ line: string; stop?: string }> => {
 			const ac = new AbortController(), id = name(row), key = keyOf(row);
@@ -143,7 +144,11 @@ export function createWaitAsk(d: WaitAskDeps) {
 			}
 		}));
 		// The raiser that asked is told by this result alone: the server sends it no `wait_card` for its own ask. A turn stopped after the press never gets the result: sb sends the notice then, and drops what it held once the result does come.
-		if (asker) for (const p of pressedAt) await settle(p.workspace, p.id);
+		if (asker) {
+			for (const p of pressedAt) await settle(p.workspace, p.id);
+			// A stop landing during any settle: each card already cleared this round gets its held notice recovered, once.
+			if (signal?.aborted) for (const c of cleared) (await memory(c.workspace, { op: "wait-notice", id: c.id, recover: true }).catch(() => undefined))?.ok === true && (late = true);
+		}
 		return { text: [...lines, ...(asker && pressed && !late ? ["This is the boss's answer: no wait_card message follows."] : [])].join("\n"), details: { asked: queue.length } };
 	};
 }
