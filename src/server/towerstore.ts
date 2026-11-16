@@ -58,6 +58,8 @@ export interface QueuedEvent {
 	flag?: "crash";
 	/** A boss event that is a press of a wait card: the comms draw it as the boss's button, not as typed words (docs/specs/2026-11-07-wait-cards.md). */
 	press?: true;
+	/** A boss event the standing pane's own prompt posted: the boss wrote it at this tower's pane (the GUI's composer and another pi name none), so the run may show him a wait card there (runmode.ts, `boss_wait_ask`). */
+	door?: "pane";
 	/** Who sent a boss event over the control socket, as the request reported it (auto mode records it; docs/specs/2026-11-09-auto-mode.md, §2). */
 	requester?: Requester;
 	/** The event is stale (the auto watch's notice of a period that ended): the run that holds it may finish it, but it goes when that run ends, whatever the outcome, and no other run is offered it (AW-D21). */

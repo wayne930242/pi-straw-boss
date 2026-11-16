@@ -41,7 +41,7 @@ export interface WaitCardView {
 	type: "action" | "choice" | "secret"; lang: "zh-TW" | "en"; happened: string; do: string; url?: string; command?: string; after?: string; options?: { label: string; then: string }[]; secret?: { name: string };
 	from?: { /** On the server; the net swaps it for `key`. */ id?: string; name: string; role: string; workspace?: string; tab?: string; gone?: true; key?: string };
 }
-export interface WaitPressView { act: "done" | "choose" | "secret" | "decline" | "restate"; option?: number; reason?: string; at: string; main?: { status: "delivered" | "queued" | "gone" | "failed"; at: string }; secretAsked?: string }
+export interface WaitPressView { act: "done" | "choose" | "secret" | "decline" | "restate"; option?: number; reason?: string; at: string; main?: { status: "delivered" | "queued" | "gone" | "failed" | "asked"; at: string }; secretAsked?: string }
 export interface MemorySummary { rev: number; standing: number; decisions: number; waits: number; /** The open waits for the boss, with their text; `answered`: when the boss answered it (their message named it) and the tower has not resolved it yet. */ bossWaits: BossWait[]; /** What runs proposed and the boss has neither confirmed nor rejected. */ proposals: MemoryProposal[]; /** The memory file cannot be read: nothing in it can be changed until it is fixed. */ problem?: string }
 /**
  * The sb server's tower service of a workspace (docs/specs/2026-10-26-sb-backend.md, GUI): what the tower unit shows while no pi session is the tower. `queue` and `file` come with the reading and are not part of the

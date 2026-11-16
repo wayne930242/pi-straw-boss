@@ -207,6 +207,15 @@ test("wait cards: head-run.md and main.md say the same in their words", () => {
 	for (const term of ["A `wait_card` message is the boss's answer to your wait: act on it; it says when to call `secret_drop`."]) assert.ok(main.includes(term), `main.md names ${term}`);
 });
 
+// docs/specs/2026-11-16-wait-cards-flow.md (Rules): a wait card is asked again only through `boss_wait_ask`, whose dialog sb draws; the resident tower (tower.md) has no such tool and keeps its rule.
+test("wait cards asked again: main.md, tower-run.md, and head-run.md name boss_wait_ask and its limits; tower.md does not", () => {
+	const main = read("main.md"), run = read("tower-run.md"), head = read("head-run.md");
+	assert.ok(main.includes("A `wait_card` message is the boss's answer to your wait: act on it; it says when to call `secret_drop`. Re-ask a wait you raised only with `boss_wait_ask`, never `ask_user_question`; its result is his answer."), "main.md");
+	assert.ok(run.includes("- Never ask the boss yourself (no questions, robot_hand, focus changes), except `boss_wait_ask` for cards in your memory while the boss is at this pane: sb draws the card, you never word it. Its press also reaches you as an event: act once, then resolve the wait. A decision only the boss can make goes in the handoff note as above."), "tower-run.md");
+	assert.ok(head.includes("When he is at this pane and says he is back, or asks what waits, show the open cards with `boss_wait_ask` (no ids: every card) instead of listing them in text."), "head-run.md");
+	assert.ok(!read("tower.md").includes("boss_wait_ask") && read("tower.md").includes("Never ask the boss (no questions, robot_hand, focus changes)"), "the resident tower has no such tool");
+});
+
 // docs/specs/2026-11-07-train-workers.md §13.1 and §15 row 8: the train is a worker of its own, acceptance happens before loading, and the sb server sends every car notice.
 const SEAMS7 = [...SEAMS, "Step runner"];
 const read = (file: string) => readFileSync(`${PROMPT_DIR}/${file}`, "utf8");

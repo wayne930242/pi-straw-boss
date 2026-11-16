@@ -82,8 +82,13 @@ test("a notice while a turn runs is a steer; the end of auto mode tells every se
 	assert.equal(sentTexts(a)[0]!.deliverAs, "steer");
 	auto.switchOff(pi);
 	await until(() => sentTexts(a).length === 2, "the off message");
-	assert.match(sentTexts(a)[1]!.content, new RegExp(offNotice(undefined).replace(/\d\d:\d\d|\?/, ".+").slice(0, 40)));
-	assert.match(sentTexts(a)[1]!.content, /do not ask again what you parked/);
+	assert.match(sentTexts(a)[1]!.content, new RegExp(offNotice(undefined, "main").replace(/\d\d:\d\d|\?/, ".+").slice(0, 40)));
+	// 2026-11-16 (docs/specs/2026-11-16-wait-cards-flow.md, Rules): a parked wait is asked again only through the card sb draws, never in the agent's own words.
+	assert.ok(sentTexts(a)[1]!.content.endsWith("their answers reach you as wait_card messages. Never re-ask a parked wait with ask_user_question. When the boss is with you and the answer cannot wait, call boss_wait_ask (its id, or none for every card you raised): sb shows the card and his answer resolves it everywhere."), sentTexts(a)[1]!.content);
+	assert.doesNotMatch(sentTexts(a)[1]!.content, /do not ask again what you parked/);
+	// a session that has no such tool (a subagent, a train) is told only not to re-ask
+	for (const kind of ["subagent", "train"] as const) assert.ok(offNotice(undefined, kind).endsWith("wait_card messages. Never re-ask a parked wait with ask_user_question.") && !offNotice(undefined, kind).includes("boss_wait_ask"), kind);
+	assert.ok(offNotice(undefined, "run").includes("call boss_wait_ask"), "a tower run has the tool");
 	await settle();
 	assert.equal(sentTexts(a).length, 2);
 });

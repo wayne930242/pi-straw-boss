@@ -52,6 +52,7 @@ import { createBackstop } from "./autoback.ts";
 import { headSeam } from "./headnet.ts";
 import { towerPanel } from "./towerpanel.ts";
 import { runsStopMs } from "./runs.ts";
+import { askRefused, doorOf } from "./waitpress.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import { packageRoot, VERSION } from "./version.ts";
 
@@ -457,6 +458,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		const waitId = (value: unknown) => (typeof value === "string" && /^W\d+$/.test(value) ? value : undefined);
 		// The page's composer refuses exactly `/quit` and `/new` sent as the answer to a wait (headroutes.ts `commandReply`): the same here, before anything is queued.
 		const notAnAnswer = (answers: string | undefined, body: string | undefined) => (answers && body && /^\/(quit|new)$/.test(body.trim()) ? { ok: false as const, error: "A command is not an answer to a wait; send it without --answers." } : undefined);
+		// `boss_wait_ask` (waitask.ts) on a device with no boss at it: its read of the list and its press are refused, so no card is drawn there.
+		const noAsk = askRefused(request, unattended);
+		if (noAsk) return Promise.resolve({ ok: false, error: noAsk });
 		switch (request.cmd) {
 			case "ensure-tower": {
 				const claim = typeof request.made === "object" && request.made !== null ? (request.made as Record<string, unknown>) : undefined;
@@ -499,11 +503,12 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			case "tower-event": {
 				const body = text(request.text, 16_384);
 				// `present`: the boss wrote it at the tower prompt in the standing pane, so they are at the keyboard and the run it wakes stays for them (runs.ts, the boss's presence).
+				// `door: "pane"`: the standing pane's own prompt posted it, so the run may show him a card there (`boss_wait_ask`, runmode.ts); the GUI's composer and another pi name none.
 				const answers = request.answers === undefined ? undefined : waitId(request.answers);
 				if (request.answers !== undefined && !answers) return Promise.resolve({ ok: false, error: "answers names a wait: W and its number" });
 				const refusal = notAnAnswer(answers, body);
 				if (refusal) return Promise.resolve(refusal);
-				return workspace && body ? answer(async (t) => ({ queued: t.runs.boss(workspace, body, "the boss", { present: request.present === true, ...(requesterFrom(request) ? { requester: requesterFrom(request)! } : {}) }).id, ...(answers ? { answered: await markWaitAnswered(t, workspace, answers) } : {}) })) : Promise.resolve({ ok: false, error: "tower-event needs a workspace and text" });
+				return workspace && body ? answer(async (t) => ({ queued: t.runs.boss(workspace, body, "the boss", { present: request.present === true, ...(request.door === "pane" ? { door: "pane" as const } : {}), ...(requesterFrom(request) ? { requester: requesterFrom(request)! } : {}) }).id, ...(answers ? { answered: await markWaitAnswered(t, workspace, answers) } : {}) })) : Promise.resolve({ ok: false, error: "tower-event needs a workspace and text" });
 			}
 			// The tower prompt in the standing pane (towerprompt/, standing.ts): it polls for the state it shows and for the order to leave, says Ctrl+D, and says it is gone. It starts nothing and holds no run token;
 			// its requests are a session's or a shell's, as the CLI's, and a server that is still loading tells it to wait.
@@ -515,7 +520,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				return towers.prompt(request.cmd, workspace, pid, request.answering === true).then((reply) => (unattended() && "label" in reply ? { ...reply, unattended: true } : reply));
 			}
 			// The boss's memory (towermemory.ts `memoryRequest`): `/boss memory` in a pi session is the GUI panel's request on the same function. A run's token never gets here (rungate.ts refuses it).
-			case "tower-memory": return workspace && typeof request.json === "object" && request.json !== null ? answer(async (t) => ({ ...(await t.memory(workspace, request.json as Record<string, unknown>, request.via === "prompt" || request.via === "run-pane" ? request.via : "pi")) })) : Promise.resolve({ ok: false, error: "tower-memory needs a workspace and a request" });
+			// `via: "ask"` is the press of a dialog sb drew for an agent's `boss_wait_ask` (waitask.ts); the GUI's door is its own route's, never a client's word (`doorOf`).
+			case "tower-memory": return workspace && typeof request.json === "object" && request.json !== null ? answer(async (t) => ({ ...(await t.memory(workspace, request.json as Record<string, unknown>, doorOf(request.via))) })) : Promise.resolve({ ok: false, error: "tower-memory needs a workspace and a request" });
 			// The boss's open wait cards, every tower's and the head's or one's (waitlist.ts): `/boss wait` and the tower prompt's picker. A run's token never gets here (rungate.ts).
 			case "boss-waits": return answer(async (t) => ({ ...t.waitList(workspace, text(request.own)) }));
 			case "tower-retry": return workspace ? answer(async (t) => (t.runs.retry(workspace), {})) : Promise.resolve({ ok: false, error: "tower-retry needs a workspace" });

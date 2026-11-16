@@ -29,7 +29,8 @@ export interface Card {
 export const DONE_LABEL: Record<Lang, string> = { "zh-TW": "我做完了", en: "I'm done" };
 export const ACTS = ["done", "choose", "secret", "decline", "restate"] as const;
 export type Act = (typeof ACTS)[number];
-export type Delivery = "delivered" | "queued" | "gone" | "failed";
+/** `asked`: the raiser asked the boss itself (`boss_wait_ask`), so the tool's result told it and no notice was sent. */
+export type Delivery = "delivered" | "queued" | "gone" | "failed" | "asked";
 /** What the boss pressed, when, and whether the raiser got the notice. `secretAsked`: the first step of a secret card was taken at this time. */
 export interface Press { act: Act; option?: number; reason?: string; at: string; main?: { status: Delivery; at: string }; secretAsked?: string }
 

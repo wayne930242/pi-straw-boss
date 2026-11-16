@@ -377,7 +377,8 @@ test("the picker of /boss wait is relayed nowhere: with a tool call in flight it
 	await next(1, (options) => options[0]); // the list
 	await next(2, (options) => options.find((o) => o === "Skip")); // the card
 	await next(3, () => true); // the confirm after the reason (the input answers at once in this rig)
-	await next(4, () => undefined); // the list again: Escape
+	await next(4, () => undefined); // the skip goes on to the next card (2026-11-16, the cards one after another): Escape there is the way back to the list
+	await next(5, () => undefined); // the list again: Escape
 	await done;
 	assert.equal(r.sent("pending").length, 0);
 });

@@ -266,6 +266,54 @@ test("switch focuses the raiser's tab and writes nothing", async () => {
 	assert.match(twice.last().text, /More than one tab/);
 });
 
+// --- one card after another (docs/specs/2026-11-16-wait-cards-flow.md, B) ---------------------------------------------------------------------------------------------
+
+/** Three cards of one tower; the list shows the newest first: third (W3), second (W2), first (W1). */
+const three = (over: Parameters<typeof harness>[0] = {}) => {
+	const h = harness(over);
+	h.plant("wA", { id: "W1", card: card({ do: "first" }) as never });
+	h.plant("wA", { id: "W2", card: card({ do: "second" }) as never });
+	h.plant("wA", { id: "W3", card: card({ do: "third" }) as never });
+	return h;
+};
+const cardOf = (d: Dialog) => /^(?:\[Alpha\]|［Alpha］) (W\d+)/.exec(d.title)?.[1];
+
+test("after a press the next card's dialog opens with no list between: three cards are answered one after another in the list's order, around its end, and the picker ends when none is left", async () => {
+	const h = three();
+	await h.run("", /second/, "I'm done", "I'm done", "I'm done");
+	assert.deepEqual(h.dialogs.map((d) => cardOf(d) ?? d.title), ["Waits for you (3)", "W2", "W1", "W3"], "the list once, then each card's own dialog");
+	assert.deepEqual(h.sent.map((s) => s.id), ["W2", "W1", "W3"]);
+	assert.deepEqual(h.told.map((t) => t.text), ["W2 done: mp3946-print was told.", "W1 done: mp3946-print was told.", "W3 done: mp3946-print was told."], "each press says its own line, and nothing is said when none is left");
+	for (const id of ["W1", "W2", "W3"]) assert.equal(h.wait("wA", id).state, "answered");
+});
+
+test("a skip and a reply go on to the next card too; a card that already carries a final press is passed over, and one the boss answered in this picker is not offered again", async () => {
+	const h = three();
+	h.plant("wA", { id: "W4", card: card({ do: "pressed before" }) as never, state: "answered", press: { act: "done", at: iso(NOW) } as never });
+	// the list: W4 (pressed), W3, W2, W1. Skip W3, reply to W2, then W1 is the only one left; after it nothing is.
+	await h.run("", /third/, "Skip", "", true, /^Reply to the tower/, "on Monday", "I'm done");
+	assert.deepEqual(h.dialogs.filter((d) => d.kind === "select").map((d) => cardOf(d) ?? d.title), ["Waits for you (4)", "W3", "W2", "W1"]);
+	assert.deepEqual(h.sent.map((s) => [s.id, s.act]), [["W3", "decline"], ["W1", "done"]]);
+	assert.equal(h.asked.filter((r) => r.cmd === "tower-event").length, 1);
+});
+
+test("a card among others offers Next card and All cards: Next moves on with nothing pressed, All cards returns to the list; a single card has neither and keeps Back", async () => {
+	const h = three();
+	await h.run("", /third/, "Next card", "Next card", "All cards", undefined);
+	assert.deepEqual(h.dialogs.map((d) => cardOf(d) ?? d.title), ["Waits for you (3)", "W3", "W2", "W1", "Waits for you (3)"]);
+	assert.deepEqual(h.dialogs[1]!.options, ["I'm done", "Skip", "Reply to the tower", "Switch to mp3946-print's tab", "Next card", "All cards"]);
+	assert.equal(h.sent.length, 0, "moving between cards presses nothing");
+	assert.equal(h.told.length, 0);
+	// the last card that still waits has no next: only the way to the list
+	const last = three();
+	await last.run("", /third/, "I'm done", "I'm done", undefined, undefined);
+	assert.deepEqual(last.dialogs[3]!.options, ["I'm done", "Skip", "Reply to the tower", "Switch to mp3946-print's tab", "All cards"]);
+	const zh = three({ lang: "zh-TW" });
+	await zh.run("", /third/, "下一張", "全部卡片", undefined);
+	assert.deepEqual(zh.dialogs[1]!.options!.slice(-2), ["下一張", "全部卡片"]);
+	assert.deepEqual(zh.dialogs.map((d) => cardOf(d) ?? d.title), ["等你處理（3）", "W3", "W2", "等你處理（3）"]);
+});
+
 test("a press the server refuses shows the server's reason and the list is read again", async () => {
 	const h = harness();
 	h.plant("wA", { id: "W1", card: card() as never });
@@ -311,6 +359,7 @@ test("every dialog is terminal-only, under the boss's mark, inside the here mark
 	h.plant("wA", { id: "W2", card: card({ do: "second" }) as never });
 	await h.run("", /Re-authorize/, "Skip", "why", true, undefined);
 	assert.deepEqual(h.dialogs.map((d) => d.kind), ["select", "select", "input", "confirm", "select"]);
+	assert.match(h.dialogs[4]!.title, /^\[Alpha\] W2\n/, "the last one is the next card's, which is the only one left");
 	for (const d of h.dialogs) {
 		assert.ok(d.opts && Object.getOwnPropertySymbols(d.opts).includes(NO_RELAY), `${d.kind} "${d.title.split("\n")[0]}" is terminal-only`);
 		assert.equal(d.boss, true, `${d.kind} runs under the boss's mark`);

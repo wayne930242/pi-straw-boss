@@ -1,5 +1,6 @@
 import { clean } from "../board.ts";
 import type { Locale } from "../towerprompt/messages.ts";
+import { UNATTENDED } from "./autoops.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
 import { cut, type Entry, findWait, hhmm, iso, MEM, type Memory, memoryView, Refused, updateMemory } from "./towermemory.ts";
@@ -17,8 +18,16 @@ export function deliveryOf(status: string | undefined): Delivery {
 	return status === "queued" ? "queued" : "failed";
 }
 
-/** The door a press came in by, as the log records it (never the text): pi's `/boss wait` or `/boss memory`, the tower prompt's picker, the pane of a tower run, or the GUI. */
-export type PressDoor = "pi" | "prompt" | "run-pane" | "gui";
+/** The door a press came in by, as the log records it (never the text): pi's `/boss wait` or `/boss memory`, the tower prompt's picker, the pane of a tower run, the GUI, or the dialog sb drew for an agent's `boss_wait_ask` (waitask.ts). */
+export type PressDoor = "pi" | "prompt" | "run-pane" | "gui" | "ask";
+/** The doors a control request may name (main.ts): the GUI's is its own route's, never a client's word. */
+export const doorOf = (via: unknown): PressDoor => (via === "prompt" || via === "run-pane" || via === "ask" ? via : "pi");
+/**
+ * `boss_wait_ask` on a device with no boss at it (autoops.ts `UNATTENDED`): its read of the list (`boss-waits` with `ask: true`) and its press (`tower-memory` with `via: "ask"`) are refused, so no card is drawn there.
+ * The list and the memory themselves stay as they are: `/boss wait` and the prompt's picker are a controller's own doors.
+ */
+export const askRefused = (request: Record<string, unknown>, unattended: () => boolean): string | undefined =>
+	((request.cmd === "boss-waits" && request.ask === true) || (request.cmd === "tower-memory" && request.via === "ask")) && unattended() ? UNATTENDED : undefined;
 export interface PressDeps {
 	slot: Slot;
 	now(): number;
@@ -63,7 +72,7 @@ export function pressWait(m: Memory, now: number, json: Record<string, unknown>,
 	const at = iso(now), raiserName = card?.from?.name ?? "the raiser", who = card?.from;
 	const what = card?.do ?? e.text;
 	/** The sentence that closes an event: whether the raiser got the notice. Nothing for a wait with no raiser. */
-	const delivery = (status: string) => (!who ? "" : status === "delivered" || status === "queued" ? ` ${raiserName} got it.` : ` ${raiserName} was not reached (${status}): tell it yourself, or tell its owner if it is gone.`);
+	const delivery = (status: string) => (!who ? "" : status === "delivered" || status === "queued" || status === "asked" ? ` ${raiserName} got it.` : ` ${raiserName} was not reached (${status}): tell it yourself, or tell its owner if it is gone.`);
 
 	if (act === "decline") {
 		if (e.state !== "open" && e.state !== "answered") throw new Refused(`${id} is ${e.state} already`);
@@ -134,6 +143,7 @@ const failure = (cause: unknown): { status: number; body: Record<string, unknown
 
 /**
  * `{ op: "press", id, act, option?, reason? }` of the boss's route. The raiser is told by its session id: a card whose raiser is not live now is `gone` and nothing is sent. The tower's event is queued last, with the delivery in its text.
+ * At the `ask` door the press may name its `asker` (the session whose `boss_wait_ask` drew the dialog): when that is the raiser, the tool's own result is its notice, so none is sent and the delivery is `asked`.
  */
 export async function pressRequest(d: PressDeps, workspace: string, json: Record<string, unknown>, via: PressDoor = "pi"): Promise<{ status: number; body: Record<string, unknown> }> {
 	if (typeof json.id !== "string") return { status: 400, body: { error: "bad_request", reason: "A press names the wait (id)" } };
@@ -149,8 +159,10 @@ export async function pressRequest(d: PressDeps, workspace: string, json: Record
 	const raiser = plan.card?.from?.id;
 	let status: Delivery | undefined;
 	if (plan.notice && raiser) {
+		const asked = via === "ask" && json.asker === raiser;
 		status = await (async (): Promise<Delivery> => {
 			try {
+				if (asked) return "asked";
 				if (!(await d.live(raiser))) return "gone";
 				let timer: ReturnType<typeof setTimeout> | undefined;
 				const cutOff = new Promise<{ status?: string }>((resolve) => { timer = setTimeout(() => resolve({ status: "failed" }), d.waitMs ?? NOTICE_WAIT_MS); timer.unref?.(); });
