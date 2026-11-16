@@ -102,7 +102,7 @@ export const endEvent = (r: Report): string => {
 export function reportText(r: Report): string {
 	const s = summaryOf(r);
 	const out = [`Auto mode ended at ${hhmm(r.until)} (${r.off}); it ran from ${hhmm(r.since)} (${r.on}).`];
-	if (r.parked.length) out.push(`Parked waits (${r.parked.length}); /boss wait (or /boss memory done|choose|decline W<n>) acts on one:`, ...r.parked.map((p) => `- ${p.id} (${p.tower}, ${p.type}${p.from ? `, from ${p.from}` : ""}): ${p.text}`));
+	if (r.parked.length) out.push(`Parked waits (${r.parked.length}). Answer them at the tower pane, with /boss wait, or in the GUI:`, ...r.parked.map((p) => `- ${p.id} (${p.tower}, ${p.type}${p.from ? `, from ${p.from}` : ""}): ${p.text}`));
 	else out.push("No wait was parked.");
 	const bySession = Object.groupBy(r.lines, (l) => l.session || "(unknown)");
 	if (r.lines.length) out.push(`Cancelled or refused (${s.cancels}):`, ...Object.entries(bySession).map(([session, lines]) => `- ${session}: ${lines!.map((l) => `${l.tool} ${l.kind}${l.count > 1 ? ` ×${l.count}` : ""}${l.gist ? ` "${l.gist}"` : ""} (from ${hhmm(l.first)})`).join("; ")}`));

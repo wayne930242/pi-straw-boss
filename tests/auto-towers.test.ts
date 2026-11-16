@@ -181,7 +181,7 @@ test("the return list covers the towers and the head: the parked waits per tower
 	assert.deepEqual(report.stillWaiting.map((l) => l.session), ["main-3"]);
 	const text = String(off.report);
 	assert.ok(text.indexOf("Parked waits (2)") >= 0 && text.indexOf("Parked waits") < text.indexOf("Cancelled or refused"), "the parked waits come first");
-	assert.match(text, /\/boss wait \(or \/boss memory done\|choose\|decline W<n>\) acts on one:/);
+	assert.match(text, /^Parked waits \(2\)\. Answer them at the tower pane, with \/boss wait, or in the GUI:$/m); // 2026-11-16: the cards are answered where they are drawn, no W<n> to type
 	assert.match(text, /- main-1: ask_user_question cancelled "Which database\?" \(from \d\d:\d\d\); robot_hand refused ×2/);
 	// the parked flag lived for the period
 	assert.equal(memory().entries[0]!.parked, undefined);

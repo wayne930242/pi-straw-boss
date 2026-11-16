@@ -139,7 +139,7 @@ export function createAuto({ pi, cfg, s, guiDir, me }: Kit, d: AutoDeps = {}) {
 			const was = lastOn;
 			lastOn = st.on;
 			if (st.on) cancelOpen(st, was !== true);
-			else if (was === true) tell(offNotice(new Date(cfg.now()).toISOString()));
+			else if (was === true) tell(offNotice(new Date(cfg.now()).toISOString(), kind()));
 		} catch { /* the next poll tries again */ } finally {
 			checking = false;
 		}
