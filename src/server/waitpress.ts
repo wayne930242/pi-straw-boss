@@ -142,18 +142,19 @@ const failure = (cause: unknown): { status: number; body: Record<string, unknown
 };
 
 /** The notice of a press whose raiser asked it itself (`asked`), kept in memory for `lateNotice`: the tool's result is that notice, unless its turn was stopped and the result never came (R-F006). A restart forgets them. */
-const held = new Map<string, { text: string; at: number; act: string; pressAt: string | undefined }>();
-/** A held notice older than this is dropped: the stopped turn's raiser is not sent a decision that old. */
-export const HELD_MS = 5 * 60_000;
+const held = new Map<string, { text: string; at: number; act: string; pressAt: string | undefined; cleared?: boolean }>();
+/** A held notice older than this is dropped: the stopped turn's raiser is not sent a decision that old. It outlasts a full round of 4 cards (`CAP_MS` 5 min each in waitask.ts) with a margin. */
+export const HELD_MS = 25 * 60_000;
 
 /** `{ op: "wait-notice", id, asker }` at the `ask` door: the asker's turn was stopped after its press, so the raiser (the asker) is sent the notice the result would have been. Once, and only to the session that asked. */
 export async function lateNotice(d: PressDeps, workspace: string, json: Record<string, unknown>, via: PressDoor = "pi"): Promise<{ status: number; body: Record<string, unknown> }> {
 	const key = `${workspace}\n${String(json.id)}`, hold = held.get(key);
 	if (via !== "ask") return { status: 409, body: { error: "refused", reason: "no notice is held for that session" } };
-	// `clear`: the tool's own result came back, so the held notice is not needed.
-	if (json.clear === true) return (held.delete(key), { status: 200, body: { cleared: hold !== undefined } });
 	const raiser = updateMemory(d.slot, workspace, d.now(), () => undefined).memory.entries.find((e) => e.id === json.id)?.card?.from?.id;
-	if (!hold || !raiser || json.asker !== raiser || d.now() - hold.at > HELD_MS) return (held.delete(key), { status: 409, body: { error: "refused", reason: "no notice is held for that session" } });
+	const mine = hold !== undefined && raiser !== undefined && json.asker === raiser;
+	// `clear`: the tool's own result came back, so the held notice is not needed. Only the raiser's own call clears it, and the hold stays (marked) until it expires, so a stop that lands during the request can `recover` it.
+	if (json.clear === true) return (mine && (hold.cleared = true), { status: 200, body: { cleared: mine } });
+	if (!hold || !mine || (hold.cleared && json.recover !== true) || d.now() - hold.at > HELD_MS) return (!hold || d.now() - hold.at > HELD_MS ? held.delete(key) : false, { status: 409, body: { error: "refused", reason: "no notice is held for that session" } });
 	held.delete(key);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const cutOff = new Promise<{ status?: string }>((resolve) => { timer = setTimeout(() => resolve({ status: "failed" }), d.waitMs ?? NOTICE_WAIT_MS); timer.unref?.(); });

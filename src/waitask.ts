@@ -85,6 +85,14 @@ export function createWaitAsk(d: WaitAskDeps) {
 			const r = await d.ask({ cmd: "tower-memory", workspace, json: { ...json, ...(asker ? { asker } : {}) }, via: "ask" });
 			return { ok: r.ok, ...(typeof r.error === "string" ? { error: r.error } : {}), ...(typeof r.status === "number" ? { status: r.status } : {}), ...(typeof r.body === "object" && r.body !== null ? { body: Object.fromEntries(Object.entries(r.body)) } : {}) };
 		};
+		let late = false;
+		// The round's end settles each held notice (the server holds one longer than a full round of cards). A stop is read after the clear is decided: then the held notice is recovered and sent.
+		const settle = async (workspace: string, id: string) => {
+			const call = (extra: Record<string, unknown>) => memory(workspace, { op: "wait-notice", id, ...extra }).catch(() => undefined);
+			if (signal?.aborted) return void ((await call({}))?.ok === true && (late = true));
+			await call({ clear: true });
+			if (signal?.aborted) (await call({ recover: true }))?.ok === true && (late = true);
+		};
 		/** One card's dialog, with the look at the list beside it: how it ended as the result's line, and why the round ends there, if it does. */
 		const show = async (row: Row, more: boolean): Promise<{ line: string; stop?: string }> => {
 			const ac = new AbortController(), id = name(row), key = keyOf(row);
@@ -135,8 +143,7 @@ export function createWaitAsk(d: WaitAskDeps) {
 			}
 		}));
 		// The raiser that asked is told by this result alone: the server sends it no `wait_card` for its own ask. A turn stopped after the press never gets the result: sb sends the notice then, and drops what it held once the result does come.
-		let late = false;
-		if (asker) for (const p of pressedAt) late = ((await memory(p.workspace, { op: "wait-notice", id: p.id, ...(signal?.aborted ? {} : { clear: true }) }).catch(() => undefined))?.ok === true && signal?.aborted === true) || late;
+		if (asker) for (const p of pressedAt) await settle(p.workspace, p.id);
 		return { text: [...lines, ...(asker && pressed && !late ? ["This is the boss's answer: no wait_card message follows."] : [])].join("\n"), details: { asked: queue.length } };
 	};
 }

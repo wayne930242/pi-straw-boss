@@ -39,7 +39,7 @@ type Dialog = { kind: "select" | "input" | "confirm"; title: string; options?: s
 const HOLD = Symbol("hold");
 type Step = string | RegExp | typeof HOLD | ((d: Dialog) => unknown) | undefined | boolean;
 
-function harness(over: { scope?: Scope; lang?: "en" | "zh-TW"; hasUI?: boolean; auto?: boolean; refusal?: string; unattended?: boolean; hereFails?: boolean; head?: boolean } = {}) {
+function harness(over: { scope?: Scope; lang?: "en" | "zh-TW"; hasUI?: boolean; auto?: boolean; refusal?: string; unattended?: boolean; hereFails?: boolean; head?: boolean; onClear?: () => void } = {}) {
 	const slot = { dir: mkdtempSync(join(tmpdir(), "psb-waitask-")) } as Slot, told: string[] = [], dialogs: Dialog[] = [], sent: Request[] = [], asked: Request[] = [], events: string[] = [], notices: string[] = [], ticks: (() => void)[] = [];
 	let hereOpen = false, script: Step[] = [], auto = over.auto === true, clock = NOW, stops = 0;
 	const here: Here = async (fn) => {
@@ -75,6 +75,7 @@ function harness(over: { scope?: Scope; lang?: "en" | "zh-TW"; hasUI?: boolean; 
 			const no = askRefused(request, () => over.unattended === true);
 			if (no) return { ok: false, error: no };
 			if (request.cmd === "boss-waits") return { ok: true, ...waitList({ slot, now: () => clock, locale: "en", auto: () => ({ on: auto }) }, [{ workspace: "wA", label: "Alpha" }, { workspace: "wB", label: "Beta" }], over.head ? {} : undefined, typeof request.workspace === "string" ? request.workspace : undefined) };
+			if (request.cmd === "tower-memory" && (request.json as { op?: string; clear?: boolean }).clear === true) over.onClear?.();
 			if (request.cmd === "tower-memory" && (request.json as { op?: string }).op === "wait-notice") return { ok: true, ...(await lateNotice({ slot, now: () => clock, log: { line() {}, hide() {} }, locale: "en", live: async () => true, send: async (to, text) => (notices.push(`${to}: ${text}`), { status: "sent" }), boss: () => {}, autoOn: () => auto }, String(request.workspace), request.json as Record<string, unknown>, "ask")) };
 			if (request.cmd === "tower-memory") return (sent.push(request), { ok: true, ...(await press(String(request.workspace), request.json as Record<string, unknown>, request.via === "ask" ? "ask" : "pi")) });
 			return { ok: true, answered: request.answers, queued: "e1" };
@@ -597,7 +598,7 @@ test("R2-F001: the 60 s quiet end is the option select's own, reset when a selec
 	await p2;
 });
 
-test("R2-F002: a held notice expires after 5 min, goes once when the tool's result came back (cleared), and a stopped turn's notice is not worded as 'no wait_card follows'", async () => {
+test("R2-F002: a held notice expires after 25 min, goes once when the tool's result came back (cleared), and a stopped turn's notice is not worded as 'no wait_card follows'", async () => {
 	const main = harness({ scope: { kind: "raised", by: "main-1" } });
 	main.plant("wA", { id: "W1", card: card(CHOICE) as never });
 	const ac = new AbortController();
@@ -607,9 +608,9 @@ test("R2-F002: a held notice expires after 5 min, goes once when the tool's resu
 	const old = harness({ scope: { kind: "raised", by: "main-1" } });
 	old.plant("wA", { id: "W1", card: card(CHOICE) as never });
 	await old.press("wA", { id: "W1", act: "choose", option: 0, asker: "main-1" }, "ask");
-	old.advance(6 * 60_000);
-	const gone = await lateNotice({ slot: old.slot, now: () => NOW + 6 * 60_000, log: { line() {}, hide() {} }, locale: "en", live: async () => true, send: async (to, text) => (old.notices.push(`${to}: ${text}`), { status: "sent" }), boss: () => {}, autoOn: () => false }, "wA", { op: "wait-notice", id: "W1", asker: "main-1" }, "ask");
-	assert.equal(gone.status, 409, "a notice older than 5 minutes is dropped");
+	old.advance(26 * 60_000);
+	const gone = await lateNotice({ slot: old.slot, now: () => NOW + 26 * 60_000, log: { line() {}, hide() {} }, locale: "en", live: async () => true, send: async (to, text) => (old.notices.push(`${to}: ${text}`), { status: "sent" }), boss: () => {}, autoOn: () => false }, "wA", { op: "wait-notice", id: "W1", asker: "main-1" }, "ask");
+	assert.equal(gone.status, 409, "a notice older than 25 minutes is dropped");
 	assert.deepEqual(old.notices, []);
 	// a normal result clears the held notice, so a later wait-notice sends nothing
 	const ok = harness({ scope: { kind: "raised", by: "main-1" } });
@@ -618,4 +619,31 @@ test("R2-F002: a held notice expires after 5 min, goes once when the tool's resu
 	const late = await lateNotice({ slot: ok.slot, now: () => NOW, log: { line() {}, hide() {} }, locale: "en", live: async () => true, send: async (to, text) => (ok.notices.push(`${to}: ${text}`), { status: "sent" }), boss: () => {}, autoOn: () => false }, "wA", { op: "wait-notice", id: "W1", asker: "main-1" }, "ask");
 	assert.equal(late.status, 409);
 	assert.deepEqual(ok.notices, []);
+});
+
+test("R3-F001: a wait-notice from another asker (clear or not) leaves the hold; the raiser's own call still sends the wait_card", async () => {
+	const h = harness({ scope: { kind: "raised", by: "main-1" } });
+	h.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	await h.press("wA", { id: "W1", act: "choose", option: 0, asker: "main-1" }, "ask");
+	const deps = { slot: h.slot, now: () => NOW, log: { line() {}, hide() {} }, locale: "en" as const, live: async () => true, send: async (to: string, text: string) => (h.notices.push(`${to}: ${text}`), { status: "sent" }), boss: () => {}, autoOn: () => false };
+	assert.equal((await lateNotice(deps, "wA", { op: "wait-notice", id: "W1", asker: "other", clear: true }, "ask")).status, 200);
+	assert.equal((await lateNotice(deps, "wA", { op: "wait-notice", id: "W1", asker: "other" }, "ask")).status, 409);
+	assert.deepEqual(h.notices, []);
+	assert.equal((await lateNotice(deps, "wA", { op: "wait-notice", id: "W1", asker: "main-1" }, "ask")).status, 200);
+	assert.equal(h.notices.length, 1);
+});
+
+test("R3-F002: a press on card 1, more than 5 min on later cards, then a stop: the raiser still gets the wait_card once; a stop during the clear is recovered", async () => {
+	const main = harness({ scope: { kind: "raised", by: "main-1" } });
+	main.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	main.plant("wA", { id: "W2", card: card(CHOICE) as never });
+	const ac = new AbortController();
+	await main.callWith(ac.signal, { ids: ["W1", "W2"] }, (d) => d.options!.find((o) => o.includes("Deploy")), (d) => (main.advance(7 * 60_000), ac.abort(), undefined));
+	assert.equal(main.notices.filter((n) => n.includes("W1") || n.includes("wait W1")).length, 1);
+	// the stop lands while the clear request is in flight
+	const ac2 = new AbortController();
+	const m2 = harness({ scope: { kind: "raised", by: "main-1" }, onClear: () => ac2.abort() });
+	m2.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	await m2.callWith(ac2.signal, { ids: ["W1"] }, (d) => d.options!.find((o) => o.includes("Deploy")));
+	assert.equal(m2.notices.length, 1, "the held notice is recovered and sent");
 });
