@@ -141,3 +141,15 @@ test("a unit's report comes from the workspace inside the team's project, not an
 	assert.ok(reports.includes("inside note"), JSON.stringify(reports));
 	assert.ok(!reports.includes("outside note"), JSON.stringify(reports));
 });
+
+test("R-F003: an unattended device has no boss at its prompt: a poll that says the boss is answering holds no wake there", async () => {
+	const u = unattended("status");
+	const s = await towers(u);
+	const MAIN = { id: "main-1", name: "mp3946-print" };
+	world.client("sb-tower-wa")!.incoming(MAIN, { id: "m1", content: { text: "the build is green" } });
+	await until(() => world.client("sb-tower-wa") !== undefined, "the tower identity");
+	const polled = await ask(s, { cmd: "prompt-poll", workspace: "wA", pid: 4321, answering: true });
+	assert.equal(polled.ok, true);
+	assert.equal(polled.unattended, true, "the prompt is told it has no boss");
+	assert.equal(polled.holding, undefined, "and holds no wake");
+});

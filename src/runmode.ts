@@ -53,6 +53,8 @@ export const MESSAGE = "straw-tower";
 const POLL_MS = 1000, CLAIM_WAIT_MS = 10_000, LOST_MS = 30_000, TURN_START_MS = 15_000, GLYPH_WAIT_MS = 30_000;
 /** The boss's words in the run's session are told to the server at most this often: its silence is judged in minutes. */
 const BOSS_SIGN_MS = 15_000;
+/** How long the boss's last words at this pane count as his being there: the server's `bossAway` (runs.ts), the idle span a run waits for his silence. */
+const BOSS_AT_PANE_MS = 10 * 60_000;
 /** A run's pane tokens: the tower's standing pane and an ally run's pane. */
 export const RUN_PANE_ROLES = new Set(["tower", "ally", "head"]);
 /** A `/reload` makes a new instance of the extension in the same process: the claim stays with the process. */
@@ -117,7 +119,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	let registered = false, bossSign: number | undefined, bossTyped = false, bossTurn = false, signing: Promise<unknown> | undefined, briefSent: string | undefined;
 	// Where the boss's last words in this run came from: this pane (typed in this pi, or written at the pane's own tower prompt: the server marks that event `door: "pane"`) or elsewhere (the GUI's composer, another pi). `boss_wait_ask`
 	// draws a card only while it is this pane (docs/specs/2026-11-16-wait-cards-flow.md, D4): a boss in the GUI has the card there, and a dialog in a terminal he does not see answers nothing. A press is his button, not his words, and moves nothing.
-	let bossDoor: "pane" | "away" | undefined;
+	let bossDoor: "pane" | "away" | undefined, bossDoorAt = 0;
 	// The pane-role ask of a pi with STRAW_BOSS_ROLE=tower that did not come back within `towerAskMs` is still in flight: the session is undecided, neither a run nor a normal session (so it joins nothing, hands nothing
 	// over and quits nothing) until the answer comes. `epoch` counts session starts and shutdowns, so an answer for a session that is gone is released instead of acted on; `afterNormal` holds the session start that waits for a `none`.
 	let epoch = 0, deciding: (() => void)[] | undefined;
@@ -302,7 +304,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (claim!.kind !== "ally") registerWaitAsk(pi, {
 			lang: memoryLang(env), scope: () => (claim!.kind === "head" ? { kind: "all" } : { kind: "tower", workspace: claim!.workspace }), auto: { on: () => s.autoOn?.() === true }, ask: paneAsk, here: bossHere, now: cfg.now, every: cfg.face?.every ?? every, tell,
 			refusal: () => (claim?.hand && !bossTurn ? "In the boss's own pi (a hand run) boss_wait_ask works only in a turn the boss started; the card stays open for the GUI and /boss wait."
-				: bossDoor !== "pane" ? "The boss is not at this pane: his last words in this run came from the GUI or another session, or he has not spoken in it. The card stays open for the GUI and /boss wait; a dialog here would wait where he does not look." : undefined),
+				: bossDoor !== "pane" || cfg.now() - bossDoorAt >= BOSS_AT_PANE_MS ? "The boss is not at this pane: his last words in this run came from the GUI or another session, or he has not spoken at this pane for 10 minutes. The card stays open for the GUI and /boss wait; a dialog here would wait where he does not look." : undefined),
 		});
 		// The memory of the tower (towermemory.ts) is a local run's, and the head's: the server refuses the tool to an ally run by its kind as well.
 		if (claim!.kind !== "ally") pi.registerTool({ name: "tower_memory", label: "tower_memory", description: MEMORY_DESCRIPTION, parameters: memoryParameters(), execute: async (id, params) => ({ content: [{ type: "text", text: (await tool("tower_memory", params, id)).text }], details: undefined }) });
@@ -387,7 +389,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		// Idle and nothing queued are read again at the moment of delivery, after the round trip: a run that got busy meanwhile is offered the event again at its next idle poll.
 		if (!idle() || ctx?.hasPendingMessages()) return;
 		startedBy = event.id;
-		if (event.kind === "boss" && !event.press) bossDoor = event.door === "pane" ? "pane" : "away";
+		if (event.kind === "boss" && !event.press) (bossDoor = event.door === "pane" ? "pane" : "away"), (bossDoorAt = cfg.now());
 		send(eventText(event), { id: event.id, kind: event.kind, ...(event.from ? { from: event.from } : {}) });
 		await call({ cmd: "run-taken", id: event.id }).catch((error: Error) => tell(`Straw Boss: the server did not take note of an event: ${error.message}`, "warning"));
 	};
@@ -462,7 +464,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (mode !== "run" || claim?.kind === "ally" || !claim || event.source !== "interactive") return;
 		// Their words protect the turn from the abort whether or not the server heard them (it may be the very thing that is away): the flag is not undone by a failed request, the rate-limit mark is.
 		bossTyped = true;
-		bossDoor = "pane";
+		(bossDoor = "pane"), (bossDoorAt = cfg.now());
 		// The turn their words start is theirs: a hand run holds no guard in it (below). A steer typed in the middle of a turn an event started (pi runs this handler before it queues the words) does not make that turn theirs.
 		if (idle()) (bossTurn = true, (startedTyped = { text: event.text, seq: ++typedSeq }));
 		if (bossSign !== undefined && cfg.now() - bossSign < BOSS_SIGN_MS) return;

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { fakeClock } from "./fake-clock.ts";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
-import { fieldsOf } from "../src/header.ts";
+import { fieldsOf, header } from "../src/header.ts";
 import { callControl } from "../src/server/socket.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
 import { readQueue } from "../src/server/towerstore.ts";
@@ -182,4 +182,18 @@ test("a hold with nothing waiting holds nothing: the poll says no hold, and a st
 	await standing(s, "held");
 	await poll(s, false);
 	await until(() => world.pis.size === 2, "the run");
+});
+
+test("R-F002: a held wake's timer begins no run before the wake's own time: a milestone waits its hold out after the boss's answering lapsed", async () => {
+	const s = await setup();
+	await poll(s, true);
+	const text = `${header({ from: { name: "mp3946-print", id: "main-1", role: "main" }, kind: "call_tower", scope: "tower", to: [], reply: false, why: "milestone" })} the build is green`;
+	tower().incoming(from, msg("m1", text));
+	await until(() => readQueue(world.slot, "wA").some((e) => e.kind === "intercom" && !e.taken), "the milestone queued");
+	assert.equal((await poll(s, true)).holding, true, "the boss is answering: the wake is held");
+	clock.advance(12_000);
+	await looks();
+	assert.equal(world.pis.size, 0, "the hold lapsed 12 s in, but the milestone's own 30 s wait has not");
+	clock.advance(19_000);
+	await until(() => world.pis.size === 1, "the run at the milestone's own time");
 });

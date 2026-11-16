@@ -16,7 +16,7 @@ import { callControl } from "../src/server/socket.ts";
 import { type Entry, iso, loadMemory, updateMemory } from "../src/server/towermemory.ts";
 import { waitList } from "../src/server/waitlist.ts";
 import { serverSource } from "../src/towerprompt/serversource.ts";
-import { askRefused, pressRequest } from "../src/server/waitpress.ts";
+import { askRefused, lateNotice, pressRequest } from "../src/server/waitpress.ts";
 import { PARENT_ONLY } from "../src/tools.ts";
 import { createWaitAsk, type Scope, WAIT_ASK, type WaitAskDeps, waitAskParameters } from "../src/waitask.ts";
 import { settle, World } from "./fakes.ts";
@@ -32,7 +32,7 @@ const NO_RELAY = Symbol.for("pi-straw-boss.no-relay");
 const FROM = { id: "main-1", name: "mp3946-print", role: "main", workspace: "Alpha", tab: "MP-3946" };
 const card = (over: Record<string, unknown> = {}) => ({ type: "action", lang: "en", happened: "The key expired.", do: "Re-authorize the machine.", after: "The tower asks the main to test.", from: FROM, ...over });
 const CHOICE = { type: "choice", do: "Deploy the build now?", options: [{ label: "Deploy", then: "The main deploys." }, { label: "Hold", then: "The main waits." }] };
-const STAYS = "it stays open for the GUI and /boss wait; do not ask it again this session.";
+const STAYS = "it stays open for the GUI and /boss wait; do not ask it again for 10 minutes.";
 
 type Dialog = { kind: "select" | "input" | "confirm"; title: string; options?: string[]; opts: { signal?: AbortSignal } | undefined; boss: boolean; here: boolean };
 /** Holds a dialog open until its signal aborts (pi's dialogs then resolve undefined). */
@@ -75,6 +75,7 @@ function harness(over: { scope?: Scope; lang?: "en" | "zh-TW"; hasUI?: boolean; 
 			const no = askRefused(request, () => over.unattended === true);
 			if (no) return { ok: false, error: no };
 			if (request.cmd === "boss-waits") return { ok: true, ...waitList({ slot, now: () => clock, locale: "en", auto: () => ({ on: auto }) }, [{ workspace: "wA", label: "Alpha" }, { workspace: "wB", label: "Beta" }], over.head ? {} : undefined, typeof request.workspace === "string" ? request.workspace : undefined) };
+			if (request.cmd === "tower-memory" && (request.json as { op?: string }).op === "wait-notice") return { ok: true, ...(await lateNotice({ slot, now: () => clock, log: { line() {}, hide() {} }, locale: "en", live: async () => true, send: async (to, text) => (notices.push(`${to}: ${text}`), { status: "sent" }), boss: () => {}, autoOn: () => auto }, String(request.workspace), request.json as Record<string, unknown>, "ask")) };
 			if (request.cmd === "tower-memory") return (sent.push(request), { ok: true, ...(await press(String(request.workspace), request.json as Record<string, unknown>, request.via === "ask" ? "ask" : "pi")) });
 			return { ok: true, answered: request.answers, queued: "e1" };
 		},
@@ -86,6 +87,8 @@ function harness(over: { scope?: Scope; lang?: "en" | "zh-TW"; hasUI?: boolean; 
 		setAuto: (on: boolean) => void (auto = on), advance: (ms: number) => void (clock += ms),
 		/** The look of the dialog that is open now (the watch's timer, fired by the test). */
 		look: async () => { ticks.at(-1)!(); await settle(); },
+		/** A call whose turn can be stopped: `signal` is the tool's own. */
+		callWith: (signal: AbortSignal, params: Record<string, unknown>, ...steps: Step[]) => ((script = steps), tool(params as never, signal, { hasUI: over.hasUI ?? true, ui })),
 		call: (params: Record<string, unknown>, ...steps: Step[]) => ((script = steps), tool(params as never, undefined, { hasUI: over.hasUI ?? true, ui })),
 		text: async (params: Record<string, unknown>, ...steps: Step[]) => ((script = steps), (await tool(params as never, undefined, { hasUI: over.hasUI ?? true, ui })).text),
 		wait: (ws: string, id: string) => loadMemory(slot, ws).memory.entries.find((e) => e.id === id)!,
@@ -516,4 +519,53 @@ test("the head's run has it with every tower's cards in scope; a hand run draws 
 		for (const s of sessions) s.dispose();
 		rmSync(root, { recursive: true, force: true });
 	}
+});
+
+test("R-F001: the boss's last words at this pane age: past the run's away span (10 min) with no new word a run is refused again, and a new word at the pane renews it", async () => {
+	const srv = fakeServer();
+	let clock = Date.now();
+	const agent = world.agent({ id: "run1", pane: "wA:p1", tab: "wA:t1", ui: true, deps: { now: () => clock, stateDir: world.stateDir, runSide: { ask: srv.ask, pollMs: 20, claimWaitMs: 300 } } });
+	agent.flags.set("sb-run", "RUN");
+	await agent.start();
+	await until(() => srv.requests.some((r) => r.cmd === "run-poll"), "the run to poll");
+	await deliver(agent, srv, { id: "e1", kind: "boss", text: "from the prompt", door: "pane" });
+	clock += 9 * 60_000;
+	assert.match(await askInRun(agent), /^W1: /, "9 minutes on he is still taken to be at the pane");
+	clock += 2 * 60_000;
+	await assert.rejects(askInRun(agent), AWAY, "11 minutes with no word: a dialog would wait where nobody looks");
+	await agent.fire("input", { source: "interactive", text: "back" });
+	assert.match(await askInRun(agent), /^W1: /, "a word at the pane renews it");
+});
+
+test("R-F001: a dialog nobody touches for 60 s ends at the next look: no answer, the card stays open, the rest is not shown, and it is not drawn again for 10 minutes", async () => {
+	const h = harness();
+	h.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	h.plant("wA", { id: "W2", card: card() as never });
+	const pending = h.text({}, HOLD);
+	await until(() => h.dialogs.length === 1, "the dialog");
+	h.advance(59_000);
+	await h.look();
+	assert.equal(h.dialogs[0]!.opts!.signal!.aborted, false, "59 s is not yet quiet");
+	h.advance(2000);
+	await h.look();
+	assert.equal(h.dialogs[0]!.opts!.signal!.aborted, true);
+	const out = await pending;
+	assert.match(out, /^W2: no answer \(the dialog stood 61 s with no key\); it stays open/);
+	assert.match(out, /W1: not shown \(the dialog stood quiet\)/);
+	assert.equal(h.sent.length, 0);
+	assert.equal(h.dialogs.length, 1);
+});
+
+test("R-F006: the asker is the raiser and its turn was stopped after the press: the result never reaches it, so sb sends it the wait_card after all", async () => {
+	const main = harness({ scope: { kind: "raised", by: "main-1" } });
+	main.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	const ac = new AbortController();
+	await main.callWith(ac.signal, { ids: ["W1"] }, (d) => (ac.abort(), d.options!.find((o) => o.includes("Deploy"))));
+	assert.deepEqual(main.notices, ['main-1: The boss chose "Deploy" on wait W1: The main deploys.'], "the raiser is told once, as for any press");
+	assert.equal(main.wait("wA", "W1").press!.main!.status, "delivered");
+	// a press whose result came back is not sent twice
+	const ok = harness({ scope: { kind: "raised", by: "main-1" } });
+	ok.plant("wA", { id: "W1", card: card(CHOICE) as never });
+	await ok.callWith(new AbortController().signal, { ids: ["W1"] }, /1\) Deploy/);
+	assert.deepEqual(ok.notices, []);
 });

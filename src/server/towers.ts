@@ -40,7 +40,7 @@ import { type ConversationInfo, sessionsRoot } from "./bossconv.ts";
 import { addExpect, clearExpect, lastNote, listRuns, readExpects, readNotes, readTimer } from "./towerrunstore.ts";
 import { runTool, type ServerTools } from "./runtools.ts";
 import { localeOf } from "../towerprompt/messages.ts";
-import { type PressDoor, pressRequest } from "./waitpress.ts";
+import { lateNotice, type PressDoor, pressRequest } from "./waitpress.ts";
 import { type Entry, hasWaitOn, markShown, memoryRequest, memorySection, memorySummary, memoryTool, noteMessage, readMemory } from "./towermemory.ts";
 import { openSeen, type Seen } from "./towerseen.ts";
 import { readTowerRuns } from "./towerruns.ts";
@@ -1232,10 +1232,10 @@ export function createTowers(o: TowersOptions): Towers {
 		memory: (workspace, json, via) => {
 			// The head's constant key reaches head/ whether or not a head service stands (towerstore.ts `HEAD_KEY`).
 			if (workspace !== HEAD_KEY && !services.has(workspace)) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
-			if (json.op === "press") {
+			if (json.op === "press" || json.op === "wait-notice") {
 				const l = workspace === HEAD_KEY ? headLive() : services.get(workspace);
 				if (!l) return Promise.resolve({ status: 409, body: { error: "refused", reason: "The tower service is not running, so nothing can be pressed" } });
-				return pressRequest({
+				return (json.op === "press" ? pressRequest : lateNotice)({
 					slot, now, log, locale: localeOf(o.env), autoOn: () => o.auto?.view().on === true,
 					live: async (id) => (await l.reach!.read()).sessions.some((x) => x.id === id),
 					send: (to, text, wait) => l.reach!.post(to, text, "wait_card", "session", false, undefined, undefined, { wait }),

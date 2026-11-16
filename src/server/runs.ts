@@ -290,6 +290,8 @@ interface Svc {
 	wake?: ReturnType<typeof setTimeout>;
 	/** When `wake` fires. */
 	wakeAt?: number;
+	/** The wake was held by the boss's answering: a hold's end does not start a run before the wake's own time (a milestone's wait), and the timer keeps the watcher's pace till then. */
+	watched?: boolean;
 	timer?: ReturnType<typeof setTimeout>;
 	crashes: number[];
 	/** The last local start failed because the standing pane runs a program of the boss's (its names): a held service starts again when the pane is free (standing.ts). */
@@ -447,8 +449,8 @@ export function createRuns(o: RunsOptions) {
 		if (svc.wake && svc.wakeAt! <= due && svc.wakeAt! >= held) return;
 		clearTimeout(svc.wake);
 		svc.wakeAt = due;
-		// A held wake is looked at again at the watcher's pace, and the hold is read off the clock then: no run begins while it stands, however late or early the timer fires.
-		svc.wake = setTimeout(() => ((svc.wake = undefined), now() < heldUntil(svc) ? poke(svc) : void begin(svc).catch((cause: Error) => (error("run-begin", cause.message), (svc.state = "standing")))), held > at ? Math.min(due - at, t.watch) : due - at);
+		// A held wake is looked at again at the watcher's pace, and the hold is read off the clock then: no run begins while it stands, however late or early the timer fires, and none before the wake's own time (`due`) once it lapsed.
+		svc.wake = setTimeout(() => ((svc.wake = undefined), now() < heldUntil(svc) || (svc.watched && due - at > t.wake && now() < due) ? poke(svc) : ((svc.watched = false), void begin(svc).catch((cause: Error) => (error("run-begin", cause.message), (svc.state = "standing"))))), ((svc.watched ||= held > at) && (held > at || due - at > t.wake)) ? Math.min(due - at, t.watch) : due - at);
 		svc.wake.unref();
 	};
 	const release = () => {

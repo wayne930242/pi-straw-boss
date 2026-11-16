@@ -389,7 +389,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// `/boss wait` in a run's own pane (todo #144 task 3; measured) 564 to 602 (+38): the token-less press (`tower-memory` with via run-pane), the here-marked picker, and the widget that follows the poll digest. Cap = measured.
 	// Role section off the roster (2026-11-16; measured) 602 to 613 (+11): a head run's brief in two texts (`claim.live`), given as a message at a turn's start and again after a compaction, and kept across a /reload. Cap = measured.
 	// boss_wait_ask (2026-11-16, docs/specs/2026-11-16-wait-cards-flow.md C and D4; measured): runmode.ts 613 to 627 (+14: the registration for a local and a head run with their scope and the two refusals, `bossDoor` (where the boss's last words in the run came from, set at his typed input and at a boss event by its `door`), and `paneAsk`, the session's request both `/boss wait` and the tool send from this pane). Cap = measured.
-	assert.ok(count("src/runmode.ts") <= 627, `src/runmode.ts has ${count("src/runmode.ts")} lines`);
+	// R-F001 (2026-11-16 review fix; measured): runmode.ts 627 to 629 (+2: when the boss's last words at the pane were said, so a run stops counting them after 10 minutes).
+	assert.ok(count("src/runmode.ts") <= 629, `src/runmode.ts has ${count("src/runmode.ts")} lines`);
 	// Todo #31: runallow.ts is the list of a local run's tools and the rule that refuses the rest and the paths of the state folder (the server passes it to pi, runmode.ts enforces it); it has its own figure; 63 to 75 for the path arguments by tool, the UNC refusal, and `refusedForRun` (R31 review).
 	assert.ok(count("src/runallow.ts") <= 81, `src/runallow.ts has ${count("src/runallow.ts")} lines`);
 	// T4: towercmd.ts is `/boss tower`'s subcommands (status, parked, retry, deliver, drop, leave, new, the tower prompt's words for them); it has its own figure.
