@@ -490,8 +490,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (claim.live === undefined || claim.live === briefSent) return;
 		return { message: liveBrief(claim.live) };
 	});
-	// A compaction folds the brief into its summary with the rest: the session is given it again, behind the summary (stored when idle, before the next model call when a turn is under way).
-	pi.on("session_compact", () => void (mode === "run" && claim?.live !== undefined && briefSent !== undefined && pi.sendMessage(liveBrief(claim.live), { deliverAs: "steer" })));
+	// A compaction folds the brief into its summary with the rest: the session is given it again, behind the summary (stored without a turn of its own; steered into the turn only when the compaction retries one).
+	pi.on("session_compact", (event) => void (mode === "run" && claim?.live !== undefined && briefSent !== undefined && pi.sendMessage(liveBrief(claim.live), event.willRetry ? { deliverAs: "steer" } : { triggerTurn: false })));
 	/** A pane the server owns: this pi quits with the server's reason. */
 	const quitPane = (context: ExtensionContext, reason?: string) => {
 		mode = "run";

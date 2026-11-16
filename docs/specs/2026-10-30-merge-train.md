@@ -35,6 +35,8 @@ A coordinator's anchor before handoff is its review (P0 and P1 clear) plus behav
 | `prompts/planning.md` | The coordinator's anchor and where the other gates run. |
 | `prompts/tower-run.md`, `prompts/tower.md` | A `shared` merge request from an integration app goes to the project's one integrator, opened when absent, closed when idle. |
 
+2026-11-16: `prompts/main.md` now exempts the integrator only for claiming a pre-dev branch; no main merges to base.
+
 Word budgets (tests/prompts.test.ts) stay unchanged: main.md 484, tower.md 380, planning.md 650. The new text was fitted by trimming other words in the same prompts.
 
 ## Not built (phase 2)

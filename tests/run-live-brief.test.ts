@@ -4,6 +4,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { BRIEF_MARK } from "../src/eventmarks.ts";
+import { eventText } from "../src/runmode.ts";
 import { type Answer, type Request, rig as makeRig, scratchRoot } from "./run-rig.ts";
 import { until } from "./server-world.ts";
 
@@ -122,4 +123,26 @@ test("a compaction folds the brief into its summary, so the session is given it 
 	await until(() => turns.length === 2, "the second turn");
 	assert.equal(count(turns[1]!.messages, BRIEF_MARK), 2, "the one of the claim and the one after the compaction");
 	assert.equal(briefs(), 2);
+});
+
+test("a threshold compaction at the end of a turn stores the brief behind the summary and starts no model turn of its own", async () => {
+	const srv = server();
+	srv.push("e1", "EVENT-ONE");
+	const r = await makeRig(root, (q) => srv.ask(q), sessions);
+	// The faux provider estimates usage from the text (4 characters a token): this reply fills the 100k window past the compaction threshold. The compaction of a split turn asks the model twice for a summary.
+	r.faux.setResponses([() => fauxAssistantMessage("x".repeat(400_000)), () => fauxAssistantMessage("SUMMARY"), () => fauxAssistantMessage("SUMMARY-PREFIX"), () => fauxAssistantMessage("UNSOLICITED")]);
+	const briefs = () => r.session.messages.filter((m) => (m as { details?: { brief?: boolean } }).details?.brief === true).length;
+	await until(() => r.faux.state.callCount >= 3 && briefs() === 1 && !r.session.isStreaming, "the turn, its summaries, and the brief behind them");
+	await new Promise((resolve) => setTimeout(resolve, 200));
+	assert.equal(r.faux.state.callCount, 3, "the turn and its two summaries: no unsolicited fourth call");
+	const order = r.session.messages.map((m) => ((m as { details?: { brief?: boolean } }).details?.brief ? "brief" : (m as { role: string }).role));
+	assert.equal(order.at(-1), "brief", "stored after the summary");
+	assert.ok(order.indexOf("compactionSummary") < order.indexOf("brief"));
+});
+
+test("no event reads as a brief: every kind of eventText opens with a marker of its own, never BRIEF_MARK", () => {
+	for (const kind of ["boss", "notice", "timer", "intercom"] as const) for (const flag of [undefined, "crash" as const]) {
+		const text = eventText({ kind, text: "x", ...(flag ? { flag } : {}), from: { id: "main-1", name: "docs-main" } });
+		assert.ok(!text.startsWith(BRIEF_MARK), `${kind}${flag ? "+crash" : ""} opens with the brief marker`);
+	}
 });
