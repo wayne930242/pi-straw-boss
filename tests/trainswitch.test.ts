@@ -61,7 +61,7 @@ test("on: the assembled text is today's text minus the markers; the files stay w
 		assert.doesNotMatch(text, MARKS, name);
 		assert.equal(text, strip(raw(name), false));
 	}
-	assert.match(set.read("main"), /unless your kind is `integrator`/);
+	assert.match(set.read("main"), /never claim a pre-dev branch unless your kind is `integrator`/);
 	assert.match(set.read("tower-run"), /car slip/);
 	assert.doesNotMatch(set.read("main"), /integration is off/i);
 	assert.ok(existsSync(join(PROMPT_DIR, "integrator.md")));
@@ -175,7 +175,7 @@ test("a session with the switch on in config.json only is off too; with it set t
 	const on = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t2", env: { STRAW_BOSS_INTEGRATION: "on" }, deps: { stateDir: dir } });
 	await on.start();
 	await on.promote();
-	assert.match((await on.run())["straw-boss"]!, /unless your kind is `integrator`/);
+	assert.match((await on.run())["straw-boss"]!, /never claim a pre-dev branch unless your kind is `integrator`/);
 });
 
 test("the train's ledger folder follows PI_CODING_AGENT_DIR, and no prompt names ~/.pi", async () => {

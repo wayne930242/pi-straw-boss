@@ -135,7 +135,7 @@ test("train stages: apps-config declares stages and targets, the integrator veri
 
 test("merge train: main hands integration cars over with why shared, planning states the principle, and the tower forwards a shared merge request to the one integrator", () => {
 	const main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
-	for (const term of ["`integration`", "unless your kind is `integrator`", "never merge to its base or claim a pre-dev branch", "`why: shared`", "waits for sb's car notice", "the done report still goes to whoever asked", "paths outside the project"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	for (const term of ["`integration`", "never claim a pre-dev branch unless your kind is `integrator`", "never merge to its base;", "`why: shared`", "waits for sb's car notice", "the done report still goes to whoever asked", "paths outside the project"]) assert.ok(main.includes(term), `main.md names ${term}`);
 	const plan = readFileSync(`${PROMPT_DIR}/planning.md`, "utf8");
 	for (const term of ["`Light checks`", "once, by the integrator", "`integrating`'s Principle"]) assert.ok(plan.includes(term), `planning.md names ${term}`);
 	for (const file of ["tower.md", "tower-run.md"]) {

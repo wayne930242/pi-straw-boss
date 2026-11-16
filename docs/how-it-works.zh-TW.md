@@ -978,7 +978,7 @@ Straw Boss 不指名任何 skill 套件。火車的 prompt 假設 `integrating` 
 
 #### 整合員
 
-它的 prompt 只保留屬於 Straw Boss 的部分：角色（是主智慧體，不是塔台，也是「絕不合併進整合基底」的例外）、名稱 `integ <project>`（最多 16 個字元，絕不改名）、狀態資料夾裡 `trains/<project>/<app>.json` 的帳本（`$PI_CODING_AGENT_DIR/straw-boss`，預設 `~/.pi/agent/straw-boss`；角色 prompt 寫出解析後的路徑）、每列成形中的火車一個 `train` todo（防護會檢查它；車場由它畫出）、以及塔台呼叫（發車時帶 `train:` 區塊的 `shared`；`blocked`；閒置的 `milestone`）。
+它的 prompt 只保留屬於 Straw Boss 的部分：角色（是主智慧體，不是塔台，也是唯一可以認領 `pre-dev` 分支的主智慧體；它和所有主智慧體一樣，從不自己合併進整合基底）、名稱 `integ <project>`（最多 16 個字元，絕不改名）、狀態資料夾裡 `trains/<project>/<app>.json` 的帳本（`$PI_CODING_AGENT_DIR/straw-boss`，預設 `~/.pi/agent/straw-boss`；角色 prompt 寫出解析後的路徑）、每列成形中的火車一個 `train` todo（防護會檢查它；車場由它畫出）、以及塔台呼叫（發車時帶 `train:` 區塊的 `shared`；`blocked`；閒置的 `milestone`）。
 
 <details>
 <summary>細節</summary>
