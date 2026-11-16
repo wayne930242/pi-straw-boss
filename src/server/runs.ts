@@ -1310,7 +1310,8 @@ export function createRuns(o: RunsOptions) {
 		a.idleSince = undefined;
 		a.steeredIdle = false;
 		a.offered.set(next.id, next);
-		return { ok: true as const, event: { id: next.id, kind: next.kind, text: next.text, from: next.from, at: next.at, ...(next.flag ? { flag: next.flag } : {}) } };
+		// `door` and `press`: where the boss's words came from, and that an event is his button, not words (`boss_wait_ask` draws a card only while his last words in the run came from this pane; runmode.ts).
+		return { ok: true as const, event: { id: next.id, kind: next.kind, text: next.text, from: next.from, at: next.at, ...(next.flag ? { flag: next.flag } : {}), ...(next.door ? { door: next.door } : {}), ...(next.press ? { press: true as const } : {}) } };
 	}
 	/** The run says an event is in its session. */
 	function taken(req: Record<string, unknown>) {
@@ -1588,10 +1589,10 @@ export function createRuns(o: RunsOptions) {
 			if (!pendingTakeovers) herdrLostAt = undefined;
 		},
 		/** The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`, the tower prompt): an event ahead of the rest; a held service wakes again. */
-		boss(workspace: string, text: string, from = "the boss", opts: { present?: boolean; press?: true; requester?: Requester } = {}): QueuedEvent {
+		boss(workspace: string, text: string, from = "the boss", opts: { present?: boolean; press?: true; door?: "pane"; requester?: Requester } = {}): QueuedEvent {
 			const svc = services.get(workspace);
 			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
-			const written = append(slot, svc.ref.record(), { kind: "boss", from: { id: "boss", name: from }, text, at: iso(now()), ...(opts.press ? { press: true as const } : {}), ...(opts.requester ? { requester: opts.requester } : {}) });
+			const written = append(slot, svc.ref.record(), { kind: "boss", from: { id: "boss", name: from }, text, at: iso(now()), ...(opts.press ? { press: true as const } : {}), ...(opts.door ? { door: opts.door } : {}), ...(opts.requester ? { requester: opts.requester } : {}) });
 			if (svc.state === "held") (svc.state = svc.run ? "running" : "standing", (svc.crashes = []), (svc.paneBusy = undefined), (svc.notices = svc.notices.filter((n) => n.id !== "loop" && n.id !== "start")));
 			// At the tower prompt the boss is at the pane: the run this wakes is one they are in, from its claim (or from now, when a run is live already).
 			if (opts.present) {

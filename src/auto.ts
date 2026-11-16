@@ -14,8 +14,8 @@ import { secretShaped } from "./server/waitcard.ts";
 // agent why in words the code writes. It is registered before the child return, so it holds in mains, members, trains, subagents, and the standing panes' hand runs. The state changes only through the server (automode.ts):
 // this module reads the file, and acts on a change only after the server says the write is its own (§1, task 3).
 
-/** The tools whose call waits for the boss: pi-code's `question` (drawn with ui.custom), rpiv's ask_user_question, pi-robot-hand's two, and Straw Link's approval. */
-const WAITING = new Set(["ask_user_question", "question", "robot_hand", "secret_drop", "link_request"]);
+/** The tools whose call waits for the boss: pi-code's `question` (drawn with ui.custom), rpiv's ask_user_question, pi-robot-hand's two, Straw Link's approval, and sb's own card dialog (waitask.ts, which also ends an open one when auto mode starts). */
+const WAITING = new Set(["ask_user_question", "question", "robot_hand", "secret_drop", "link_request", "boss_wait_ask"]);
 /** pi-mcp-adapter's `mcp` waits for a browser login only for these actions. */
 const MCP_LOGIN = new Set(["auth-start", "auth-complete"]);
 const POLL_MS = 2000;

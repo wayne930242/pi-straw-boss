@@ -9,6 +9,7 @@ import { createHereMark } from "./heremark.ts";
 import { every } from "./lanface.ts";
 import { memoryLang } from "./memorycmd.ts";
 import { runWaitCommand } from "./waitcmd.ts";
+import { registerWaitAsk } from "./waitask.ts";
 import type { DigestRow } from "./server/waitlist.ts";
 import { waitBlock, waitHint } from "./towerprompt/waitblock.ts";
 import { createApproval } from "./link/approval.ts";
@@ -67,7 +68,7 @@ interface Peer { device: string; label: string; short: string; team: string; tea
 interface Claim { token: string; kind: "local" | "ally" | "head"; level?: string; peer?: Peer; run: string; workspace: string; identity: string; label: string; brief: string; live?: string; hand?: boolean }
 /** A pi without the flag in a standing pane: the server says whether to quit, wait, or take the pane as a run of the boss's own. */
 type Found = { role: "none" | "quit" | "hand"; reason?: string; claim?: Claim };
-interface Event { id: string; kind: string; text: string; from?: { id: string; name?: string }; flag?: string }
+interface Event { id: string; kind: string; text: string; from?: { id: string; name?: string }; flag?: string; door?: string; press?: boolean }
 type Command = { type: "steer"; text: string } | { type: "quit" } | { type: "confirmed"; dialogId: string; allow: boolean };
 
 const NO_SUBAGENTS = "A tower run dispatches no subagents: one would outlive the run. Open a main for the work with boss_open_main, or route it to the main that owns it.";
@@ -114,6 +115,9 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	let quitOrdered = false;
 	// `briefSent`: the live brief (`claim.live`) the session was last given as a message; a turn that starts with another one is given it, once.
 	let registered = false, bossSign: number | undefined, bossTyped = false, bossTurn = false, signing: Promise<unknown> | undefined, briefSent: string | undefined;
+	// Where the boss's last words in this run came from: this pane (typed in this pi, or written at the pane's own tower prompt: the server marks that event `door: "pane"`) or elsewhere (the GUI's composer, another pi). `boss_wait_ask`
+	// draws a card only while it is this pane (docs/specs/2026-11-16-wait-cards-flow.md, D4): a boss in the GUI has the card there, and a dialog in a terminal he does not see answers nothing. A press is his button, not his words, and moves nothing.
+	let bossDoor: "pane" | "away" | undefined;
 	// The pane-role ask of a pi with STRAW_BOSS_ROLE=tower that did not come back within `towerAskMs` is still in flight: the session is undecided, neither a run nor a normal session (so it joins nothing, hands nothing
 	// over and quits nothing) until the answer comes. `epoch` counts session starts and shutdowns, so an answer for a session that is gone is released instead of acted on; `afterNormal` holds the session start that waits for a `none`.
 	let epoch = 0, deciding: (() => void)[] | undefined;
@@ -238,12 +242,13 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	// `/boss wait` in the run's own pane (waitcmd.ts): the one /boss command a run takes, typed by the boss. It makes the requests a session makes (the hello secret, never this run's token: `tower-memory` and `boss-waits` stay refused to a run
 	// token) and draws its dialogs terminal-only, under the here mark. The run's model is given no tool that presses, and an event reaches it as a message, never as typed input, so nothing a model or a peer writes can run the command.
 	const bossHere = createHereMark({ ask: (request) => ask(request), pane: env.HERDR_PANE_ID ?? null, every: cfg.face?.every ?? every });
+	// A session's request from this pane's dialogs: the boss's reply to a card names this pane as its sender, and one to this run's own tower says it was written here (`door`), as the pane's prompt says of its posts.
+	const paneAsk = (request: Record<string, unknown>) => ask(request.cmd === "tower-event" || request.cmd === "head-event" ? { ...request, session: env.PI_INTERCOM_SESSION_ID, pane: env.HERDR_PANE_ID, pid: process.pid, ...(request.cmd === "tower-event" && request.workspace === claim?.workspace ? { door: "pane" } : {}) } : request);
 	async function waits(args: string, context: ExtensionContext): Promise<void> {
 		if (mode !== "run" || !claim || claim.kind === "ally") return tell("An ally run takes no /boss command: the boss is not its sender, and it ends with its message.", "warning");
-		const who = { session: env.PI_INTERCOM_SESSION_ID, pane: env.HERDR_PANE_ID, pid: process.pid };
 		await runWaitCommand(args, {
 			lang: memoryLang(env), interactive: context.hasUI, own: claim.workspace, tell, ui: context.ui, here: bossHere, now: cfg.now, workspaces: () => workspaces(cfg.run), tabs: (workspace) => tabs(cfg.run, workspace),
-			ask: (request) => ask(request.cmd === "tower-event" || request.cmd === "head-event" ? { ...request, ...who } : request),
+			ask: paneAsk,
 			memory: async (workspace, json) => {
 				const r = await ask({ cmd: "tower-memory", workspace, json, via: "run-pane" });
 				return { ok: r.ok, ...(typeof r.error === "string" ? { error: r.error } : {}), ...(typeof r.status === "number" ? { status: r.status } : {}), ...(typeof r.body === "object" && r.body !== null ? { body: Object.fromEntries(Object.entries(r.body)) } : {}) };
@@ -292,6 +297,13 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		tools.addTowerComms();
 		if (claim!.kind === "local") registerLinkRequest();
 		if (claim!.kind === "head") (registerHeadSend(pi, tool), registerBossAuto(pi, tool, confirmAuto));
+		// `boss_wait_ask` (waitask.ts): a local run shows its tower's cards, the head's run any tower's. Registered here and not proxied to `run-tool`, because it draws a dialog: its requests are a session's (the hello secret), never this
+		// run's token. An ally run has none: the boss is not its sender. A hand run's turn that an event started is no turn of his either.
+		if (claim!.kind !== "ally") registerWaitAsk(pi, {
+			lang: memoryLang(env), scope: () => (claim!.kind === "head" ? { kind: "all" } : { kind: "tower", workspace: claim!.workspace }), auto: { on: () => s.autoOn?.() === true }, ask: paneAsk, here: bossHere, now: cfg.now, every: cfg.face?.every ?? every, tell,
+			refusal: () => (claim?.hand && !bossTurn ? "In the boss's own pi (a hand run) boss_wait_ask works only in a turn the boss started; the card stays open for the GUI and /boss wait."
+				: bossDoor !== "pane" ? "The boss is not at this pane: his last words in this run came from the GUI or another session, or he has not spoken in it. The card stays open for the GUI and /boss wait; a dialog here would wait where he does not look." : undefined),
+		});
 		// The memory of the tower (towermemory.ts) is a local run's, and the head's: the server refuses the tool to an ally run by its kind as well.
 		if (claim!.kind !== "ally") pi.registerTool({ name: "tower_memory", label: "tower_memory", description: MEMORY_DESCRIPTION, parameters: memoryParameters(), execute: async (id, params) => ({ content: [{ type: "text", text: (await tool("tower_memory", params, id)).text }], details: undefined }) });
 		if (claim!.kind !== "head") pi.registerTool({
@@ -375,6 +387,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		// Idle and nothing queued are read again at the moment of delivery, after the round trip: a run that got busy meanwhile is offered the event again at its next idle poll.
 		if (!idle() || ctx?.hasPendingMessages()) return;
 		startedBy = event.id;
+		if (event.kind === "boss" && !event.press) bossDoor = event.door === "pane" ? "pane" : "away";
 		send(eventText(event), { id: event.id, kind: event.kind, ...(event.from ? { from: event.from } : {}) });
 		await call({ cmd: "run-taken", id: event.id }).catch((error: Error) => tell(`Straw Boss: the server did not take note of an event: ${error.message}`, "warning"));
 	};
@@ -449,6 +462,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (mode !== "run" || claim?.kind === "ally" || !claim || event.source !== "interactive") return;
 		// Their words protect the turn from the abort whether or not the server heard them (it may be the very thing that is away): the flag is not undone by a failed request, the rate-limit mark is.
 		bossTyped = true;
+		bossDoor = "pane";
 		// The turn their words start is theirs: a hand run holds no guard in it (below). A steer typed in the middle of a turn an event started (pi runs this handler before it queues the words) does not make that turn theirs.
 		if (idle()) (bossTurn = true, (startedTyped = { text: event.text, seq: ++typedSeq }));
 		if (bossSign !== undefined && cfg.now() - bossSign < BOSS_SIGN_MS) return;

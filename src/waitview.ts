@@ -87,7 +87,8 @@ export function cardTitle(lang: Lang, auto: boolean, tower: Tower, e: ViewEntry)
 		...(e.parked ? [w.stateParked] : []), ...state, ...(auto && c.type === "secret" && !e.press?.secretAsked ? [w.autoSecret] : []),
 	].join("\n");
 }
-function pressedWord(lang: Lang, e: ViewEntry): string {
+/** What the press on a card says it did: the option chosen, done, declined, or restated. */
+export function pressedWord(lang: Lang, e: ViewEntry): string {
 	const m = memoryWords(lang), p = e.press!;
 	return p.act === "choose" ? m.didChose(e.card?.options?.[p.option ?? -1]?.label ?? "?") : p.act === "decline" ? m.didDecline : p.act === "restate" ? m.didRestate : m.didDone;
 }

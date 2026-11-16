@@ -288,7 +288,8 @@ test("the return list gains the watch's section: readings, calm ones, wakes, the
 });
 
 test("the head needs no new tool for the watch, and its brief says whose notice it is", () => {
-	assert.deepEqual([...HEAD_TOWER_TOOLS], ["tower_list", "board_read", "tower_send", "tower_memory", "tower_done", "boss_server", "boss_auto"]);
+	// `boss_wait_ask` (2026-11-16, tests/wait-ask.test.ts) is the head's way to show the boss his cards; the watch uses none of it.
+	assert.deepEqual([...HEAD_TOWER_TOOLS], ["tower_list", "board_read", "tower_send", "tower_memory", "tower_done", "boss_server", "boss_auto", "boss_wait_ask"]);
 	for (const tool of ["tower_send", "tower_memory", "board_read", "tower_list"]) assert.ok(WATCH_RUNBOOK.includes(tool) && WATCH_BRIEF.includes(tool));
 	const head = { identity: "sb-head", woken: "10:00", boss: false, chapter: { n: 1, since: "2026-11-09T00:00:00Z", turns: 0, resumed: false }, workspaces: [], asks: [], tools: ["- y"], flags: [] };
 	assert.ok(buildHeadBrief({ ...head, auto: `Auto mode: on\n${WATCH_BRIEF}` }).includes('An "Auto watch" notice is the sb server\'s own'));

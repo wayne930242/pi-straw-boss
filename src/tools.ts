@@ -37,10 +37,10 @@ export const linkRequestParameters = () => Type.Object({
 });
 
 /** Every tool sb registers, all of them after the child return (index.ts): a role that lists one fails `/boss roles-check` (rolescheck.ts). tests/roles-check.test.ts pins it to the recorded registry. */
-export const PARENT_ONLY: readonly string[] = ["board_read", "board_set", "boss_auto", "boss_broadcast", "boss_close_main", "boss_duty", "boss_open_main", "boss_promote", "boss_rename", "boss_server", "boss_status", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send", "train_car"];
+export const PARENT_ONLY: readonly string[] = ["board_read", "board_set", "boss_auto", "boss_broadcast", "boss_close_main", "boss_duty", "boss_open_main", "boss_promote", "boss_rename", "boss_server", "boss_status", "boss_wait_ask", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send", "train_car"];
 
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, promote, digest, closeMain, link, server, towerCall, boardFill }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill }) {
+export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, promote, digest, closeMain, link, server, towerCall, boardFill, waitAsk }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill; /** Registers `boss_wait_ask` for a joined session (waitask.ts `mainWaitAsk`); a tower run registers its own (runmode.ts). */ waitAsk?: () => void }) {
 	// A main says why it calls (required); a tower's call is a blocked one, so it may leave it out and the header says unspecified.
 	const whyType = Type.Union([Type.Literal("milestone"), Type.Literal("shared"), Type.Literal("blocked")], { description: "Why you call: milestone, shared, or blocked. The tower reads it in the header." });
 	const whyField = towerCall || role() === "tower" ? Type.Optional(whyType) : whyType;
@@ -105,6 +105,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 					return { content: [{ type: "text", text }], details: { action: params.action } };
 				},
 			});
+			if (!s.isTower) waitAsk?.();
 			// The work board fills itself from the main's todo list and name (boardfill.ts); board_set overrides it, whole, until the todos move, and `auto` hands it back. Nothing here names another session's file.
 			if (!s.isTower) tool("board_set", "Override this main agent's work board entry. The board fills itself from your todo list and your name; this replaces it with one line of what you work on now and a short checklist with done marks, until your todos move. `auto: true` (with no text) hands the board back to auto-fill at once. `clear: true` (with no text) deletes your entry: use it when your work is finished or shelved, because a line left on the board reads as current work; auto-fill does not write it again until your todo list or name changes. Towers on this computer and, for a Straw Link team bound to your project, your teammates' towers read it; allies get an auto-filled entry as its line and done count only, and a board_set entry whole. Terse agent language; no secrets, credentials, customer data, or paths outside the project. It is not a report: the done report still goes to whoever asked. Only a tab's main agent may write.",
 				Type.Object({

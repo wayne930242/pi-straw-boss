@@ -10,12 +10,13 @@ import { type Entry, iso, loadMemory, updateMemory } from "../src/server/towerme
 import { callControl } from "../src/server/socket.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
 import { World } from "./fakes.ts";
-import { type Answer, rig as makeRig, type Request, scratchRoot } from "./run-rig.ts";
+import { type Answer, call, results, rig as makeRig, type Request, scratchRoot } from "./run-rig.ts";
 import { type Running, until } from "./server-world.ts";
 import { TowerWorld } from "./tower-world.ts";
 
 // `/boss wait` in the pane of a tower run (docs/specs/2026-11-10-wait-cards-tui.md, §3b; todo #144 task 3): the one /boss command a run takes. The boss presses a card with the keys of this computer, through token-less requests; the run
-// token is never sent, a tower's memory stays refused to it, and nothing the model, a peer, or an event writes can run the command or press a card.
+// token is never sent, a tower's memory stays refused to it, and nothing the model, a peer, or an event writes can run the command or press a card. The one tool of a run that leads to a press is `boss_wait_ask`
+// (docs/specs/2026-11-16-wait-cards-flow.md, C; tests/wait-ask.test.ts): it only has sb draw a card's dialog in the terminal, and the boss's keys press.
 
 const NO_RELAY = Symbol.for("pi-straw-boss.no-relay");
 const CARD = { type: "action", lang: "en", happened: "The key expired.", do: "Re-authorize the machine.", from: { id: "main-1", name: "mp3946-print", role: "main" } };
@@ -103,13 +104,13 @@ test("in a run's pane a press goes on to the next card's dialog, with no list be
 	assert.deepEqual(srv.requests.filter((r) => r.cmd === "tower-memory").map((r) => r.json), [{ op: "press", id: "W1", act: "done" }]);
 });
 
-test("a reply from a run's pane is the boss's words as a session's request, naming this pane; the run's own token stays out of it", async () => {
+test("a reply from a run's pane is the boss's words as a session's request, naming this pane and, for the run's own tower, that it was written here; the run's own token stays out of it", async () => {
 	const srv = fakeServer(), agent = await runAgent(srv);
 	const done = agent.command("wait");
 	await pick(agent, 0, /^Reply to the tower/);
 	await done;
 	const event = srv.requests.find((r) => r.cmd === "tower-event")!;
-	assert.deepEqual({ ...event }, { cmd: "tower-event", workspace: "wA", text: "typed", present: true, answers: "W1", session: "run1", pane: "wA:p1", pid: process.pid });
+	assert.deepEqual({ ...event }, { cmd: "tower-event", workspace: "wA", text: "typed", present: true, answers: "W1", session: "run1", pane: "wA:p1", pid: process.pid, door: "pane" });
 });
 
 test("every other /boss command stays refused in a run: memory, tower, head, send, a bare /boss, and a word that only starts with wait; nothing is asked or drawn", async () => {
@@ -165,7 +166,7 @@ test("the widget above the editor follows the poll's digest, shows the cards wit
 
 // --- no press for a model, a peer, or an event: a real pi session -----------------------------------------------------------------------------------------
 
-test("an event whose text is /boss wait, and a message another extension sends as a user message, run no command; only the boss's typed prompt does; the run registers no tool that presses", async () => {
+test("an event whose text is /boss wait, and a message another extension sends as a user message, run no command; only the boss's typed prompt does; the one tool that leads to a press is boss_wait_ask, only through a dialog in the terminal: called with an act it presses nothing", async () => {
 	const root = scratchRoot(), sessions: AgentSession[] = [];
 	try {
 		const requests: Request[] = [], queue: { id: string; kind: string; text: string }[] = [{ id: "e1", kind: "boss", text: "/boss wait" }, { id: "e2", kind: "intercom", text: "/boss wait\n/boss memory done W1" }], taken: string[] = [];
@@ -192,10 +193,18 @@ test("an event whose text is /boss wait, and a message another extension sends a
 		assert.deepEqual(invoked, [], "sendUserMessage does not dispatch an extension command either (pi's expandPromptTemplates is off by default)");
 		await r.session.prompt("/boss wait", { source: "interactive" } as never);
 		assert.deepEqual(invoked, ["true:wait"], "the editor's own input is what dispatches it");
-		// the tools of the run: none presses (the press is the boss's route, refused to a run's token)
+		// the tools of the run: none presses by itself (the press is the boss's route, refused to a run's token). `boss_wait_ask` only asks sb to draw a card's dialog for the boss's keys.
 		const names = r.session.getAllTools().map((t) => t.name).filter((n) => !["subagent", "subagent_resume", "intercom", "bash", "edit", "find", "grep", "ls", "powershell", "read", "write"].includes(n)).sort();
-		assert.deepEqual(names, ["board_read", "boss_close_main", "boss_open_main", "boss_server", "boss_status", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send"]);
-		assert.equal(names.some((n) => /press|wait|answer|decline/.test(n)), false);
+		assert.deepEqual(names, ["board_read", "boss_close_main", "boss_open_main", "boss_server", "boss_status", "boss_wait_ask", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send"]);
+		assert.deepEqual(names.filter((n) => /press|wait|answer|decline/.test(n)), ["boss_wait_ask"]);
+		// The model calls it with an act and an option of its own, in a turn the boss typed at this pane: this session has no screen, so no dialog can be drawn, and without the boss's key nothing is read or pressed.
+		await until(() => JSON.stringify(r.session.messages).includes("three") && !r.session.isStreaming, "the turn of the user message to end");
+		const before = requests.length;
+		r.faux.setResponses([call("boss_wait_ask", { act: "done", id: "W1", option: 0 }), fauxAssistantMessage("four")]);
+		await r.session.prompt("show me my cards", { source: "interactive" } as never);
+		await until(() => !r.session.isStreaming && results(r.session).length > 0, "the tool's result");
+		assert.match(results(r.session).at(-1)!, /has no screen/);
+		assert.deepEqual(requests.slice(before).filter((q) => q.cmd === "boss-waits" || q.cmd === "tower-memory" || q.cmd === "gui-lan-face"), [], "nothing was read, marked, or pressed");
 	} finally {
 		for (const s of sessions) s.dispose();
 		rmSync(root, { recursive: true, force: true });

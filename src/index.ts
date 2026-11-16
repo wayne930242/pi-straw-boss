@@ -36,6 +36,7 @@ import { createStashing } from "./stashing.ts";
 import { createBossPaths } from "./bosspaths.ts";
 import { type Config, createKit, type Deps } from "./state.ts";
 import { createTools } from "./tools.ts";
+import { mainWaitAsk } from "./waitask.ts";
 import { createTower } from "./tower.ts";
 import { registerTrainGuard, registerTrainSigns, type TrainGuard } from "./trainguard.ts";
 import { carLink, trainCarTool } from "./traincar.ts";
@@ -93,7 +94,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const addTrainCar = trainCarTool(kit, () => trainGuard, cars, (text) => reach.callTower(text, undefined, false, "blocked"));
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote(), tools.addDuty(), addTrainCar()), onMain: link.look, control: () => control });
 		// `look` (above) starts and upgrades the sb server (src/server/) and is the way to it; a session that is no part of that has none.
-		const tools = createTools(kit, { ...reach, mainDuty, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), link, server: look, boardFill: createBoardFill(kit) });
+		const tools = createTools(kit, { ...reach, mainDuty, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), link, server: look, boardFill: createBoardFill(kit), waitAsk: () => mainWaitAsk(kit, { ask: cfg.ask ?? look?.ask, here: (fn) => host.here(fn), auto }) });
 		const host = createHost(kit, { connected: membership.connected, ask: cfg.ask ?? look?.ask });
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck, turn: bridge.turn });
