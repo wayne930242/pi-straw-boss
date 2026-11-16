@@ -23,10 +23,10 @@ const BRIEF = "You are a run of the tower of workspace Alpha (wA); head tower: A
 
 type Digest = { id: string; type: string; do: string; from?: string; parked?: true }[];
 /** The server a run talks to: scripted, every request kept. */
-function fakeServer(over: { kind?: "local" | "head"; hand?: boolean; workspace?: string } = {}) {
+function fakeServer(over: { kind?: "local" | "head"; hand?: boolean; workspace?: string; cards?: number } = {}) {
 	const requests: Request[] = [];
 	let digest: Digest = [];
-	const waits = [{ workspace: over.workspace ?? "wA", label: "Alpha", own: true, waits: [{ id: "W1", text: CARD.do, at: new Date(Date.now() - 5 * 60_000).toISOString(), state: "open", card: CARD }] }];
+	const waits = [{ workspace: over.workspace ?? "wA", label: "Alpha", own: true, waits: Array.from({ length: over.cards ?? 1 }, (_, i) => ({ id: `W${i + 1}`, text: CARD.do, at: new Date(Date.now() - 5 * 60_000).toISOString(), state: "open", card: i ? { ...CARD, do: `Card ${i + 1}.` } : CARD })) }];
 	return {
 		requests, digest: (rows: Digest) => void (digest = rows),
 		ask: async (request: Request): Promise<Answer> => {
@@ -86,6 +86,21 @@ test("a local, a head, and a hand run press a card from their own pane through t
 		assert.deepEqual(open.map((r) => r.open), [true, false], "the here mark opened for the picker and dropped after it");
 		await agent.stop("reload");
 	}
+});
+
+test("in a run's pane a press goes on to the next card's dialog, with no list between; All cards returns to the list", async () => {
+	const srv = fakeServer({ cards: 2 }), agent = await runAgent(srv);
+	const done = agent.command("wait");
+	await pick(agent, 0, /Re-authorize/);
+	await pick(agent, 1, "I'm done");
+	await until(() => agent.dialogs.length > 2, "the next card's dialog");
+	assert.match(agent.dialogs[2]!.title, /^\[Alpha\] W2\n/, "the second card, not the list");
+	await pick(agent, 2, "All cards");
+	await until(() => agent.dialogs.length > 3, "the list");
+	assert.equal(agent.dialogs[3]!.title, "Waits for you (2)");
+	agent.dialogs[3]!.settle(undefined);
+	await done;
+	assert.deepEqual(srv.requests.filter((r) => r.cmd === "tower-memory").map((r) => r.json), [{ op: "press", id: "W1", act: "done" }]);
 });
 
 test("a reply from a run's pane is the boss's words as a session's request, naming this pane; the run's own token stays out of it", async () => {

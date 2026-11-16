@@ -24,7 +24,7 @@ export const WORDS = {
 		tag: (label: string) => `[${label}] `,
 		happened: "What happened", do: "What you do", where: "Where", run: "Run", after: "After that", secret: "Secret", raised: "Raised by", legacy: "An old free-text wait: it has no buttons.",
 		stateParked: "Parked for your return.", stateReplied: "You replied; the tower has not resolved it yet.", statePressed: (what: string) => `Pressed: ${what}.`,
-		done: "I'm done", skip: "Skip", back: "Back", restate: (tower: string) => `Ask ${tower} to rewrite it as a card`,
+		done: "I'm done", skip: "Skip", back: "Back", next: "Next card", all: "All cards", restate: (tower: string) => `Ask ${tower} to rewrite it as a card`,
 		secretStart: (name: string) => `Start entering (asks ${name} to open the entry box)`, secretDone: "I entered it",
 		reply: (tower: string) => `Reply to ${tower}`, switchTo: (name: string) => `Switch to ${name}'s tab`,
 		tower: "the tower", head: "the head tower", raiserFallback: "the raiser",
@@ -47,7 +47,7 @@ export const WORDS = {
 		tag: (label: string) => `［${label}］`,
 		happened: "發生了什麼", do: "你要做的", where: "在哪裡", run: "指令", after: "做完之後", secret: "密鑰", raised: "提出者", legacy: "舊式的自由文字等待：沒有按鈕。",
 		stateParked: "已暫放，等你回來。", stateReplied: "你已回覆，塔台還沒結案。", statePressed: (what: string) => `已按下：${what}。`,
-		done: "我做完了", skip: "略過", back: "返回", restate: (tower: string) => `請${tower}重寫成卡片`,
+		done: "我做完了", skip: "略過", back: "返回", next: "下一張", all: "全部卡片", restate: (tower: string) => `請${tower}重寫成卡片`,
 		secretStart: (name: string) => `開始輸入（請 ${name} 開啟輸入框）`, secretDone: "我輸入好了",
 		reply: (tower: string) => `回覆${tower}`, switchTo: (name: string) => `切到 ${name} 的分頁`,
 		tower: "塔台", head: "主塔台", raiserFallback: "提出者",
@@ -63,6 +63,8 @@ export const WORDS = {
 };
 
 export const raiserOf = (e: ViewEntry) => e.card?.from?.name;
+/** A card the boss can still press: it carries no press that is the last word (a secret card's first step is not one). */
+export const pending = (e: ViewEntry) => !(e.press && e.press.act !== "secret");
 export const towerWord = (lang: Lang, t: Tower) => (t.head ? WORDS[lang].head : WORDS[lang].tower);
 
 /** One row of the list: `［主塔台］需要你處理：<do>・由 <raiser>・12 分前`, with `［已暫放］` and `（你已回覆）` where they hold. */
@@ -90,9 +92,11 @@ function pressedWord(lang: Lang, e: ViewEntry): string {
 	return p.act === "choose" ? m.didChose(e.card?.options?.[p.option ?? -1]?.label ?? "?") : p.act === "decline" ? m.didDecline : p.act === "restate" ? m.didRestate : m.didDone;
 }
 
-export type Act = { kind: "press"; json: Record<string, unknown>; what: string } | { kind: "skip" } | { kind: "reply" } | { kind: "switch"; from: ViewFrom } | { kind: "back" };
+export type Act = { kind: "press"; json: Record<string, unknown>; what: string } | { kind: "skip" } | { kind: "reply" } | { kind: "switch"; from: ViewFrom } | { kind: "next" } | { kind: "back" };
+/** Where a card's dialog leads besides its own acts: `next` adds the way to the next card that waits, `all` names the way back as the list of all cards, and `ask` (sb drew the card for an agent, waitask.ts) leaves only the card's own acts and the reply. */
+export interface Nav { next?: boolean; all?: boolean; ask?: boolean }
 /** The acts the card offers, by its kind and state (the table of §2): a card already pressed keeps only the reply, the switch, and the way back. */
-export function actsOf(lang: Lang, auto: boolean, tower: Tower, e: ViewEntry): { label: string; act: Act }[] {
+export function actsOf(lang: Lang, auto: boolean, tower: Tower, e: ViewEntry, nav: Nav = {}): { label: string; act: Act }[] {
 	const w = WORDS[lang], m = memoryWords(lang), c = e.card, who = c?.from?.name ?? w.raiserFallback, tw = towerWord(lang, tower);
 	const pressed = e.press !== undefined && e.press.act !== "secret";
 	const press = (label: string, json: Record<string, unknown>, what: string) => ({ label, act: { kind: "press" as const, json: { op: "press", id: e.id, ...json }, what } });
@@ -106,6 +110,6 @@ export function actsOf(lang: Lang, auto: boolean, tower: Tower, e: ViewEntry): {
 		} else own.push(press(w.done, { act: "done" }, m.didDone));
 		own.push({ label: w.skip, act: { kind: "skip" } });
 	}
-	const there = c?.from?.tab && !c.from.gone ? c.from : undefined;
-	return [...own, { label: w.reply(tw), act: { kind: "reply" } }, ...(there ? [{ label: w.switchTo(who), act: { kind: "switch" as const, from: there } }] : []), { label: w.back, act: { kind: "back" } }];
+	const there = c?.from?.tab && !c.from.gone && !nav.ask ? c.from : undefined;
+	return [...own, { label: w.reply(tw), act: { kind: "reply" } }, ...(there ? [{ label: w.switchTo(who), act: { kind: "switch" as const, from: there } }] : []), ...(nav.next ? [{ label: w.next, act: { kind: "next" as const } }] : []), ...(nav.ask ? [] : [{ label: nav.all ? w.all : w.back, act: { kind: "back" as const } }])];
 }
