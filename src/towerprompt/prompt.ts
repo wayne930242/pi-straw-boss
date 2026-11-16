@@ -323,7 +323,7 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		}
 		const message = lines.join("\n").trim() || NO_MESSAGE;
 		// The boss writes to the tower: they are no longer at the cards, and the run this wakes is not held.
-		void cards?.letGo();
+		void cards?.wrote();
 		posting = true;
 		try {
 			await source.post(message);

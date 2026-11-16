@@ -376,7 +376,8 @@ export function createCardView(io: ViewIo) {
 			cur = undefined;
 			io.fresh();
 			await sync(true);
-			if (cur === undefined) released = manual;
+			// No card to show: the keys stay the message line's, and a mark that was open is dropped.
+			if (cur === undefined) (released = manual), await disengage();
 		}, undefined),
 		/**
 		 * Whether the boss is answering, for the poll: at the cards, with a card key in the last `QUIET_MS`. Past that the view is no longer engaged (the mark is dropped, a field and a mark with it), and the next card key engages again.
@@ -394,7 +395,7 @@ export function createCardView(io: ViewIo) {
 			return false;
 		},
 		/** The prompt posts the boss's words: they are no longer at the cards. */
-		letGo: () => run(async () => {
+		wrote: () => run(async () => {
 			if (!engaged && mark === undefined) return;
 			mark = undefined;
 			await disengage();
