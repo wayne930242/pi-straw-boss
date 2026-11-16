@@ -59,7 +59,7 @@ test("entries saved by 0.4.0 (asked, then joined) bring the session back as a me
 	assert.deepEqual([a.tokens, b.tokens], [{ sb_role: "main" }, { sb_role: "member" }], "a saved join does not take over the live main");
 	assert.ok(b.tools.has("boss_promote"));
 	assert.equal(b.entries.length, 2, "no new entry");
-	assert.match((await b.run())["straw-boss"]!, /whose main agent is a\./);
+	assert.match((await b.run())["straw-boss"]!, /^Straw Boss: you are a member of tab work of workspace Alpha, and the tab has a main agent/);
 });
 
 test("boss_promote makes the first caller the main agent; a second caller is refused while that main lives", async () => {
@@ -73,7 +73,8 @@ test("boss_promote makes the first caller the main agent; a second caller is ref
 	assert.deepEqual([a.tokens, b.tokens], [{ sb_role: "main" }, { sb_role: "member" }]);
 	assert.equal(state()?.main, "a");
 	assert.match((await a.run())["straw-boss"]!, /^You are the main agent of Herdr tab work, of kind coordinator:/);
-	assert.match((await b.run())["straw-boss"]!, /^Straw Boss: you are a member of tab work, whose main agent is a\..*Before you dispatch a subagent, tell a through intercom/);
+	// The section names no other session (tests/section-stable.test.ts): boss_status and boss_promote's refusal have the main's name.
+	assert.match((await b.run())["straw-boss"]!, /^Straw Boss: you are a member of tab work of workspace Alpha, and the tab has a main agent \(`boss_status` names it\)\. Before you dispatch a subagent, tell the main agent through intercom/);
 	await assert.rejects(b.tool("boss_promote"), /already has a main agent/);
 });
 
@@ -123,7 +124,8 @@ test("/boss from a member forces a claim even when the tab has a main; the two s
 	await settle();
 	assert.deepEqual([a.tokens, b.tokens], [{ sb_role: "member" }, { sb_role: "main" }]);
 	assert.match((await b.run())["straw-boss"]!, /^You are the main agent/);
-	assert.match((await a.run())["straw-boss"]!, /whose main agent is b\./);
+	assert.match((await a.run())["straw-boss"]!, /^Straw Boss: you are a member of tab work of workspace Alpha, and the tab has a main agent/);
+	assert.equal(((await a.tool("boss_status")).details as { tabs: { main: string }[] }).tabs[0]!.main, "b", "boss_status names the new main");
 	assert.deepEqual(a.notices.map((n) => n.text), ["This session is now the main agent of work", "This session is no longer the main agent of work"]);
 	assert.ok(b.notices.some((n) => n.text === "This session is now the main agent of work"));
 });

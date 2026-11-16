@@ -30,8 +30,8 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 	// The role's prompt is a system prompt section, set when a run starts. A role that changes during a run (a member promoted as it
 	// dispatches a subagent, mains demoted as their tower quits), a kind that switches, or a plan that names a graph reaches the agent at its next step as a steer; an idle session gets it with its next run.
 	let briefed: Briefed | undefined, running = false;
-	// `dir` is the folder of the files the prompt points to (the switch of trainswitch.ts may give a copy), `state` the state folder, whose `trains` folder holds an integrator's ledgers, `cli` the command that runs cli.mjs (`train check`).
-	const render = (text = "", duty = "") => text.replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ dir: files ? files.dir : cfg.promptDir, state: guiDir, cli: cliCommand(), ...s.info, duty })[key] || "none yet");
+	// `dir` is the folder of the files the prompt points to (the switch of trainswitch.ts may give a copy), `state` the state folder, whose `trains` folder holds an integrator's ledgers, `cli` the command that runs cli.mjs (`train check`). What a prompt may name is this session's own (its tab's label, its workspace's label, its kind) or fixed for the process, never another session's name or state: the tower's or the main's name in the section rewrote it whenever that session left, came back, or renamed itself, and a rewritten section is read with the whole context uncached; `boss_status` has the live values (docs/how-it-works.md, The role section stays put).
+	const render = (text = "", duty = "") => text.replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ dir: files ? files.dir : cfg.promptDir, state: guiDir, cli: cliCommand(), tab: s.info.tab, workspace: s.info.workspace, head: s.info.head, duty } as Record<string, string | undefined>)[key] || "none yet");
 	const compose = (parts: string[], duty: string) => render(parts.map((part) => prompts[part]).join("\n\n"), duty);
 	const steer = (text: string) => pi.sendMessage({ customType: ENTRY, content: `<straw-boss>\n${text}\n</straw-boss>`, display: true }, { deliverAs: "steer" });
 	return {

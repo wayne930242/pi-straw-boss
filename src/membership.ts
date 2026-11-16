@@ -71,7 +71,7 @@ export function createMembership({ pi, cfg, s, me, tell }: Kit, { presence, elec
 			s.mainId = sessions.find((x) => x.id === (s.pinned ?? recorded))?.id;
 			const ws = (await workspaces(run)).find((w) => w.workspace_id === s.at.workspaceId);
 			const tab = sessions.find((x) => x.id === me())?.herdrLocation?.tab?.label ?? s.at.tabId;
-			s.info = { tab, workspace: ws?.label ?? s.at.workspaceId, main: nameOf(sessions.find((x) => x.id === s.mainId)), tower: nameOf(sessions.find((x) => x.id === ws?.tokens?.tower)) };
+			s.info = { tab, workspace: ws?.label ?? s.at.workspaceId, main: nameOf(sessions.find((x) => x.id === s.mainId)) }; // `main` is for boss_promote's answer only: the role prompt names no other session (briefing.ts `render`)
 			const wasMain = s.isMain;
 			s.isMain = s.mainId === me();
 			if (s.isMain !== wasMain) (tell(`This session is ${s.isMain ? "now" : "no longer"} the main agent of ${s.info.tab}`), briefing.rebrief());
