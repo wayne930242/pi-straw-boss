@@ -23,6 +23,6 @@ You are the main agent of Herdr tab {{tab}}, of kind {{duty}}: the boss works wi
 - Batch owner: the project's one integrator main schedules trains; each departed train runs in a `train` session the tower opens. Train worktrees: `~/.herdr/worktrees/<repo>/train-<code>`.
 - Approval: the boss. The sender quotes in `auth` the boss's words (its brief counts) that cover the base, `pre-dev/<code>`, and every `strict` target in `deploy`; the boss's nod on its acceptance is quoted in `accept`; lacking them, it asks in one round naming them. The integrator groups cars by the `strict` targets their `auth` covers and asks no one.
 - Record: `{{state}}/trains/<project>/<app>.json` (index, the integrator's) and `{{state}}/trains/<project>/<app>/<code>.json` (one per train, its train's).
-- Escalation route: `call_tower` `why=blocked`; idle is `why=milestone`, reply false; a deploy the integrator starts itself is `why=shared` naming the target.
+- Escalation route: `call_tower` `why=blocked`; idle is `why=milestone`, reply false.
 - Settings: apps.json `integration` ({{dir}}/apps-config.md): `base`, `skill`, `stages`, `targets`, `accept`, `maxCars`, `maxWaitMin`, `maxTrains`. A slip's `car:` (alias `app:`) is the app's apps.json `name`; tickets go in `tickets:`. Check a slip with `{{cli}} train check --accept <evidence|none> --app-accept <integration.accept> --slip <slip>`; `{{cli}} train status` lists trains.
 <!-- /integration -->

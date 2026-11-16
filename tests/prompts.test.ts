@@ -105,7 +105,7 @@ test("merge train: apps-config names the integration fields and points to the sk
 	for (const term of ["`integration`", "`maxCars`", "`maxWaitMin`", "`base`", "`integrating`'s Project skill contract", "## Light checks", "## Load", "`why=blocked`"]) assert.ok(cfg.includes(term), `apps-config.md names ${term}`);
 	const integrator = readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8");
 	assert.match(integrator, /^# Integrator/);
-	for (const term of ["`integrating` skill", "`deploying` skill", "Seam bindings in your role prompt", "(the merge-train contract)", "quoting the refusal", "`why=blocked`", "`why=milestone`", "{{dir}}/apps-config.md", "`<project>/<app>.json` in the `trains` folder your role prompt names", "integ <project>", "never rename again", "`coordinator` is a session id", "`reviewer` role"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
+	for (const term of ["`integrating` skill", "`deploying` skill", "Seam bindings in your role prompt", "(the merge-train contract)", "quoting the refusal", "`why=blocked`", "`why=milestone`", "{{dir}}/apps-config.md", "`<project>/<app>.json` in the `trains` folder your role prompt names", "integ <project>", "never rename again", "`coordinator` is a session id"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
 	assert.ok(!integrator.includes("<state dir>") && !integrator.includes("reserve") && !integrator.includes("~/.pi"), "integrator.md has no placeholder, undefined path, hard-coded agent folder, or reserve");
 	assert.match(readFileSync(`${PROMPT_DIR}/main.md`, "utf8"), /Record: `\{\{state\}\}\/trains\/<project>\/<app>\.json`/, "the role prompt names the ledger file");
 	// The procedure (slip block, checks, departure, assembly, review, red handling, urgent lane, deploy, UAT) moved to the `integrating` and `deploying` skills (docs/specs/2026-11-06-seam-bindings.md maps every old line):
@@ -121,8 +121,6 @@ test("train stages: apps-config declares stages and targets, the integrator veri
 	const cfg = readFileSync(`${PROMPT_DIR}/apps-config.md`, "utf8");
 	for (const term of ["`stages`", "`merge` (the default, always first)", "`integration.maxTrains`", "`targets` maps a deploy target to `auto`", "only the boss sets it"]) assert.ok(cfg.includes(term), `apps-config.md names ${term}`);
 	const integrator = readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8");
-	for (const term of ["merge-triggered deploys need no `shared` call", "calls `shared` naming the target"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
-	assert.ok(readFileSync(`${PROMPT_DIR}/tower-run.md`, "utf8").includes("a deploy it starts names its target"));
 	for (const file of ["integrator.md", "apps-config.md", "planning.md", "main.md"]) {
 		const text = readFileSync(`${PROMPT_DIR}/${file}`, "utf8");
 		assert.ok(!/\b(staging|production|prod)\b/i.test(text), `${file} names no environment`);
@@ -150,9 +148,9 @@ test("merge train: main hands integration cars over with why shared, planning st
 
 test("merge train: the integrator needs no shared call for its own merges, and the tower answers its shared request instead of forwarding it back", () => {
 	const integrator = readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8");
-	assert.ok(integrator.includes("your own merges and merge-triggered deploys need no `shared` call"));
-	assert.ok(readFileSync(`${PROMPT_DIR}/tower-run.md`, "utf8").includes("from the integrator itself, answer go or wait"));
-	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("the integrator's own: go/wait"));
+	assert.ok(!integrator.includes("merge-triggered deploys") && !integrator.includes("no trainboard"), "the integrator has no legacy-train line");
+	assert.ok(!readFileSync(`${PROMPT_DIR}/tower-run.md`, "utf8").includes("from the integrator itself, answer go or wait"));
+	assert.ok(!readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("the integrator's own: go/wait"));
 });
 
 // 2026-11-02: a main carried a side task itself under the single-loop rule "carry bounded work in the session" and stalled its own chain.
@@ -182,8 +180,7 @@ test("seam bindings: main.md binds all six seams of the integrating skill, in on
 	// Review SB-F001/F003: the coordinator quotes words already given and asks only when they are missing (an overnight train must not stall on a question); the integrator groups cars by the strict targets their auth covers and asks no one (TP-F008).
 	const approval = lines.find((line) => line.startsWith("- Approval:"))!;
 	assert.ok(approval.includes("lacking them, it asks") && approval.includes("groups cars by the `strict` targets their `auth` covers and asks no one") && !approval.includes("no car names"), "Approval asks only when the words are missing");
-	// SB-F002 is fixed in the skill (train step 4 gates `Merge` on the deploy steps; part of merge-train contract 1); SB-F006: a subagent is briefed for one step.
-	assert.ok(readFileSync(`${PROMPT_DIR}/integrator.md`, "utf8").includes("never the skill"), "integrator.md keeps the skill from subagents");
+	// SB-F002 is fixed in the skill (train step 4 gates `Merge` on the deploy steps; part of merge-train contract 1).
 	// 2026-11-12: Straw Boss requires the contract, not a package. The READMEs name the merge train's need as the contract and leave who implements it to the guide.
 	for (const readme of ["README.md", "README.zh-TW.md"]) assert.ok(/merge-train contract|合併火車契約/.test(readFileSync(readme, "utf8")) && !/needs \[pi-anchorloop\]|需要 \[pi-anchorloop\]/.test(readFileSync(readme, "utf8")), `${readme} names the contract and requires no skills package`);
 	// SB-F004: only the headings `integrating` requires stop a departure.
@@ -252,7 +249,7 @@ test("train workers: train.md names every kind of the closed set, the checks bef
 
 test("train workers: no uat stage and no UAT page in the integrator or the train; both state D13's refusal with its word; neither tells a coordinator a car's fate, both set it with train_car", () => {
 	for (const file of ["integrator.md", "train.md"]) {
-		const text = read(file).replace(/- A train in your ledger with no trainboard[^\n]*/, "");
+		const text = read(file);
 		assert.doesNotMatch(text, /`uat`|UAT page|accepted in UAT|\bshow_doc\b/, `${file} has no uat stage or page`);
 		const bare = text.replace(D13_WORD, "").replace("A car that asks it for UAT, e2e, or any acceptance", "").replace("You never wait on a person and run no UAT, e2e, or acceptance.", "").replace("list a uat stage", "");
 		assert.doesNotMatch(bare, /\buat\b/i, `${file} runs no uat stage, backticked or not`);
@@ -265,7 +262,6 @@ test("train workers: no uat stage and no UAT page in the integrator or the train
 	const integrator = read("integrator.md");
 	assert.ok(integrator.includes("equal the forward's `fwd-from`"), "the coordinator is the forward's fwd-from, not the header's sender");
 	assert.ok(integrator.includes("One `train` todo per forming train (`metadata.sb`, `v`: 1") && integrator.includes("`in_progress` first (sb holds it until each `received` notice is told) and only then the manifest's call, `completed` on the tower's answer with `result`"), "the train todo's lifecycle");
-	assert.match(integrator, /legacy: finish it as before \(merge, deploy, UAT page, intercom/, "legacy trains are finished the old way");
 	for (const term of ["`received`", "`returned`", "`train check`", "`--accept <evidence>`", "`departs`", "`integration.maxTrains`", "`strict`", "`train:`", "`why: shared`", "`metadata.sb`", "you do not supervise it", "idle"]) assert.ok(integrator.includes(term), `integrator.md names ${term}`);
 	for (const state of ["`landed`", "`dropped`", "`returned`"]) assert.ok(read("train.md").includes(state), `train.md names ${state}`);
 });

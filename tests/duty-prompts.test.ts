@@ -28,7 +28,7 @@ test("size caps: a kind addendum is at most 6 lines and 900 characters, a graph 
 	const standing = read("duty-standing");
 	assert.ok(lines(standing) <= 6 && standing.length <= 900, `duty-standing: ${lines(standing)} lines, ${standing.length} characters`);
 	for (const name of ["graph-fan-out", "graph-orchestrator-worker"]) assert.ok(lines(read(name)) <= 2 && read(name).length <= 300, name);
-	assert.equal(lines(read("integrator")), 14);
+	assert.equal(lines(read("integrator")), 13);
 	assert.equal(lines(read("dispatch")), 3);
 });
 

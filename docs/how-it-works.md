@@ -1078,7 +1078,7 @@ A train's pane carries `sb_role=train` and `sb_train=<project>/<code>`, so the n
 2. In `apps.json`, remove `uat` from every app's `integration.stages` (an app that still lists it is a config error: the tower opens no train for it, the integrator's `train` todo is refused, and nothing departs). Add `integration.accept` for an app that requires acceptance, and `integration.maxTrains` if 3 is not right.
 3. In the project skill, rename `## UAT` to `## Acceptance`: it now tells a coordinator how to accept on its branch. Give `## Load` a number, list `## Full gates` one by one, and end `## Post-merge` and `## Deploy verify` with a line that is the pipeline's conclusion or the target's version.
 4. Coordinators send `departs:` and `accept:` lines; a slip with `uat:` and no `accept:` is returned.
-5. A train already in the ledger with no trainboard is finished by the integrator the old way; later departures open train sessions. Ledgers are not rewritten. A car the 0.64.0 tower forwarded that still sits in the integrator's queue cannot be received or returned (the server saw no forward of it): its coordinator sends the slip again, and the integrator says `blocked` naming the car so the tower asks for it.
+5. A train already in the ledger with no trainboard is history: the integrator no longer carries it, and later departures open train sessions. Ledgers are not rewritten. A car the 0.64.0 tower forwarded that still sits in the integrator's queue cannot be received or returned (the server saw no forward of it): its coordinator sends the slip again, and the integrator says `blocked` naming the car so the tower asks for it.
 
 ## Tower dashboard
 
