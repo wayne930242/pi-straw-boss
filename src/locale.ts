@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // The one language of sb's own words (docs/how-it-works.md, Language): the sb server's (the stand-in, the head's label, the briefs' card language), the tower prompt's, a tower run's, and the /boss commands'.
@@ -38,11 +38,13 @@ export function localeSetting(stateDir: string | undefined): Locale | undefined 
 export const localeOf = (env: NodeJS.ProcessEnv, stateDir?: string): Locale => localeSetting(stateDir) ?? envLocale(env);
 
 /**
- * Sets `locale` in `config.json` (`auto` removes it), keeping every other key; written by rename, 2-space JSON. A file that cannot be parsed, or holds no JSON object, is refused and left as it is.
+ * Sets `locale` in `config.json` (`auto` removes it), keeping every other key; written by rename beside the real file (a symlink stays one, the mode stays), 2-space JSON. It does not take the Straw Link lock (that lock lives in the link holder's process); the read and the rename follow each other synchronously, so only another process's write in that instant is lost (Known limit). A file that cannot be parsed, or holds no JSON object, is refused and left as it is.
  * Returns the setting now in force.
  */
 export function writeLocale(stateDir: string, value: Locale | "auto"): Locale | undefined {
-	const file = configOf(stateDir);
+	let file = configOf(stateDir);
+	// A config.json that is a symlink (a dotfile setup) keeps being one: the file written is the one it points to, as editLinkConfig does.
+	try { file = realpathSync(file); } catch { /* no file yet */ }
 	let text: string | undefined;
 	try {
 		text = readFileSync(file, "utf8");
@@ -62,9 +64,10 @@ export function writeLocale(stateDir: string, value: Locale | "auto"): Locale | 
 	}
 	const { locale: _, ...rest } = config;
 	const next = value === "auto" ? rest : { ...rest, locale: value };
-	const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+	const mode = (statSync(file, { throwIfNoEntry: false })?.mode ?? 0o600) & 0o777, temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
 	try {
-		writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+		writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, { mode, flag: "wx" });
+		try { chmodSync(temp, mode); } catch { /* a file system without modes */ }
 		renameSync(temp, file);
 	} catch (cause) {
 		rmSync(temp, { force: true });

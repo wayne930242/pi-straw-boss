@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -67,4 +67,15 @@ test("/boss locale shows the language and its source, sets zh-TW, en or auto, an
 	assert.deepEqual(localeCommand("fr", shell, d), { text: "用法：/boss locale [zh-TW | en | auto]", warn: true });
 	assert.match(localeCommand("auto", shell, d).text, /English \(en\), from the environment/);
 	assert.equal(config(d).locale, undefined);
+});
+
+test("writeLocale through a symlinked config.json keeps the link, updates the target, keeps other keys and the mode", () => {
+	const d = dir(), real = join(d, "dotfiles-config.json"), link = join(d, "config.json");
+	writeFileSync(real, JSON.stringify({ towerModel: "m" }), { mode: 0o640 });
+	chmodSync(real, 0o640);
+	symlinkSync(real, link);
+	writeLocale(d, "zh-TW");
+	assert.ok(lstatSync(link).isSymbolicLink(), "still a symlink");
+	assert.deepEqual(JSON.parse(readFileSync(real, "utf8")), { towerModel: "m", locale: "zh-TW" });
+	assert.equal(statSync(real).mode & 0o777, 0o640);
 });
