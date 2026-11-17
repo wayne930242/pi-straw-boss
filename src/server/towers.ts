@@ -29,7 +29,7 @@ import type { Allows } from "./allows.ts";
 import type { Asks } from "./asks.ts";
 import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, localTools } from "./towerbrief.ts";
 import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
-import { digestOf, type WaitDigest, type WaitList, waitList, waitRows } from "./waitlist.ts";
+import { digestOf, openCards, type WaitDigest, type WaitList, waitList, waitRows } from "./waitlist.ts";
 import { claimGate, proofGate, seatGate, type SeatVerdict } from "./typegate.ts";
 import { addAnswer, addRoute, answeredAsks, ALLY_LEDGER, dropAsk, dropOpened, type Peer, readAnswers, readRoutes, removeAnswer, openedFor, routeOf, setStop, spendRoute } from "./allyroute.ts";
 import { createRevoker, type OpenedMain } from "./revoke.ts";
@@ -100,6 +100,8 @@ export interface TowersOptions {
 	runs?: Partial<RunsOptions>;
 	/** The line typed into a standing pane's shell to start the tower prompt (main.ts builds it from the CLI beside the server); without it the server types nothing and reports no stand-in. */
 	promptCommand?: (workspace: string) => string | undefined;
+	/** Whether this device has no boss at it (main.ts): its stand-ins stay idle whatever cards wait. */
+	unattended?: () => boolean;
 	/** The timers of the standing pane (standing.ts), for tests, and `standingWait`: */
 	standing?: Partial<StandingTimers>; standingWait?: /* the clock of a run's wait for the prompt's exit (tests) */ { now: () => number; sleep: (ms: number) => Promise<void> };
 	/** A request to the link holder as a tower identity (main.ts; absent in a world without one). */
@@ -280,7 +282,7 @@ export function createTowers(o: TowersOptions): Towers {
 		async brief({ events, woken, run: rec, refresh, split }) {
 			const ws = l.record.workspace, all = await workspaces(run), target = all.find((w) => w.workspace_id === ws);
 			if (!target || !l.client) throw new Error("the tower's workspace or its intercom connection is gone");
-			if (isHeadL(l)) return headBrief({ slot, run, now, auto: autoLine, record: () => l.record, sessions: () => l.client!.listSessions(), towerState, locale: localeOf(o.env) }, { woken, run: rec, ...(split ? { split } : {}) });
+			if (isHeadL(l)) return headBrief({ slot, run, now, auto: autoLine, record: () => l.record, sessions: () => l.client!.listSessions(), towerState, locale: localeOf(o.env, slot.stateDir) }, { woken, run: rec, ...(split ? { split } : {}) });
 			const mains = await gatherMains({ run, now, sessions: () => l.client!.listSessions(), boardDir: join(slot.stateDir, "board"), workspace: target, ledger: readLedger(slot, ws, now()) });
 			const lines = await digest.peek(ws).catch(() => []), note = lastNote(slot, ws, "local"), timer = readTimer(slot, ws);
 			const counts: Record<string, number> = {};
@@ -302,7 +304,7 @@ export function createTowers(o: TowersOptions): Towers {
 						...(crashed.length ? [`${crashed.length} event${crashed.length > 1 ? "s were" : " was"} possibly handled by a run that crashed: check before acting.`] : []),
 						...(oldest !== undefined && oldest > 10 * 60_000 ? [`The oldest event waiting is ${ageOf(oldest)} old.`] : []),
 					],
-					tools: localTools(localeOf(o.env)),
+					tools: localTools(localeOf(o.env, slot.stateDir)),
 				}),
 			};
 		},
@@ -339,7 +341,7 @@ export function createTowers(o: TowersOptions): Towers {
 	};
 	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), headModel: () => headModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), ...o.runs });
 
-	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.standingWait ? { wait: o.standingWait } : {}), ...(o.runs?.platform ? { platform: o.runs.platform } : {}), ...(o.runs?.alive ? { alive: o.runs.alive } : {}) });
+	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.standingWait ? { wait: o.standingWait } : {}), ...(o.runs?.platform ? { platform: o.runs.platform } : {}), ...(o.runs?.alive ? { alive: o.runs.alive } : {}), locale: () => localeOf(o.env, slot.stateDir), attended: () => !o.unattended?.() });
 	const place = (l: Live): Place => ({ paneId: l.record.pane, tabId: l.record.tab, workspaceId: l.record.workspace });
 	const dirOf = (workspace: string) => join(towerDir(slot, workspace));
 	const error = (code: string, text: string) => log.line("error", { code, text: phrase(text, 300) });
@@ -745,7 +747,7 @@ export function createTowers(o: TowersOptions): Towers {
 		// The head's files are in `head/`, whatever the id of its workspace is. Its runs are the hub's too (runs.ts): they resume one conversation and have the head's tools.
 		if (isHeadL(l)) bindDir(slot, record.workspace, headDir(slot));
 		runs.attach(refOf(l));
-		standing.attach({ workspace: record.workspace, label: () => l.record.label, ...(isHeadL(l) ? { agent: STANDIN_HEAD } : {}), pane: () => l.record.pane, live: () => l.state === "live" && !l.stopped && Boolean(l.client?.isConnected()), seated: (pane) => holds(l, pane), status: () => runs.status(record.workspace), runWithin: (ms) => runs.startsWithin(record.workspace, ms), paneBusy: () => runs.paneBusy(record.workspace), busyPids: () => runs.busyPids(record.workspace), paneFree: () => runs.retry(record.workspace) }, fresh);
+		standing.attach({ workspace: record.workspace, label: () => l.record.label, ...(isHeadL(l) ? { agent: STANDIN_HEAD } : {}), pane: () => l.record.pane, live: () => l.state === "live" && !l.stopped && Boolean(l.client?.isConnected()), seated: (pane) => holds(l, pane), status: () => runs.status(record.workspace), cards: () => cardsFor(l), runWithin: (ms) => runs.startsWithin(record.workspace, ms), paneBusy: () => runs.paneBusy(record.workspace), busyPids: () => runs.busyPids(record.workspace), paneFree: () => runs.retry(record.workspace) }, fresh);
 		l.starting = (async () => {
 			// A resident tower keeps its workspace; the service registers its identity once that session leaves. Two towers never hold one workspace.
 			let waited = false;
@@ -1148,7 +1150,7 @@ export function createTowers(o: TowersOptions): Towers {
 				return named.some((x) => /^sb-tower-/.test(x.id) || net.ps.find((p) => p.pane_id === x.herdrLocation?.paneId)?.tokens?.sb_role === "tower");
 			},
 			memory: (margs: Record<string, unknown>) => memoryTool({
-				slot, workspace: ws, run: who.id, now, log, bossEvents: () => runs.bossEvents(request.token), intercomEvents: () => runs.intercomEvents(request.token), locale: () => localeOf(o.env), ...(o.auto ? { auto: { on: () => o.auto!.view().on, told: (e: Entry) => tellParked(ws, e) } } : {}),
+				slot, workspace: ws, run: who.id, now, log, bossEvents: () => runs.bossEvents(request.token), intercomEvents: () => runs.intercomEvents(request.token), locale: () => localeOf(o.env, slot.stateDir), ...(o.auto ? { auto: { on: () => o.auto!.view().on, told: (e: Entry) => tellParked(ws, e) } } : {}),
 				// The session with this id in the net now: never found by name, since a subagent shows on intercom as `subagent-chat-<id>` (todo #49).
 				raiser: async (id: string) => {
 					const net = await l.reach!.read(), x = net.sessions.find((s) => s.id === id);
@@ -1217,10 +1219,12 @@ export function createTowers(o: TowersOptions): Towers {
 	// The boss's waits for the list and the polls' digests (waitlist.ts): the head's memory is read under its constant key, a workspace's under its id.
 	const autoView = () => ((v) => ({ on: v?.on === true, ...(v?.since ? { since: v.since } : {}) }))(o.auto?.view());
 	const listed = (): Target[] => [...services.values()].filter((l) => !l.stopped && !isHeadL(l)).map((l) => ({ workspace: l.record.workspace, label: l.record.label }));
+	/** The cards that wait for the boss at a stand-in (standing.ts `standinReport`): a tower's own, and at the head its own and every tower's, as its runs' `boss_wait_ask` reaches them. A memory that cannot be read counts none. */
+	const cardsFor = (l: Live): number => (isHeadL(l) ? [HEAD_KEY, ...listed().map((t) => t.workspace)] : [l.record.workspace]).reduce((n, key) => n + openCards(waitRows(slot, key, now(), key === HEAD_KEY).rows), 0);
 	const api: Towers = {
 		waitList: (only, own) => {
 			const h = headLive();
-			return waitList({ slot, now, locale: localeOf(o.env), auto: autoView }, listed(), h ? { at: h.record.workspace } : waitRows(slot, HEAD_KEY, now(), true).rows.length ? {} : undefined, only, own);
+			return waitList({ slot, now, locale: localeOf(o.env, slot.stateDir), auto: autoView }, listed(), h ? { at: h.record.workspace } : waitRows(slot, HEAD_KEY, now(), true).rows.length ? {} : undefined, only, own);
 		},
 		waitDigest: (workspace) => {
 			const l = services.get(workspace);
@@ -1236,7 +1240,7 @@ export function createTowers(o: TowersOptions): Towers {
 				const l = workspace === HEAD_KEY ? headLive() : services.get(workspace);
 				if (!l) return Promise.resolve({ status: 409, body: { error: "refused", reason: "The tower service is not running, so nothing can be pressed" } });
 				return (json.op === "press" ? pressRequest : lateNotice)({
-					slot, now, log, locale: localeOf(o.env), autoOn: () => o.auto?.view().on === true,
+					slot, now, log, locale: localeOf(o.env, slot.stateDir), autoOn: () => o.auto?.view().on === true,
 					live: async (id) => (await l.reach!.read()).sessions.some((x) => x.id === id),
 					send: (to, text, wait) => l.reach!.post(to, text, "wait_card", "session", false, undefined, undefined, { wait }),
 					boss: (text) => void runs.boss(l.record.workspace, text, "the boss (wait card)", { press: true }),

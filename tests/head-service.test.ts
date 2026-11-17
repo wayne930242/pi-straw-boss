@@ -342,6 +342,26 @@ test("the prompt's poll answers as the head's (head: true), and the stand-in is 
 	}
 });
 
+test("the head's stand-in is blocked while any tower's wait card or its own waits for the boss, and names them all", async () => {
+	const s = await started();
+	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	const got = await head().ensure();
+	const pid = 6100, at = new Date().toISOString();
+	world.herdr.pane(got.pane).processes = [{ name: "node", argv0: "node", pid, cmdline: `node "/pkg/dist/server/cli.mjs" prompt --workspace ${got.workspace} --state-dir "/s"` }];
+	const timer = setInterval(() => void ask(s, { cmd: "prompt-poll", workspace: got.workspace, pid }).catch(() => {}), 20);
+	const wait = (id: string) => ({ id, kind: "wait" as const, text: `do ${id}`, by: "run" as const, via: "run" as const, at, run: "r1", for: "boss" as const, state: "open" as const, card: { type: "action" as const, lang: "en" as const, happened: "h", do: `do ${id}` } });
+	try {
+		await until(() => world.herdr.pane(got.pane).agent_status === "idle", "the head's stand-in, idle");
+		updateMemory(world.slot, "wA", Date.now(), (m) => void m.entries.push(wait("W1")));
+		await until(() => world.herdr.pane(got.pane).standinMessage === "1 card waits", "a tower's card on the head's stand-in");
+		assert.equal(world.herdr.pane(got.pane).agent_status, "blocked");
+		updateMemory(world.slot, HEAD_KEY, Date.now(), (m) => void m.entries.push(wait("W1")));
+		await until(() => world.herdr.pane(got.pane).standinMessage === "2 cards wait", "and its own");
+	} finally {
+		clearInterval(timer);
+	}
+});
+
 // --- the findings of the H1 review (HH1-F001 to F007) ------------------------------------------------------------------------------------------------------------------------------
 
 test("HH1-F001: a workspace id a stale tower service still holds is never bound to head/: ensure ends the stranger first, and the head comes up as sb-head with its files in head/", async () => {

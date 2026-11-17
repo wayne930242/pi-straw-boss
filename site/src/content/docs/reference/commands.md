@@ -105,6 +105,8 @@ The GUI's Memory panel does the same as `/boss memory`. See [Tower memory](/pi-s
 | `/boss server stop` | Stop it on purpose, after a confirm. Nothing but a boss command starts it again. |
 | `/boss server restart [reason]` | Restart it on the same port, after a confirm. Open pages reconnect by themselves. |
 | `/boss server logs [n]` | The last `n` lines of its log (default and most 200). |
+| `/boss locale` | Show sb's language (English or Traditional Chinese) and where it comes from: `locale` in `config.json`, else the environment. |
+| `/boss locale zh-TW` · `en` · `auto` | Set it in `config.json`, or take it from the environment again (`auto`). The server and `/boss` commands follow at once, a tower prompt from its next start; cards already written keep theirs. See [Language](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/#language). |
 
 ## Roles
 

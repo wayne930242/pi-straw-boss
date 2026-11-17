@@ -5,10 +5,10 @@
 
 import { clean } from "./board.ts";
 import { HEAD_KEY } from "./headkey.ts";
+import type { Locale } from "./locale.ts";
 
-export type Lang = "en" | "zh-TW";
-/** Traditional Chinese for a zh-TW, zh-HK, zh-MO, or zh-Hant locale, as the shell names it; English otherwise. */
-export const memoryLang = (env: NodeJS.ProcessEnv): Lang => (/^zh[_-](TW|HK|MO|Hant)/i.test(env.LC_ALL || env.LC_MESSAGES || env.LANG || "") ? "zh-TW" : "en");
+/** sb's language (src/locale.ts `localeOf`: the `locale` setting, else the environment). */
+export type Lang = Locale;
 
 type Id = { id: string };
 export type MemoryArgs =

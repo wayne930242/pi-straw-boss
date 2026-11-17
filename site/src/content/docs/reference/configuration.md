@@ -16,6 +16,7 @@ The settings file is `<agentDir>/straw-boss/config.json`, where `<agentDir>` is 
   "headModel": "provider/model-id",
   "towerRuns": { "enabled": true, "max": 4 },
   "integration": "on",
+  "locale": "zh-TW",
   "stallWatch": { "cpuMinutes": 5, "silentMinutes": 30 },
   "link": {
     "relay": "https://relay.example",
@@ -31,6 +32,7 @@ The settings file is `<agentDir>/straw-boss/config.json`, where `<agentDir>` is 
 | `towerRuns.enabled` | `true` | The tower service: a tower is a run that wakes for its events and ends with a handoff note. `false` keeps resident towers. A file that cannot be read or parsed also means on, and the server says so in its log. |
 | `towerRuns.max` | 4 | The most pi runs at once. |
 | `integration` | `on` (`off` under `STRAW_BOSS_DESK=1`) | `off` turns the [merge train](/pi-straw-boss/docs/guide/merge-train/) off on this computer. On is `on`, `true`, `1`, or `yes`; off is `off`, `false`, `0`, or `no`. Any other value, and a file that cannot be read, turns it off with a notice. |
+| `locale` | from the environment | sb's language, `zh-TW` or `en`: the stand-in, the head's label, the tower prompt, a run's cards, and the `/boss` commands. Without it `LC_ALL`, `LC_MESSAGES`, or `LANG` decides, else the system's language. `/boss locale` sets it. See [Language](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/#language). |
 | `stallWatch.enabled` | `true` | The [stall watch](/pi-straw-boss/docs/guide/process-hygiene/#the-stall-watch): the sb server tells a workspace's tower when a pi session looks frozen. It never stops the session. `false` turns it off. Every `stallWatch` key is read once a minute, so a change needs no restart. |
 | `stallWatch.cpuPercent` | 75 | How much of one core counts as pegged, from 10 to 100, as the average over `cpuMinutes`. A minute under half of it is calm and starts the count again. A healthy session with a long history can pass this for a minute while it works (two were measured at 73 and 83); what sets it apart is that it writes its session file, so a lower value buys little and risks false reports. |
 | `stallWatch.cpuMinutes` | 5 | Minutes in a row, none of them calm, over which a pi must average `cpuPercent` or more, with its session file not written, before it is told. One minute a little under the threshold does not start the count again. `0` turns this signal off. |

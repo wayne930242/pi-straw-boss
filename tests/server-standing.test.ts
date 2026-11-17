@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
@@ -8,7 +9,8 @@ import { callControl } from "../src/server/socket.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
 import { deleteService } from "../src/server/towerstore.ts";
 import { TOWER_LABEL } from "../src/herdr.ts";
-import { idleShell, standinMessage } from "../src/server/standing.ts";
+import { idleShell, standinMessage, standinReport } from "../src/server/standing.ts";
+import { type Entry, updateMemory } from "../src/server/towermemory.ts";
 
 // The standing pane between runs (docs/specs/2026-10-26-sb-backend.md, The tower service, The standing pane): the sb server types the tower prompt's command into the pane's shell, and while that
 // prompt polls, it reports a stand-in agent `tower` on the pane, so the tower keeps its row in Herdr's Agents list (the net view). The prompt leaves before a run starts and comes back after it.
@@ -145,6 +147,39 @@ test("standinMessage: standing by, N queued, or held", () => {
 	assert.equal(standinMessage(base), "standing by");
 	assert.equal(standinMessage({ ...base, queued: 3 }), "3 queued");
 	assert.equal(standinMessage({ ...base, state: "held", queued: 3 }), "held");
+});
+
+test("standinReport: blocked while cards wait for the boss and the device is attended, idle otherwise; the message names the cards first, in sb's language", () => {
+	const base = { state: "standing" as const, queued: 0, allyRuns: [], notices: [], parked: [] };
+	assert.deepEqual(standinReport(base, 0), { state: "idle", message: "standing by" });
+	assert.deepEqual(standinReport(base, 1), { state: "blocked", message: "1 card waits" });
+	assert.deepEqual(standinReport({ ...base, queued: 2 }, 3), { state: "blocked", message: "3 cards wait · 2 queued" });
+	assert.deepEqual(standinReport({ ...base, state: "held" }, 2), { state: "blocked", message: "2 cards wait · held" });
+	assert.deepEqual(standinReport(base, 2, "en", false), { state: "idle", message: "2 cards wait" }, "an unattended device has nobody to answer: idle, the count still said");
+	assert.deepEqual(standinReport(base, 0, "zh-TW"), { state: "idle", message: "待命中" });
+	assert.deepEqual(standinReport({ ...base, queued: 1 }, 2, "zh-TW"), { state: "blocked", message: "2 張卡片等你 · 1 則待處理" });
+	assert.deepEqual(standinReport({ ...base, state: "held" }, 0, "zh-TW"), { state: "idle", message: "已擱置" });
+});
+
+const card = (id: string, extra: Partial<Entry> = {}): Entry => ({ id, kind: "wait", text: `do ${id}`, by: "run", via: "run", at: new Date().toISOString(), run: "r1", for: "boss", state: "open", card: { type: "action", lang: "en", happened: "h", do: `do ${id}` }, ...extra });
+
+test("有卡片就顯示等待中: while wait cards for the boss are open the stand-in is reported blocked and names how many; a pressed or answered card no longer counts, and with none it is idle again", async () => {
+	const { s, pane } = await setup();
+	new FakePrompt(s, pane);
+	await until(() => world.herdr.pane(pane).agent_status === "idle", "the stand-in, idle");
+	updateMemory(world.slot, "wA", Date.now(), (m) => void m.entries.push(card("W1"), card("W2"), card("W3", { state: "answered", answered: new Date().toISOString() }), card("W4", { kind: "wait", for: "agent", on: { id: "x", name: "x" } })));
+	await until(() => world.herdr.pane(pane).standinMessage === "2 cards wait", "the two open cards for the boss to be named");
+	assert.equal(world.herdr.pane(pane).agent_status, "blocked");
+	updateMemory(world.slot, "wA", Date.now(), (m) => void (m.entries.find((e) => e.id === "W1")!.press = { act: "done", at: new Date().toISOString() }));
+	await until(() => world.herdr.pane(pane).standinMessage === "1 card waits", "a pressed card to stop counting");
+	assert.equal(world.herdr.pane(pane).agent_status, "blocked");
+	// sb's language, set in config.json, is read at the next look.
+	const config = join(world.stateDir, "config.json");
+	writeFileSync(config, JSON.stringify({ ...JSON.parse(readFileSync(config, "utf8")), locale: "zh-TW" }));
+	await until(() => world.herdr.pane(pane).standinMessage === "1 張卡片等你", "the message in zh-TW");
+	updateMemory(world.slot, "wA", Date.now(), (m) => void (m.entries.find((e) => e.id === "W2")!.state = "resolved"));
+	await until(() => world.herdr.pane(pane).agent_status === "idle", "idle again with no card open");
+	assert.equal(world.herdr.pane(pane).standinMessage, "待命中");
 });
 
 test("a run's start tells the prompt to leave and takes the stand-in away first; pi starts once the prompt is gone, and the prompt is typed again and reported after the run", async () => {

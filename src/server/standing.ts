@@ -1,4 +1,5 @@
 import { type HerdrApi, type HerdrRun, type HerdrWorld, isStandin, type Pane, releaseStandin, reportStandin, type Sleep, STANDIN_HEAD } from "../herdr.ts";
+import type { Locale } from "../locale.ts";
 import { alive as pidAlive } from "../remote.ts";
 import type { Log } from "./log.ts";
 import type { ServiceStatus } from "./runs.ts";
@@ -56,6 +57,8 @@ export interface StandingTarget {
 	/** Whether the pane is proven to be the tower's own seat (typegate.ts `seatGate`, `proofGate`) for the pane as Herdr lists it in `pane` (the look's own reading); nothing is typed before. Absent: proven (a target that needs no proof). */
 	seated?(pane: Pane | undefined): boolean;
 	status(): ServiceStatus | undefined;
+	/** How many wait cards wait for the boss here (the head: its own and every tower's): the stand-in is `blocked` while there are any. */
+	cards?(): number;
 	/** Whether a run starts in the pane within `ms`: a prompt typed now would only have to start, poll, and leave before the run's pi can. */
 	runWithin?(ms: number): boolean;
 	/** The service is held because the pane runs a program of the boss's (runs.ts), and the call that starts it again. */
@@ -80,6 +83,10 @@ export interface StandingOptions {
 	platform?: NodeJS.Platform;
 	/** Whether a process runs (the resident tower that handed a pane over); the PID check of `remote.ts` by default. */
 	alive?: (pid: number) => boolean;
+	/** sb's language for the stand-in's message (src/locale.ts), read at each look; English when unset. */
+	locale?: () => Locale;
+	/** Whether a person is at this device: an unattended one keeps the stand-in idle whatever waits (nobody there answers it). Attended when unset. */
+	attended?: () => boolean;
 }
 /** What a prompt's poll is answered. `holding`: events wait, and the wake is held while the boss answers wait cards at the prompt (runs.ts `answering`; towers.ts adds it). */
 export type PromptReply = { ok: true; label: string; state: ServiceStatus["state"]; queued: number; leave: boolean; head?: true; holding?: true } | { ok: false; error: string; gone?: true };
@@ -114,17 +121,30 @@ interface Mine {
 	/** The server said, once, that the prompt is gone from a pane it cannot type into (Windows, a pane that is not fresh). */
 	lost: boolean;
 	/** The last stand-in reported, and how often Herdr did not keep it in a row. */
-	reported?: { message: string; at: number };
+	reported?: { message: string; state: Standin["state"]; at: number };
 	misses: number;
 	/** The server said the label is not kept, for the prompt with this pid. */
 	unsupported?: number;
 }
 
-/** The short state the stand-in's message gives: `standing by`, `3 queued`, or `held`. */
-export function standinMessage(status: Pick<ServiceStatus, "state" | "queued"> | undefined): string {
-	if (status?.state === "held") return "held";
-	return status && status.queued > 0 ? `${status.queued} queued` : "standing by";
+/** What the stand-in is reported as: its Herdr state and the short message. */
+export interface Standin { state: "idle" | "blocked"; message: string }
+const STANDIN_WORDS = {
+	en: { standing: "standing by", held: "held", queued: (n: number) => `${n} queued`, cards: (n: number) => (n === 1 ? "1 card waits" : `${n} cards wait`) },
+	"zh-TW": { standing: "待命中", held: "已擱置", queued: (n: number) => `${n} 則待處理`, cards: (n: number) => `${n} 張卡片等你` },
+};
+/**
+ * The stand-in (docs/how-it-works.md, The standing pane): `blocked` while wait cards wait for the boss (`cards`, the tower's own; the head's own and every tower's), so Herdr's Agents list and its rollups show the tower as
+ * waiting on him; `idle` with none, and always on an unattended device, where nobody answers. Auto mode does not change it: the cards still wait, parked, and the page shows them. The message names the cards first, then
+ * `held` or the queue: `2 cards wait · 1 queued`, `standing by`, in sb's language.
+ */
+export function standinReport(status: Pick<ServiceStatus, "state" | "queued"> | undefined, cards = 0, locale: Locale = "en", attended = true): Standin {
+	const w = STANDIN_WORDS[locale], tail = status?.state === "held" ? w.held : status && status.queued > 0 ? w.queued(status.queued) : undefined;
+	const parts = [...(cards > 0 ? [w.cards(cards)] : []), ...(tail ? [tail] : [])];
+	return { state: cards > 0 && attended ? "blocked" : "idle", message: parts.length ? parts.join(" · ") : w.standing };
 }
+/** The stand-in's message alone, in English with no card: `standing by`, `3 queued`, or `held`. */
+export const standinMessage = (status: Pick<ServiceStatus, "state" | "queued"> | undefined): string => standinReport(status).message;
 
 /** The programs in the pane's foreground that are no shell and not the tower prompt: what the boss runs there. Empty when none is listed or all are shells. */
 export function programProcs(info: { foreground_processes?: unknown } | undefined): { pid?: number; name?: string; argv0?: string; cmdline?: string }[] {
@@ -188,7 +208,7 @@ export function createStanding(o: StandingOptions) {
 		m.reported = undefined;
 		await releaseStandin(api, m.target.pane(), m.target.agent).catch(() => {});
 	};
-	const report = async (m: Mine, pane: Pane | undefined, message: string) => {
+	const report = async (m: Mine, pane: Pane | undefined, { message, state }: Standin) => {
 		// A label Herdr did not keep (it answered the report and the pane shows no stand-in at the next look) is counted; at the third in a row the server says so once and stops.
 		if (m.reported && !(pane && isStandin(pane))) m.misses++;
 		if (m.misses >= MISSES) {
@@ -199,8 +219,8 @@ export function createStanding(o: StandingOptions) {
 			return;
 		}
 		try {
-			await reportStandin(api, m.target.pane(), message, m.target.agent);
-			m.reported = { message, at: now() };
+			await reportStandin(api, m.target.pane(), message, m.target.agent, state);
+			m.reported = { message, state, at: now() };
 		} catch (cause) {
 			error("standin", `${m.target.workspace}: ${(cause as Error).message}`);
 		}
@@ -276,8 +296,9 @@ export function createStanding(o: StandingOptions) {
 				case "prompt": {
 					m.parked = false;
 					if (isStandin(pane)) m.misses = 0;
-					const message = standinMessage(status);
-					if (!isStandin(pane) || !m.reported || m.reported.message !== message || now() - m.reported.at >= t.refreshMs) await report(m, pane, message);
+					const next = standinReport(status, target.cards?.() ?? 0, o.locale?.() ?? "en", o.attended?.() ?? true);
+					// Reported again when the message or the state changed (a card opened or was answered), and every `refreshMs`.
+					if (!isStandin(pane) || !m.reported || m.reported.message !== next.message || m.reported.state !== next.state || now() - m.reported.at >= t.refreshMs) await report(m, pane, next);
 					return;
 				}
 				case "typed":

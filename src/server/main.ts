@@ -632,7 +632,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	cars = startCars({ slot, run: cfg.run, now, startedAt, client: () => (client?.isConnected() ? client : undefined), startOf, log: (event, facts) => log.line(event, facts), stops });
 	towers = createTowers({
 		ally: allyPort(() => link), allows, asks, cars: cars.book,
-		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => towerRuns().enabled, server: serverTools,
+		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => towerRuns().enabled, server: serverTools, unattended,
 		link: async (body, from) => (!slot.primary ? { ok: false, code: "no_link", error: NO_LINK } : link ? link.request(body, from) : { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" }),
 		sessions: () => (client ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))),
 		promptCommand: (workspace) => promptCommand(cliBeside(), slot.stateDir, workspace), ...((auto ?? follower) ? { auto: (auto ?? follower)! } : {}), ...o.towers,

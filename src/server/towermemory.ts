@@ -492,7 +492,7 @@ export interface ToolEnv {
 	intercomEvents(): { id: string; from: { id: string; name?: string } }[];
 	/** The session with this id in the net now (never by name: a subagent shows on intercom under another name, todo #49), with its name, role, workspace, and tab; undefined when it is not live. */
 	raiser(id: string): Promise<Raiser | undefined>;
-	/** The sb server's locale (`localeOf(env)`): the language the brief told the run to write a card in, kept on the card. */
+	/** sb's language (src/locale.ts `localeOf`: the `locale` setting, else the server's environment): the language the brief told the run to write a card in, kept on the card. */
 	locale(): Locale;
 	/** Auto mode (§6): whether it is on (a wait recorded then is parked), and the message to the raiser of a card parked (sent once: the entry was written with `parkedTold`). */
 	auto?: { on(): boolean; told(entry: Entry): Promise<void> };

@@ -27,8 +27,8 @@ export function refuseHead(client: IntercomLike, from: Session, message: Incomin
 	client.sendMessageReceipt?.({ messageId: message.id, status: "expired", timestamp: now(), detail: HEAD_REFUSAL });
 }
 
-/** The workspace's label, only for show: `主塔台` when the server's locale says Traditional Chinese (the tower prompt's rule), else `Head tower`. */
-export const headLabel = (env: NodeJS.ProcessEnv): string => (localeOf(env) === "zh-TW" ? "主塔台" : "Head tower");
+/** The workspace's label, only for show: `主塔台` when sb's language is Traditional Chinese (src/locale.ts: the `locale` setting, else the server's environment), else `Head tower`. */
+export const headLabel = (env: NodeJS.ProcessEnv, stateDir?: string): string => (localeOf(env, stateDir) === "zh-TW" ? "主塔台" : "Head tower");
 /** The head's working folder: an empty one beside the state folder and the music folder, made by the server, where no project's files are. */
 export const headFolder = (env: NodeJS.ProcessEnv): string => join(env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "straw-boss-head");
 
@@ -44,8 +44,8 @@ export interface MadeHead {
  * place over the socket API. The workspace token is written at once, before the move, so no reader takes the new workspace for a base while the identity registers (HH1-F002); the service writes it again
  * once the identity is registered. A move that fails is a warning (the head works in any place); a workspace that could not be marked is closed again, so a failed ask leaves no stray workspace.
  */
-export async function makeHead(d: { run: HerdrRun; api: HerdrApi; env: NodeJS.ProcessEnv; log: Log; id: string }): Promise<MadeHead> {
-	const cwd = headFolder(d.env), label = headLabel(d.env);
+export async function makeHead(d: { run: HerdrRun; api: HerdrApi; env: NodeJS.ProcessEnv; log: Log; id: string; slot?: { stateDir: string } }): Promise<MadeHead> {
+	const cwd = headFolder(d.env), label = headLabel(d.env, d.slot?.stateDir);
 	mkdirSync(cwd, { recursive: true, mode: 0o700 });
 	chmodSync(cwd, 0o700);
 	const made = await result(d.run, ["workspace", "create", "--cwd", cwd, "--label", label, "--no-focus"]);

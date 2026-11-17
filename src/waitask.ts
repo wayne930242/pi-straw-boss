@@ -6,7 +6,7 @@ import type { Here } from "./heremark.ts";
 import { terminalOnlyOpts } from "./intercept.ts";
 import type { Ask } from "./host.ts";
 import { every } from "./lanface.ts";
-import { type Lang, memoryLang } from "./memorycmd.ts";
+import { type Locale as Lang, localeOf } from "./locale.ts";
 import type { Kit } from "./state.ts";
 import { card, type CardEnd, keyOf, read, type WaitUi } from "./waitcmd.ts";
 import { type Listed, pending, pressedWord } from "./waitview.ts";
@@ -166,9 +166,9 @@ function pressedLine(row: Row, json: Record<string, unknown>, raiser: boolean): 
 }
 
 /** `boss_wait_ask` of a joined session (tools.ts): only a tab's main agent asks, only the cards it raised, and its own result is the answer (no `wait_card` follows). */
-export function mainWaitAsk({ pi, cfg, s, me, role, tell }: Kit, o: { ask?: Ask; here: Here; auto: WaitAskDeps["auto"] }): void {
+export function mainWaitAsk({ pi, cfg, s, me, role, tell, guiDir }: Kit, o: { ask?: Ask; here: Here; auto: WaitAskDeps["auto"] }): void {
 	registerWaitAsk(pi, {
-		lang: memoryLang(cfg.env), scope: () => ({ kind: "raised", by: me() }), auto: o.auto, here: o.here, now: cfg.now, every: cfg.face?.every ?? every, tell,
+		lang: localeOf(cfg.env, guiDir), scope: () => ({ kind: "raised", by: me() }), auto: o.auto, here: o.here, now: cfg.now, every: cfg.face?.every ?? every, tell,
 		refusal: () => (role() !== "main" ? "Only a tab's main agent has sb ask the boss its wait cards again (the ones it raised); a member's go through its main, and a train's stay with the tower." : s.remoteOrigin ? "A teammate's turn does not ask the boss of this computer." : undefined),
 		ask: async (request) => (o.ask ? o.ask(request, { start: "never" }) : { ok: false, error: "The sb server is not available in this session." }),
 	});

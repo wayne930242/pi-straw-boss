@@ -200,7 +200,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		if (typeof workspace !== "string" || !/^[\w.:-]+$/.test(workspace)) throw new UsageError(`prompt needs --workspace <id> (letters, digits, and . : _ -)\n${USAGE}`);
 		const ended = new AbortController();
 		(deps.signals ?? ((leave) => (["SIGTERM", "SIGINT", "SIGHUP"] as const).forEach((signal) => process.once(signal, leave))))(() => ended.abort());
-		return await runPrompt({ workspace, source: serverSource(ctx, workspace), input: deps.stdin ?? process.stdin, output: deps.stdout ?? process.stdout, locale: localeOf(env), env, signal: ended.signal });
+		return await runPrompt({ workspace, source: serverSource(ctx, workspace), input: deps.stdin ?? process.stdin, output: deps.stdout ?? process.stdout, locale: localeOf(env, slot.stateDir), env, signal: ended.signal });
 	}
 
 	async function status() {

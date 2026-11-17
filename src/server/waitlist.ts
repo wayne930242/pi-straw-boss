@@ -92,6 +92,9 @@ export function waitList(d: ListDeps, towers: Target[], head: { at?: string } | 
 	};
 }
 
+/** How many of the rows wait for the boss: open, and not pressed (a secret's first step still waits for its entry). */
+export const openCards = (rows: readonly WaitRow[]): number => rows.filter((r) => r.state === "open" && (!r.press || r.press.act === "secret")).length;
+
 /** The lines a poll carries for one tower's rows. */
 export function digestOf(rows: WaitRow[], auto: boolean): WaitDigest {
 	return {

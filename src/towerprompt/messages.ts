@@ -1,23 +1,12 @@
+import type { Locale } from "../locale.ts";
 import type { Hint } from "./look.ts";
 import type { PollAnswer } from "./source.ts";
 
-// The words of the tower prompt. English, and Traditional Chinese for a boss whose shell says so; every other language, Simplified Chinese included, gets English.
+// The words of the tower prompt. English, and Traditional Chinese when sb's language is (src/locale.ts: the `locale` setting, else the shell's); every other language, Simplified Chinese included, gets English.
 
-export type Locale = "en" | "zh-TW";
-
-/** The prompt's language from the environment as a shell reads it (LC_ALL, then LC_MESSAGES, then LANG); with none set, from the system's own language. */
-export function localeOf(env: NodeJS.ProcessEnv): Locale {
-	const set = env.LC_ALL || env.LC_MESSAGES || env.LANG || systemLanguage();
-	return /^zh[_-](tw|hk|mo|hant)/i.test(set) ? "zh-TW" : "en";
-}
-function systemLanguage(): string {
-	try {
-		return Intl.DateTimeFormat().resolvedOptions().locale;
-	} catch {
-		return "en";
-	}
-}
-
+export type { Locale } from "../locale.ts";
+/** sb's language (src/locale.ts): the `locale` setting in the state folder's config.json, else the environment as a shell reads it, else the system's. */
+export { localeOf } from "../locale.ts";
 export interface Texts {
 	/** The title: `tower · Alpha`. */
 	title(label: string): string;

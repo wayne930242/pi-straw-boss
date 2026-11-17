@@ -105,6 +105,8 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 | `/boss server stop` | 確認後刻意停掉它。除了老闆的指令，沒有東西會再把它啟動。 |
 | `/boss server restart [reason]` | 確認後在同一個 port 重新啟動它。開著的頁面會自己重新連線。 |
 | `/boss server logs [n]` | 它的 log 最後 `n` 行（預設與上限都是 200）。 |
+| `/boss locale` | 顯示 sb 的語言（英文或繁體中文）與它的來源：`config.json` 的 `locale`，否則取自環境變數。 |
+| `/boss locale zh-TW` · `en` · `auto` | 寫進 `config.json`，或改回取自環境變數（`auto`）。server 與 `/boss` 指令立即生效，塔台提示在下次啟動時生效；已寫好的卡片保留原本的語言。見[語言](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#語言)。 |
 
 ## 角色
 

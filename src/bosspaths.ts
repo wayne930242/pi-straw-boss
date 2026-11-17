@@ -7,7 +7,7 @@ import { createBossOpen } from "./bossopen.ts";
 import type { Here } from "./heremark.ts";
 import { hereOnlyOpts } from "./intercept.ts";
 import type { createHost } from "./host.ts";
-import { type Lang, memoryLang } from "./memorycmd.ts";
+import { type Locale as Lang, localeOf } from "./locale.ts";
 import { collectNet, type Net, type Unit } from "./net.ts";
 import type { ServerLook } from "./server-look.ts";
 import { newer } from "./semver.ts";
@@ -140,7 +140,7 @@ const flat = (units: Unit[]): Unit[] => units.flatMap((u) => [u, ...flat(u.subs)
 /** The first pi-straw-boss whose server reads `guarded` on a session's input. */
 const GUARDED_SINCE = "0.61.0";
 export function createBossPaths(kit: Kit, { host, server, closeSelf, post = postServer, read, pollMs, here, stream }: { host: Pick<ReturnType<typeof createHost>, "ensure" | "sessions">; /** Holds the pane's local-only mark while a screen that only this computer may answer waits (heremark.ts). */ here: Here; server?: Pick<ServerLook, "logs">; closeSelf(keepPane: boolean): string | undefined; post?: Post; /** The net as the boss sees it; tests hand one over. */ read?: () => Promise<Net>; /** How often an opening is asked for a trust question (bossopen.ts). */ pollMs?: number; /** The net as the page's stream sends it, with each waiting unit's answerable dialog (`/boss answer`); tests hand one over. */ stream?: (r: GuiRecord) => Promise<Net> }) {
-	const { cfg, s, guiDir, tell, me } = kit, lang = (): Lang => memoryLang(cfg.env), t = () => WORDS[lang()];
+	const { cfg, s, guiDir, tell, me } = kit, lang = (): Lang => localeOf(cfg.env, guiDir), t = () => WORDS[lang()];
 	const net = (): Promise<Net> => read ? read() : collectNet({ run: cfg.run, world: cfg.world, sessions: () => host.sessions() });
 	/** The server's recorded GUI; a refusal says why in the boss's words. */
 	async function record(): Promise<GuiRecord> {

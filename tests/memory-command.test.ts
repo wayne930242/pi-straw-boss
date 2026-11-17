@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { memoryLang, type MemoryCmdDeps, parseMemoryArgs, runMemoryCommand } from "../src/memorycmd.ts";
+import { type MemoryCmdDeps, parseMemoryArgs, runMemoryCommand } from "../src/memorycmd.ts";
 import { memoryParameters } from "../src/memorytool.ts";
 import { TOOLS } from "../src/server/runtools.ts";
 import type { Slot } from "../src/server/record.ts";
@@ -52,15 +52,6 @@ test("the arguments: nothing or list shows the memory; confirm and reject name a
 	assert.deepEqual(parseMemoryArgs("-w Beta confirm P1"), { workspace: "Beta", op: "confirm", id: "P1" });
 	assert.deepEqual(parseMemoryArgs("-w Beta"), { workspace: "Beta", op: "list" });
 	for (const bad of ["confirm", "confirm S1", "confirm P1 P2", "reject D1", "add", "add wait x", "add standing", "edit S2", "edit P1 x", "delete P1", "delete", "resolve D1", "resolve", "-w", "frobnicate", "list extra"]) assert.equal("usage" in parseMemoryArgs(bad), true, bad);
-});
-
-test("the words follow the locale: Traditional Chinese for a zh-TW, zh-HK, zh-MO or zh-Hant locale, English otherwise", () => {
-	assert.equal(memoryLang({ LANG: "zh_TW.UTF-8" }), "zh-TW");
-	assert.equal(memoryLang({ LC_ALL: "zh_HK.UTF-8", LANG: "en_US.UTF-8" }), "zh-TW", "LC_ALL wins");
-	assert.equal(memoryLang({ LC_MESSAGES: "zh-Hant-TW" }), "zh-TW");
-	assert.equal(memoryLang({ LANG: "en_US.UTF-8" }), "en");
-	assert.equal(memoryLang({ LANG: "zh_CN.UTF-8" }), "en");
-	assert.equal(memoryLang({}), "en");
 });
 
 test("/boss memory lists the memory: proposals first with what they cite, then standing instructions, decisions and waits", async () => {

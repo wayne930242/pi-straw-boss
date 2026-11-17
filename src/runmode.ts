@@ -7,7 +7,7 @@ import { BOSS_MARK, BRIEF_MARK, CRASH_FLAG, cleanLabel } from "./eventmarks.ts";
 import { panes, type Place, TOWER_LABEL, tabs, workspaces } from "./herdr.ts";
 import { createHereMark } from "./heremark.ts";
 import { every } from "./lanface.ts";
-import { memoryLang } from "./memorycmd.ts";
+import { localeOf } from "./locale.ts";
 import { runWaitCommand } from "./waitcmd.ts";
 import { registerWaitAsk } from "./waitask.ts";
 import type { DigestRow } from "./server/waitlist.ts";
@@ -249,7 +249,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	async function waits(args: string, context: ExtensionContext): Promise<void> {
 		if (mode !== "run" || !claim || claim.kind === "ally") return tell("An ally run takes no /boss command: the boss is not its sender, and it ends with its message.", "warning");
 		await runWaitCommand(args, {
-			lang: memoryLang(env), interactive: context.hasUI, own: claim.workspace, tell, ui: context.ui, here: bossHere, now: cfg.now, workspaces: () => workspaces(cfg.run), tabs: (workspace) => tabs(cfg.run, workspace),
+			lang: localeOf(env, guiDir), interactive: context.hasUI, own: claim.workspace, tell, ui: context.ui, here: bossHere, now: cfg.now, workspaces: () => workspaces(cfg.run), tabs: (workspace) => tabs(cfg.run, workspace),
 			ask: paneAsk,
 			memory: async (workspace, json) => {
 				const r = await ask({ cmd: "tower-memory", workspace, json, via: "run-pane" });
@@ -262,7 +262,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	let waitsShown = "";
 	function showWaits(answer: Answer) {
 		if (!ctx || claim?.kind === "ally") return;
-		const rows = Array.isArray(answer.waits) ? (answer.waits as DigestRow[]) : [], lang = memoryLang(env);
+		const rows = Array.isArray(answer.waits) ? (answer.waits as DigestRow[]) : [], lang = localeOf(env, guiDir);
 		const lines = rows.length ? [...waitBlock(rows, lang, "/boss wait"), `  ${waitHint(lang, "/boss wait")}`] : [];
 		const key = JSON.stringify(lines);
 		if (key === waitsShown) return;
@@ -302,7 +302,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		// `boss_wait_ask` (waitask.ts): a local run shows its tower's cards, the head's run any tower's. Registered here and not proxied to `run-tool`, because it draws a dialog: its requests are a session's (the hello secret), never this
 		// run's token. An ally run has none: the boss is not its sender. A hand run's turn that an event started is no turn of his either.
 		if (claim!.kind !== "ally") registerWaitAsk(pi, {
-			lang: memoryLang(env), scope: () => (claim!.kind === "head" ? { kind: "all" } : { kind: "tower", workspace: claim!.workspace }), auto: { on: () => s.autoOn?.() === true }, ask: paneAsk, here: bossHere, now: cfg.now, every: cfg.face?.every ?? every, tell,
+			lang: localeOf(env, guiDir), scope: () => (claim!.kind === "head" ? { kind: "all" } : { kind: "tower", workspace: claim!.workspace }), auto: { on: () => s.autoOn?.() === true }, ask: paneAsk, here: bossHere, now: cfg.now, every: cfg.face?.every ?? every, tell,
 			refusal: () => (claim?.hand && !bossTurn ? "In the boss's own pi (a hand run) boss_wait_ask works only in a turn the boss started; the card stays open for the GUI and /boss wait."
 				: bossDoor !== "pane" || cfg.now() - bossDoorAt >= BOSS_AT_PANE_MS ? "The boss is not at this pane: his last words in this run came from the GUI or another session, or he has not spoken at this pane for 10 minutes. The card stays open for the GUI and /boss wait; a dialog here would wait where he does not look." : undefined),
 		});

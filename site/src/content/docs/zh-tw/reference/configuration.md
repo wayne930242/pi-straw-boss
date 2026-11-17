@@ -16,6 +16,7 @@ pi-straw-boss 不需要任何設定就能運作。
   "headModel": "provider/model-id",
   "towerRuns": { "enabled": true, "max": 4 },
   "integration": "on",
+  "locale": "zh-TW",
   "stallWatch": { "cpuMinutes": 5, "silentMinutes": 30 },
   "link": {
     "relay": "https://relay.example",
@@ -31,6 +32,7 @@ pi-straw-boss 不需要任何設定就能運作。
 | `towerRuns.enabled` | `true` | 塔台服務：塔台是一次因事件而醒來、結束時留下交接筆記的執行。`false` 則保留常駐的塔台。讀不到或無法解析的檔案也視為開啟，server 會在它的 log 裡說明。 |
 | `towerRuns.max` | 4 | 同時跑的 pi 執行上限。 |
 | `integration` | `on`（在 `STRAW_BOSS_DESK=1` 下為 `off`） | `off` 會在這台電腦上關掉[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。開啟是 `on`、`true`、`1` 或 `yes`；關閉是 `off`、`false`、`0` 或 `no`。任何其他值，以及讀不到的檔案，都會把它關掉並發出通知。 |
+| `locale` | 取自環境變數 | sb 的語言，`zh-TW` 或 `en`：替身、主塔台的名稱、塔台提示、執行寫的卡片，以及 `/boss` 指令。沒有設定時由 `LC_ALL`、`LC_MESSAGES` 或 `LANG` 決定，否則用系統語言。用 `/boss locale` 設定。見[語言](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#語言)。 |
 | `stallWatch.enabled` | `true` | [停滯監看](/pi-straw-boss/docs/zh-tw/guide/process-hygiene/#停滯監看)：pi session 看起來卡死時，sb server 會告訴該工作區的塔台，但絕不停掉那個 session。`false` 關閉。`stallWatch` 的每個鍵每分鐘讀一次，改了不必重啟。 |
 | `stallWatch.cpuPercent` | 75 | 占用單一核心多少算是滿載，10 到 100，以 `cpuMinutes` 內的平均計算。某一分鐘低於它的一半就算平靜，計數重新開始。歷史很長的正常 session 工作時，某一分鐘也可能超過這個值（實測兩個分別是 73 和 83）；它和卡死的差別在於還在寫 session 檔，所以調低這個值幫助不大，還可能誤報。 |
 | `stallWatch.cpuMinutes` | 5 | pi 連續幾分鐘都不平靜、平均達到 `cpuPercent` 以上，session 檔又沒有寫入，才通報。其中某一分鐘略低於門檻不會讓計數重新開始。`0` 關閉這個訊號。 |
