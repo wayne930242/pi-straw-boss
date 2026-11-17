@@ -1,4 +1,4 @@
-# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ 4d6fbaa2 -->
+# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ d5ef3a17 -->
 
 [README](../README.zh-TW.md) 背後的完整行為。使用說明在各篇指南；這份參考則逐節寫出程式實際怎麼做，所以請在下面找到需要的那一節，其餘可以略過。
 
@@ -217,7 +217,7 @@ sequenceDiagram
 
 #### 它的工作區
 
-sb server 在第一次需要主塔台時（老闆從任何頻道送出的第一則訊息，或 `/boss head`）建立它，位置在資料夾 `<pi agent dir>/straw-boss-head/`。全新安裝在老闆寫訊息給它之前，Herdr 裡不會多出任何東西。伺服器的語系是繁體中文時，工作區標籤是 `主塔台`，否則是 `Head tower`，它的分頁帶有皇冠字符（U+F01A5），它的 pane 放的是塔台的常駐 pane，標記為 `sb_role=head`，排序在最前面（`000`）。它是靠自己的紀錄和 `sb_head` token 辨認的，絕不靠標籤，所以老闆有個同標籤的工作區，不會被誤認成它。
+sb server 在第一次需要主塔台時（老闆從任何頻道送出的第一則訊息，或 `/boss head`）建立它，位置在資料夾 `<pi agent dir>/straw-boss-head/`。全新安裝在老闆寫訊息給它之前，Herdr 裡不會多出任何東西。[sb 的語言](#語言)是繁體中文時，工作區標籤是 `主塔台`，否則是 `Head tower`，它的分頁帶有皇冠字符（U+F01A5），它的 pane 放的是塔台的常駐 pane，標記為 `sb_role=head`，排序在最前面（`000`）。它是靠自己的紀錄和 `sb_head` token 辨認的，絕不靠標籤，所以老闆有個同標籤的工作區，不會被誤認成它。
 
 <details>
 <summary>細節</summary>
@@ -2361,7 +2361,7 @@ server 用 GUI 讀網的結果來判定（有頁面開著時每 2 秒讀一次�
 
 ### 兩次執行之間的塔台
 
-由 sb server 執行的塔台，即使沒有任何執行中的 run，也保有它的那一列：只要塔台提示在常駐 pane 上執行（[常駐 pane](#常駐-pane)），server 就會在該 pane 上回報一個替身智慧體 `tower`（閒置，訊息為 `standing by`、`3 queued` 或 `held`），所以這一列會排在其工作區的第一個位置，作為塔台的標記，`agent.list` 也看得到它。它只是一列，沒有別的作用：網、儀表板、收起、closer 或 reaper 的檢查都不把它算作智慧體、主智慧體或成員，閒置回報也不會觸發 toast、音效或注意力計數。run 開始時，由 pi 自己的那一列取代它；run 結束後它會再回來。隊友 run 的 pane 也是一列，就在塔台的正下方（`[ally] <device label>`，見[隊友 run](#隊友-run)）。
+由 sb server 執行的塔台，即使沒有任何執行中的 run，也保有它的那一列：只要塔台提示在常駐 pane 上執行（[常駐 pane](#常駐-pane)），server 就會在該 pane 上回報一個替身智慧體 `tower`（閒置，訊息為 `standing by`、`3 queued` 或 `held`；有等待卡片在等老闆時則是 blocked，訊息以 `2 cards wait` 開頭），所以這一列會排在其工作區的第一個位置，作為塔台的標記，`agent.list` 也看得到它。它只是一列，沒有別的作用：網、儀表板、收起、closer 或 reaper 的檢查都不把它算作智慧體、主智慧體或成員，閒置回報也不會觸發 toast、音效或注意力計數。blocked 的替身就是 Herdr 自己的等待狀態，Herdr 給它什麼注意力就是什麼，工作區的彙總也跟著它，所以儀表板的塔台列與頁面的據點都顯示等待中；頁面上的塔台單位在 run 之間仍是閒置，不另外發警示（卡片本身就是它的警示）。run 開始時，由 pi 自己的那一列取代它；run 結束後它會再回來。隊友 run 的 pane 也是一列，就在塔台的正下方（`[ally] <device label>`，見[隊友 run](#隊友-run)）。
 
 <details>
 <summary>細節</summary>
@@ -2971,6 +2971,12 @@ GUI 不再等待塔台 pi：sb server 從它自己啟動起就提供頁面，所
 
 </details>
 
+### 語言
+
+sb 自己的文字有英文與繁體中文兩種：server 的（替身的訊息、主塔台工作區的標籤、執行的簡報要它寫卡片用的語言）、塔台提示的，以及 pi 裡 `/boss` 指令的（`src/locale.ts`）。`~/.pi/agent/straw-boss/config.json` 的 `locale` 設定它，值是 `"zh-TW"` 或 `"en"`，優先於環境變數；沒有設定時由環境決定，讀法和 shell 相同（`LC_ALL`，接著 `LC_MESSAGES`，再來 `LANG`：`zh_TW`、`zh_HK`、`zh_MO` 或 `zh-Hant` 是繁體中文，其他語言都是英文），再沒有就用系統本身的語言。這個版本不認得的值，或讀不到的檔案，都不算設定。
+
+`/boss locale` 顯示目前的語言與它的來源；`/boss locale zh-TW`、`en` 或 `auto`（改回取自環境）會寫入這個檔案，保留其他的鍵，檔案無法解析時則拒絕。每個讀取者每次都重新讀檔，所以 server 與 `/boss` 指令立即跟上，塔台提示在下次啟動時、執行在下次簡報時跟上；已寫好的卡片保留原本的語言。
+
 ### 塔台服務
 
 一個開關，`~/.pi/agent/straw-boss/config.json` 中的 `towerRuns`：`{ "towerRuns": { "enabled": false } }`（`max`，同時最多的 pi run 數，預設 4，是給[本機 run](#本機 run)用的）。**它預設是開啟的**：沒有 `config.json`，或 `towerRuns` 沒有 `enabled: false`，都表示開啟。讀不出來或解析不了的 `config.json` 也表示開啟，但 server 會說一次：在 log 與 status 的 `lastError` 中有一行 `code=config` 的 `error`，因為在此期間檔案自己的 `enabled: false` 並未被遵守。在 `enabled: false` 時，塔台維持為常駐，本節中的一切都不會發生。
@@ -3099,7 +3105,7 @@ Herdr 以短計數器為工作區、分頁與 pane 編號，這些計數器在�
 
 它在其間說的幾行（喚醒塔台、下一次對話是新的 session、server 沒有回應、塔台沒有接收、不認得的指令、離開 pane）帶有各自種類的圖示與顏色。Nerd Font 圖示是塔台分頁自己的，所以假設字型有它。`NO_COLOR`（已設定且不是空的）或 `TERM=dumb` 會去掉顏色；pane 所執行的 shell 中的 `STRAW_BOSS_ASCII=1` 會去掉每個 ASCII 之外的圖示（`# tower - <label>`、`o standing by`、`Enter`、`tower> `）；`TERM=dumb` 也會去掉清除畫面。
 
-沒有終端機（管線、log）時，輸出是沒有跳脫序列的單純 ASCII，除非 `STRAW_BOSS_ASCII=0` 要求圖示；外觀在 `src/towerprompt/look.ts`。文字是英文，而當 shell 的 `LC_ALL`、`LC_MESSAGES` 或 `LANG` 說 `zh_TW`、`zh_HK`、`zh_MO` 或 `zh-Hant` 時是繁體中文。它每 2 秒透過控制 socket，以狀態資料夾紀錄的密鑰輪詢 server，如同 CLI（在判斷資料夾的擁有者之後才讀取紀錄），不啟動任何東西，也不持有 run token；已停止或載入中的 server 會被等待，並說一次。
+沒有終端機（管線、log）時，輸出是沒有跳脫序列的單純 ASCII，除非 `STRAW_BOSS_ASCII=0` 要求圖示；外觀在 `src/towerprompt/look.ts`。文字使用 [sb 的語言](#語言)，在提示啟動時讀取：英文或繁體中文（`config.json` 的 `locale`，否則看 shell 的 `LC_ALL`、`LC_MESSAGES` 或 `LANG` 是否說 `zh_TW`、`zh_HK`、`zh_MO` 或 `zh-Hant`）。它每 2 秒透過控制 socket，以狀態資料夾紀錄的密鑰輪詢 server，如同 CLI（在判斷資料夾的擁有者之後才讀取紀錄），不啟動任何東西，也不持有 run token；已停止或載入中的 server 會被等待，並說一次。
 - **等待卡片**（`src/towerprompt/waitblock.ts`、`cardview.ts`、`pick.ts`）。提示在狀態行下面印出這個 pane 的塔台所開著的卡片區塊（head pane 則是 head 自己的），只在 server 的摘要改變時印一次，摘要由 `prompt-poll` 帶來，每個欄位截到 120 字：`W2 choice · <do> · from <raiser> · parked`，最多五行，再接 `3 more: /wait`（中文介面寫成 `還有 3 張：/wait`），或一行說沒有開著的卡片；不響鈴。卡片文字在寫出前會再清一次，因為提示是直接寫進終端機的。
 
   在會回報按鍵的終端機上，提示直接把卡片一張接一張畫出來，不用打任何指令（**卡片檢視**，[規格](specs/2026-11-16-wait-cards-flow.md)）：這個 pane 的塔台一有開著的卡片，就畫出第一張，動作排成幾列；↑↓ 或數字標記一列（一開始沒有任何一列被標記），Enter 按下被標記的那一列並畫出下一張，←→ 換到另一張而不按，Esc 把按鍵還給訊息列（`/wait` 把卡片叫回來）。略過與回覆在那一行上開一個欄位（理由與確認，或回覆的文字，連同 `answers` 送給卡片的塔台）。不是數字的可印字元進訊息列，沒有標記任何一列時的空 Enter 仍然喚醒塔台。只有在空的訊息列上單獨打出的一個按鍵才算卡片按鍵：貼上在欄位裡是文字，在其他地方則結束檢視、什麼都不按。這個 pane 的此處標記在第一個卡片按鍵時才開，不是在畫卡片時，所以老闆沒碰卡片之前，配對手機的按鍵板仍是寫給塔台；標記開不了就拒絕檢視。server 拒絕的按下（別處先回答了）會顯示出來並畫下一張，顯示中的卡片離開清單時，下一次輪詢就換掉。無人值守的裝置不會自己畫卡片：`/wait` 才開啟檢視。
@@ -3147,7 +3153,7 @@ Herdr 拒絕的輸入（`pane run` 失敗）不算一次嘗試：server 記錄 `
 
 在 Windows 上，前景清單無法分辨閒置的 shell 與執行中的程式，Retry 會先讀行程表，只有在那次讀取成功、而且在 pane 的 shell 之下沒有找到老闆的程式（塔台提示除外）時才輸入：失敗的讀取會說明並且不輸入任何東西，找到的程式會讓服務再次被它保持並指名它，而 Retry 會再問一次。歸還最多把 pane 標為全新一分鐘，而 pane 被停放時完全不標。啟動失敗的通知，在按下 Retry 時、老闆寫給被保持的塔台時，以及之後有 run 聲明時消失。
 
-它在提示於最近 6 秒內輪詢過時回報替身，在訊息改變時再回報，並每 4 分鐘一次。在 run 於 pane 裡啟動 pi 之前，它會釋放替身（Herdr 拒絕在有智慧體的 pane 中 `agent start`：`agent_pane_busy`），告訴提示離開，最多等 3 秒讓它消失，而且只有在 pane 的前景正是那個提示時（依 PID）才送 Ctrl+C。
+它在提示於最近 6 秒內輪詢過時回報替身，在訊息或狀態改變時再回報，並每 4 分鐘一次。有等待卡片在等老闆時（開著且還沒按下；密鑰卡片按了第一步仍算在等），狀態是 `blocked`：塔台算自己的，主塔台算每座塔台的加上自己的，和主塔台的執行能觸及的範圍相同；否則是 `idle`，而在無人值守裝置上一律是 `idle`，因為沒有人會回答。自動模式下仍是 blocked：卡片還在等，只是暫放，頁面也會顯示它們。訊息先說卡片數，再說 `held` 或佇列（`2 cards wait · 1 queued`），使用 [sb 的語言](#語言)。在 run 於 pane 裡啟動 pi 之前，它會釋放替身（Herdr 拒絕在有智慧體的 pane 中 `agent start`：`agent_pane_busy`），告訴提示離開，最多等 3 秒讓它消失，而且只有在 pane 的前景正是那個提示時（依 PID）才送 Ctrl+C。
 
 然後，在 macOS 與 Linux 上，它最多等 2 秒讓提示的行程本身消失（提示說它要離開不等於它結束：Herdr 在結束後幾毫秒就接受 `agent start`，而 zsh 還沒有讀取，指令的 Enter 就遺失了），再多等 300 毫秒讓它穩定下來；在最近 15 秒內輸入、還沒有輪詢過的提示會以同樣的方式被等待，而沒有及時結束的提示會在 log 中被指名（`run-yield`），run 繼續。
 
@@ -3483,7 +3489,7 @@ stateDiagram-v2
     live --> [*]: 退役
 ```
 
-老闆寫，用工作區內任何已加入的 pi session 裡的 **`/boss memory`**：`/boss memory` 列出（塔台的提案排最前面，各帶它引用的老闆訊息），`/boss memory confirm P3` 與 `reject P3` 回答提案，`add standing|decision <text>`、`edit S2 <text>`、`delete D4` 與 `resolve W1 [outcome]` 改其餘的（`-w <workspace>` 指名另一個工作區；這些詞依你的語系是英文或繁體中文）。pi 是第一個介面：塔台通訊畫面的**記憶**面板與 GUI 的塔台卡片，以同樣的 `rev` 檢查呼叫同一個 server 函式，自己不另加任何東西。
+老闆寫，用工作區內任何已加入的 pi session 裡的 **`/boss memory`**：`/boss memory` 列出（塔台的提案排最前面，各帶它引用的老闆訊息），`/boss memory confirm P3` 與 `reject P3` 回答提案，`add standing|decision <text>`、`edit S2 <text>`、`delete D4` 與 `resolve W1 [outcome]` 改其餘的（`-w <workspace>` 指名另一個工作區；這些詞依 [sb 的語言](#語言)是英文或繁體中文）。pi 是第一個介面：塔台通訊畫面的**記憶**面板與 GUI 的塔台卡片，以同樣的 `rev` 檢查呼叫同一個 server 函式，自己不另加任何東西。
 
 <details>
 <summary>細節</summary>
