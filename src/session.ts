@@ -292,6 +292,9 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	// A rename from any source (boss_rename, /name, another extension) can make this main an integrator (§2); its todos are read again after each todo call.
 	pi.on("session_info_changed", (event) => void (!runMode.active() && mainDuty.migrate((event as { name?: string }).name)));
 	pi.on("agent_settled", () => void (!runMode.active() && briefing.settled()));
+	// A compaction drops the cache and may summarize the steers away, and a tree move may leave them on another branch: the next run renders the role section anew (briefing.ts `fresh`).
+	pi.on("session_compact", (event) => void (!runMode.active() && briefing.fresh(event.willRetry)));
+	pi.on("session_tree", () => void (!runMode.active() && briefing.fresh()));
 
 	// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.

@@ -96,3 +96,95 @@ test("the role prompts a session renders name only this session's own facts: no 
 		for (const [, key] of readFileSync(`${PROMPT_DIR}/${file}`, "utf8").matchAll(/\{\{(\w+)\}\}/g)) assert.ok(allowed.has(key!), `${file} uses {{${key}}}`);
 	}
 });
+
+// A coordinator's plan graph (docs/specs/2026-11-09-agent-kinds.md §2a) toggled "## Dispatch" and "## Graph:" in the section at every run start that followed a todo call (traced before 0.80.12: 22 + 22 strict cache misses, about
+// 3.9M tokens a day). The section keeps the graph it was rendered with for the session; a graph that changed since reaches the model once, as rebrief's steer, at the next run start or during a run.
+const plan = (a: { entries: { customType: string; data: unknown }[]; toolResult(name: string): Promise<void> }, graph?: string, status = "pending") => {
+	a.entries.splice(0, a.entries.length, ...a.entries.filter((e) => e.customType !== "rpiv-todo-state"), { customType: "rpiv-todo-state", data: { nextId: 2, tasks: [{ id: 1, subject: "p", status, metadata: graph ? { graph } : {} }] } });
+	return a.toolResult("todo");
+};
+const told = (a: { sent: { customType: string; content: string; deliverAs?: string }[] }) => a.sent.filter((m) => m.customType === "straw-boss").map((m) => (assert.equal(m.deliverAs, "steer"), m.content));
+
+test("a coordinator's section is the same bytes while its plan's graph comes, changes, and goes; each change reaches the model once, as a steer, at the next run start or during a run", async () => {
+	const a = await main("a", "wA:p1", "wA:t1");
+	const first = await section(a);
+	assert.doesNotMatch(first, /## Dispatch|## Graph:/);
+	await plan(a, "fan-out");
+	assert.deepEqual(told(a), [], "an idle session is told at its next run");
+	assert.equal(await section(a), first, "a graph that appeared while idle");
+	assert.equal(told(a).length, 1);
+	assert.match(told(a)[0]!, /^<straw-boss>\nYour plan's graph is now fan-out\/fan-in\. Add to your instructions:[\s\S]*## Dispatch[\s\S]*## Graph: fan-out\/fan-in/);
+	assert.equal(await section(a), first, "a run with no change");
+	assert.equal(told(a).length, 1, "a change is told once, not at every run");
+	await a.run(); // a run in progress: the change is steered at once (rebrief), and the next run start adds nothing
+	await plan(a, "single-loop");
+	await a.fire("agent_settled", { aborted: false });
+	assert.equal(told(a).length, 2);
+	assert.match(told(a)[1]!, /Your plan's graph is now single-loop\. Drop your "## Graph:" section\./);
+	assert.equal(await section(a), first, "a graph that changed during a run");
+	assert.equal(told(a).length, 2);
+	await plan(a, "orchestrator-worker");
+	assert.equal(await section(a), first, "a graph that changed while idle");
+	assert.match(told(a)[2]!, /Your plan's graph is now orchestrator-worker\. Add to your instructions:[\s\S]*## Graph: orchestrator-worker/);
+	await plan(a, "orchestrator-worker", "completed");
+	assert.equal(await section(a), first, "a plan that ended while idle");
+	assert.equal(told(a).length, 4);
+	assert.match(told(a)[3]!, /Your plan has no open graph: drop your "## Dispatch" and "## Graph:" sections\./);
+	await plan(a, "fan-out");
+	await plan(a, undefined);
+	assert.equal(await section(a), first, "a graph that came and went between two runs");
+	assert.equal(told(a).length, 4, "the model was told no graph, and no graph it is");
+});
+
+test("the section is rendered anew with the plan's graph where the cache or the steers are gone: a compaction, a tree move, and every session start (startup, /reload, /new, /resume, /fork)", async () => {
+	const a = await main("a", "wA:p1", "wA:t1");
+	assert.doesNotMatch(await section(a), /## Dispatch/);
+	await plan(a, "fan-out");
+	await a.fire("session_compact", { reason: "threshold", willRetry: false, fromExtension: false });
+	assert.match(await section(a), /## Dispatch[\s\S]*## Graph: fan-out\/fan-in/, "after a compaction");
+	assert.deepEqual(told(a), [], "the section carries the graph: no steer");
+	await plan(a, "single-loop");
+	await a.fire("session_tree", { newLeafId: "x", oldLeafId: "y" });
+	const tree = await section(a);
+	assert.match(tree, /## Dispatch/);
+	assert.doesNotMatch(tree, /## Graph:/, "after a tree move");
+	for (const reason of ["reload", "new", "resume", "fork"]) {
+		await plan(a, reason === "new" || reason === "fork" ? "orchestrator-worker" : "fan-out");
+		await a.fire("session_start", { reason });
+		await world.quiet();
+		assert.match(await section(a), reason === "new" || reason === "fork" ? /## Graph: orchestrator-worker/ : /## Graph: fan-out\/fan-in/, `after a session start (${reason})`);
+	}
+	assert.deepEqual(told(a), []);
+});
+
+test("a compaction during a run tells the rest of the run what its section lacks (a steer when the turn is retried, a stored message when not); the next run renders the section anew; so does a kind change", async () => {
+	const a = await main("a", "wA:p1", "wA:t1");
+	await section(a);
+	await plan(a, "fan-out");
+	await section(a);
+	assert.equal(told(a).length, 1);
+	await a.run();
+	await a.fire("session_compact", { reason: "overflow", willRetry: true, fromExtension: false });
+	assert.equal(told(a).length, 2, "the steer before the compaction may be summarized away");
+	assert.equal(told(a)[1], told(a)[0]);
+	await a.fire("agent_settled", { aborted: false });
+	assert.match(await section(a), /## Graph: fan-out\/fan-in/, "the run after the compaction renders the section anew");
+	assert.equal(told(a).length, 2);
+	await a.run();
+	await plan(a, "single-loop");
+	assert.equal(told(a).length, 3, "steered during the run");
+	await a.fire("session_compact", { reason: "threshold", willRetry: false, fromExtension: false });
+	const stored = a.sent.at(-1)!;
+	assert.equal(a.sent.length, 4);
+	assert.deepEqual([stored.deliverAs, stored.triggerTurn], [undefined, false], "a compaction that retries no turn stores the message: a steer would make pi continue an ended run");
+	assert.match(stored.content, /^<straw-boss>\nYour plan's graph is now single-loop\. Drop your "## Graph:" section\.\n<\/straw-boss>$/, "told against the section, rendered with fan-out/fan-in");
+	await a.fire("agent_settled", { aborted: false });
+	const next = await section(a);
+	assert.match(next, /## Dispatch/);
+	assert.doesNotMatch(next, /## Graph:/);
+	assert.equal(a.sent.length, 4);
+	await a.tool("boss_duty", { duty: "standing", reason: "minds the v1 redis" });
+	await settle();
+	assert.match(await section(a), /of kind standing[\s\S]*## Kind: standing/, "a kind change renders the section anew (and is steered as before when it comes during a run)");
+	assert.equal(a.sent.length, 4);
+});
