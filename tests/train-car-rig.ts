@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CarBook, type Look } from "../src/server/carbook.ts";
+import { CarBook, type Look, type PaneFacts } from "../src/server/carbook.ts";
 import { type Cars, carsReply, runGit } from "../src/server/carops.ts";
 import { createCarClient } from "../src/traincar.ts";
 import { slipBlock } from "./train-guard-rig.ts";
@@ -22,6 +22,9 @@ export function carWorld() {
 	for (const d of [stateDir, dir, work]) mkdirSync(d, { recursive: true });
 	let clock = Date.parse("2026-11-07T08:00:00Z");
 	const looks = new Map<string, Look>();
+	// The panes Herdr lists, by id, with the tokens that make one a train: a fact of its own beside the broker's sessions (`looks`), which a pi's /reload or a broker restart hides for a while. `herdr.down` makes the list unreadable.
+	const panes = new Map<string, PaneFacts>();
+	const herdr = { down: false };
 	const logs: string[] = [];
 	const existing = new Set<string>();
 	let counter = 0;
@@ -29,7 +32,7 @@ export function carWorld() {
 	// own environment forbids: `GIT_ALLOW_PROTOCOL` is the server's to give, and this world's override is what lets the tests play a train that redirects the fetch to a local repository).
 	const rewrites: [string, string][] = [];
 	const deps = {
-		stateDir, dir, now: () => clock, look: async (id: string) => looks.get(id), git: (cwd: string, args: string[], env?: Record<string, string>) => runGit(cwd, [...rewrites.flatMap(([from, to]) => ["-c", `url.${to}.insteadOf=${from}`]), ...args], { ...env, GIT_ALLOW_PROTOCOL: "https:ssh:file" }), knownHosts: "git.example.test ssh-ed25519 not-a-real-key\n", exists: (p: string) => existing.has(p),
+		stateDir, dir, now: () => clock, look: async (id: string) => looks.get(id), paneOf: async (pane: string) => { if (herdr.down) throw new Error("herdr: connection closed"); return panes.get(pane); }, git: (cwd: string, args: string[], env?: Record<string, string>) => runGit(cwd, [...rewrites.flatMap(([from, to]) => ["-c", `url.${to}.insteadOf=${from}`]), ...args], { ...env, GIT_ALLOW_PROTOCOL: "https:ssh:file" }), knownHosts: "git.example.test ssh-ed25519 not-a-real-key\n", exists: (p: string) => existing.has(p),
 		startOf, secret: () => `secret-${++counter}`, log: (event: string, facts: Record<string, unknown>) => void logs.push(`${event} ${JSON.stringify(facts)}`),
 		// The integrator's workspace is the tower's: its checkout is where the check at `received` reads the remote and the app's base (nothing is read while `repo()` and `appBase()` have not made them).
 		checkoutOf: async () => checkout,
@@ -41,15 +44,19 @@ export function carWorld() {
 	// The pi of the integrator and the pi of the train, as Herdr lists them.
 	looks.set(INTEG, { id: INTEG, name: "integ acme", role: "main", pane: "wA:p1", workspace: "wA", cwd: work, foreground: [111] });
 	looks.set(TRAIN, { id: TRAIN, name: "train 1106m", role: "train", train: { project: "acme", code: CODE }, pane: "wA:p2", workspace: "wA", cwd: work, foreground: [222] });
+	panes.set("wA:p1", { role: "main" });
+	panes.set("wA:p2", { role: "train", train: { project: "acme", code: CODE } });
 	const client = (session: string, pid: number, pane: string, held = new Map<string, string>()) => createCarClient({ call, session: () => session, pane: () => pane, pid, held, started: startOf });
 	return {
-		root, stateDir, dir, work, checkout, book, cars, call, looks, logs, existing, client, deps, rewrites,
+		root, stateDir, dir, work, checkout, book, cars, call, looks, panes, herdr, logs, existing, client, deps, rewrites,
 		integ: client(INTEG, 111, "wA:p1"), train: client(TRAIN, 222, "wA:p2"),
 		tick: (ms: number) => void (clock += ms), now: () => clock,
 		/** The server opened train CODE for the train session, with its base, on a manifest that lists `heads`; the tower's checkout is read at the open. */
 		opened: async (base: string | null = "develop", heads: string[] = [SHA_A]) => { const url = await book.remoteOf(checkout); book.noteTrain({ project: "acme", code: CODE, session: TRAIN, pane: "wA:p2", integrator: INTEG, ...(base ? { base } : {}), heads, ...(url ? { url } : {}) }); },
 		/** The tower forwarded this head to the integrator on behalf of `from`. */
 		forwarded: (from = COORD, head = SHA_A) => book.noteForward({ fwd: "e".repeat(16), from, to: [INTEG], text: slipBlock({ head }) }),
+		/** The session's pi ended: the broker no longer lists it and Herdr no longer lists its pane. */
+		gone: (session: string) => { const pane = looks.get(session)?.pane; looks.delete(session); if (pane) panes.delete(pane); },
 		done: () => rmSync(root, { recursive: true, force: true }),
 		freeze: (path: string) => { writeFileSync(path, "x"); existing.add(path); },
 	};

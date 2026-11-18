@@ -98,7 +98,7 @@ test("a car received for a live train is not returned by the integrator, and one
 	await w.opened();
 	await receive(w);
 	await refused(trainCar(integratorDeps(w), received, integratorCtx(forwardEntry(COORD))), "sb: car T-15 is already received");
-	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "late", project: "acme" }, integratorCtx(forwardEntry(COORD))), `sb: train ${CODE} is live (session ${TRAIN}): the train sets its cars' fates`);
+	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "late", project: "acme" }, integratorCtx(forwardEntry(COORD))), `sb: train ${CODE} is live (session ${TRAIN}, pane wA:p2): the train sets its cars' fates`);
 	const w2 = world();
 	w2.forwarded();
 	await trainCar(integratorDeps(w2), { car: "T-15", state: "returned", reason: "no accept", project: "acme" }, integratorCtx(forwardEntry(COORD)));

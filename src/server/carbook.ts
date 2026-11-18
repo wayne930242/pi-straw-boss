@@ -70,6 +70,8 @@ export const refusal = (text: string) => new Error(text);
 
 /** What the server knows of a session from the broker and Herdr: the pane token role, the train token, the pane and its folder, and the pids of the pane's foreground processes (pi is one). */
 export interface Look { id: string; name: string; role?: string; train?: { project: string; code: string }; pane: string; workspace?: string; cwd?: string; foreground: number[] }
+/** What Herdr's pane list says of one pane: its `sb_role` token and the train its `sb_train` token names. */
+export interface PaneFacts { role?: string; train?: { project: string; code: string } }
 
 export interface BookDeps {
 	/** The state folder: the trainboard (the display journal) lives under it. */
@@ -82,6 +84,8 @@ export interface BookDeps {
 	/** When this server started, as the refusal of a forward it does not hold tells it (todo #154); the moment the book was made when absent. */
 	startedAt?: number;
 	look(session: string): Promise<Look | undefined>;
+	/** The pane as Herdr lists it now; undefined when Herdr lists no such pane, and a rejection when the list cannot be read. */
+	paneOf(pane: string): Promise<PaneFacts | undefined>;
 	/** The checkout folder of the Herdr workspace a session runs in (where the open reads a project's remote); left out, or undefined, the session's own folder is used. */
 	checkoutOf?(look: Look): Promise<string | undefined>;
 	/** The start time of a process, in the form `register` is given; undefined when it cannot be told. */
@@ -583,7 +587,7 @@ export class CarBook {
 	}
 
 	/**
-	 * The integrator ends a car it received (boss W45): only once the train it was received for is gone, since a live train sets its cars' fates itself. The train is live when the session this server opened it for still looks up as a train; with no
+	 * The integrator ends a car it received (boss W45): only once the train it was received for is gone, since a live train sets its cars' fates itself (`trainLive`); with no
 	 * record of the open (never opened here, or this server started again since) `dropped` and `returned` are let through, and `landed` is refused, since the base and remote its commit is checked against were read at that open. `landed` is the
 	 * same git check a train's is. A car already ended is not ended again.
 	 */
@@ -592,11 +596,28 @@ export class CarBook {
 		if (ended) throw refusal(`sb: car ${label} is already ${ended.state}`);
 		if (receipt.by.session !== setter.session) throw refusal(`sb: car ${label} was received by ${receipt.by.name}, not this session: the integrator that received a car ends it`);
 		const code = String(receipt.train), record = this.trainOf(project, code);
-		if (record && (await this.d.look(record.session))?.role === "train") throw refusal(`sb: train ${code} is live (session ${record.session}): the train sets its cars' fates; the integrator ends a car it received only once that train is gone`);
+		const live = record ? await this.trainLive(record) : undefined;
+		if (live) throw refusal(live);
 		if (state === "dropped" && (!isAbsolute(String(fields.evidence)) || !this.d.exists(String(fields.evidence)))) throw refusal(`sb: dropped.evidence ${String(fields.evidence).slice(0, 200)} is not a file that exists (give its absolute path)`);
 		if (state !== "landed") return;
 		if (!record) throw refusal(`sb: this server holds no open of train ${code.slice(0, 40)} (it was never opened here, or the server started again since), so the base and remote car ${label}'s commit would be checked on are unknown and it cannot be set landed`);
 		await this.landed(project, record, head, String(fields.commit), label, file.app);
+	}
+
+	/**
+	 * Why the integrator may not end a car of this train yet, or undefined once the train is gone (TCR-F001). The broker's session list alone is no answer: a train's pi that reloads, or a broker that restarts, is missing from it for a while, so a miss there
+	 * would read a live train as gone. The pane the server opened the train in is the fact that stays: Herdr lists it with `sb_role=train` and this train's `sb_train` while the train's pi runs, and over its /reload too (presence.ts keeps those tokens), and
+	 * its pi clears them when it ends. The train is gone only when that pane is gone or carries something else, and its session does not look up as a train either; a list that cannot be read is no answer, and refuses.
+	 */
+	private async trainLive(record: TrainRecord): Promise<string | undefined> {
+		const code = record.code, unsure = (what: string, error: unknown) => `sb: cannot tell whether train ${code} is live (${what} could not be read: ${String((error as Error)?.message ?? error).slice(0, 200)}): try again; while the train runs, it sets its cars' fates`;
+		const live = `sb: train ${code} is live (session ${record.session}, pane ${record.pane}): the train sets its cars' fates; the integrator ends a car it received only once that train is gone`;
+		let pane: PaneFacts | undefined;
+		try { pane = await this.d.paneOf(record.pane); } catch (error) { return unsure("Herdr's pane list", error); }
+		if (pane?.role === "train" && (!pane.train || (pane.train.project === record.project && pane.train.code === code))) return live;
+		let seen: Look | undefined;
+		try { seen = await this.d.look(record.session); } catch (error) { return unsure(`session ${record.session}`, error); }
+		return seen?.role === "train" ? live : undefined;
 	}
 
 	/**

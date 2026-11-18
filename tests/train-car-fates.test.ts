@@ -70,8 +70,8 @@ test("the integrator sets dropped on a car it received only when the train is go
 	const { w, evidence, ctx } = await rode();
 	const adds: Json[] = [];
 	const dropped = { car: "T-15", state: "dropped", round: 1, reason: "unit red", evidence, project: "acme" } satisfies CarParams;
-	await refused(trainCar(integratorDeps(w, adds), dropped, ctx), `sb: train ${CODE} is live (session ${TRAIN}): the train sets its cars' fates`);
-	w.looks.delete(TRAIN);
+	await refused(trainCar(integratorDeps(w, adds), dropped, ctx), `sb: train ${CODE} is live (session ${TRAIN}, pane wA:p2): the train sets its cars' fates`);
+	w.gone(TRAIN);
 	const out = await trainCar(integratorDeps(w, adds), dropped, ctx);
 	assert.match(out.text, /^Car T-15 is dropped\. .*this session waits for that/);
 	assert.deepEqual(w.book.read("acme")[0]!.file.states.map((s) => [s.state, s.by.role]), [["received", "main"], ["dropped", "main"]]);
@@ -82,12 +82,12 @@ test("the integrator sets dropped on a car it received only when the train is go
 test("integrator landed checks the commit on the base's remote branch the open read; returned after receipt is allowed once the train is gone; with no open here, landed is refused and dropped allowed", async () => {
 	const { w, ctx } = await rode();
 	const { pushed, local } = repo(w);
-	w.looks.delete(TRAIN);
+	w.gone(TRAIN);
 	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "landed", version: "1.2.0", commit: local, project: "acme" }, ctx), `sb: landed.commit ${local.slice(0, 12)} is not on develop of the project's remote`);
 	assert.match((await trainCar(integratorDeps(w), { car: "T-15", state: "landed", version: "1.2.0", commit: pushed, project: "acme" }, ctx)).text, /^Car T-15 is landed\./);
 	const back = await rode();
 	await refused(trainCar(integratorDeps(back.w), { car: "T-15", state: "returned", reason: "late", project: "acme" }, back.ctx), `sb: train ${CODE} is live`);
-	back.w.looks.delete(TRAIN);
+	back.w.gone(TRAIN);
 	assert.match((await trainCar(integratorDeps(back.w), { car: "T-15", state: "returned", reason: "late", project: "acme" }, back.ctx)).text, /^Car T-15 is returned\./);
 	// A server that never opened the train (a restart): no record to check landed against, while dropped needs none.
 	const none = world();
@@ -101,6 +101,19 @@ test("integrator landed checks the commit on the base's remote branch the open r
 	const fresh = world();
 	fresh.forwarded();
 	await refused(trainCar(integratorDeps(fresh), { car: "T-15", state: "dropped", round: 1, reason: "x", evidence: "/e", project: "acme" }, integratorCtx(forwardEntry(COORD))), "sb: car T-15 was never received, so it is on no train");
+});
+
+test("a train is live while Herdr lists its pane as that train, though the broker misses its session (a /reload, a broker restart); a pane list that cannot be read refuses; a pane that is gone or no longer that train lets the end through", async () => {
+	const { w, evidence, ctx } = await rode();
+	const dropped = { car: "T-15", state: "dropped", round: 1, reason: "unit red", evidence, project: "acme" } satisfies CarParams;
+	w.looks.delete(TRAIN);
+	await refused(trainCar(integratorDeps(w), dropped, ctx), `sb: train ${CODE} is live (session ${TRAIN}, pane wA:p2): the train sets its cars' fates`);
+	w.herdr.down = true;
+	await refused(trainCar(integratorDeps(w), dropped, ctx), `sb: cannot tell whether train ${CODE} is live (Herdr's pane list could not be read: herdr: connection closed): try again; while the train runs, it sets its cars' fates`);
+	w.herdr.down = false;
+	// Another pi in the pane after the train's: the pane no longer carries this train.
+	w.panes.set("wA:p2", { role: "main" });
+	assert.match((await trainCar(integratorDeps(w), dropped, ctx)).text, /^Car T-15 is dropped\./);
 });
 
 // ---- one ticket on two cars
@@ -139,7 +152,7 @@ test("a train narrows a ticket on two cars of its manifest by head", async () =>
 
 test("the integrator's wait covers a car it dropped: the notice still pending keeps it, and a server that lost the car hands the dropped notice to the tower", async () => {
 	const { w, evidence, ctx } = await rode();
-	w.looks.delete(TRAIN);
+	w.gone(TRAIN);
 	const calls: string[] = [], waits: ReturnWait[] = [];
 	const watch = createReturnWatch({ session: () => INTEG, now: w.now, waits, read: (project) => w.integ.read(project), callTower: async (text) => void calls.push(text) });
 	await trainCar({ ...integratorDeps(w), returns: watch }, { car: "T-15", state: "dropped", round: 1, reason: "unit red", evidence, project: "acme" }, ctx);

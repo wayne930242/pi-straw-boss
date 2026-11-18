@@ -6,7 +6,7 @@ import type { IntercomLike } from "./kit.ts";
 import type { HerdrRun } from "../herdr.ts";
 import { panes, workspaces } from "../herdr.ts";
 import { trainFromToken } from "../trainrole.ts";
-import { CarBook, type Look } from "./carbook.ts";
+import { CarBook, type Look, type PaneFacts } from "./carbook.ts";
 import { CarNotices } from "./carnotices.ts";
 import { type Slot, towerId } from "./record.ts";
 import type { Reply, Request } from "./socket.ts";
@@ -85,6 +85,14 @@ async function look(o: StartCars, session: string): Promise<Look | undefined> {
 	return { id: session, name: (found.name ?? session), ...(token ? { role: token } : {}), ...(train ? { train } : {}), pane: paneId, ...(pane.workspace_id ? { workspace: pane.workspace_id } : {}), ...(pane.cwd ? { cwd: pane.cwd } : {}), foreground };
 }
 
+/** A pane as Herdr lists it now, by its id: undefined when no pane has it; a pane list that cannot be had rejects. */
+async function paneOf(o: StartCars, paneId: string): Promise<PaneFacts | undefined> {
+	const pane = (await panes(o.run)).find((p) => p.pane_id === paneId);
+	if (!pane) return undefined;
+	const role = pane.tokens?.sb_role, train = trainFromToken(pane.tokens?.sb_train);
+	return { ...(role ? { role } : {}), ...(train ? { train } : {}) };
+}
+
 /** The user's known_hosts as it is now, read once when the server starts: the copy ssh trusts for the `landed` check (RR2-F002). Missing or unreadable, nothing is known and an ssh remote cannot be checked. */
 function knownHostsOfUser(): string {
 	try { return readFileSync(join(homedir(), ".ssh", "known_hosts"), "utf8").slice(0, 4_000_000); } catch { return ""; }
@@ -94,7 +102,7 @@ function knownHostsOfUser(): string {
 export function startCars(o: StartCars): Cars {
 	let notices: CarNotices | undefined;
 	const book = new CarBook({
-		stateDir: o.slot.stateDir, dir: o.slot.dir, now: o.now, ...(o.startedAt !== undefined ? { startedAt: o.startedAt } : {}), look: (session) => look(o, session), git: runGit, knownHosts: knownHostsOfUser(), exists: existsSync, log: o.log,
+		stateDir: o.slot.stateDir, dir: o.slot.dir, now: o.now, ...(o.startedAt !== undefined ? { startedAt: o.startedAt } : {}), look: (session) => look(o, session), paneOf: (pane) => paneOf(o, pane), git: runGit, knownHosts: knownHostsOfUser(), exists: existsSync, log: o.log,
 		// The checkout of the session's workspace, as the tower's open reads it (towers.ts): where the check at `received` finds the project's remote and the app's base.
 		checkoutOf: async (seen) => (seen.workspace ? (await workspaces(o.run)).find((w) => w.workspace_id === seen.workspace)?.worktree?.checkout_path : undefined) ?? seen.cwd,
 		startOf: o.startOf, onChange: () => notices?.kick(), ...o.over,
