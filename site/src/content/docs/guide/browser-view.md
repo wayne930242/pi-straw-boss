@@ -23,6 +23,8 @@ The tower and the head tower keep their own icons, and a unit with no known kind
 It shows its chat, the messages queued for its next turn, its todo list, its background monitors, and the documents it shows.
 Type into the session from its composer; a file pasted, dropped, or picked with **+** (20 MB at most) is stored in a private temp folder and its path goes into the message.
 On a desktop, click into a unit's terminal and it takes your keyboard.
+Each message has a **Copy** button that copies the whole message (an agent's message as the markdown it wrote), also over plain http on your Wi-Fi, where the browser has no clipboard API; if even that is refused, the message is selected and you use your phone's own Copy.
+Text you select stays selected while new messages and tool results arrive: the log waits for you to let go before it follows its end or redraws that message.
 
 ### Alerts
 A unit that waits on you raises an alert, and the alerts queue up.
