@@ -91,6 +91,21 @@ test("entries arriving while the selection holds the log count as unseen: the pi
 	}
 });
 
+test("a finger resting on a followed log with nothing selected holds it, but an entry arriving then is not counted as unseen: no N new pill flashes", () => {
+	const r = rig();
+	try {
+		const pill = (r.chat as unknown as { log: El }).log.parent!.find((el) => el.className === "chat-pill")[0]!;
+		r.log.bubble("touchstart");
+		r.arrive();
+		assert.deepEqual([r.writes, pill.hidden], [[], true], "the finger holds the log, and no pill shows for a log that still follows");
+		r.log.bubble("touchend");
+		r.tick(300);
+		assert.deepEqual([r.top, pill.hidden], [800, true], "the coast ended: the log lands at its end");
+	} finally {
+		r.done();
+	}
+});
+
 test("a frame's resize while text is selected does not park the followed log", () => {
 	const r = rig();
 	try {
