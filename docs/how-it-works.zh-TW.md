@@ -1,4 +1,4 @@
-# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ d5ef3a17 -->
+# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ 4107cfaa -->
 
 [README](../README.zh-TW.md) 背後的完整行為。使用說明在各篇指南；這份參考則逐節寫出程式實際怎麼做，所以請在下面找到需要的那一節，其餘可以略過。
 
@@ -898,7 +898,7 @@ sequenceDiagram
     T->>I: 轉發（沒有整合員時先開一個）
     I->>S: train_car received 或 returned
     S-->>C: 車廂通知
-    I->>T: 要求一列火車
+    I->>T: 要求一列火車（sb 附上每節車廂的車廂單）
     T->>R: boss_open_main，role train
     R->>R: 組裝、審查、完整檢查、合併、CI、部署
     R->>S: train_car landed 或 dropped
@@ -911,8 +911,9 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> received: 整合員接受車廂單
     [*] --> returned: 整合員拒絕它
-    received --> landed: 火車把它合併了
-    received --> dropped: 火車把它丟下了
+    received --> landed: 火車把它合併了（火車已不在時由整合員設定）
+    received --> dropped: 火車把它丟下了（火車已不在時由整合員設定）
+    received --> returned: 火車已不在時由整合員設定
     landed --> [*]
     returned --> [*]: 協調者收到通知
     dropped --> [*]: 協調者收到通知
@@ -1021,6 +1022,8 @@ app 的 `integration.stages` 列出整合員帶每列火車走過的階段：`me
 
 它出發之後自己執行；整合員不監督它。它從不等人，而塔台在它的 `milestone` 之後關閉它。
 
+清單帶著每節車廂的車廂單，而整合員從不自己重寫車廂單：整合員的 `call_tower`（`why=shared`）帶著清單（它的 `project:` 和 `code:`）時，sb 會把整合員那個代號的 `train` todo 裡每節車廂的車廂單附加到訊息後面，原文取自它分支上塔台的轉發，所以火車從協調者寫的車廂單讀到它的車廂。訊息裡已有的車廂單，和轉發逐字相同時就保留；沒有 `train` todo 指名這個代號、其中某節車廂在分支上沒有轉發，或訊息裡某張車廂單的 head 不是 todo 裡的車廂、或和它的轉發不同時，這次呼叫會被拒絕，什麼也不送出。
+
 </details>
 
 ##### 交接前的驗收
@@ -1044,14 +1047,16 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 ##### 車廂通知
 
-火車和整合員用 `train_car` 設定每個車廂的狀態（`received`、`returned`、`landed`、`dropped`）；sb server 對每個（車廂、狀態）以 `kind=car_notice` 送給協調者一則 intercom 通知，在 30 秒、2 分鐘和 5 分鐘重試，記錄 `deliveredAt`，而協調者不在時，送給塔台一則 `blocked` 並記錄 `escalatedAt`。火車在每則 landed 通知都已送達或升級之前，不能通過 `land`。整合員在接收時退回的車廂不在任何火車上，所以沒有哪一列火車的步驟會等它的通知：整合員自己的 session 會等，而 sb server 若在通知送達之前重啟，它就帶著通知內容以 `blocked` 呼叫塔台。server 只在記憶體裡保留塔台的轉發紀錄，以及門為某張車廂單列出整合員的回答，兩者都不從磁碟讀回（那裡的檔案是火車寫得到的），所以 sb server 重啟後就沒有了。
+火車和整合員用 `train_car` 設定每個車廂的狀態（`received`、`returned`、`landed`、`dropped`）；sb server 對每個（車廂、狀態）以 `kind=car_notice` 送給協調者一則 intercom 通知，在 30 秒、2 分鐘和 5 分鐘重試，記錄 `deliveredAt`，而協調者不在時，送給塔台一則 `blocked` 並記錄 `escalatedAt`。火車在每則 landed 通知都已送達或升級之前，不能通過 `land`。火車還在執行時，由它設定自己車廂的結果；火車不在了之後，整合員可以對它為那列火車收下的車廂設定 `returned`、`dropped` 或 `landed`。整合員自己結束的車廂，不論是在接收時或在火車之後，都沒有火車的步驟在等它的通知：整合員自己的 session 會等，而 sb server 若在通知送達之前重啟，它就帶著通知內容以 `blocked` 呼叫塔台。server 只在記憶體裡保留塔台的轉發紀錄，以及門為某張車廂單列出整合員的回答，兩者都不從磁碟讀回（那裡的檔案是火車寫得到的），所以 sb server 重啟後就沒有了。
 
 <details>
 <summary>細節</summary>
 
 從 0.75.1 起，拒絕訊息會說明這一點：在 server 啟動後的 24 小時內，整合員的 `train_car` 拒絕訊息 `no forward by a tower carries head ...` 會寫出啟動時間與補救方式（協調者把車廂單再送給塔台一次，塔台再轉發一次），而車廂單在啟動之前就進來的塔台 run，會被告知再問一次門。
 
-整合員的等待放在它自己 pi 行程的記憶體裡（`src/carwait.ts`），不從磁碟讀任何東西。它每 15 秒問一次 server 的帳本，直到 `returned` 通知送達或升級。server 已經不再持有那節車廂、通知過了一天仍未送達，或 session 在還等著的時候結束（reload 會保留等待），它就把通知交給塔台；塔台沒有收下時，30 秒後再問一次，最多十次。被強制終止的 pi 行程什麼也交不出去。
+對 server 來說，火車不在了，是指它為之開啟火車的那個 session 已查不到是火車，或它沒有那次開啟的紀錄（火車從沒在這個 server 上開啟，或 server 之後重新啟動過）。整合員只能結束自己收下、而且還沒結束的車廂；`landed` 需要那次開啟的紀錄，因為 server 會像檢查火車一樣，在那次開啟讀到的 base 的 remote 分支上檢查 commit。一張票指名兩節車廂時（兩個 app，或用新 head 再送一次的車廂），要用 `app` 或 `head` 設定：只給票號會被拒絕，並列出每節車廂的 app 和 head。清單裡沒有某節車廂車廂單的火車（這條規則之前的整合員只用路徑指名車廂單），會在 sb server 為它持有的車廂裡找到那節車廂，也就是整合員為那列火車收下的車廂。
+
+整合員的等待放在它自己 pi 行程的記憶體裡（`src/carwait.ts`），不從磁碟讀任何東西。它每 15 秒問一次 server 的帳本，直到它所設定狀態的通知送達或升級。server 已經不再持有那節車廂、通知過了一天仍未送達，或 session 在還等著的時候結束（reload 會保留等待），它就把通知交給塔台；塔台沒有收下時，30 秒後再問一次，最多十次。被強制終止的 pi 行程什麼也交不出去。
 
 新的一輪需要一則在車廂結束之後才由塔台轉發的車廂單，所以車廂被退回時所依據的那張車廂單不會得到第二次回答（`car <ticket> is already returned`）。server 把前一輪和新的一輪一起留在記憶體裡：前一輪的通知照樣送出，丟下那節車廂的火車也仍然讀得到自己設定的狀態；磁碟上的車廂檔顯示最新的一輪。在 `received` 時，server 對車廂的 head 執行 `landed` 的 git 檢查，對象是整合員工作區 checkout 的 remote，以及那個 checkout 的 `apps.json` 裡該 app 的 `integration.base`（app 自己就是一個儲存庫，也就是專案的 git submodule 時，remote 是那個 checkout 裡 app 自己的 checkout 的 `origin`，不會是專案的 remote，因為 app 的 commit 不在專案 remote 的任何分支上；火車的 `landed` 問的也是這個 remote，用的是 server 在火車開啟時讀到的值；在那裡沒有 checkout 的 submodule，由 index 裡的 gitlink 或 `.gitmodules` 裡的 path 認出，也是這種 app，只是沒有 remote 可讀）：head 已在那個分支上就拒絕，remote 讀不到的專案或這種 app 不經檢查就接收（工具會說明；開啟火車時在那裡也讀不到 remote，所以這種火車不能設定 `landed`），remote 讀得到、但 app 沒有可用的 `integration.base` 時拒絕接收，remote 連不上或無法認證時（`ls-remote` 或 fetch 因認證失敗，包括金鑰或主機金鑰被拒、HTTP 401 或 403；因連線失敗，包括 DNS、連線被拒或重設、TLS 錯誤、HTTP 5xx、代理伺服器的 407，以及 server 自己的 60 秒逾時；或因 remote 說儲存庫不存在而失敗，其他的「not found」不算，所以缺少 `ssh` 會被拒絕；server 的 git 沒有 credential helper），不經檢查就接收並註明原因，URL 裡的 userinfo 會被遮掉，其他 git 失敗則拒絕接收，server 的 mirror 被別的東西寫過之後 fetch 失敗也一樣拒絕。這項檢查在 server 逐一處理設定之前執行，所以緩慢的 fetch 不會拖住火車的 `landed`。以 squash 或 rebase 合併的車廂，head 不在 base 上，這項檢查找不到它。
 
