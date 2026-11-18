@@ -9,8 +9,10 @@ import { createFollow, reach } from "./follow.ts";
 import { readAnswered } from "./answered.ts";
 import { deliverToUnit } from "./blockanswer.ts";
 import type { Away } from "./blocks.ts";
+import { copyButton } from "./copy.ts";
 import { mdBody } from "./mdbody.ts";
 import { post } from "./post.ts";
+import { onSelectionEnd, selectedIn } from "./selection.ts";
 import type { Post } from "./composer.ts";
 import { m } from "./sentences.ts"; import { iconRef } from "./icons.ts"; import { noun } from "./nouns.ts";
 import { getLocale } from "./paraglide/runtime.js";
@@ -128,7 +130,8 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 	let loading = false, loaded = false, target: string | undefined, held: HTMLElement | undefined, release = 0, down = false, coast: ReturnType<typeof setTimeout> | undefined;
 	// A finger on the log, a wheel or key moving it up, or the fling after them still coasting (no input and no scroll for 250 ms ends it), hold the log where the user put it: nothing pulls it to the bottom, and
 	// when it ends a log still following lands there in one jump. A wheel down at the end holds nothing: the entry lands at once, so the tail of that fling has no new room to glide into.
-	const touching = () => down || coast !== undefined, coasting = () => (clearTimeout(coast), (coast = setTimeout(() => ((coast = undefined), follow.pinned && !model.detached && toBottom()), 250)));
+	// Text selected in the log holds it too (selection.ts: a long press and its handles send no touch event), and so does the redraw of the message that holds it; both wait for the selection to end.
+	const selecting = () => selectedIn(scroller), touching = () => down || coast !== undefined || selecting(), coasting = () => (clearTimeout(coast), (coast = setTimeout(() => ((coast = undefined), follow.pinned && !model.detached && !selecting() && toBottom()), 250)));
 	const button = (label = follow.button(model.detached)) => ((pill.hidden = !label), (pill.textContent = label ?? ""));
 	const park = () => ((scroller.scrollTop = scroller.scrollHeight), follow.parked(scroller.scrollTop));
 	const toBottom = () => (follow.jump(), (held = undefined), park(), button());
@@ -187,9 +190,15 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 	}
 	const stamp = (it: Item) => h("time", null, clock(it.at));
 	/** The boss's own message: a YOU bubble. `raw` is the whole text, kept as the tooltip when the server's marker lines were taken off. */
-	const you = (it: Item, body: string, crashed: boolean | undefined, raw: string) => h("article", { class: "tx you" }, h("header", null, stamp(it), h("b", null, noun("you")), icon("user")), h("div", { class: "bubble", title: raw }, crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, ...plain(body), thumbs(it.id, it.images)));
+	const you = (it: Item, body: string, crashed: boolean | undefined, raw: string) => {
+		const bubble = h("div", { class: "bubble", title: raw }, crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, ...plain(body), thumbs(it.id, it.images));
+		return h("article", { class: "tx you" }, h("header", null, copyButton(() => body, () => bubble), stamp(it), h("b", null, noun("you")), icon("user")), bubble);
+	};
 	/** An incoming message: its label on one collapsed line, its text (and the crash flag, or the verified header folded behind "details") inside. */
-	const notice = (it: Item, label: (Node | string)[], body: string, more: { crashed?: boolean; raw?: string } = {}) => h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, m.incoming()), ...label, stamp(it)), more.crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, h("pre", null, body), more.raw ? h("details", { class: "notice-raw" }, h("summary", null, m.notice_details()), h("pre", { class: "raw" }, more.raw)) : null));
+	const notice = (it: Item, label: (Node | string)[], body: string, more: { crashed?: boolean; raw?: string } = {}) => {
+		const pre = h("pre", null, body);
+		return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, m.incoming()), ...label, stamp(it)), more.crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, pre, copyButton(() => body, () => pre), more.raw ? h("details", { class: "notice-raw" }, h("summary", null, m.notice_details()), h("pre", { class: "raw" }, more.raw)) : null));
+	};
 	/** A message from a session on this computer: its name (a link to it when the net lists it), its id, and where it comes from; a teammate's message through Straw Link says so too, so the two never read alike. */
 	const intercomLabel = (from: string | undefined): (Node | string)[] => {
 		const s = senderOf(from);
@@ -226,7 +235,8 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 				if (bare() && !it.text && !it.thought && !it.error && !it.stop) return skipped(); // the head's page shows its words: an entry of tool calls alone is not content there
 				const body = h("pre", { class: "thought-text" }), more = it.thought ? h("button", { class: "thought", type: "button" }, it.thought < 0 ? m.thought_redacted() : m.thought_chars({ count: it.thought.toLocaleString() })) : null;
 				if (it.thought && it.thought > 0) more?.addEventListener("click", () => fetchBody(more, body, it.id, (full) => full.thoughtText));
-				return h("article", { class: me.head ? "tx in head" : "tx in" }, icon(me.head ? "crown" : me.role, me.duty), h("div", { class: "tx-body" }, h("header", null, h("b", null, speaker(me)), it.model ? h("span", null, it.model) : null, stamp(it), it.stop ? h("span", { class: "stop", "data-mark": "error" }, it.stop) : null), more, body, it.text ? textOf(it.id, it.text) : null, it.error ? h("p", { class: "fault" }, it.error) : null, ...(bare() ? [] : it.tools ?? []).flatMap((t) => action(t, it.id))));
+				const words = it.text ? textOf(it.id, it.text) : null;
+				return h("article", { class: me.head ? "tx in head" : "tx in" }, icon(me.head ? "crown" : me.role, me.duty), h("div", { class: "tx-body" }, h("header", null, h("b", null, speaker(me)), it.model ? h("span", null, it.model) : null, stamp(it), it.stop ? h("span", { class: "stop", "data-mark": "error" }, it.stop) : null, it.text ? copyButton(() => it.text!, () => words) : null), more, body, words, it.error ? h("p", { class: "fault" }, it.error) : null, ...(bare() ? [] : it.tools ?? []).flatMap((t) => action(t, it.id))));
 			}
 			case "bash": if (bare()) return skipped(); return h("article", { class: "tx sys" }, h("details", { class: "act" }, h("summary", { "data-mark": it.exit ? "error" : "done" }, h("b", { class: "badge" }), h("code", null, "shell"), h("span", { class: "sum" }, `! ${it.command}`), it.exit ? h("span", { class: "stop", "data-mark": "error" }, m.exit_code({ code: it.exit })) : null), it.text ? h("pre", { class: "out" }, it.text) : null));
 			case "notice": {
@@ -283,16 +293,20 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 		}
 		for (const [id, rule] of rules) if (!shown.has(id)) (rule.el.remove(), rules.delete(id));
 	}
-	// Calls that just received a result are redrawn in place.
-	const touch = (d: Delta) => d.touched.forEach((id) => {
+	// Calls that just received a result are redrawn in place; one that holds the reader's selection waits until the selection is gone (a redraw would drop it).
+	const later = new Set<string>();
+	const redraw = (id: string) => {
 		const old = els.get(id), it = model.items.find((x) => x.id === id);
-		if (old && it) {
-			const next = render(it);
-			if (old.classList.contains("fresh") && Date.now() - Number(old.dataset.born ?? 0) < 400) next.classList.add("fresh"); // its motion goes on
-			old.replaceWith(next);
-			els.set(id, next);
-		}
-	});
+		later.delete(id);
+		if (!old || !it) return;
+		if (selectedIn(old)) return void later.add(id);
+		const next = render(it);
+		if (old.classList.contains("fresh") && Date.now() - Number(old.dataset.born ?? 0) < 400) next.classList.add("fresh"); // its motion goes on
+		old.replaceWith(next);
+		els.set(id, next);
+	};
+	const touch = (d: Delta) => d.touched.forEach(redraw);
+	onSelectionEnd(scroller, () => ([...later].forEach(redraw), follow.pinned && !model.detached && !touching() && toBottom()));
 	const older = async () => {
 		if (loading || !model.before || !loaded) return;
 		loading = true;

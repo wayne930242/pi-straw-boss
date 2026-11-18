@@ -1464,5 +1464,9 @@
 	"wc_told_failed_head": "the head tower was told; {name} was not reached",
 	"wc_ended_head": "The head tower confirmed: {outcome}",
 	"wc_ended_plain_head": "The head tower closed this wait.",
-	"zen_wait_placeholder_head": "Your answer to the head tower"
+	"zen_wait_placeholder_head": "Your answer to the head tower",
+	"chat_copy": "Copy",
+	"chat_copy_message": "Copy this message",
+	"chat_copied": "Copied",
+	"chat_copy_select": "Selected: use Copy in the phone menu"
 }

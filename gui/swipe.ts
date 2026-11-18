@@ -17,6 +17,12 @@ export function intent(dx: number, dy: number, open: boolean): Intent {
 	return ax >= RATIO * ay && (open ? dx < 0 : dx > 0) ? "drag" : "pass";
 }
 
+/**
+ * `intent` for a touch whose text may have been selected since it began. A long press selects a word at once, and the finger that goes on moving drags the selection's end (iOS sends that as touchmoves of the same touch): it is the page's,
+ * however flat the move. `ignored` only sees what is selected when the touch begins.
+ */
+export const read = (dx: number, dy: number, open: boolean, selecting: boolean): Intent => (selecting ? "pass" : intent(dx, dy, open));
+
 /** Whether the drawer settles open once let go: its visible part `x` of `width` past HALF, unless a flick (`v` px/ms, rightwards positive) says otherwise. */
 export const settles = (x: number, width: number, v: number) => (Math.abs(v) >= FLICK ? v > 0 : x >= width * HALF);
 

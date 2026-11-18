@@ -1282,5 +1282,9 @@
 	"wc_told_failed_head": "已通知主塔台；沒能通知到 {name}",
 	"wc_ended_head": "主塔台已確認：{outcome}",
 	"wc_ended_plain_head": "主塔台已結束這項等待。",
-	"zen_wait_placeholder_head": "回覆主塔台"
+	"zen_wait_placeholder_head": "回覆主塔台",
+	"chat_copy": "複製",
+	"chat_copy_message": "複製這則訊息",
+	"chat_copied": "已複製",
+	"chat_copy_select": "已選取：請用系統選單的複製"
 }

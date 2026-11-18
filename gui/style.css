@@ -697,6 +697,10 @@ a.tower:hover::before { border-color: var(--c); }
 .tx-body, .tx-body > * { min-width: 0; }
 .tx-body > header { display: flex; align-items: baseline; gap: 10px; color: var(--dim); font: 11px var(--mono); }
 .tx-body > header b { color: var(--accent); font: 600 13px var(--sans); }
+/* A message's Copy (copy.ts): always shown, a phone has no hover; its label is never part of a selection, and a long press on it opens no callout. */
+.tx-copy { flex: none; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); background: none; color: var(--dim); font: 11px var(--sans); letter-spacing: normal; text-transform: none; cursor: pointer; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.tx-copy[data-state] { color: var(--ok); }
+.tx-body > header .tx-copy { margin-left: auto; align-self: center; } .notice > .tx-copy { display: block; margin: 0 10px 8px auto; }
 .stop, .dialog .tag { padding: 1px 8px; border-radius: 999px; background: var(--c1); color: var(--c); font-size: 10px; }
 .fault { color: var(--err-soft); font-size: 13px; }
 .thought, .more, .tab-btn { justify-self: start; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); background: none; color: var(--dim); font: 11px var(--sans); cursor: pointer; }
@@ -1011,6 +1015,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 	:where(input:not([type="checkbox"], [type="radio"], [type="file"], [type="hidden"]), select, textarea) { min-height: 44px; box-sizing: border-box; } /* every box and menu, the ones above them in specificity aside */
 	.picker-crumbs button, .picker-places button, .pitem { min-height: 44px; }
 	.drawer-sweep .pair-btn { min-height: 44px; }
+	.tx-copy { position: relative; padding-block: 4px; } .tx-copy::after { content: ""; position: absolute; inset: -11px -8px; } /* a message's Copy keeps its small look and reaches 44 px with an invisible box around it, so its header keeps its height */
 	/* The session header and the composer: the row of keys is 48 px, the box above it two lines. */
 	.head-back { width: 44px; height: 44px; min-width: 44px; } .modes button { min-height: 44px; }
 	:is(.head-info, .head-main:not([hidden]), .head-quit:not([hidden]), .ally-asks-btn) { min-height: 44px; min-width: 44px; }

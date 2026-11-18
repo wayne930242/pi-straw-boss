@@ -128,6 +128,16 @@ export class El {
 		for (const node of nodes) if (node instanceof El) node.parent = parent;
 		parent.kids.splice(parent.kids.indexOf(this), 0, ...nodes);
 	}
+	/** As the DOM's: this node leaves its parent and `next` takes its place. */
+	replaceWith(next: El) {
+		const parent = this.parent;
+		if (!parent) return;
+		next.remove();
+		next.parent = parent;
+		parent.kids.splice(parent.kids.indexOf(this), 1, next);
+		this.dropFocus(this);
+		this.parent = undefined;
+	}
 	/** A browser moves the focus to the body when the focused node leaves the document (here: when its subtree is cut loose from where it stood). */
 	private dropFocus(gone: El) {
 		if (page.focused && gone.contains(page.focused)) page.focused = undefined;

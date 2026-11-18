@@ -4,6 +4,7 @@ import { type Alert, unitOf } from "./alerts.ts";
 import type { SessionPost } from "./answer.ts";
 import { joined, outcome, type WaitActions, waitActions } from "./asks.ts";
 import { actions, choices, LONG_Q, mark, option, say, sendButton, statusLine, wire } from "./askview.ts";
+import { selectText } from "./copy.ts";
 import { h, nodes } from "./dom.ts";
 import { m } from "./sentences.ts";
 import type { Answer } from "./post.ts";
@@ -56,13 +57,6 @@ export function safeHref(url: string): string | undefined {
 		return undefined;
 	}
 }
-const selectText = (el: HTMLElement) => {
-	const sel = globalThis.getSelection?.(), range = globalThis.document.createRange?.();
-	if (!sel || !range) return;
-	range.selectNodeContents(el);
-	sel.removeAllRanges();
-	sel.addRange(range);
-};
 
 type Pick = { id: ButtonId; option?: number };
 /** The press a row sends, by the row's id: the memory route's act (asks.ts `waitActions`). */

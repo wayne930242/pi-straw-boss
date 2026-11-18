@@ -10,7 +10,7 @@ import { locate } from "./scene.ts";
 import { aimUnit, dismiss, showDismissAll } from "./quit.ts"; import { can } from "./boxmodel.ts";
 import { aim, aimOpening, fillPlate, html, mark, PLATE, roleName, roleWord, say, sync, text } from "./render.ts";
 import type { Route } from "./router.ts";
-import { chainOf, ignored, intent, settles } from "./swipe.ts";
+import { chainOf, ignored, intent, read as readMove, settles } from "./swipe.ts";
 
 // The phone's quick switch: a swipe to the right from anywhere pulls a drawer out of the left edge, a condensed map of the net, one row per unit grouped
 // as the map groups them (the base, its tower, each tab, the units outside the net) with the map's own plate, colours, and names, plus one short word
@@ -149,7 +149,7 @@ export function mountDrawer(off: () => boolean = () => false) {
 		if (!t || t.mode === "pass") return;
 		const p = e.touches[0]!, dx = p.clientX - t.x0, dy = p.clientY - t.y0;
 		if (t.mode === "wait") {
-			const read = intent(dx, dy, t.was);
+			const read = readMove(dx, dy, t.was, Boolean(getSelection()?.toString()));
 			if (read === "wait") return;
 			// Rightwards on the open drawer is a finished subagent's card's, to dismiss it; the drawer has no use for it.
 			if (read === "pass" && t.card && intent(dx, dy, false) === "drag") {
