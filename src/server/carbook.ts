@@ -513,6 +513,7 @@ export class CarBook {
 		if (setter.role === "main") {
 			// The integrator's: the slip arrived as a tower's forward to this session; the car is what that slip says, and the session that sent it to the tower is the coordinator. Nothing of the car comes from the caller.
 			const sent = this.forwardOf(head, setter.session);
+			if (!sent && state !== "received") this.expiredForward(project, head, setter.session, state);
 			if (!sent) throw refusal(`sb: no forward by a tower carries head ${head.slice(0, 12)} to this session: a car slip reaches the integrator only as the tower's tower_send or tower_reply with forward: (the code stamps fwd-from).${this.restartWord()}`);
 			const slip = sent.slip;
 			if (slip.over) throw refusal(slip.over);
@@ -602,6 +603,17 @@ export class CarBook {
 		if (state !== "landed") return;
 		if (!record) throw refusal(`sb: this server holds no open of train ${code.slice(0, 40)} (it was never opened here, or the server started again since), so the base and remote car ${label}'s commit would be checked on are unknown and it cannot be set landed`);
 		await this.landed(project, record, head, String(fields.commit), label, file.app);
+	}
+
+	/**
+	 * The refusal of an integrator's state for a car it received whose forward the server no longer holds (TCR-F002): a forward counts `KEEP_MS` and the newest `MAX_FORWARDS`, in memory only, and a train that runs long or stalls outlives it. The car's identity
+	 * still comes from a forward alone, so nothing is set; the word says why and the way back, a forward of the slip again. A car this session did not receive, or one that ended, gets the refusal it would get anyway.
+	 */
+	private expiredForward(project: string, head: string, session: string, state: CarState): void {
+		const held = [...(this.cars.get(project)?.entries() ?? [])].find(([key, h]) => !key.includes(PAST) && h.file.car.head === head)?.[1], file = held?.file;
+		const receipt = file?.states.find((s) => s.state === "received");
+		if (!file || !receipt || receipt.by.session !== session || endOf(file)) return;
+		throw refusal(`sb: car ${file.car.tickets[0] ?? head.slice(0, 12)} was received by this session, but the tower's forward of its slip has expired${this.d.now() - this.since < KEEP_MS ? ` or went with the sb server's restart at ${iso(this.since)}` : ""} (the sb server keeps a forward ${KEEP_MS / 3_600_000} h, and the newest ${MAX_FORWARDS}, in memory only): ask its coordinator ${file.coordinator} to send its slip to the tower again (call_tower why=shared); the tower forwards it again, and then set ${state}`);
 	}
 
 	/**

@@ -116,6 +116,16 @@ test("a train is live while Herdr lists its pane as that train, though the broke
 	assert.match((await trainCar(integratorDeps(w), dropped, ctx)).text, /^Car T-15 is dropped\./);
 });
 
+test("the integrator whose forward of a received car is no longer held is told the forward expired and the way back; the tower's forward again lets the end through", async () => {
+	const { w, evidence, ctx } = await rode();
+	w.gone(TRAIN);
+	w.tick(24 * 3_600_000 + 1);
+	const dropped = { car: "T-15", state: "dropped", round: 1, reason: "unit red", evidence, project: "acme" } satisfies CarParams;
+	await refused(trainCar(integratorDeps(w), dropped, ctx), `sb: car T-15 was received by this session, but the tower's forward of its slip has expired (the sb server keeps a forward 24 h, and the newest 512, in memory only): ask its coordinator ${COORD} to send its slip to the tower again (call_tower why=shared); the tower forwards it again, and then set dropped`);
+	w.forwarded();
+	assert.match((await trainCar(integratorDeps(w), dropped, ctx)).text, /^Car T-15 is dropped\./);
+});
+
 // ---- one ticket on two cars
 
 const SAME_A = slipBlock({ tickets: "MP-3972", head: SHA_A, car: "web", branch: "fix/mp-3972" }), SAME_B = slipBlock({ tickets: "MP-3972", head: SHA_B, car: "insight", branch: "fix/mp-3972" });
