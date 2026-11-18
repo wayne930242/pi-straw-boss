@@ -898,7 +898,7 @@ sequenceDiagram
     T->>I: forwards it (opens one if there is none)
     I->>S: train_car received or returned
     S-->>C: car notice
-    I->>T: asks for a train
+    I->>T: asks for a train (sb appends each car's slip)
     T->>R: boss_open_main, role train
     R->>R: assemble, review, full checks, merge, CI, deploy
     R->>S: train_car landed or dropped
@@ -911,8 +911,9 @@ A car has four states, set with `train_car` by the integrator and the train:
 stateDiagram-v2
     [*] --> received: the integrator accepts the slip
     [*] --> returned: the integrator refuses it
-    received --> landed: the train merged it
-    received --> dropped: the train dropped it
+    received --> landed: the train merged it (or the integrator, once the train is gone)
+    received --> dropped: the train dropped it (or the integrator, once the train is gone)
+    received --> returned: the integrator, once the train is gone
     landed --> [*]
     returned --> [*]: the coordinator gets a notice
     dropped --> [*]: the coordinator gets a notice
@@ -1021,6 +1022,8 @@ The coordinator (a main) runs its acceptance, then sends the car slip. The integ
 
 It runs on its own once it departs; the integrator does not supervise it. It never waits on a person, and the tower closes it after its `milestone`.
 
+The manifest carries every car's slip, and the integrator never restates one: when the integrator's `call_tower` (`why=shared`) carries a manifest (its `project:` and `code:`), sb appends to the message the slip of each car of the integrator's `train` todo of that code, verbatim from the tower's forward on its branch, so the train reads its cars from the slips the coordinators wrote. A slip the message already holds stays when it matches the forward word for word; the call is refused, and nothing is sent, when no `train` todo names the code, a car of it has no forward on the branch, or a slip in the message names a head that is no car of the todo or differs from its forward.
+
 </details>
 
 ##### Acceptance before handoff
@@ -1044,14 +1047,16 @@ A train holds a lane (an app's integration branch) or a target from its first st
 
 ##### Car notices
 
-The train and the integrator set each car's state with `train_car` (`received`, `returned`, `landed`, `dropped`); the sb server sends the coordinator one intercom notice per (car, state) under `kind=car_notice`, retries at 30 s, 2 min and 5 min, records `deliveredAt`, and when the coordinator is gone sends the tower one `blocked` and records `escalatedAt`. A train cannot pass `land` before every landed notice is delivered or escalated. A car the integrator returns at receipt is on no train, so no train's step waits for its notice: the integrator's own session waits for it, and calls the tower `blocked` with the notice text when the sb server restarted before the notice was delivered. The server keeps a tower's forwards, and the door's answer naming a slip's integrators, in memory only and reads neither back from disk (a file there is one a train can write), so an sb server restart loses them.
+The train and the integrator set each car's state with `train_car` (`received`, `returned`, `landed`, `dropped`); the sb server sends the coordinator one intercom notice per (car, state) under `kind=car_notice`, retries at 30 s, 2 min and 5 min, records `deliveredAt`, and when the coordinator is gone sends the tower one `blocked` and records `escalatedAt`. A train cannot pass `land` before every landed notice is delivered or escalated. While a train runs it sets its cars' fates; once it is gone, the integrator sets `returned`, `dropped` or `landed` on a car it received for it. A car the integrator ends itself, at receipt or after its train, has no train step waiting for its notice: the integrator's own session waits for it, and calls the tower `blocked` with the notice text when the sb server restarted before the notice was delivered. The server keeps a tower's forwards, and the door's answer naming a slip's integrators, in memory only and reads neither back from disk (a file there is one a train can write), so an sb server restart loses them.
 
 <details>
 <summary>Details</summary>
 
 The refusals say so since 0.75.1: within 24 hours of the server's start, the integrator's `train_car` refusal `no forward by a tower carries head ...` names the start time and the way back (the coordinator sends the slip to the tower again and the tower forwards it again), and a tower run whose slip came in before the start is told to ask the door again.
 
-The integrator's wait is the memory of its own pi process (`src/carwait.ts`); nothing is read from disk. It asks the server's book every 15 s until the `returned` notice is delivered or escalated. It hands the notice to the tower when the server no longer holds the car, when the notice stayed undelivered for a day, and when the session ends while it still waits (a reload keeps the wait); a tower that does not take the call is asked again 30 s later, ten times at most. A pi process that is killed hands over nothing.
+A train is gone for the server when the session it opened the train for no longer looks up as a train, or when it holds no record of the open (it was never opened on this server, or the server started again since). The integrator ends only a car it received itself and that has not ended; `landed` needs the record of the open, since the server checks the commit, as for a train, on the remote branch of the base that open read. A ticket that names two cars (two apps, or a car sent again with a new head) is set with `app` or `head`: the ticket alone is refused with each car's app and head. A train whose manifest has no slip of a car (an integrator before this rule named slips by path) finds the car among the cars the sb server holds for it, those the integrator received for that train.
+
+The integrator's wait is the memory of its own pi process (`src/carwait.ts`); nothing is read from disk. It asks the server's book every 15 s until the notice of the state it set is delivered or escalated. It hands the notice to the tower when the server no longer holds the car, when the notice stayed undelivered for a day, and when the session ends while it still waits (a reload keeps the wait); a tower that does not take the call is asked again 30 s later, ten times at most. A pi process that is killed hands over nothing.
 
 A new life needs a forward the tower made after the car's end, so the slip the car was returned on gets no second answer (`car <ticket> is already returned`). The server keeps the life before in memory beside the new one: its notice is still sent, and the train that dropped the car still reads the state it set; the car file on disk shows the newest life. At `received` the server runs the git check of `landed` on the car's head, against the remote of the integrator's workspace checkout and the app's `integration.base` in that checkout's `apps.json` (for an app that is a repository of its own, a git submodule of the project, the remote is the `origin` of the app's own checkout inside that checkout and never the project's, where the app's commits are on no branch; a train's `landed` asks that remote too, as the server read it when the train opened; a submodule with no checkout there, known by its gitlink in the index or its path in `.gitmodules`, is such an app with no remote to read): a head on that branch is refused, a project, or such an app, whose remote cannot be read is received unchecked (the tool says so; an open reads no remote there either, so such a train cannot set `landed`), an app whose remote is read but that names no usable `integration.base` is refused, a remote that cannot be reached or authenticated (`ls-remote` or the fetch fails on credentials, refused keys or host keys, or HTTP 401 or 403; on the connection, which includes DNS, a refused or reset connection, TLS errors, HTTP 5xx, a proxy's 407, and the server's own 60 s timeout; or on a repository the remote says is not there, and no other "not found", so a missing `ssh` refuses; the server's git has no credential helper) is received unchecked with that reason, a URL's userinfo blanked, and any other git failure refuses the receipt, as does a fetch that fails after the server's mirror was written to by something else. The check runs before the server takes sets one at a time, so a slow fetch does not hold up a train's `landed`. A car merged by squash or rebase has no head on the base, so the check does not find it.
 

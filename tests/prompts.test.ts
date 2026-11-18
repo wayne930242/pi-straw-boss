@@ -334,7 +334,8 @@ test("train workers: every state a prompt names with fields names exactly the fi
 			seen.add(`${file} ${state}`);
 		}
 	}
-	assert.deepEqual([...seen].sort(), ["integrator.md received", "train.md dropped", "train.md landed"]);
+	// Car fates (boss W45): the integrator ends a car it received once its train is gone, so it names dropped and landed with their fields too.
+	assert.deepEqual([...seen].sort(), ["integrator.md dropped", "integrator.md landed", "integrator.md received", "train.md dropped", "train.md landed"]);
 });
 
 test("TB-F006, F008, F009: the prompts give the code's form, the todo order, absolute evidence paths, the version refusal and the car with no forward", () => {
