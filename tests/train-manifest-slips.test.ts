@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { COORD, INTEG } from "./train-car-rig.ts";
+import type { CarView } from "../src/train/cars.ts";
 import { CODE, SHA_A, SHA_B, SHA_C, type Json } from "./train-fixtures.ts";
 import { cleanup, forwardEntry, rig, type Rig, slipBlock } from "./train-guard-rig.ts";
 
@@ -14,8 +15,13 @@ const trainTodo = (cars: Json[], code = CODE): Json => ({ v: 1, project: "acme",
 /** What the incident's integrator sent: a manifest that names its slips by path only. */
 const pathOnly = (code = CODE) => `train:\n  project: acme\n  app: web\n  code: ${code}\n  base: develop\n  integrator: ${INTEG}\nCars (slips verbatim in /tmp/integ-mc/): slip-T-15.txt (head ${SHA_A}), slip-T-16.txt (head ${SHA_B})\n`;
 
-async function integrator(cars = [car(["T-15"], SHA_A, "fix/t-15"), car(["T-16"], SHA_B, "fix/t-16")], forwards = [SLIP_A, SLIP_B]) {
-	const r = rig({ main: true, train: false });
+/** A life of a car in the server's book: received by the integrator, then the states after it. */
+const life = (ticket: string, head: string, after: { state: "returned" | "dropped"; at: string }[] = [], received = "2026-11-07T08:01:00Z"): CarView => ({
+	file: { v: 1, project: "acme", app: "web", car: { tickets: [ticket], branch: `fix/${ticket.toLowerCase()}`, head }, coordinator: COORD, states: [{ state: "received", at: received, by: { role: "main", name: "integ acme", session: INTEG }, train: CODE, departs: "next" }, ...after.map((s) => ({ ...s, by: { role: "main" as const, name: "integ acme", session: INTEG }, ...(s.state === "returned" ? { reason: "late" } : { round: 1, reason: "unit red", evidence: "/r/unit.log" }) }))] } as never,
+});
+
+async function integrator(cars = [car(["T-15"], SHA_A, "fix/t-15"), car(["T-16"], SHA_B, "fix/t-16")], forwards = [SLIP_A, SLIP_B], book: { views: CarView[]; error?: string } | null = { views: [] }) {
+	const r = rig({ main: true, train: false, ...(book ? { cars: book } : {}) });
 	for (const text of forwards) r.entries.push(forwardEntry(COORD, text));
 	const made = await r.create(trainTodo(cars));
 	assert.equal(made.ok, true, String(made.reason));
@@ -60,3 +66,16 @@ test("no train todo for the manifest's code, or a car row with no forward on the
 	assert.deepEqual(await callTower(other, pathOnly()), { blocked: undefined, message: pathOnly() });
 });
 
+
+test("a car the integrator ended before its train opens is refused at the manifest's call, naming it, and nothing is sent; a car sent again and received in a new life rides; a book that cannot be read refuses", async () => {
+	const returned = await integrator(undefined, undefined, { views: [life("T-15", SHA_A), life("T-16", SHA_B, [{ state: "returned", at: "2026-11-07T08:05:00Z" }])] });
+	const out = await callTower(returned, pathOnly());
+	assert.equal(out.blocked, "sb: car T-16 (bbbbbbbbbbbb) of the train todo is returned in the sb server's book (set 2026-11-07T08:05:00Z): an ended car rides no train, so take it off the train todo, then call again");
+	assert.equal(out.message, pathOnly(), "nothing appended, nothing sent");
+	const again = await integrator(undefined, undefined, { views: [life("T-16", SHA_B, [{ state: "dropped", at: "2026-11-07T08:05:00Z" }]), life("T-16", SHA_B, [], "2026-11-07T09:00:00Z")] });
+	assert.equal((await callTower(again, pathOnly())).blocked, undefined);
+	const down = await integrator(undefined, undefined, { views: [], error: "connect ECONNREFUSED" });
+	assert.match(String((await callTower(down, pathOnly())).blocked), /^sb: the sb server did not answer for the cars of project acme \(connect ECONNREFUSED\); try again/);
+	const unlinked = await integrator(undefined, undefined, null);
+	assert.match(String((await callTower(unlinked, pathOnly())).blocked), /^sb: this guard has no link to the sb server/);
+});

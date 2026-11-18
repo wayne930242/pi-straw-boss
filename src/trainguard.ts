@@ -20,7 +20,7 @@ import type { MainDuty } from "./mainduty.ts";
 import { manifestWithSlips } from "./manifestslips.ts";
 import type { Roles } from "./roles.ts";
 import { ENTRY, type Kit } from "./state.ts";
-import { TRAIN, type TrainId, trainFromToken, trainToken } from "./trainrole.ts";
+import { TRAIN, type TrainId, trainFromRequest, trainFromToken, trainToken } from "./trainrole.ts";
 import { integrationOff } from "./trainswitch.ts";
 
 // The guard of the train's session (docs/specs/2026-11-07-train-workers.md §7, §21; todo #125 task 4): a `tool_call` handler on the session's own tools. In a train it handles every `todo` and `MonitorCreate` call; in the integrator, the `todo`
@@ -557,10 +557,15 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 	 * The integrator's departure (manifestslips.ts): a `call_tower` with why=shared whose message is a train manifest goes out with every car's forwarded slip appended, rewritten in place as a run step's command is (pi hands the tool this same
 	 * object); a manifest that cannot carry them is refused and nothing is sent.
 	 */
-	function departure(input: Json, ctx: Ctx): Block {
+	async function departure(input: Json, ctx: Ctx): Promise<Block> {
 		if (input.why !== "shared" || typeof input.message !== "string" || env.train() || !env.isMain() || env.duty() !== "integrator") return undefined;
+		const id = trainFromRequest(input.message);
+		if ("refusal" in id) return undefined;
+		// The book says which car ended before the open (TCR-F003); a guard that cannot read it sends nothing.
+		const views = await fetchViews(id.project);
+		if (typeof views === "string") return { block: true, reason: views };
 		try {
-			const entries = ctx.sessionManager.getBranch(), out = manifestWithSlips(input.message, rowsOfSnapshot(snapshotOfBranch(entries)).rows, entries);
+			const entries = ctx.sessionManager.getBranch(), out = manifestWithSlips(input.message, rowsOfSnapshot(snapshotOfBranch(entries)).rows, entries, views);
 			if (out && "refusal" in out) return { block: true, reason: out.refusal };
 			if (out) input.message = out.message;
 			return undefined;
