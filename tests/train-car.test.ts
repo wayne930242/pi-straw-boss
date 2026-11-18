@@ -93,11 +93,12 @@ test("returned at receipt: a slip whose coordinator is not its sender is returne
 	assert.equal(w2.book.read("acme")[0]!.file.coordinator, COORD);
 });
 
-test("a car already received is not returned by the integrator, and one state per car: a second terminal state or a second receipt is refused", async () => {
+test("a car received for a live train is not returned by the integrator, and one state per car: a second terminal state or a second receipt is refused", async () => {
 	const w = world();
+	await w.opened();
 	await receive(w);
 	await refused(trainCar(integratorDeps(w), received, integratorCtx(forwardEntry(COORD))), "sb: car T-15 is already received");
-	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "late", project: "acme" }, integratorCtx(forwardEntry(COORD))), "sb: car T-15 is already received; the integrator returns a car at receipt only");
+	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "late", project: "acme" }, integratorCtx(forwardEntry(COORD))), `sb: train ${CODE} is live (session ${TRAIN}): the train sets its cars' fates`);
 	const w2 = world();
 	w2.forwarded();
 	await trainCar(integratorDeps(w2), { car: "T-15", state: "returned", reason: "no accept", project: "acme" }, integratorCtx(forwardEntry(COORD)));
@@ -115,13 +116,13 @@ test("the server needs its own forward: a slip no tower forwarded to this sessio
 	assert.equal(w.book.read("acme").length, 0);
 });
 
-test("train_car is for a train and the integrator: another session, and a state the role does not set, are refused", async () => {
+test("train_car is for a train and the integrator: another session, a state the role does not set, and an end of a car never received are refused", async () => {
 	const w = world();
 	w.forwarded();
 	const ctx = integratorCtx(forwardEntry(COORD));
 	await refused(trainCar({ ...integratorDeps(w), role: () => undefined }, received, ctx), "sb: train_car is for a train and for the integrator");
-	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "landed", version: "1", commit: SHA_B }, ctx), "sb: only a train sets landed");
-	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "dropped", round: 1, reason: "x", evidence: "/e" }, ctx), "sb: only a train sets dropped");
+	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "landed", version: "1", commit: SHA_B, project: "acme" }, ctx), "sb: car T-15 was never received, so it is on no train");
+	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "dropped", round: 1, reason: "x", evidence: "/e", project: "acme" }, ctx), "sb: car T-15 was never received, so it is on no train");
 	const r = rig({ manifest: MANIFEST });
 	await refused(trainCar(trainDeps(w, r), received, r.ctx as never), "sb: a train does not set received");
 });
@@ -169,7 +170,7 @@ test("landed: the base is the manifest's, held by the server from the open; a tr
 test("a car not in the train's manifest, one the integrator never received, and one received for another train are refused", async () => {
 	const { w, r, deps, ctx } = await ridden();
 	const { pushed } = repo(w);
-	await refused(trainCar(deps, { car: "T-99", state: "landed", version: "1", commit: pushed }, ctx), "sb: car T-99 is not in this train's manifest");
+	await refused(trainCar(deps, { car: "T-99", state: "landed", version: "1", commit: pushed }, ctx), `sb: car T-99 is neither in this train's manifest nor among the cars the sb server holds for train ${CODE}`);
 	const w2 = world();
 	await w2.opened();
 	await refused(trainCar(trainDeps(w2, r), { car: "T-15", state: "landed", version: "1", commit: pushed }, ctx), "is not in the book of project acme: only a car the integrator received can be set");
@@ -261,7 +262,8 @@ test("#14: a forward the tower makes after a car was returned starts the car's n
 	assert.deepEqual(receivedTold(await w.integ.read("acme"), { app: "web", head: SHA_A, ticket: "T-15" }), [`sb: waits for sb to tell ${COORD} that car T-15 is received (0 attempts)`]);
 	// Within a life the rules are the ones of any car.
 	await refused(trainCar(integratorDeps(w), received, ctx), "sb: car T-15 is already received");
-	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "late", project: "acme" }, ctx), "sb: car T-15 is already received; the integrator returns a car at receipt only");
+	await w.opened();
+	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "late", project: "acme" }, ctx), `sb: train ${CODE} is live`);
 });
 
 test("#14: a car returned again in its new life is a new return: both are in the book, each with a notice to send, and the forward it was returned on still gets no second answer", async () => {
@@ -310,7 +312,7 @@ test("#15: a car the book holds as landed is not received again when its slip co
 	const { pushed } = repo(w);
 	await trainCar(deps, { car: "T-15", state: "landed", version: "1.2.0", commit: pushed }, ctx);
 	const mine = integratorCtx(forwardEntry(COORD));
-	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "x", project: "acme" }, mine), "sb: car T-15 is already received; the integrator returns a car at receipt only");
+	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "returned", reason: "x", project: "acme" }, mine), "sb: car T-15 is already landed");
 	w.tick(LATER);
 	w.forwarded();
 	const word = landedWord("T-15", SHA_A, "landed in 1.2.0");

@@ -16,9 +16,10 @@ import { writePrivate } from "../trainboard.ts";
 //     A car lands once (#15): `received` is refused for a head the same git check finds on the base's remote branch already, which holds after a restart because it rests on nothing the book remembers.
 //   - A car's lives (#14). A car ends `returned`, `dropped` or `landed`. A forward of the same head that the tower made after that end is its coordinator sending the slip again, so the integrator's next state starts a new life of the car: a new car file under
 //     the same name, with notices of its own. The life before stays in the book under `<name>#<n>` (its notice is still sent, and the train that dropped it still reads it); the journal shows the current life.
-//   - Claims, each limited to the claimer's own train and granting nothing: `dropped` and `returned` of a car on the claimer's train (it only ends that car's ride), the `version` text of `landed`, and the integrator's `train`, `departs` and `reason` text. A
-//     process that claims a role it is not can, at worst, end the rides of the cars of the train it registered as (it must be that train's session by Herdr's pane record and the server's own open), or put those words in the notice of a car the tower
-//     forwarded to the integrator it registered as.
+//   - Claims, each limited to the claimer's own train and granting nothing: `dropped` and `returned` of a car on the claimer's train (it only ends that car's ride), the same of a car the integrator received once the server holds that car's train as gone
+//     (`endsReceived`), the `version` text of `landed`, and the integrator's `train`, `departs` and `reason` text. A
+//     process that claims a role it is not can, at worst, end the rides of the cars of the train it registered as (it must be that train's session by Herdr's pane record and the server's own open), end a car the integrator it registered as
+//     received once that car's train is gone, or put those words in the notice of a car the tower forwarded to the integrator it registered as.
 //   - A per-session secret that `register` hands the pi process, once. It is defense in depth, not proof: a registration is not replaced while its process lives, the start time of the process is required, and nothing above depends on it.
 // The car files and notice records on disk are a display journal for the yard (they are written here, never read here). A restart starts with an empty book: what the disk holds, a train could have written. So a forward made before a restart is gone, and the
 // integrator's refusal says so (todo #154): for as long as such a forward would have been kept, it names the server's start and the way back, which is the fact again (the coordinator sends the slip, the tower forwards it).
@@ -502,7 +503,6 @@ export class CarBook {
 		const project = setter.role === "train" ? train!.project : car.project;
 		if (!isName(project)) throw refusal("sb: car needs a project (a path-safe name)");
 		if (setter.role === "train" && car.project !== undefined && car.project !== project) throw refusal(`sb: this train works for project ${project}, not ${String(car.project)}`);
-		if (setter.role === "main" && (state === "dropped" || state === "landed")) throw refusal(`sb: only a train sets ${state}; the integrator sets received and returned`);
 		if (setter.role === "train" && state === "received") throw refusal("sb: only the integrator sets received");
 
 		let file: CarFile | undefined, name: string, held: Held | undefined, label: string, before: Held | undefined, unchecked: string | undefined;
@@ -521,7 +521,8 @@ export class CarBook {
 			if (off) throw refusal(`sb: car ${label} does not match the forwarded slip: ${off[0]} differs from what the slip the tower forwarded says`);
 			// A forward the tower made after the car ended is its coordinator sending the same head again (#14): the car starts a new life, and the state set here is its first. A landed car is not received again in any life (#15); returned, it tells the coordinator so.
 			const ended = file ? endOf(file) : undefined;
-			if (ended && sent.at > Date.parse(ended.at)) {
+			// Only a state at receipt starts a life: a car is dropped or landed in the life it was received in.
+			if (ended && sent.at > Date.parse(ended.at) && (state === "received" || state === "returned")) {
 				if (ended.state === "landed" && state === "received") throw refusal(landedWord(label, head, `landed in ${String(ended.version).slice(0, 60)}`));
 				// A train reads the life received for its own code (`lifeFor`), so a new life does not ride a train an earlier life of the car left.
 				const rode = [...(this.cars.get(project)?.entries() ?? [])].some(([key, h]) => (key === name || key.startsWith(`${name}${PAST}`)) && h.file.states.some((s) => s.state === "received" && s.train === fields.train));
@@ -529,9 +530,12 @@ export class CarBook {
 				before = held;
 				held = file = undefined;
 			}
-			if (file?.states.some((s) => s.state === "received")) throw refusal(`sb: car ${label} is already received${state === "returned" ? "; the integrator returns a car at receipt only" : ""}`);
+			const receipt = file?.states.find((s) => s.state === "received");
+			if (receipt && state === "received") throw refusal(`sb: car ${label} is already received`);
+			if (!receipt && (state === "dropped" || state === "landed")) throw refusal(`sb: car ${label} was never received, so it is on no train`);
 			if (!slip.coordinator) throw refusal("sb: the slip names no coordinator");
-			if (slip.coordinator !== sent.from) {
+			if (receipt) await this.endsReceived(project, file!, receipt, setter, state, fields, head, label);
+			else if (slip.coordinator !== sent.from) {
 				const word = coordinatorWord(label, slip.coordinator, sent.from);
 				if (state === "received") throw refusal(word);
 				// A returned car goes to the session that really sent it, with the word.
@@ -576,6 +580,23 @@ export class CarBook {
 		let notice: string | undefined;
 		try { notice = stateLine(next, entry); } catch { notice = undefined; }
 		return { state, at: entry.at, file: name, coordinator: next.coordinator, ...(notice ? { notice } : {}), ...(unchecked ? { unchecked } : {}) };
+	}
+
+	/**
+	 * The integrator ends a car it received (boss W45): only once the train it was received for is gone, since a live train sets its cars' fates itself. The train is live when the session this server opened it for still looks up as a train; with no
+	 * record of the open (never opened here, or this server started again since) `dropped` and `returned` are let through, and `landed` is refused, since the base and remote its commit is checked against were read at that open. `landed` is the
+	 * same git check a train's is. A car already ended is not ended again.
+	 */
+	private async endsReceived(project: string, file: CarFile, receipt: StateEntry, setter: Setter, state: CarState, fields: Record<string, unknown>, head: string, label: string): Promise<void> {
+		const ended = endOf(file);
+		if (ended) throw refusal(`sb: car ${label} is already ${ended.state}`);
+		if (receipt.by.session !== setter.session) throw refusal(`sb: car ${label} was received by ${receipt.by.name}, not this session: the integrator that received a car ends it`);
+		const code = String(receipt.train), record = this.trainOf(project, code);
+		if (record && (await this.d.look(record.session))?.role === "train") throw refusal(`sb: train ${code} is live (session ${record.session}): the train sets its cars' fates; the integrator ends a car it received only once that train is gone`);
+		if (state === "dropped" && (!isAbsolute(String(fields.evidence)) || !this.d.exists(String(fields.evidence)))) throw refusal(`sb: dropped.evidence ${String(fields.evidence).slice(0, 200)} is not a file that exists (give its absolute path)`);
+		if (state !== "landed") return;
+		if (!record) throw refusal(`sb: this server holds no open of train ${code.slice(0, 40)} (it was never opened here, or the server started again since), so the base and remote car ${label}'s commit would be checked on are unknown and it cannot be set landed`);
+		await this.landed(project, record, head, String(fields.commit), label, file.app);
 	}
 
 	/**

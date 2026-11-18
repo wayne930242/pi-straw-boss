@@ -9,7 +9,7 @@ import { startOf } from "./startof.ts";
 import type { Kit } from "./state.ts";
 import { snapshotOfBranch } from "./todo.ts";
 import { parseSlip, slipLines } from "./train/accept.ts";
-import { CAR_STATES, type CarState, type CarView, coordinatorWord, forwardsOf, noticeText, validateStateFields } from "./train/cars.ts";
+import { CAR_STATES, type CarState, type CarView, coordinatorWord, forwardsOf, noticeText, type TerminalState, validateStateFields } from "./train/cars.ts";
 import { isName, isObject, type Json } from "./train/spec.ts";
 import { type Manifest, rowsOfSnapshot, slipBlocks, type TrainGuard } from "./trainguard.ts";
 import type { TrainId } from "./trainrole.ts";
@@ -115,17 +115,26 @@ export interface CarToolDeps {
 	role(): "train" | "main" | undefined;
 	train(): TrainId | undefined;
 	manifest(ctx: CarCtx): Manifest | undefined;
-	client: Pick<CarClient, "set">;
+	/** `read` is the train's way to a car its manifest text lacks: the cars the server holds for it. */
+	client: Pick<CarClient, "set" | "read">;
 	home: string;
-	/** The integrator's wait for the notice of a car it returned (carwait.ts, #13): nothing else waits for that notice, so the session does. */
+	/** The integrator's wait for the notice of a car it returned at receipt or ended after its train was gone (carwait.ts, #13): no step of a train waits for that notice, so the session does. */
 	returns?: Pick<ReturnWatch, "add">;
 }
-export interface CarParams { car: string; state: CarState; project?: string; train?: string; departs?: string; reason?: string; round?: number; evidence?: string; version?: string; commit?: string }
+export interface CarParams { car: string; state: CarState; app?: string; head?: string; project?: string; train?: string; departs?: string; reason?: string; round?: number; evidence?: string; version?: string; commit?: string }
 const FIELD_KEYS = ["train", "departs", "reason", "round", "evidence", "version", "commit"] as const;
 
 /** The slip blocks of a forwarded message body: a `car: <app> | tickets: …` that follows the tower's own words starts a block of its own line. */
 function slipsOf(body: string) {
 	return slipBlocks(slipLines(body)).blocks.map(parseSlip);
+}
+
+/** The cars that match the ticket, one per app and head (the last of each), and the word that refuses more than one. */
+function oneCar<T>(found: readonly T[], key: (x: T) => { app: string; head: string }, ticket: string, where: string): T | undefined {
+	const cars = new Map<string, T>();
+	for (const x of found) { const k = key(x); cars.delete(`${k.app}|${k.head}`); cars.set(`${k.app}|${k.head}`, x); }
+	if (cars.size > 1) throw new Error(`sb: car ${ticket} is on ${cars.size} ${where} (${[...cars.values()].map((x) => `app ${key(x).app} head ${key(x).head.slice(0, 12)}`).join(", ")}): give app or head`);
+	return found.at(-1);
 }
 
 const assembles = (rows: ReturnType<typeof rowsOfSnapshot>["rows"]) => rows.flatMap((r) => {
@@ -143,7 +152,9 @@ export async function trainCar(deps: CarToolDeps, params: CarParams, ctx: CarCtx
 	if (typeof params.car !== "string" || !params.car.trim()) throw new Error("sb: car is the car's first ticket (the first of the slip's tickets:, not its car:, which names the app)");
 	const ticket = params.car.trim();
 	if (role === "train" && state === "received") throw new Error("sb: a train does not set received: the integrator does, at receipt");
-	if (role === "main" && (state === "dropped" || state === "landed")) throw new Error(`sb: only a train sets ${state}; the integrator sets received and returned`);
+	if (params.head !== undefined && !/^[0-9a-f]{40}$/.test(params.head)) throw new Error("sb: head must be 40 hex, the head: of the car's slip");
+	if (params.app !== undefined && !isName(params.app)) throw new Error("sb: app must be the car's app, a path-safe name (the car: of its slip)");
+	const fits = (app: string | undefined, head: string | undefined) => (params.app === undefined || app === params.app) && (params.head === undefined || head === params.head);
 	const fields: Json = {};
 	for (const key of FIELD_KEYS) if (params[key] !== undefined) fields[key] = params[key];
 	if (typeof fields.evidence === "string" && !isAbsolute(fields.evidence)) fields.evidence = fields.evidence === "~" || fields.evidence.startsWith("~/") ? join(deps.home, fields.evidence.slice(2)) : resolve(ctx.cwd ?? process.cwd(), fields.evidence);
@@ -154,9 +165,10 @@ export async function trainCar(deps: CarToolDeps, params: CarParams, ctx: CarCtx
 	let car: Json, coordinator: string;
 	if (role === "main") {
 		// The slip is one a tower forwarded to this session, and the session that sent it to the tower is the coordinator (§5.5).
-		const found = forwardsOf(entries, fieldsOf).flatMap((forward) => slipsOf(bodyOf(forward.text)).filter((s) => s.tickets.includes(ticket)).map((slip) => ({ forward, slip })));
-		const hit = found.at(-1);
-		if (!hit) throw new Error(`sb: car ${ticket} is on no forwarded slip of this session: a car slip reaches the integrator as the tower's forward, whose header names its sender (fwd-from)`);
+		// One ticket can name two cars (two apps, or a car sent again with a new head): app and head tell them apart, and more than one left is refused, never guessed.
+		const found = forwardsOf(entries, fieldsOf).flatMap((forward) => slipsOf(bodyOf(forward.text)).filter((s) => s.tickets.includes(ticket) && fits(s.fields.car, s.fields.head)).map((slip) => ({ forward, slip })));
+		const hit = oneCar(found, (h) => ({ app: h.slip.fields.car ?? "?", head: h.slip.fields.head ?? "?" }), ticket, "forwarded slips");
+		if (!hit) throw new Error(`sb: car ${ticket}${params.app || params.head ? " with that app and head" : ""} is on no forwarded slip of this session: a car slip reaches the integrator as the tower's forward, whose header names its sender (fwd-from)`);
 		const f = hit.slip.fields, head = f.head, claimed = f.coordinator;
 		if (!head || !/^[0-9a-f]{40}$/.test(head) || !f.car || !f.branch || !claimed) throw new Error(`sb: the slip of car ${ticket} needs car:, branch:, head: (40 hex) and coordinator:`);
 		if (state === "received" && claimed !== hit.forward.from) throw new Error(coordinatorWord(ticket, claimed, hit.forward.from));
@@ -165,29 +177,50 @@ export async function trainCar(deps: CarToolDeps, params: CarParams, ctx: CarCtx
 		coordinator = claimed;
 		car = { project, app: f.car, head, tickets: hit.slip.tickets, branch: f.branch, coordinator: claimed };
 	} else {
-		const manifest = deps.manifest(ctx), mine = manifest?.cars.find((c) => c.ticket === ticket || c.row?.tickets.includes(ticket));
-		if (!mine?.head) throw new Error(`sb: car ${ticket} is not in this train's manifest`);
-		const slip = parseSlip(mine.slip), app = slip.fields.car ?? manifest?.app;
+		const manifest = deps.manifest(ctx), appOf = (slip: string) => parseSlip(slip).fields.car ?? manifest?.app;
+		const listed = manifest?.cars.filter((c) => c.head && (c.ticket === ticket || c.row?.tickets.includes(ticket)) && fits(appOf(c.slip), c.head)) ?? [];
+		const mine = oneCar(listed, (c) => ({ app: appOf(c.slip) ?? "?", head: c.head! }), ticket, "cars of this train");
+		const found = mine ? { app: appOf(mine.slip), head: mine.head!, slip: parseSlip(mine.slip), tickets: mine.row?.tickets } : await fromBook(deps, ticket, fits);
+		const app = found.app, slip = found.slip;
 		if (!app) throw new Error(`sb: the slip of car ${ticket} names no app (car:)`);
-		const plan = assembles(rows), listed = (round: number) => plan.some((a) => a.round === round && a.removed.includes(ticket));
-		if (state === "returned" && !listed(1)) throw new Error(`sb: car ${ticket} is returned from the manifest only when round 1's assemble lists it in spec.removed: create that assemble first`);
+		const plan = assembles(rows), removes = (round: number) => plan.some((a) => a.round === round && a.removed.includes(ticket));
+		if (state === "returned" && !removes(1)) throw new Error(`sb: car ${ticket} is returned from the manifest only when round 1's assemble lists it in spec.removed: create that assemble first`);
 		if (state === "dropped") {
 			const round = Number(fields.round);
 			if (plan.some((a) => a.round <= round && a.removed.includes(ticket))) throw new Error(`sb: car ${ticket} was out of the train before round ${round}`);
-			if (!listed(round + 1)) throw new Error(`sb: car ${ticket} is dropped from round ${round} when round ${round + 1}'s assemble lists it in spec.removed: create that assemble first`);
+			if (!removes(round + 1)) throw new Error(`sb: car ${ticket} is dropped from round ${round} when round ${round + 1}'s assemble lists it in spec.removed: create that assemble first`);
 		}
 		if (state === "landed" && plan.some((a) => a.removed.includes(ticket))) throw new Error(`sb: car ${ticket} was removed from the train, so it cannot land`);
 		coordinator = slip.fields.coordinator ?? "";
-		car = { app, head: mine.head, tickets: mine.row?.tickets ?? slip.tickets, branch: slip.fields.branch ?? "" };
+		car = { app, head: found.head, tickets: found.tickets ?? slip.tickets, branch: slip.fields.branch ?? "" };
 	}
 	const answer = await deps.client.set({ state, car, fields });
 	const told = answer.coordinator || coordinator;
-	// A car returned at receipt is on no train, so no step of a train waits for its notice: this session does, and calls the tower when the server lost it.
-	const waiting = role === "main" && state === "returned" && deps.returns !== undefined;
-	if (waiting) deps.returns!.add({ project: String(car.project), app: String(car.app), head: String(car.head), ticket, coordinator: told, at: answer.at, line: answer.notice ?? noticeText("returned", { ticket, head: String(car.head), reason: String(fields.reason) }) });
+	// A car the integrator ends (returned at receipt, or any end once its train is gone) has no step of a train waiting for its notice: this session waits, and calls the tower when the server lost it.
+	const waiting = role === "main" && state !== "received" && deps.returns !== undefined;
+	if (waiting) deps.returns!.add({ state: state as TerminalState, project: String(car.project), app: String(car.app), head: String(car.head), ticket, coordinator: told, at: answer.at, line: answer.notice ?? lineOf(state, ticket, String(car.head), fields) });
 	const waits = waiting ? "this session waits for that and calls the tower itself if the sb server loses the notice" : `${state === "received" ? "the train todo" : state === "landed" ? "the land step" : "the assemble that removes it"} waits for that${state === "received" ? " before the manifest goes to the tower" : ""}`;
 	const text = `Car ${ticket} is ${state}. sb tells its coordinator (${told}) by session id and confirms the delivery; ${waits}. You send no notice yourself.${answer.unchecked ? ` Received unchecked: ${answer.unchecked}.` : ""}`;
 	return { text, details: { car: ticket, ...answer } };
+}
+
+/** The notice line when the server's answer carries none: what the coordinator is sent, from the fields given. */
+function lineOf(state: CarState, ticket: string, head: string, fields: Json): string {
+	try { return noticeText(state, { ticket, head, ...(fields as object) }); } catch { return `${state}: your car ${ticket} (${head.slice(0, 12)})`; }
+}
+
+/**
+ * A car the train's manifest text has no slip for (a manifest that named its slips by path, train 2026-11-17-q): the cars the sb server holds for this train, those the integrator received for it, by ticket and the app and head given. The server's own
+ * checks at `set` stay the authority.
+ */
+async function fromBook(deps: CarToolDeps, ticket: string, fits: (app: string | undefined, head: string | undefined) => boolean) {
+	const train = deps.train();
+	if (!train) throw new Error(`sb: car ${ticket} is not in this train's manifest`);
+	const views = (await deps.client.read(train.project)).filter((v) => v.file.car.tickets.includes(ticket) && v.file.states.some((s) => s.state === "received" && s.train === train.code) && fits(v.file.app, v.file.car.head));
+	const view = oneCar(views, (v) => ({ app: v.file.app, head: v.file.car.head }), ticket, "cars of this train");
+	if (!view) throw new Error(`sb: car ${ticket} is neither in this train's manifest nor among the cars the sb server holds for train ${train.code}`);
+	const f = view.file;
+	return { app: f.app, head: f.car.head, tickets: f.car.tickets, slip: { fields: { car: f.app, branch: f.car.branch, head: f.car.head, coordinator: f.coordinator } as Record<string, string>, tickets: f.car.tickets } };
 }
 
 const FIRST_LOOK_MS = 3_000;
@@ -222,10 +255,12 @@ export function trainCarTool(kit: Kit, guard: () => TrainGuard | undefined, link
 		};
 		pi.registerTool({
 			name: "train_car", label: "train_car",
-			description: "Set what became of a car: the sb server tells the car's coordinator by session id and confirms the delivery, and the step that depends on it waits for that. For the integrator (state received with train and departs, or returned with reason, at receipt) and a train (returned with reason, dropped with round, reason and evidence, landed with version and commit). Never send a coordinator a notice yourself.",
+			description: "Set what became of a car: the sb server tells the car's coordinator by session id and confirms the delivery, and the step that depends on it waits for that. For a train (returned with reason, dropped with round, reason and evidence, landed with version and commit) and the integrator (at receipt: received with train and departs, or returned with reason; and of a car it received, once the train it was received for is gone: returned, dropped or landed; while that train runs, the train sets its cars' fates). A car whose ticket is on two cars is named with app or head. Never send a coordinator a notice yourself.",
 			parameters: Type.Object({
 				car: Type.String({ description: "The car's first ticket: the first of the slip's tickets:, not the slip's car: (which names the car's app)." }),
 				state: Type.Union(CAR_STATES.map((x) => Type.Literal(x))),
+				app: Type.Optional(Type.String({ description: "The car's app (the slip's car:), when its ticket is on two cars." })),
+				head: Type.Optional(Type.String({ description: "The car's head (the slip's head:, 40 hex), when its ticket is on two cars." })),
 				project: Type.Optional(Type.String({ description: "Integrator only, when no train todo names the project yet." })),
 				train: Type.Optional(Type.String({ description: "received: the train's code, YYYY-MM-DD-<letters>." })),
 				departs: Type.Optional(Type.String({ description: "received: the departure conditions in words." })),
