@@ -239,6 +239,7 @@ A train's kind is its role. `coordinator` is the kind of every main that declare
 
   A steer carries only what was added (about 600 characters at most), not the whole prompt.
   - **Cost.** For a coordinator, the next run's system prompt differs, so it re-reads its whole context once, uncached. That happens when a plan first names a graph, when a replan changes it, and when a plan ends. A review dispatched after the plan has ended needs no plan, so it costs no flip. An integrator or a standing main never flips on its graph.
+    - *2026-11-18, 0.80.12:* the section now keeps the graph it was rendered with for the session, and a graph change is steered instead, so it no longer rewrites the next run's system prompt (docs/how-it-works.md, The role section stays put).
 - **The release note** says: a coordinator main that dispatches a `worker` must first write a plan whose todos name a graph. Scouts, planners, and reviewers need none, and integrators and standing mains are never asked. The first refused call says how.
 
 ### 3. `boss_duty` (D2)
