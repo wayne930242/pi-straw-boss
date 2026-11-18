@@ -1286,5 +1286,6 @@
 	"chat_copy": "複製",
 	"chat_copy_message": "複製這則訊息",
 	"chat_copied": "已複製",
-	"chat_copy_select": "已選取：請用系統選單的複製"
+	"chat_copy_select": "已選取",
+	"chat_copy_select_hint": "已選取：請用瀏覽器選單的複製"
 }

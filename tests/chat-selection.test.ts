@@ -76,6 +76,21 @@ test("an entry arriving while text is selected does not move the log, and the lo
 	}
 });
 
+test("entries arriving while the selection holds the log count as unseen: the pill says N new, and clears once the log lands at the end", () => {
+	const r = rig();
+	try {
+		const pill = (r.chat as unknown as { log: El }).log.parent!.find((el) => el.className === "chat-pill")[0]!;
+		select(r.list.find((el) => el.className === "bubble")[0]!);
+		r.arrive();
+		r.arrive();
+		assert.deepEqual([pill.hidden, pill.textContent], [false, m.new_entries({ count: 2 })]);
+		select(undefined);
+		assert.equal(pill.hidden, true, "back at the end: no pill");
+	} finally {
+		r.done();
+	}
+});
+
 test("a frame's resize while text is selected does not park the followed log", () => {
 	const r = rig();
 	try {

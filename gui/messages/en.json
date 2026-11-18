@@ -1468,5 +1468,6 @@
 	"chat_copy": "Copy",
 	"chat_copy_message": "Copy this message",
 	"chat_copied": "Copied",
-	"chat_copy_select": "Selected: use Copy in the phone menu"
+	"chat_copy_select": "Selected",
+	"chat_copy_select_hint": "Selected: use Copy in the browser menu"
 }

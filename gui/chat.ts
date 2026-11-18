@@ -365,7 +365,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 				const d = model.append(e.items);
 				paint(d);
 				touch(d);
-				if (follow.arrived(d.added.length) && !model.detached && !touching()) toBottom();
+				if (follow.arrived(d.added.length, touching()) && !model.detached && !touching()) toBottom();
 				else button();
 			}
 		},

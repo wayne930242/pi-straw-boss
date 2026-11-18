@@ -16,7 +16,7 @@ export const selectText = (el: Node) => {
 
 /** `execCommand("copy")` over an off-screen textarea holding `text` (16 px, or iOS zooms in on it); the reader's own selection is put back. */
 function viaTextarea(text: string) {
-	const sel = globalThis.getSelection?.(), kept = sel ? Array.from({ length: sel.rangeCount }, (_, i) => sel.getRangeAt(i)) : [];
+	const sel = globalThis.getSelection?.(), kept = sel ? Array.from({ length: sel.rangeCount }, (_, i) => sel.getRangeAt(i).cloneRange()) : [], focus = globalThis.document.activeElement as HTMLElement | null;
 	const area = h("textarea", { readonly: "", "aria-hidden": "true", tabindex: "-1", style: "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px;pointer-events:none" });
 	area.value = text;
 	document.body.append(area);
@@ -30,6 +30,7 @@ function viaTextarea(text: string) {
 	}
 	area.remove();
 	if (sel && kept.length) (sel.removeAllRanges(), kept.forEach((r) => sel.addRange(r)));
+	if (focus && focus !== globalThis.document.activeElement && focus.isConnected) focus.focus({ preventScroll: true }); // the textarea took the focus; it goes back where it was
 	return ok;
 }
 
@@ -50,10 +51,13 @@ export function copyButton(text: () => string, body?: () => Node | null | undefi
 	button.addEventListener("click", () => void copyText(text()).then((ok) => {
 		const target = ok ? undefined : body?.();
 		if (target) selectText(target);
+		// The label is short (a phone's header has no room); the aria-label carries the state so the live region announces it, and the title the longer hint.
 		button.textContent = ok ? m.chat_copied() : m.chat_copy_select();
+		button.setAttribute("aria-label", ok ? m.chat_copied() : m.chat_copy_select_hint());
+		if (!ok) button.title = m.chat_copy_select_hint();
 		button.dataset.state = ok ? "copied" : "select";
 		clearTimeout(timer);
-		timer = setTimeout(() => ((button.textContent = m.chat_copy()), delete button.dataset.state), 1800);
+		timer = setTimeout(() => ((button.textContent = m.chat_copy()), button.setAttribute("aria-label", m.chat_copy_message()), button.removeAttribute("title"), delete button.dataset.state), 1800);
 	}));
 	return button;
 }

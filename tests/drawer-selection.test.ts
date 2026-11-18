@@ -45,3 +45,20 @@ test("text selected by a long press after the touch began keeps the finger's mov
 test("a flat swipe on the page pulls the drawer out", () => {
 	assert.equal(touch([[30, 2]]).prevented > 0, true);
 });
+
+test("a selection left over from before the touch does not block the swipe that closes an open drawer", () => {
+	const panel = page.body.find((el) => el.classes.has("drawer"))[0]!;
+	panel.classes.add("on");
+	// the open drawer: a touch inside the panel, moving left
+	const target = new El("p");
+	panel.append(target);
+	Object.assign(target, { closest: () => null }); // the fake cannot read the card selector
+	selected = "left over";
+	let prevented = 0;
+	const fire = (type: string, x: number) => page.on[type]?.forEach((on) => on({ target, touches: [{ clientX: x, clientY: 300 }], preventDefault: () => void prevented++ } as never));
+	fire("touchstart", 200);
+	fire("touchmove", 160);
+	fire("touchmove", 120);
+	fire("touchend", 120);
+	assert.equal(prevented > 0, true, "the drawer follows the finger");
+});

@@ -63,7 +63,7 @@ export function mountDrawer(off: () => boolean = () => false) {
 	aim(front, { view: "head" });
 	const panel = h("aside", { class: "drawer", "aria-label": m.drawer_label() }, h("header", null, h("b", null, m.drawer_title()), close), front, body, h("footer", { class: "drawer-foot" }, top, home)), veil = h("div", { class: "drawer-veil" });
 	document.body.append(veil, panel);
-	let latest: Net | undefined, here: string | undefined, atHead = false, open = false, x = 0, width = 0, t: { x0: number; y0: number; mode: "wait" | "drag" | "pass" | "card"; was: boolean; base: number; last: number; at: number; v: number; card?: HTMLElement } | undefined;
+	let latest: Net | undefined, here: string | undefined, atHead = false, open = false, x = 0, width = 0, t: { x0: number; y0: number; mode: "wait" | "drag" | "pass" | "card"; was: boolean; sel: string; base: number; last: number; at: number; v: number; card?: HTMLElement } | undefined;
 	const draw = () => {
 		const entry = headEntry(latest);
 		front.hidden = !entry;
@@ -143,13 +143,13 @@ export function mountDrawer(off: () => boolean = () => false) {
 		if (!phone() || off() || e.touches.length !== 1 || document.querySelector(MODAL) || (open ? !inside : ignored(chainOf(el), Boolean(getSelection()?.toString())))) return;
 		const p = e.touches[0]!;
 		const card = open ? el.closest<HTMLElement>(".unit[data-dismiss] > .card") ?? undefined : undefined;
-		t = { x0: p.clientX, y0: p.clientY, mode: "wait", was: open, base: x, last: p.clientX, at: performance.now(), v: 0, card };
+		t = { x0: p.clientX, y0: p.clientY, mode: "wait", was: open, sel: getSelection()?.toString() ?? "", base: x, last: p.clientX, at: performance.now(), v: 0, card };
 	}, { passive: true });
 	document.addEventListener("touchmove", (e) => {
 		if (!t || t.mode === "pass") return;
 		const p = e.touches[0]!, dx = p.clientX - t.x0, dy = p.clientY - t.y0;
 		if (t.mode === "wait") {
-			const read = readMove(dx, dy, t.was, Boolean(getSelection()?.toString()));
+			const read = readMove(dx, dy, t.was, Boolean(getSelection()?.toString()) && getSelection()!.toString() !== t.sel);
 			if (read === "wait") return;
 			// Rightwards on the open drawer is a finished subagent's card's, to dismiss it; the drawer has no use for it.
 			if (read === "pass" && t.card && intent(dx, dy, false) === "drag") {

@@ -34,14 +34,14 @@ export function createFollow() {
 		},
 		/** Opening at an anchor reads from there. */
 		hold: () => void (near = pinned = false),
-		/** Entries arrived; true when the log should follow them to the bottom. */
-		arrived(n: number) {
-			if (!pinned) unseen += n;
+		/** Entries arrived; true when the log should follow them to the bottom. A log `held` where it stands (the reader has text selected) counts them as unseen, though it still follows. */
+		arrived(n: number, held = false) {
+			if (!pinned || held) unseen += n;
 			return pinned;
 		},
 		jump: () => void ((near = pinned = true), (unseen = 0)),
 		/** The button's text, or undefined when it hides. A detached log (its end not mounted) always offers it. */
-		button: (detached: boolean) => (pinned && !detached ? undefined : unseen && !detached ? m.new_entries({ count: unseen }) : m.jump_latest()),
+		button: (detached: boolean) => (detached ? m.jump_latest() : unseen ? m.new_entries({ count: unseen }) : pinned ? undefined : m.jump_latest()),
 	};
 }
 

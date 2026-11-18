@@ -17,7 +17,7 @@ function rig(result = true) {
 	const create = page.createElement;
 	page.createElement = (tag: string) => {
 		const el = create(tag);
-		if (tag === "textarea") Object.assign(el, { select() { (el as unknown as { picked: boolean }).picked = true; }, setSelectionRange() {} }), made.push(el);
+		if (tag === "textarea") Object.assign(el, { select() { (el as unknown as { picked: boolean }).picked = true; el.focus(); }, setSelectionRange() {} }), made.push(el);
 		return el;
 	};
 	doc.execCommand = (cmd: string) => {
@@ -81,7 +81,7 @@ test("a clipboard that refuses falls back to the textarea; both failing says so"
 test("a selection the reader had survives the copy", async () => {
 	setNavigator({});
 	const ranges = ["r1", "r2"], log: string[] = [];
-	Object.assign(globalThis, { getSelection: () => ({ rangeCount: ranges.length, getRangeAt: (i: number) => ranges[i], removeAllRanges: () => void log.push("clear"), addRange: (r: string) => void log.push(`add ${r}`) }) });
+	Object.assign(globalThis, { getSelection: () => ({ rangeCount: ranges.length, getRangeAt: (i: number) => ({ cloneRange: () => ranges[i] }), removeAllRanges: () => void log.push("clear"), addRange: (r: string) => void log.push(`add ${r}`) }) });
 	const r = rig();
 	try {
 		await copyText("x");
@@ -116,9 +116,28 @@ test("the message's Copy button copies its text, says Copied and then goes back;
 		await Promise.resolve();
 		assert.deepEqual(picked, [body], "the message is selected for the reader to copy by hand");
 		assert.equal(b.textContent, m.chat_copy_select());
+		assert.equal(b.getAttribute("aria-label"), m.chat_copy_select_hint(), "the state is announced through the label");
+		assert.equal(m.chat_copy_select_hint().includes("phone"), false);
 	} finally {
 		Object.assign(globalThis, save);
 		delete (page as unknown as Record<string, unknown>).createRange;
+		r.restore();
+	}
+});
+
+test("the copy through the textarea gives the focus back to the control that had it", () => {
+	setNavigator({});
+	const r = rig();
+	try {
+		const field = new El("input");
+		page.body.append(field);
+		field.focus();
+		Object.assign(globalThis, { getSelection: () => ({ rangeCount: 0, removeAllRanges() {}, addRange() {} }) });
+		const areaFocus = r.made;
+		void copyText("x");
+		assert.equal(page.focused, field);
+		void areaFocus;
+	} finally {
 		r.restore();
 	}
 });
