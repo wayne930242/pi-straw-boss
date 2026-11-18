@@ -126,6 +126,28 @@ test("the integrator whose forward of a received car is no longer held is told t
 	assert.match((await trainCar(integratorDeps(w), dropped, ctx)).text, /^Car T-15 is dropped\./);
 });
 
+test("an integrator that did not receive the car does not end it, though a tower forwarded the slip to it too", async () => {
+	const { w, evidence, ctx } = await rode();
+	w.gone(TRAIN);
+	const OTHER = "sess-integ-2";
+	w.looks.set(OTHER, { id: OTHER, name: "integ acme 2", role: "main", pane: "wA:p4", workspace: "wA", cwd: w.work, foreground: [444] });
+	w.book.noteForward({ fwd: "f".repeat(16), from: COORD, to: [OTHER], text: slipBlock({ head: SHA_A }) });
+	const other = { ...integratorDeps(w), client: w.client(OTHER, 444, "wA:p4") };
+	await refused(trainCar(other, { car: "T-15", state: "dropped", round: 1, reason: "unit red", evidence, project: "acme" }, ctx), "sb: car T-15 was received by integ acme, not this session: the integrator that received a car ends it");
+	assert.deepEqual(w.book.read("acme")[0]!.file.states.map((s) => s.state), ["received"]);
+});
+
+test("dropped or landed after an end and a newer forward is refused as already ended: only received or returned start a new life", async () => {
+	const { w, evidence, ctx } = await rode();
+	w.gone(TRAIN);
+	await trainCar(integratorDeps(w), { car: "T-15", state: "dropped", round: 1, reason: "unit red", evidence, project: "acme" }, ctx);
+	w.tick(60_000);
+	w.forwarded();
+	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "dropped", round: 2, reason: "again", evidence, project: "acme" }, ctx), "sb: car T-15 is already dropped");
+	await refused(trainCar(integratorDeps(w), { car: "T-15", state: "landed", version: "1", commit: SHA_B, project: "acme" }, ctx), "sb: car T-15 is already dropped");
+	assert.equal(w.book.read("acme").length, 1, "no new life");
+});
+
 // ---- one ticket on two cars
 
 const SAME_A = slipBlock({ tickets: "MP-3972", head: SHA_A, car: "web", branch: "fix/mp-3972" }), SAME_B = slipBlock({ tickets: "MP-3972", head: SHA_B, car: "insight", branch: "fix/mp-3972" });
