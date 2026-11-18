@@ -32,6 +32,7 @@ const main = async (id: string, pane: string, tab: string) => {
 	const agent = world.agent({ id, pane, tab });
 	await agent.start();
 	await agent.promote();
+	agent.idle = false; // pi streams: a steer waits in its queue (an idle pi stores it at once, as the test of sb2-F003 does)
 	return agent;
 };
 
@@ -242,12 +243,12 @@ test("a change made while a steer waits in pi's queue is told once that steer is
 	assert.equal(told(a).length, 2);
 });
 
-test("a steer an abort left in pi's queue (ctx.abort clears none) arrives at the next run's start, before the steer that run wrote against the older state: the model then gets the whole role prompt", async () => {
+test("a steer an abort left in pi's queue (a compaction during the run, an RPC or SDK abort, a run that failed to start) arrives at the next run's start, before the steer that run wrote against the older state: the model then gets the whole role prompt", async () => {
 	const a = await main("a", "wA:p1", "wA:t1");
 	const first = await section(a);
 	await a.run();
 	await plan(a, "fan-out");
-	await a.fire("agent_settled", { aborted: true }); // sb's own aborts (watchdog, auto, closemain) call ctx.abort: pi keeps the steer queued
+	await a.fire("agent_settled", { aborted: true }); // session.compact() during a run aborts without clearing the queue (sb's own ctx.abort clears it in the TUI)
 	await plan(a, "orchestrator-worker");
 	assert.equal(await section(a), first);
 	const steers = told(a);
@@ -256,6 +257,23 @@ test("a steer an abort left in pi's queue (ctx.abort clears none) arrives at the
 	assert.match(steers[2]!, /^<straw-boss>\nSome of your Straw Boss role updates were lost or reached you out of order\. This replaces the role instructions in your system prompt:\n\nYou are the main agent[\s\S]*## Dispatch[\s\S]*## Graph: orchestrator-worker/);
 	assert.equal(await section(a), first);
 	assert.equal(told(a).length, 3);
+});
+
+// pi is idle while it awaits `agent_settled` handlers, and after `_prepareRun` threw past `before_agent_start` (no `agent_settled` then): a steer sent then is stored at once, with no `message_end` (sb2-F003).
+test("a steer sent while pi is idle is stored at once and told as it is sent: a graph added then and dropped before the next run is steered away at that run's start", async () => {
+	const a = await main("a", "wA:p1", "wA:t1");
+	const first = await section(a);
+	await a.run();
+	a.idle = true; // pi awaits the run's agent_settled handlers
+	await plan(a, "fan-out");
+	assert.match(told(a)[0]!, /Your plan's graph is now fan-out\/fan-in\. Add to your instructions:/);
+	assert.equal(a.queued().length, 0, "stored, not queued");
+	await a.fire("agent_settled", { aborted: false });
+	await plan(a, "fan-out", "completed");
+	a.idle = false;
+	assert.equal(await section(a), first);
+	assert.equal(told(a).length, 2, "the stored addition is told: the next run start drops it");
+	assert.match(told(a)[1]!, /Your plan has no open graph: drop your "## Dispatch" and "## Graph:" sections\./);
 });
 
 // pi keeps a run's section through a compaction in it (`_runSystemPromptOptions`), so every compaction of the run tells it again what its section lacks (sbcache-F002: the second told nothing).

@@ -47,7 +47,7 @@ export function createCloseMain({ pi, cfg, s, me }: Kit, { closeSelf, check, tur
 		if (!workspace?.tokens?.tower || workspace.tokens.tower !== from) return no("the request is not from the tower of this workspace");
 		const running = subagents(mine, all, cfg.now()).filter((row) => !row.ended).length;
 		const subs = running && `${running} subagent${running > 1 ? "s are" : " is"} running`;
-		// An interrupt aborts the turn in flight, and only that: a dialog, a monitor or a subagent is work the abort does not end, so they still refuse. A queue that survives the abort is another busy answer at the next ask.
+		// An interrupt aborts the turn in flight, and only that: a dialog, a monitor or a subagent is work the abort does not end, so they still refuse. A queue that survives the abort (pi's TUI clears it; an RPC or SDK abort does not) is another busy answer at the next ask.
 		if (interrupt && turn?.running()) {
 			const others = [turn.blockers(), subs].filter(Boolean).join(", ");
 			if (others) return { reason: others, busy: true };

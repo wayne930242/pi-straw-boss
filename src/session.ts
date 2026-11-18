@@ -116,7 +116,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		s.ui = ctx.ui;
 		s.hasUI = ctx.hasUI;
 		s.quit = () => ctx.shutdown();
-		briefing.load();
+		briefing.load(() => { try { return ctx.isIdle(); } catch { return false; } }); // a replaced session's context throws
 		s.saved = Object.assign({}, ...ctx.sessionManager.getBranch().flatMap((e) => (e.type === "custom" && e.customType === ENTRY ? [e.data] : [])));
 		s.duty = isCoordinatorDuty(s.saved.duty) ? s.saved.duty : undefined; // the migration's guard is this live value (docs/specs/2026-11-09-agent-kinds.md §2)
 		s.branch = () => ctx.sessionManager.getBranch();

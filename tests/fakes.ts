@@ -487,12 +487,12 @@ export class Agent {
 	entries: { customType: string; data: unknown }[];
 	notices: { text: string; level?: string }[] = [];
 	/** Messages the extension handed pi with pi.sendMessage. */
-	sent: { customType: string; content: string; deliverAs?: string; triggerTurn?: boolean; details?: unknown }[] = [];
+	sent: { customType: string; content: string; deliverAs?: string; triggerTurn?: boolean; details?: unknown; stored?: boolean }[] = [];
 	/** How many of the steers in `sent` left pi's queue: delivered (`deliver`) or dropped (`dropQueue`). */
 	private dequeued = 0;
 	/** The steers pi's queue still holds. */
 	queued() {
-		return this.sent.filter((m) => m.deliverAs === "steer").slice(this.dequeued);
+		return this.sent.filter((m) => m.deliverAs === "steer" && !m.stored).slice(this.dequeued);
 	}
 	/** pi's loop delivers the queued steers in order, each with its `message_end`, and the run goes on until the queue is empty: a steer sent meanwhile is delivered too. */
 	async deliver(): Promise<void> {
@@ -503,7 +503,7 @@ export class Agent {
 	}
 	/** pi's queue is cleared before it delivers what it holds: Esc (`restoreQueuedMessagesToEditor`), the dequeue key, or the sb GUI's Edit, which presses it. */
 	dropQueue(): void {
-		this.dequeued = this.sent.filter((m) => m.deliverAs === "steer").length;
+		this.dequeued = this.sent.filter((m) => m.deliverAs === "steer" && !m.stored).length;
 	}
 	/** Each ctx.ui.custom overlay, open until it closes itself. */
 	overlays: (Overlay & { closed: boolean })[] = [];
@@ -597,7 +597,7 @@ export class Agent {
 			getSessionName: () => this.name,
 			getCommands: () => world.commands,
 			getAllTools: () => [...this.tools.values()].map((t) => ({ name: t.name, description: t.description })),
-			sendMessage: (message: { customType: string; content: string }, options?: { deliverAs?: string; triggerTurn?: boolean }) => void this.sent.push({ ...message, deliverAs: options?.deliverAs, triggerTurn: options?.triggerTurn }),
+			sendMessage: (message: { customType: string; content: string }, options?: { deliverAs?: string; triggerTurn?: boolean }) => void this.sent.push({ ...message, deliverAs: options?.deliverAs, triggerTurn: options?.triggerTurn, ...(this.idle && !options?.triggerTurn ? { stored: true } : {}) }), // an idle pi stores a message that triggers no turn at once (`_appendCustomMessage`): no queue, no `message_end`
 		} as unknown as ExtensionAPI;
 		// pi-intercom's side of the extension API.
 		if (!options.noIntercom) events.on("intercom:extension-register", (registration) => world.broker.register(this, registration as Registration));

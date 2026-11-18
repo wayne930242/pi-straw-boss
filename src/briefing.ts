@@ -37,17 +37,18 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 	// `told` is what the agent holds: the section, then each steer pi delivered (its `message_end`), never one only sent, since pi's queue can drop it first (Esc, the dequeue key, the sb GUI's Edit).
 	// One steer waits in the queue at a time (`flight`), and a change meanwhile is written once it arrived, against what it told. A steer an abort left queued arrives at the next run's start, after that run's
 	// own was written against the older state: `told` is unknown (`undefined`) then, and the next steer is the whole prompt.
-	let told: Briefed | undefined, sectioned: Briefed | undefined, flight: Told | undefined, running = false, stale = false;
+	let idle = () => false, told: Briefed | undefined, sectioned: Briefed | undefined, flight: Told | undefined, running = false, stale = false;
 	// `dir` is the folder of the files the prompt points to (the switch of trainswitch.ts may give a copy), `state` the state folder, whose `trains` folder holds an integrator's ledgers, `cli` the command that runs cli.mjs (`train check`). What a prompt may name is this session's own (its tab's label, its workspace's label, its kind) or fixed for the process, never another session's name or state: the tower's or the main's name in the section rewrote it whenever that session left, came back, or renamed itself, and a rewritten section is read with the whole context uncached; `boss_status` has the live values (docs/how-it-works.md, The role section stays put).
 	const render = (text = "", duty = "") => text.replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ dir: files ? files.dir : cfg.promptDir, state: guiDir, cli: cliCommand(), tab: s.info.tab, workspace: s.info.workspace, head: s.info.head, duty } as Record<string, string | undefined>)[key] || "none yet");
 	const compose = (parts: string[], duty: string) => render(parts.map((part) => prompts[part]).join("\n\n"), duty);
 	// A compaction that retries no turn gets the message stored, not steered: a steer queued then would make pi continue a run that had ended (runmode.ts does the same with a run's brief).
 	let quiet = false;
-	// A stored message is in the transcript at the turn's end, and pi reports it to no extension: it is told as it is sent.
+	// A stored message is in the transcript at the turn's end, and pi reports it to no extension: it is told as it is sent. So is a steer sent while pi is idle (awaiting `agent_settled` handlers, or after a run
+	// that failed to start past `before_agent_start`): pi stores it at once (`_appendCustomMessage`), with no `message_end`.
 	const steer = (text: string, base: Briefed | null, briefed: Briefed) => {
 		const details: Told = { briefed, base };
 		pi.sendMessage({ customType: ENTRY, content: `<straw-boss>\n${text}\n</straw-boss>`, display: true, details }, quiet ? { triggerTurn: false } : { deliverAs: "steer" });
-		if (quiet) told = briefed;
+		if (quiet || idle()) told = briefed;
 		else flight = details;
 	};
 	/** Steers what changed from `was` to `now`, if anything: a role or a kind gets its whole prompt, which replaces the section's, as does an unknown `was`; a coordinator's graph only what it adds, replaces, or drops (§2a). */
@@ -67,7 +68,9 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 	/** Tells a running agent what changed since what it holds, unless a steer still waits in pi's queue. */
 	const rebrief = () => void (running && !flight && steerChange(told, stateOf()));
 	return {
-		load() {
+		/** `isIdle` is pi's idle signal (`ctx.isIdle`) of the session that started. */
+		load(isIdle: () => boolean = () => false) {
+			idle = isIdle;
 			files = promptSet({ promptDir: cfg.promptDir, stateDir: guiDir, env: cfg.env, warn: (text) => tell(text, "warning") });
 			prompts = Object.fromEntries(PROMPTS.map((name) => [name, files!.read(name)]));
 			[told, sectioned, flight, running, stale] = [undefined, undefined, undefined, false, false]; // a session start: the next run renders the section anew
