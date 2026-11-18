@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { afterEach, test } from "node:test";
-import { PROMPT_DIR, settle, World } from "./fakes.ts";
+import { type Agent, PROMPT_DIR, settle, World } from "./fakes.ts";
 
 // A session's `straw-boss` system section holds nothing of another session: no name of a tower or a main, no state. Such a value rewrote the section whenever that session renamed, left, or came back, and a
 // rewritten section reads the whole context uncached (measured 2026-11-13 to 11-16: 27 strict cache misses, 4.1M tokens, on coordinator mains whose tower line flipped between the tower's name and "none yet").
@@ -13,8 +13,10 @@ afterEach(async () => {
 	world = new World();
 });
 
-const section = async (agent: { run(): Promise<Record<string, string>>; fire(type: string, event?: Record<string, unknown>): Promise<void> }) => {
+/** One run: its section, and the steers it sent, delivered as pi's loop delivers them before the run settles. */
+const section = async (agent: Agent) => {
 	const text = (await agent.run())["straw-boss"] ?? "";
+	await agent.deliver();
 	await agent.fire("agent_settled", { aborted: false });
 	return text;
 };
@@ -118,6 +120,7 @@ test("a coordinator's section is the same bytes while its plan's graph comes, ch
 	assert.equal(told(a).length, 1, "a change is told once, not at every run");
 	await a.run(); // a run in progress: the change is steered at once (rebrief), and the next run start adds nothing
 	await plan(a, "single-loop");
+	await a.deliver();
 	await a.fire("agent_settled", { aborted: false });
 	assert.equal(told(a).length, 2);
 	assert.match(told(a)[1]!, /Your plan's graph is now single-loop\. Drop your "## Graph:" section\./);
@@ -173,6 +176,7 @@ test("a compaction during a run tells the rest of the run what its section lacks
 	await a.run();
 	await plan(a, "single-loop");
 	assert.equal(told(a).length, 3, "steered during the run");
+	await a.deliver();
 	await a.fire("session_compact", { reason: "threshold", willRetry: false, fromExtension: false });
 	const stored = a.sent.at(-1)!;
 	assert.equal(a.sent.length, 4);
@@ -187,4 +191,87 @@ test("a compaction during a run tells the rest of the run what its section lacks
 	await settle();
 	assert.match(await section(a), /of kind standing[\s\S]*## Kind: standing/, "a kind change renders the section anew (and is steered as before when it comes during a run)");
 	assert.equal(a.sent.length, 4);
+});
+
+// What the model was told counts from pi's delivery (the steer's `message_end`), not from the send (cachefix review, sbcache-F001): pi's queue can be cleared before it delivers a steer (Esc restores the queue to the
+// editor, as do the dequeue key and the sb GUI's Edit, which presses it), and a steer counted at its send was then never told again, or the next one was written against a section part the model never dropped.
+test("a steer pi's queue drops before delivery (Esc, the dequeue key, the sb GUI's Edit) is not told: the next run start tells it again", async () => {
+	const a = await main("a", "wA:p1", "wA:t1");
+	const first = await section(a);
+	await a.run();
+	await plan(a, "fan-out");
+	assert.equal(told(a).length, 1);
+	a.dropQueue();
+	await a.fire("agent_settled", { aborted: true });
+	assert.equal(await section(a), first);
+	assert.equal(told(a).length, 2, "told again at the next run start");
+	assert.equal(told(a)[1], told(a)[0]);
+	assert.equal(await section(a), first);
+	assert.equal(told(a).length, 2, "delivered, it is told");
+});
+
+test("a dropped steer that dropped the graph, then a new graph in the same run: the newest steer replaces the section's graph, and none adds a second", async () => {
+	const a = await main("a", "wA:p1", "wA:t1");
+	await plan(a, "fan-out");
+	const first = await section(a);
+	assert.match(first, /## Dispatch[\s\S]*## Graph: fan-out\/fan-in/);
+	await a.run();
+	await plan(a, "fan-out", "completed");
+	assert.match(told(a)[0]!, /Your plan has no open graph: drop your "## Dispatch" and "## Graph:" sections\./);
+	a.dropQueue(); // the dequeue key: the run goes on
+	await plan(a, "orchestrator-worker");
+	await a.deliver();
+	await a.fire("agent_settled", { aborted: false });
+	assert.equal(await section(a), first);
+	assert.match(told(a).at(-1)!, /^<straw-boss>\nYour plan's graph is now orchestrator-worker\. Replace your "## Graph:" section with:[\s\S]*## Graph: orchestrator-worker/);
+	assert.doesNotMatch(told(a).join("\n"), /Add to your instructions/);
+});
+
+test("a change made while a steer waits in pi's queue is told once that steer is delivered, against what it told", async () => {
+	const a = await main("a", "wA:p1", "wA:t1");
+	const first = await section(a);
+	await a.run();
+	await plan(a, "fan-out");
+	await plan(a, "orchestrator-worker"); // the same turn: the first steer is still queued
+	assert.equal(told(a).length, 1, "one steer in flight");
+	await a.deliver();
+	assert.equal(told(a).length, 2);
+	assert.match(told(a)[1]!, /Your plan's graph is now orchestrator-worker\. Replace your "## Graph:" section with:[\s\S]*## Graph: orchestrator-worker/);
+	await a.fire("agent_settled", { aborted: false });
+	assert.equal(await section(a), first);
+	assert.equal(told(a).length, 2);
+});
+
+test("a steer an abort left in pi's queue (ctx.abort clears none) arrives at the next run's start, before the steer that run wrote against the older state: the model then gets the whole role prompt", async () => {
+	const a = await main("a", "wA:p1", "wA:t1");
+	const first = await section(a);
+	await a.run();
+	await plan(a, "fan-out");
+	await a.fire("agent_settled", { aborted: true }); // sb's own aborts (watchdog, auto, closemain) call ctx.abort: pi keeps the steer queued
+	await plan(a, "orchestrator-worker");
+	assert.equal(await section(a), first);
+	const steers = told(a);
+	assert.equal(steers.length, 3);
+	assert.match(steers[1]!, /Your plan's graph is now orchestrator-worker\. Add to your instructions:/, "written against the section, before the queued steer arrived");
+	assert.match(steers[2]!, /^<straw-boss>\nSome of your Straw Boss role updates were lost or reached you out of order\. This replaces the role instructions in your system prompt:\n\nYou are the main agent[\s\S]*## Dispatch[\s\S]*## Graph: orchestrator-worker/);
+	assert.equal(await section(a), first);
+	assert.equal(told(a).length, 3);
+});
+
+// pi keeps a run's section through a compaction in it (`_runSystemPromptOptions`), so every compaction of the run tells it again what its section lacks (sbcache-F002: the second told nothing).
+test("each compaction in a run tells it again what its section lacks; the next run renders the section anew", async () => {
+	const a = await main("a", "wA:p1", "wA:t1");
+	await section(a);
+	await a.run();
+	await plan(a, "fan-out");
+	await a.deliver();
+	for (const n of [2, 3]) {
+		await a.fire("session_compact", { reason: "overflow", willRetry: true, fromExtension: false });
+		await a.deliver();
+		assert.equal(told(a).length, n, `compaction ${n - 1}`);
+		assert.equal(told(a).at(-1), told(a)[0], "told against the run's section, rendered with no graph");
+	}
+	await a.fire("agent_settled", { aborted: false });
+	assert.match(await section(a), /## Graph: fan-out\/fan-in/);
+	assert.equal(told(a).length, 3);
 });

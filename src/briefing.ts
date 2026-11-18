@@ -10,6 +10,9 @@ const GRAPH_ADDENDUM: Partial<Record<Graph, string>> = { "fan-out/fan-in": "grap
 
 /** What a run was briefed with: the role, a main's kind, and the graph a coordinator's plan named (an integrator and a standing main carry `dispatch.md` whatever their plan says, so they have none here). */
 interface Briefed { role: Role | undefined; duty: string; graph: Graph | "" }
+/** A steer's `details`: what it tells, and what it was written against (`null`: it replaces the whole role prompt, whatever the model held). */
+interface Told { briefed: Briefed; base: Briefed | null }
+const same = (a: Briefed, b: Briefed) => a.role === b.role && a.duty === b.duty && a.graph === b.graph;
 
 /** The role prompt: a system prompt section, set when a run starts, and a steer when the role, the kind, or a coordinator's plan changes during one. */
 export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty: MainDuty) {
@@ -29,61 +32,79 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 	};
 	// The role's prompt is a system prompt section, set when a run starts. A role that changes during a run (a member promoted as it dispatches a subagent, mains demoted as their tower quits),
 	// a kind that switches, or a plan that names a graph reaches the agent at its next step as a steer; an idle session gets it with its next run.
-	// `briefed` is what the agent was told last (the section and the steers after it), `sectioned` what the section was rendered with. A section that changes is read with the whole context uncached,
-	// so a run start keeps it while only the graph moved, and steers the change instead (docs/how-it-works.md, The role section stays put); it is rendered anew where the cache or the steers are gone anyway.
-	let briefed: Briefed | undefined, sectioned: Briefed | undefined, running = false;
+	// A section that changes is read with the whole context uncached, so a run start keeps it while only the graph moved, and steers the change instead (docs/how-it-works.md, The role section stays put);
+	// it is rendered anew (`stale`) where the cache or the steers are gone anyway. `sectioned` is what the section was rendered with, which pi keeps for the whole run, through its compactions.
+	// `told` is what the agent holds: the section, then each steer pi delivered (its `message_end`), never one only sent, since pi's queue can drop it first (Esc, the dequeue key, the sb GUI's Edit).
+	// One steer waits in the queue at a time (`flight`), and a change meanwhile is written once it arrived, against what it told. A steer an abort left queued arrives at the next run's start, after that run's
+	// own was written against the older state: `told` is unknown (`undefined`) then, and the next steer is the whole prompt.
+	let told: Briefed | undefined, sectioned: Briefed | undefined, flight: Told | undefined, running = false, stale = false;
 	// `dir` is the folder of the files the prompt points to (the switch of trainswitch.ts may give a copy), `state` the state folder, whose `trains` folder holds an integrator's ledgers, `cli` the command that runs cli.mjs (`train check`). What a prompt may name is this session's own (its tab's label, its workspace's label, its kind) or fixed for the process, never another session's name or state: the tower's or the main's name in the section rewrote it whenever that session left, came back, or renamed itself, and a rewritten section is read with the whole context uncached; `boss_status` has the live values (docs/how-it-works.md, The role section stays put).
 	const render = (text = "", duty = "") => text.replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ dir: files ? files.dir : cfg.promptDir, state: guiDir, cli: cliCommand(), tab: s.info.tab, workspace: s.info.workspace, head: s.info.head, duty } as Record<string, string | undefined>)[key] || "none yet");
 	const compose = (parts: string[], duty: string) => render(parts.map((part) => prompts[part]).join("\n\n"), duty);
 	// A compaction that retries no turn gets the message stored, not steered: a steer queued then would make pi continue a run that had ended (runmode.ts does the same with a run's brief).
 	let quiet = false;
-	const steer = (text: string) => pi.sendMessage({ customType: ENTRY, content: `<straw-boss>\n${text}\n</straw-boss>`, display: true }, quiet ? { triggerTurn: false } : { deliverAs: "steer" });
-	/** Steers what changed from `was` to `now`, if anything: a role or a kind gets its whole prompt, which replaces the section's; a coordinator's graph only what it adds, replaces, or drops (§2a). */
-	const steerChange = (was: Briefed, now: Briefed) => {
-		const name = nameOf(now.role);
-		if (!name || (now.role === was.role && now.duty === was.duty && now.graph === was.graph)) return;
-		if (now.role !== was.role) return steer(`Your Straw Boss role changed during this run. This replaces the role instructions in your system prompt:\n\n${compose(partsOf(name, now.duty, now.graph), now.duty)}`);
-		if (now.duty !== was.duty) return steer(`Your kind is now ${now.duty}. This replaces the role instructions in your system prompt:\n\n${compose(partsOf(name, now.duty, now.graph), now.duty)}`);
-		const addendum = now.graph ? GRAPH_ADDENDUM[now.graph] : undefined;
-		if (!now.graph) return steer(`Your plan has no open graph: drop your "## Dispatch" and "## Graph:" sections.`);
-		if (!was.graph) return steer(`Your plan's graph is now ${now.graph}. Add to your instructions:\n\n${compose(["dispatch", ...(addendum ? [addendum] : [])], now.duty)}`);
-		if (!addendum) return steer(`Your plan's graph is now ${now.graph}. Drop your "## Graph:" section.`);
-		steer(`Your plan's graph is now ${now.graph}. ${GRAPH_ADDENDUM[was.graph] ? 'Replace your "## Graph:" section with' : "Add to your instructions"}:\n\n${compose([addendum], now.duty)}`);
+	// A stored message is in the transcript at the turn's end, and pi reports it to no extension: it is told as it is sent.
+	const steer = (text: string, base: Briefed | null, briefed: Briefed) => {
+		const details: Told = { briefed, base };
+		pi.sendMessage({ customType: ENTRY, content: `<straw-boss>\n${text}\n</straw-boss>`, display: true, details }, quiet ? { triggerTurn: false } : { deliverAs: "steer" });
+		if (quiet) told = briefed;
+		else flight = details;
 	};
+	/** Steers what changed from `was` to `now`, if anything: a role or a kind gets its whole prompt, which replaces the section's, as does an unknown `was`; a coordinator's graph only what it adds, replaces, or drops (§2a). */
+	const steerChange = (was: Briefed | undefined, now: Briefed) => {
+		const name = nameOf(now.role);
+		if (!name || (was && same(was, now))) return;
+		const whole = (lead: string) => steer(`${lead} This replaces the role instructions in your system prompt:\n\n${compose(partsOf(name, now.duty, now.graph), now.duty)}`, null, now);
+		if (!was) return whole("Some of your Straw Boss role updates were lost or reached you out of order.");
+		if (now.role !== was.role) return whole("Your Straw Boss role changed during this run.");
+		if (now.duty !== was.duty) return whole(`Your kind is now ${now.duty}.`);
+		const addendum = now.graph ? GRAPH_ADDENDUM[now.graph] : undefined, graph = (text: string) => steer(text, was, now);
+		if (!now.graph) return graph(`Your plan has no open graph: drop your "## Dispatch" and "## Graph:" sections.`);
+		if (!was.graph) return graph(`Your plan's graph is now ${now.graph}. Add to your instructions:\n\n${compose(["dispatch", ...(addendum ? [addendum] : [])], now.duty)}`);
+		if (!addendum) return graph(`Your plan's graph is now ${now.graph}. Drop your "## Graph:" section.`);
+		graph(`Your plan's graph is now ${now.graph}. ${GRAPH_ADDENDUM[was.graph] ? 'Replace your "## Graph:" section with' : "Add to your instructions"}:\n\n${compose([addendum], now.duty)}`);
+	};
+	/** Tells a running agent what changed since what it holds, unless a steer still waits in pi's queue. */
+	const rebrief = () => void (running && !flight && steerChange(told, stateOf()));
 	return {
 		load() {
 			files = promptSet({ promptDir: cfg.promptDir, stateDir: guiDir, env: cfg.env, warn: (text) => tell(text, "warning") });
 			prompts = Object.fromEntries(PROMPTS.map((name) => [name, files!.read(name)]));
-			[briefed, sectioned, running] = [undefined, undefined, false]; // a session start: the next run renders the section anew (`fresh`)
+			[told, sectioned, flight, running, stale] = [undefined, undefined, undefined, false, false]; // a session start: the next run renders the section anew
 		},
 		/** Whether the loaded prompts have integration off; before they are loaded, the switch is read as `promptSet` will read it. */
 		off: () => files?.off,
 		/** The folder of the files the prompts point to. */
 		dir: () => (files ? files.dir : cfg.promptDir),
-		rebrief() {
-			const now = stateOf();
-			if (!running || !briefed || !nameOf(now.role)) return;
-			const was = briefed;
-			briefed = now;
-			steerChange(was, now);
+		rebrief,
+		/** pi delivered a message. A steer of this briefing moves what the agent holds to what it tells, when it was written against what the agent held, or tells what it holds already; else what it holds is unknown. */
+		delivered(message: { role?: string; customType?: string; details?: unknown }) {
+			const d = message.details as Told | undefined;
+			if (message.role !== "custom" || message.customType !== ENTRY || !d?.briefed) return;
+			const fits = d.base === null || (told !== undefined && (same(d.base, told) || same(d.briefed, told)));
+			[told, flight] = [fits ? d.briefed : undefined, flight === d ? undefined : flight];
+			rebrief();
 		},
 		/** The section is rendered anew at the next run start: a compaction or a tree move, as a session start (`load`), left no cache for it, or no steers after it.
-		 * A run that goes on after a compaction keeps its section, and is told again what changed since that section was rendered: the steers that said it may be summarized away. */
+		 * A run that goes on after a compaction keeps its section, and is told again, at each compaction, what changed since that section was rendered: the steers that said it may be summarized away. */
 		fresh(retries = true) {
-			quiet = !retries;
-			if (running && sectioned && briefed && nameOf(briefed.role)) steerChange(sectioned, briefed);
-			[sectioned, quiet] = [undefined, false];
+			stale = true;
+			if (!running || !sectioned) return;
+			[told, quiet] = [sectioned, !retries];
+			rebrief();
+			quiet = false;
 		},
 		/** A run starts: the role's prompt becomes the session's section, or stays it while only the plan's graph moved since it was rendered, and the move is steered once. */
 		begin(sections: Record<string, string>) {
 			const now = stateOf(), name = nameOf(now.role);
-			const same = (b: Briefed | undefined) => b && b.role === now.role && b.duty === now.duty;
-			const keep = Boolean(name) && same(sectioned) && same(briefed);
+			const kept = (b: Briefed | undefined) => b !== undefined && b.role === now.role && b.duty === now.duty;
+			const keep = Boolean(name) && !stale && kept(sectioned) && kept(told);
 			if (!name) delete sections[ENTRY];
 			else sections[ENTRY] = compose(partsOf(name, now.duty, keep ? sectioned!.graph : now.graph), now.duty);
-			if (keep) steerChange(briefed!, now);
-			else sectioned = name ? now : undefined;
-			[briefed, running] = [now, true];
+			if (!keep) [sectioned, told, stale] = [name ? now : undefined, now, false];
+			// A steer the last run left undelivered was dropped from pi's queue or waits for this run's start: it is not told, and if it arrives, `delivered` weighs it.
+			[running, flight] = [true, undefined];
+			rebrief();
 		},
 		settled: () => void (running = false),
 	};

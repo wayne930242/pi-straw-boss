@@ -227,9 +227,11 @@ test("graph addenda follow the plan and steer once per change; a coordinator's d
 	world = new World();
 	const a = await main("Docs");
 	await text(a);
-	const todo = (...tasks: Parameters<typeof snap>) => {
+	// pi delivers a steer at its next poll, after the todo's turn; the next change waits for that delivery (briefing.ts `flight`).
+	const todo = async (...tasks: Parameters<typeof snap>) => {
 		a.entries.splice(0, a.entries.length, ...a.entries.filter((e) => e.customType !== "rpiv-todo-state"), snap(...tasks));
-		return a.toolResult("todo");
+		await a.toolResult("todo");
+		await a.deliver();
 	};
 	await todo({ id: 1, graph: "fan-out" });
 	assert.equal(steers(a).length, 1);

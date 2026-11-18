@@ -292,6 +292,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	// A rename from any source (boss_rename, /name, another extension) can make this main an integrator (§2); its todos are read again after each todo call.
 	pi.on("session_info_changed", (event) => void (!runMode.active() && mainDuty.migrate((event as { name?: string }).name)));
 	pi.on("agent_settled", () => void (!runMode.active() && briefing.settled()));
+	pi.on("message_end", (event) => void (!runMode.active() && briefing.delivered(event.message))); // a role steer counts as told once pi delivers it (briefing.ts `told`)
 	// A compaction drops the cache and may summarize the steers away, and a tree move may leave them on another branch: the next run renders the role section anew (briefing.ts `fresh`).
 	pi.on("session_compact", (event) => void (!runMode.active() && briefing.fresh(event.willRetry)));
 	pi.on("session_tree", () => void (!runMode.active() && briefing.fresh()));

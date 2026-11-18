@@ -488,6 +488,23 @@ export class Agent {
 	notices: { text: string; level?: string }[] = [];
 	/** Messages the extension handed pi with pi.sendMessage. */
 	sent: { customType: string; content: string; deliverAs?: string; triggerTurn?: boolean; details?: unknown }[] = [];
+	/** How many of the steers in `sent` left pi's queue: delivered (`deliver`) or dropped (`dropQueue`). */
+	private dequeued = 0;
+	/** The steers pi's queue still holds. */
+	queued() {
+		return this.sent.filter((m) => m.deliverAs === "steer").slice(this.dequeued);
+	}
+	/** pi's loop delivers the queued steers in order, each with its `message_end`, and the run goes on until the queue is empty: a steer sent meanwhile is delivered too. */
+	async deliver(): Promise<void> {
+		for (let next = this.queued()[0]; next; next = this.queued()[0]) {
+			this.dequeued++;
+			await this.fire("message_end", { message: { role: "custom", customType: next.customType, content: next.content, display: true, details: next.details } });
+		}
+	}
+	/** pi's queue is cleared before it delivers what it holds: Esc (`restoreQueuedMessagesToEditor`), the dequeue key, or the sb GUI's Edit, which presses it. */
+	dropQueue(): void {
+		this.dequeued = this.sent.filter((m) => m.deliverAs === "steer").length;
+	}
 	/** Each ctx.ui.custom overlay, open until it closes itself. */
 	overlays: (Overlay & { closed: boolean })[] = [];
 	/** What pi-intercom reports as this session's status. */
