@@ -623,7 +623,7 @@ export class CarBook {
 	 */
 	private async trainLive(record: TrainRecord): Promise<string | undefined> {
 		const code = record.code, unsure = (what: string, error: unknown) => `sb: cannot tell whether train ${code} is live (${what} could not be read: ${String((error as Error)?.message ?? error).slice(0, 200)}): try again; while the train runs, it sets its cars' fates`;
-		const live = `sb: train ${code} is live (session ${record.session}, pane ${record.pane}): the train sets its cars' fates; the integrator ends a car it received only once that train is gone`;
+		const live = `sb: train ${code} is live (session ${record.session}, pane ${record.pane}): the train sets its cars' fates; the integrator ends a car it received only once that train is gone (a train whose pi crashed keeps its pane's train tokens until they lapse: close its pane to free its cars)`;
 		let pane: PaneFacts | undefined;
 		try { pane = await this.d.paneOf(record.pane); } catch (error) { return unsure("Herdr's pane list", error); }
 		if (pane?.role === "train" && (!pane.train || (pane.train.project === record.project && pane.train.code === code))) return live;

@@ -316,8 +316,8 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 	const startedWord = (id: number, status: string) => `sb: step #${id} is ${status}; a started step is never deleted: complete it as void (why: skipped or superseded)`;
 
 	/** The server's cars of a project, or the refusal in words: a guard that cannot ask the server does not let a notice-dependent step through. */
-	async function fetchViews(project: string): Promise<CarView[] | string> {
-		if (!env.cars) return "sb: this guard has no link to the sb server, so it cannot read the car notices a step waits for";
+	async function fetchViews(project: string, what = "the car notices a step waits for"): Promise<CarView[] | string> {
+		if (!env.cars) return `sb: this guard has no link to the sb server, so it cannot read ${what}`;
 		try { return await env.cars.read(project); } catch (error) { return `sb: the sb server did not answer for the cars of project ${project} (${(error as Error).message}); try again`; }
 	}
 	/** Whether a step this call completes as passed rests on a notice: a `notice` check, or an assemble that removes cars. */
@@ -562,7 +562,7 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 		const id = trainFromRequest(input.message);
 		if ("refusal" in id) return undefined;
 		// The book says which car ended before the open (TCR-F003); a guard that cannot read it sends nothing.
-		const views = await fetchViews(id.project);
+		const views = await fetchViews(id.project, "which cars of the manifest ended, so the manifest is not sent");
 		if (typeof views === "string") return { block: true, reason: views };
 		try {
 			const entries = ctx.sessionManager.getBranch(), out = manifestWithSlips(input.message, rowsOfSnapshot(snapshotOfBranch(entries)).rows, entries, views);
