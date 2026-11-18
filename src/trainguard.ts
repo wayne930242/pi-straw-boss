@@ -17,6 +17,7 @@ import { type Effect, isObject, type Json, shortCode, STEP_REQUIRED, todoEffects
 import { type FactStep, stepWaits, type TrainFacts, type Wait, waitMessage } from "./train/waits.ts";
 import { type Acceptor, buildBoard, buildYard, freezeStep, type Row } from "./trainboard.ts";
 import type { MainDuty } from "./mainduty.ts";
+import { manifestWithSlips } from "./manifestslips.ts";
 import type { Roles } from "./roles.ts";
 import { ENTRY, type Kit } from "./state.ts";
 import { TRAIN, type TrainId, trainFromToken, trainToken } from "./trainrole.ts";
@@ -532,6 +533,7 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 
 	pi.on("tool_call", async (event, ctx) => {
 		const input = event.input;
+		if (event.toolName === "call_tower") return isObject(input) ? departure(input, ctx) : undefined;
 		if (!isObject(input) || (event.toolName !== "todo" && event.toolName !== "MonitorCreate")) return undefined;
 		const me = env.train();
 		let reasons: string[] = [];
@@ -551,6 +553,21 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 		}
 		return reasons.length ? ({ block: true, reason: reasons.join("\n") } satisfies Block) : undefined;
 	});
+	/**
+	 * The integrator's departure (manifestslips.ts): a `call_tower` with why=shared whose message is a train manifest goes out with every car's forwarded slip appended, rewritten in place as a run step's command is (pi hands the tool this same
+	 * object); a manifest that cannot carry them is refused and nothing is sent.
+	 */
+	function departure(input: Json, ctx: Ctx): Block {
+		if (input.why !== "shared" || typeof input.message !== "string" || env.train() || !env.isMain() || env.duty() !== "integrator") return undefined;
+		try {
+			const entries = ctx.sessionManager.getBranch(), out = manifestWithSlips(input.message, rowsOfSnapshot(snapshotOfBranch(entries)).rows, entries);
+			if (out && "refusal" in out) return { block: true, reason: out.refusal };
+			if (out) input.message = out.message;
+			return undefined;
+		} catch (error) {
+			return { block: true, reason: `sb: the train guard could not check this manifest (${(error as Error).message}); try again` };
+		}
+	}
 	/** Whether a todo call carries a `metadata.sb`, in its own metadata or in a batch's. */
 	function hasSb(input: Json): boolean {
 		const meta = (m: unknown) => isObject(m) && m.sb !== undefined;
