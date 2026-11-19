@@ -86,8 +86,9 @@ export function listenControl({ endpoint, secret, hello, handle, refused, idleMs
 		sockets.add(conn);
 		conn.on("close", () => sockets.delete(conn));
 		conn.on("error", () => {});
-		conn.setEncoding("utf8").setTimeout(idleMs, () => conn.destroy());
-		let buffer = "", state: "new" | "challenged" | "authed" | "closed" = "new", clientNonce = "", work: Promise<void> = Promise.resolve();
+		// Idle means no request in flight: a `landed` or `received` check may fetch a base for minutes, and closing its connection loses the answer while the check goes on (0.80.15 FE2).
+		let buffer = "", state: "new" | "challenged" | "authed" | "closed" = "new", clientNonce = "", work: Promise<void> = Promise.resolve(), inFlight = 0;
+		conn.setEncoding("utf8").setTimeout(idleMs, () => inFlight === 0 && conn.destroy());
 		const serverNonce = randomBytes(16).toString("hex");
 		const wait = setTimeout(() => state !== "authed" && refuse(conn, "no proof"), HELLO_MS);
 		wait.unref();
@@ -129,6 +130,7 @@ export function listenControl({ endpoint, secret, hello, handle, refused, idleMs
 					continue;
 				}
 				// Requests on one connection are answered in order, each with one line.
+				inFlight++;
 				work = work.then(async () => {
 					let reply: Reply;
 					try {
@@ -136,6 +138,7 @@ export function listenControl({ endpoint, secret, hello, handle, refused, idleMs
 					} catch (error) {
 						reply = { ok: false, error: (error as Error).message };
 					}
+					inFlight--;
 					if (!conn.destroyed) conn.write(`${JSON.stringify(reply)}\n`, () => reply[AFTER]?.());
 					else reply[AFTER]?.();
 				});

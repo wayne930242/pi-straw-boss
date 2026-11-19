@@ -384,3 +384,18 @@ test("R13b-F006: a real server's challenge replayed from another connection does
 		await nonHex.close();
 	}
 });
+
+test("a request in flight outlives the idle timeout and gets its answer; once answered, the idle connection is closed", async () => {
+	let release = () => {};
+	const held = new Promise<void>((r) => (release = r));
+	const { control } = await serve({ idleMs: 20, handle: async (r) => (await held, { ok: true, echo: r.cmd }) });
+	const call = callControl(control.endpoint, SECRET, { cmd: "cars-set" }, 60_000);
+	// Several idle periods pass while the handler holds the answer (a base fetch of minutes in the server).
+	await new Promise((r) => setTimeout(r, 200));
+	release();
+	const { reply } = await call;
+	assert.deepEqual(reply, { ok: true, echo: "cars-set" });
+	const conn = createConnection(control.endpoint);
+	conn.on("error", () => {});
+	await new Promise<void>((r) => conn.on("close", () => r()));
+});
