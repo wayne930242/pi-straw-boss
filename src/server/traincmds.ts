@@ -3,9 +3,9 @@ import { availableParallelism, devNull, loadavg, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { execFileSyncExe } from "../exe.mjs";
 import { checkAcceptRef, checkCar, checkEvidence, parseAppAccept, parseSlip } from "../train/accept.ts";
-import { appsFile, carRepos, projectAppsDir, readAppIntegration, repoRoot } from "../train/appsconfig.ts";
-import { type Board, boardPath, boardState, MAX_TRAINS, trainboardDir, factsOf, MAX_CLEARS, readBoard, readTrainboards, type Writer, writeBoard } from "../train/board.ts";
-import { isName, isObject, validateStep } from "../train/spec.ts";
+import { appsFile, carRepos, enclosingAppsDir, projectAppsDir, readAppIntegration, repoRoot } from "../train/appsconfig.ts";
+import { type Board, type BoardEnd, boardPath, boardState, MAX_TRAINS, trainboardDir, factsOf, MAX_CLEARS, readBoard, readTrainboards, type Writer, writeBoard } from "../train/board.ts";
+import { isName, isObject, SHA_RE, validateStep } from "../train/spec.ts";
 import { noticeStatus, stateLine, type Attempt } from "../train/cars.ts";
 import { carsFolderOk, listCars, MAX_CAR_FILES } from "../trainboard.ts";
 import { holding, loadLimit, stepWaits, type FactStep, type TrainFacts, type Wait } from "../train/waits.ts";
@@ -13,8 +13,8 @@ import { gateDeps, type GateDeps, type GateFile, readGate, runGate, writerAlive 
 import { plain } from "./operatesanitize.ts";
 import { heldLocks, lockDirOf } from "./trainlock.ts";
 
-// The `train` commands of cli.mjs (docs/specs/2026-11-07-train-workers.md §9.2): `gate` (traingate.ts), `check`, `status`, `clear`. Kept out of cli.ts, which carries a line budget (procscli.ts is the model). Exit codes: `gate` as the wrapper
-// says (0, 1, 3, 143); `check` 0 when nothing is refused and 2 when something is (a usage error is 2 too); `status` 0; `clear` 0 done, 1 refused (the train's state does not allow it), 2 usage.
+// The `train` commands of cli.mjs (docs/specs/2026-11-07-train-workers.md §9.2): `gate` (traingate.ts), `check`, `status`, `clear`, `end`. Kept out of cli.ts, which carries a line budget (procscli.ts is the model). Exit codes: `gate` as the wrapper
+// says (0, 1, 3, 143); `check` 0 when nothing is refused and 2 when something is (a usage error is 2 too); `status` 0; `clear` and `end` 0 done, 1 refused (the train's state does not allow it), 2 usage.
 
 export interface TrainIo {
 	out(text: string): void;
@@ -28,6 +28,9 @@ export interface TrainIo {
 	user?: string;
 	/** `git merge-base --is-ancestor` in `cwd` (in the app's own repository when the app is a submodule of the project), and whether a file is there: replaced by tests. */
 	isAncestor?: (older: string, newer: string) => boolean;
+	/** Whether git knows a commit, and the tip of a branch on origin, for a slip's head (A5): replaced by tests. */
+	hasCommit?: (sha: string) => boolean;
+	remoteTip?: (branch: string) => { sha: string } | { none: true } | { error: string };
 	exists?: (path: string) => boolean;
 	load?: () => { now: number; cores: number } | undefined;
 	gate?: Partial<GateDeps>;
@@ -50,15 +53,16 @@ export async function runTrain(flags: Record<string, string | true>, io: TrainIo
 		case "status": return status(flags, io);
 		case "notices": return notices(flags, io);
 		case "clear": return clear(flags, io);
+		case "end": return end(flags, io);
 	}
-	return usage(io, "train needs gate, check, status, clear or notices");
+	return usage(io, "train needs gate, check, status, clear, end or notices");
 }
 
 // ---- check
 
 function check(flags: Record<string, string | true>, io: TrainIo): number {
 	const cwd = io.cwd ?? process.cwd();
-	if ((flags.step === undefined) === (flags.accept === undefined)) return usage(io, "train check needs --step <spec.json> or --accept <file> (with --app, --app-accept and --slip), one of them");
+	if ((flags.step === undefined) === (flags.accept === undefined)) return usage(io, "train check needs --step <spec.json> or --accept <file> (with --app, --slip, and --app-accept, which only adds to the app's integration.accept in apps.json), one of them");
 	if (flags.step !== undefined && (flags["app-accept"] !== undefined || flags.slip !== undefined || flags.app !== undefined)) return usage(io, "--app, --app-accept and --slip go with --accept");
 	if (flags.accept === undefined && flags.slip !== undefined) return usage(io, "--slip goes with --accept");
 	const read = (flag: string) => {
@@ -99,7 +103,8 @@ function check(flags: Record<string, string | true>, io: TrainIo): number {
 		let required: string[] = setting.ok ? setting.accept : [], repos = [cwd];
 		if (!accept.refusal && !slip?.refusal && setting.ok) {
 			const app = typeof flags.app === "string" ? flags.app : slip ? parseSlip(slip.text!).fields.car : evidenceApp(accept.text);
-			const dir = projectAppsDir(cwd);
+			// From an app's folder that is a repository of its own, the project's apps.json is in a folder above it (A6).
+			const dir = projectAppsDir(cwd) ?? enclosingAppsDir(cwd);
 			if (dir === undefined) {
 				if (app) refusals.push(`sb: app ${app} could not be checked: ${noAppsWhere(cwd)}; run train check in the project's checkout`);
 			} else {
@@ -121,10 +126,54 @@ function check(flags: Record<string, string | true>, io: TrainIo): number {
 			}));
 			const options = { appAccept: required, exists, isAncestor };
 			refusals.push(...(slip ? checkCar(slip.text!, accept.text, options) : none ? checkAcceptRef("none", required) : checkEvidence(accept.text!, options)));
+			if (slip) {
+				const heads = headRefusals(parseSlip(slip.text!).fields, repos, io);
+				refusals.push(...heads.refusals);
+				for (const warning of heads.warnings) io.err(`${warning}\n`);
+			}
 		}
 	}
 	io.out(`${JSON.stringify({ ok: refusals.length === 0, refusals })}\n`);
 	return refusals.length ? 2 : 0;
+}
+
+const GIT_ENV = () => ({ ...process.env, GIT_GRAFT_FILE: devNull, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" });
+
+/** `git cat-file -e <sha>^{commit}` in any of the folders: whether git knows the commit there. */
+const hasCommit = (repos: string[]) => (sha: string) => repos.some((at) => {
+	try {
+		execFileSyncExe("git", ["--no-replace-objects", "cat-file", "-e", `${sha}^{commit}`], { cwd: at, stdio: "ignore", timeout: 15_000, killSignal: "SIGKILL", env: GIT_ENV() });
+		return true;
+	} catch {
+		return false;
+	}
+});
+
+/** The tip of `branch` on `origin`, asked of the first folder (`git ls-remote`, at most 30 s): `none` when origin has no such branch, `error` when origin could not be asked. */
+const remoteTip = (repos: string[]) => (branch: string): { sha: string } | { none: true } | { error: string } => {
+	try {
+		const out = String(execFileSyncExe("git", ["ls-remote", "origin", `refs/heads/${branch}`], { cwd: repos[0], stdio: ["ignore", "pipe", "pipe"], timeout: 30_000, killSignal: "SIGKILL", env: GIT_ENV(), encoding: "utf8" }));
+		const line = out.split(/\r?\n/).find((l) => l.endsWith(`\trefs/heads/${branch}`));
+		return line ? { sha: line.slice(0, line.indexOf("\t")).toLowerCase() } : { none: true };
+	} catch (error) {
+		const e = error as { stderr?: unknown; message?: string; signal?: string };
+		return { error: e.signal === "SIGKILL" ? "no answer in 30 s" : (String(e.stderr ?? "").trim().split(/\r?\n/).at(-1) || e.message || "git failed").slice(0, 200) };
+	}
+};
+
+/**
+ * A slip's `head:` checked in git (0.80.17, A5): a commit git knows where the car's commits are (the app's own repository when it is one), and the tip of the slip's `branch:` on origin. An unknown commit and a tip that is another commit (or
+ * no branch on origin) are refusals naming both; an origin that could not be asked (the network, no remote) is a warning, since the merge itself fetches again.
+ */
+function headRefusals(fields: Record<string, string>, repos: string[], io: Pick<TrainIo, "hasCommit" | "remoteTip">): { refusals: string[]; warnings: string[] } {
+	const head = fields.head?.toLowerCase(), branch = fields.branch;
+	if (!head || !SHA_RE.test(head) || !branch) return { refusals: [], warnings: [] };
+	const where = repos.join(", ");
+	if (!(io.hasCommit ?? hasCommit(repos))(head)) return { refusals: [`sb: slip head ${head} is not a commit git knows in ${where}: a mistyped head, or a branch not fetched (git fetch, then check the head the slip names)`], warnings: [] };
+	const tip = (io.remoteTip ?? remoteTip(repos))(branch);
+	if ("error" in tip) return { refusals: [], warnings: [`sb: warning: the tip of ${branch} on origin could not be read (${tip.error}); the slip's head ${head} was checked in git only`] };
+	if ("none" in tip) return { refusals: [`sb: slip head ${head}: origin has no branch ${branch}; push the car's branch, or name the branch the head is on`], warnings: [] };
+	return tip.sha === head ? { refusals: [], warnings: [] } : { refusals: [`sb: slip head ${head} is not the tip of ${branch} on origin, which is ${tip.sha}: push the branch, or name its tip in the slip`], warnings: [] };
 }
 
 /** Where `train check` looked for an apps.json and found none: the folder's git root, and the repository's main checkout when that is another folder. */
@@ -145,6 +194,8 @@ export interface StepRow { id: number; kind: string; name: string; status: strin
 export interface TrainRow {
 	project: string; app?: string; code: string; state: TrainFacts["state"]; reason?: string; session?: { id: string; pid: number; live: boolean }; round?: number; steps: StepRow[];
 	cars: { tickets: string[]; branch: string; head: string; coordinator: string }[]; holds?: { lanes: string[]; targets: string[] };
+	/** How `train end` ended it, when it did. */
+	end?: BoardEnd;
 }
 export interface Status { load?: { now: number; cores: number }; locks: { name: string; train: string; step: number; pid: number; since: string }[]; trains: TrainRow[]; truncated: boolean; unlisted: string[] }
 
@@ -170,7 +221,7 @@ export function trainStatus(io: Pick<TrainIo, "stateDir" | "now" | "alive" | "lo
 		const held2 = holding(train);
 		return {
 			project: board.project, app: board.app, code: board.code, state: train.state, session: { id: board.writer.session, pid: board.writer.pid, live: alive(board.writer) }, round: board.round, steps,
-			cars: board.cars.map((c) => ({ tickets: c.tickets, branch: c.branch, head: c.head, coordinator: c.coordinator })), holds: { lanes: held2.lanes, targets: held2.targets },
+			cars: board.cars.map((c) => ({ tickets: c.tickets, branch: c.branch, head: c.head, coordinator: c.coordinator })), holds: { lanes: held2.lanes, targets: held2.targets }, ...(board.end ? { end: board.end } : {}),
 		};
 	});
 	return { ...(load ? { load } : {}), locks, trains, truncated, unlisted };
@@ -183,6 +234,7 @@ function render(s: Status): string {
 	const lines = [s.load ? `load ${Math.round(s.load.now * 10) / 10} on ${s.load.cores} cores` : "load unknown", s.locks.length ? `locks: ${s.locks.map((l) => `${l.name} (${l.train} #${l.step}, pid ${l.pid})`).join(", ")}` : "locks: none"];
 	for (const t of s.trains) {
 		lines.push(`${t.project} ${t.app ?? "?"} ${t.code} ${t.state}${t.session ? ` session ${t.session.id} ${t.session.live ? "live" : "gone"}` : ""}${t.round ? ` round ${t.round}` : ""}${t.reason ? ` (${t.reason})` : ""}`);
+		if (t.end) lines.push(`  end ${t.end.outcome}${t.end.commit ? ` ${t.end.commit.slice(0, 12)}` : ""}: ${t.end.reason} (evidence: ${t.end.evidence}; ${t.end.by}, ${t.end.at})`);
 		for (const c of t.cars) lines.push(`  car ${c.tickets.join(",")} ${c.branch} (${c.coordinator})`);
 		for (const st of t.steps) lines.push(`  #${st.id} ${st.kind} ${st.name}: ${st.status}${st.outcome ? ` ${st.outcome}` : ""}${st.gate ? ` [${st.gate.state}: ${st.gate.message}]` : ""}${st.waits.length ? ` waits ${st.waits.map(waitText).join("; ")}` : ""}`);
 	}
@@ -191,9 +243,15 @@ function render(s: Status): string {
 	return `${lines.join("\n")}\n`;
 }
 
+const STATES: readonly TrainFacts["state"][] = ["live", "stale", "ended", "unreadable"];
+
 function status(flags: Record<string, string | true>, io: TrainIo): number {
 	if (flags.project !== undefined && typeof flags.project !== "string") return usage(io, "--project needs a name");
-	const result = trainStatus(io, flags.project as string | undefined);
+	const wanted = typeof flags.state === "string" ? flags.state.split(",").map((x) => x.trim()).filter(Boolean) : [];
+	if (flags.state !== undefined && (!wanted.length || wanted.some((x) => !(STATES as readonly string[]).includes(x)))) return usage(io, `--state is a comma list of ${STATES.join(", ")}`);
+	const all = trainStatus(io, flags.project as string | undefined);
+	// The filter picks rows only: the load, the locks and whether the list was cut are the computer's, whatever is shown.
+	const result = wanted.length ? { ...all, trains: all.trains.filter((t) => wanted.includes(t.state)) } : all;
 	io.out(flags.json === true ? `${JSON.stringify(result)}\n` : render(result));
 	return 0;
 }
@@ -231,6 +289,45 @@ function clear(flags: Record<string, string | true>, io: TrainIo): number {
 		return refuse(`the clear was not written: ${(error as Error).message}`);
 	}
 	io.out(`${JSON.stringify({ ok: true, project: board.project, train: board.code, [key]: name, reason: why })}\n`);
+	return 0;
+}
+
+// ---- end
+
+/**
+ * Ends a stale train (0.80.17): one whose session is gone and whose board is 10 minutes old, which no land step will end, because its cars all left or its session died after the merge. `landed` names the commit the cars landed in;
+ * `none` says nothing merged. The board gets an `end` and reads as ended from then on: it holds nothing, the watch no longer reports it, and it is deleted 7 days after the end. `updated` stays as it was.
+ */
+function end(flags: Record<string, string | true>, io: TrainIo): number {
+	const { project, train, outcome, reason, evidence, commit } = flags;
+	if (![project, train, outcome, reason, evidence].every((v) => typeof v === "string") || (commit !== undefined && typeof commit !== "string"))
+		return usage(io, "train end needs --project P --train CODE --outcome landed|none --reason TEXT --evidence TEXT, and --commit SHA with landed");
+	if (outcome !== "landed" && outcome !== "none") return usage(io, "--outcome is landed or none");
+	if (outcome === "landed" && !SHA_RE.test(String(commit ?? "").toLowerCase())) return usage(io, "--outcome landed needs --commit, the 40-hex commit the train's cars landed in");
+	if (outcome === "none" && commit !== undefined) return usage(io, "--commit goes with --outcome landed; a train that merged nothing has no commit");
+	const why = String(reason).replace(/\s+/g, " ").trim(), proof = String(evidence).replace(/\s+/g, " ").trim();
+	if (!why || why.length > 600) return usage(io, "--reason is 1 to 600 characters");
+	if (!proof || proof.length > 600) return usage(io, "--evidence is 1 to 600 characters");
+	let file: string;
+	try {
+		file = boardPath(io.stateDir, String(project), String(train));
+	} catch (error) {
+		return usage(io, (error as Error).message);
+	}
+	const refuse = (text: string) => (io.err(`sb: ${text}\n`), 1);
+	const read = readBoard(file);
+	if (!read.ok) return refuse(`the board of train ${String(train)} cannot be read (${read.reason}), so how it stands cannot be known and an end is not written`);
+	const { board } = read, now = (io.now ?? Date.now)(), alive = (io.alive ?? ((w: Writer) => writerAlive(w)))(board.writer);
+	const state = boardState(board, { now, alive });
+	if (state === "ended") return refuse(`train ${board.code} has ended already${board.end ? ` (${board.end.outcome}, by ${board.end.by})` : " (its land step completed)"}`);
+	if (state === "live") return refuse(alive ? `train ${board.code}'s session is live (pid ${board.writer.pid}); only a train whose session is gone can be ended` : `train ${board.code}'s session is gone, but its board was updated less than 10 minutes ago; it is stale after that, and only a stale train can be ended`);
+	const next: Board = { ...board, end: { outcome, ...(outcome === "landed" ? { commit: String(commit).toLowerCase() } : {}), reason: why, evidence: proof, by: `cli train end (${io.user ?? userInfo().username})`, at: new Date(now).toISOString() } };
+	try {
+		writeBoard(io.stateDir, next);
+	} catch (error) {
+		return refuse(`the end was not written: ${(error as Error).message}`);
+	}
+	io.out(`${JSON.stringify({ ok: true, project: board.project, train: board.code, end: next.end })}\n`);
 	return 0;
 }
 

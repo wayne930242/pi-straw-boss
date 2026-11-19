@@ -95,6 +95,17 @@ export function projectAppsDir(dir: string): string | undefined {
 	return appsFile(main).exists ? main : undefined;
 }
 
+/**
+ * The nearest folder above `dir` whose apps.json is there (0.80.17, A6): `train check` run in an app's folder that is a repository of its own (a submodule of the project) finds no apps.json at that repository's root nor in its main
+ * checkout, and the project's is above it. Undefined when no folder up to the file system's root has one.
+ */
+export function enclosingAppsDir(dir: string): string | undefined {
+	for (let d = dirname(resolve(dir)); ; d = dirname(d)) {
+		if (appsFile(d).exists) return d;
+		if (dirname(d) === d) return undefined;
+	}
+}
+
 /** The repository `dir` is a checkout of, as its main checkout's real folder: a linked worktree's `.git` is a file naming its git dir, whose `commondir` leads to the repository's own `.git`. Two worktrees of one repository answer the same; anything else answers its git root. */
 export function repoRoot(dir: string): string {
 	const real = (path: string) => { try { return realpathSync(path); } catch { return resolve(path); } };

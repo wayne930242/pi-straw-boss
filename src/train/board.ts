@@ -22,7 +22,12 @@ export interface BoardStep {
 /** A car the current round's assemble step left out (§3.5): its ticket and why, as the page tells it. The evidence path stays in the train's own todo. */
 export interface BoardRemoved { ticket: string; why: string; /** The car's head, so the yard can show whether sb has told its coordinator and the sweep can find its car file (TB-F004). */ head?: string }
 export const MAX_REMOVED = 32;
-export interface Board { v: 1; project: string; app: string; code: string; writer: Writer; updated: string; round: number; cars: CarRow[]; steps: BoardStep[]; clears?: Clear[]; removed?: BoardRemoved[] }
+/**
+ * How a stale train ended, written by `train end` (0.80.17): `landed` with the commit its cars landed in, or `none` when nothing merged. A board with an end is ended, whatever its steps say; its train's own writer never writes one, and a
+ * session that comes back writes its board again without it (live again).
+ */
+export interface BoardEnd { outcome: "landed" | "none"; commit?: string; reason: string; evidence: string; by: string; at: string }
+export interface Board { v: 1; project: string; app: string; code: string; writer: Writer; updated: string; round: number; cars: CarRow[]; steps: BoardStep[]; clears?: Clear[]; removed?: BoardRemoved[]; end?: BoardEnd }
 export interface YardTrain { code: string; app: string; status: "forming" | "departing" | "opened" | "refused"; session?: string; cars: CarRow[]; departs?: { maxCars: number; maxWaitMin: number; oldest: string } }
 export interface Yard { v: 1; project: string; writer: Writer; updated: string; trains: YardTrain[] }
 
@@ -113,6 +118,19 @@ function clearRefusals(clear: unknown, path: string): string[] {
 	return out;
 }
 
+function endRefusals(end: unknown, path: string): string[] {
+	if (!isObject(end)) return [`sb: ${path} must be an object`];
+	const out = unknown(end, ["outcome", "commit", "reason", "evidence", "by", "at"], path);
+	if (end.outcome !== "landed" && end.outcome !== "none") out.push(`sb: ${path}.outcome must be landed or none`);
+	else if (end.outcome === "landed" && !SHA_RE.test(String(end.commit))) out.push(`sb: ${path}.commit must be 40 hex for a landed end`);
+	else if (end.outcome === "none" && present(end.commit)) out.push(`sb: ${path}.commit is set only for a landed end`);
+	if (!text(end.reason, CAP.reason)) out.push(`sb: ${path}.reason must be 1 to ${CAP.reason} characters`);
+	if (!text(end.evidence, CAP.reason)) out.push(`sb: ${path}.evidence must be 1 to ${CAP.reason} characters`);
+	if (!text(end.by, CAP.by)) out.push(`sb: ${path} needs by`);
+	if (!isoTime(end.at)) out.push(`sb: ${path}.at must be an ISO time with its zone`);
+	return out;
+}
+
 /** The refusal of a board or yard that is nested too deep (never walked), not JSON, or over the file's size. */
 const tooBig = (value: unknown, what: string) => {
 	const size = jsonBytes(value, what, MAX_BOARD_BYTES);
@@ -124,7 +142,7 @@ export function validateBoard(value: unknown): string[] {
 	if (!isObject(value)) return ["sb: board must be an object"];
 	const big = tooBig(value, "board");
 	if (big.length) return big;
-	const out = unknown(value, ["v", "project", "app", "code", "writer", "updated", "round", "cars", "steps", "clears", "removed"], "board");
+	const out = unknown(value, ["v", "project", "app", "code", "writer", "updated", "round", "cars", "steps", "clears", "removed", "end"], "board");
 	if (value.v !== 1) out.push("sb: board.v must be 1");
 	for (const key of ["project", "app"]) if (!(typeof value[key] === "string" && isName(value[key]))) out.push(`sb: board.${key} must be a path-safe name`);
 	if (!isCode(value.code)) out.push("sb: board.code must be YYYY-MM-DD-<letters>");
@@ -153,6 +171,7 @@ export function validateBoard(value: unknown): string[] {
 		if (!Array.isArray(value.clears) || value.clears.length > MAX_CLEARS) out.push(`sb: board.clears must be a list of at most ${MAX_CLEARS}`);
 		else value.clears.forEach((c, i) => out.push(...clearRefusals(c, `board.clears[${i}]`)));
 	}
+	if (present(value.end)) out.push(...endRefusals(value.end, "board.end"));
 	return out;
 }
 
@@ -418,17 +437,18 @@ export function readTrainboards(stateDir: string, opts: { project?: string; max?
 
 export interface Life { now: number; alive: boolean }
 
-/** Ended when its `land` step completed (a voided one is no end); stale when its writer is gone and the board is 10 minutes old; live otherwise (§10). */
+/** Ended when its `land` step completed (a voided one is no end) or `train end` ended it; stale when its writer is gone and the board is 10 minutes old; live otherwise (§10). */
 export function boardState(board: Board, { now, alive }: Life): "ended" | "stale" | "live" {
+	if (board.end) return "ended";
 	if (board.steps.some((s) => s.kind === "land" && s.status === "completed" && s.outcome !== "void")) return "ended";
 	return !alive && now - Date.parse(board.updated) >= STALE_MS ? "stale" : "live";
 }
 
-/** Whether the server deletes a board: an ended one 7 days after its last update, a stale one only after a clear and the same 7 days since the later of its update and its last clear; a live one never. */
+/** Whether the server deletes a board: an ended one 7 days after its last update (one `train end` ended, 7 days after that end), a stale one only after a clear and the same 7 days since the later of its update and its last clear; a live one never. */
 export function expired(board: Board, life: Life): boolean {
 	const state = boardState(board, life);
 	if (state === "live") return false;
-	if (state === "ended") return life.now >= Date.parse(board.updated) + KEEP_MS;
+	if (state === "ended") return life.now >= Date.parse(board.end?.at ?? board.updated) + KEEP_MS;
 	const clears = (board.clears ?? []).map((c) => Date.parse(c.at));
 	return clears.length > 0 && life.now >= Math.max(Date.parse(board.updated), ...clears) + KEEP_MS;
 }

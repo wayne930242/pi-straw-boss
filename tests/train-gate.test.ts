@@ -758,7 +758,7 @@ test("cli: train needs a command and its flags; unknown ones are usage errors (e
 	assert.equal(await go("train", "clear", "--project", "p"), 2);
 	assert.equal(await go("train", "clear", "--project", "p", "--train", CODE, "--lane", "a", "--target", "b", "--reason", "r"), 2);
 	assert.match(err.join(""), /train gate --spec/);
-	assert.match(err.join(""), /train needs gate, check, status, clear or notices/);
+	assert.match(err.join(""), /train needs gate, check, status, clear, end or notices/);
 });
 
 test("cli: train gate runs the wrapper and returns its exit code", async () => {
@@ -778,7 +778,7 @@ function checkIo(w: World, apps = true) {
 	const out: string[] = [], err: string[] = [];
 	const go = async (...argv: string[]) => {
 		out.length = 0;
-		const code = await run(["train", "check", ...argv], { out: (t) => out.push(t), err: (t) => err.push(t), stateDir: w.stateDir, train: { cwd: w.base, exists: () => true, isAncestor: () => true } });
+		const code = await run(["train", "check", ...argv], { out: (t) => out.push(t), err: (t) => err.push(t), stateDir: w.stateDir, train: { cwd: w.base, exists: () => true, isAncestor: () => true, hasCommit: () => true, remoteTip: () => ({ error: "no origin in this test" }) } });
 		return { code, result: out.length ? (JSON.parse(out.join("")) as { ok: boolean; refusals: string[] }) : undefined, err: err.join("") };
 	};
 	return go;
@@ -889,7 +889,7 @@ test("0.77.3 A1: train check in a linked worktree with no apps.json reads the ma
 	writeFileSync(slipFile, slip({ car: "no-such-app", accept: file }));
 	const go = async (...argv: string[]) => {
 		const out: string[] = [];
-		const code = await run(["train", "check", ...argv], { out: (t) => out.push(t), err: () => {}, stateDir: w.stateDir, train: { cwd: wt, exists: () => true, isAncestor: () => true } });
+		const code = await run(["train", "check", ...argv], { out: (t) => out.push(t), err: () => {}, stateDir: w.stateDir, train: { cwd: wt, exists: () => true, isAncestor: () => true, hasCommit: () => true, remoteTip: () => ({ error: "no origin in this test" }) } });
 		return { code, result: JSON.parse(out.join("")) as { ok: boolean; refusals: string[] } };
 	};
 	const none = await go("--accept", file, "--app-accept", "e2e", "--slip", slipFile);

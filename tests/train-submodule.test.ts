@@ -106,8 +106,8 @@ test("train check --accept in the project's root, and in a linked worktree of th
 		return { code, ...(JSON.parse(out.join("")) as { ok: boolean; refusals: string[] }) };
 	};
 	const good = evidenceFile(r, "good", "web", p.web.head, p.web.base), side = evidenceFile(r, "side", "web", p.web.head, p.web.side);
-	assert.deepEqual(await go(r.cwd, good, slipFile("slip-good", { head: p.web.head, accept: good })), { code: 0, ok: true, refusals: [] });
-	assert.deepEqual(await go(r.cwd, side, slipFile("slip-side", { head: p.web.head, accept: side })), { code: 2, ok: false, refusals: ["sb: evidence entry 1: on.head is not the car's head"] });
+	assert.deepEqual(await go(r.cwd, good, slipFile("slip-good", { head: p.web.head, branch: "develop", accept: good })), { code: 0, ok: true, refusals: [] });
+	assert.deepEqual(await go(r.cwd, side, slipFile("slip-side", { head: p.web.head, branch: "develop", accept: side })), { code: 2, ok: false, refusals: ["sb: evidence entry 1: on.head is not the car's head"] });
 	const site = evidenceFile(r, "site", "site", p.own.tip, p.own.first);
 	assert.deepEqual(await go(r.cwd, site, slipFile("slip-site", { car: "site", head: p.own.tip, accept: site })), { code: 0, ok: true, refusals: [] }, "an app of the project's repository, as before");
 	// A linked worktree of the project (its apps.json is tracked): apps/web is an empty folder there, so the app's repository is the main checkout's.
@@ -115,13 +115,13 @@ test("train check --accept in the project's root, and in a linked worktree of th
 	git(r.cwd, "worktree", "add", "-q", wt, "-b", "coord");
 	assert.deepEqual(carRepos(wt, "web"), [realpathSync(p.web.dir)]);
 	assert.deepEqual(carRepos(r.cwd, "web"), [realpathSync(p.web.dir)]);
-	assert.deepEqual(await go(wt, good, slipFile("slip-wt", { head: p.web.head, accept: good })), { code: 0, ok: true, refusals: [] });
-	assert.equal((await go(wt, side, slipFile("slip-wt-side", { head: p.web.head, accept: side }))).code, 2);
+	assert.deepEqual(await go(wt, good, slipFile("slip-wt", { head: p.web.head, branch: "develop", accept: good })), { code: 0, ok: true, refusals: [] });
+	assert.equal((await go(wt, side, slipFile("slip-wt-side", { head: p.web.head, branch: "develop", accept: side }))).code, 2);
 	// RD0801-F003: the worktree checks the submodule out itself. Its git dir is under the repository's `.git/worktrees/<name>/modules`, and both checkouts of the app answer.
 	git(wt, "-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init");
 	assert.match(readFileSync(join(wt, "apps", "web", ".git"), "utf8"), /^gitdir: .*\/worktrees\/wt\/modules\/apps\/web\s*$/);
 	assert.deepEqual(carRepos(wt, "web"), [realpathSync(join(wt, "apps", "web")), realpathSync(p.web.dir)]);
-	assert.deepEqual(await go(wt, good, slipFile("slip-wt-own", { head: p.web.head, accept: good })), { code: 0, ok: true, refusals: [] });
+	assert.deepEqual(await go(wt, good, slipFile("slip-wt-own", { head: p.web.head, branch: "develop", accept: good })), { code: 0, ok: true, refusals: [] });
 });
 
 test("RD0801-F001: a project whose own git dir is outside its folder (a submodule of another repository, a clone with --separate-git-dir) still has its submodule app answer", () => {
@@ -164,7 +164,7 @@ test("RD0801-F002: a replace ref in the app's repository does not make a commit 
 	await refused(r.create(trainTodo("web", p.web.head, side)), /^sb: evidence entry 1: on\.head is not the car's head$/);
 	const slip = join(r.root, "slip.txt"), out: string[] = [];
 	writeFileSync(slip, slipBlock({ head: p.web.head, accept: side }));
-	assert.equal(await run(["train", "check", "--accept", side, "--slip", slip], { out: (t) => out.push(t), err: () => {}, stateDir: r.stateDir, train: { cwd: r.cwd } }), 2);
+	assert.equal(await run(["train", "check", "--accept", side, "--slip", slip], { out: (t) => out.push(t), err: () => {}, stateDir: r.stateDir, train: { cwd: r.cwd, remoteTip: () => ({ error: "not asked in this test" }) } }), 2);
 	assert.deepEqual((JSON.parse(out.join("")) as { refusals: string[] }).refusals, ["sb: evidence entry 1: on.head is not the car's head"]);
 	await ok(r.create(trainTodo("web", p.web.head, evidenceFile(r, "good", "web", p.web.head, p.web.base))));
 });
@@ -236,7 +236,7 @@ test("R0802-F003: a graft file in the app's repository does not make a commit an
 	await refused(r.create(trainTodo("web", p.web.head, side)), /^sb: evidence entry 1: on\.head is not the car's head$/);
 	const slip = join(r.root, "slip.txt"), out: string[] = [];
 	writeFileSync(slip, slipBlock({ head: p.web.head, accept: side }));
-	assert.equal(await run(["train", "check", "--accept", side, "--slip", slip], { out: (t) => out.push(t), err: () => {}, stateDir: r.stateDir, train: { cwd: r.cwd } }), 2);
+	assert.equal(await run(["train", "check", "--accept", side, "--slip", slip], { out: (t) => out.push(t), err: () => {}, stateDir: r.stateDir, train: { cwd: r.cwd, remoteTip: () => ({ error: "not asked in this test" }) } }), 2);
 	assert.deepEqual((JSON.parse(out.join("")) as { refusals: string[] }).refusals, ["sb: evidence entry 1: on.head is not the car's head"]);
 	await ok(r.create(trainTodo("web", p.web.head, evidenceFile(r, "good", "web", p.web.head, p.web.base))));
 });
@@ -257,6 +257,6 @@ test("R0802D-F002: a commit-graph that gives the car's head another parent does 
 	await refused(r.create(trainTodo("web", p.web.head, side)), /^sb: evidence entry 1: on\.head is not the car's head$/);
 	const slip = join(r.root, "slip.txt"), out: string[] = [];
 	writeFileSync(slip, slipBlock({ head: p.web.head, accept: side }));
-	assert.equal(await run(["train", "check", "--accept", side, "--slip", slip], { out: (t) => out.push(t), err: () => {}, stateDir: r.stateDir, train: { cwd: r.cwd } }), 2);
+	assert.equal(await run(["train", "check", "--accept", side, "--slip", slip], { out: (t) => out.push(t), err: () => {}, stateDir: r.stateDir, train: { cwd: r.cwd, remoteTip: () => ({ error: "not asked in this test" }) } }), 2);
 	assert.deepEqual((JSON.parse(out.join("")) as { refusals: string[] }).refusals, ["sb: evidence entry 1: on.head is not the car's head"]);
 });

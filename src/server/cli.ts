@@ -38,10 +38,11 @@ const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS]
        cli.mjs procs [list]
        cli.mjs procs reap (--owner ID | --checkout PATH)   (kill what an ended worker left; refused while a live worker works in the checkout)
        cli.mjs train gate --spec FILE   (the wrapper of a train's run step; its monitor runs it)
-       cli.mjs train check (--step FILE | --accept FILE|none [--app NAME] [--app-accept K,K] [--slip FILE])
-       cli.mjs train status [--project P] [--json]
+       cli.mjs train check (--step FILE | --accept FILE|none [--app NAME] [--app-accept K,K] [--slip FILE])   (from the project or any folder in it; the app's integration.accept in apps.json is required, --app-accept only adds)
+       cli.mjs train status [--project P] [--state live,stale,ended,unreadable] [--json]
        cli.mjs train notices [--project P] [--pending] [--json]   (the journal on disk, which a train could also have written; not the server's own record)
        cli.mjs train clear --project P --train CODE (--lane APP | --target NAME) --reason TEXT
+       cli.mjs train end --project P --train CODE --outcome landed|none --reason TEXT --evidence TEXT [--commit SHA]   (a stale train; --commit with landed)
        cli.mjs prompt --workspace ID [--state-dir DIR]   (the tower prompt of a standing pane: the server types it)`;
 export class UsageError extends Error {}
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
@@ -50,7 +51,7 @@ const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 };
 // `train` has a word of its own, and each word its flags.
 const TRAIN: Record<string, { value: string[]; switch: string[] }> = {
-	gate: { value: ["spec"], switch: [] }, check: { value: ["step", "accept", "app", "app-accept", "slip"], switch: [] }, status: { value: ["project"], switch: ["json"] }, clear: { value: ["project", "train", "lane", "target", "reason"], switch: [] }, notices: { value: ["project"], switch: ["pending", "json"] },
+	gate: { value: ["spec"], switch: [] }, check: { value: ["step", "accept", "app", "app-accept", "slip"], switch: [] }, status: { value: ["project", "state"], switch: ["json"] }, clear: { value: ["project", "train", "lane", "target", "reason"], switch: [] }, end: { value: ["project", "train", "outcome", "reason", "evidence", "commit"], switch: [] }, notices: { value: ["project"], switch: ["pending", "json"] },
 };
 export interface Args { command: string; flags: Record<string, string | true> }
 export function parseArgs(argv: string[]): Args {
@@ -61,7 +62,7 @@ export function parseArgs(argv: string[]): Args {
 	const flags: Record<string, string | true> = {};
 	if (command === "train") {
 		const sub = rest.shift() ?? "";
-		if (!Object.hasOwn(TRAIN, sub)) throw new UsageError(`train needs gate, check, status, clear or notices\n${USAGE}`);
+		if (!Object.hasOwn(TRAIN, sub)) throw new UsageError(`train needs gate, check, status, clear, end or notices\n${USAGE}`);
 		allowed = TRAIN[sub]!;
 		flags.sub = sub;
 	}
