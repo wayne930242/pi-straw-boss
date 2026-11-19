@@ -23,11 +23,12 @@ export interface BoardStep {
 export interface BoardRemoved { ticket: string; why: string; /** The car's head, so the yard can show whether sb has told its coordinator and the sweep can find its car file (TB-F004). */ head?: string }
 export const MAX_REMOVED = 32;
 /**
- * How a stale train ended, written by `train end` (0.80.17): `landed` with the commit its cars landed in, or `none` when nothing merged. A board with an end is ended, whatever its steps say; its train's own writer never writes one, and a
- * session that comes back writes its board again without it (live again).
+ * How a stale train ended, written by `train end` (0.80.17) to `end.json` beside its `board.json`, which keeps the schema every version reads (SBR-F001): `landed` with the commit its cars landed in, or `none` when nothing merged.
+ * An end counts while the board is no newer than it: a session that comes back and writes its board again is live again, and the old end is ignored.
  */
-export interface BoardEnd { outcome: "landed" | "none"; commit?: string; reason: string; evidence: string; by: string; at: string }
-export interface Board { v: 1; project: string; app: string; code: string; writer: Writer; updated: string; round: number; cars: CarRow[]; steps: BoardStep[]; clears?: Clear[]; removed?: BoardRemoved[]; end?: BoardEnd }
+export interface BoardEnd { v: 1; outcome: "landed" | "none"; commit?: string; reason: string; evidence: string; by: string; at: string }
+export const MAX_END_BYTES = 4 * 1024;
+export interface Board { v: 1; project: string; app: string; code: string; writer: Writer; updated: string; round: number; cars: CarRow[]; steps: BoardStep[]; clears?: Clear[]; removed?: BoardRemoved[] }
 export interface YardTrain { code: string; app: string; status: "forming" | "departing" | "opened" | "refused"; session?: string; cars: CarRow[]; departs?: { maxCars: number; maxWaitMin: number; oldest: string } }
 export interface Yard { v: 1; project: string; writer: Writer; updated: string; trains: YardTrain[] }
 
@@ -118,9 +119,13 @@ function clearRefusals(clear: unknown, path: string): string[] {
 	return out;
 }
 
-function endRefusals(end: unknown, path: string): string[] {
+/** What an `end.json` is refused for; `train end` checks it before it writes and the readers after they read. */
+export function validateEnd(end: unknown, path = "end"): string[] {
 	if (!isObject(end)) return [`sb: ${path} must be an object`];
-	const out = unknown(end, ["outcome", "commit", "reason", "evidence", "by", "at"], path);
+	const size = jsonBytes(end, path, MAX_END_BYTES);
+	if (size.refusal) return [size.refusal];
+	const out = unknown(end, ["v", "outcome", "commit", "reason", "evidence", "by", "at"], path);
+	if (end.v !== 1) out.push(`sb: ${path}.v must be 1`);
 	if (end.outcome !== "landed" && end.outcome !== "none") out.push(`sb: ${path}.outcome must be landed or none`);
 	else if (end.outcome === "landed" && !SHA_RE.test(String(end.commit))) out.push(`sb: ${path}.commit must be 40 hex for a landed end`);
 	else if (end.outcome === "none" && present(end.commit)) out.push(`sb: ${path}.commit is set only for a landed end`);
@@ -142,7 +147,7 @@ export function validateBoard(value: unknown): string[] {
 	if (!isObject(value)) return ["sb: board must be an object"];
 	const big = tooBig(value, "board");
 	if (big.length) return big;
-	const out = unknown(value, ["v", "project", "app", "code", "writer", "updated", "round", "cars", "steps", "clears", "removed", "end"], "board");
+	const out = unknown(value, ["v", "project", "app", "code", "writer", "updated", "round", "cars", "steps", "clears", "removed"], "board");
 	if (value.v !== 1) out.push("sb: board.v must be 1");
 	for (const key of ["project", "app"]) if (!(typeof value[key] === "string" && isName(value[key]))) out.push(`sb: board.${key} must be a path-safe name`);
 	if (!isCode(value.code)) out.push("sb: board.code must be YYYY-MM-DD-<letters>");
@@ -171,7 +176,6 @@ export function validateBoard(value: unknown): string[] {
 		if (!Array.isArray(value.clears) || value.clears.length > MAX_CLEARS) out.push(`sb: board.clears must be a list of at most ${MAX_CLEARS}`);
 		else value.clears.forEach((c, i) => out.push(...clearRefusals(c, `board.clears[${i}]`)));
 	}
-	if (present(value.end)) out.push(...endRefusals(value.end, "board.end"));
 	return out;
 }
 
@@ -253,6 +257,7 @@ const safe = (project: string, code?: string) => {
 };
 export const trainboardDir = (stateDir: string) => join(stateDir, "trainboard");
 export const boardPath = (stateDir: string, project: string, code: string) => (safe(project, code), join(trainboardDir(stateDir), project, code, "board.json"));
+export const endPath = (stateDir: string, project: string, code: string) => join(dirname(boardPath(stateDir, project, code)), "end.json");
 export const yardPath = (stateDir: string, project: string) => (safe(project), join(trainboardDir(stateDir), project, "yard.json"));
 /** Where the car files and their notice records go (§5.5). */
 export const carsDir = (stateDir: string, project: string) => (safe(project), join(trainboardDir(stateDir), project, "cars"));
@@ -283,6 +288,14 @@ export function writeBoard(stateDir: string, board: Board): string {
 	refuse(validateBoard(board));
 	const file = boardPath(stateDir, board.project, board.code), folder = dirname(file);
 	writePrivate(file, `${JSON.stringify(board)}\n`, [trainboardDir(stateDir), dirname(folder), folder]);
+	return file;
+}
+
+/** Writes a train's `end.json` beside its board, atomically and privately; refuses an end its readers would refuse. Returns the path. */
+export function writeEnd(stateDir: string, project: string, code: string, end: BoardEnd): string {
+	refuse(validateEnd(end));
+	const file = endPath(stateDir, project, code), folder = dirname(file);
+	writePrivate(file, `${JSON.stringify(end)}\n`, [trainboardDir(stateDir), dirname(folder), folder]);
 	return file;
 }
 
@@ -391,6 +404,20 @@ export const readBoard = (file: string): FileRead<{ board: Board }> => safely(()
 	return { ok: true, board };
 });
 
+/**
+ * The `end.json` in a board's folder: undefined when there is none, and when it does not read or validate, since the board then reads as it did without one (stale, holding what it held), which is the safe side. `problem` says why it was not taken.
+ */
+export function readEnd(boardFile: string): { end?: BoardEnd; problem?: string } {
+	const file = join(dirname(boardFile), "end.json");
+	try {
+		if (!lstatSync(file, { throwIfNoEntry: false })) return {};
+	} catch { /* the read says why */ }
+	const read = readJsonFile(file, MAX_END_BYTES);
+	if (!read.ok) return { problem: `end.json: ${read.reason}` };
+	const refusals = validateEnd(read.value);
+	return refusals.length ? { problem: `end.json: ${reasonOf(refusals)}` } : { end: read.value as BoardEnd };
+}
+
 export const readYard = (file: string): FileRead<{ yard: Yard }> => safely(() => {
 	const read = readFile(file);
 	if (!read.ok) return read;
@@ -401,7 +428,8 @@ export const readYard = (file: string): FileRead<{ yard: Yard }> => safely(() =>
 	return { ok: true, yard };
 });
 
-export type BoardRead = { project: string; code: string; file: string } & FileRead<{ board: Board }>;
+/** A board read with its `end.json` (`end`), when one reads; `endProblem` when one is there and does not. */
+export type BoardRead = { project: string; code: string; file: string } & FileRead<{ board: Board; end?: BoardEnd; endProblem?: string }>;
 
 /** The folders in a folder; one that is not there has none, and one that cannot be listed for another reason is told in `failed`. */
 const dirs = (path: string, failed: string[]) => {
@@ -427,19 +455,23 @@ export function readTrainboards(stateDir: string, opts: { project?: string; max?
 	const kept = [...found].sort((a, b) => compareCodes(a.code, b.code) || (a.project < b.project ? -1 : a.project > b.project ? 1 : 0)).slice(Math.max(0, found.length - max));
 	const trains = kept.sort((a, b) => (a.project < b.project ? -1 : a.project > b.project ? 1 : compareCodes(a.code, b.code))).map(({ project, code }): BoardRead => {
 		const file = join(root, project, code, "board.json");
-		const read = readBoard(file);
-		return { project, code, file, ...(read.ok ? read : { ok: false, reason: read.reason.replace(/^cannot read: ENOENT$/, "no board.json") }) } as BoardRead;
+		const read = readBoard(file), ended = read.ok ? readEnd(file) : {};
+		return { project, code, file, ...(read.ok ? { ...read, ...ended.end ? { end: ended.end } : {}, ...ended.problem ? { endProblem: ended.problem } : {} } : { ok: false, reason: read.reason.replace(/^cannot read: ENOENT$/, "no board.json") }) } as BoardRead;
 	});
 	return { trains, truncated: found.length > max, unlisted };
 }
 
 // ---- life of a board
 
-export interface Life { now: number; alive: boolean }
+/** `end`: the train's `end.json`, when it has one. */
+export interface Life { now: number; alive: boolean; end?: BoardEnd }
 
-/** Ended when its `land` step completed (a voided one is no end) or `train end` ended it; stale when its writer is gone and the board is 10 minutes old; live otherwise (§10). */
-export function boardState(board: Board, { now, alive }: Life): "ended" | "stale" | "live" {
-	if (board.end) return "ended";
+/** The end that counts: one the board is no newer than. A session that came back and wrote its board after the end has resumed, and the end no longer says how it stands. */
+export const endOf = (board: Board, end: BoardEnd | undefined): BoardEnd | undefined => (end && Date.parse(board.updated) <= Date.parse(end.at) ? end : undefined);
+
+/** Ended when its `land` step completed (a voided one is no end) or `train end` ended it (`endOf`); stale when its writer is gone and the board is 10 minutes old; live otherwise (§10). */
+export function boardState(board: Board, { now, alive, end }: Life): "ended" | "stale" | "live" {
+	if (endOf(board, end)) return "ended";
 	if (board.steps.some((s) => s.kind === "land" && s.status === "completed" && s.outcome !== "void")) return "ended";
 	return !alive && now - Date.parse(board.updated) >= STALE_MS ? "stale" : "live";
 }
@@ -448,7 +480,7 @@ export function boardState(board: Board, { now, alive }: Life): "ended" | "stale
 export function expired(board: Board, life: Life): boolean {
 	const state = boardState(board, life);
 	if (state === "live") return false;
-	if (state === "ended") return life.now >= Date.parse(board.end?.at ?? board.updated) + KEEP_MS;
+	if (state === "ended") return life.now >= Date.parse(endOf(board, life.end)?.at ?? board.updated) + KEEP_MS;
 	const clears = (board.clears ?? []).map((c) => Date.parse(c.at));
 	return clears.length > 0 && life.now >= Math.max(Date.parse(board.updated), ...clears) + KEEP_MS;
 }
@@ -456,7 +488,7 @@ export function expired(board: Board, life: Life): boolean {
 /** A read board as the facts waits.ts reads; one that did not read holds everything of its project. */
 export function factsOf(read: BoardRead, life: { now: number; alive: (writer: Writer) => boolean }): TrainFacts {
 	if (!read.ok) return { project: read.project, code: read.code, state: "unreadable", steps: [] };
-	const { board } = read, state: TrainState = boardState(board, { now: life.now, alive: life.alive(board.writer) });
+	const { board } = read, state: TrainState = boardState(board, { now: life.now, alive: life.alive(board.writer), ...(read.end ? { end: read.end } : {}) });
 	const steps: FactStep[] = board.steps.map((s) => ({ id: s.id, kind: s.kind, status: s.status, round: s.round, ...(s.holds ? { holds: s.holds } : {}), ...(s.load ? { load: s.load } : {}), ...(s.lock ? { lock: s.lock } : {}) }));
 	return { project: board.project, code: board.code, state, steps, ...(board.clears ? { clears: board.clears } : {}) };
 }

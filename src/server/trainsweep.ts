@@ -29,7 +29,7 @@ export function sweepTrainboards(d: SweepDeps): Sweep {
 	const out: Sweep = { removed: [], problems: [] };
 	const { trains, unlisted } = readTrainboards(d.stateDir, { max: Number.MAX_SAFE_INTEGER });
 	out.problems.push(...unlisted);
-	const gone = trains.flatMap((t) => (t.ok && expired(t.board, { now, alive: alive(t.board.writer) }) ? [t] : []));
+	const gone = trains.flatMap((t) => (t.ok && expired(t.board, { now, alive: alive(t.board.writer), ...(t.end ? { end: t.end } : {}) }) ? [t] : []));
 	if (!gone.length) return out;
 	// What the boards and yards that stay carry, by project: a car file of one of these is kept; a project with one that does not read is not cleaned of car files at all.
 	const goneSet = new Set(gone);

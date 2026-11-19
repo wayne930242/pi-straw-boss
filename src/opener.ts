@@ -198,7 +198,7 @@ export function opener(env: OpenerEnv) {
 			// A folder that cannot be listed hides live trains: the count would be a guess, so nothing opens (RR-F004).
 			if (read.unlisted.length) throw new OpenLimitError(`The live trains of project ${train.project} cannot be counted: ${read.unlisted.join("; ")}`);
 			const boards = read.trains;
-			for (const b of boards) if (b.ok && boardState(b.board, { now: Date.now(), alive: alive(b.board.writer.pid) }) === "live") codes.add(b.code);
+			for (const b of boards) if (b.ok && boardState(b.board, { now: Date.now(), alive: alive(b.board.writer.pid), ...(b.end ? { end: b.end } : {}) }) === "live") codes.add(b.code);
 			if (codes.size >= max) throw new OpenLimitError(`Project ${train.project} already has ${codes.size} live train${codes.size === 1 ? "" : "s"} (maxTrains is ${max}); try again when one has finished.`);
 		}
 		if (integ && found) {

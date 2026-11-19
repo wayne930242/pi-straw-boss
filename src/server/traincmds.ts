@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { execFileSyncExe } from "../exe.mjs";
 import { checkAcceptRef, checkCar, checkEvidence, parseAppAccept, parseSlip } from "../train/accept.ts";
 import { appsFile, carRepos, enclosingAppsDir, projectAppsDir, readAppIntegration, repoRoot } from "../train/appsconfig.ts";
-import { type Board, type BoardEnd, boardPath, boardState, MAX_TRAINS, trainboardDir, factsOf, MAX_CLEARS, readBoard, readTrainboards, type Writer, writeBoard } from "../train/board.ts";
+import { type Board, type BoardEnd, boardPath, boardState, endOf, readEnd, writeEnd, MAX_TRAINS, trainboardDir, factsOf, MAX_CLEARS, readBoard, readTrainboards, type Writer, writeBoard } from "../train/board.ts";
 import { isName, isObject, SHA_RE, validateStep } from "../train/spec.ts";
 import { noticeStatus, stateLine, type Attempt } from "../train/cars.ts";
 import { carsFolderOk, listCars, MAX_CAR_FILES } from "../trainboard.ts";
@@ -137,7 +137,8 @@ function check(flags: Record<string, string | true>, io: TrainIo): number {
 	return refusals.length ? 2 : 0;
 }
 
-const GIT_ENV = () => ({ ...process.env, GIT_GRAFT_FILE: devNull, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" });
+// No prompt may hold the check: git's own and the credential manager's are off, and ssh runs in batch mode unless the caller set its own ssh command (F008).
+const GIT_ENV = () => ({ ...process.env, GIT_GRAFT_FILE: devNull, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never", ...(process.env.GIT_SSH_COMMAND === undefined ? { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" } : {}) });
 
 /** `git cat-file -e <sha>^{commit}` in any of the folders: whether git knows the commit there. */
 const hasCommit = (repos: string[]) => (sha: string) => repos.some((at) => {
@@ -194,8 +195,8 @@ export interface StepRow { id: number; kind: string; name: string; status: strin
 export interface TrainRow {
 	project: string; app?: string; code: string; state: TrainFacts["state"]; reason?: string; session?: { id: string; pid: number; live: boolean }; round?: number; steps: StepRow[];
 	cars: { tickets: string[]; branch: string; head: string; coordinator: string }[]; holds?: { lanes: string[]; targets: string[] };
-	/** How `train end` ended it, when it did. */
-	end?: BoardEnd;
+	/** How `train end` ended it, when it did; `endProblem` when its `end.json` is there and was not taken. */
+	end?: BoardEnd; endProblem?: string;
 }
 export interface Status { load?: { now: number; cores: number }; locks: { name: string; train: string; step: number; pid: number; since: string }[]; trains: TrainRow[]; truncated: boolean; unlisted: string[] }
 
@@ -221,7 +222,7 @@ export function trainStatus(io: Pick<TrainIo, "stateDir" | "now" | "alive" | "lo
 		const held2 = holding(train);
 		return {
 			project: board.project, app: board.app, code: board.code, state: train.state, session: { id: board.writer.session, pid: board.writer.pid, live: alive(board.writer) }, round: board.round, steps,
-			cars: board.cars.map((c) => ({ tickets: c.tickets, branch: c.branch, head: c.head, coordinator: c.coordinator })), holds: { lanes: held2.lanes, targets: held2.targets }, ...(board.end ? { end: board.end } : {}),
+			cars: board.cars.map((c) => ({ tickets: c.tickets, branch: c.branch, head: c.head, coordinator: c.coordinator })), holds: { lanes: held2.lanes, targets: held2.targets }, ...(train.state === "ended" && endOf(board, read.end) ? { end: endOf(board, read.end)! } : {}), ...(read.endProblem ? { endProblem: read.endProblem } : {}),
 		};
 	});
 	return { ...(load ? { load } : {}), locks, trains, truncated, unlisted };
@@ -234,6 +235,7 @@ function render(s: Status): string {
 	const lines = [s.load ? `load ${Math.round(s.load.now * 10) / 10} on ${s.load.cores} cores` : "load unknown", s.locks.length ? `locks: ${s.locks.map((l) => `${l.name} (${l.train} #${l.step}, pid ${l.pid})`).join(", ")}` : "locks: none"];
 	for (const t of s.trains) {
 		lines.push(`${t.project} ${t.app ?? "?"} ${t.code} ${t.state}${t.session ? ` session ${t.session.id} ${t.session.live ? "live" : "gone"}` : ""}${t.round ? ` round ${t.round}` : ""}${t.reason ? ` (${t.reason})` : ""}`);
+		if (t.endProblem) lines.push(`  (${t.endProblem}; the train reads as it would without it)`);
 		if (t.end) lines.push(`  end ${t.end.outcome}${t.end.commit ? ` ${t.end.commit.slice(0, 12)}` : ""}: ${t.end.reason} (evidence: ${t.end.evidence}; ${t.end.by}, ${t.end.at})`);
 		for (const c of t.cars) lines.push(`  car ${c.tickets.join(",")} ${c.branch} (${c.coordinator})`);
 		for (const st of t.steps) lines.push(`  #${st.id} ${st.kind} ${st.name}: ${st.status}${st.outcome ? ` ${st.outcome}` : ""}${st.gate ? ` [${st.gate.state}: ${st.gate.message}]` : ""}${st.waits.length ? ` waits ${st.waits.map(waitText).join("; ")}` : ""}`);
@@ -273,8 +275,8 @@ function clear(flags: Record<string, string | true>, io: TrainIo): number {
 	const refuse = (text: string) => (io.err(`sb: ${text}\n`), 1);
 	const read = readBoard(file);
 	if (!read.ok) return refuse(`the board of train ${String(train)} cannot be read (${read.reason}), so what it holds cannot be known and a clear does not release it`);
-	const { board } = read, now = (io.now ?? Date.now)(), alive = (io.alive ?? ((w: Writer) => writerAlive(w)))(board.writer);
-	const state = boardState(board, { now, alive });
+	const { board } = read, now = (io.now ?? Date.now)(), alive = (io.alive ?? ((w: Writer) => writerAlive(w)))(board.writer), ended = readEnd(file).end;
+	const state = boardState(board, { now, alive, ...(ended ? { end: ended } : {}) });
 	if (state === "ended") return refuse(`train ${board.code} has ended; it holds nothing`);
 	if (state === "live") return refuse(alive ? `train ${board.code}'s session is live (pid ${board.writer.pid}); only a train whose session is gone can be cleared` : `train ${board.code}'s session is gone, but its board was updated less than 10 minutes ago; it is stale after that, and a clear is honored only for a stale train`);
 	const facts = factsOf({ project: board.project, code: board.code, file, ...read }, { now, alive: () => alive }), held = holding(facts);
@@ -296,7 +298,8 @@ function clear(flags: Record<string, string | true>, io: TrainIo): number {
 
 /**
  * Ends a stale train (0.80.17): one whose session is gone and whose board is 10 minutes old, which no land step will end, because its cars all left or its session died after the merge. `landed` names the commit the cars landed in;
- * `none` says nothing merged. The board gets an `end` and reads as ended from then on: it holds nothing, the watch no longer reports it, and it is deleted 7 days after the end. `updated` stays as it was.
+ * `none` says nothing merged. The end goes to `end.json` beside the board, whose schema stays the one every version reads (SBR-F001); the train reads as ended from then on: it holds nothing, the watch no longer reports it, and it is
+ * deleted 7 days after the end. A train that still holds a deploy target is refused (F007): what the target runs is read and the target cleared first; a lane it still holds goes with the end.
  */
 function end(flags: Record<string, string | true>, io: TrainIo): number {
 	const { project, train, outcome, reason, evidence, commit } = flags;
@@ -317,17 +320,19 @@ function end(flags: Record<string, string | true>, io: TrainIo): number {
 	const refuse = (text: string) => (io.err(`sb: ${text}\n`), 1);
 	const read = readBoard(file);
 	if (!read.ok) return refuse(`the board of train ${String(train)} cannot be read (${read.reason}), so how it stands cannot be known and an end is not written`);
-	const { board } = read, now = (io.now ?? Date.now)(), alive = (io.alive ?? ((w: Writer) => writerAlive(w)))(board.writer);
-	const state = boardState(board, { now, alive });
-	if (state === "ended") return refuse(`train ${board.code} has ended already${board.end ? ` (${board.end.outcome}, by ${board.end.by})` : " (its land step completed)"}`);
+	const { board } = read, now = (io.now ?? Date.now)(), alive = (io.alive ?? ((w: Writer) => writerAlive(w)))(board.writer), before = endOf(board, readEnd(file).end);
+	const state = boardState(board, { now, alive, ...(before ? { end: before } : {}) });
+	if (state === "ended") return refuse(`train ${board.code} has ended already${before ? ` (${before.outcome}, by ${before.by})` : " (its land step completed)"}`);
 	if (state === "live") return refuse(alive ? `train ${board.code}'s session is live (pid ${board.writer.pid}); only a train whose session is gone can be ended` : `train ${board.code}'s session is gone, but its board was updated less than 10 minutes ago; it is stale after that, and only a stale train can be ended`);
-	const next: Board = { ...board, end: { outcome, ...(outcome === "landed" ? { commit: String(commit).toLowerCase() } : {}), reason: why, evidence: proof, by: `cli train end (${io.user ?? userInfo().username})`, at: new Date(now).toISOString() } };
+	const targets = holding(factsOf({ project: board.project, code: board.code, file, ...read }, { now, alive: () => alive })).targets;
+	if (targets.length) return refuse(`train ${board.code} still holds deploy target ${targets.join(", ")}: read what the target runs, then \`train clear --target ${targets[0]}\` with that version as the reason, and end the train after`);
+	const ending: BoardEnd = { v: 1, outcome, ...(outcome === "landed" ? { commit: String(commit).toLowerCase() } : {}), reason: why, evidence: proof, by: `cli train end (${io.user ?? userInfo().username})`, at: new Date(now).toISOString() };
 	try {
-		writeBoard(io.stateDir, next);
+		writeEnd(io.stateDir, board.project, board.code, ending);
 	} catch (error) {
 		return refuse(`the end was not written: ${(error as Error).message}`);
 	}
-	io.out(`${JSON.stringify({ ok: true, project: board.project, train: board.code, end: next.end })}\n`);
+	io.out(`${JSON.stringify({ ok: true, project: board.project, train: board.code, end: ending })}\n`);
 	return 0;
 }
 

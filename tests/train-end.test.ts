@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { run } from "../src/server/cli.ts";
 import { runningTrains, trainsRefusal } from "../src/server/restartguard.ts";
 import { startMs } from "../src/server/traingate.ts";
 import { startOf } from "../src/startof.ts";
-import { type Board, boardPath, boardState, expired, factsOf, readBoard, validateBoard, writeBoard } from "../src/train/board.ts";
+import { type Board, boardPath, boardState, endOf, endPath, expired, factsOf, readBoard, readEnd, readTrainboards, validateBoard, validateEnd, writeBoard, writeEnd } from "../src/train/board.ts";
 import { holding } from "../src/train/waits.ts";
 import { CODE, SHA_A, SHA_B, slip } from "./train-fixtures.ts";
 
@@ -25,33 +25,61 @@ const board = (code = CODE, over: Partial<Board> = {}): Board => ({
 	steps: [{ id: 1, kind: "merge", name: "merge", status: "completed", round: 1, holds: { lane: "web" }, outcome: "failed" }, { id: 2, kind: "land", name: "land", status: "pending", round: 1, holds: { lane: "web" } }],
 	...over,
 });
-const end = (over: Record<string, unknown> = {}) => ({ outcome: "landed" as const, commit: SHA_B, reason: "the fetch timed out; the merge is on develop", evidence: "git merge-base --is-ancestor passes on origin/develop", by: "cli train end (tester)", at: "2026-11-07T08:00:00.000Z", ...over });
+const end = (over: Record<string, unknown> = {}) => ({ v: 1 as const, outcome: "landed" as const, commit: SHA_B, reason: "the fetch timed out; the merge is on develop", evidence: "git merge-base --is-ancestor passes on origin/develop", by: "cli train end (tester)", at: "2026-11-07T08:00:00.000Z", ...over });
 
-// ---- the board's end
+// ---- the board's end, in end.json beside it (SBR-F001)
 
-test("A1: a board's end validates (landed needs a 40-hex commit, none has none), makes it ended, holds nothing, and expires 7 days after the end", () => {
-	assert.deepEqual(validateBoard(board(CODE, { end: end() })), []);
-	assert.deepEqual(validateBoard(board(CODE, { end: end({ outcome: "none", commit: undefined }) })), []);
-	const refused = (value: unknown, pattern: RegExp) => assert.ok(validateBoard(board(CODE, { end: value as never })).some((r) => pattern.test(r)), `${pattern}: ${JSON.stringify(validateBoard(board(CODE, { end: value as never })))}`);
-	refused(end({ commit: undefined }), /board\.end\.commit must be 40 hex for a landed end/);
-	refused(end({ outcome: "none" }), /board\.end\.commit is set only for a landed end/);
-	refused(end({ outcome: "merged" }), /board\.end\.outcome must be landed or none/);
-	refused(end({ reason: "" }), /board\.end\.reason/);
-	refused(end({ evidence: "x".repeat(601) }), /board\.end\.evidence/);
-	refused(end({ at: "yesterday" }), /board\.end\.at/);
-	refused(end({ extra: 1 }), /board\.end\.extra is not a field/);
-	refused("landed", /board\.end must be an object/);
+/** The top-level keys a board may have in 0.80.16 (6eb292b9 `validateBoard`): an older reader refuses any other, and a refused board holds every lane and target of its project. */
+const OLD_BOARD_KEYS = ["v", "project", "app", "code", "writer", "updated", "round", "cars", "steps", "clears", "removed"];
+
+test("A1: an end validates (landed needs a 40-hex commit, none has none), makes the train ended, holds nothing, and expires 7 days after the end", () => {
+	assert.deepEqual(validateEnd(end()), []);
+	assert.deepEqual(validateEnd(end({ outcome: "none", commit: undefined })), []);
+	const refused = (value: unknown, pattern: RegExp) => assert.ok(validateEnd(value).some((r) => pattern.test(r)), `${pattern}: ${JSON.stringify(validateEnd(value))}`);
+	refused(end({ commit: undefined }), /end\.commit must be 40 hex for a landed end/);
+	refused(end({ outcome: "none" }), /end\.commit is set only for a landed end/);
+	refused(end({ outcome: "merged" }), /end\.outcome must be landed or none/);
+	refused(end({ v: 2 }), /end\.v must be 1/);
+	refused(end({ reason: "" }), /end\.reason/);
+	refused(end({ evidence: "x".repeat(601) }), /end\.evidence/);
+	refused(end({ at: "yesterday" }), /end\.at/);
+	refused(end({ extra: 1 }), /end\.extra is not a field/);
+	refused("landed", /end must be an object/);
 
 	const stale = board();
 	assert.equal(boardState(stale, { now: NOW, alive: false }), "stale", "a board without an end reads as before");
-	const ended = board(CODE, { end: end() });
-	assert.equal(boardState(ended, { now: NOW, alive: false }), "ended");
-	const facts = factsOf({ project: PROJECT, code: CODE, file: "", ok: true, board: ended }, { now: NOW, alive: () => false });
+	assert.equal(boardState(stale, { now: NOW, alive: false, end: end() }), "ended");
+	const facts = factsOf({ project: PROJECT, code: CODE, file: "", ok: true, board: stale, end: end() }, { now: NOW, alive: () => false });
 	assert.deepEqual(holding(facts), { lanes: [], targets: [], all: false });
 	assert.deepEqual(holding(factsOf({ project: PROJECT, code: CODE, file: "", ok: true, board: stale }, { now: NOW, alive: () => false })).lanes, ["web"], "the stale one held its lane");
 	const at = Date.parse(end().at);
-	assert.equal(expired(ended, { now: at + 7 * DAY - 1, alive: false }), false, "7 days after the end, not after the older update");
-	assert.equal(expired(ended, { now: at + 7 * DAY, alive: false }), true);
+	assert.equal(expired(stale, { now: at + 7 * DAY - 1, alive: false, end: end() }), false, "7 days after the end, not after the older update");
+	assert.equal(expired(stale, { now: at + 7 * DAY, alive: false, end: end() }), true);
+	// A session that came back and wrote its board after the end has resumed: the end no longer counts.
+	const resumed = board(CODE, { updated: "2026-11-07T08:05:00.000Z" });
+	assert.equal(endOf(resumed, end()), undefined);
+	assert.equal(boardState(resumed, { now: NOW + 5 * MIN, alive: true, end: end() }), "live");
+	assert.equal(expired(resumed, { now: at + 30 * DAY, alive: false, end: end() }), false, "nor does it expire the board, which is stale again and holds");
+});
+
+test("SBR-F001: train end leaves board.json as every version reads it, writes end.json beside it, and the new readers see the train ended", async () => {
+	const stateDir = join(base(), "state");
+	writeBoard(stateDir, board());
+	const before = readFileSync(boardPath(stateDir, PROJECT, CODE), "utf8");
+	assert.equal(await run(["train", "end", "--project", PROJECT, "--train", CODE, "--outcome", "none", "--reason", "no cars left", "--evidence", "ledger"], { out: () => {}, err: () => {}, stateDir, train: { now: () => NOW, alive: () => false, user: "tester" } }), 0);
+	const raw = readFileSync(boardPath(stateDir, PROJECT, CODE), "utf8");
+	assert.equal(raw, before, "board.json is not touched");
+	assert.deepEqual(Object.keys(JSON.parse(raw)).filter((k) => !OLD_BOARD_KEYS.includes(k)), [], "no key a 0.80.16 reader refuses");
+	assert.deepEqual(validateBoard(JSON.parse(raw)), []);
+	assert.equal(readEnd(boardPath(stateDir, PROJECT, CODE)).end?.outcome, "none");
+	const [read] = readTrainboards(stateDir).trains;
+	assert.ok(read?.ok && read.end);
+	assert.equal(factsOf(read!, { now: NOW, alive: () => false }).state, "ended");
+	// An end.json that does not read is no end: the train reads as it did, stale, and status says why.
+	writeFileSync(endPath(stateDir, PROJECT, CODE), "{nope");
+	const [bad] = readTrainboards(stateDir).trains;
+	assert.ok(bad?.ok && !bad.end && /end\.json: not JSON/.test(bad.endProblem ?? ""));
+	assert.equal(factsOf(bad!, { now: NOW, alive: () => false }).state, "stale");
 });
 
 // ---- train end
@@ -94,10 +122,16 @@ test("A1: train end ends a stale train with landed and a commit, or none; refuse
 	assert.ok(after.ok);
 	if (after.ok) {
 		assert.equal(after.board.updated, board().updated, "updated stays");
-		assert.equal(boardState(after.board, { now: NOW, alive: false }), "ended");
+		assert.equal(boardState(after.board, { now: NOW, alive: false, end: readEnd(boardPath(stateDir, PROJECT, CODE)).end }), "ended");
 	}
 	assert.equal(await go(CODE, false, "--outcome", "none", "--reason", "r", "--evidence", "e"), 1, "twice");
 	assert.match(err.join(""), /has ended already \(landed, by cli train end \(tester\)\)/);
+	// F007: a deploy target it still holds is read and cleared first; the lane it holds goes with the end
+	writeBoard(stateDir, board("2026-11-06-t", { steps: [{ id: 1, kind: "merge", name: "merge", status: "completed", round: 1, holds: { lane: "web" }, outcome: "passed" }, { id: 2, kind: "deploy", name: "deploy", status: "in_progress", round: 1, holds: { target: "prod" } }] }));
+	assert.equal(await go("2026-11-06-t", false, ...landed), 1);
+	assert.match(err.join(""), /still holds deploy target prod: read what the target runs, then `train clear --target prod`/);
+	assert.equal(await run(["train", "clear", "--project", PROJECT, "--train", "2026-11-06-t", "--target", "prod", "--reason", "prod reads 1.2.3"], { out: () => {}, err: () => {}, stateDir, train: { now: () => NOW, alive: () => false, user: "tester" } }), 0);
+	assert.equal(await go("2026-11-06-t", false, ...landed), 0, err.join(""));
 	// none
 	writeBoard(stateDir, board("2026-11-05-k", { steps: [{ id: 1, kind: "assemble", name: "assemble", status: "completed", round: 2, outcome: "void", why: "skipped" }] }));
 	assert.equal(await go("2026-11-05-k", false, "--outcome", "none", "--reason", "round 2 had no cars left", "--evidence", "integ ledger 1116-k: nothing merged"), 0, err.join(""));
@@ -108,7 +142,8 @@ test("A1: train end ends a stale train with landed and a commit, or none; refuse
 
 test("A1: train status --state filters the rows (text and --json), takes a comma list, and shows a train's end", async () => {
 	const stateDir = join(base(), "state");
-	writeBoard(stateDir, board("2026-11-05-a", { end: end() }));
+	writeBoard(stateDir, board("2026-11-05-a"));
+	writeEnd(stateDir, PROJECT, "2026-11-05-a", end());
 	writeBoard(stateDir, board("2026-11-05-b"));
 	writeBoard(stateDir, board("2026-11-05-c", { writer: { session: "sess-live", pid: process.pid, started: new Date(startMs(startOf(process.pid)!)).toISOString() } }));
 	mkdirSync(join(stateDir, "trainboard", PROJECT, "2026-11-05-d"), { recursive: true });
@@ -185,7 +220,8 @@ test("A5, A6: train check from an app's own repository reads the project's apps.
 
 test("A3: a restart is refused while a train runs (its board live and its writer's process the one that wrote it); --force needs --reason", async () => {
 	const stateDir = join(base(), "state"), me = { session: "sess-live", pid: process.pid, started: new Date(startMs(startOf(process.pid)!)).toISOString() };
-	writeBoard(stateDir, board("2026-11-05-a", { end: end(), writer: me }));
+	writeBoard(stateDir, board("2026-11-05-a", { writer: me }));
+	writeEnd(stateDir, PROJECT, "2026-11-05-a", end());
 	writeBoard(stateDir, board("2026-11-05-b"));
 	assert.deepEqual(runningTrains(stateDir), [], "an ended train and a stale one do not run");
 	assert.equal(trainsRefusal([], "x"), undefined);
