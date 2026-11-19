@@ -5,7 +5,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { safeUrl, sshCommand } from "../src/server/carbook.ts";
-import { runGit } from "../src/server/carops.ts";
+import { gitDeadline, runGit } from "../src/server/carops.ts";
 import { forwardEntry, cleanup } from "./train-guard-rig.ts";
 import { CODE, SHA_A } from "./train-fixtures.ts";
 import { type CarWorld, carWorld, COORD, git, INTEG, PUBLIC_URL, repo, startOf, TRAIN } from "./train-car-rig.ts";
@@ -312,4 +312,10 @@ test("RR2-F002: git started by the server carries none of the proxy or ssl varia
 		for (const name of Object.keys(process.env)) if (!(name in keep)) delete process.env[name];
 		Object.assign(process.env, keep);
 	}
+});
+
+test("a fetch of the base gets 10 minutes, every other git command 60 s (a 135 MB base took 117 s)", () => {
+	assert.equal(gitDeadline(["-c", "transfer.fsckObjects=true", "fetch", "--no-tags", "--", "https://x/y.git", "+refs/heads/develop:refs/sb/x"]), 10 * 60_000);
+	assert.equal(gitDeadline(["ls-remote", "--exit-code", "--", "https://x/y.git", "refs/heads/develop"]), 60_000);
+	assert.equal(gitDeadline(["merge-base", "--is-ancestor", "a", "b"]), 60_000);
 });

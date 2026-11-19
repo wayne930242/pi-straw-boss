@@ -19,6 +19,8 @@ import { integrationOff } from "./trainswitch.ts";
 // knows (its manifest, its branch, its todo list) and sends the state to the server, which checks what it can know itself and records it. The session proves itself to the server with a secret the server hands this process once and this process holds in memory only.
 
 /** Where the secrets of the sessions this process has run are kept: on `globalThis`, so a `/reload` (a new module in the same process) finds the one it was given; never in env, argv, a file, or any text the model reads. */
+/** How long a set waits for the server: a `landed` or a `received` may fetch the base for up to 10 minutes (`GIT_FETCH_DEADLINE_MS` in server/carops.ts) after an `ls-remote` of up to one. */
+const CARS_SET_WAIT_MS = 15 * 60_000;
 const HELD = Symbol.for("pi-straw-boss.cars.secrets");
 const heldSecrets = (): Map<string, string> => ((globalThis as { [HELD]?: Map<string, string> })[HELD] ??= new Map());
 
@@ -77,7 +79,7 @@ export function createCarClient(d: CarClientDeps) {
 		async set(request: CarSet): Promise<SetAnswer> {
 			for (let attempt = 0; ; attempt++) {
 				const secret = await ensure();
-				const reply = await d.call({ cmd: "cars-set", secret, state: request.state, car: request.car, fields: request.fields }, 120_000);
+				const reply = await d.call({ cmd: "cars-set", secret, state: request.state, car: request.car, fields: request.fields }, CARS_SET_WAIT_MS);
 				if (reply?.ok) return reply as unknown as SetAnswer;
 				// A server that started again knows no secret: register again, once.
 				if (attempt === 0 && reply && /not from a registered session/.test(String(reply.error))) { held.delete(keyOf()); continue; }

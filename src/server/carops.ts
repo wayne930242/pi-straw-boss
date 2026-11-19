@@ -20,15 +20,18 @@ export interface Cars { book: CarBook; notices: CarNotices }
 const KEEP_ENV = /^(?:PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_[A-Z_]+|SSH_AUTH_SOCK|SSL_CERT_FILE|SSL_CERT_DIR|SystemRoot|SYSTEMROOT|USERPROFILE|APPDATA|LOCALAPPDATA|PATHEXT|COMSPEC)$/;
 /**
  * git in a folder, for the checks the server makes on a train's word (CR-F002): git's environment is an allow-list of this process's (no GIT_*, proxy or ssl variable), the system and global configuration are not read, no prompt is made, and no hook, fsmonitor, `ext::` transport,
- * replace ref or submodule recursion can run something the folder chose. The folder's own `.git/config` is still read (the server reads the project's remote from the tower's checkout with it, at the open); the fetches run in a repository of the server's own. 60 s at most.
+ * replace ref or submodule recursion can run something the folder chose. The folder's own `.git/config` is still read (the server reads the project's remote from the tower's checkout with it, at the open); the fetches run in a repository of the server's own. `gitDeadline` bounds it.
  */
+/** A fetch of a base brings the whole branch into a fresh mirror (a large project's took 117 s for 135 MB, and 60 s refused its `landed` four times): it gets 10 minutes; every other git command, 60 s. */
+export const GIT_DEADLINE_MS = 60_000, GIT_FETCH_DEADLINE_MS = 10 * 60_000;
+export const gitDeadline = (args: readonly string[]): number => (args.includes("fetch") ? GIT_FETCH_DEADLINE_MS : GIT_DEADLINE_MS);
 export function runGit(cwd: string, args: string[], extra: Record<string, string> = {}): Promise<string> {
 	const env: Record<string, string> = {};
 	for (const [key, value] of Object.entries(process.env)) if (value !== undefined && KEEP_ENV.test(key)) env[key] = value;
 	// git looks for no repository above the root of the file system: the `ls-remote` of `landed` runs at that root with none to find, so no repository configuration is read.
 	Object.assign(env, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", GIT_CEILING_DIRECTORIES: parse(resolve(cwd)).root, ...extra });
 	const isolation = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never", "-c", "submodule.recurse=false", "--no-replace-objects"];
-	return new Promise((resolvePromise, reject) => execFileExe("git", [...isolation, "-C", cwd, ...args], { encoding: "utf8", deadline: 60_000, env, windowsHide: true }, (error, stdout, stderr) => (error ? reject(Object.assign(error, { stderr })) : resolvePromise(String(stdout).trim()))));
+	return new Promise((resolvePromise, reject) => execFileExe("git", [...isolation, "-C", cwd, ...args], { encoding: "utf8", deadline: gitDeadline(args), env, windowsHide: true }, (error, stdout, stderr) => (error ? reject(Object.assign(error, { stderr })) : resolvePromise(String(stdout).trim()))));
 }
 
 const reply = (error: unknown): Reply => ({ ok: false, error: (error as Error).message });
