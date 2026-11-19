@@ -24,7 +24,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `call_tower` | 已加入的 session 與塔台 | 在標頭之下發訊息給這個工作區的塔台，或另一個工作區的塔台。`why` 是 `milestone`、`shared` 或 `blocked`；通知用 `reply: false`。 |
 | `boss_broadcast` | 已加入的 session 與塔台 | 發訊息給一個分頁、一個工作區、所有塔台或所有 session，標頭會列出每位收件者。 |
 | `board_set` | 分頁的主智慧體 | 覆寫它自己的工作看板項目（一行與最多 8 個清單項目）；`auto: true` 交還給自動填入，`clear: true` 刪除它。 |
-| `boss_server` | 已加入的 session | sb server 的 `status`（server 沒在跑時也可用）、它的 `logs`（最多 200 行），或附理由 `restart`。老闆停掉 server 時會被拒絕，每分鐘最多一次，且在遠端 turn 中絕不可用。 |
+| `boss_server` | 已加入的 session | sb server 的 `status`（server 沒在跑時也可用）、它的 `logs`（最多 200 行），或附理由 `restart`。老闆停掉 server 或有火車在跑時會被拒絕，每分鐘最多一次，且在遠端 turn 中絕不可用。 |
 | `link_request` | 有人看管的電腦上的每個 session，以及本機塔台 run | 附理由請求一個 Straw Link 動作（create、invite、join、trust、leave、remove、role、rotate）。它絕不會未經詢問就執行：老闆要在對話框裡核准。 |
 | `boss_open_main` | 塔台 | 為沒有 session 負責的請求，開一個帶新主智慧體的分頁。`role: "train"` 開一列火車；`role: "integrator"` 把車廂單送給專案唯一的整合員，沒有在跑的就開一個。`duty: "standing"` 開一個值守種類的主智慧體（預設為協調者）。見[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。 |
 | `boss_close_main` | 塔台 | 等它裡面沒有東西在跑，關掉這座塔台開的主智慧體；值守主智慧體不會被關，只有老闆能關。 |
@@ -103,7 +103,7 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 | --- | --- |
 | `/boss server` | 顯示 sb server，沒在跑就啟動它。 |
 | `/boss server stop` | 確認後刻意停掉它。除了老闆的指令，沒有東西會再把它啟動。 |
-| `/boss server restart [reason]` | 確認後在同一個 port 重新啟動它。開著的頁面會自己重新連線。 |
+| `/boss server restart [reason]` | 確認後在同一個 port 重新啟動它，確認會指名正在跑的火車。開著的頁面會自己重新連線。 |
 | `/boss server logs [n]` | 它的 log 最後 `n` 行（預設與上限都是 200）。 |
 | `/boss locale` | 顯示 sb 的語言（英文或繁體中文）與它的來源：`config.json` 的 `locale`，否則取自環境變數。 |
 | `/boss locale zh-TW` · `en` · `auto` | 寫進 `config.json`，或改回取自環境變數（`auto`）。server 與 `/boss` 指令立即生效，塔台提示在下次啟動時生效；已寫好的卡片保留原本的語言。見[語言](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#語言)。 |
@@ -156,10 +156,10 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 | 指令 | 做什麼 |
 | --- | --- |
 | `cli.mjs status`、`cli.mjs logs` | server 的狀態與它的 log。 |
-| `cli.mjs up`、`cli.mjs stop`、`cli.mjs restart` | 在 server 與 GUI 沒在跑時啟動它們；停止或重新啟動 server。 |
+| `cli.mjs up`、`cli.mjs stop`、`cli.mjs restart` | 在 server 與 GUI 沒在跑時啟動它們；停止或重新啟動 server。有火車在跑時 `restart` 會被拒絕；帶 `--reason` 的 `--force` 照樣重啟。 |
 | `cli.mjs serve` | 在前景執行 server，作為[無人值守裝置](/pi-straw-boss/docs/zh-tw/guide/unattended-device/)的連線持有者。 |
 | `cli.mjs up --dir <folder> --label <name>` | 桌面模式，給自己顯示頁面的 shell 用：需要 `STRAW_BOSS_DESK=1`。見[桌面模式](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#桌面模式up---dir)。 |
 | `cli.mjs procs`、`cli.mjs procs reap --checkout <path>` | server 知道的工作者；停掉持有某個 checkout 的程序。 |
-| `cli.mjs train status\|check\|gate\|clear\|notices` | [合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)的火車、車廂單、關卡與車廂通知。 |
+| `cli.mjs train status\|check\|gate\|clear\|end\|notices` | [合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)的火車、車廂單、關卡與車廂通知。`status --state live,stale,ended,unreadable` 只留下這些狀態的列。`check` 可以在專案或其中任何資料夾執行，沒有 `--app-accept` 時要求 app 的 `integration.accept`，並檢查車廂單的 `head:` 是認得的 commit、且是它的分支在 origin 上的頂端。`end --project P --train CODE --outcome landed --commit SHA`（或 `--outcome none`）`--reason TEXT --evidence TEXT` 結束一列過時的火車。 |
 
 見 [sb server](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/)，以及從一般 shell 讀網的 [從 shell](/pi-straw-boss/docs/zh-tw/reference/how-it-works/from-a-shell/)。

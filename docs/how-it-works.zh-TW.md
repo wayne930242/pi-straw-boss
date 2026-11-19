@@ -1028,7 +1028,7 @@ app 的 `integration.stages` 列出整合員帶每列火車走過的階段：`me
 
 ##### 交接前的驗收
 
-e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，並取得老闆的同意，如同專案 skill 的 `## Acceptance` 所說（`integration.accept` 指名 app 要求的種類）。車廂單帶有 `accept:`（證據：跑了什麼、在哪個 head 上、結果、老闆的話）和 `departs:`（車廂何時可以離開：`next`、`alone`、`with <car>`、`after <time>` 或 `by <time>`，以逗號分隔）；`cli.mjs train check --accept <file>|none [--slip <file>] [--app <name>] [--app-accept K,…]` 驗證兩者。app 要求什麼，是專案 `apps.json` 裡的 `integration.accept`，整合員的防護和火車自己會讀它，所以旗標只能往上加，絕不能削弱它：證據缺少必要種類、或對要求某些種類的 app 寫 `none` 的車廂，在火車出發之前就被拒絕（`train check` 在自己的資料夾裡有檔案時就讀那個檔案，否則讀它儲存庫主 checkout 裡的那份，因為連結的 worktree 常常沒有；兩處都沒有時，它指名的 app 會以無法檢查為由被拒絕，絕不放行）。車廂單的 `car:` 指名車廂的 app，用 `apps.json` 裡的名字，絕不是票號；`app:` 是同一個欄位，兩者都給卻不一致的車廂單會被拒絕，不是車廂單欄位的鍵也一樣，在塔台門口和 `train check` 都會被拒絕。`train_car` 的 `car` 是車廂的第一張票，也就是車廂單 `tickets:` 的第一個。
+e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，並取得老闆的同意，如同專案 skill 的 `## Acceptance` 所說（`integration.accept` 指名 app 要求的種類）。車廂單帶有 `accept:`（證據：跑了什麼、在哪個 head 上、結果、老闆的話）和 `departs:`（車廂何時可以離開：`next`、`alone`、`with <car>`、`after <time>` 或 `by <time>`，以逗號分隔）；`cli.mjs train check --accept <file>|none [--slip <file>] [--app <name>] [--app-accept K,…]` 驗證兩者。app 要求什麼，是專案 `apps.json` 裡的 `integration.accept`，整合員的防護和火車自己會讀它，所以旗標只能往上加，絕不能削弱它：證據缺少必要種類、或對要求某些種類的 app 寫 `none` 的車廂，在火車出發之前就被拒絕（`train check` 在自己的資料夾裡有檔案時就讀那個檔案，否則讀它儲存庫主 checkout 裡的那份，因為連結的 worktree 常常沒有，再否則讀它資料夾之上最近的那份，因為本身是儲存庫的 app（submodule）在它的根目錄沒有；都沒有時，它指名的 app 會以無法檢查為由被拒絕，絕不放行；沒有 `--app-accept` 時，要求的就是 app 的 `integration.accept`）。給了 `--slip` 時，車廂單的 `head:` 必須是 git 在車廂 commit 所在之處認得的 commit，而且是它的 `branch:` 在 `origin` 上的頂端（`git ls-remote`，30 秒）：不認得的 commit、別的頂端，或沒有那個分支，都會被拒絕並指名兩個 commit；問不到 origin 則是 stderr 上的警告。車廂單的 `car:` 指名車廂的 app，用 `apps.json` 裡的名字，絕不是票號；`app:` 是同一個欄位，兩者都給卻不一致的車廂單會被拒絕，不是車廂單欄位的鍵也一樣，在塔台門口和 `train check` 都會被拒絕。`train_car` 的 `car` 是車廂的第一張票，也就是車廂單 `tickets:` 的第一個。
 
 <details>
 <summary>細節</summary>
@@ -1064,7 +1064,7 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 ##### 指令
 
-`cli.mjs train gate|check|status|clear|notices`。`status` 顯示每列火車、它的步驟、等待、鎖和車廂；`clear` 釋放 session 已經消失的火車仍然持有的東西（在讀取目標的版本之後）；`notices` 從磁碟上的 journal 列出每個車廂的狀態（`--project`、`--pending`、`--json`）。
+`cli.mjs train gate|check|status|clear|end|notices`。`status` 顯示每列火車、它的步驟、等待、鎖和車廂（`--state live,stale,ended,unreadable` 只留下處於這些狀態的列，文字和 `--json` 都一樣；被 `train end` 結束的火車會顯示它的結果、commit、原因和證據）；`clear` 釋放 session 已經消失的火車仍然持有的東西（在讀取目標的版本之後）；`end` 結束一列不會再有 land 步驟來結束的過時火車，因為它的車廂都離開了，或它的 session 在合併之後死掉：`--outcome landed --commit <sha>` 或 `--outcome none`，加上 `--reason` 和 `--evidence`，對存活、已結束或讀不到的火車會像 `clear` 一樣拒絕；從此它的看板讀成已結束，不持有任何東西，監看也不再回報它（回來的 session 會不帶這個結束重寫它的看板）；`notices` 從磁碟上的 journal 列出每個車廂的狀態（`--project`、`--pending`、`--json`）。
 
 ##### 檔案
 
@@ -1073,7 +1073,7 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 <details>
 <summary>細節</summary>
 
-一輪移除的車廂，連同它們的 head 留在看板上，所以車場顯示它們的協調者有沒有被告知，而掃描會連同看板一起移除它們的車廂檔案。合併火車開啟時，伺服器會在已結束的 trainboard 最後一次更新 7 天後刪除它，而過時的只在 `train clear` 之後再過同樣 7 天才刪，在啟動時和每小時進行。
+一輪移除的車廂，連同它們的 head 留在看板上，所以車場顯示它們的協調者有沒有被告知，而掃描會連同看板一起移除它們的車廂檔案。合併火車開啟時，伺服器會在已結束的 trainboard 最後一次更新 7 天後刪除它（被 `train end` 結束的，在結束 7 天後），而過時的只在 `train clear` 之後再過同樣 7 天才刪，在啟動時和每小時進行。
 
 </details>
 
@@ -2873,7 +2873,7 @@ sequenceDiagram
 
 當請求者的 broker 範圍或傳輸與紀錄的不同時，重啟會被拒絕（`serve` 接管獨立 server 同理），而且 `serve` 絕不取代較新套件的 server（所以從較舊套件啟動的 `serve`，在它的 supervisor 每次在 `KeepAlive` 或 `Restart=always` 之下再次啟動它時，每次都以 1 結束，直到套件升級或較新的 server 消失為止）。`stop` 同樣會從另一個範圍或傳輸被拒絕。
 
-只有某個對象請求的重啟（智慧體、`/boss server restart`、`cli.mjs restart`）才計入智慧體受限的每分鐘一次限制；升級或 `serve` 接管不計，而該限制在鎖之下檢查，所以同時兩個請求只得到一次重啟。session 以磁碟上緊鄰它將啟動的 `cli.mjs` 的套件版本，而不是它載入的程式碼，來判斷升級，並把新 server 不比舊 server 新的升級視為失敗（說一次），而不是每次查看都再問一次；只有在 server 的版本或套件的版本改變時才會再問，絕不隨時間流逝而問，所以過期的 `dist/` 不會讓 server 每分鐘重啟一次。
+只有某個對象請求的重啟（智慧體、`/boss server restart`、`cli.mjs restart`）才計入智慧體受限的每分鐘一次限制；升級或 `serve` 接管不計，而該限制在鎖之下檢查，所以同時兩個請求只得到一次重啟。session 以磁碟上緊鄰它將啟動的 `cli.mjs` 的套件版本，而不是它載入的程式碼，來判斷升級，並把新 server 不比舊 server 新的升級視為失敗（說一次），而不是每次查看都再問一次；只有在 server 的版本或套件的版本改變時才會再問，絕不隨時間流逝而問，所以過期的 `dist/` 不會讓 server 每分鐘重啟一次。火車在跑時（它的看板是存活的，且寫它的就是它 session 的程序）重啟，會失去 server 的車廂簿和它開了哪列火車，於是火車的 land 步驟隨後會被拒絕：`cli.mjs restart`、`boss_server restart` 和塔台執行的重啟都會被拒絕並指名那些火車，帶 `--reason` 的 `cli.mjs restart --force` 照樣進行，老闆的 `/boss server restart` 和 GUI 的 Restart 按鈕也一樣；升級則會等待，等沒有火車在跑時，之後的查看會再問一次。
 
 **`cli.mjs`**（`node dist/server/cli.mjs …`，或在 checkout 裡用 `npm run server -- …`，它透過 tsx 執行 `src/server/cli.ts`；在沒有 `dist/` 的 checkout 裡，session 會以 `node src/server/cli.ts` 啟動 server，這需要 Node 22.18 或更新版本）：
 
@@ -2883,7 +2883,7 @@ sequenceDiagram
 | `serve` | 在前景執行 server，給 supervisor（systemd、launchd）用。它會在同一個連接埠上（同一個 token 之下）接管獨立的 server；另一個存活的 `serve` 會讓它以 4 結束。 |
 | `stop` | 刻意停止 server（`server.json` 裡的 `stopped`）；pi session 不會再次啟動它（它們的查看會放過已停止的 server），只有老闆的指令（`up`、`serve`、`/boss server`）才會清除它。對 `serve` server 會被拒絕，結束碼 5：請停止它的 supervisor。 |
 | `status` | 印出一行 JSON：`state`（`live`、`restarting`、`stopped`、`gui-stopped` 或 `gone`，[shell 的狀態](#shell-的狀態)）、紀錄的事實（絕不含密鑰）、GUI 的 `url`、存活 server 的運行時間與遠端存取（`remote`）、Wi-Fi 存取（`lan`：是否想要且已開啟、連接埠、不含 token 的入口 `url`、提供服務的位址與它們的介面、待處理配對請求的數量，以及一個 `note`），以及它消失時的上次啟動錯誤。server 停止時也能運作。 |
-| `restart [--reason TEXT] [--by TEXT] [--downgrade]` | 在同一個連接埠、同一個 token 之下重啟（`--downgrade` 到 D27 之前的套件會產生新的 token，並解除每個裝置的配對）。原因是單行 1 到 200 個字元；`--by` 在 log 中指名提出者（GUI 的 Restart 按鈕使用它）。 |
+| `restart [--reason TEXT] [--by TEXT] [--downgrade] [--force]` | 在同一個連接埠、同一個 token 之下重啟（`--downgrade` 到 D27 之前的套件會產生新的 token，並解除每個裝置的配對）。原因是單行 1 到 200 個字元；`--by` 在 log 中指名提出者（GUI 的 Restart 按鈕使用它）。有火車在跑時拒絕，exit 1；需要 `--reason` 的 `--force` 照樣重啟。 |
 | `logs [--lines N] [--follow]` | 印出 log 的尾端（預設 200 行）。 |
 
 結束碼：0 完成；1 某個步驟失敗（stderr 上一行 JSON）；2 用法錯誤；3 server 無法執行（`start-error.json` 說明原因）；4 `serve` 發現有存活的 `serve`；5 `stop` 發現是 `serve` server。
@@ -2892,7 +2892,7 @@ sequenceDiagram
 
 ### 在 session 中
 
-在 `cli.mjs stop` 之後，session 不會重啟 server：它是被刻意停止的，只有 `up`、`serve` 或 `/boss server` 會再次啟動它。`/boss server` 顯示狀態，並在 server 停止時啟動它，即使它是被刻意停止的也一樣。`/boss server stop` 在一次確認之後刻意停止它，該確認會說明每個工作區隨後都失去它存活的塔台，而主智慧體會在 15 秒後被降級。`/boss server restart [--downgrade] [reason]` 在一次確認之後重啟它。`/boss server restart` 指令也會清除刻意停止（它是老闆自己的啟動）。
+在 `cli.mjs stop` 之後，session 不會重啟 server：它是被刻意停止的，只有 `up`、`serve` 或 `/boss server` 會再次啟動它。`/boss server` 顯示狀態，並在 server 停止時啟動它，即使它是被刻意停止的也一樣。`/boss server stop` 在一次確認之後刻意停止它，該確認會說明每個工作區隨後都失去它存活的塔台，而主智慧體會在 15 秒後被降級。`/boss server restart [--downgrade] [reason]` 在一次確認之後重啟它，該確認會指名正在跑的火車。`/boss server restart` 指令也會清除刻意停止（它是老闆自己的啟動）。
 
 <details>
 <summary>細節</summary>

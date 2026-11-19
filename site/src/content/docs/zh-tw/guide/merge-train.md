@@ -110,6 +110,6 @@ Straw Boss 自己檢查這項宣告，因為模型讀 skill 分不出程序是�
 ## 指令
 
 `node dist/server/cli.mjs train status` 列出每列火車、它的步驟、等待、鎖與車廂。
-`train check` 在車廂單送出前驗證它與它的驗收證據，`train clear` 釋放 session 已不在的火車仍持有的東西。
+`train check` 在車廂單送出前驗證它與它的驗收證據，`train clear` 釋放 session 已不在的火車仍持有的東西。`train end` 結束一列不會再有 land 步驟來結束的過時火車（它的車廂都離開了，或它的 session 在合併後死掉），結果是附 commit 的 `landed` 或 `none`，加上原因與證據；`train status --state stale` 列出剩下的。
 
 規則見[合併火車](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#合併火車)。

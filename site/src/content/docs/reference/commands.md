@@ -24,7 +24,7 @@ Agents call the **tools**; you type the **`/boss` commands** in any pi session i
 | `call_tower` | joined sessions and towers | Message this workspace's tower, or another workspace's, under a header. `why` is `milestone`, `shared`, or `blocked`; `reply: false` for a notice. |
 | `boss_broadcast` | joined sessions and towers | Message a tab, a workspace, every tower, or every session, under a header naming every recipient. |
 | `board_set` | a tab's main | Override its own work board entry (one line and up to 8 checklist items); `auto: true` hands it back to the auto-fill, `clear: true` deletes it. |
-| `boss_server` | joined sessions | The sb server's `status` (also with it down), its `logs` (up to 200 lines), or `restart` with a reason. Refused while the boss stopped the server, at most once a minute, and never in a remote turn. |
+| `boss_server` | joined sessions | The sb server's `status` (also with it down), its `logs` (up to 200 lines), or `restart` with a reason. Refused while the boss stopped the server or a train runs, at most once a minute, and never in a remote turn. |
 | `link_request` | every session on an attended computer, and a local tower run | Ask for a Straw Link action (create, invite, join, trust, leave, remove, role, rotate) with a reason. It never runs unasked: the boss approves it in a dialog. |
 | `boss_open_main` | towers | Open a tab with a new main agent for a request no session owns. `role: "train"` opens a train; `role: "integrator"` sends a car slip to the project's one integrator, opening it when none runs. `duty: "standing"` opens a main of kind standing (default coordinator). See [Merge train](/pi-straw-boss/docs/guide/merge-train/). |
 | `boss_close_main` | towers | Close a main this tower opened, once nothing runs in it; never a standing main, which only the boss closes. |
@@ -103,7 +103,7 @@ The GUI's Memory panel does the same as `/boss memory`. See [Tower memory](/pi-s
 | --- | --- |
 | `/boss server` | Show the sb server, and start it when it is down. |
 | `/boss server stop` | Stop it on purpose, after a confirm. Nothing but a boss command starts it again. |
-| `/boss server restart [reason]` | Restart it on the same port, after a confirm. Open pages reconnect by themselves. |
+| `/boss server restart [reason]` | Restart it on the same port, after a confirm, which names any train that runs. Open pages reconnect by themselves. |
 | `/boss server logs [n]` | The last `n` lines of its log (default and most 200). |
 | `/boss locale` | Show sb's language (English or Traditional Chinese) and where it comes from: `locale` in `config.json`, else the environment. |
 | `/boss locale zh-TW` · `en` · `auto` | Set it in `config.json`, or take it from the environment again (`auto`). The server and `/boss` commands follow at once, a tower prompt from its next start; cards already written keep theirs. See [Language](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/#language). |
@@ -156,10 +156,10 @@ See [The role pack](/pi-straw-boss/docs/reference/how-it-works/the-role-pack/).
 | Command | What it does |
 | --- | --- |
 | `cli.mjs status`, `cli.mjs logs` | The server's state, and its log. |
-| `cli.mjs up`, `cli.mjs stop`, `cli.mjs restart` | Start the server and the GUI when they are down; stop or restart the server. |
+| `cli.mjs up`, `cli.mjs stop`, `cli.mjs restart` | Start the server and the GUI when they are down; stop or restart the server. `restart` is refused while a train runs; `--force` with `--reason` restarts anyway. |
 | `cli.mjs serve` | Run the server in the foreground, as the link holder of an [unattended device](/pi-straw-boss/docs/guide/unattended-device/). |
 | `cli.mjs up --dir <folder> --label <name>` | Desk mode, for a shell that shows the page itself: needs `STRAW_BOSS_DESK=1`. See [Desk mode](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/#desk-mode-up---dir). |
 | `cli.mjs procs`, `cli.mjs procs reap --checkout <path>` | The workers the server knows; stop the processes that hold a checkout. |
-| `cli.mjs train status\|check\|gate\|clear\|notices` | The [merge train](/pi-straw-boss/docs/guide/merge-train/)'s trains, slips, gates, and car notices. |
+| `cli.mjs train status\|check\|gate\|clear\|end\|notices` | The [merge train](/pi-straw-boss/docs/guide/merge-train/)'s trains, slips, gates, and car notices. `status --state live,stale,ended,unreadable` keeps those rows. `check` runs from the project or any folder in it, requires the app's `integration.accept` without `--app-accept`, and checks a slip's `head:` is a known commit and the tip of its branch on origin. `end --project P --train CODE --outcome landed --commit SHA` (or `--outcome none`) `--reason TEXT --evidence TEXT` ends a stale train. |
 
 See [The sb server](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/), and [From a shell](/pi-straw-boss/docs/reference/how-it-works/from-a-shell/) for reading the net from a plain shell.

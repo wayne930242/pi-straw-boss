@@ -110,6 +110,6 @@ No main or tower then takes the integrator role, a merge or a deploy waits for y
 ## Commands
 
 `node dist/server/cli.mjs train status` lists every train, its steps, waits, locks, and cars.
-`train check` validates a slip and its acceptance evidence before it is sent, and `train clear` releases what a train whose session is gone still holds.
+`train check` validates a slip and its acceptance evidence before it is sent, and `train clear` releases what a train whose session is gone still holds. `train end` ends a stale train that no land step will end (its cars all left, or its session died after the merge), as `landed` with the commit or `none`, with a reason and evidence; `train status --state stale` lists the ones left.
 
 The rules are in [Merge train](/pi-straw-boss/docs/reference/how-it-works/how-it-works/#merge-train).
