@@ -13,6 +13,7 @@ import { packageRoot } from "./server/version.ts";
 import type { Kit } from "./state.ts";
 import type { Here } from "./heremark.ts";
 import { hereOnlyOpts } from "./intercept.ts";
+import { type RunningTrain, runningTrains, trainsRefusal } from "./server/restartguard.ts";
 
 // A pi session's part in the sb server (docs/specs/2026-10-26-sb-backend.md, Starting, Stopping, Seeing and restarting the server): at session start, and then every 2 s, it
 // looks whether a live server runs for its Herdr and starts one when none does and the rules allow; it asks the live server to upgrade when this session's package is newer;
@@ -24,7 +25,7 @@ const MAX_LOG_LINES = 200;
 const STOP_WARNING = "Every workspace then loses its live tower, and mains are demoted 15 s later. The server stays down until /boss server or `cli.mjs up` starts it again.";
 
 /** Replaces what the look reaches the machine with, for tests. */
-export interface ServerLookDeps { ctx?: Partial<Ctx>; cli?: string; /** The package folder whose package.json holds the version of the package on disk. */ root?: string; /** Told each look as it starts, so a test can wait for the looks in flight before it removes the folder they work in. */ track?: (done: Promise<void>) => void }
+export interface ServerLookDeps { ctx?: Partial<Ctx>; cli?: string; /** The trains that run on this computer (restartguard.ts); tests replace it. */ trains?: (stateDir: string) => RunningTrain[]; /** The package folder whose package.json holds the version of the package on disk. */ root?: string; /** Told each look as it starts, so a test can wait for the looks in flight before it removes the folder they work in. */ track?: (done: Promise<void>) => void }
 
 export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: ServerLookDeps) {
 	const told = new Set<string>();
@@ -62,6 +63,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		}
 	};
 	const ctxFor = (): Ctx => makeCtx({ slot: slot(), version: version(), cli: cli(), by: asker(), env: cfg.env, now: cfg.now, ...deps.ctx });
+	const trains = (ctx: Ctx) => (deps.trains ?? ((dir: string) => runningTrains(dir, { now: cfg.now })))(ctx.slot.stateDir);
 
 	/** One look: start, upgrade, or leave the server as it is. Anything that cannot be done is told once. */
 	const look = () => {
@@ -95,6 +97,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 				// package.json (a stale build) would otherwise restart the server once a minute for nothing.
 				const pair = `${seen.record!.version}|${ctx.version}`;
 				if (failedUpgrade === pair) return;
+				if (trains(ctx).length) return; // A restart loses the server's car book (A3): while a train runs the upgrade waits, and a later look asks again once none does.
 				upgradePair = pair;
 				const before = seen.record!.version, done = await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 }); if (stopped) return;
 				// An upgrade that starts a server no newer than the one it replaced would be asked for again at every look.
@@ -165,6 +168,8 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			// The once-a-minute limit is judged under server.lock (client.ts), so two asks at once cannot both pass it.
 			const found = await trusted(ctx).catch((error: unknown) => refuse(error));
 			if (!boss && found?.stopped) throw new Error("The sb server was stopped on purpose; an agent cannot restart it. The boss starts it again with /boss server.");
+			const cut = boss ? undefined : trainsRefusal(trains(ctx), "ask the boss, whose /boss server restart goes ahead"); // A3: an agent's restart that would cut a running train; the boss's own goes ahead.
+			if (cut) throw new Error(cut);
 			try {
 				const done = await restart(ctx, { reason: why, downgrade, boss, limit: !boss });
 				return { server: done.server, pid: done.record.pid, version: done.record.version };
@@ -231,7 +236,8 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 			}
 			if (sub === "restart") {
 				const downgrade = /(^|\s)--downgrade(?=\s|$)/.test(rest), reason = rest.replace(/(^|\s)--downgrade(?=\s|$)/g, " ").trim() || "restart from /boss server restart";
-				const message = downgrade ? "This starts the server from this session's pi-straw-boss, which is OLDER than the server's. Its GUI keeps its address only if that older package keeps the GUI token too (a build with D27); an older one draws a new address at its start and unpairs every phone (reopen it with /boss gui)." : "The GUI keeps its address (open pages, the desk shell, and paired phones reconnect by themselves) unless a port is taken; runs and dialogs carry on.";
+				const running = trains(ctxFor()), cutting = running.length ? ` A train runs (${running.map((t) => `${t.project} ${t.code}`).join(", ")}): the restart loses the server's car book, and its land step is then refused.` : "";
+				const message = (downgrade ? "This starts the server from this session's pi-straw-boss, which is OLDER than the server's. Its GUI keeps its address only if that older package keeps the GUI token too (a build with D27); an older one draws a new address at its start and unpairs every phone (reopen it with /boss gui)." : "The GUI keeps its address (open pages, the desk shell, and paired phones reconnect by themselves) unless a port is taken; runs and dialogs carry on.") + cutting;
 				if (!(await ask(downgrade ? "Restart the sb server from an older package?" : "Restart the sb server?", message))) return tell("The sb server was not restarted.");
 				const done = await api.restart(reason, { boss: true, downgrade });
 				return tell(`The sb server ${done.server} (pid ${done.pid}, pi-straw-boss ${done.version}).`);

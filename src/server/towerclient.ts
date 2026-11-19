@@ -1,5 +1,6 @@
 import { callControl, ControlError } from "./socket.ts";
 import { type Ctx, decide, ensure, lockWaitFor, probe, restart, ServerError } from "./client.ts";
+import { runningTrains } from "./restartguard.ts";
 
 // How a session or a handing-over resident tower asks the sb server for a workspace's tower (docs/specs/2026-10-26-sb-backend.md, A workspace gets one):
 // `ensure-tower` over the control socket. The server makes the tab, registers the identity, and writes the tokens; it starts no pi. Only behind `towerRuns.enabled`.
@@ -32,7 +33,8 @@ async function serverFor(ctx: Ctx, boss: boolean) {
 		if (seen.denied) throw new Error("the sb server runs but this process may not reach it (started from an elevated shell?)");
 		if (seen.live && seen.record) {
 			// A server on an older package than this one is upgraded by a session's look, not by a tower request.
-			if (verdict.do === "upgrade") {
+			// While a train runs it is not upgraded at all (A3: a restart loses the car book): the tower is asked of the server that runs.
+			if (verdict.do === "upgrade" && !runningTrains(ctx.slot.stateDir, { now: ctx.now }).length) {
 				// The new server has its own record and secret: the old record answers nothing.
 				const done = await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 }).catch(() => undefined);
 				return done?.record ?? seen.record;

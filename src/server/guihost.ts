@@ -530,10 +530,13 @@ export function createGuiHost(o: GuiHostOptions) {
 }
 export type GuiHost = ReturnType<typeof createGuiHost>;
 
-/** The restart a button on the page asks for: a requester of its own (`cli.mjs restart`), since this server is what it asks to restart and cannot start its successor itself. */
-export function spawnRestart(cli: string, reason: string, by: string, env: NodeJS.ProcessEnv, cwd: string, start: typeof spawn = spawn): HttpReply {
+/**
+ * The restart a button on the page asks for: a requester of its own (`cli.mjs restart`), since this server is what it asks to restart and cannot start its successor itself. `force`: the boss's own button, which restarts while a train runs
+ * (the spawned CLI's refusal would reach nobody); a tower run's restart is checked before it gets here.
+ */
+export function spawnRestart(cli: string, reason: string, by: string, env: NodeJS.ProcessEnv, cwd: string, start: typeof spawn = spawn, force = false): HttpReply {
 	try {
-		const child = start(process.execPath, [cli, "restart", "--reason", reason, "--by", by], { detached: true, stdio: "ignore", windowsHide: true, env, cwd });
+		const child = start(process.execPath, [cli, "restart", "--reason", reason, "--by", by, ...(force ? ["--force"] : [])], { detached: true, stdio: "ignore", windowsHide: true, env, cwd });
 		child.on("error", () => {});
 		child.unref();
 		return { status: 202, body: { restarting: true } };

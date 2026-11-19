@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -8,6 +8,9 @@ import { MESSAGE_TYPE } from "../src/link/turn.ts";
 import { RESTART_EVERY_MS } from "../src/server-look.ts";
 import { fileOf, writeRecord } from "../src/server/record.ts";
 import { forgetSid, ownerGate } from "../src/server/winprep.ts";
+import { startMs } from "../src/server/traingate.ts";
+import { startOf } from "../src/startof.ts";
+import { writeBoard } from "../src/train/board.ts";
 import { type Agent, until, World } from "./fakes.ts";
 import { bob, TEAM_HEX } from "./link/holder-world.ts";
 import { ServerWorld, sleep } from "./server-world.ts";
@@ -316,6 +319,39 @@ test("boss_server restart is taken once a minute, for the whole machine", async 
 	// A minute later it is taken again.
 	writeRecord(sw.slot, { ...sw.record()!, lastRestart: { at: new Date(Date.now() - RESTART_EVERY_MS - 1000).toISOString(), reason: "old", by: "x" } });
 	assert.match(text(await a.tool("boss_server", { action: "restart", reason: "a minute on" })), /restarted/);
+});
+
+/** A train that runs on this computer (0.80.17, A3): its board live, written by this test's own process. Returns its removal. */
+const runningTrain = (code = "2026-11-07-a") => {
+	writeBoard(sw.stateDir, { v: 1, project: "acme", app: "web", code, writer: { session: "sess-train", pid: process.pid, started: new Date(startMs(startOf(process.pid)!)).toISOString() }, updated: new Date().toISOString(), round: 1, cars: [], steps: [] });
+	return () => rmSync(join(sw.stateDir, "trainboard", "acme", code), { recursive: true, force: true });
+};
+
+test("0.80.17 A3: boss_server restart is refused while a train runs, naming it; the boss's /boss server restart goes ahead and its confirm names the train", async () => {
+	const a = session();
+	await a.start();
+	await until(() => sw.record()?.pid, "the server");
+	const before = sw.record()!.pid;
+	runningTrain();
+	await assert.rejects(a.tool("boss_server", { action: "restart", reason: "roll" }), /a train runs on this computer: acme 2026-11-07-a \(pid \d+\).*ask the boss, whose \/boss server restart goes ahead/);
+	assert.equal(sw.record()?.pid, before, "not restarted");
+	const run = a.command("server restart roll now");
+	const dialog = await confirm(a, true);
+	await run;
+	assert.match(String(dialog.second), /A train runs \(acme 2026-11-07-a\): the restart loses the server's car book/);
+	assert.notEqual(sw.record()?.pid, before);
+});
+
+test("0.80.17 A3: a session on a newer package does not upgrade the server while a train runs, and upgrades it at a later look once none does", async () => {
+	const s = await sw.start({ version: "0.43.0" });
+	await s.handle.ready;
+	const gone = runningTrain();
+	const a = session("a1", { version: "0.44.0" });
+	await a.start();
+	await sleep(150);
+	assert.equal(sw.record()?.version, "0.43.0", "no upgrade while the train runs");
+	gone();
+	await until(() => sw.record()?.version === "0.44.0", "the upgrade once the train is gone");
 });
 
 test("sbr-F011: two sessions asking for a restart at once get one restart between them: the limit is judged under the lock", async () => {

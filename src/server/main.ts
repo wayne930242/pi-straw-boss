@@ -17,6 +17,7 @@ import { tellVia } from "./boardpanel.ts";
 import { allyPort } from "./allyport.ts";
 import { createAsks } from "./asks.ts";
 import { cliBeside, createGuiHost, spawnRestart } from "./guihost.ts";
+import { runningTrains, trainsRefusal } from "./restartguard.ts";
 import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
 import { DialogForwarder } from "../link/dialogs-out.ts";
 import { dispatcherLookup, unitLabel } from "./dispatcher.ts";
@@ -601,7 +602,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		// The primary server holds the link itself (B3), so the GUI asks the holder in this process as the server, which the holder takes GUI requests from; before it runs, the channel reaches the holder's session. A secondary server holds none and its GUI says so (`no_link`, as its `link` request does): the channel would ask the primary's holder as a session that is not the GUI's host.
 		link: gui.link ?? (!slot.primary ? elsewhereLink() : inProcessLink(createGuiLink({ events: kit.pi.events, id: () => serverId(slot), stateDir: slot.stateDir, agentDir: env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), log: (text) => log.line("link", { text }) }), () => link, () => serverId(slot))),
 		status: () => ({ state: phase === "ready" ? "live" : phase, version, pid, mode, desk, uptimeMs: now() - startedAt, log: fileOf(slot, "log"), ...(own.lastError ? { lastError: own.lastError } : {}) }),
-		restart: gui.restart ?? ((reason) => spawnRestart(cliBeside(), reason, "the GUI", serverEnv(env), slot.dir)),
+		restart: gui.restart ?? ((reason) => spawnRestart(cliBeside(), reason, "the GUI", serverEnv(env), slot.dir, undefined, true)),
 		failed: (code, text) => recordError(code, text), tailscale: gui.tailscale, bundle: gui.bundle, bindWaitMs: gui.bindWaitMs, ...(gui.lan ? { lan: gui.lan } : {}), ...(gui.trainyard ? { trainyard: gui.trainyard } : {}),
 		// The page's tower units: the service's state and queue in the net, the composer as a boss event, and the notices' buttons (towers is built below, after the GUI host, and may be absent).
 		tower: towerPanel(() => towers), head: headSeam(slot, now), trainCars: () => cars?.book,
@@ -615,6 +616,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		async restart(reason, by) {
 			const soon = restartTooSoon();
 			if (soon) throw new Error(soon);
+			const trains = trainsRefusal(runningTrains(slot.stateDir, { now }), "ask the boss, whose /boss server restart goes ahead"); // A3: a tower run is no boss, and a restart cuts a running train
+			if (trains) throw new Error(trains);
 			restartAskedAt = now();
 			log.line("restart-asked", { by, reason });
 			const done = await (gui?.restart ?? ((why: string) => spawnRestart(cliBeside(), why, by, serverEnv(env), slot.dir)))(reason);

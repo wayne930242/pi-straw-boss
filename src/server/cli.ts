@@ -14,6 +14,7 @@ import { ensureTowerVia } from "./towerclient.ts";
 import { onFatal } from "./fatal.ts";
 import { runProcs } from "./procscli.ts";
 import { runTrain, type TrainIo } from "./traincmds.ts";
+import { runningTrains, trainsRefusal } from "./restartguard.ts";
 import { callControl, ControlError } from "./socket.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
 import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
@@ -32,7 +33,7 @@ import { serverSource } from "../towerprompt/serversource.ts";
 const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS] [--exact]   (--dir and --label are the desk steps and need STRAW_BOSS_DESK=1)
        cli.mjs serve
        cli.mjs stop | status
-       cli.mjs restart [--reason TEXT] [--by TEXT] [--downgrade]
+       cli.mjs restart [--reason TEXT] [--by TEXT] [--downgrade] [--force]   (refused while a train runs; --force, with --reason, restarts anyway)
        cli.mjs logs [--lines N] [--follow]
        cli.mjs procs [list]
        cli.mjs procs reap (--owner ID | --checkout PATH)   (kill what an ended worker left; refused while a live worker works in the checkout)
@@ -45,7 +46,7 @@ const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS]
 export class UsageError extends Error {}
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout", "dir", "label"], switch: ["exact"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason", "by"], switch: ["downgrade"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
+	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
 };
 // `train` has a word of its own, and each word its flags.
 const TRAIN: Record<string, { value: string[]; switch: string[] }> = {
@@ -258,6 +259,10 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	async function restartCommand() {
 		const reason = String(flags.reason ?? "restart from the command line");
 		if (!reason.trim() || reason.length > 200 || /[\r\n]/.test(reason)) throw new UsageError("--reason is one line of 1 to 200 characters");
+		if (flags.force === true && typeof flags.reason !== "string") throw new UsageError("--force needs --reason: why the restart cannot wait for the train");
+		// A restart while a train runs loses the server's car book (A3): refused unless forced with a reason.
+		const trains = flags.force === true ? undefined : trainsRefusal(runningTrains(slot.stateDir, { ...(deps.train?.now ? { now: deps.train.now } : {}), ...(deps.train?.alive ? { alive: deps.train.alive } : {}) }), "give --force with --reason to restart anyway");
+		if (trains) return (err(`${trains}\n`), 1);
 		const done = await restart(ctx, { reason, downgrade: flags.downgrade === true });
 		json({ server: done.server, pid: done.record.pid, version: done.record.version, url: guiUrl(done.record) });
 		return 0;
