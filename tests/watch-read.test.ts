@@ -299,13 +299,13 @@ test("the request's fields are checked: a key of 1 to 200 characters, quietMs of
 	assert.equal(((await ask({ key: "u1", quietMs: 60_000, loadMax: 5, deadline: w.clock.now() + 1 })) as Answer).state, "changed");
 });
 
-// The real control socket closes a connection after its idle time without traffic; a hold is one request with no traffic until its answer.
+// The real control socket closes a connection after its idle time without traffic, but not while a request on it is in flight (0.80.16); a hold is one request with no traffic until its answer.
 const scratch = mkdtempSync(join(tmpdir(), "psb-watch-"));
 const closers: (() => Promise<unknown>)[] = [];
 afterEach(async () => void (await Promise.all(closers.splice(0).map((c) => c()))));
 process.on("exit", () => rmSync(scratch, { recursive: true, force: true }));
 
-test("over the real control socket a hold shorter than the idle close is answered, hold after hold on a quiet unit (a client's 5-minute wait), and one longer than the idle close is cut", async () => {
+test("over the real control socket a hold shorter than the idle close is answered, hold after hold on a quiet unit (a client's 5-minute wait), and one longer than the idle close is answered too (a request in flight is not idle)", async () => {
 	const serve = async (holdMs: number, idleMs: number) => {
 		const listeners = new Set<(net: Net) => void>(), quiet = netOf([unit()]);
 		const watch = createWatchRead({ net: { onRead: (cb) => (listeners.add(cb), () => void listeners.delete(cb)), last: () => quiet, lookup: (key) => (key === "u1" ? { key, base: "w1", name: "coord", role: "main", live: true } : undefined), read: async () => quiet }, now: Date.now, holdMs });
@@ -323,7 +323,7 @@ test("over the real control socket a hold shorter than the idle close is answere
 	}
 	const cut = await serve(3000, 100);
 	const first = await cut({});
-	await assert.rejects(cut({ since: first.since }), "the idle close ends a hold that outlasts it");
+	assert.equal((await cut({ since: first.since })).state, "unchanged", "a hold that outlasts the idle close is answered by its own timer");
 });
 
 let hostWorld: World | undefined, hosted: Hosted | undefined;

@@ -7,7 +7,7 @@ import type { YardTrainRow } from "../train/yardview.ts";
 import type { Reply } from "./socket.ts";
 
 // The sb server's `watch-read` route (docs/specs/2026-11-09-agent-kinds.md §10): a watchdog child's long poll on one unit of this computer's net. A request is held until a reading of the net gives a verdict other than `unchanged`, until its
-// deadline, or until the hold's own timer (45 s, inside the control socket's 60 s idle close), which answers with the last reading and waits for no further one. A hold costs one compare per reading.
+// deadline, or until the hold's own timer (45 s; the control socket's idle close skips a connection with a request in flight since 0.80.16), which answers with the last reading and waits for no further one. A hold costs one compare per reading.
 //
 // What wakes a hold is state only: the unit's mark, each monitor's status and exit, todo progress, a train's steps and waits, the subagents' marks, and the unit leaving the net. Output lines, a monitor's last line, notes, ticks, and load
 // readings wake nothing; they move the quiet clock, which gives `stalled` once per quiet spell when the request names `quietMs`. A monitor whose newest progress line carries a load over the limit gives `load` once per crossing.
