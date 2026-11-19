@@ -13,7 +13,7 @@ import { packageRoot } from "./server/version.ts";
 import type { Kit } from "./state.ts";
 import type { Here } from "./heremark.ts";
 import { hereOnlyOpts } from "./intercept.ts";
-import { type RunningTrain, runningTrains, trainsRefusal } from "./server/restartguard.ts";
+import { type RunningTrain, runningTrains, trainsRefusal, upgradeWaits } from "./server/restartguard.ts";
 
 // A pi session's part in the sb server (docs/specs/2026-10-26-sb-backend.md, Starting, Stopping, Seeing and restarting the server): at session start, and then every 2 s, it
 // looks whether a live server runs for its Herdr and starts one when none does and the rules allow; it asks the live server to upgrade when this session's package is newer;
@@ -97,7 +97,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 				// package.json (a stale build) would otherwise restart the server once a minute for nothing.
 				const pair = `${seen.record!.version}|${ctx.version}`;
 				if (failedUpgrade === pair) return;
-				if (trains(ctx).length) return; // A restart loses the server's car book (A3): while a train runs the upgrade waits, and a later look asks again once none does.
+				if (upgradeWaits(ctx.log, ctx.slot.stateDir, trains(ctx), ctx.by)) return; // A3: a restart loses the car book; the upgrade waits, logged once, and a later look asks again.
 				upgradePair = pair;
 				const before = seen.record!.version, done = await restart(ctx, { reason: "upgrade", upgrade: true, lockWaitMs: 0 }); if (stopped) return;
 				// An upgrade that starts a server no newer than the one it replaced would be asked for again at every look.

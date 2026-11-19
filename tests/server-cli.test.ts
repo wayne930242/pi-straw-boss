@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { writeBoard } from "../src/train/board.ts";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import { type CliDeps, parseArgs, run, UsageError } from "../src/server/cli.ts";
@@ -146,6 +147,22 @@ test("up with the desk switch against a server started without it restarts it; w
 	assert.equal(plain.json?.server, "found");
 	assert.deepEqual((plain.json?.warnings as { code: string }[]).map((w) => w.code), ["desk_on"]);
 	assert.equal(plain.json?.pid, desk.json?.pid);
+});
+
+test("SBR-F002: up's upgrade is refused at step server while a train runs, naming it; --force with --reason upgrades anyway, and --force alone is a usage error", async () => {
+	const s = await world.start({ version: "0.43.0" });
+	await s.handle.ready;
+	writeBoard(world.stateDir, { v: 1, project: "acme", app: "web", code: "2026-11-07-a", writer: { session: "sess-train", pid: 4242, started: "2026-11-07T07:00:00.000Z" }, updated: new Date().toISOString(), round: 1, cars: [], steps: [] });
+	const train = { alive: () => true };
+	const refused = await cli(["up"], { version: "0.44.0", train });
+	assert.equal(refused.code, 1);
+	assert.equal(refused.errJson?.step, "server");
+	assert.match(String(refused.errJson?.error ?? refused.err), /a train runs on this computer: acme 2026-11-07-a \(pid 4242\).*give --force with --reason/);
+	assert.equal(world.record()?.version, "0.43.0", "not upgraded");
+	assert.equal((await cli(["up", "--force"], { version: "0.44.0", train })).code, 2);
+	const forced = await cli(["up", "--force", "--reason", "hotfix for the train itself"], { version: "0.44.0", train });
+	assert.equal(forced.json?.server, "upgraded", forced.err);
+	assert.match(readFileSync(fileOf(world.slot, "log"), "utf8"), /restart reason="upgrade \(forced: hotfix for the train itself\)"/);
 });
 
 test("up from a newer package upgrades an older server; from an older package it warns server_newer and leaves it, or with --exact exits 1 at step version", async () => {

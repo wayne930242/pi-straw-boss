@@ -342,7 +342,7 @@ test("0.80.17 A3: boss_server restart is refused while a train runs, naming it; 
 	assert.notEqual(sw.record()?.pid, before);
 });
 
-test("0.80.17 A3: a session on a newer package does not upgrade the server while a train runs, and upgrades it at a later look once none does", async () => {
+test("0.80.17 A3, SBR-F003: a session on a newer package does not upgrade the server while a train runs, logs that once, and upgrades it at a later look once none does", async () => {
 	const s = await sw.start({ version: "0.43.0" });
 	await s.handle.ready;
 	const gone = runningTrain();
@@ -350,6 +350,7 @@ test("0.80.17 A3: a session on a newer package does not upgrade the server while
 	await a.start();
 	await sleep(150);
 	assert.equal(sw.record()?.version, "0.43.0", "no upgrade while the train runs");
+	assert.equal(readFileSync(fileOf(sw.slot, "log"), "utf8").match(/upgrade-deferred trains="acme 2026-11-07-a"/g)?.length, 1, "the server's log says so once for the episode, not at every look");
 	gone();
 	await until(() => sw.record()?.version === "0.44.0", "the upgrade once the train is gone");
 });

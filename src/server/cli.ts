@@ -30,7 +30,7 @@ import { serverSource } from "../towerprompt/serversource.ts";
 // cannot run (`start-error.json` says `loader`, `intercom`, or `acl`); 4 `serve` found a live `serve` server; 5 `stop` found a `serve` server (stop its supervisor).
 // `prompt` is the one command nobody types: the server types it into a tower's standing pane (towerprompt/), and once it runs it ends with 0 however it ends (a usage error is 2).
 
-const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS] [--exact]   (--dir and --label are the desk steps and need STRAW_BOSS_DESK=1)
+const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS] [--exact] [--force --reason TEXT]   (--dir and --label are the desk steps and need STRAW_BOSS_DESK=1; --force restarts while a train runs)
        cli.mjs serve
        cli.mjs stop | status
        cli.mjs restart [--reason TEXT] [--by TEXT] [--downgrade] [--force]   (refused while a train runs; --force, with --reason, restarts anyway)
@@ -46,7 +46,7 @@ const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS]
        cli.mjs prompt --workspace ID [--state-dir DIR]   (the tower prompt of a standing pane: the server types it)`;
 export class UsageError extends Error {}
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
-	up: { value: ["timeout", "dir", "label"], switch: ["exact"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
+	up: { value: ["timeout", "dir", "label", "reason"], switch: ["exact", "force"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
 	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
 };
 // `train` has a word of its own, and each word its flags.
@@ -85,6 +85,7 @@ export function parseArgs(argv: string[]): Args {
 	if (flags.dir !== undefined && (!String(flags.dir).trim() || !String(flags.label).trim())) throw new UsageError("--dir and --label are not empty");
 	if (command === "procs" && (flags.sub === "reap" ? (flags.owner === undefined) === (flags.checkout === undefined) : flags.owner !== undefined || flags.checkout !== undefined)) throw new UsageError(`procs reap needs --owner or --checkout, one of them; list takes neither\n${USAGE}`);
 	if (flags.timeout !== undefined && !(Number(flags.timeout) > 0)) throw new UsageError("--timeout is a number of seconds");
+	if (flags.force === true && (typeof flags.reason !== "string" || !flags.reason.trim())) throw new UsageError("--force needs --reason: why the restart cannot wait for the train");
 	if (flags.lines !== undefined && !(Number.isInteger(Number(flags.lines)) && Number(flags.lines) > 0)) throw new UsageError("--lines is a positive whole number");
 	return { command, flags };
 }
@@ -260,7 +261,6 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 	async function restartCommand() {
 		const reason = String(flags.reason ?? "restart from the command line");
 		if (!reason.trim() || reason.length > 200 || /[\r\n]/.test(reason)) throw new UsageError("--reason is one line of 1 to 200 characters");
-		if (flags.force === true && typeof flags.reason !== "string") throw new UsageError("--force needs --reason: why the restart cannot wait for the train");
 		// A restart while a train runs loses the server's car book (A3): refused unless forced with a reason.
 		const trains = flags.force === true ? undefined : trainsRefusal(runningTrains(slot.stateDir, { ...(deps.train?.now ? { now: deps.train.now } : {}), ...(deps.train?.alive ? { alive: deps.train.alive } : {}) }), "give --force with --reason to restart anyway");
 		if (trains) return (err(`${trains}\n`), 1);
@@ -340,7 +340,10 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			});
 			const { server: how, record } = await stepOf<{ server: "found" | "started" | "restarted" | "upgraded"; record: ServerRecord }>("server", async () => {
 				if (plan === "upgrade" || plan === "desk") {
-					const done = await restart(ctx, { reason: plan === "upgrade" ? "upgrade" : "desk switch", upgrade: plan === "upgrade", boss: true, deadline, counts: false });
+					// SBR-F002: the restart of an upgrade or a desk switch would cut a running train too; `--force --reason` goes ahead.
+					const cut = flags.force === true ? undefined : trainsRefusal(runningTrains(slot.stateDir, { ...(deps.train?.now ? { now: deps.train.now } : {}), ...(deps.train?.alive ? { alive: deps.train.alive } : {}) }), "give --force with --reason to restart anyway");
+					if (cut) throw new StepError("server", cut);
+					const done = await restart(ctx, { reason: `${plan === "upgrade" ? "upgrade" : "desk switch"}${flags.force === true ? ` (forced: ${String(flags.reason).replace(/\s+/g, " ").slice(0, 150)})` : ""}`, upgrade: plan === "upgrade", boss: true, deadline, counts: false });
 					return { value: { server: done.server, record: done.record }, detail: `${done.server}: ${plan === "upgrade" ? "upgrade" : "desk switch"}` };
 				}
 				const done = await ensure(ctx, { boss: true, deadline });
