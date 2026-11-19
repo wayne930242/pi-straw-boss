@@ -156,10 +156,10 @@ See [The role pack](/pi-straw-boss/docs/reference/how-it-works/the-role-pack/).
 | Command | What it does |
 | --- | --- |
 | `cli.mjs status`, `cli.mjs logs` | The server's state, and its log. |
-| `cli.mjs up`, `cli.mjs stop`, `cli.mjs restart` | Start the server and the GUI when they are down; stop or restart the server. `restart` is refused while a train runs; `--force` with `--reason` restarts anyway. |
+| `cli.mjs up`, `cli.mjs stop`, `cli.mjs restart` | Start the server and the GUI when they are down; stop or restart the server. `restart`, and the upgrade or desk-switch restart of `up`, are refused while a train runs; `--force` with `--reason` restarts anyway. |
 | `cli.mjs serve` | Run the server in the foreground, as the link holder of an [unattended device](/pi-straw-boss/docs/guide/unattended-device/). |
 | `cli.mjs up --dir <folder> --label <name>` | Desk mode, for a shell that shows the page itself: needs `STRAW_BOSS_DESK=1`. See [Desk mode](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/#desk-mode-up---dir). |
 | `cli.mjs procs`, `cli.mjs procs reap --checkout <path>` | The workers the server knows; stop the processes that hold a checkout. |
-| `cli.mjs train status\|check\|gate\|clear\|end\|notices` | The [merge train](/pi-straw-boss/docs/guide/merge-train/)'s trains, slips, gates, and car notices. `status --state live,stale,ended,unreadable` keeps those rows. `check` runs from the project or any folder in it, requires the app's `integration.accept` without `--app-accept`, and checks a slip's `head:` is a known commit and the tip of its branch on origin. `end --project P --train CODE --outcome landed --commit SHA` (or `--outcome none`) `--reason TEXT --evidence TEXT` ends a stale train. |
+| `cli.mjs train status\|check\|gate\|clear\|end\|notices` | The [merge train](/pi-straw-boss/docs/guide/merge-train/)'s trains, slips, gates, and car notices. `status --state live,stale,ended,unreadable` keeps those rows. `check` runs from the project or any folder in it, requires the app's `integration.accept` without `--app-accept`, and checks a slip's `head:` is a known commit and the tip of its branch on origin. `end --project P --train CODE --outcome landed --commit SHA` (or `--outcome none`) `--reason TEXT --evidence TEXT` ends a stale train (one that still holds a deploy target is cleared of it first). |
 
 See [The sb server](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/), and [From a shell](/pi-straw-boss/docs/reference/how-it-works/from-a-shell/) for reading the net from a plain shell.

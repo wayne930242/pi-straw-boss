@@ -156,10 +156,10 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 | 指令 | 做什麼 |
 | --- | --- |
 | `cli.mjs status`、`cli.mjs logs` | server 的狀態與它的 log。 |
-| `cli.mjs up`、`cli.mjs stop`、`cli.mjs restart` | 在 server 與 GUI 沒在跑時啟動它們；停止或重新啟動 server。有火車在跑時 `restart` 會被拒絕；帶 `--reason` 的 `--force` 照樣重啟。 |
+| `cli.mjs up`、`cli.mjs stop`、`cli.mjs restart` | 在 server 與 GUI 沒在跑時啟動它們；停止或重新啟動 server。有火車在跑時，`restart` 以及 `up` 的升級或桌面開關重啟都會被拒絕；帶 `--reason` 的 `--force` 照樣重啟。 |
 | `cli.mjs serve` | 在前景執行 server，作為[無人值守裝置](/pi-straw-boss/docs/zh-tw/guide/unattended-device/)的連線持有者。 |
 | `cli.mjs up --dir <folder> --label <name>` | 桌面模式，給自己顯示頁面的 shell 用：需要 `STRAW_BOSS_DESK=1`。見[桌面模式](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#桌面模式up---dir)。 |
 | `cli.mjs procs`、`cli.mjs procs reap --checkout <path>` | server 知道的工作者；停掉持有某個 checkout 的程序。 |
-| `cli.mjs train status\|check\|gate\|clear\|end\|notices` | [合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)的火車、車廂單、關卡與車廂通知。`status --state live,stale,ended,unreadable` 只留下這些狀態的列。`check` 可以在專案或其中任何資料夾執行，沒有 `--app-accept` 時要求 app 的 `integration.accept`，並檢查車廂單的 `head:` 是認得的 commit、且是它的分支在 origin 上的頂端。`end --project P --train CODE --outcome landed --commit SHA`（或 `--outcome none`）`--reason TEXT --evidence TEXT` 結束一列過時的火車。 |
+| `cli.mjs train status\|check\|gate\|clear\|end\|notices` | [合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)的火車、車廂單、關卡與車廂通知。`status --state live,stale,ended,unreadable` 只留下這些狀態的列。`check` 可以在專案或其中任何資料夾執行，沒有 `--app-accept` 時要求 app 的 `integration.accept`，並檢查車廂單的 `head:` 是認得的 commit、且是它的分支在 origin 上的頂端。`end --project P --train CODE --outcome landed --commit SHA`（或 `--outcome none`）`--reason TEXT --evidence TEXT` 結束一列過時的火車（仍持有部署目標的，先清掉那個目標）。 |
 
 見 [sb server](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/)，以及從一般 shell 讀網的 [從 shell](/pi-straw-boss/docs/zh-tw/reference/how-it-works/from-a-shell/)。
