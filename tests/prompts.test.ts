@@ -221,9 +221,10 @@ const SEAMS7 = [...SEAMS, "Step runner"];
 const read = (file: string) => readFileSync(`${PROMPT_DIR}/${file}`, "utf8");
 const D13_WORD = acceptanceWord({ car: "<ticket>", what: "<what>", where: "<where>" });
 // train.md: ~450 words on (it is the train's system prompt, whole inside the integration markers), nothing off (the role is refused at the open); integrator.md 340 to 412.
+// 0.80.17 (sb friction A7, A8): train.md 543 to 625, measured: `load` is the skill's, never a manifest note's; git answers before a merge or land fails on a tool error; a train that merges nothing ends with a failed land.
 test("train workers: train.md and integrator.md stay within their budgets, on and off", () => {
 	const train = read("train.md");
-	assert.ok(words(strip(train, false)) > 300 && words(strip(train, false)) <= 543, `train.md has ${words(strip(train, false))} words on`);
+	assert.ok(words(strip(train, false)) > 300 && words(strip(train, false)) <= 625, `train.md has ${words(strip(train, false))} words on`);
 	assert.equal(words(strip(train, true)), 0, "train.md is empty with the train off");
 	assert.ok(words(read("integrator.md")) > 300 && words(read("integrator.md")) <= 538, `integrator.md has ${words(read("integrator.md"))} words`);
 });
