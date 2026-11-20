@@ -4,6 +4,7 @@ description: 瀏覽器檢視裡的哪個圖示、Herdr 側邊欄裡的哪個標�
 ---
 
 import NetIcon from "../../../../components/NetIcon.astro";
+import NerdGlyph from "../../../../components/NerdGlyph.astro";
 
 網裡的每個智慧體都帶著一個標記，說明它是誰。
 [瀏覽器檢視](/pi-straw-boss/docs/zh-tw/guide/browser-view/)把它畫成圖示；Herdr（側邊欄的[網檢視](/pi-straw-boss/docs/zh-tw/guide/herdr-plugins/#側邊欄的網檢視)、塔台的儀表板與分頁標籤）把它畫成 Nerd Font 字形或一段簡短文字。
@@ -20,30 +21,30 @@ import NetIcon from "../../../../components/NetIcon.astro";
 
 | 瀏覽器圖示 | 誰 | Herdr 標記 |
 | :---: | --- | --- |
-| <NetIcon id="crown" /> | **主塔台**：每台電腦一座，接收你跨工作區的指示 | 分頁上的皇冠（nf-md-crown，U+F01A5） |
-| <NetIcon id="tower" /> | **塔台**：每個工作區一座，協調該區的主智慧體 | 分頁上的無線電塔（nf-md-radio_tower，U+F043B）；列上沒有標記 |
-| <NetIcon id="main" /> | 沒有回報種類的**主智慧體** | 星號（U+F005） |
-| <NetIcon id="member" /> | **成員**：分頁裡不是主智慧體的 pi | 人形（U+F007） |
+| <NetIcon id="crown" /> | **主塔台**：每台電腦一座，接收你跨工作區的指示 | <NerdGlyph cp="F01A5" /> 分頁上的皇冠（nf-md-crown，U+F01A5） |
+| <NetIcon id="tower" /> | **塔台**：每個工作區一座，協調該區的主智慧體 | <NerdGlyph cp="F043B" /> 分頁上的無線電塔（nf-md-radio_tower，U+F043B）；列上沒有標記 |
+| <NetIcon id="main" /> | 沒有回報種類的**主智慧體** | <NerdGlyph cp="F005" /> 星號（U+F005） |
+| <NetIcon id="member" /> | **成員**：分頁裡不是主智慧體的 pi | <NerdGlyph cp="F007" /> 人形（U+F007） |
 | <NetIcon id="subagent" /> | 種類不明的**子智慧體** | `[sub] <啟動者名稱>` |
-| <NetIcon id="train" /> | **火車**：負責一列[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)的 session | 火車（U+F238）加上火車的短代碼，例如 `1106m` |
+| <NetIcon id="train" /> | **火車**：負責一列[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)的 session | <NerdGlyph cp="F238" /> 火車（U+F238）加上火車的短代碼，例如 `1106m` |
 
 ## 主智慧體的種類
 
 | 瀏覽器圖示 | 種類 | 做什麼 | Herdr 標記 |
 | :---: | --- | --- | --- |
-| <NetIcon id="coordinator" /> | `coordinator`（預設，GUI 稱協調者） | 規劃並派工 | 舵輪（nf-md-ship_wheel，U+F0833） |
-| <NetIcon id="integrator" /> | `integrator`（整合員） | 負責一個專案的合併火車 | 程式分支（U+F126） |
-| <NetIcon id="standing" /> | `standing`，瀏覽器檢視標為**值守** | 負責某個系統或機器，沒有終點 | 燈塔（nf-md-lighthouse，U+F09FF） |
+| <NetIcon id="coordinator" /> | `coordinator`（預設，GUI 稱協調者） | 規劃並派工 | <NerdGlyph cp="F0833" /> 舵輪（nf-md-ship_wheel，U+F0833） |
+| <NetIcon id="integrator" /> | `integrator`（整合員） | 負責一個專案的合併火車 | <NerdGlyph cp="F126" /> 程式分支（U+F126） |
+| <NetIcon id="standing" /> | `standing`，瀏覽器檢視標為**值守** | 負責某個系統或機器，沒有終點 | <NerdGlyph cp="F09FF" /> 燈塔（nf-md-lighthouse，U+F09FF） |
 
 ## 子智慧體的種類
 
 | 瀏覽器圖示 | 種類 | 角色名稱 | Herdr 標記 |
 | :---: | --- | --- | --- |
-| <NetIcon id="worker" /> | `worker`（工作者） | `worker` | 扳手（nf-md-wrench，U+F05B7） |
-| <NetIcon id="scout" /> | `scout`（偵察） | `scout` | 望遠鏡（nf-md-binoculars，U+F00A5） |
-| <NetIcon id="planner" /> | `planner`（規劃） | `planner` | 鉛筆加尺（nf-md-pencil_ruler，U+F1353） |
-| <NetIcon id="reviewer" /> | `reviewer`（審查） | `reviewer`、`visual-tester`、`adversarial-reviewer` | 放大鏡（nf-md-magnify，U+F0349） |
-| <NetIcon id="watchdog" /> | `watchdog`（監控者） | `watchdog` | 狗（nf-md-dog，U+F0A43） |
+| <NetIcon id="worker" /> | `worker`（工作者） | `worker` | <NerdGlyph cp="F05B7" /> 扳手（nf-md-wrench，U+F05B7） |
+| <NetIcon id="scout" /> | `scout`（偵察） | `scout` | <NerdGlyph cp="F00A5" /> 望遠鏡（nf-md-binoculars，U+F00A5） |
+| <NetIcon id="planner" /> | `planner`（規劃） | `planner` | <NerdGlyph cp="F1353" /> 鉛筆加尺（nf-md-pencil_ruler，U+F1353） |
+| <NetIcon id="reviewer" /> | `reviewer`（審查） | `reviewer`、`visual-tester`、`adversarial-reviewer` | <NerdGlyph cp="F0349" /> 放大鏡（nf-md-magnify，U+F0349） |
+| <NetIcon id="watchdog" /> | `watchdog`（監控者） | `watchdog` | <NerdGlyph cp="F0A43" /> 狗（nf-md-dog，U+F0A43） |
 
 用其他角色名稱啟動的子智慧體，顯示一般的子智慧體標記。
 
@@ -59,9 +60,21 @@ import NetIcon from "../../../../components/NetIcon.astro";
 
 在 Herdr 裡，ally run（sb server 處理隊友經 [Straw Link](/pi-straw-boss/docs/zh-tw/guide/straw-link/) 傳來的訊息）的 pane 標成 `[ally] <裝置標籤>`。
 
+## Herdr 裡火車的步驟
+
+火車在側邊欄的列上，還會顯示目前步驟的狀態（`sb_step`），後面接著步驟的類型，例如 `review` 或 `deploy`。
+
+| Herdr 標記 | 步驟狀態 |
+| :---: | --- |
+| <NerdGlyph cp="F254" /> | 等待中（沙漏，U+F254） |
+| <NerdGlyph cp="F04B" /> | 執行中（播放，U+F04B） |
+| <NerdGlyph cp="F00C" /> | 通過（打勾，U+F00C） |
+| <NerdGlyph cp="F00D" /> | 失敗（叉號，U+F00D） |
+| <NerdGlyph cp="F0E2" /> | 回滾中（復原，U+F0E2） |
+
 ## 補充
 
-- Herdr 的標記需要終端機使用 [Nerd Font](https://www.nerdfonts.com/)；沒有的話會顯示成空方框。這些字形依 Nerd Fonts 3.5.1 核對過。
+- 在終端機裡，Herdr 的標記需要 [Nerd Font](https://www.nerdfonts.com/)；沒有的話會顯示成空方框。本頁用 Nerd Fonts 3.5.1 的 Symbols Nerd Font Mono 畫出它們，這些字形也是依這個版本核對的。
 - 每個種類的瀏覽器圖示與 Herdr 字形畫的是同一樣東西（舵輪、扳手等），只有整合員例外：瀏覽器是兩支匯合的箭頭，Herdr 是程式分支。一般的位置標記在兩邊不同：主智慧體在瀏覽器是機器人頭盔、在 Herdr 是星號；成員在瀏覽器是兵卒、在 Herdr 是人形。
 - **鴉閣**檢視為各個位置畫了自己的圖示（主智慧體是戴兜帽的眷屬、成員是狼、子智慧體是蝙蝠等），火車與各種類則沿用上面的圖示。完整清單與圖示出處見 [gui/ICONS.md](https://github.com/wayne930242/pi-straw-boss/blob/main/gui/ICONS.md)。
 - Herdr 標記背後的 token，見[側邊欄網檢視](/pi-straw-boss/docs/zh-tw/reference/how-it-works/sidebar-net-view/)。

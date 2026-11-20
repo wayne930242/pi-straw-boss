@@ -1,0 +1,19 @@
+---
+// One Nerd Font glyph as Herdr draws it (the sidebar's sb_mark, the tower's dashboard, the tab labels), in the font the GUI already ships
+// (gui/fonts/SymbolsNerdFontMono.woff2, Nerd Fonts 3.5.1, credited in NOTICE.md), so a reader without a Nerd Font still sees the mark.
+// `cp` is the code point in hex, as src/herdr.ts names it (F0833 for the coordinator's ship's wheel).
+
+interface Props { cp: string }
+const { cp } = Astro.props;
+if (!/^[0-9A-Fa-f]{4,5}$/.test(cp)) throw new Error(`NerdGlyph: bad code point ${cp}`);
+---
+<span class="nerd-glyph" aria-hidden="true">{String.fromCodePoint(parseInt(cp, 16))}</span>
+
+<style is:global>
+	@font-face {
+		font-family: "Symbols Nerd Font Mono";
+		src: url("../../../gui/fonts/SymbolsNerdFontMono.woff2") format("woff2");
+		font-display: block;
+	}
+	.nerd-glyph { font-family: "Symbols Nerd Font Mono"; font-size: 1.5em; line-height: 1; vertical-align: middle; margin-inline-end: 0.35em; }
+</style>

@@ -4,6 +4,7 @@ description: Which icon in the browser view, and which mark in the Herdr sidebar
 ---
 
 import NetIcon from "../../../components/NetIcon.astro";
+import NerdGlyph from "../../../components/NerdGlyph.astro";
 
 Every agent in the net carries one mark that says who it is.
 The [browser view](/pi-straw-boss/docs/guide/browser-view/) draws it as an icon, and Herdr (the sidebar's [net view](/pi-straw-boss/docs/guide/herdr-plugins/#net-view-in-the-sidebar), the tower's dashboard, and the tab labels) draws it as a Nerd Font glyph or a short text label.
@@ -20,30 +21,30 @@ In the browser view the icon's color follows the unit's live state (working, wai
 
 | Browser icon | Who | Herdr mark |
 | :---: | --- | --- |
-| <NetIcon id="crown" /> | **Head tower**: one per computer, takes your instructions across workspaces | Crown on its tab (nf-md-crown, U+F01A5) |
-| <NetIcon id="tower" /> | **Tower**: one per workspace, coordinates its mains | Radio tower on its tab (nf-md-radio_tower, U+F043B); no row mark |
-| <NetIcon id="main" /> | **Main agent** that has reported no kind | Star (U+F005) |
-| <NetIcon id="member" /> | **Member**: a pi in a tab that is not the tab's main | Person (U+F007) |
+| <NetIcon id="crown" /> | **Head tower**: one per computer, takes your instructions across workspaces | <NerdGlyph cp="F01A5" /> Crown on its tab (nf-md-crown, U+F01A5) |
+| <NetIcon id="tower" /> | **Tower**: one per workspace, coordinates its mains | <NerdGlyph cp="F043B" /> Radio tower on its tab (nf-md-radio_tower, U+F043B); no row mark |
+| <NetIcon id="main" /> | **Main agent** that has reported no kind | <NerdGlyph cp="F005" /> Star (U+F005) |
+| <NetIcon id="member" /> | **Member**: a pi in a tab that is not the tab's main | <NerdGlyph cp="F007" /> Person (U+F007) |
 | <NetIcon id="subagent" /> | **Subagent** whose kind is unknown | `[sub] <launcher name>` |
-| <NetIcon id="train" /> | **Train**: the session running one [merge train](/pi-straw-boss/docs/guide/merge-train/) | Train (U+F238) and the train's short code, such as `1106m` |
+| <NetIcon id="train" /> | **Train**: the session running one [merge train](/pi-straw-boss/docs/guide/merge-train/) | <NerdGlyph cp="F238" /> Train (U+F238) and the train's short code, such as `1106m` |
 
 ## Kinds of main agent
 
 | Browser icon | Kind | What it does | Herdr mark |
 | :---: | --- | --- | --- |
-| <NetIcon id="coordinator" /> | `coordinator` (the default) | Plans and dispatches work | Ship's wheel (nf-md-ship_wheel, U+F0833) |
-| <NetIcon id="integrator" /> | `integrator` | Runs one project's merge trains | Code fork (U+F126) |
-| <NetIcon id="standing" /> | `standing`, labelled **on watch** in the browser view | Looks after one system or machine, with no end | Lighthouse (nf-md-lighthouse, U+F09FF) |
+| <NetIcon id="coordinator" /> | `coordinator` (the default) | Plans and dispatches work | <NerdGlyph cp="F0833" /> Ship's wheel (nf-md-ship_wheel, U+F0833) |
+| <NetIcon id="integrator" /> | `integrator` | Runs one project's merge trains | <NerdGlyph cp="F126" /> Code fork (U+F126) |
+| <NetIcon id="standing" /> | `standing`, labelled **on watch** in the browser view | Looks after one system or machine, with no end | <NerdGlyph cp="F09FF" /> Lighthouse (nf-md-lighthouse, U+F09FF) |
 
 ## Kinds of subagent
 
 | Browser icon | Kind | Role names | Herdr mark |
 | :---: | --- | --- | --- |
-| <NetIcon id="worker" /> | `worker` | `worker` | Wrench (nf-md-wrench, U+F05B7) |
-| <NetIcon id="scout" /> | `scout` | `scout` | Binoculars (nf-md-binoculars, U+F00A5) |
-| <NetIcon id="planner" /> | `planner` | `planner` | Pencil and ruler (nf-md-pencil_ruler, U+F1353) |
-| <NetIcon id="reviewer" /> | `reviewer` | `reviewer`, `visual-tester`, `adversarial-reviewer` | Magnifier (nf-md-magnify, U+F0349) |
-| <NetIcon id="watchdog" /> | `watchdog` | `watchdog` | Dog (nf-md-dog, U+F0A43) |
+| <NetIcon id="worker" /> | `worker` | `worker` | <NerdGlyph cp="F05B7" /> Wrench (nf-md-wrench, U+F05B7) |
+| <NetIcon id="scout" /> | `scout` | `scout` | <NerdGlyph cp="F00A5" /> Binoculars (nf-md-binoculars, U+F00A5) |
+| <NetIcon id="planner" /> | `planner` | `planner` | <NerdGlyph cp="F1353" /> Pencil and ruler (nf-md-pencil_ruler, U+F1353) |
+| <NetIcon id="reviewer" /> | `reviewer` | `reviewer`, `visual-tester`, `adversarial-reviewer` | <NerdGlyph cp="F0349" /> Magnifier (nf-md-magnify, U+F0349) |
+| <NetIcon id="watchdog" /> | `watchdog` | `watchdog` | <NerdGlyph cp="F0A43" /> Dog (nf-md-dog, U+F0A43) |
 
 A subagent launched with any other role name shows the plain subagent mark.
 
@@ -59,9 +60,21 @@ A subagent launched with any other role name shows the plain subagent mark.
 
 In Herdr, the pane of an ally run (a teammate's [Straw Link](/pi-straw-boss/docs/guide/straw-link/) message the sb server works on) is marked `[ally] <device label>`.
 
+## A train's step in Herdr
+
+A train's row in the sidebar also shows the state of its current step (`sb_step`), then the step's kind, such as `review` or `deploy`.
+
+| Herdr mark | Step state |
+| :---: | --- |
+| <NerdGlyph cp="F254" /> | Waiting (hourglass, U+F254) |
+| <NerdGlyph cp="F04B" /> | Running (play, U+F04B) |
+| <NerdGlyph cp="F00C" /> | Passed (check, U+F00C) |
+| <NerdGlyph cp="F00D" /> | Failed (times, U+F00D) |
+| <NerdGlyph cp="F0E2" /> | Rolling back (undo, U+F0E2) |
+
 ## Notes
 
-- The Herdr marks need a [Nerd Font](https://www.nerdfonts.com/) in your terminal; without one they show as empty boxes. The glyphs were checked against Nerd Fonts 3.5.1.
+- In your terminal the Herdr marks need a [Nerd Font](https://www.nerdfonts.com/); without one they show as empty boxes. This page draws them with Symbols Nerd Font Mono from Nerd Fonts 3.5.1, the version the glyphs were checked against.
 - Each kind's browser icon and Herdr glyph show the same object (a ship's wheel, a wrench, and so on), except the integrator: two joining arrows in the browser, a code fork in Herdr. The plain position marks differ between the two: a main is a robot helmet in the browser and a star in Herdr, a member a pawn in the browser and a person in Herdr.
 - The **Raven Keep** view draws its own icons for the positions (a hooded spawn for a main, a wolf for a member, a bat for a subagent, and so on) and keeps the icons above for the train and the kinds. The full list and the icons' credits are in [gui/ICONS.md](https://github.com/wayne930242/pi-straw-boss/blob/main/gui/ICONS.md).
 - The tokens behind the Herdr marks are in [Sidebar net view](/pi-straw-boss/docs/reference/how-it-works/sidebar-net-view/).
