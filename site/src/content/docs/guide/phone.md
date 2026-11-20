@@ -19,6 +19,16 @@ The page installs as an app (Add to Home Screen, or Chrome's Install) with the e
 Opened without a pairing (after a new token, or on iOS, where the app keeps cookies of its own), the app asks for the **pairing code** that `/boss gui remote` prints under the QR code.
 The code is 8 characters, works once within ten minutes, and is void after five wrong tries.
 
+**If Safari can't connect on an iPhone or iPad.**
+With iCloud Private Relay on, Safari may show “Client sent an HTTP request to an HTTPS server” or “Safari can't establish a secure connection” when you open the pairing link or remote URL, even on the tailnet with an `https://` URL.
+Private Relay changes how Safari connects to the tailnet's `ts.net` name, and Tailscale refuses the request before it reaches Straw Boss, so it doesn't use up the pairing token.
+
+- Open the link in Firefox or Chrome instead; neither uses Private Relay for browsing.
+- Or turn off Private Relay in Settings → [your name] → iCloud → Private Relay.
+- Or turn off **Limit IP Address Tracking** for the network you're using, in the Wi-Fi network's info or in Cellular Data Options.
+
+If the one-time pairing link has expired in the meantime, get a fresh one with `/boss gui remote`.
+
 ## On the same Wi-Fi
 
 `/boss gui lan` reaches the page from a phone on the same Wi-Fi, without Tailscale.

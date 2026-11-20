@@ -19,6 +19,16 @@ description: 透過你的 tailnet 或同一個 Wi-Fi，用手機連到瀏覽器�
 在沒有配對的情況下開啟時（換了新 token 之後，或在 iOS 上，因為 app 有自己的 cookie），app 會要求輸入 `/boss gui remote` 印在 QR code 下方的**配對碼**。
 配對碼是 8 個字元，十分鐘內只能用一次，輸錯五次就作廢。
 
+**如果 iPhone 或 iPad 上的 Safari 連不上。**
+開啟 iCloud 私密轉送時，即使裝置已連上 tailnet、網址也以 `https://` 開頭，Safari 開啟配對連結或遠端網址時，仍可能顯示「Client sent an HTTP request to an HTTPS server」或「Safari 無法建立安全連線」。
+私密轉送會改變 Safari 連到 tailnet `ts.net` 網址的方式，請求在送到 Straw Boss 之前就被 Tailscale 拒絕，因此不會用掉配對 token。
+
+- 改用 Firefox 或 Chrome 開啟連結；這兩個瀏覽器不透過私密轉送瀏覽網頁。
+- 或到「設定」→「你的姓名」→「iCloud」→「私密轉送」，關閉私密轉送。
+- 或針對目前使用的網路關閉「限制 IP 位址追蹤」：到該 Wi-Fi 網路的資訊頁面，或到「行動數據選項」。
+
+如果一次性配對連結已經過期，用 `/boss gui remote` 取得新的連結。
+
 ## 在同一個 Wi-Fi 上
 
 `/boss gui lan` 讓同一個 Wi-Fi 上的手機不用 Tailscale 就能連到頁面。
