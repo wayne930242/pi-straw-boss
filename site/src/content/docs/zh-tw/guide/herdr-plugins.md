@@ -13,7 +13,7 @@ description: Herdr 側邊欄的網檢視，以及清理智慧體留在 worktree 
 Herdr server 一啟動，這個檢視就是開的，一個按鍵可以關掉再開回來。
 它需要 Herdr 0.9.5 或更新版本與 node。
 
-<p align="center"><img src="/pi-straw-boss/docs/img/sidebar-net-view.png" width="308" alt="網檢視中的 Herdr 側邊欄：每個工作區的塔台排最前面，每個主智慧體帶星號與它的分頁標籤，每個子智慧體以樹狀分支掛在啟動它的 session 之下"></p>
+<p align="center"><img src="/pi-straw-boss/docs/img/sidebar-net-view.png" width="308" alt="網檢視中的 Herdr 側邊欄：主塔台排最前面，接著是每個工作區的塔台，每個主智慧體帶它種類的標記與分頁標籤，每列火車帶它的代碼，每個子智慧體以樹狀分支掛在啟動它的 session 之下"></p>
 
 從 GitHub 安裝，或連結一份 checkout：
 

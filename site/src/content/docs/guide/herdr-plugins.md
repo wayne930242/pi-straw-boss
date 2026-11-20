@@ -13,7 +13,7 @@ It lists the head tower's workspace first (once the head tower exists), then in 
 The view is on whenever the Herdr server starts, and one key switches it off and on again.
 It needs Herdr 0.9.5 or newer and node.
 
-<p align="center"><img src="/pi-straw-boss/docs/img/sidebar-net-view.png" width="308" alt="Herdr's sidebar in the net view: each workspace's tower first, each main agent with a star and its tab's label, and every subagent on a tree branch under the session that launched it"></p>
+<p align="center"><img src="/pi-straw-boss/docs/img/sidebar-net-view.png" width="308" alt="Herdr's sidebar in the net view: the head tower first, then each workspace's tower, each main agent with its kind's mark and its tab's label, each train with its code, and every subagent on a tree branch under the session that launched it"></p>
 
 Install it from GitHub, or link a checkout:
 
