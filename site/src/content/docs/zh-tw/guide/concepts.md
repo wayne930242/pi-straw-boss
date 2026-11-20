@@ -52,6 +52,7 @@ flowchart TD
 ## 種類
 
 主智慧體與子智慧體各有一個**種類**，在[瀏覽器檢視](/pi-straw-boss/docs/zh-tw/guide/browser-view/)與 Herdr 側邊欄裡，顯示為名稱旁的字詞與單位的圖示。
+[圖示](/pi-straw-boss/docs/zh-tw/guide/icons/)畫出每個圖示，並列出側邊欄的字形。
 
 ### 主智慧體的種類
 

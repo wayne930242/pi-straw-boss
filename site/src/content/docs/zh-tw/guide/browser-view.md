@@ -13,7 +13,7 @@ description: 整張網即時顯示在瀏覽器裡，智慧體等待的問題就�
 
 每個工作區是一個**基地**，有它的塔台、作為**小隊**的分頁，以及每個智慧體與子智慧體，這些是處於即時狀態的**單位**：工作中、等你、指揮中（自己閒著，但它的子智慧體或 monitor 在工作）、閒置、已完成或失敗。
 點一個基地可以放大，點一個單位可以把它的對話當成即時的通訊記錄來讀。
-單位的圖示與名稱旁的字詞說明它的種類；[種類表](/pi-straw-boss/docs/zh-tw/guide/concepts/#種類)列出全部。
+單位的圖示與名稱旁的字詞說明它的種類；[圖示](/pi-straw-boss/docs/zh-tw/guide/icons/)列出每個圖示與它代表什麼。
 塔台與主塔台保留自己的圖示，不知道種類的單位仍用一般的主智慧體、成員或子智慧體圖示。
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-comms.png" width="49%" alt="一個單位的通訊畫面：它的對話成為即時記錄、排給它下一輪的訊息、它的 todo 清單、它的背景 monitor，以及它的檔案資料"> <img src="/pi-straw-boss/docs/img/gui-alert.png" width="49%" alt="警示對話框，顯示單位正在等的問題，附可選的選項與可加的備註"></p>

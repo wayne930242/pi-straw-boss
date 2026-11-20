@@ -13,7 +13,7 @@ The sb server serves it, one per computer, so it does not depend on which sessio
 
 Each workspace is a **base**, with its tower, its tabs as **squads**, and every agent and subagent as a **unit** in a live state: working, waiting on you, commanding (idle while a subagent or a monitor of it works), idle, finished, or failed.
 Click a base to zoom in, and click a unit to read its chat as a live comms log.
-A unit's icon and the word beside its name tell its kind; the [kinds tables](/pi-straw-boss/docs/guide/concepts/#kinds) list them.
+A unit's icon and the word beside its name tell its kind; [Icons](/pi-straw-boss/docs/guide/icons/) shows every icon and what it stands for.
 The tower and the head tower keep their own icons, and a unit with no known kind keeps the plain main, member, or subagent icon.
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-comms.png" width="49%" alt="A unit's comms: its chat as a live log, the messages queued for its next turn, its todo list, its background monitors, and its dossier"> <img src="/pi-straw-boss/docs/img/gui-alert.png" width="49%" alt="An alert dialog with the question a unit waits on, with its options to pick and a note to add"></p>

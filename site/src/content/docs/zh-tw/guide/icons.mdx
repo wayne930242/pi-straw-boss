@@ -1,0 +1,67 @@
+---
+title: 圖示
+description: 瀏覽器檢視裡的哪個圖示、Herdr 側邊欄裡的哪個標記，代表哪個角色與哪種智慧體。
+---
+
+import NetIcon from "../../../../components/NetIcon.astro";
+
+網裡的每個智慧體都帶著一個標記，說明它是誰。
+[瀏覽器檢視](/pi-straw-boss/docs/zh-tw/guide/browser-view/)把它畫成圖示；Herdr（側邊欄的[網檢視](/pi-straw-boss/docs/zh-tw/guide/herdr-plugins/#側邊欄的網檢視)、塔台的儀表板與分頁標籤）把它畫成 Nerd Font 字形或一段簡短文字。
+
+用一條規則決定標記：
+
+- 塔台、主塔台與火車，一律顯示自己的標記（在 Herdr 裡，塔台與主塔台的標記在它們的分頁上）。
+- 已知[種類](/pi-straw-boss/docs/zh-tw/guide/concepts/#種類)的主智慧體或子智慧體，顯示它種類的標記。主智慧體用 `boss_duty` 工具自己設定種類（沒設定就是 `coordinator`），子智慧體的種類來自啟動它時用的 pi-herdr-agents 角色。
+- 其他智慧體顯示它所在位置的一般標記：主智慧體、成員或子智慧體。
+
+在瀏覽器檢視裡，圖示的顏色跟著單位的即時狀態（工作中、等你、閒置等）變化；圖案本身不隨狀態改變。
+
+## 塔台、位置與火車
+
+| 瀏覽器圖示 | 誰 | Herdr 標記 |
+| :---: | --- | --- |
+| <NetIcon id="crown" /> | **主塔台**：每台電腦一座，接收你跨工作區的指示 | 分頁上的皇冠（nf-md-crown，U+F01A5） |
+| <NetIcon id="tower" /> | **塔台**：每個工作區一座，協調該區的主智慧體 | 分頁上的無線電塔（nf-md-radio_tower，U+F043B）；列上沒有標記 |
+| <NetIcon id="main" /> | 沒有回報種類的**主智慧體** | 星號（U+F005） |
+| <NetIcon id="member" /> | **成員**：分頁裡不是主智慧體的 pi | 人形（U+F007） |
+| <NetIcon id="subagent" /> | 種類不明的**子智慧體** | `[sub] <啟動者名稱>` |
+| <NetIcon id="train" /> | **火車**：負責一列[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)的 session | 火車（U+F238）加上火車的短代碼，例如 `1106m` |
+
+## 主智慧體的種類
+
+| 瀏覽器圖示 | 種類 | 做什麼 | Herdr 標記 |
+| :---: | --- | --- | --- |
+| <NetIcon id="coordinator" /> | `coordinator`（預設，GUI 稱協調者） | 規劃並派工 | 舵輪（nf-md-ship_wheel，U+F0833） |
+| <NetIcon id="integrator" /> | `integrator`（整合員） | 負責一個專案的合併火車 | 程式分支（U+F126） |
+| <NetIcon id="standing" /> | `standing`，瀏覽器檢視標為**值守** | 負責某個系統或機器，沒有終點 | 燈塔（nf-md-lighthouse，U+F09FF） |
+
+## 子智慧體的種類
+
+| 瀏覽器圖示 | 種類 | 角色名稱 | Herdr 標記 |
+| :---: | --- | --- | --- |
+| <NetIcon id="worker" /> | `worker`（工作者） | `worker` | 扳手（nf-md-wrench，U+F05B7） |
+| <NetIcon id="scout" /> | `scout`（偵察） | `scout` | 望遠鏡（nf-md-binoculars，U+F00A5） |
+| <NetIcon id="planner" /> | `planner`（規劃） | `planner` | 鉛筆加尺（nf-md-pencil_ruler，U+F1353） |
+| <NetIcon id="reviewer" /> | `reviewer`（審查） | `reviewer`、`visual-tester`、`adversarial-reviewer` | 放大鏡（nf-md-magnify，U+F0349） |
+| <NetIcon id="watchdog" /> | `watchdog`（監控者） | `watchdog` | 狗（nf-md-dog，U+F0A43） |
+
+用其他角色名稱啟動的子智慧體，顯示一般的子智慧體標記。
+
+## 瀏覽器檢視裡的其他圖示
+
+| 圖示 | 代表 |
+| :---: | --- |
+| <NetIcon id="outpost" /> | 子工作區（前哨）：pi-herdr-agents 為子智慧體開的 worktree 工作區 |
+| <NetIcon id="outside" /> | 網外的 pi pane：還沒加入網的 pi，列出來讓它不被藏起來 |
+| <NetIcon id="user" /> | 你，出現在單位的通訊紀錄裡 |
+| <NetIcon id="comms" /> | 通訊頻道與收到的訊息 |
+| <NetIcon id="doc" /> | 單位展示的文件 |
+
+在 Herdr 裡，ally run（sb server 處理隊友經 [Straw Link](/pi-straw-boss/docs/zh-tw/guide/straw-link/) 傳來的訊息）的 pane 標成 `[ally] <裝置標籤>`。
+
+## 補充
+
+- Herdr 的標記需要終端機使用 [Nerd Font](https://www.nerdfonts.com/)；沒有的話會顯示成空方框。這些字形依 Nerd Fonts 3.5.1 核對過。
+- 每個種類的瀏覽器圖示與 Herdr 字形畫的是同一樣東西（舵輪、扳手等），只有整合員例外：瀏覽器是兩支匯合的箭頭，Herdr 是程式分支。一般的位置標記在兩邊不同：主智慧體在瀏覽器是機器人頭盔、在 Herdr 是星號；成員在瀏覽器是兵卒、在 Herdr 是人形。
+- **鴉閣**檢視為各個位置畫了自己的圖示（主智慧體是戴兜帽的眷屬、成員是狼、子智慧體是蝙蝠等），火車與各種類則沿用上面的圖示。完整清單與圖示出處見 [gui/ICONS.md](https://github.com/wayne930242/pi-straw-boss/blob/main/gui/ICONS.md)。
+- Herdr 標記背後的 token，見[側邊欄網檢視](/pi-straw-boss/docs/zh-tw/reference/how-it-works/sidebar-net-view/)。

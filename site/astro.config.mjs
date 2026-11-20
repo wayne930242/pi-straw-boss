@@ -52,7 +52,7 @@ export default defineConfig({
 				{
 					label: "Start here",
 					translations: { "zh-TW": "開始" },
-					items: ["guide/install", "guide/quick-start", "guide/concepts"],
+					items: ["guide/install", "guide/quick-start", "guide/concepts", "guide/icons"],
 				},
 				{
 					label: "Guides",

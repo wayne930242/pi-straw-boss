@@ -52,6 +52,7 @@ Mains and the tower go together: a tower that opens promotes each tab's earliest
 ## Kinds
 
 A main and a subagent each have a **kind**, shown as a word beside the name and as the unit's icon in the [browser view](/pi-straw-boss/docs/guide/browser-view/) and the Herdr sidebar.
+[Icons](/pi-straw-boss/docs/guide/icons/) draws every icon and lists the sidebar's glyphs.
 
 ### Kinds of main
 

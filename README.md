@@ -37,6 +37,8 @@ See [Install](https://wayne930242.github.io/pi-straw-boss/docs/guide/install/) f
 
 ## Quick start
 
+**You talk to the main agent of the tab you work in, and to nobody else.** It plans, dispatches subagents, talks to the tower for you, and comes back to you only for the decisions that are yours. One task, one tab: open a new Herdr tab for each new piece of work. The tower, the members, and the subagents need nothing from you; the optional head tower takes instructions that span workspaces. See [How you work with it](https://wayne930242.github.io/pi-straw-boss/docs/guide/quick-start/#how-you-work-with-it), and [Icons](https://wayne930242.github.io/pi-straw-boss/docs/guide/icons/) for what each icon stands for.
+
 1. Open pi in a Herdr tab and give it work. It joins the net by itself, and promotes itself to the tab's main agent when its work grows, which also opens the workspace's tower.
 2. `/boss status` shows each tab's main agent and the towers.
 3. `/boss tower` opens the workspace's tower and its dashboard.

@@ -1,0 +1,18 @@
+---
+// One icon of the browser view, drawn from the GUI's own sprite (gui/index.html), so the docs show the same drawing the page does.
+// The build runs in site/ (npm run build), so the sprite is one folder up. An unknown id fails the build instead of drawing nothing.
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+interface Props { id: string; label?: string }
+const { id, label } = Astro.props;
+const sprite = readFileSync(resolve(process.cwd(), "../gui/index.html"), "utf8");
+const found = new RegExp(`<symbol id="i-${id}" viewBox="([^"]+)"[^>]*>([\\s\\S]*?)</symbol>`).exec(sprite);
+if (!found) throw new Error(`NetIcon: no symbol i-${id} in gui/index.html`);
+const [, viewBox, body] = found;
+---
+<svg class="net-icon" viewBox={viewBox} fill="currentColor" role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : "true"} set:html={body} />
+
+<style>
+	.net-icon { width: 1.75em; height: 1.75em; vertical-align: middle; }
+</style>

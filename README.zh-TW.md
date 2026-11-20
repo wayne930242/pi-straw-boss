@@ -33,6 +33,8 @@ pi install npm:pi-straw-boss
 
 ## 快速開始
 
+**你只和自己所在分頁的主智慧體說話，不和其他任何人說話。** 它規劃工作、派出子智慧體、替你和塔台溝通，只有屬於你的決定才回來找你。一件工作，一個分頁：每件新工作都開一個新的 Herdr 分頁。塔台、成員與子智慧體都不需要你理會；選用的主塔台接收跨工作區的指示。見[你怎麼使用它](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/quick-start/#你怎麼使用它)，各圖示代表什麼見[圖示](https://wayne930242.github.io/pi-straw-boss/docs/zh-tw/guide/icons/)。
+
 1. 在 Herdr 分頁裡開 pi，交給它工作。它會自己加入網；工作變多時升任為分頁的主智慧體，工作區的塔台也會跟著開起來。
 2. `/boss status` 列出每個分頁的主智慧體和各座塔台。
 3. `/boss tower` 打開工作區的塔台和它的儀表板。
