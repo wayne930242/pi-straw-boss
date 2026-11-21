@@ -25,5 +25,5 @@ export function cutCards(sums: MemorySummary[]): MemorySummary[] {
 		else (over = true, cut.add(r.w));
 	}
 	if (!cut.size) return sums;
-	return sums.map((s) => (s.bossWaits.some((w) => cut.has(w)) ? { ...s, bossWaits: s.bossWaits.map((w): BossWait => (cut.has(w) ? { id: w.id, text: w.text, at: w.at, ...(w.answered ? { answered: w.answered } : {}), ...(w.parked ? { parked: true as const } : {}), ...(w.listed ? { listed: true as const } : {}), ...(w.state ? { state: w.state, ...(w.outcome ? { outcome: w.outcome } : {}), ...(w.ended ? { ended: w.ended } : {}) } : {}), cut: true } : w)) } : s));
+	return sums.map((s) => (s.bossWaits.some((w) => cut.has(w)) ? { ...s, bossWaits: s.bossWaits.map((w): BossWait => (cut.has(w) ? { id: w.id, text: w.text, at: w.at, ...(w.answered ? { answered: w.answered } : {}), ...(w.parked ? { parked: true as const } : {}), ...(w.listed ? { listed: true as const } : {}), ...(w.state ? { state: w.state, ...(w.outcome ? { outcome: w.outcome } : {}), ...(w.ended ? { ended: w.ended } : {}), ...(w.returned ? { returned: w.returned } : {}) } : {}), cut: true } : w)) } : s));
 }
