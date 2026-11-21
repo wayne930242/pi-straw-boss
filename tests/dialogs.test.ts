@@ -345,6 +345,14 @@ test("probe: a session whose pane moved (Herdr gives it a new pane id; its bridg
 	assert.equal(x.published.length, before, "none of them was asked");
 });
 
+test("monitors: a moved session's running monitor is reported on the pane intercom places it on now, and on its bridge's pane before any reading", async () => {
+	const x = hub(), path = file([]), monitors = [{ id: "1", what: "vite", status: "running" as const, lines: 1, at: 1 }];
+	x.h.receive("S", x.list([], { file: path, monitors }));
+	assert.deepEqual(x.h.monitors(), [{ pane: "wA:p1", what: "vite" }]);
+	await read(x, path, { pane: "wB:p4", unitPane: "wB:p4" });
+	assert.deepEqual(x.h.monitors(), [{ pane: "wB:p4", what: "vite" }]);
+});
+
 test("commands: the hub asks the bound bridge for a prefix and takes only its matching, well-formed list", async () => {
 	const x = hub(), path = file([]);
 	assert.equal(await x.h.commands("S", "re"), undefined, "no bridge at all");

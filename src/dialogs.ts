@@ -247,8 +247,8 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 			// What was relayed is gone with the page's state: the bridges are asked for their open dialogs again, so a gate still open is known when it closes.
 			if (tracking) sync();
 		},
-		/** The monitors that run in the sessions that relayed to this hub, with the pane each runs in (the sb server tells its controllers which units have background work). */
-		monitors: () => [...bridges.values()].flatMap((b) => (b.monitors ?? []).filter((x) => x.status === "running").map((x) => ({ pane: b.pane, what: x.what }))),
+		/** The monitors that run in the sessions that relayed to this hub, with the pane each runs in now, by intercom's placement once a net reading bound it (the sb server tells its controllers which units have background work). */
+		monitors: () => [...bridges].flatMap(([from, b]) => (b.monitors ?? []).filter((x) => x.status === "running").map((x) => ({ pane: placed.get(from) ?? b.pane, what: x.what }))),
 		/** Binds each relayed list to a unit, from this net reading's sessions and registry. */
 		relayed(sessions, refs) {
 			[bound, targets, reach, placed] = [new Map(), new Map(), new Map(), new Map()];

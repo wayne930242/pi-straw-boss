@@ -191,7 +191,7 @@ export function createControl({ auto, board, bridge, lan, overlay, link, server:
 		return reason ? (saveFailed?.(reason), no(500, "save_failed", reason)) : undefined;
 	};
 	// A link_request is open when the session file shows its call or the runtime that owns the approval relays its dialog (a call nested in codemode is not in the file).
-	/** An operate session's write goes only while pi is in the pane's foreground and holds the terminal, looked at right before it (the box's own refusal, the last of the guards): Herdr's process list, then pi's raw mode again. An editor that pi starts sits in pi's own group, beside pi, so the list cannot see it; only `raw` can, and an earlier probe may be a second old. */
+	/** An operate session's write goes only while pi is in the pane's foreground and holds the terminal, looked at right before it (the box's own refusal, the last of the guards): Herdr's process list, then pi's raw mode again. An editor that pi starts sits in pi's own group, beside pi, so the list cannot see it; only `raw` can, and an earlier probe may be up to 4 s old. */
 	const foremost = async (foreground: Flags["foreground"], pane: string, session: string, alive?: Flags["alive"]) => {
 		if (!(await foreground?.(pane).catch(() => false))) throw no(403, OPERATE_REFUSED, "Something other than pi may hold the pane's terminal (or Herdr cannot say), so nothing is sent from here.", { why: "foreground" });
 		const barred = operateRawRefusal(await answers?.probe(session, undefined, true));
