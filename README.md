@@ -21,7 +21,7 @@ pi-straw-boss lets them find each other and coordinate, without a scheduler or a
 - **The browser view**, `/boss gui`: every workspace, agent, and subagent live, and the questions they wait on, answered in place from a desktop or a paired phone. Its Zen view shows one thing at a time.
 - **Merge trains**: a project can batch its reviewed branches, so the heavy gates (lint, build, full suites) run once per train instead of once per branch.
 - **Straw Link** connects the towers of teammates' computers, and an unattended build box can take work from them.
-- **Auto mode**: tell the head tower you are going to sleep, and no agent waits on you until you are back. Agents keep working, and what needed you comes back as one list.
+- **Auto mode**: tell the head tower you are going to sleep, and no agent waits on you until you are back. Agents keep working, and what needed you goes back to the agent that asked, to ask you again when you are back.
 
 ## Install
 

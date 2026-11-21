@@ -49,8 +49,10 @@ export interface Entry {
 	/** A boss wait recorded (or open) while auto mode is on: silent until they are back (docs/specs/2026-11-09-auto-mode.md, §6). `parkedTold`: its raiser was told once. */
 	parked?: true;
 	parkedTold?: true;
-	/** The return list showed this wait (it was parked when auto mode ended): the panel was its notice, so it raises no alert again. */
+	/** The return list showed this wait (it was parked when auto mode ended, before 2026-11-21): the panel was its notice, so it raises no alert again. */
 	listed?: true;
+	/** A parked card that auto mode's end gave back and closed (docs/specs/2026-11-21-auto-return.md, AR-D3, AR-D4): to its raiser, to the tower's own event, or closed because nobody could take it (`gone`). */
+	returned?: "raiser" | "tower" | "gone";
 }
 /** What a run asks of the boss: to keep a standing instruction or a decision (`add`, `text`), or to retire one (`retire`, `target` and the entry's `text` as it was). `event` and `cites`: the boss message it came from, shown to the boss as context. */
 export interface Proposal { id: string; op: "add" | "retire"; kind: "standing" | "decision"; text: string; target?: string; run: string; event?: string; cites?: string; at: string }
@@ -423,7 +425,7 @@ export function memorySummary(m: Memory, now?: number): MemorySummary {
 	return {
 		rev: m.rev, standing: m.entries.filter((e) => e.kind === "standing").length, decisions: m.entries.filter((e) => e.kind === "decision").length, waits: m.entries.filter(shown).length,
 		// A boss wait that was resolved or declined stays until the sweep drops it (24 h): the page draws it struck through, with what became of it.
-		bossWaits: m.entries.filter((e) => e.for === "boss" && (shown(e) || (e.kind === "wait" && e.state === "resolved"))).map((e) => ({ id: e.id, text: e.text, at: e.at, ...(e.state === "answered" && e.answered ? { answered: e.answered } : {}), ...(e.state === "resolved" ? { state: "resolved" as const, ...(e.outcome ? { outcome: e.outcome } : {}), ...(e.ended ? { ended: e.ended } : {}) } : {}), ...(e.card ? { card: e.card } : {}), ...(e.press ? { press: e.press } : {}), ...(e.parked ? { parked: true as const } : {}), ...(e.listed ? { listed: true as const } : {}) })), proposals: m.proposals.map(proposalView),
+		bossWaits: m.entries.filter((e) => e.for === "boss" && (shown(e) || (e.kind === "wait" && e.state === "resolved"))).map((e) => ({ id: e.id, text: e.text, at: e.at, ...(e.state === "answered" && e.answered ? { answered: e.answered } : {}), ...(e.state === "resolved" ? { state: "resolved" as const, ...(e.outcome ? { outcome: e.outcome } : {}), ...(e.ended ? { ended: e.ended } : {}) } : {}), ...(e.card ? { card: e.card } : {}), ...(e.press ? { press: e.press } : {}), ...(e.parked ? { parked: true as const } : {}), ...(e.listed ? { listed: true as const } : {}), ...(e.returned ? { returned: e.returned } : {}) })), proposals: m.proposals.map(proposalView),
 	};
 }
 /** The memory as the panel reads it, swept as of `now`. */
@@ -435,7 +437,7 @@ export function readMemory(slot: Slot, workspace: string, now: number): { memory
 const proposalView = ({ id, op, kind, text, target, cites }: Proposal) => ({ id, op, kind, text, ...(target ? { target } : {}), ...(cites ? { cites } : {}) });
 export const memoryView = (m: Memory) => ({
 	rev: m.rev, proposals: m.proposals.map((p) => ({ ...proposalView(p), at: p.at })),
-	entries: m.entries.map((e) => ({ id: e.id, kind: e.kind, text: e.text, by: e.by, via: e.via, at: e.at, ...(e.for ? { for: e.for } : {}), ...(e.on ? { on: e.on.name } : {}), ...(e.state ? { state: e.state } : {}), ...(e.due ? { due: e.due } : {}), ...(e.answered ? { answered: e.answered } : {}), ...(e.outcome ? { outcome: e.outcome } : {}), ...(e.ended ? { ended: e.ended } : {}), ...(e.card ? { card: e.card } : {}), ...(e.press ? { press: e.press } : {}), ...(e.parked ? { parked: true as const } : {}), ...(e.listed ? { listed: true as const } : {}) })),
+	entries: m.entries.map((e) => ({ id: e.id, kind: e.kind, text: e.text, by: e.by, via: e.via, at: e.at, ...(e.for ? { for: e.for } : {}), ...(e.on ? { on: e.on.name } : {}), ...(e.state ? { state: e.state } : {}), ...(e.due ? { due: e.due } : {}), ...(e.answered ? { answered: e.answered } : {}), ...(e.outcome ? { outcome: e.outcome } : {}), ...(e.ended ? { ended: e.ended } : {}), ...(e.card ? { card: e.card } : {}), ...(e.press ? { press: e.press } : {}), ...(e.parked ? { parked: true as const } : {}), ...(e.listed ? { listed: true as const } : {}), ...(e.returned ? { returned: e.returned } : {}) })),
 });
 
 /**

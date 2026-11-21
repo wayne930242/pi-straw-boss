@@ -35,7 +35,7 @@ let shown: Net = { bases: [] };
 /** One server's life over the state folder: auto mode and its watch as main.ts wires them, with a head that keeps what it was sent (`taken`: how many of them a run took). */
 function server(over: Partial<WatchDeps> = {}) {
 	const sent: { workspace: string; text: string; key: string }[] = [], asks: Ask[] = [], unparked: number[] = [];
-	const auto = createAutoMode({ dir, now: clock.now, log: (event, facts) => void logs.push([event, facts]), unpark: () => void unparked.push(1), watch: (p, until) => watchSection(p.watch, p.since, until, asks, (x) => over.noticeState?.(x.workspace, x.key) ?? "gone") });
+	const auto = createAutoMode({ dir, now: clock.now, log: (event, facts) => void logs.push([event, facts]), returnParked: () => (unparked.push(1), { rows: [], settled: Promise.resolve([]) }), watch: (p, until) => watchSection(p.watch, p.since, until, asks, (x) => over.noticeState?.(x.workspace, x.key) ?? "gone") });
 	auto.start();
 	const watch = createAutoWatch({
 		now: clock.now, log: (event, facts) => void logs.push([event, facts]), auto, head: () => ({ workspace: "w-head" }), asks: () => asks,
@@ -122,7 +122,7 @@ test("R-F003: the runbook and the head's prompt send the tower the wait and the 
 	}
 });
 
-test("R-F004: a watch state the period file holds broken costs the broken entries, not the return list or the unpark", async () => {
+test("R-F004: a watch state the period file holds broken costs the broken entries, not the return list or the return of the parked cards", async () => {
 	server().auto.switchOn(pi);
 	// a hand edit (or a foreign write) while auto mode is on, then a restart
 	const file = join(dir, PERIOD_FILE), period = JSON.parse(readFileSync(file, "utf8")) as { since: string };
@@ -131,13 +131,13 @@ test("R-F004: a watch state the period file holds broken costs the broken entrie
 	clock.advance(3 * HOUR);
 	const off = s.auto.switchOff(pi) as { report?: string };
 	assert.ok(off.report, "the return list is written");
-	assert.equal(s.unparked.length, 1, "the parked waits are unparked");
+	assert.equal(s.unparked.length, 1, "the parked cards are returned");
 	assert.deepEqual(s.auto.report()!.watch!.quiet.map((q) => q.label), ["Beta"], "the entries that hold are kept");
 });
 
 test("R-F004: a watch section that cannot be built leaves the rest of the return list", () => {
 	const unparked: number[] = [];
-	const auto = createAutoMode({ dir, now: clock.now, log: (event, facts) => void logs.push([event, facts]), unpark: () => void unparked.push(1), watch: () => { throw new Error("broken"); } });
+	const auto = createAutoMode({ dir, now: clock.now, log: (event, facts) => void logs.push([event, facts]), returnParked: () => (unparked.push(1), { rows: [], settled: Promise.resolve([]) }), watch: () => { throw new Error("broken"); } });
 	auto.start();
 	auto.switchOn(pi);
 	const off = auto.switchOff(pi) as { report?: string };

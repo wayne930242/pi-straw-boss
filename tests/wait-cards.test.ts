@@ -278,6 +278,14 @@ test("a card the budget cuts keeps the auto mode flags: a parked or listed wait 
 	for (const w of cutOnes) assert.equal(Boolean(w.parked) !== Boolean(w.listed), true, `${w.id} keeps exactly its flag`);
 });
 
+test("AR-F006: a returned card the budget cuts keeps `returned`, so the page still says auto mode's end closed it", () => {
+	const sums: MemorySummary[] = Array.from({ length: 4 }, (_, t) => memorySummary(memWith(12, FULL, NOW + t * 100_000)));
+	sums.flatMap((s) => s.bossWaits).forEach((w) => void Object.assign(w, { state: "resolved", outcome: "returned to docs-main to ask the boss again (auto mode ended)", ended: w.at, returned: "raiser" }));
+	const cutOnes = cutCards(sums).flatMap((s) => s.bossWaits).filter((w) => w.cut);
+	assert.ok(cutOnes.length > 0);
+	for (const w of cutOnes) assert.deepEqual([w.state, w.returned], ["resolved", "raiser"], `${w.id} keeps where it went`);
+});
+
 test("the budget: whole cards newest first across towers while their text sum is at most CARD_TEXTS; the rest go as { id, text, at, cut } and a cut card has its text; measured on 12 waits x 10 towers at every cap", () => {
 	const sums: MemorySummary[] = Array.from({ length: 10 }, (_, t) => memorySummary(memWith(12, FULL, NOW + t * 100_000)));
 	const raw = JSON.stringify(sums).length;

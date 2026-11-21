@@ -53,7 +53,7 @@ import { createBackstop } from "./autoback.ts";
 import { headSeam } from "./headnet.ts";
 import { towerPanel } from "./towerpanel.ts";
 import { runsStopMs } from "./runs.ts";
-import { askRefused, doorOf } from "./waitpress.ts";
+import { askRefused, doorOf, NOTICE_WAIT_MS } from "./waitpress.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import { packageRoot, VERSION } from "./version.ts";
 
@@ -185,9 +185,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	let link: LinkService | undefined, linkFirst: Promise<void> | undefined;
 	let procs: ReturnType<typeof startProcs> | undefined; // the owner registry (procsops.ts), assigned before the first request is taken
 	// Auto mode (docs/specs/2026-11-09-auto-mode.md): the primary server alone writes `auto.json` at the state root, so every Herdr slot of this computer reads one file; the head's notices go through the tower service once it exists.
-	const auto = slot.primary ? createAutoMode({ dir: slot.stateDir, now, log: (event, facts) => log.line(event, facts), parked: () => towers?.parked() ?? [], unpark: () => towers?.unpark(), watch: reportWatch(slot, now, () => towers), tellHead: (text) => { const workspace = towers?.head.status()?.workspace; if (workspace) towers!.runs.notice(workspace, text, `auto:${now()}`); } }) : undefined;
+	const auto = slot.primary ? createAutoMode({ dir: slot.stateDir, now, log: (event, facts) => log.line(event, facts), returnParked: () => towers?.returnParked(), watch: reportWatch(slot, now, () => towers), tellHead: (text) => { const workspace = towers?.head.status()?.workspace; if (workspace) towers!.runs.notice(workspace, text, `auto:${now()}`); } }) : undefined;
 	// A secondary slot follows the primary's files and forwards its asks (autofollow.ts, AMC-F002).
-	const follower = slot.primary ? undefined : createAutoFollower({ dir: slot.stateDir, primary: { ...slot, primary: true, dir: slot.stateDir }, log: (event, facts) => log.line(event, facts), unpark: () => towers?.unpark(), tellHead: (text) => { const workspace = towers?.head.status()?.workspace; if (workspace) towers!.runs.notice(workspace, text, `auto:${now()}`); } });
+	const follower = slot.primary ? undefined : createAutoFollower({ dir: slot.stateDir, primary: { ...slot, primary: true, dir: slot.stateDir }, log: (event, facts) => log.line(event, facts), returnParked: () => towers?.returnParked(), tellHead: (text) => { const workspace = towers?.head.status()?.workspace; if (workspace) towers!.runs.notice(workspace, text, `auto:${now()}`); } });
 	// An unattended device has no boss at it (autoops.ts): the link holder says which this computer is.
 	const unattended = () => Boolean(link?.holder) && !link!.attended();
 	let dog: Watchdog | undefined, cars: Cars | undefined; // the watchdog routes (watchdogops.ts), assigned with the GUI host; the book of cars and the notice sender (carops.ts), assigned before the first request is taken
@@ -342,14 +342,14 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		const began = now();
 		timers.forEach(clearInterval);
 		stops.forEach((stop) => stop());
-		// The link holder's record goes before the server does, so the next server takes it at its first look and no relay stream is left half open.
-		forwarder?.stop();
+		forwarder?.stop(); // the link holder's record goes before the server does, so the next server takes it at its first look and no relay stream is left half open
 		operateBox?.stop(); // each operate session says `close` to its operator while the holder still runs
 		operateHost?.stop(); // and each session of this computer's own to a box
 		await Promise.race([link?.stop().catch((error: Error) => log.line("error", { code: "link", text: phrase(error.message, 300) })), sleep(LINK_STOP_MS)]);
 		// The GUI listeners and the remote entry go before the intercom ids are released.
 		await Promise.race([guiHost?.leave(phase === "stopping").catch(() => {}), sleep(GUI_LEAVE_MS)]);
-		// The tower identities leave the broker with the server's own session; their tokens and files stay for the server that comes next.
+		// The tower identities leave the broker with the server's own session; their tokens and files stay for the server that comes next. The parked cards auto mode's end sent back go out first, each within its wait (AR-F004).
+		await Promise.race([towers?.returning(), sleep(NOTICE_WAIT_MS)]);
 		// A stop on purpose waits for its runs to quit (and, off Windows, for the signal to a pi that stays): the exit does not come before it has either happened or been decided, however long the process table read takes.
 		await Promise.race([Promise.all([towers?.stop({ quitRuns: phase === "stopping" }), client?.disconnect().catch(() => {})]), sleep(LEAVE_MS + (phase === "stopping" ? runsStopMs() : 0))]);
 		const disconnected = now();

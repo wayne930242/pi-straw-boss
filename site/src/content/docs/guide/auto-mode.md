@@ -1,6 +1,6 @@
 ---
 title: Auto mode
-description: "For when you are away: no agent waits on you, and what needed you comes back as one list."
+description: "For when you are away: no agent waits on you, and what needed you goes back to the agent that asked, to ask you again."
 ---
 
 Auto mode is for when you are away, asleep or out.
@@ -12,13 +12,13 @@ It covers this computer; Straw Link teammates are not told.
 ```mermaid
 stateDiagram-v2
   [*] --> Off
-  Off --> Staged: you say you are going to sleep (boss_auto)
+  Off --> On: you say you are going to sleep (boss_auto), or the page's two taps
+  Off --> Staged: /boss auto on
   Staged --> On: you confirm
-  Off --> On: the page's two taps, or /boss auto on and confirm
   On --> Off: you say you are up, one tap, or /boss auto off
 ```
 
-- **Tell the head tower.** Say you are going to sleep (「我要睡了」), and the head tower stages a request with `boss_auto`. Confirm it with the button on the head page or Zen's strip, or with `/boss auto confirm`. Say you are up again (「我起床了」) and it ends. The server reads your words itself and refuses a question, a negation, and words used before.
+- **Tell the head tower.** Say you are going to sleep (「我要睡了」), and the head tower turns auto mode on with `boss_auto`, at once. Say you are up again (「我起床了」) and it ends. The server reads your words itself and refuses a question, a negation, and words used before.
 - **The page's switch.** The chip under the header says `Auto mode` while off and `Auto · since 23:10` while on. Starting takes two taps: the first shows what will happen, the second starts. Ending takes one tap.
 - **In pi.** `/boss auto on` asks you to confirm in the terminal, `/boss auto off` ends it, and a bare `/boss auto` shows the state.
 
@@ -26,7 +26,7 @@ stateDiagram-v2
 
 - **Waits are refused.** In every session, a new `ask_user_question`, `question`, `robot_hand`, `secret_drop`, `link_request`, or browser login is refused with a note that says you are away, and a confirm opened inside a tool call is answered as Escape. Your own `/boss` commands still confirm.
 - **Open waits are cancelled.** The ones open when it turns on are cancelled, and the agent is told why.
-- **Towers park what needs you.** A wait card a tower records for you is parked: it raises no notification, sound, or Zen cue. The session that raised it is told once.
+- **Towers park what needs you.** A wait card a tower records for you is parked: it raises no notification, sound, or Zen cue. The session that raised it is told once that it comes back when you do.
 - **Agents keep working.** `call_tower`, monitors, loops, and subagents are not refused.
 
 ## The head tower keeps watch
@@ -44,10 +44,10 @@ While auto mode is on, the sb server reads every workspace every 15 minutes and 
 
 ## When you are back
 
-When auto mode ends, the parked waits become open waits again, and one list says what happened:
+When auto mode ends, the towers do not relay the parked waits to you. Each parked card is closed and goes back to whoever raised it: a main gets it back as a message and asks you again itself, with its own question; a tower's own card goes back to that tower, which records it again if it still needs you. A card whose raiser has gone is closed with nothing left for you. One list says what happened:
 
-- **On the page**, a return panel opens on the next load: the parked waits first, as cards you can press, then what was cancelled or refused, what a tower decided on its own, and what still waits.
-- **In pi**, `/boss auto off` prints the same list. Act on a parked wait with `/boss memory done|choose|decline W<n>`.
+- **On the page**, a return panel opens on the next load: where each parked card went first, then what was cancelled or refused, what a tower decided on its own, and what still waits.
+- **In pi**, `/boss auto off` prints the same list. A card that was not parked still waits for you as usual: `/boss wait`, or `/boss memory done|choose|decline W<n>`.
 - **The watch's part.** The list ends with how many readings the server took, how many were calm, how often the head tower was woken, the messages it sent on its own, and the workspaces that showed no output for 2 hours or more. Then every finding of the night is in one place: still open at the last reading (told, and still there: a held tower, a stuck train, an unanswered forward), carried only by notices parked after crashes, in a last notice a head tower run still holds, or told to nobody (no head tower run took it; one gone by the last reading is marked so). A finding that was told and is gone is left out. `/boss auto off` prints it; the page's return panel does not show it yet.
 
 The rules are in [Auto mode](/pi-straw-boss/docs/reference/how-it-works/how-it-works/#auto-mode).

@@ -206,15 +206,17 @@ test("a wait-card press never counts, even when its quoted card holds the words"
 	assert.equal(a.view().on, true);
 });
 
-test("the head's 我要睡了 stages (and says so); only the confirm turns it on", () => {
+test("AR-D1: the head's 我要睡了 switches auto mode on at once, with no staged record; a request staged by another door is cleared", () => {
 	const a = make();
+	assert.equal(a.stage("/boss auto on", pi).ok, true);
 	const r = a.bossAuto(true, ev("e1", "我要睡了"), { session: "head", pid: 7 });
-	assert.equal(r.ok, true);
-	assert.equal((r as { pending?: { id: string } }).pending?.id, "p1");
-	assert.equal(a.view().on, false);
-	assert.equal(a.view().pending?.from.requester?.pid, 7);
-	assert.deepEqual(a.confirm("p1", { via: "gui", name: "page" }), { ok: true, changed: true });
+	assert.deepEqual(r, { ok: true, changed: true, said: "我要睡了" });
 	assert.equal(a.view().on, true);
+	assert.equal(a.view().pending, undefined, "nothing waits for a confirm");
+	assert.equal(a.view().by.via, "head");
+	assert.equal(a.view().by.said, "我要睡了");
+	assert.equal(a.view().by.requester?.pid, 7);
+	assert.deepEqual(a.bossAuto(true, ev("e2", "我要睡了"), undefined), { ok: true, changed: false, said: "我要睡了" }, "on already");
 });
 
 test("an event works once, also across a server restart; the next night's event is a new one", () => {

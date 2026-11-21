@@ -19,7 +19,7 @@ const setup = () => {
 	const auto = createAutoMode({ dir, now: () => 1_800_000_000_000, log: () => {} });
 	auto.start();
 	const told: string[] = [], unparked: number[] = [], forwarded: string[] = [];
-	const follower = createAutoFollower({ dir, primary: slot(), log: () => {}, unpark: () => void unparked.push(1), tellHead: (t) => void told.push(t), call: async (r) => (forwarded.push(r.cmd), autoReply(auto, r) ?? { ok: false, error: "x" }) });
+	const follower = createAutoFollower({ dir, primary: slot(), log: () => {}, returnParked: () => (unparked.push(1), { settled: Promise.resolve([]) }), tellHead: (t) => void told.push(t), call: async (r) => (forwarded.push(r.cmd), autoReply(auto, r) ?? { ok: false, error: "x" }) });
 	return { auto, follower, told, unparked, forwarded };
 };
 
@@ -51,7 +51,7 @@ test("an unreachable primary is said, never answered as ok", async () => {
 	assert.deepEqual({ ok: out?.ok, error: out?.error }, { ok: false, error: PRIMARY_UNREACHABLE });
 });
 
-test("the towers of a secondary slot follow the switch: the brief reads on, the end unparks and tells the head once", async () => {
+test("the towers of a secondary slot follow the switch: the brief reads on, the end returns the parked cards and tells the head once", async () => {
 	const { auto, follower, told, unparked } = setup();
 	const changes: boolean[] = [];
 	follower.onSwitch((c) => void changes.push(c.to.on));

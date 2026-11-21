@@ -3,7 +3,7 @@ import { h } from "./dom.ts";
 import { m } from "./sentences.ts";
 import { type Answer, post } from "./post.ts";
 
-// The head tower's request to start auto mode, as the page shows it (docs/specs/2026-11-09-auto-mode.md, sections 2 and 7; D9): while the net snapshot carries a pending record (`net.auto.pending`), the head page and Zen's strip show one
+// A staged request to start auto mode (`/boss auto on` or any `auto-on` over the socket; the head's `boss_auto` switches at once since docs/specs/2026-11-21-auto-return.md, AR-D1), as the page shows it (docs/specs/2026-11-09-auto-mode.md, sections 2 and 7; D9): while the net snapshot carries a pending record (`net.auto.pending`), the head page and Zen's strip show one
 // button, 「確認進入自動模式」, that confirms it by its id. The id and the words are the server's; the page decides nothing: a tap on a record that lapsed or was replaced gets the server's refusal. Nothing here switches auto mode on by itself.
 // Phase 2 (task 5b): the header chip that holds the switch (`mountAutoSwitch`). Off, one tap arms it and says what starting does (the sentence is the confirm); the second tap posts `on`. On, one tap posts `off`, and the page is told so the
 // return panel (autoback.ts) can open. The state is the snapshot's: the chip draws what `net.auto` says, and the answer of a post only moves it a moment earlier.

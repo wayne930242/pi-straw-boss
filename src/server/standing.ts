@@ -57,8 +57,10 @@ export interface StandingTarget {
 	/** Whether the pane is proven to be the tower's own seat (typegate.ts `seatGate`, `proofGate`) for the pane as Herdr lists it in `pane` (the look's own reading); nothing is typed before. Absent: proven (a target that needs no proof). */
 	seated?(pane: Pane | undefined): boolean;
 	status(): ServiceStatus | undefined;
-	/** How many wait cards wait for the boss here (the head: its own and every tower's): the stand-in is `blocked` while there are any. */
+	/** How many wait cards wait for the boss here (a tower's own; the head's own): the stand-in is `blocked` while there are any. */
 	cards?(): number;
+	/** The head only: how many cards wait at the other towers. Named on the stand-in, never `blocked` (docs/specs/2026-11-21-auto-return.md, AR-D2). */
+	elsewhere?(): number;
 	/** Whether a run starts in the pane within `ms`: a prompt typed now would only have to start, poll, and leave before the run's pi can. */
 	runWithin?(ms: number): boolean;
 	/** The service is held because the pane runs a program of the boss's (runs.ts), and the call that starts it again. */
@@ -130,18 +132,18 @@ interface Mine {
 /** What the stand-in is reported as: its Herdr state and the short message. */
 export interface Standin { state: "idle" | "blocked"; message: string }
 const STANDIN_WORDS = {
-	en: { standing: "standing by", held: "held", queued: (n: number) => `${n} queued`, cards: (n: number) => (n === 1 ? "1 card waits" : `${n} cards wait`) },
-	"zh-TW": { standing: "待命中", held: "已擱置", queued: (n: number) => `${n} 則待處理`, cards: (n: number) => `${n} 張卡片等你` },
+	en: { standing: "standing by", held: "held", queued: (n: number) => `${n} queued`, cards: (n: number) => (n === 1 ? "1 card waits" : `${n} cards wait`), elsewhere: (n: number) => (n === 1 ? "1 card waits at another tower" : `${n} cards wait at other towers`) },
+	"zh-TW": { standing: "待命中", held: "已擱置", queued: (n: number) => `${n} 則待處理`, cards: (n: number) => `${n} 張卡片等你`, elsewhere: (n: number) => `其他塔台有 ${n} 張卡片等你` },
 };
 /**
- * The stand-in (docs/how-it-works.md, The standing pane): `blocked` while wait cards wait for the boss (`cards`, the tower's own; the head's own and every tower's), so Herdr's Agents list and its rollups show the tower as
+ * The stand-in (docs/how-it-works.md, The standing pane): `blocked` while wait cards wait for the boss (`cards`: a tower's own, and the head's own at the head), so Herdr's Agents list and its rollups show the tower as
  * waiting on him; `idle` with none, and always on an unattended device, where nobody answers. Auto mode does not change it: the cards still wait, parked, and the page shows them. The message names the cards first, then
- * `held` or the queue: `2 cards wait · 1 queued`, `standing by`, in sb's language.
+ * at the head the cards of the other towers (`elsewhere`, a note that never blocks: a tower's wait is not the head's, AR-D2), then `held` or the queue: `2 cards wait · 1 queued`, `standing by`, in sb's language.
  */
-export function standinReport(status: Pick<ServiceStatus, "state" | "queued"> | undefined, cards = 0, locale: Locale = "en", attended = true): Standin {
+export function standinReport(status: Pick<ServiceStatus, "state" | "queued"> | undefined, cards = 0, locale: Locale = "en", attended = true, elsewhere = 0): Standin {
 	const w = STANDIN_WORDS[locale], tail = status?.state === "held" ? w.held : status && status.queued > 0 ? w.queued(status.queued) : undefined;
-	const parts = [...(cards > 0 ? [w.cards(cards)] : []), ...(tail ? [tail] : [])];
-	return { state: cards > 0 && attended ? "blocked" : "idle", message: parts.length ? parts.join(" · ") : w.standing };
+	const parts = [...(cards > 0 ? [w.cards(cards)] : []), ...(elsewhere > 0 ? [w.elsewhere(elsewhere)] : []), ...(tail ? [tail] : [])];
+	return { state: cards > 0 && attended ? "blocked" : "idle", message: parts.length ? (cards > 0 || tail || !elsewhere ? parts.join(" · ") : `${w.standing} · ${parts.join(" · ")}`) : w.standing };
 }
 /** The stand-in's message alone, in English with no card: `standing by`, `3 queued`, or `held`. */
 export const standinMessage = (status: Pick<ServiceStatus, "state" | "queued"> | undefined): string => standinReport(status).message;
@@ -296,7 +298,7 @@ export function createStanding(o: StandingOptions) {
 				case "prompt": {
 					m.parked = false;
 					if (isStandin(pane)) m.misses = 0;
-					const next = standinReport(status, target.cards?.() ?? 0, o.locale?.() ?? "en", o.attended?.() ?? true);
+					const next = standinReport(status, target.cards?.() ?? 0, o.locale?.() ?? "en", o.attended?.() ?? true, target.elsewhere?.() ?? 0);
 					// Reported again when the message or the state changed (a card opened or was answered), and every `refreshMs`.
 					if (!isStandin(pane) || !m.reported || m.reported.message !== next.message || m.reported.state !== next.state || now() - m.reported.at >= t.refreshMs) await report(m, pane, next);
 					return;

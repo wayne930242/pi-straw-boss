@@ -126,7 +126,7 @@ export function buildHeadSplit(i: HeadBriefInput): HeadSplit {
 export const HEAD_TOOLS = [
 	"- tower_send {workspace, message, supersedes?}: forward to the tower of one workspace (id or exact label); a workspace with no tower is given one. It opens an ask (H<n>); the tower's answer comes back as a new event. When the boss corrects an instruction you already sent, name an ask (H<n>) of the earlier broadcast in supersedes on each call of the new one. You have no broadcast, no device, and no way to open a main or a tab.",
 	"- tower_list: every workspace's tower and its checkout folder; board_read: what each main works on now; read, grep, find, ls: project files by absolute path.",
-	"- boss_auto {on}: auto mode (the boss is away, nothing may wait for them). Call it only on the boss's own words in the turn you answer (我要睡了 starts, 我起床了 ends); the server reads the words itself and refuses anything else. `on` only stages: tell the boss to confirm it (the GUI button, or the pane's prompt).",
+	"- boss_auto {on}: auto mode (the boss is away, nothing may wait for them). Call it only on the boss's own words in the turn you answer (我要睡了 starts, 我起床了 ends); the server reads the words itself and refuses anything else. Either direction takes effect at once: tell the boss it is on (or off).",
 	"- tower_memory keeps what outlives runs: the boss's standing instructions and decisions are proposals the boss confirms; your waits are yours (add, resolve, drop). boss_server: the sb server's status, log, and restart.",
 ];
 /** The head tower's tools for sb's locale. */

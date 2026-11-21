@@ -7,7 +7,8 @@ import { type BoxAsk, buildReport, endEvent, type ParkedRow, type Report, report
 import { REPORT_FILE, AUTO_FILE, type AutoState, type By, isOwn, matchBoss, OWN_FILE, type Own, type Pending, readAuto, readOwn, seal } from "../autostate.ts";
 
 // The server's auto mode (docs/specs/2026-11-09-auto-mode.md, §1 and §2). The server alone writes `auto.json` (what every session reads) and `auto-own.json` (what it wrote last, a pending `on`, and the words it has used), the
-// own record first. A write that is not its own is put back as a new rev. Turning it on is never one step outside the GUI's two taps: every `on` request stages a pending record that the boss confirms (D9).
+// own record first. A write that is not its own is put back as a new rev. Over the control socket every `on` request stages a pending record that the boss confirms (D9); the GUI's two taps and the head's `boss_auto` on the boss's own
+// words switch at once (docs/specs/2026-11-21-auto-return.md, AR-D1).
 
 /** How long a staged `on` waits for the boss's confirm (D9). */
 export const PENDING_MS = 10 * 60_000;
@@ -24,9 +25,11 @@ export interface AutoDeps {
 	id?(): string;
 	/** One event to the head tower (a staged request that expired; the end of auto mode). */
 	tellHead?(text: string): void;
-	/** The parked boss waits now open across the towers and the head (towers.ts), for the return list; and the end of the period, which makes them ordinary again. */
-	parked?(): ParkedRow[];
-	unpark?(): void;
+	/**
+	 * The end of the period for the towers and the head (towers.ts `returnParked`): every parked card is closed and goes back to whoever raised it (docs/specs/2026-11-21-auto-return.md, AR-D3, AR-D4). `rows` go on the return list
+	 * at once; `settled` gives them again once each raiser's message is known, and the list is written again when one changed.
+	 */
+	returnParked?(): { rows: ParkedRow[]; settled: Promise<ParkedRow[]> } | undefined;
 	/** The asks of the boxes this computer controls that were left waiting (D6). */
 	boxes?(): BoxAsk[];
 	/** The watch's section of the return list (autowatch.ts `watchSection`), from the period that ends. */
@@ -184,14 +187,23 @@ export function createAutoMode(d: AutoDeps) {
 		try {
 			const p = period ?? { since: change.from.since ?? iso(), notes: [], foreign: [], decided: [] };
 			const until = iso();
-			// The watch's section is the watch's alone: one that cannot be built costs that section, never the list or the unpark.
+			// The watch's section is the watch's alone: one that cannot be built costs that section, never the list or the cards' return.
 			let watch: WatchReport | undefined;
 			try { watch = d.watch?.(p, until); } catch (error) { d.log("auto-watch-report", { text: (error as Error).message }); }
-			last = buildReport(p, change.from.by, by, until, d.parked?.() ?? [], d.boxes?.() ?? [], watch);
-			write(REPORT_FILE, last);
-			text = reportText(last);
-			d.unpark?.();
-			d.tellHead?.(endEvent(last));
+			// The parked cards are closed and sent back first, so the list names where each went and no press lands on one after the boss is back (AR-D3).
+			let back: { rows: ParkedRow[]; settled: Promise<ParkedRow[]> } | undefined;
+			try { back = d.returnParked?.(); } catch (error) { d.log("auto-return", { text: (error as Error).message }); }
+			const report = buildReport(p, change.from.by, by, until, back?.rows ?? [], d.boxes?.() ?? [], watch);
+			last = report;
+			write(REPORT_FILE, report);
+			text = reportText(report);
+			d.tellHead?.(endEvent(report));
+			// A raiser that could not be told is known only after its message (AR-D4): the list of this period is written again with it, unless a newer period ended meanwhile.
+			void back?.settled.then((rows) => {
+				if (last !== report || rows.every((r, i) => r.returned === report.parked[i]?.returned)) return;
+				last = { ...report, parked: rows };
+				write(REPORT_FILE, last);
+			}).catch((error: Error) => d.log("auto-return", { text: error.message }));
 		} catch (error) {
 			d.log("auto-report", { text: (error as Error).message });
 		}
@@ -204,7 +216,10 @@ export function createAutoMode(d: AutoDeps) {
 		if (!p || typeof id !== "string" || p.id !== id || d.now() >= p.expires) return { ok: false, error: STALE };
 		return switchOn({ via: by.via, name: phrase(`${by.name} (asked by ${p.from.via})`, 80), said: p.said, ...(by.requester ? { requester: by.requester } : {}) });
 	}
-	/** The head's `boss_auto` (AM-F001): it acts on the boss's own words in the turn the run's extension reports, never a press, read here against the fixed lists; each event or typed line works once (AM2-F007). */
+	/**
+	 * The head's `boss_auto` (AM-F001): it acts on the boss's own words in the turn the run's extension reports, never a press, read here against the fixed lists; each event or typed line works once (AM2-F007). Both directions
+	 * switch at once (AR-D1, boss 2026-11-21: 「on/off 都直接切」): the check of the words is the guard, and a request another door staged is cleared by the switch.
+	 */
 	function bossAuto(on: boolean, words: Words, requester: By["requester"]): Outcome {
 		const source = words.event && !words.event.press ? { key: `event:${words.event.id}`, text: words.event.text, set: "events" as const } : words.typed ? { key: `typed:${words.typed.run}:${words.typed.seq}`, text: words.typed.text, set: "typed" as const } : undefined;
 		if (!source) return { ok: false, error: NOT_THE_BOSS };
@@ -214,13 +229,8 @@ export function createAutoMode(d: AutoDeps) {
 		const used = { ...own.used, [source.set]: [...own.used[source.set], source.key].slice(-USED_MAX) };
 		commit({ ...own, used }, false);
 		const by: By = { via: "head", name: "head tower", said, ...(requester ? { requester } : {}) };
-		if (!on) {
-			const off = switchOff(by);
-			return off.ok ? { ...off, said } : off;
-		}
-		if (own.state.on) return { ok: true, changed: false, said };
-		const staged = stage(said, by);
-		return staged.ok ? { ...staged, said, typed: Boolean(words.typed) } : staged;
+		const done = on ? switchOn(by) : switchOff(by);
+		return done.ok ? { ...done, said } : done;
 	}
 	/** Whether a session's reading is the server's own write; with it the session acts once per rev (§1). */
 	const check = (rev: unknown, hash: unknown) => rev === own.rev && hash === own.hash;

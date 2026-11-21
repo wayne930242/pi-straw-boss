@@ -420,8 +420,28 @@ test("nothing parked says so; check() reads the report once, opens it when this 
 	assert.equal(old.host.hidden, true, "a report weeks old is not news");
 });
 
+test("AR-D3: a list written since 2026-11-21 names where each parked card went, as plain lines: back to its raiser, back to the tower, or closed with the raiser gone; no card is drawn to press", async () => {
+	const { host, back } = panelWith(towerNet([w("W1", { card: cardOf("action") })]));
+	await back.open({ ...REPORT, parked: [ROW("W1", { from: "ops-main", returned: "raiser" }), ROW("W2", { returned: "tower" }), ROW("W9", { from: "api-fix", returned: "gone" })] });
+	assert.equal(host.querySelectorAll(".auto-back-card").length, 0, "nothing to press: the raisers ask again themselves");
+	assert.equal(host.querySelector(".auto-back-returned h3")!.textContent, m.back_returned({ n: "3" }));
+	const lines = host.querySelectorAll(".auto-back-returned li").map((li) => li.textContent);
+	assert.deepEqual(lines, [
+		`W1 · Harbor: question W1 — ${m.back_to_raiser({ name: "ops-main" })}`,
+		`W2 · Harbor: question W2 — ${m.back_to_tower()}`,
+		`W9 · Harbor: question W9 — ${m.back_gone({ name: "api-fix" })}`,
+	]);
+	assert.equal(host.querySelector(".auto-back-settled"), null);
+});
+
+test("AR-D3: a card that auto mode's end returned reads as returned, not as confirmed by the tower", () => {
+	const model = cardModel({ wait: { id: "W1", text: "x", at: WAIT_AT, state: "resolved", outcome: "returned to ops-main to ask the boss again (auto mode ended)", ended: WAIT_AT, returned: "raiser", card: cardOf("action") } as never, phase: "ended", remote: false, open: false, now: Date.now() });
+	assert.equal(model.line, m.wc_returned({ outcome: "returned to ops-main to ask the boss again (auto mode ended)" }));
+	assert.equal(m.wc_returned({ outcome: "x" }, { locale: "zh-TW" }), "自動模式結束時：x");
+});
+
 test("the panel's words exist in both languages", () => {
-	for (const id of ["back_title", "back_parked", "back_none", "back_settled", "back_rest", "back_close", "back_decided", "back_still", "back_boxes", "back_foreign"] as const) {
+	for (const id of ["back_title", "back_parked", "back_none", "back_settled", "back_rest", "back_close", "back_decided", "back_still", "back_boxes", "back_foreign", "back_returned", "back_to_raiser", "back_to_tower", "back_gone"] as const) {
 		for (const locale of ["en", "zh-TW"] as const) assert.ok((m[id] as (i: object, o: object) => string)({ n: "2", from: "23:10", until: "07:40" }, { locale }).length > 0, `${id} ${locale}`);
 	}
 });

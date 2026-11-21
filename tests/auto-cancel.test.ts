@@ -83,11 +83,15 @@ test("a notice while a turn runs is a steer; the end of auto mode tells every se
 	auto.switchOff(pi);
 	await until(() => sentTexts(a).length === 2, "the off message");
 	assert.match(sentTexts(a)[1]!.content, new RegExp(offNotice(undefined, "main").replace(/\d\d:\d\d|\?/, ".+").slice(0, 40)));
-	// 2026-11-16 (docs/specs/2026-11-16-wait-cards-flow.md, Rules): a parked wait is asked again only through the card sb draws, never in the agent's own words.
-	assert.ok(sentTexts(a)[1]!.content.endsWith("their answers reach you as wait_card messages. Never re-ask a parked wait with ask_user_question. When the boss is with you and the answer cannot wait, call boss_wait_ask (its id, or none for every card you raised): sb shows the card and his answer resolves it everywhere."), sentTexts(a)[1]!.content);
-	assert.doesNotMatch(sentTexts(a)[1]!.content, /do not ask again what you parked/);
-	// a session that has no such tool (a subagent, a train) is told only not to re-ask
-	for (const kind of ["subagent", "train"] as const) assert.ok(offNotice(undefined, kind).endsWith("wait_card messages. Never re-ask a parked wait with ask_user_question.") && !offNotice(undefined, kind).includes("boss_wait_ask"), kind);
+	// AR-D3 (docs/specs/2026-11-21-auto-return.md, boss 2026-11-21): a parked wait comes back to its raiser as a wait_returned message, and the raiser asks the boss again itself; this inverts the 2026-11-16 rule.
+	const said = sentTexts(a)[1]!.content;
+	assert.match(said, /A wait parked for them is not kept for them: it comes back to you as a wait_returned message, and its card is closed\. Ask them again yourself then, with ask_user_question\./);
+	assert.match(said, /A card that was not parked still waits for them: when the boss is with you and the answer cannot wait, call boss_wait_ask \(its id, or none for every card you raised\): sb shows the card and his answer resolves it everywhere\.$/);
+	assert.doesNotMatch(said, /Never re-ask a parked wait|Parked waits go to them in one list/);
+	assert.match(offNotice(undefined, "train"), /Ask again with call_tower then\.$/);
+	assert.match(offNotice(undefined, "subagent"), /Ask again then as your brief allows \(caller_ping your dispatcher\)\.$/);
+	for (const kind of ["subagent", "train"] as const) assert.ok(!offNotice(undefined, kind).includes("boss_wait_ask"), kind);
+	assert.match(offNotice(undefined, "run"), /it comes back to you as an event, and its card is closed\. Record it again with tower_memory if it still needs them\./);
 	assert.ok(offNotice(undefined, "run").includes("call boss_wait_ask"), "a tower run has the tool");
 	await settle();
 	assert.equal(sentTexts(a).length, 2);

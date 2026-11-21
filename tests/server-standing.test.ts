@@ -159,6 +159,11 @@ test("standinReport: blocked while cards wait for the boss and the device is att
 	assert.deepEqual(standinReport(base, 0, "zh-TW"), { state: "idle", message: "待命中" });
 	assert.deepEqual(standinReport({ ...base, queued: 1 }, 2, "zh-TW"), { state: "blocked", message: "2 張卡片等你 · 1 則待處理" });
 	assert.deepEqual(standinReport({ ...base, state: "held" }, 0, "zh-TW"), { state: "idle", message: "已擱置" });
+	// AR-D2: the head's pane counts only its own cards as blocking; other towers' cards are a note, never a wait of the head
+	assert.deepEqual(standinReport(base, 0, "en", true, 3), { state: "idle", message: "standing by · 3 cards wait at other towers" });
+	assert.deepEqual(standinReport(base, 0, "en", true, 1), { state: "idle", message: "standing by · 1 card waits at another tower" });
+	assert.deepEqual(standinReport({ ...base, queued: 2 }, 1, "en", true, 2), { state: "blocked", message: "1 card waits · 2 cards wait at other towers · 2 queued" });
+	assert.deepEqual(standinReport({ ...base, state: "held" }, 0, "zh-TW", true, 2), { state: "idle", message: "其他塔台有 2 張卡片等你 · 已擱置" });
 });
 
 const card = (id: string, extra: Partial<Entry> = {}): Entry => ({ id, kind: "wait", text: `do ${id}`, by: "run", via: "run", at: new Date().toISOString(), run: "r1", for: "boss", state: "open", card: { type: "action", lang: "en", happened: "h", do: `do ${id}` }, ...extra });

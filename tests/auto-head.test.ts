@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { AUTO_FILE } from "../src/autostate.ts";
+import { HEAD_TOOLS } from "../src/server/headbrief.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
 import { callControl } from "../src/server/socket.ts";
 import { type Running, until } from "./server-world.ts";
@@ -89,7 +90,7 @@ test("a run token is refused every auto command; there is no tool that switches 
 	assert.equal(r.ok, false, "boss_status is not a head tool either");
 });
 
-test("boss_auto is refused for 「狀況如何？」, and acts on 「我要睡了」 by staging only; the confirm turns it on", async () => {
+test("AR-D1: boss_auto is refused for 「狀況如何？」, and 「我要睡了」 switches auto mode on at once, with no confirm", async () => {
 	const { s, ws } = await setup();
 	const first = await talk(s, ws, 1, "狀況如何？");
 	const refused = await bossAuto(s, first.token, true, { turn: first.ids[0] });
@@ -99,17 +100,34 @@ test("boss_auto is refused for 「狀況如何？」, and acts on 「我要睡�
 	assert.equal(second.ok, true);
 	const next = (await ask(s, { cmd: "run-poll", token: first.token, idle: true })).event as { id: string };
 	await ask(s, { cmd: "run-taken", token: first.token, id: next.id });
-	const staged = await bossAuto(s, first.token, true, { turn: next.id });
-	assert.equal(staged.ok, true, JSON.stringify(staged));
-	assert.match(String(staged.text), /pending: not on until the boss confirms \(10 min\)/);
-	assert.equal((await state(s)).on, false);
+	const on = await bossAuto(s, first.token, true, { turn: next.id });
+	assert.equal(on.ok, true, JSON.stringify(on));
+	assert.equal(String(on.text), "Auto mode is on.");
+	assert.equal((await state(s)).on, true);
+	assert.equal((await state(s)).pending, undefined, "no staged record");
 	const again = await bossAuto(s, first.token, true, { turn: next.id });
 	assert.equal(again.ok, false, "an event works once");
-	const pending = (await state(s)).pending!;
-	assert.equal(pending.said, "我要睡了，今晚麻煩你盯著");
-	assert.equal((await ask(s, { cmd: "auto-confirm", id: pending.id })).ok, true);
 	assert.equal(file().on, true);
+	assert.equal(file().by.via, "head");
 	assert.equal(file().by.said, "我要睡了，今晚麻煩你盯著");
+});
+
+test("AR-F001: the head brief's line for boss_auto says both directions switch at once, as the tool and the role say", () => {
+	const line = HEAD_TOOLS.find((l) => l.startsWith("- boss_auto"))!;
+	assert.doesNotMatch(line, /stages|confirm/);
+	assert.match(line, /Either direction takes effect at once/);
+});
+
+test("AR-F005: on an unattended device boss_auto is refused both ways, as the socket and the GUI refuse it", async () => {
+	world.unattended = () => true;
+	const { s, ws } = await setup();
+	const { token, ids } = await talk(s, ws, 1, "我要睡了，今晚麻煩你盯著");
+	for (const on of [true, false]) {
+		const r = await bossAuto(s, token, on, { turn: ids[0] });
+		assert.equal(r.ok, false);
+		assert.match(String(r.error), /an unattended device has no boss at it/);
+	}
+	assert.equal((await state(s)).on, false);
 });
 
 test("a board line or a press in a boss-started turn never counts, nor does a turn id the run did not take", async () => {
