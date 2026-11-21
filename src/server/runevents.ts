@@ -57,8 +57,8 @@ export function runEvents(d: RunEventsDeps) {
 			const event = taken().find((e) => e.id === id), fields = event && fieldsOf(event.text);
 			return event && fields?.kind === "call_tower" && fields.why === "shared" ? { id: event.id, from: event.from!.id, text: event.text, at: Date.parse(event.at) } : undefined;
 		},
-		/** The waits-on `call_tower` this run took, by its id: `tower_send` `waitsOn.event` takes device, owner, what, and the raiser from it, so the model retypes nothing. */
-		waitEvent: (id: string): WaitEvent | undefined => ((e) => (e ? waitOf(e) : undefined))(taken().find((e) => e.id === id)),
+		/** The waits-on calls this run took: `tower_send` names one by id and takes device, owner, what, and the raiser from it. */
+		waitEvents: (): WaitEvent[] => taken().map(waitOf).filter((e) => e !== undefined),
 		/** A `tower_reply` to a raiser answers its waits-on events in this run: the guard lets the run end. */
 		replied: (to: string) => taken().flatMap((e) => (e.from?.id === to && waitOf(e) ? [e.id] : [])).forEach((id) => markHandled(d.who.id, id)),
 	};

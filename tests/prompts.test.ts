@@ -290,14 +290,13 @@ test("train workers: planning, apps-config, main and the tower prompts say the n
 		for (const term of ["`role: \"train\"`", "manifest", "`train:` block", "`blocked`"]) assert.ok(text.includes(term), `${file} names ${term}`);
 	}
 	// A car slip reaches the integrator only as a stamped forward, and since 0.74.0 (todo #151) by one door: boss_open_main with role integrator, in the run that took the slip; the code finds or opens the project's one integrator and forwards.
-	// A run is shown no event id, so the prompt names none (`forward: <event id>` could not be followed).
+	// The door selects the integrator; the slip's first line supplies the event id for an explicit forward.
 	const run = read("tower-run.md");
 	assert.ok(run.includes("Send it there with `boss_open_main` and `role: \"integrator\"`: the slip as it came as the request, and its sender, in the run that took it"), "tower-run.md sends a slip through the integrator's door");
 	assert.ok(run.includes("opens it as your own main (kind integrator, outside the two opened mains and the sender's one; a project never has two)"), "the integrator is the tower's own main, and a project has one");
-	assert.ok(run.includes("nothing you send without that stamp reaches one as a slip") && !/`forward: <event id>`|boss_duty/.test(run), "tower-run.md leaves the kind to the code and names no event id of its own");
-	// A project that already runs integrators of its own (0.73: the boss's, one per app) keeps the forward of 0.73: the door opens nothing and gives the event id, and the run forwards with tower_reply to the one that runs the app's trains.
-	assert.ok(run.includes("Where the project already runs integrators of its own (the boss's, one per app, such as `integ FE2` and `integ v3`), the door opens nothing and answers with their names and the slip's event id"), "tower-run.md keeps the boss's own integrators");
-	assert.ok(run.includes("forward the slip to the one that runs that app's trains with `tower_reply` (`to`: that integrator, `message`: the slip as it came, `forward`: that event id), in the same run") && run.includes("open no main for it. `tower_send` cannot reach an integrator"), "tower-run.md forwards with tower_reply and the door's event id, never with tower_send");
+	assert.ok(run.includes("nothing you send without that stamp reaches one as a slip") && !/`forward: <event id>`|boss_duty/.test(run), "tower-run.md leaves the stamp to the code");
+	assert.ok(run.includes("Where the project already runs integrators of its own") && run.includes("the door names them but opens nothing"), "tower-run.md keeps the boss's own integrators");
+	assert.ok(run.includes("use `tower_reply` in the same run (`to`: that app's integrator, `message`: the slip as it came, `forward`: the first line's `[event id: <id>]` value)") && run.includes("open no main. `tower_send` cannot reach an integrator"), "tower-run.md forwards with tower_reply and the model-visible queue id, never with tower_send");
 	// An ally run has the same door for a slip of a main it opened, and no other way to an integrator.
 	const ally = read("ally-run.md");
 	assert.ok(ally.includes("A car slip from a main you opened") && ally.includes("`role: \"integrator\"`") && ally.includes("A request to open an integrator gets none"), "ally-run.md sends a slip of its main through the door and opens no integrator otherwise");
@@ -352,7 +351,7 @@ test("TB-F006, F008, F009: the prompts give the code's form, the todo order, abs
 test("box-mac waits: main.md blocks with waitsOn and names standing, tower-run.md forwards waitsOn and binds by default, ally-run.md escalates, duty-standing.md watches with the CLI", () => {
 	const main = read("main.md"), run = read("tower-run.md"), ally = read("ally-run.md"), standing = read("duty-standing.md"), tower = read("tower.md");
 	assert.ok(main.includes("`waitsOn` names a teammate device") && main.includes("watching, not finishing tasks, is `standing`"), "main.md");
-	assert.ok(run.includes("A device's answer never enters a tower run") && run.includes("leaving `reply` out binds the one main") && run.includes("Use `reply: false` only for a pure notice") && run.includes("`waitsOn: {event: <its event id>}`"), "tower-run.md");
+	assert.ok(run.includes("A device's answer never enters a tower run") && run.includes("leaving `reply` out binds the one main") && run.includes("Use `reply: false` only for a pure notice") && run.includes("pass the first line's `[event id: <id>]` value to `tower_send` as `waitsOn.event`"), "tower-run.md");
 	assert.ok(!run.includes("A teammate's device never answers you"), "the old rule is gone");
 	assert.ok(ally.includes("call `ally_escalate` once per item") && ally.includes("\"Mains here\""), "ally-run.md");
 	assert.ok(standing.includes("{{cli}} watch <key> --idle 20m"), "duty-standing.md");

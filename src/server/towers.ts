@@ -1111,7 +1111,7 @@ export function createTowers(o: TowersOptions): Towers {
 			allow: (q: { toolCallId: string; tool: string; args: unknown }) => (o.allows ? o.allows.take({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),
 			allowRequest: (q: { toolCallId: string; lines: string[] }) => (o.allows ? o.allows.takeRequest({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),
 			asks: o.asks ?? { open: () => { throw new Error("this server keeps no asks"); } },
-			forwardEvent: ev.forwardEvent, waitEvent: ev.waitEvent, allyMessages: () => runs.allyMessages(request.token), ...(o.waits ? { waits: o.waits } : {}),
+			forwardEvent: ev.forwardEvent, waitEvents: ev.waitEvents, allyMessages: () => runs.allyMessages(request.token), ...(o.waits ? { waits: o.waits } : {}),
 			// A reply that settles a blocked call_tower this run took, while auto mode is on, is listed for the return list with the basis it names (autotower.ts `basisOf`) or `none`.
 			decided: (to: string, gist: string, basis: unknown) => {
 				if (!o.auto?.view().on) return;

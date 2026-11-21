@@ -1501,7 +1501,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Auto return (docs/specs/2026-11-21-auto-return.md, AR-D3; measured with this worktree's own `npm ci`, after a fresh `npm run gui:build`, node 24): chat chunks 494,691 / 185,875 to 495,909 / 186,301 (+1,218 / +426: the returned card's line and the return panel's four lines in both languages and the Raven twin, autoback.ts's rows, waitcardmodel.ts's line; the confirm title and stale line reworded). Cap = measured.
 	// Both merged (2026-11-21; measured after a fresh `npm run gui:build`, node 24): chat chunks 496,202 / 186,381 (operate `noanswer` +293 raw on top of auto return). Cap = measured.
 	// Box ↔ Mac waits, item D (2026-11-21; measured after the fresh `npm run gui:build` of `npm test`, node 24): chat chunks 496,202 / 186,381 to 496,399 / 186,510 (+197 / +129: `link_main_waiting` in both languages, the sentence table's row). Cap = measured.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 496_399 && total(chunks, gz) <= 186_510, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// Run event IDs (0.81.5; fresh GUI build, node 24): 496,461 / 186,537 (+62 / +27) for parsing the queue-id suffix alongside old event markers. Caps = measured.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 496_461 && total(chunks, gz) <= 186_537, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.

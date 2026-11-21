@@ -1,7 +1,7 @@
 import { type FileHandle, open } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { BOSS_MARK } from "../eventmarks.ts";
+import { bossTurn } from "../eventmarks.ts";
 import { type Json, parse, toItem } from "../items.ts";
 import { type BossPointer, resumable, type Resume, type ResumeEnv } from "./bossconv.ts";
 import type { Slot } from "./record.ts";
@@ -63,8 +63,9 @@ export async function recapOf(file: string): Promise<string[]> {
 			const entry: Json | undefined = raw.includes('"custom_message"') || raw.includes('"assistant"') ? parse(raw) : undefined;
 			const item = entry && toItem(entry, raw.length);
 			if (!item?.text) continue;
-			const text = item.text.replace(BOSS_MARK, "").replace(/\s+/g, " ").trim();
-			if (item.kind === "notice" && item.type === "straw-tower" && item.event === "boss" && text) out.push(`boss: ${text}`);
+			const boss = item.kind === "notice" && item.type === "straw-tower" && item.event === "boss";
+			const text = (boss ? (bossTurn(item.text)?.body ?? item.text) : item.text).replace(/\s+/g, " ").trim();
+			if (boss && text) out.push(`boss: ${text}`);
 			else if (item.kind === "assistant" && text) out.push(`head: ${text}`);
 		}
 		const lines = out.slice(-RECAP_LINES).map((l) => (l.length > 400 ? `${l.slice(0, 399)}…` : l));

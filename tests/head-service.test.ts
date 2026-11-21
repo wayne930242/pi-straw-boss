@@ -5,6 +5,8 @@ import { afterEach, beforeEach, test } from "node:test";
 import { FakeHerdr, settle } from "./fakes.ts";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, until } from "./server-world.ts";
+import { BOSS_MARK, CRASH_FLAG } from "../src/eventmarks.ts";
+import { recapOf } from "../src/server/headchapters.ts";
 import { HEAD_LABEL, headTowerOf, isHead, TOWER_LABEL, type Workspace } from "../src/herdr.ts";
 import { fileOf, slotOf } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
@@ -43,6 +45,17 @@ const createCalls = () => world.herdr.commands("workspace", "create");
 /** How many workspaces the server made for a head (a Herdr restart clears the fake's call log, so the workspaces are counted). */
 const headWorkspaces = () => world.herdr.workspaces.filter((w) => w.label === "Head tower").length;
 const mode = (path: string) => statSync(path).mode & 0o777;
+
+test("head chapter recaps leave out the boss event ID and crash flag, including across an upgrade", async () => {
+	const file = join(world.slot.dir, "recap.jsonl");
+	mkdirSync(world.slot.dir, { recursive: true });
+	const entries = [
+		`${BOSS_MARK}\nOld boss message.`,
+		`${BOSS_MARK} [event id: 0123456789abcdef]\n${CRASH_FLAG}\nNew boss message.`,
+	];
+	writeFileSync(file, entries.map((content, i) => JSON.stringify({ type: "custom_message", id: `e${i}`, customType: "straw-tower", content, display: true, details: { kind: "boss" } })).join("\n"));
+	assert.deepEqual(await recapOf(file), ["boss: Old boss message.", "boss: New boss message."]);
+});
 
 test("nothing is made before the head is first needed: a server with the tower service on shows no head workspace, no identity, no folder", async () => {
 	await started();

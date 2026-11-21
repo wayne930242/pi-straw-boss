@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { BOSS_MARK, BRIEF_MARK, CRASH_FLAG, cleanLabel } from "./eventmarks.ts";
+import { BOSS_MARK, BRIEF_MARK, CRASH_FLAG, cleanLabel, eventIdMark } from "./eventmarks.ts";
 import { panes, type Place, TOWER_LABEL, tabs, workspaces } from "./herdr.ts";
 import { createHereMark } from "./heremark.ts";
 import { every } from "./lanface.ts";
@@ -26,7 +26,7 @@ import { startOf as processStart } from "./startof.ts";
 import { promptSet } from "./trainswitch.ts";
 import { ALLY_ENTRY, ENTRY, type Kit } from "./state.ts";
 import { MEMORY_DESCRIPTION, memoryParameters } from "./memorytool.ts";
-import { createTools, LINK_REQUEST_DESCRIPTION, linkRequestParameters } from "./tools.ts";
+import { createTools, FORWARD_DESCRIPTION, LINK_REQUEST_DESCRIPTION, linkRequestParameters } from "./tools.ts";
 
 // A pi the sb server started for a tower run (docs/specs/2026-10-26-sb-backend.md, Local runs): it is a short life of its own and no part of a tab's net. At its start it claims its run over the
 // control socket (`--sb-run <run id>`; a pi without the flag in a standing pane asks `pane-role`), gets the brief and a run token, registers the tower tools as clients of the server, and lives off
@@ -84,18 +84,17 @@ const ALLY_REGISTERED = new Set(["boss_status", "tower_list", "board_read", "tow
 const INTERCOM_MESSAGE = "intercom_message";
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 
-/** How an event reads to the model: an intercom one opens with a line this code writes from the broker's sender (the text after it is the sender's own, and may claim anything), then the header the sender's code wrote. */
-export function eventText(e: Pick<Event, "kind" | "text" | "flag" | "from">): string {
-	// The flag line comes after the marker line, so an event still opens with its marker: only the boss line marks the boss.
-	const flag = e.flag === "crash" ? `\n${CRASH_FLAG}` : "";
-	if (e.kind === "boss") return `${BOSS_MARK}${flag}\n${e.text}`;
-	if (e.kind === "notice") return `[notice from the sb server]${flag}\n${e.text}`;
-	if (e.kind === "timer") return `[your wakeAfter follow-up is due]${flag}\n${e.text}`;
-	// A teammate's message to an ally run: the server wrote the verified header (device, team, the ask it carries) before the peer's text.
+/** An event opens with a code-written marker and queue ID on the first line; for intercom, the sender controls none of that line. */
+export function eventText(e: Pick<Event, "id" | "kind" | "text" | "flag" | "from">): string {
+	// Ally runs already get the verified header (device, team, and the ask it carries) before the peer's text.
 	if (e.kind === "link") return e.text;
+	const tail = `${eventIdMark(e.id)}${e.flag === "crash" ? `\n${CRASH_FLAG}` : ""}\n${e.text}`;
+	if (e.kind === "boss") return `${BOSS_MARK}${tail}`;
+	if (e.kind === "notice") return `[notice from the sb server]${tail}`;
+	if (e.kind === "timer") return `[your wakeAfter follow-up is due]${tail}`;
 	const label = (v = "") => cleanLabel(v);
 	const sender = e.from ? `${label(e.from.name) ? `${label(e.from.name)} ` : ""}(${label(e.from.id)})` : "an unknown sender";
-	return `[intercom from ${sender}]${flag}\n${e.text}`;
+	return `[intercom from ${sender}]${tail}`;
 }
 
 export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunSideDeps = {}, link?: Link) {
@@ -311,7 +310,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 				message: Type.String({ description: "The answer, terse: what the session needs to know or do." }),
 				reply: Type.Optional(Type.Boolean({ description: "Whether you wait for an answer. Default false." })),
 				basis: Type.Optional(Type.String({ description: "Auto mode: when this answers a blocked call_tower, the memory id (S<n>, D<n>) or the boss event id you answer from; without a valid one the return list shows basis none." })),
-				forward: Type.Optional(Type.String({ description: "Tower run only, for a car slip: the id of the call_tower event (why=shared) the slip came in, as the event header shows it. The code then writes the slip's sender into the header (fwd and fwd-from), which the integrator checks against the slip's coordinator; you cannot write either yourself. Send the slip as it came." })),
+				forward: Type.Optional(Type.String({ description: FORWARD_DESCRIPTION })),
 			}),
 			execute: async (id, params) => {
 				const done = await tool("tower_reply", params, id);

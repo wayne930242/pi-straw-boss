@@ -59,6 +59,20 @@ test("intercom, server notice, timer, and steer have their labels; the marker li
 	assert.ok(!flagged.text.includes(CRASH_FLAG) && !flagged.text.includes("[notice from the sb server]"));
 });
 
+test("queue event IDs on the first line are hidden without losing sender labels, body text, or crash flags", () => {
+	const id = "0123456789abcdef", mark = `[event id: ${id}]`;
+	const intercom = drawn(tower(`[intercom from docs-main (m1)] ${mark}\n${CRASH_FLAG}\nBuild is green.`, { id, kind: "intercom", from: { id: "m1", name: "docs-main" } }));
+	assert.ok(intercom.text.includes("docs-main") && intercom.text.includes("(m1)"), intercom.text);
+	assert.ok(!intercom.text.includes(mark), intercom.text);
+	assert.equal(intercom.article.find((el) => el.tag === "pre")[0]!.textContent, "Build is green.");
+	assert.equal(intercom.cls("boss-flag")[0]!.textContent, m.boss_crash_flag());
+	for (const [kind, marker] of [["boss", BOSS_MARK], ["notice", "[notice from the sb server]"], ["timer", "[your wakeAfter follow-up is due]"]]) {
+		const turn = drawn(tower(`${marker} ${mark}\n${CRASH_FLAG}\nLook again.`, { id, kind }));
+		assert.ok(turn.text.includes("Look again.") && !turn.text.includes(mark), turn.text);
+		assert.equal(turn.cls("boss-flag")[0]!.textContent, m.boss_crash_flag());
+	}
+});
+
 test("a run in a comms the net does not describe (an ally run's) reads its events the same way: nothing depends on the unit having a service", () => {
 	const intercom = drawn(tower("[intercom from docs-main (m1)]\nYes.", { id: "q2", kind: "intercom", from: { id: "m1", name: "docs-main" } }), {});
 	assert.ok(intercom.text.includes(m.notice_intercom()) && !intercom.text.includes("straw-tower"), intercom.text);

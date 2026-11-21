@@ -45,7 +45,10 @@ Assumption to confirm at rollout: the box's `/etc/straw-link/policy.json` gives 
 
 The code writes `waits-on=<device short>` into the header after `why=`. `prompts/main.md` gets one clause: a task that ends at a step only another device or owner can take (a merge, a review, a credential, a login) is `blocked` with `waitsOn`, not a `milestone`.
 
-**Tower run.** `tower_send` gains `waitsOn: { event: "<event id>" }`. The server takes `device`, `owner`, `what`, and the raiser from the event this run took (the same pattern as `forward` on slips), so the model retypes nothing. The send:
+**Tower run.** `tower_send` takes `waitsOn: { event: "<event id>" }`, using the `[event id: …]` value on the code-written first line above the `call_tower` header.
+The server takes `device`, `owner`, `what`, and the raiser from the event this run took (the same pattern as `forward` on slips), so the model retypes nothing.
+If the id does not match, the refusal lists only the queue IDs of the waits-on events the run took, not their text.
+The send:
 
 1. Binds `for` to the raiser (it implies `reply: true`) and opens an ask, as today.
 2. Generates a wait id: 16 random bytes, in hex.

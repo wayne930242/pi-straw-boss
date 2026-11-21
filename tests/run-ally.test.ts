@@ -78,7 +78,7 @@ test("an ally run registers the ally tools only, reads its events as the server 
 	assert.ok(seen[0]!.includes(`verified=yes kind=tower_send`), "the header the server wrote");
 	assert.ok(seen[0]!.includes("please look at the build"));
 	assert.doesNotMatch(seen[0]!, /\[intercom from/, "no sender line of the broker: the text is the server's");
-	assert.equal(eventText({ kind: "link", text: "X" }), "X");
+	assert.equal(eventText({ id: "0123456789abcdef", kind: "link", text: "[straw net asks=ask-id] X" }), "[straw net asks=ask-id] X");
 });
 
 test("the run is one remote turn at its claimed level for the whole session: a call outside the allowlist is gated and refused with no answer, tower_send to the sender is free, to another device gated", async () => {

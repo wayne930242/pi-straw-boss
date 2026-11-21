@@ -93,8 +93,8 @@ export interface ToolHost {
 	now(): number;
 	/** When this server started: the refusal of a forward whose slip came in before it says what a restart lost (todo #154). */
 	startedAt?: number;
-	/** The waits-on `call_tower` this run took, by its id (runevents.ts): `tower_send` `waitsOn.event` forwards it (docs/specs/2026-11-21-box-mac-waits.md §2.1). */
-	waitEvent?(id: string): WaitEvent | undefined;
+	/** The waits-on `call_tower` events this run took (runevents.ts): `tower_send` `waitsOn.event` forwards one by id. */
+	waitEvents?(): WaitEvent[];
 	/** The wait router (linkwaits.ts). */
 	waits?: Pick<LinkWaits, "sent" | "escalate" | "handleOf" | "newId">;
 	/** An ally run's own messages from its device, with the ask each carries (runs.ts `allyMessages`). */
@@ -168,7 +168,7 @@ async function forwardOf(host: ToolHost, args: Record<string, unknown>, to?: str
 	const id = opt(args, "forward");
 	if (id === undefined) return undefined;
 	const event = host.forwardEvent?.(id);
-	if (!event) throw new Error(`forward ${id.slice(0, 40)} is no call_tower event (why=shared) that this run took: forward a car slip with the id its event header shows. A slip's event is held only while the run that took it lives and for 24 h: ask its sender to send the slip to the tower again (call_tower why=shared) and forward the new event's id`);
+	if (!event) throw new Error(`forward ${id.slice(0, 40)} is no call_tower event (why=shared) that this run took: use the ID from [event id: <id>] on the first line of the slip's event. A slip's event is held only while the run that took it lives and for 24 h: ask its sender to send the slip to the tower again (call_tower why=shared) and forward the new event's id`);
 	const net = await host.reach.read(), peers = (session: string) => deviceToken(net, session) !== undefined || (host.openedAnywhere ?? host.openedFor)?.(session) !== undefined;
 	if (peers(event.from)) throw new Error(PEERS_SLIP(event.from, event.from));
 	if (to !== undefined && !namedFor.get(`${host.identity} ${event.id}`)?.includes(to)) throw new Error(`forward ${event.id} goes only to an integrator the door named for this slip: call boss_open_main with role "integrator", the slip as the request, and its sender, and forward to one of the sessions its answer names.${restartWord(host, event.at)}`);
@@ -385,8 +385,9 @@ async function towerSendDevice(host: ToolHost, args: Record<string, unknown>, fo
 	if ((forWho !== undefined || args.waitsOn !== undefined) && args.reply === false) throw new Error("An ask for a main has to expect a reply: leave reply out or set reply: true");
 	// `waitsOn` (docs/specs/2026-11-21-box-mac-waits.md §2.1): the device, owner, what, and raiser are the event's, never the model's; the raiser's ask is bound as `for` would bind it.
 	const waitsOn = args.waitsOn === undefined ? undefined : (args.waitsOn as { event?: unknown } | null)?.event;
-	const event = typeof waitsOn === "string" ? host.waitEvent?.(waitsOn) : undefined;
-	if (args.waitsOn !== undefined && (ally || !event)) throw new Error(ally ? "An ally run forwards no wait" : `waitsOn.event ${String(waitsOn).slice(0, 40)} is no call_tower with waits-on= that this run took: name the id its event header shows`);
+	if (args.waitsOn !== undefined && ally) throw new Error("An ally run forwards no wait");
+	const waits = args.waitsOn === undefined ? [] : (host.waitEvents?.() ?? []), event = waits.find((w) => w.id === waitsOn);
+	if (args.waitsOn !== undefined && !event) throw new Error(`waitsOn.event names no call_tower with waits-on= that this run took: use the ID from [event id: <id>] on its first line. Waits-on event IDs this run took: ${waits.map((w) => w.id).join(", ") || "none"}`);
 	if (event && forWho !== undefined) throw new Error("waitsOn binds the raiser of the event: leave for out");
 	const target = event ? await host.link({ op: "device-resolve", device: forced ?? opt(args, "device") ?? event.short }) : undefined;
 	if (target && (!target.ok || target.short !== event!.short)) throw new Error(target.ok ? `The event waits on device ${event!.short}, not ${String(target.short)}: send it there` : String(target.error));

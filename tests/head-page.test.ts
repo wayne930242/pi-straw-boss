@@ -275,9 +275,9 @@ test("the head's page leaves out its tool calls, shell lines, and the sb server'
 		{ id: "u1", kind: "user", text: "tell everyone I am up", at: "2026-11-06T08:00:00Z" },
 		{ id: "a1", kind: "assistant", model: "m", at: "2026-11-06T08:00:01Z", text: "Handing it out.", tools: [{ id: "t1", name: "tower_send", summary: "(workspace: wA)", args: "{}" }] },
 		{ id: "a2", kind: "assistant", model: "m", at: "2026-11-06T08:00:02Z", tools: [{ id: "t2", name: "tower_done", summary: "(note: 11/06 morning)", args: "{}" }] },
-		{ id: "n1", kind: "notice", type: "straw-tower", event: "notice", at: "2026-11-06T08:00:03Z", text: "[notice from the sb server]\nThe run has been open for 40 minutes." },
-		{ id: "n2", kind: "notice", type: "straw-tower", event: "timer", at: "2026-11-06T08:00:04Z", text: "[your wakeAfter follow-up is due]\nCheck." },
-		{ id: "n3", kind: "notice", type: "straw-tower", event: "intercom", from: "tower · Alpha", at: "2026-11-06T08:00:05Z", text: "[intercom from tower · Alpha (a1)]\nDone." },
+		{ id: "n1", kind: "notice", type: "straw-tower", event: "notice", at: "2026-11-06T08:00:03Z", text: "[notice from the sb server] [event id: 0123456789abcde1]\nThe run has been open for 40 minutes." },
+		{ id: "n2", kind: "notice", type: "straw-tower", event: "timer", at: "2026-11-06T08:00:04Z", text: "[your wakeAfter follow-up is due] [event id: 0123456789abcde2]\nCheck." },
+		{ id: "n3", kind: "notice", type: "straw-tower", event: "intercom", from: "tower · Alpha", at: "2026-11-06T08:00:05Z", text: "[intercom from tower Alpha (a1)] [event id: 0123456789abcde3]\nDone." },
 		{ id: "b1", kind: "bash", command: "ls", exit: 0, at: "2026-11-06T08:00:06Z", text: "x" },
 	] as never[];
 	const draw = (head: boolean, page = true) => {
@@ -293,7 +293,7 @@ test("the head's page leaves out its tool calls, shell lines, and the sb server'
 	assert.match(text, /tell everyone I am up/);
 	assert.match(text, /Handing it out\./, "the head's prose stays when its entry also made a call");
 	assert.match(text, /Done\./, "a tower's answer stays");
-	assert.doesNotMatch(text, /sb server|follow-up|tower_done|tower_send|open for 40/);
+	assert.doesNotMatch(text, /sb server|follow-up|tower_done|tower_send|open for 40|event id:/);
 	assert.equal(head.find((el) => el.classes.has("skip")).length, 4, "tool-only entry, two server notices, shell line: hidden, in their place");
 	const tower = draw(false);
 	assert.equal(tower.find((el) => el.classes.has("act")).length, 3, "a workspace tower's page is as it was");

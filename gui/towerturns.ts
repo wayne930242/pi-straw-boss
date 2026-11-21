@@ -1,5 +1,5 @@
 import type { TowerService } from "../src/net.ts";
-import { BOSS_MARK, CRASH_FLAG } from "../src/eventmarks.ts";
+import { BOSS_MARK, CRASH_FLAG, eventMarker } from "../src/eventmarks.ts";
 import { m } from "./sentences.ts";
 import type { Answer } from "./post.ts";
 import { actionWhy } from "./towermodel.ts";
@@ -8,24 +8,17 @@ import { operateWhy } from "./termwords.ts";
 // What the session view says about a tower the sb server runs, apart from the map (towermodel.ts): the turns of a run that the server wrote, what a refused send was, and what stands where a terminal would be. The view's own chunk loads it.
 
 type Opts = { locale?: "en" | "zh-TW" };
+export { bossTurn } from "../src/eventmarks.ts";
 
 /**
  * A user turn in a tower's run that the server wrote, not the boss: the first line is the server's (src/runmode.ts `eventText`), written from the broker's sender and cleaned, so only it is read. The boss's
  * own turn opens with another marker and stays the boss's.
  */
 export function heard(text: string | undefined): { kind: "intercom"; from: string } | { kind: "server" | "timer" } | undefined {
-	const first = (text ?? "").split("\n", 1)[0]!;
+	const first = eventMarker((text ?? "").split("\n", 1)[0]);
 	if (first.startsWith("[intercom from ") && first.endsWith("]")) return { kind: "intercom", from: first.slice("[intercom from ".length, -1) };
 	if (first === "[notice from the sb server]") return { kind: "server" };
 	if (first === "[your wakeAfter follow-up is due]") return { kind: "timer" };
-}
-
-/** The boss's own turn in a service tower's run: its marker line (and the crash flag line after it) is the server's, so the bubble shows what the boss wrote, with the flag as a note; undefined for any other turn. */
-export function bossTurn(text: string | undefined): { body: string; crashed: boolean } | undefined {
-	const lines = (text ?? "").split("\n");
-	if (lines[0] !== BOSS_MARK) return undefined;
-	const crashed = lines[1] === CRASH_FLAG;
-	return { body: lines.slice(crashed ? 2 : 1).join("\n"), crashed };
 }
 
 /** The sender of an intercom marker line (`label (id)`, `(id)`, or the words for none) as its name and id; the line is the server's, written from the broker's sender and cleaned, so the id is the session's own. */
@@ -70,25 +63,26 @@ const MARKS = { intercom: (l: string) => l.startsWith("[intercom from ") && l.en
  * A `straw-tower` event of a kind this page does not know, and any other message, give undefined (the generic notice). A link message is cut at the verified header, which stays whole for the details.
  */
 export function eventTurn(it: { type?: string; event?: string; text?: string; from?: string }): Turn | undefined {
-	const text = it.text ?? "", strip = (ok: (line: string) => boolean) => {
-		const lines = text.split("\n"), marked = ok(lines[0] ?? "") ? 1 : 0, crashed = marked === 1 && lines[1] === CRASH_FLAG;
-		return { body: lines.slice(marked + (crashed ? 1 : 0)).join("\n"), crashed };
-	};
+	const text = it.text ?? "";
 	if (it.type === "straw-link" || it.event === "link") {
 		const head = strawHeader(text), kind = head?.fields.kind, from = it.from ?? head?.fields.remote ?? head?.fields.from ?? "?";
 		const what = kind === "link_reply" ? "reply" : kind === "tower_reply" ? "answer" : head?.fields.asks ? "ask" : "message";
 		return { kind: "link", what, from, body: head ? head.body : text, ...(head ? { raw: head.raw } : {}) };
 	}
 	if (it.type !== "straw-tower") return undefined;
+	if (it.event === "steer") return { kind: "server", body: text.replace(/^\[sb server\] /, ""), crashed: false };
+	const lines = text.split("\n"), marker = eventMarker(lines[0]), strip = (marked: boolean) => {
+		const crashed = marked && lines[1] === CRASH_FLAG;
+		return { body: marked ? lines.slice(crashed ? 2 : 1).join("\n") : text, crashed };
+	};
 	switch (it.event) {
-		case "boss": return { kind: "boss", ...strip((l) => l === BOSS_MARK) };
+		case "boss": return { kind: "boss", ...strip(marker === BOSS_MARK) };
 		case "intercom": {
-			const first = text.split("\n", 1)[0]!, marked = MARKS.intercom(first);
-			return { kind: "intercom", from: marked ? first.slice("[intercom from ".length, -1) : (it.from ?? ""), ...strip(MARKS.intercom) };
+			const marked = MARKS.intercom(marker);
+			return { kind: "intercom", from: marked ? marker.slice("[intercom from ".length, -1) : (it.from ?? ""), ...strip(marked) };
 		}
-		case "notice": return { kind: "server", ...strip(MARKS.notice) };
-		case "steer": return { kind: "server", body: text.replace(/^\[sb server\] /, ""), crashed: false };
-		case "timer": return { kind: "timer", ...strip(MARKS.timer) };
+		case "notice": return { kind: "server", ...strip(MARKS.notice(marker)) };
+		case "timer": return { kind: "timer", ...strip(MARKS.timer(marker)) };
 	}
 }
 

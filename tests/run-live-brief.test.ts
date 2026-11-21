@@ -19,6 +19,7 @@ afterEach(() => {
 	rmSync(root, { recursive: true, force: true });
 });
 
+const FIRST_EVENT_ID = "0123456789abcdef";
 const FIXED = "You are the head tower: the boss's own tower, in no workspace. FIXED-MARK";
 const live = (state: string) => `Your conversation with the boss: chapter 1.\n\nWorkspaces now:\n- Alpha (wA): tower standing by\n  work: main docs-main ${state}`;
 /** The server a head run talks to: its claim answers the brief in two texts unless `whole`, a poll may answer a newer brief once, and its events are taken one at a time. */
@@ -57,7 +58,7 @@ const count = (text: string, part: string) => text.split(part).length - 1;
 
 test("a head run says at its claim that it takes a brief in two texts; the fixed text is its section and the live text is one message, after the event that started the turn", async () => {
 	const srv = server(), turns: Turn[] = [];
-	srv.push("e1", "EVENT-ONE");
+	srv.push(FIRST_EVENT_ID, "EVENT-ONE");
 	const r = await makeRig(root, (q) => srv.ask(q), sessions);
 	r.faux.setResponses([spy(turns) as never]);
 	await until(() => turns.length === 1, "the first turn");
@@ -67,6 +68,7 @@ test("a head run says at its claim that it takes a brief in two texts; the fixed
 	assert.doesNotMatch(turns[0]!.system, /Workspaces now:|docs-main/, "the section holds nothing of the live text");
 	assert.equal(count(turns[0]!.messages, BRIEF_MARK), 1);
 	assert.ok(turns[0]!.messages.includes(JSON.stringify(`${BRIEF_MARK}\n${live("idle")}`).slice(1, -1)), "the message is the marker line and the live text");
+	assert.match(turns[0]!.messages, /\[intercom from \(sb-tower-wa\)\] \[event id: 0123456789abcdef\]\\nEVENT-ONE/);
 	assert.ok(turns[0]!.messages.indexOf("EVENT-ONE") < turns[0]!.messages.indexOf(BRIEF_MARK));
 	const kept = r.session.messages.find((m) => (m as { customType?: string; details?: { brief?: boolean } }).details?.brief === true) as { customType?: string; display?: boolean } | undefined;
 	assert.deepEqual([kept?.customType, kept?.display], ["straw-tower", false], "kept in the session, and not shown: the boss never saw the brief in the section either");
@@ -102,7 +104,7 @@ test("a tree move followed immediately by reload resends the brief without chang
 	await until(() => turns.length === 1 && srv.taken.length === 1 && !r.session.isStreaming, "the first turn to settle");
 	assert.equal(count(turns[0]!.messages, BRIEF_MARK), 1);
 	const manager = r.session.sessionManager;
-	const beforeBrief = manager.getBranch().find((entry) => entry.type === "custom_message" && entry.content === eventText({ kind: "intercom", text: "EVENT-ONE", from: { id: "sb-tower-wa" } }));
+	const beforeBrief = manager.getBranch().find((entry) => entry.type === "custom_message" && entry.content === eventText({ id: "e1", kind: "intercom", text: "EVENT-ONE", from: { id: "sb-tower-wa" } }));
 	assert.ok(beforeBrief, "the waking event precedes the brief");
 	await r.session.navigateTree(beforeBrief.id);
 	assert.ok(!r.session.messages.some((m) => (m as { details?: { brief?: boolean } }).details?.brief), "the new branch has no brief");
@@ -165,7 +167,9 @@ test("a threshold compaction at the end of a turn stores the brief behind the su
 
 test("no event reads as a brief: each code-headed eventText kind (boss, notice, timer, intercom) opens with its own marker, never BRIEF_MARK", () => {
 	for (const kind of ["boss", "notice", "timer", "intercom"] as const) for (const flag of [undefined, "crash" as const]) {
-		const text = eventText({ kind, text: "x", ...(flag ? { flag } : {}), from: { id: "main-1", name: "docs-main" } });
-		assert.ok(!text.startsWith(BRIEF_MARK), `${kind}${flag ? "+crash" : ""} opens with the brief marker`);
+		const text = eventText({ id: FIRST_EVENT_ID, kind, text: "x", ...(flag ? { flag } : {}), from: { id: "main-1", name: "docs-main" } });
+		const first = text.split("\n", 1)[0]!;
+		assert.ok(!first.startsWith(BRIEF_MARK), kind);
+		assert.ok(first.endsWith(`[event id: ${FIRST_EVENT_ID}]`), first);
 	}
 });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { bodyOf, fieldsOf, header } from "../src/header.ts";
+import { eventText } from "../src/runmode.ts";
 import { type Running, until } from "./server-world.ts";
 import { TowerWorld } from "./tower-world.ts";
 import { callControl } from "../src/server/socket.ts";
@@ -48,7 +49,7 @@ async function started() {
 	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
 	return s;
 }
-/** A run that took these events from `main-1`: the ids the server queued them under, in order. */
+/** A run that took these events from `main-1`: the queue ids visible in the model's event text, in order. */
 async function run(s: Running, texts: string[]) {
 	world.sessions = [{ id: "main-1", name: "docs-main" }, INTEG as never];
 	world.herdr.addTab("wA:t2", "integ acme", "wA:p2");
@@ -60,10 +61,13 @@ async function run(s: Running, texts: string[]) {
 	await until(async () => ((got = await ask(s, { cmd: "claim", runId: id, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` })), got.ok && !got.wait), "the claim");
 	const token = String(got!.token), ids: string[] = [];
 	for (let i = 0; i < texts.length; i++) {
-		const ev = (await ask(s, { cmd: "run-poll", token, idle: true })).event as { id: string } | undefined;
+		const ev = (await ask(s, { cmd: "run-poll", token, idle: true })).event as Parameters<typeof eventText>[0] | undefined;
 		if (!ev) break;
 		await ask(s, { cmd: "run-taken", token, id: ev.id });
-		ids.push(ev.id);
+		const first = eventText(ev).split("\n", 1)[0]!;
+		const event = /\[event id: ([0-9a-f]{16})\]$/.exec(first)?.[1];
+		assert.ok(event, `the model's first line gives the event id: ${first}`);
+		ids.push(event);
 	}
 	// The door names the integrator this slip may be forwarded to; without it a forward has no target.
 	const door = await ask(s, { cmd: "run-tool", token, tool: "boss_open_main", args: { role: "integrator", request: slip, sender: "main-1" } });
