@@ -24,13 +24,13 @@ import { headBrief, headIntake, relayOnlyFromHead, stateWord } from "./headside.
 import type { Requester } from "../autostate.ts";
 import type { AutoMode } from "./automode.ts";
 import { basisOf, briefLine, type ParkedRow, parkedRows, parkedText, parkOpen, type Target } from "./autotower.ts";
-import { returnAll } from "./autoreturn.ts";
+import { returner, type Returns } from "./autoreturn.ts";
 import { autoAnswer, headHost, headTool, type HeadPort } from "./headtools.ts";
 import type { Allows } from "./allows.ts";
 import type { Asks } from "./asks.ts";
 import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, localTools } from "./towerbrief.ts";
 import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
-import { digestOf, openCards, type WaitDigest, type WaitList, waitList, waitRows } from "./waitlist.ts";
+import { digestOf, headLabel, openCards, type WaitDigest, type WaitList, waitList, waitRows } from "./waitlist.ts";
 import { claimGate, proofGate, seatGate, type SeatVerdict } from "./typegate.ts";
 import { addAnswer, addRoute, answeredAsks, ALLY_LEDGER, dropAsk, dropOpened, type Peer, readAnswers, readRoutes, removeAnswer, openedFor, routeOf, setStop, spendRoute } from "./allyroute.ts";
 import { createRevoker, type OpenedMain } from "./revoke.ts";
@@ -124,7 +124,8 @@ export interface TowersOptions {
 }
 export interface Ensured { id: string; workspace: string; label: string; tab?: string; pane?: string; opened: boolean; resident?: true; live: boolean }
 export interface TowerRow { workspace: string; label: string; id: string; state: "waiting" | "registering" | "live"; queue: number; service?: ServiceStatus }
-export interface Towers {
+/** `returnParked` and `returning`, the end of auto mode for the towers, are autoreturn.ts's (`Returns`). */
+export interface Towers extends Returns {
 	/** Starts the service when the flag is on: converts resident-tower records, adopts every `service.json`, registers the identities, and watches Herdr. Idempotent. */
 	activate(): Promise<void>;
 	/** Whether the runs of the last server are loaded and the identities adopted (true when the tower runs are off: there is nothing to load). */
@@ -152,8 +153,6 @@ export interface Towers {
 	runs: Runs;
 	/** Auto mode (autotower.ts): the open boss waits that are parked, for the watch and the tests. */
 	parked(): ParkedRow[];
-	/** The end of the period (autoreturn.ts; docs/specs/2026-11-21-auto-return.md, AR-D3, AR-D4): every parked card is closed and sent back to whoever raised it; `settled` holds the rows once each raiser's message is known. */
-	returnParked(): { rows: ParkedRow[]; settled: Promise<ParkedRow[]> };
 	/** The head tower (head.ts): a service of kind `head` in a workspace of its own, made on first use and kept after; the same machinery as a workspace tower's service. */
 	head: {
 		ensure(): Promise<HeadEnsured>;
@@ -1205,8 +1204,8 @@ export function createTowers(o: TowersOptions): Towers {
 		}
 	};
 
-	// Auto mode and the towers (§6): the waits open when it turns on are parked, and a raiser is told once under `wait_parked`.
-	const targets = (): Target[] => [...services.values()].map((l) => ({ workspace: l.record.workspace, label: l.record.label, ...(isHeadL(l) ? { head: true as const } : {}) }));
+	// Auto mode and the towers (§6): the waits open when it turns on are parked, and a raiser is told once under `wait_parked`. The head's memory is read under its constant key while no head service stands, as the list reads it, so its parked cards go back (as `gone`) with the rest (AR-F002).
+	const targets = (): Target[] => ((ts) => (ts.some((t) => t.head) ? ts : [...ts, { workspace: HEAD_KEY, label: headLabel(localeOf(o.env, slot.stateDir)), head: true as const }]))([...services.values()].map((l) => ({ workspace: l.record.workspace, label: l.record.label, ...(isHeadL(l) ? { head: true as const } : {}) })));
 	const tellParked = async (workspace: string, entry: Entry): Promise<void> => {
 		const raiser = entry.card?.from?.id, reach = services.get(workspace)?.reach;
 		if (raiser && reach) await reach.post(raiser, parkedText(entry.id), "wait_parked", "session", false, undefined, undefined, { wait: entry.id });
@@ -1234,7 +1233,7 @@ export function createTowers(o: TowersOptions): Towers {
 			return l && !l.stopped ? digestOf(waitRows(slot, isHeadL(l) ? HEAD_KEY : workspace, now(), isHeadL(l)).rows, o.auto?.view().on === true) : undefined;
 		},
 		parked: () => parkedRows(slot, now(), targets()),
-		returnParked: () => returnAll({ slot, now, log, error, targets: targets(), reach: (workspace) => services.get(workspace)?.reach, notice: (workspace, text, key) => runs.notice(workspace, text, key) }),
+		...returner(() => ({ slot, now, log, error, targets: targets(), reach: (workspace) => services.get(workspace)?.reach, notice: (workspace, text, key) => runs.notice(workspace, text, key), head: (id) => ((h) => (h?.record.id === id ? h.record.workspace : undefined))(headLive()) })),
 		runTool: runToolFor,
 		memory: (workspace, json, via) => {
 			// The head's constant key reaches head/ whether or not a head service stands (towerstore.ts `HEAD_KEY`).

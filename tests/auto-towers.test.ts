@@ -9,7 +9,7 @@ import { buildHeadBrief } from "../src/server/headbrief.ts";
 import type { Slot } from "../src/server/record.ts";
 import { buildBrief } from "../src/server/towerbrief.ts";
 import { addCardWait, addText, addWait, loadMemory, updateMemory } from "../src/server/towermemory.ts";
-import { readQueue } from "../src/server/towerstore.ts";
+import { HEAD_KEY, readQueue } from "../src/server/towerstore.ts";
 import { pressRequest } from "../src/server/waitpress.ts";
 import { checkCard } from "../src/server/waitcard.ts";
 import { type Running, until } from "./server-world.ts";
@@ -309,4 +309,61 @@ test("AR-D3: returnedText tells a tower raiser to record the wait again, and own
 	assert.match(returnedText("W2", "Pick a host.", "2026-11-21T07:40:00Z", "main"), /ask them again yourself now with ask_user_question/);
 	assert.match(ownReturnedText("W3", "Look.", "2026-11-21T07:40:00Z"), /^Your wait W3 \(Look\.\) was parked while the boss was away\./);
 	assert.ok(header({ from: { name: "t", id: "sb-tower-wa", role: "tower" }, kind: "wait_returned", scope: "session", to: [{ name: "m", id: "m", role: "main" }], reply: false, wait: "W2" }).includes("kind=wait_returned"));
+});
+
+test("AR-F002: the head's parked card goes back when auto mode ends after the head was closed: closed as gone, and on the list", async () => {
+	const s = await setup();
+	const head = await world.expose!.head.ensure();
+	const now = Date.now();
+	updateMemory(world.slot, head.workspace, now, (m) => void addWait(m, now, "r2", { text: "Which customer first?", for: "boss" }));
+	await autoOn(s);
+	await world.expose!.head.close();
+	assert.equal(world.expose!.head.status(), undefined, "no head service stands");
+	assert.equal((await ask(s, { cmd: "auto-off", ...WHO })).ok, true);
+	const e = loadMemory(world.slot, HEAD_KEY).memory.entries[0]!;
+	assert.deepEqual([e.state, e.parked, e.returned], ["resolved", undefined, "gone"]);
+	assert.deepEqual(reportFile().parked.map((p) => [p.id, p.head, p.returned]), [["W1", true, "gone"]]);
+});
+
+test("AR-F003: a parked card the head tower raised goes back to the head as its event, not as a message its gate refuses", async () => {
+	const s = await setup();
+	await parkedCard(s);
+	const head = await world.expose!.head.ensure(), headId = world.expose!.head.status()!.id;
+	updateMemory(world.slot, "wA", Date.now(), (m) => void Object.assign(m.entries[0]!.card!.from!, { id: headId, name: "head tower", role: "session" }));
+	assert.equal((await ask(s, { cmd: "auto-off", ...WHO })).ok, true);
+	const back = readQueue(world.slot, head.workspace).filter((ev) => ev.kind === "notice" && ev.text.startsWith("Wait W1 "));
+	assert.equal(back.length, 1);
+	assert.match(back[0]!.text, /^Wait W1 \(Say go in the terminal\.\) comes back to you: .* If you still need it, record it again with tower_memory as a wait for the boss, or ask as you asked before\.$/);
+	await world.expose!.returning();
+	assert.equal(sentTo(headId).length, 0, "nothing goes through the head's gate");
+	assert.deepEqual([memory().entries[0]!.state, memory().entries[0]!.returned], ["resolved", "raiser"], "not closed as gone");
+	assert.equal(reportFile().parked[0]!.returned, "raiser");
+});
+
+test("AR-F004: a stop right after the end waits for the raisers' messages before the towers leave the broker", async () => {
+	const s = await setup();
+	await parkedCard(s);
+	const client = world.client("sb-tower-wa")!, order: string[] = [];
+	let release!: () => void;
+	const gate = new Promise<void>((r) => (release = r));
+	const send = client.send.bind(client), disconnect = client.disconnect.bind(client);
+	client.send = async (to, options) => {
+		if (fieldsOf(options.text)?.kind !== "wait_returned") return send(to, options);
+		order.push("posting");
+		await gate;
+		order.push("posted");
+		return send(to, options);
+	};
+	client.disconnect = async () => (order.push("disconnect"), disconnect());
+	const towers = world.expose!, drain = towers.returning.bind(towers);
+	towers.returning = () => (order.push("drain"), drain());
+	assert.equal((await ask(s, { cmd: "auto-off", ...WHO })).ok, true);
+	await until(() => order.includes("posting"), "the message under way");
+	const ending = s.handle.shutdown(0);
+	await until(() => order.includes("drain") || order.includes("disconnect"), "the shutdown at the drain");
+	assert.deepEqual(order, ["posting", "drain"], "the tower is still on the broker");
+	release();
+	await ending;
+	assert.deepEqual(order, ["posting", "drain", "posted", "disconnect"]);
+	assert.equal(memory().entries[0]!.returned, "raiser");
 });
