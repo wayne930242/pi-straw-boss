@@ -348,3 +348,15 @@ test("the demo's mains scenes: mains is the dispatcher's own two with Stop, admi
 	assert.deepEqual(cards("mains,stopping").map((c) => [c.stopping, c.canStop]), [[true, false], [false, true]]);
 	assert.deepEqual(cards("mains,nostop").map((c) => c.canStop), [false, false]);
 });
+
+test("a box main with an open link wait on this computer says so on its row, beside its dispatcher (docs/specs/2026-11-21-box-mac-waits.md §5)", async () => {
+	const { unitCards } = await import("../gui/linkmodel.ts");
+	const status = { team: "t", device: "d1", at: 0, units: [{ unit: "Harbor API", state: "running", monitors: [], report: "" }], dispatchers: { b: { label: "bob-mac" } }, waiting: { "0123456789abcdef": ["L3", "L4"] }, mains: [
+		{ handle: "0123456789abcdef", unit: "Harbor API", name: "work-on", state: "blocked", by: "b", stopping: false },
+		{ handle: "fedcba9876543210", unit: "Harbor API", name: "docs", state: "idle", by: "b", stopping: false },
+	] };
+	const [waiting, plain] = unitCards([status] as never, [], { teams: ["t"], device: "d1", workspace: "Harbor API" }, 1_000_000)[0]!.mains;
+	assert.deepEqual([waiting!.waiting, plain!.waiting], [["L3", "L4"], undefined]);
+	const rows = draw([mains(mainCard({ byLabel: "bob-mac", waiting: ["L3", "L4"] }), mainCard({ handle: "fedcba9876543210", waiting: ["L5"] }))]).querySelectorAll(".au-main");
+	assert.deepEqual(rows.map((r) => r.querySelector(".au-mby")!.textContent), [`${m.link_main_by({ who: "bob-mac" })} · ${m.link_main_waiting({ ids: "L3, L4" })}`, m.link_main_waiting({ ids: "L5" })]);
+});

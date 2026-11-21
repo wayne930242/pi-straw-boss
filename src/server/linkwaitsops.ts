@@ -4,7 +4,7 @@ import type { HolderOptions } from "../link/holder.ts";
 import type { LinkService } from "../link/service.ts";
 import { restrictLabel } from "../link/text.ts";
 import { localeOf } from "../towerprompt/messages.ts";
-import { createLinkWaits, type LinkWaits } from "./linkwaits.ts";
+import { createLinkWaits, isOpen, type LinkWaits, readWaits } from "./linkwaits.ts";
 import type { Slot } from "./record.ts";
 import type { Towers } from "./towers.ts";
 import { listServices } from "./towerstore.ts";
@@ -77,6 +77,11 @@ export function startLinkWaits(o: StartWaits): WaitsHub {
 		router,
 		holder: {
 			take: (item, ws) => router.take(item, ws), orphan: (item, asker, ws) => router.orphan(item, asker, ws),
+			openOn: (device) => {
+				const by: Record<string, string[]> = {};
+				for (const ws of listServices(o.slot)) for (const w of readWaits(o.slot, ws.workspace).entries) if (w.dir === "in" && w.device === device && w.handle && isOpen(w)) (by[w.handle] ??= []).push(`L${w.n}`);
+				return by;
+			},
 			// C4: a box's notice about an ask this computer made reaches the main that asked, in a line the server writes; the notice itself stays in the Link notices.
 			notice: (n) => {
 				const ask = o.asks?.find(n.ref);

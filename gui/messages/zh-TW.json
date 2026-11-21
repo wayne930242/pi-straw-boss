@@ -658,6 +658,7 @@
 	"link_mains": "主智慧體（{count}）",
 	"link_main_by": "派工者 {who}",
 	"link_main_stopping": "停止中…",
+	"link_main_waiting": "等候本機 · {ids}",
 	"link_main_stop": "停止",
 	"link_main_stop_aria": "停止主智慧體 {name}",
 	"link_main_stop_ask": "要請 {box} 停止主智慧體 {name} 嗎？「停止」等它閒下來才結束；「中斷並停止」會先中止它進行中的回合。由那台機器決定，結果會通知你。",

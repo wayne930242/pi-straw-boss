@@ -4,6 +4,7 @@ import type { Monitor } from "../monitors.ts";
 import type { Base, Found, Net, Unit } from "../net.ts";
 import { waitMessage } from "../train/waits.ts";
 import type { YardTrainRow } from "../train/yardview.ts";
+import { type LinkWatchDeps, parseLinkKey, readLinkKey, waitsOf } from "./linkwatch.ts";
 import type { Reply } from "./socket.ts";
 
 // The sb server's `watch-read` route (docs/specs/2026-11-09-agent-kinds.md §10): a watchdog child's long poll on one unit of this computer's net. A request is held until a reading of the net gives a verdict other than `unchanged`, until its
@@ -15,6 +16,10 @@ import type { Reply } from "./socket.ts";
 // The stamp (`since`) is what was already told: this server instance, a hash of the waking facts, the move the last `stalled` was told for, and the monitors whose load was told. It is opaque to the client; one that does not parse, or is of
 // another instance, is a mismatch and answers `changed` at once.
 //
+// Box ↔ Mac waits (docs/specs/2026-11-21-box-mac-waits.md §5): a `link:` key reads a teammate device from the Link holder's latest `unit-status` (linkwatch.ts) at each reading, and gives `offline` once per spell of a status older than
+// 3 minutes. For every key, `waiting` tells that a link wait on it opened or changed state, and `idleMs` gives `idle` once per spell of a unit or main this server has read idle for that long. Order: gone, expired, offline, waiting, changed,
+// load, idle, stalled.
+//
 // The readings are the GUI host's (guihost.ts `watchNet`): it reads the net every 2 s or 10 s while it runs. While it gives none (a GUI stopped on purpose, or one that never started), the route reads the net itself every 10 s, only while a hold is open.
 
 export const HOLD_MS = 45_000, READ_MS = 10_000;
@@ -24,7 +29,7 @@ const MAX_TOLD = 12;
 
 /** The server's readings of the net: every reading the GUI host makes is told to `onRead`, `last` is the newest, `lookup` is the registry of the last reading (a unit that left it is found for 10 minutes, with its successor), and `read` makes a reading now. */
 export interface WatchNet { onRead(cb: (net: Net) => void): () => void; last(): Net | undefined; lookup(key: string): Found | undefined; read(): Promise<Net> }
-export interface WatchQuery { key: string; since?: string; deadline?: number; quietMs?: number; loadMax?: number }
+export interface WatchQuery { key: string; since?: string; deadline?: number; quietMs?: number; loadMax?: number; idleMs?: number }
 export interface WatchReadDeps {
 	net: WatchNet;
 	now(): number;
@@ -32,13 +37,15 @@ export interface WatchReadDeps {
 	timer?(ms: number, fn: () => void): () => void;
 	holdMs?: number;
 	readMs?: number;
+	/** The Link holder's statuses and the wait router's ledgers, for `link:` keys and `waiting`; none on a server without a holder. */
+	link?: LinkWatchDeps;
 }
-export type State = "changed" | "stalled" | "load" | "unchanged" | "expired" | "gone";
+export type State = "changed" | "stalled" | "load" | "idle" | "waiting" | "offline" | "unchanged" | "expired" | "gone";
 
-type Holder = Pick<Unit, "mark" | "note" | "todo" | "monitors" | "ticks"> & { key: string; duty?: string; subs?: Unit[] };
+type Holder = Pick<Unit, "mark" | "note" | "todo" | "monitors" | "ticks"> & { key: string; id?: string; duty?: string; subs?: Unit[] };
 interface Seen { unit: Holder; train?: YardTrainRow }
-/** What a stamp carries besides the instance: the facts' hash, the move the last `stalled` was told for (0: none), and the short ids of the monitors whose load was told. */
-interface Told { hash: string; stalled: number; load: string[] }
+/** What a stamp carries besides the instance: the facts' hash, the move the last `stalled` was told for (0: none), the short ids of the monitors whose load was told, the waits' hash, and the idle spell and stale status told (0: none). */
+interface Told { hash: string; stalled: number; load: string[]; waits: string; idle: number; offline: number }
 /** The quiet clock of one unit: `from` is where the quiet began (the last move, or the reading after a gap), `move` the last move itself, `at` the last reading that had the unit. */
 interface Quiet { at: number; from: number; move: number; mark: string; note?: string; tick?: number; lines: Map<string, number>; asked: number }
 interface Hold { q: WatchQuery; told: Told; done(reply: Reply): void; cancel(): void }
@@ -77,16 +84,28 @@ export function createWatchRead(d: WatchReadDeps) {
 	const instance = randomBytes(4).toString("hex"), holdMs = d.holdMs ?? HOLD_MS, readMs = d.readMs ?? READ_MS;
 	const timer = d.timer ?? ((ms: number, fn: () => void) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); });
 	const holds = new Set<Hold>(), quiets = new Map<string, Quiet>();
+	/** Where each idle spell began, by key, and when the key was last asked about. */
+	const idles = new Map<string, { since: number; asked: number }>();
+	let ledger: { at: number; list: ReturnType<LinkWatchDeps["waits"]> } | undefined;
+	const allWaits = (at: number) => (d.link ? (ledger?.at === at ? ledger : (ledger = { at, list: d.link.waits() })).list : []);
+	/** The start of the idle spell `key` is in now (none while it is not idle); one opens at the first reading that finds it idle. */
+	const spellOf = (key: string, idle: boolean, at: number) => {
+		if (!idle) return void idles.delete(key);
+		const was = idles.get(key) ?? { since: at, asked: at };
+		idles.set(key, { since: was.since, asked: at });
+		return was.since;
+	};
 	/** The last reading taken in, by unit key, and when it was taken in. */
 	let net: Net | undefined, units = new Map<string, Seen>(), fed = -Infinity, reading: Promise<void> | undefined, poll: (() => void) | undefined;
 
-	const stampOf = (t: Told) => Buffer.from(JSON.stringify([instance, t.hash, t.stalled, t.load])).toString("base64url");
+	const stampOf = (t: Told) => Buffer.from(JSON.stringify([instance, t.hash, t.stalled, t.load, t.waits, t.idle, t.offline])).toString("base64url");
 	/** What a stamp of this instance told; none for any other text. */
 	const toldOf = (since: string | undefined): Told | undefined => {
 		if (!since || since.length > 512) return undefined;
 		try {
-			const [of, hash, stalled, load] = JSON.parse(Buffer.from(since, "base64url").toString("utf8")) as unknown[];
-			return of === instance && typeof hash === "string" && typeof stalled === "number" && Array.isArray(load) && load.every((x) => typeof x === "string") ? { hash, stalled, load: (load as string[]).slice(0, MAX_TOLD) } : undefined;
+			const [of, hash, stalled, load, waits = "", idle = 0, offline = 0] = JSON.parse(Buffer.from(since, "base64url").toString("utf8")) as unknown[];
+			const fine = of === instance && typeof hash === "string" && typeof stalled === "number" && Array.isArray(load) && load.every((x) => typeof x === "string") && typeof waits === "string" && typeof idle === "number" && typeof offline === "number";
+			return fine ? { hash, stalled, load: (load as string[]).slice(0, MAX_TOLD), waits, idle, offline } : undefined;
 		} catch {
 			return undefined;
 		}
@@ -106,8 +125,9 @@ export function createWatchRead(d: WatchReadDeps) {
 	const take = (next: Net) => {
 		const at = d.now();
 		[net, fed, units] = [next, at, new Map()];
-		if (!holds.size && !quiets.size) return;
+		if (!holds.size && !quiets.size && !idles.size) return;
 		for (const b of next.bases) for (const unit of holdersOf(b)) if (!units.has(unit.key)) units.set(unit.key, { unit, ...((train) => (train ? { train } : {}))(trainOf(next, unit.key)) });
+		for (const [key, i] of idles) if (at - i.asked > FORGET_MS) idles.delete(key);
 		for (const [key, q] of quiets) {
 			const seen = units.get(key);
 			if (at - q.asked > FORGET_MS) quiets.delete(key);
@@ -130,6 +150,8 @@ export function createWatchRead(d: WatchReadDeps) {
 	 * `arrival`: the request has just come in, and a key the net does not know is an error (later, a unit that is in no reading and no registry has left without a trace).
 	 */
 	const judge = (hold: Hold, at: number, arrival: boolean): Reply | undefined => {
+		const link = parseLinkKey(hold.q.key);
+		if (link) return judgeLink(hold, link, at, arrival);
 		const { q, told } = hold, seen = seenOf(q.key);
 		if (!seen) {
 			const found = d.net.lookup(q.key);
@@ -143,10 +165,31 @@ export function createWatchRead(d: WatchReadDeps) {
 		const fresh = over.filter((id) => !told.load.includes(id)), hash = factsOf(seen);
 		// A load that fell back under its limit is forgotten, so its next crossing is told.
 		told.load = told.load.filter((id) => over.includes(id));
-		if (hash !== told.hash) return (told.hash = hash), answer("changed", hold, at, seen);
-		if (fresh.length) return (told.load = over), answer("load", hold, at, seen);
+		const waits = seen.unit.id && d.link ? waitsOf(seen.unit.id, allWaits(at)) : undefined, more = waits?.view.length ? { waits: waits.view } : {};
+		const since = spellOf(q.key, seen.unit.mark === "idle" || seen.unit.mark === "done", at);
+		if ((waits?.facts ?? "") !== told.waits) return (told.waits = waits?.facts ?? ""), answer("waiting", hold, at, seen, more);
+		if (hash !== told.hash) return (told.hash = hash), answer("changed", hold, at, seen, more);
+		if (fresh.length) return (told.load = over), answer("load", hold, at, seen, more);
+		if (q.idleMs !== undefined && since !== undefined && at - since >= q.idleMs && told.idle !== since) return (told.idle = since), answer("idle", hold, at, seen, more);
 		const quiet = quiets.get(q.key);
 		if (q.quietMs !== undefined && quiet && quiet.at - quiet.from >= q.quietMs && told.stalled !== quiet.move) return (told.stalled = quiet.move), answer("stalled", hold, at, seen);
+		return undefined;
+	};
+
+	/** A `link:` key's verdict: what the Link holder last heard of the device, judged as a unit of the net is, with `offline` for a stale status. */
+	const judgeLink = (hold: Hold, k: NonNullable<ReturnType<typeof parseLinkKey>>, at: number, arrival: boolean): Reply | undefined => {
+		const { q, told } = hold;
+		if (!d.link) return arrival ? { ok: false, error: "this server has no Straw Link holder, so it hears no teammate device" } : answer("gone", hold, at);
+		const r = readLinkKey(k, d.link, at);
+		// A key this server told of before (its stamp has facts) has left; one it never read is unknown.
+		if (!r) return arrival && !told.hash ? { ok: false, error: `unknown key ${q.key}: no teammate device, unit, or main of that name in the latest status` } : answer("gone", hold, at);
+		const reply = (state: State) => ({ ok: true, state, since: stampOf(told), now: at, unit: r.view });
+		const since = spellOf(q.key, r.idle && r.offlineAt === undefined, at);
+		if (q.deadline !== undefined && at >= q.deadline) return reply("expired");
+		if (r.offlineAt !== undefined && told.offline !== r.offlineAt) return (told.offline = r.offlineAt), reply("offline");
+		if (r.waits !== told.waits) return (told.waits = r.waits), reply("waiting");
+		if (r.facts !== told.hash) return (told.hash = r.facts), reply("changed");
+		if (q.idleMs !== undefined && since !== undefined && at - since >= q.idleMs && told.idle !== since) return (told.idle = since), reply("idle");
 		return undefined;
 	};
 
@@ -168,7 +211,7 @@ export function createWatchRead(d: WatchReadDeps) {
 			if (last) take(last);
 			else if (d.now() - fed >= 2 * readMs) await readNow();
 			if (!net) return { ok: false, error: "the net could not be read; ask again" };
-			const was = toldOf(q.since), hold: Hold = { q, told: was ?? { hash: "", stalled: 0, load: [] }, done() {}, cancel() {} };
+			const was = toldOf(q.since), hold: Hold = { q, told: was ?? { hash: "", stalled: 0, load: [], waits: "", idle: 0, offline: 0 }, done() {}, cancel() {} };
 			// The registry knows a unit the last reading does not (it joined between two readings): one reading more before the key is called unknown.
 			if (!seenOf(q.key) && d.net.lookup(q.key)?.live) await readNow();
 			// A key of the registry that is no unit of the net (the head tower, a run's read-only view) has nothing to watch.
@@ -177,7 +220,8 @@ export function createWatchRead(d: WatchReadDeps) {
 			if (first) return first;
 			return new Promise<Reply>((resolve) => {
 				const left = q.deadline !== undefined ? q.deadline - d.now() : Infinity;
-				const cancel = timer(Math.min(holdMs, left), () => hold.done(answer(left <= holdMs ? "expired" : "unchanged", hold, d.now(), seenOf(q.key))));
+				const unit = () => (parseLinkKey(q.key) && d.link ? ((r) => (r ? { unit: r.view } : {}))(readLinkKey(parseLinkKey(q.key)!, d.link, d.now())) : {});
+				const cancel = timer(Math.min(holdMs, left), () => hold.done(answer(left <= holdMs ? "expired" : "unchanged", hold, d.now(), seenOf(q.key), unit())));
 				hold.cancel = cancel;
 				hold.done = (reply) => { if (holds.delete(hold)) (cancel(), resolve(reply)); };
 				holds.add(hold);

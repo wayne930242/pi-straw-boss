@@ -18,6 +18,7 @@ import type { RunMode } from "./runmode.ts";
 import type { Presence } from "./presence.ts";
 import type { Reach } from "./reach.ts";
 import type { Roles } from "./roles.ts";
+import { registerStandingHint } from "./standinghint.ts";
 import { ENTRY, type Kit } from "./state.ts";
 import { isSessionRole, TRAIN, TRAIN_EVENT, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
 
@@ -328,6 +329,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		if (!event.isError) note(`${who()} ${event.toolName === "subagent" ? "started" : "resumed"} subagent ${typeof name === "string" && name ? name : "unnamed"}${typeof agent === "string" && agent ? ` (${agent})` : ""}`);
 	});
 
+	registerStandingHint(pi, () => (role() === "main" && !runMode.active() ? mainDuty.now() : undefined)); // a coordinator that starts a watch is told of `standing` once (D8)
 	pi.on("session_shutdown", async (event) => {
 		// A run's own shutdown is runmode.ts's: it joined nothing and holds no pane, tokens, or board entry. So is that of a pi that never became a normal session (undecided, or plain after no answer from the server):
 		// the standing pane it sits in is the server's, and a quit of it leaves the pane as it found it (RV7-F002).

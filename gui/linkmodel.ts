@@ -149,13 +149,13 @@ export function unitsFor(units: DeviceUnits[] | undefined, a: Pick<AllyCard, "de
  * One main of an ally base's unit that this computer may stop (docs/specs/2026-11-07-link-remote-stop.md §6): `handle` names it to the box, `byLabel` is the dispatcher's label for a main another device dispatched (an admin sees those; a
  * dispatcher's own are not labelled), `stopping` that a stop is pending, and `canStop` whether the page offers a Stop: the box lists `unit-stop`, its status is lately, and no stop is pending. A teammate's words only ever become text.
  */
-export interface MainCard { /** The box's kind word for the main when it named one this page draws (`coordinator`, `integrator`, `standing` or `train`); any other word is dropped here, so the card is as it was. */ kind?: string; handle: string; /** The team of the status row that named this main: a box in several teams lists each main in one team only, and its stop goes there. */ team: string; name: string; state: string; tone: UnitTone; word: string; byLabel?: string; stopping: boolean; canStop: boolean }
+export interface MainCard { /** The box's kind word for the main when it named one this page draws (`coordinator`, `integrator`, `standing` or `train`); any other word is dropped here, so the card is as it was. */ kind?: string; handle: string; /** The team of the status row that named this main: a box in several teams lists each main in one team only, and its stop goes there. */ team: string; name: string; state: string; tone: UnitTone; word: string; byLabel?: string; stopping: boolean; canStop: boolean; /** The open link waits this main has on this computer (`L<n>`), the "waiting on" line (docs/specs/2026-11-21-box-mac-waits.md §5). */ waiting?: string[] }
 export const MAIN_KINDS: readonly string[] = [...COORDINATOR_DUTIES, "train"];
 /** The mains a status row names for one unit. */
 function mainCards(unit: string, row: DeviceUnits): (MainCard & { at: number })[] {
 	return (row.mains ?? []).filter((x) => x.unit === unit).map((x) => {
 		const who = row.dispatchers?.[x.by], base = x.stopping ? { tone: "other" as UnitTone, word: m.link_main_stopping() } : { tone: x.state === "working" ? "working" as UnitTone : x.state === "idle" || x.state === "done" ? "idle" as UnitTone : "other" as UnitTone, word: stateName(x.state) };
-		return { handle: x.handle, team: row.team, at: row.at, name: x.name, state: x.state, ...(x.kind !== undefined && MAIN_KINDS.includes(x.kind) ? { kind: x.kind } : {}), ...base, ...(who?.self ? {} : { byLabel: who?.label ?? x.by.slice(0, 6) }), stopping: x.stopping, canStop: row.canStop === true && row.stale !== true && !x.stopping };
+		return { handle: x.handle, team: row.team, at: row.at, name: x.name, state: x.state, ...(x.kind !== undefined && MAIN_KINDS.includes(x.kind) ? { kind: x.kind } : {}), ...base, ...(who?.self ? {} : { byLabel: who?.label ?? x.by.slice(0, 6) }), stopping: x.stopping, canStop: row.canStop === true && row.stale !== true && !x.stopping, ...(row.waiting?.[x.handle]?.length ? { waiting: row.waiting[x.handle]!.slice(0, 3) } : {}) };
 	});
 }
 

@@ -632,7 +632,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		if (read.problem !== toldConfig) (toldConfig = read.problem ?? "", read.problem && recordError("config", read.problem));
 		return read;
 	};
-	dog = startWatchdog({ net: guiHost.watchNet(), env, now, client: () => (client?.isConnected() ? client : undefined), log: (event, facts) => log.line(event, facts), stops, ...(o.watchdog ? { over: o.watchdog } : {}) });
+	dog = startWatchdog({ net: guiHost.watchNet(), env, now, slot, holder: () => link?.holder, client: () => (client?.isConnected() ? client : undefined), log: (event, facts) => log.line(event, facts), stops, ...(o.watchdog ? { over: o.watchdog } : {}) });
 	cars = startCars({ slot, run: cfg.run, now, startedAt, client: () => (client?.isConnected() ? client : undefined), startOf, log: (event, facts) => log.line(event, facts), stops });
 	waitsHub = startLinkWaits({ slot, env, now, log: (event, facts) => log.line(event, facts), run: cfg.run, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, link: () => link, stops, asks, autoOn: () => auto?.view().on === true, ...(o.waits !== undefined ? { tickMs: o.waits } : {}) });
 	towers = createTowers({

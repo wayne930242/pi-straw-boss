@@ -113,6 +113,8 @@ export interface HolderOptions {
 		take(item: InboxItem, workspace: string | undefined): Promise<boolean>;
 		orphan?(item: InboxItem, mainName: string, workspace: string | undefined): Promise<boolean>;
 		notice?(n: { team: string; device: string; label: string; kind: string; text: string; ref: string }): void;
+		/** The open waits a device's mains have on this computer, by the main's handle (`L<n>` ids): the ally card's "waiting on" line (item D). */
+		openOn?(device: string): Record<string, string[]>;
 	};
 }
 
@@ -189,6 +191,8 @@ export interface DeviceUnits {
 	canStop?: true;
 	/** With `mains`: the dispatchers the mains name (`by`), as this team's roster labels them; this computer's own is `self`. */
 	dispatchers?: Record<string, { label: string; self?: true }>;
+	/** The open link waits of the device's mains on this computer, by handle (docs/specs/2026-11-21-box-mac-waits.md §5). */
+	waiting?: Record<string, string[]>;
 	at: number;
 	stale?: true;
 }
@@ -1837,10 +1841,15 @@ export class LinkHolder {
 				if (now - seen.at > UNITS_GONE_MS || !seen.units.length) continue;
 				const mine = this.device?.keys.id, dispatchers: NonNullable<DeviceUnits["dispatchers"]> = {};
 				for (const by of new Set(seen.mains?.map((x) => x.by))) dispatchers[by] = { label: this.memberLabel(run.team, by), ...(by === mine ? { self: true as const } : {}) };
-				out.push({ team: run.team, device, units: seen.units, ...(seen.mains ? { mains: seen.mains, dispatchers } : {}), ...(this.capsOf(run, device).includes("unit-stop") ? { canStop: true as const } : {}), at: seen.at, ...(now - seen.at > UNITS_FRESH_MS ? { stale: true as const } : {}) });
+				const waiting = seen.mains ? this.o.waits?.openOn?.(device) : undefined;
+				out.push({ team: run.team, device, units: seen.units, ...(seen.mains ? { mains: seen.mains, dispatchers } : {}), ...(waiting && Object.keys(waiting).length ? { waiting } : {}), ...(this.capsOf(run, device).includes("unit-stop") ? { canStop: true as const } : {}), at: seen.at, ...(now - seen.at > UNITS_FRESH_MS ? { stale: true as const } : {}) });
 			}
 		}
 		return out;
+	}
+	/** The latest `unit-status` of each teammate device with its roster label, for a watch on a `link:` key (src/server/linkwatch.ts); a device silent for 30 minutes is gone. */
+	unitsSeen(): (DeviceUnits & { label: string })[] {
+		return this.deviceUnits().map((u) => ({ ...u, label: this.memberLabel(u.team, u.device) }));
 	}
 	/** The compact reading for the net snapshot: ally bases from presence, the notices, and the confirms waiting. */
 	summary(): LinkSummary {

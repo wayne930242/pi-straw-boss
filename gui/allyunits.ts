@@ -59,8 +59,9 @@ function fillMains(li: HTMLElement, u: UnitCard, box: string) {
 		use.setAttribute("href", iconRef(icon));
 		text(row, ".au-mstate", word);
 		const by = row.querySelector<HTMLElement>(".au-mby")!;
-		by.hidden = c.byLabel === undefined;
-		by.textContent = c.byLabel === undefined ? "" : m.link_main_by({ who: c.byLabel });
+		const said = [...(c.byLabel === undefined ? [] : [m.link_main_by({ who: c.byLabel })]), ...(c.waiting ? [m.link_main_waiting({ ids: c.waiting.join(", ") })] : [])];
+		by.hidden = !said.length;
+		by.textContent = said.join(" · ");
 		const button = row.querySelector<HTMLButtonElement>(".au-stop")!;
 		button.hidden = !c.canStop || pending;
 		button.textContent = m.link_main_stop();

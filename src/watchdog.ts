@@ -31,7 +31,7 @@ export function isWatchdog(envAgent: string | undefined, entries: readonly { typ
 	return (first?.data as { agent?: string } | undefined)?.agent === "watchdog";
 }
 
-const READ_DESCRIPTION = "Wait for one unit of the straw net to change. Pass `since` from the last reply; the call returns when the unit's state changes or after `waitMs`. Reply: `{ state, since, now, unit?, successor?, server? }`. `state`: `changed` (the unit's mark, a monitor's status or exit, todo progress, a train's step, or its subagents' marks moved), `stalled` (no tick and no monitor line for `quietMs`; once until it moves again), `load` (a monitor's load crossed `loadMax`; once per crossing), `unchanged` (nothing by `waitMs`, or a message for you arrived: read it, then call again), `expired` (`deadline` passed), `gone` (the unit ended; `successor` is the key that took over, if any). `now` is the time in ms. `unit`: `mark`, `note`, `todo`, `monitors` (`status`, `exit`, `last`, `load`, `ageMs`), `train` (`status`, `step`, `waits`), `subs`. `server: unreachable|outdated` means the sb server did not answer or is too old: call again.";
+const READ_DESCRIPTION = "Wait for one unit of the straw net to change. Pass `since` from the last reply; the call returns when the unit's state changes or after `waitMs`. Reply: `{ state, since, now, unit?, successor?, server? }`. `state`: `changed` (the unit's mark, a monitor's status or exit, todo progress, a train's step, or its subagents' marks moved), `stalled` (no tick and no monitor line for `quietMs`; once until it moves again), `load` (a monitor's load crossed `loadMax`; once per crossing), `idle` (idle for `idleMs`; once per idle spell), `waiting` (a Straw Link wait on the unit opened or changed: `waits`), `offline` (a `link:` device's status is over 3 min old; once per spell), `unchanged` (nothing by `waitMs`, or a message for you arrived: read it, then call again), `expired` (`deadline` passed), `gone` (the unit ended; `successor` is the key that took over, if any). `now` is the time in ms. `unit`: `mark`, `note`, `todo`, `monitors` (`status`, `exit`, `last`, `load`, `ageMs`), `train` (`status`, `step`, `waits`), `subs`. A teammate device's key is `link:<short>`, `link:<short>/<unit>`, or `link:<short>/main/<handle>`; its `unit` holds `state`, `report`, `monitors`, `mains`, `waits`. `server: unreachable|outdated` means the sb server did not answer or is too old: call again.";
 const REPORT_DESCRIPTION = "Send one finding to the agent that dispatched you; it is the only one you can reach. Reply: `delivered`, `queued`, or `gone` (your dispatcher ended). At most one report every 30 s, and never the same text twice.";
 
 export function registerWatchdog(pi: ExtensionAPI, env: NodeJS.ProcessEnv, deps: WatchdogDeps = {}): void {
@@ -49,6 +49,7 @@ export function registerWatchdog(pi: ExtensionAPI, env: NodeJS.ProcessEnv, deps:
 			deadline: Type.Optional(Type.Number({ description: "Your task's time limit as an absolute time in ms; the reply at it is `expired`." })),
 			quietMs: Type.Optional(Type.Number({ minimum: 60_000, description: "How long without activity counts as `stalled`, in ms. With none, nothing is `stalled`." })),
 			loadMax: Type.Optional(Type.Number({ exclusiveMinimum: 0, description: "The load above which a monitor is `load`. Default: each monitor's own maximum." })),
+			idleMs: Type.Optional(Type.Number({ minimum: 60_000, description: "How long a unit or main must read idle to be `idle`, in ms. With none, nothing is `idle`." })),
 		}),
 		execute: async (_id, params, signal, onUpdate, ctx) => {
 			const waitMs = params.waitMs ?? WAIT_MS;
@@ -63,7 +64,7 @@ export function registerWatchdog(pi: ExtensionAPI, env: NodeJS.ProcessEnv, deps:
 				// Every re-poll moves the child's activity file, so pi-herdr-agents' hang advisory stays quiet through a long wait.
 				if (polls) onUpdate?.(answer({ state: "unchanged", polls, ...trouble }));
 				const left = end - now(), began = now();
-				const reply = await Promise.race([call({ cmd: "watch-read", key: params.key, ...(since === undefined ? {} : { since }), ...(params.deadline === undefined ? {} : { deadline: params.deadline }), ...(params.quietMs === undefined ? {} : { quietMs: params.quietMs }), ...(params.loadMax === undefined ? {} : { loadMax: params.loadMax }) }, Math.min(REQUEST_MS, left)).catch(() => undefined), aborted]);
+				const reply = await Promise.race([call({ cmd: "watch-read", key: params.key, ...(since === undefined ? {} : { since }), ...(params.deadline === undefined ? {} : { deadline: params.deadline }), ...(params.quietMs === undefined ? {} : { quietMs: params.quietMs }), ...(params.loadMax === undefined ? {} : { loadMax: params.loadMax }), ...(params.idleMs === undefined ? {} : { idleMs: params.idleMs }) }, Math.min(REQUEST_MS, left)).catch(() => undefined), aborted]);
 				if (reply?.ok) {
 					const { ok: _ok, ...facts } = reply;
 					if (facts.state !== "unchanged") return answer(facts);

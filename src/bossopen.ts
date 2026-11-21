@@ -70,7 +70,7 @@ const WORDS = {
 		unitsNone: "No unattended box has reported its units yet",
 		unitsBox: (label: string, short: string, team: string, stale: boolean) => `${label} (${short}) · team ${team}${stale ? " · no status lately: this is its last one" : ""}`,
 		unitsUnit: (name: string, state: string) => `  unit ${name} · ${state}`,
-		unitsMain: (name: string, state: string, by: string | undefined, handle: string) => `    main ${name} · ${state}${by ? ` · by ${by}` : ""} · ${handle}`,
+		unitsMain: (name: string, state: string, by: string | undefined, handle: string, waits?: string) => `    main ${name} · ${state}${by ? ` · by ${by}` : ""} · ${handle}${waits ? ` · waiting on this computer ${waits}` : ""}`,
 		unitsNoStop: "  this box takes no stop requests yet: it needs a pi-straw-boss that lists unit-stop",
 		noBox: (q: string, boxes: string[]) => `No box "${q}" has reported its units. Boxes that did:\n${boxes.join("\n")}`,
 		manyBoxes: (q: string, boxes: string[]) => `More than one box matches "${q}"; nothing was sent. Give more of its name:\n${boxes.join("\n")}`,
@@ -137,7 +137,7 @@ const WORDS = {
 		unitsNone: "還沒有無人值守的機器回報過它的單位",
 		unitsBox: (label: string, short: string, team: string, stale: boolean) => `${label}（${short}）· 團隊 ${team}${stale ? " · 最近沒有狀態：這是它最後一次的回報" : ""}`,
 		unitsUnit: (name: string, state: string) => `  單位 ${name} · ${state}`,
-		unitsMain: (name: string, state: string, by: string | undefined, handle: string) => `    主智慧體 ${name} · ${state}${by ? ` · 派工者 ${by}` : ""} · ${handle}`,
+		unitsMain: (name: string, state: string, by: string | undefined, handle: string, waits?: string) => `    主智慧體 ${name} · ${state}${by ? ` · 派工者 ${by}` : ""} · ${handle}${waits ? ` · 等候本機 ${waits}` : ""}`,
 		unitsNoStop: "  這台機器還不接受停止請求：它需要在 caps 列出 unit-stop 的 pi-straw-boss",
 		noBox: (q: string, boxes: string[]) => `沒有名為「${q}」的機器回報過單位。回報過的有：\n${boxes.join("\n")}`,
 		manyBoxes: (q: string, boxes: string[]) => `不只一台機器符合「${q}」，什麼都沒送出。請多給幾個字：\n${boxes.join("\n")}`,
@@ -264,7 +264,7 @@ export function createBossOpen({ s, tell }: Kit, { record, post, why, confirm, h
 			const lines = rows.filter((row) => !parsed.device || (found as Box).device === row.device).flatMap((row) => {
 				const box = boxesOf({ ...view, units: [row] })[0]!, teamName = view.teams.find((x) => x.team === row.team)?.name ?? row.team.slice(0, 6);
 				const mains = row.mains ?? [];
-				return [t().unitsBox(line(box.label), line(box.short), line(teamName), row.stale === true), ...row.units.flatMap((u) => [t().unitsUnit(line(u.unit), line(u.state)), ...mains.filter((x) => x.unit === u.unit).map((x) => t().unitsMain(line(x.name), line(x.state), byLabel(row, x.by), line(x.handle.slice(0, 6))))]), ...(!row.canStop ? [t().unitsNoStop] : [])];
+				return [t().unitsBox(line(box.label), line(box.short), line(teamName), row.stale === true), ...row.units.flatMap((u) => [t().unitsUnit(line(u.unit), line(u.state)), ...mains.filter((x) => x.unit === u.unit).map((x) => t().unitsMain(line(x.name), line(x.state), byLabel(row, x.by), line(x.handle.slice(0, 6)), row.waiting?.[x.handle]?.slice(0, 3).join(", ")))]), ...(!row.canStop ? [t().unitsNoStop] : [])];
 			});
 			return tell(lines.join("\n"));
 		}

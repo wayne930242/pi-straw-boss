@@ -769,6 +769,7 @@
 	"link_unit_trust_hint": "Add the project to the box's trust.json",
 	"link_mains": "Mains ({count})",
 	"link_main_by": "by {who}",
+	"link_main_waiting": "waiting on this computer · {ids}",
 	"link_main_stopping": "stopping…",
 	"link_main_stop": "Stop",
 	"link_main_stop_aria": "Stop the main {name}",

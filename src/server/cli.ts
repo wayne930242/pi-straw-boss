@@ -14,6 +14,7 @@ import { ensureTowerVia } from "./towerclient.ts";
 import { onFatal } from "./fatal.ts";
 import { runProcs } from "./procscli.ts";
 import { runTrain, type TrainIo } from "./traincmds.ts";
+import { runWatch } from "./watchcli.ts";
 import { runningTrains, trainsRefusal } from "./restartguard.ts";
 import { callControl, ControlError } from "./socket.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
@@ -43,11 +44,12 @@ const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS]
        cli.mjs train notices [--project P] [--pending] [--json]   (the journal on disk, which a train could also have written; not the server's own record)
        cli.mjs train clear --project P --train CODE (--lane APP | --target NAME) --reason TEXT
        cli.mjs train end --project P --train CODE --outcome landed|none --reason TEXT --evidence TEXT [--commit SHA]   (a stale train; --commit with landed)
-       cli.mjs prompt --workspace ID [--state-dir DIR]   (the tower prompt of a standing pane: the server types it)`;
+       cli.mjs prompt --workspace ID [--state-dir DIR]   (the tower prompt of a standing pane: the server types it)
+       cli.mjs watch KEY [--idle 20m] [--quiet 30m] [--deadline MS]   (one JSON line per change of a unit, a main, or a link: key; run it under MonitorCreate)`;
 export class UsageError extends Error {}
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout", "dir", "label", "reason"], switch: ["exact", "force"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
+	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, watch: { value: ["idle", "quiet", "deadline"], switch: [] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
 };
 // `train` has a word of its own, and each word its flags.
 const TRAIN: Record<string, { value: string[]; switch: string[] }> = {
@@ -72,6 +74,7 @@ export function parseArgs(argv: string[]): Args {
 		if (sub !== "list" && sub !== "reap") throw new UsageError(`unknown procs command ${sub}\n${USAGE}`);
 		flags.sub = sub;
 	}
+	if (command === "watch") flags.key = rest[0] !== undefined && !rest[0].startsWith("--") ? rest.shift()! : "";
 	for (let i = 0; i < rest.length; i++) {
 		const flag = rest[i]!.replace(/^--/, "");
 		if (!rest[i]!.startsWith("--")) throw new UsageError(`unexpected argument ${rest[i]}\n${USAGE}`);
@@ -184,6 +187,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			case "prompt": return await promptCommand();
 			case "procs": return await runProcs(ctx, flags, { out: json, err });
 			case "train": return await runTrain(flags, { out, err, env, stateDir: slot.stateDir, ...deps.train });
+			case "watch": return await runWatch(ctx, flags, { out, err, ...(deps.signal ? { signal: deps.signal } : {}) });
 		}
 	} catch (error) {
 		if (error instanceof ServerError) return fail(error);

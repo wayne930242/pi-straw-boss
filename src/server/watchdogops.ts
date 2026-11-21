@@ -1,6 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { LinkHolder } from "../link/holder.ts";
 import type { IntercomLike } from "./kit.ts";
+import { readWaits } from "./linkwaits.ts";
+import type { Slot } from "./record.ts";
+import { listServices } from "./towerstore.ts";
 import type { Reply, Request } from "./socket.ts";
 import { createWatchRead, type WatchNet, type WatchQuery, type WatchReadDeps } from "./watchread.ts";
 import { createWatchReport, reportQuery } from "./watchreport.ts";
@@ -20,12 +24,13 @@ export function watchdogReply(dog: Watchdog | undefined, request: Request): Prom
 		const q = reportQuery(request);
 		return q ? dog.report.report(q) : no("watch-report needs session, child, and activityFile");
 	}
-	const { key, since, deadline, quietMs, loadMax } = request;
+	const { key, since, deadline, quietMs, loadMax, idleMs } = request;
 	if (typeof key !== "string" || key.length < 1 || key.length > 200) return no("key is 1 to 200 characters");
 	if (deadline !== undefined && !(number(deadline) && deadline > 0)) return no("deadline is a time in epoch ms");
 	if (quietMs !== undefined && !(number(quietMs) && quietMs >= 60_000)) return no("quietMs is at least 60000");
 	if (loadMax !== undefined && !(number(loadMax) && loadMax > 0)) return no("loadMax is a number over 0");
-	return dog.read.read({ key, ...(typeof since === "string" ? { since } : {}), ...(deadline !== undefined ? { deadline } : {}), ...(quietMs !== undefined ? { quietMs } : {}), ...(loadMax !== undefined ? { loadMax } : {}) });
+	if (idleMs !== undefined && !(number(idleMs) && idleMs >= 60_000)) return no("idleMs is at least 60000");
+	return dog.read.read({ key, ...(typeof since === "string" ? { since } : {}), ...(deadline !== undefined ? { deadline } : {}), ...(quietMs !== undefined ? { quietMs } : {}), ...(loadMax !== undefined ? { loadMax } : {}), ...(idleMs !== undefined ? { idleMs } : {}) });
 }
 
 export interface StartWatchdog {
@@ -35,12 +40,16 @@ export interface StartWatchdog {
 	client(): Pick<IntercomLike, "listSessions" | "send"> | undefined;
 	log(event: string, facts: Record<string, number | string | boolean>): void;
 	stops: (() => void)[];
+	/** The `link:` keys and `waiting` (linkwatch.ts): the waits' ledgers of this state folder and the Link holder, when there is one. */
+	slot?: Slot;
+	holder?(): Pick<LinkHolder, "unitsSeen"> | undefined;
 	/** The seams of a test: the hold's length, the read interval, the timer. */
 	over?: Partial<Pick<WatchReadDeps, "holdMs" | "readMs" | "timer">>;
 }
 /** The watchdog routes of this server: the holds on the GUI host's readings, and the reports through the server's own intercom connection. The holds' timers stop with the server. */
 export function startWatchdog(o: StartWatchdog): Watchdog {
-	const read = createWatchRead({ net: o.net, now: o.now, ...o.over });
+	const slot = o.slot, link = slot ? { units: () => o.holder?.()?.unitsSeen() ?? [], waits: () => listServices(slot).flatMap((r) => readWaits(slot, r.workspace).entries) } : undefined;
+	const read = createWatchRead({ net: o.net, now: o.now, ...(link ? { link } : {}), ...o.over });
 	o.stops.push(() => read.stop());
 	return { read, report: createWatchReport({ sessionsDir: join(o.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "sessions"), now: o.now, intercom: o.client, log: o.log }) };
 }
