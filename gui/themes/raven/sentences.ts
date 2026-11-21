@@ -120,7 +120,6 @@ export const SENTENCES: SentencePack = {
 		link_main_stop_aria: "停止血僕 {name}",
 		link_main_stop_ask: "要請 {box} 停止血僕 {name} 嗎？「停止」等它閒下來才結束；「中斷並停止」會先中止它進行中的回合。由那台機器決定，結果會通知你。",
 		yard_notice_escalated: "已上報管家：{ticket} 的送車者聯絡不上",
-		auto_confirm_title: "鴉閣要求進入自動模式",
-		auto_stale: "這個請求已過期或被取代，請再請鴉閣提出一次。",
+		back_to_tower: "已退回給管家，仍需要你時再問你",
 	},
 };
