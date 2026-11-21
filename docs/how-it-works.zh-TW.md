@@ -167,12 +167,12 @@ stateDiagram-v2
 **標頭**。程式會在每則 `call_tower`、`boss_broadcast`、`tower_send` 和交接訊息，以及監控者的 `watch_report` 的文字前寫一行（絕不是模型寫的，所以名稱或訊息都改不了它）：
 
 ```text
-[straw net from=<name> id=<session id> role=<tower|main|member|session> [head=yes] workspace=<label> kind=<call_tower|broadcast|tower_send|handoff|watch_report> scope=<scope> to=<recipients> reply=<expected|none> [why=<milestone|shared|blocked|unspecified>] [ask=H<n>] [relay=boss:<event id>] [in-reply-to=H<n>]] <message>
+[straw net from=<name> id=<session id> role=<tower|main|member|session> [head=yes] workspace=<label> kind=<call_tower|broadcast|tower_send|handoff|watch_report> scope=<scope> to=<recipients> reply=<expected|none> [why=<milestone|shared|blocked|unspecified>] [waits-on=<device short> waits-owner=<name> waits-what=<what>] [ask=H<n>] [relay=boss:<event id>] [in-reply-to=H<n>]] <message>
 ```
 
 `role` 是寄件者的角色，由它的 pane 的 `sb_role` token 發布（沒有加入網的 pi 是 `session`，只有範圍為 `all` 的廣播才找得到它）；`head=yes` 只標記主塔台，不標記其他任何人（`role` 仍是 `tower`，所以只認得四種角色的讀者照常運作）。`ask=` 和 `relay=` 只出現在主塔台的轉發上，`in-reply-to=` 則只出現在工作區塔台對轉發的回答上（[轉發與回答](#主塔台)）。`scope` 對廣播和送給所有塔台的 `tower_send` 是 `tab`、`workspace`、`towers` 或 `all`，對送給單一塔台的訊息是 `tower`，對交接則是 `main`。
 
-`to` 以 `<name> (<role> of <workspace>)` 列出每位收件者，主塔台寫 `head tower`，以 `;` 分隔，最多 20 個，之後寫 `+N more`：所有收件者讀到的是同一行，所以收到訊息的塔台知道還有誰收到，不會再轉給他們。`reply=expected` 表示寄件者在等回答；`none` 表示這是一則通知。`why=` 只出現在 `call_tower` 的標頭上：主智慧體呼叫的理由，由程式從一組封閉的值裡寫入（見[主智慧體何時呼叫塔台](#主智慧體呼叫塔台時)），所以塔台是從這一行、而不是從訊息內文讀到它。
+`to` 以 `<name> (<role> of <workspace>)` 列出每位收件者，主塔台寫 `head tower`，以 `;` 分隔，最多 20 個，之後寫 `+N more`：所有收件者讀到的是同一行，所以收到訊息的塔台知道還有誰收到，不會再轉給他們。`reply=expected` 表示寄件者在等回答；`none` 表示這是一則通知。`why=` 只出現在 `call_tower` 的標頭上：主智慧體呼叫的理由，由程式從一組封閉的值裡寫入（見[主智慧體何時呼叫塔台](#主智慧體呼叫塔台時)），所以塔台是從這一行、而不是從訊息內文讀到它。`waits-on=` 出現在等候隊友裝置的 `blocked` 呼叫上（`call_tower` `waitsOn`，[裝置之間的等待](#裝置之間的等待)）；撤回它的 `milestone` 上則以 `waits-cancel=yes` 取代 owner 與 what。
 
 名稱裡的控制字元和連續空白會折成一個空格，名稱含有空格、引號、`]`、`=` 或 `;` 時，會用雙引號包起來，裡面的引號換成 `'`。
 
@@ -402,6 +402,23 @@ flowchart TD
 面板開著時，角落的地圖總覽會讓開（面板的送出答案和取消那一列位在視窗底部，也就是總覽所在的位置；`style.css`、`body:has(.ally-asks …) .minimap`），面板關閉後再回來。屬於盒子兩個團隊的控制端只會被告知一次：盒子對每個裝置只送一個 `dialog-open`（被告知的那個團隊，只要該團隊還列著這個裝置就保留，否則選一個裝置在線的團隊），控制端對每個裝置和對話框 id 只保留一張卡片。
 
 轉發成功過去不會在任何地方留下一行；現在盒子的 `server.log` 在啟動時有 `dialog-forwarder`（`started` 或 `skipped`）、`dialog-controllers`（數量和已知者，在第一次查看以及兩者任一改變時）、每個問題各有 `dialog-seen`、`dialog-sent`（每位控制端一筆，已排進 outbox，尚未遞送）和 `dialog-ended`，以及一輪超過一分鐘沒完成時的 `dialog-pass-stuck`（它卡在 `read`、`dispatcher`、`notice` 或 `post`；會放開它，下一次查看開一輪新的；它沒來得及 post 的關閉會保留，由下一輪 post，最多試五次，卡片在控制端過期之後就完全不 post；最多只有一輪被放開的仍未完成，所以一個永不返回的呼叫只多出一輪待處理的，第二個卡住的一輪會留著繼續跑，並留下一行 `dialog-pass-hung`），而控制端的 `link.log` 在有一則到達時有 `dialog-in`；沒有任何一行含問題的隻字片語（[這些行](unattended-device.zh-TW.md#6-被拒絕時看起來像什麼)）。
+
+</details>
+
+#### 裝置之間的等待
+
+在等隊友裝置的主智慧體（合併、審查、憑證、只有那邊的人能做的登入）以 `call_tower` `why: blocked` 加上 `waitsOn {device, owner?, what}` 說出來。它的塔台 run 用 `tower_send` `waitsOn: {event}` 轉送這個事件：程式從事件取出裝置、owner、what 與發起者，綁定發起者的請求，並把等待記在工作區的帳本（`tower/<ws>/linkwaits.json`），所以沒有模型要重打一次，也沒有 `tower_done` 能關掉它（這樣的事件既未轉送也未回答時，run 的 `tower_done` 會被拒絕）。在裝置那端，等待交給等待路由器，絕不交給隊友 run。路由器通知寄件者點名的主智慧體，否則用一則訊息通知工作區每位在線的主智慧體；沒有主智慧體、或 30 分鐘內沒人認領時，就在老闆的清單上放一張卡片。每一步都回報給寄件者，其發起者會收到一行程式寫的訊息（`kind=link_wait_state`）。
+
+<details>
+<summary>細節</summary>
+
+**線路。** 等待放在加密的 `tower` 明文的第六欄（id、state、owner、what、發起者的 handle），只寫給 `caps` 列出 `tower.wait` 的裝置。對較舊的 build，它以一般 `tower` 送出，第一行是 `[waits on you: <what>]`，那台裝置的隊友 run 可以用 `ally_escalate` 接住，寄件者的帳本則標成 `sent-plain`。relay 看不出差別。
+
+**喚醒。** 被告知等待的主智慧體會從它塔台的身分收到一行 `kind=link_wait wait=L<n> remote=<label> device=<short>`，裡面沒有隊友的文字：它在 `board_read` 的 `waits` 區塊讀這個等待（兩個方向，範圍跟看板一樣），並用 `call_tower` `linkWait {id, state}` 回答。`taken` 認領它並停掉卡片計時；`done` 或 `declined` 把主智慧體的 `message` 當作對請求的回答送給裝置，並關閉等待。一台裝置最多有 3 張未結的 link 卡片；第四張併入第三張。在 link 卡片上按下按鈕，會用程式寫的話告訴裝置（「declined by the boss on <label>」）。被按下或路由器以外的東西關掉的 link 卡片（包括 auto 模式的退回），會在下一輪掃描再次提出：等待仍未結。發起者連續兩輪掃描都不在時，它的等待取消；超過 7 天的等待在兩端都過期。
+
+**隊友 run 的上報。** 寄件者的訊息在等這裡的某人、點名本機的主智慧體、說沒有本機主智慧體負責這項工作，或回報一件牽涉這裡工作的事故時，隊友 run 呼叫 `ally_escalate {what, owner?, kind?}`。它在任何等級都免費，跟 `tower_done` 一樣，從訊息開出同一種等待（訊息帶著唯一的請求時一併帶上），照上面的方式經過路由器；每次 run 最多 5 項，每項一次。run 的 brief 列出這裡的主智慧體（名稱、種類、看板 id），讓它能對上名字。
+
+**在隊友卡片上。** 在這台電腦有未結等待的盒子主智慧體，會在它那一列、派工者旁邊顯示「等候本機 · L3」，`/boss link units` 也一樣。
 
 </details>
 
@@ -2329,20 +2346,27 @@ sb 隨附它的智慧體所用的 pi-herdr-agents 角色：`roles/` 裡的 `work
 <details>
 <summary>細節</summary>
 
-**`watch_read({ key, since?, waitMs?, deadline?, quietMs?, loadMax? })`** 等一個單位發生變化。`key` 是這台電腦的網裡某個單位的鍵或 session id，`since` 是上一次回覆給的戳記（第一次呼叫沒有）。工具經控制 socket 向 sb server 送出 `watch-read`。server 把請求最多留住 45 秒，在第一次讀網得出 `unchanged` 以外的判定時回答；工具在同一次呼叫裡繼續再問，直到 `waitMs` 過去（預設 600000；上限 3000000，即 50 分鐘）。回覆是 `{ state, since, now, unit?, successor?, server? }`：
+**`watch_read({ key, since?, waitMs?, deadline?, quietMs?, loadMax?, idleMs? })`** 等一個單位發生變化。`key` 是這台電腦的網裡某個單位的鍵或 session id，或隊友裝置的 `link:` 鍵（見下），`since` 是上一次回覆給的戳記（第一次呼叫沒有）。工具經控制 socket 向 sb server 送出 `watch-read`。server 把請求最多留住 45 秒，在第一次讀網得出 `unchanged` 以外的判定時回答；工具在同一次呼叫裡繼續再問，直到 `waitMs` 過去（預設 600000；上限 3000000，即 50 分鐘）。回覆是 `{ state, since, now, unit?, successor?, server? }`：
 
 | `state` | 什麼時候 |
 |---|---|
 | `changed` | 單位的標記、某個 monitor 的狀態或結束碼、todo 進度、火車的狀態、步驟或等待事項、某個子智慧體的標記，和 `since` 記下的不同。沒有 `since` 的呼叫，以及戳記出自另一個 server 實例的呼叫（server 重啟過），會立刻得到回答。 |
 | `stalled` | 呼叫給了 `quietMs`（至少 60000），而單位已經這麼久沒有動靜：標記和備註沒變、沒有新的 tick、monitor 沒有新的輸出行。每段安靜期只回一次。兩次讀網相隔超過 60 秒（電腦睡眠）時，計時重新開始。子智慧體只有標記和備註可以算動靜。 |
 | `load` | 某個 monitor 最新的進度行帶著超過 `loadMax` 的負載（預設用那個 monitor 自己的上限；實際上這種 monitor 是火車的 gate 包裝）。每次越線只回一次。 |
+| `idle` | 呼叫帶了 `idleMs`（至少 60000），而這個單位或主智慧體讀起來閒置（塔台單位待命、主智慧體 idle 或 done）已達那麼久，從這台 server 第一次讀到它閒置時算起。每段閒置只回一次。 |
+| `waiting` | 這個鍵上的 link 等待開啟或改變狀態：對這台電腦的主智慧體，是它發起或認領的等待；對裝置鍵，是與那台裝置之間的任何等待；對盒子的主智慧體，是它發起的等待。回覆帶著 `waits`（`id`、`dir`、`what`、`state`）。 |
+| `offline` | `link:` 鍵的裝置最後一次狀態已超過 3 分鐘（頁面的過期規則）。每段只回一次。 |
 | `unchanged` | 到 `waitMs` 為止什麼都沒發生，或者呼叫期間有訊息送到監控者。 |
 | `expired` | `deadline` 已過；它是任務給的絕對時間，單位毫秒。 |
 | `gone` | 單位離開了網；有 session 接替它時，`successor` 是接替者的鍵。 |
 
-同時符合好幾項時，順序是 `gone`、`expired`、`changed`、`load`、`stalled`。輸出行、monitor 的最後一行、備註、tick，以及沒有超過上限的負載讀數，都不會喚醒等待。`unit` 帶著 `mark`、`note`、`duty`、`todo`，每個 monitor 的 `status`、`exit`、`last`、`load` 與 `ageMs`，火車的 `status`、`step` 與 `waits`，以及它的子智慧體的名稱和標記（`subs`）；裡面沒有對話紀錄、沒有路徑，也沒有 monitor 的指令。`now` 是當下的時間（毫秒），沒有 shell 的監控者靠它知道現在幾點。
+同時符合好幾項時，順序是 `gone`、`expired`、`offline`、`waiting`、`changed`、`load`、`idle`、`stalled`。輸出行、monitor 的最後一行、備註、tick，以及沒有超過上限的負載讀數，都不會喚醒等待。`unit` 帶著 `mark`、`note`、`duty`、`todo`，每個 monitor 的 `status`、`exit`、`last`、`load` 與 `ageMs`，火車的 `status`、`step` 與 `waits`，以及它的子智慧體的名稱和標記（`subs`）；裡面沒有對話紀錄、沒有路徑，也沒有 monitor 的指令。`now` 是當下的時間（毫秒），沒有 shell 的監控者靠它知道現在幾點。
 
 server 用 GUI 讀網的結果來判定（有頁面開著時每 2 秒讀一次，其他時候每 10 秒）。GUI 停掉時，這條路由自己每 10 秒讀一次網，而且只在有請求被留住時才讀。網裡沒有的鍵會讓呼叫失敗，錯誤是 `unknown key <key>`；中止和超過上限的 `waitMs` 也會讓它失敗，其他情況都不會。失敗的請求（server 重啟、socket 關閉）2 秒後重送。到了 `waitMs` server 還是沒有回答時，回覆是 `unchanged` 加上 `server: "unreachable"`；sb server 比 0.80.0 舊、不認得這個指令時，回覆帶著 `server: "outdated"`。每送一次新請求，工具就更新一次進度，所以等得再久，pi-herdr-agents 的卡住提醒也不會出現。
+
+**隊友裝置的鍵**（`link:`，[規格](specs/2026-11-21-box-mac-waits.md) §5）。`link:<short>` 是這台電腦的 Link holder 最後一次在 `unit-status` 裡聽到的那台裝置（[盒子回報什麼](#盒子回報什麼)），`link:<short>/<unit>` 是它的一個塔台單位，`link:<short>/main/<handle>` 是它讓這台電腦看到的一個主智慧體。讀它不花裝置任何成本：讀的是記憶體裡最新的狀態。它的 `unit` 帶著裝置標籤與短 id、`ageMs`、單位列（`state`、回報的第一行、`monitors`）或主智慧體的 `state`、`name`、`kind`、它的 `mains`，以及未結的 `waits`；文字照卡片的方式清理、截斷。holder 30 分鐘沒聽到的裝置、狀態裡已不再有的單位或主智慧體，都是 `gone`（不認得的鍵會立即失敗）。
+
+**給 monitor 用的 `watch`。** `cli.mjs watch <key> [--idle 20m] [--quiet 30m] [--deadline <ms>]` 以指令跑同一個迴圈：每個不是 `unchanged` 的判定印一行 JSON，並串接 `since`，所以在 `MonitorCreate` 底下啟動它的常駐主智慧體只在有一行時被喚醒，自己的輪次裡不輪詢。遇到 `gone` 或 `expired` 以 0 結束，不認得的鍵是 1，用法錯誤是 2；server 沒回答時印一次 `{"server":"unreachable"}`（每 5 秒再問一次）。派出監控者、或在 monitor 底下啟動 `watch` 的 `coordinator` 主智慧體，每個 session 會在那次呼叫的結果上收到一行：它的工作看來是常駐的盯守，`boss_duty standing` 會把它設成這個種類。sb 自己從不切換種類。
 
 **`watch_report({ text })`** 送一則 1 到 2,000 個純文字字元的訊息給派出監控者的 session。這個工具沒有收件者參數。子智慧體的 sb 向 server 送出 `watch-report`，附上 pi-herdr-agents 的啟動腳本或 resume 腳本放進它環境裡的三個值：`PI_SUBAGENT_SESSION`、`PI_SUBAGENT_ID` 與 `PI_SUBAGENT_ACTIVITY_FILE`。server 用 pi-herdr-agents 自己的檔案把三者對起來：
 
@@ -3610,7 +3634,7 @@ server 把執行限制在它被認領的等級與裝置現在的等級兩者較�
 
 #### 隊友 run 可呼叫的工具
 
-每個等級都自由的：`boss_status`、`tower_list` 與 `board_read`（兩者都限定在發送者的團隊：它專案的工作區與該團隊的看板）、送給發送者裝置的 `tower_send`（`device` 是必需的；任何其他裝置或目標都會被拒絕，不論有沒有 Allow）、`tower_done`，以及執行自己在專案受追蹤檔案之內的 `read`、`grep`、`find` 與 `ls`，如同遠端輪次。塔台自己工具中的其他任何東西（`tower_reply`、`boss_open_main`、`boss_close_main`），server 只在閘門記錄了 yes 時才執行（見下），除了 `dispatch`，在那裡它們不經確認就執行。
+每個等級都自由的：`boss_status`、`tower_list` 與 `board_read`（兩者都限定在發送者的團隊：它專案的工作區與該團隊的看板）、送給發送者裝置的 `tower_send`（`device` 是必需的；任何其他裝置或目標都會被拒絕，不論有沒有 Allow）、`tower_done`、`ally_escalate`（[裝置之間的等待](#裝置之間的等待)），以及執行自己在專案受追蹤檔案之內的 `read`、`grep`、`find` 與 `ls`，如同遠端輪次。塔台自己工具中的其他任何東西（`tower_reply`、`boss_open_main`、`boss_close_main`），server 只在閘門記錄了 yes 時才執行（見下），除了 `dispatch`，在那裡它們不經確認就執行。
 
 <details>
 <summary>細節</summary>
@@ -3684,9 +3708,13 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 <details>
 <summary>細節</summary>
 
+不給 `reply` 的 `device` `tower_send` 會綁定 run 唯一的請求者，也就是呼叫它並等回答的主智慧體，效果跟 `reply: true` 加 `for` 一樣；`reply: false` 是單純的通知，其結果會說沒有人會收到回答。
+
 答案以 `tower-reply` 種類送給 `caps` 列出它的裝置，否則送一般的 `tower`（在 relay 以 `unknown-kind` 拒絕這個種類時也是；每個裝置每小時記錄一次）。提出請求的電腦只對來自那個裝置、開啟且未使用的請求，才把 `tower-reply` 當成回覆，關閉該請求，並透過 `straw-boss/link` 把它提供給提出請求的主智慧體，後者持有它直到閒置，再把它以帶 `triggerTurn` 的 `straw-link` 訊息放進它的 session，在經過驗證的標頭底下加上 `kind=link_reply` 與 `for=<tower>`。那個主智慧體隨後以回覆裝置的等級執行一個遠端輪次。
 
-已經消失、或在 5 分鐘內沒有取走該提供的主智慧體，會得到隊友 run，其 brief 說明是哪個主智慧體提出請求；任何其他回覆也一樣。對較舊的 build 不會丟掉任何東西：請求以一般 `tower` 回來並得到隊友 run。
+忙碌中的在線主智慧體會一直保有這個提供（每 30 秒再提供一次），直到它的請求過期（24 小時）。已經消失、或已不再是它分頁主智慧體的主智慧體，會把回覆交給[等待路由器](#裝置之間的等待)，當作對它請求的回答，讓工作區的另一位主智慧體或老闆的清單收到；沒有路由器時（server 不跑塔台的電腦）沿用舊規則，5 分鐘後交給隊友 run。對較舊的 build 不會丟掉任何東西：請求以一般 `tower` 回來並得到隊友 run。
+
+**無人值守盒子的回條。** 盒子上的隊友 run 若取走一則帶請求的訊息，結束時（完成、當掉、逾時、退出）卻沒有回答，盒子的 server 會用程式寫的文字和該 run 自己的 `tower_done` 筆記回答這個請求。帶請求的訊息若等了 10 分鐘還沒有 run 開始，或它的塔台開不起來，每則訊息、每種理由會送一則 `notice`，其第四欄 `ref` 指出這個請求（給 `caps` 列出 `notice.ref` 的 build）。在提出請求的電腦上，這樣的 notice 會以程式寫的 `kind=link_notice` 行送到提出請求的主智慧體；請求仍然未結。
 
 **`boss_server` 與重啟限制。** 隊友 run 的 `boss_server` 依它的種類被拒絕；對任何執行，server 自己守著每分鐘一次重啟的限制，所以兩個智慧體同時要求也不可能都通過。
 

@@ -21,7 +21,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `boss_status` | 已加入的 session 與塔台 | 每個分頁的主智慧體與它的種類、這個工作區的塔台、主塔台與其他塔台。 |
 | `boss_duty` | 分頁的主智慧體 | 附理由設定它的種類：`coordinator`、`integrator` 或 `standing`。種類就是它執行的 prompt，並顯示在頁面上。 |
 | `boss_rename` | 已加入的 session | 用一句短語為 session 命名它目前的工作；主智慧體的分頁以它為標籤。角色標籤（塔台的圖示、`train <MMDDx>`）會被拒絕。 |
-| `call_tower` | 已加入的 session 與塔台 | 在標頭之下發訊息給這個工作區的塔台，或另一個工作區的塔台。`why` 是 `milestone`、`shared` 或 `blocked`；通知用 `reply: false`。 |
+| `call_tower` | 已加入的 session 與塔台 | 在標頭之下發訊息給這個工作區的塔台，或另一個工作區的塔台。`why` 是 `milestone`、`shared` 或 `blocked`；通知用 `reply: false`。`blocked` 附 `waitsOn {device, owner?, what}` 表示在等隊友的裝置（`milestone` 附 `cancel: true` 撤回）；`linkWait {id, state}` 認領、回覆或婉拒隊友對本機的等待。見[裝置之間的等待](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#裝置之間的等待)。 |
 | `boss_broadcast` | 已加入的 session 與塔台 | 發訊息給一個分頁、一個工作區、所有塔台或所有 session，標頭會列出每位收件者。 |
 | `board_set` | 分頁的主智慧體 | 覆寫它自己的工作看板項目（一行與最多 8 個清單項目）；`auto: true` 交還給自動填入，`clear: true` 刪除它。 |
 | `boss_server` | 已加入的 session | sb server 的 `status`（server 沒在跑時也可用）、它的 `logs`（最多 200 行），或附理由 `restart`。老闆停掉 server 或有火車在跑時會被拒絕，每分鐘最多一次，且在遠端 turn 中絕不可用。 |
@@ -29,15 +29,16 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `boss_open_main` | 塔台 | 為沒有 session 負責的請求，開一個帶新主智慧體的分頁。`role: "train"` 開一列火車；`role: "integrator"` 把車廂單送給專案唯一的整合員，沒有在跑的就開一個。`duty: "standing"` 開一個值守種類的主智慧體（預設為協調者）。見[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。 |
 | `boss_close_main` | 塔台 | 等它裡面沒有東西在跑，關掉這座塔台開的主智慧體；值守主智慧體不會被關，只有老闆能關。 |
 | `tower_list` | 塔台 | 每個工作區的塔台、發給它的訊息會送到誰、它的狀態，以及它的分頁在做什麼（每個分頁的主智慧體及其種類）。 |
-| `tower_send` | 塔台 | 發訊息給另一座塔台（用工作區 id 或標籤）或全部；附 `device` 則發給隊友電腦上的塔台。 |
-| `board_read` | 塔台 | 工作看板：每位主智慧體在做什麼、做到哪裡，包括這裡與隊友的電腦。 |
+| `tower_send` | 塔台 | 發訊息給另一座塔台（用工作區 id 或標籤）或全部；附 `device` 則發給隊友電腦上的塔台：不給 `reply` 時綁定這次 run 裡唯一等回覆的主智慧體，`reply: false` 是通知，`waitsOn: {event}` 轉送主智慧體對那台裝置的等待。 |
+| `board_read` | 塔台 | 工作看板：每位主智慧體在做什麼、做到哪裡，包括這裡與隊友的電腦，以及本機與隊友裝置之間未結的等待（`waits`）。 |
 | `tower_memory` | 本機塔台 run | 保存 run 結束後還要留著的內容：引用自老闆自己訊息的長期指示或決定，以及塔台的等待事項，包括對老闆的等待（以卡片呈現）。 |
 | `boss_wait_ask` | 主智慧體、本機塔台 run、主塔台 | 讓 sb 在終端機裡把開著的等待卡片一張接一張拿給你看：`ids`（1 到 4 個 `W<n>`），或不指名，代表它範圍內每一張開著的卡片（主智慧體是它提出的，塔台 run 是它那座塔台的，主塔台是任何一張）。sb 照 `/boss wait` 的畫法畫每一張卡片；智慧體不寫字也不選，只有你的按鍵能按。自動模式開著、無人值守的裝置、沒有畫面時都被拒絕；在塔台 run 裡，只有你在這個 run 裡最後說的話來自它的 pane 才會畫。 |
 | `tower_reply` | 塔台 run，不含主塔台的 | 用 intercom 名稱或 session id 回答一個本機 session（主智慧體或成員），掛在塔台的標頭之下。`forward` 把車廂單的事件 id 轉給整合員。 |
-| `tower_done` | 塔台 run | 附一份交接筆記（一項一行，最多 1,200 字元）結束這次 run，留給下一次 run；`wakeAfter`（5 到 240 分鐘，僅限本機 run）要求稍後再跑一次。事件仍在等這次 run 時會被拒絕。 |
+| `tower_done` | 塔台 run | 附一份交接筆記（一項一行，最多 1,200 字元）結束這次 run，留給下一次 run；`wakeAfter`（5 到 240 分鐘，僅限本機 run）要求稍後再跑一次。事件仍在等這次 run，或主智慧體對裝置的等待既未轉送也未回覆時，會被拒絕。 |
+| `ally_escalate` | 盟友 run | 把寄件者訊息裡的一項（在等這裡的某人、點名的本機主智慧體、沒有本機主智慧體負責的工作、一起事故）交給等待路由器，由它通知主智慧體或放上老闆的清單。任何層級都可用；每次 run 最多 5 項。 |
 | `boss_auto` | 主塔台 | 依老闆自己的話（server 自己讀），在它回答的那個 turn 裡直接開始或結束[自動模式](/pi-straw-boss/docs/zh-tw/guide/auto-mode/)，不需確認。 |
 | `train_car` | 整合員與火車 | 設定車廂的狀態（`received`、`returned`、`dropped`、`landed`）；sb server 會通知該車廂的協調者。它的 `car` 是車廂的第一張票；車廂單的 `car:`（或 `app:`）指名 app；同一張票在兩節車廂上時，用 `app` 或 `head`（40 個十六進位字元）指定其中一節。火車設定自己車廂的 `returned`、`dropped`、`landed`；整合員在收件時設定 `received` 或 `returned`，而它收下的車廂，等那列火車已不在了，也可以由它設定 `returned`、`dropped` 或 `landed`。 |
-| `watch_read` | `watchdog` 子智慧體 | 等網裡的一個單位發生變化。回覆是 `changed`、`stalled`、`load`、`unchanged`、`expired` 或 `gone`，並附上單位的狀態。見[用監控者盯著一件事](/pi-straw-boss/docs/zh-tw/guide/concepts/#用監控者盯著一件事)。 |
+| `watch_read` | `watchdog` 子智慧體 | 等網裡的一個單位發生變化。回覆是 `changed`、`stalled`、`load`、`idle`、`waiting`、`offline`、`unchanged`、`expired` 或 `gone`，並附上單位的狀態。隊友裝置的 `link:<short>` 鍵讀它最新的狀態。見[用監控者盯著一件事](/pi-straw-boss/docs/zh-tw/guide/concepts/#用監控者盯著一件事)。 |
 | `watch_report` | `watchdog` 子智慧體 | 把一項發現送給派出它的 session，別人都收不到：每 30 秒最多一則，不能連續兩次送同樣的內容。 |
 
 完整的表格與每個參數，見[工具](/pi-straw-boss/docs/zh-tw/reference/how-it-works/tools/)。
@@ -159,6 +160,7 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 | `cli.mjs up`、`cli.mjs stop`、`cli.mjs restart` | 在 server 與 GUI 沒在跑時啟動它們；停止或重新啟動 server。有火車在跑時，`restart` 以及 `up` 的升級或桌面開關重啟都會被拒絕；帶 `--reason` 的 `--force` 照樣重啟。 |
 | `cli.mjs serve` | 在前景執行 server，作為[無人值守裝置](/pi-straw-boss/docs/zh-tw/guide/unattended-device/)的連線持有者。 |
 | `cli.mjs up --dir <folder> --label <name>` | 桌面模式，給自己顯示頁面的 shell 用：需要 `STRAW_BOSS_DESK=1`。見[桌面模式](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#桌面模式up---dir)。 |
+| `cli.mjs watch <key> [--idle 20m] [--quiet 30m] [--deadline <ms>]` | 單位、主智慧體或隊友裝置 `link:` 鍵每有變化就印一行 JSON，給 `MonitorCreate` 用；遇到 `gone` 或 `expired` 結束。 |
 | `cli.mjs procs`、`cli.mjs procs reap --checkout <path>` | server 知道的工作者；停掉持有某個 checkout 的程序。 |
 | `cli.mjs train status\|check\|gate\|clear\|end\|notices` | [合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)的火車、車廂單、關卡與車廂通知。`status --state live,stale,ended,unreadable` 只留下這些狀態的列。`check` 可以在專案或其中任何資料夾執行，沒有 `--app-accept` 時要求 app 的 `integration.accept`，並檢查車廂單的 `head:` 是認得的 commit、且是它的分支在 origin 上的頂端。`end --project P --train CODE --outcome landed --commit SHA`（或 `--outcome none`）`--reason TEXT --evidence TEXT` 結束一列過時的火車（仍持有部署目標的，先清掉那個目標）。 |
 

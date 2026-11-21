@@ -500,6 +500,8 @@ Watch the unit your task names: call `watch_read` with the last `since` and the 
 
 ### 10. The watchdog (D3; phase 3)
 
+> Amended 2026-11-21 by [box-mac waits](2026-11-21-box-mac-waits.md) §5: `key` may also be a teammate device's `link:<short>`, `link:<short>/<unit>`, or `link:<short>/main/<handle>`; the request takes `idleMs`; the verdicts `idle`, `waiting`, and `offline` join, in the order gone, expired, offline, waiting, changed, load, idle, stalled; `cli.mjs watch` runs the same loop for a monitor.
+
 **`watch_read({ key, since?, waitMs?, deadline?, quietMs?, loadMax? })`**
 
 - **Request.**
