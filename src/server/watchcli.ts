@@ -25,8 +25,8 @@ export async function runWatch(ctx: Ctx | undefined, flags: Record<string, strin
 	const key = String(flags.key ?? ""), idleMs = flags.idle === undefined ? undefined : durationMs(String(flags.idle)), quietMs = flags.quiet === undefined ? undefined : durationMs(String(flags.quiet));
 	const deadline = flags.deadline === undefined ? undefined : Number(flags.deadline);
 	if (!key || key.length > 200) return (io.err("watch needs a key of 1 to 200 characters\n"), 2);
-	if (idleMs !== undefined && !(idleMs >= 60_000)) return (io.err("--idle is at least 1m (20m, 90s, or milliseconds)\n"), 2);
-	if (quietMs !== undefined && !(quietMs >= 60_000)) return (io.err("--quiet is at least 1m (30m, 90s, or milliseconds)\n"), 2);
+	if (flags.idle !== undefined && !(idleMs !== undefined && idleMs >= 60_000)) return (io.err("--idle is at least 1m (20m, 90s, or milliseconds)\n"), 2);
+	if (flags.quiet !== undefined && !(quietMs !== undefined && quietMs >= 60_000)) return (io.err("--quiet is at least 1m (30m, 90s, or milliseconds)\n"), 2);
 	if (deadline !== undefined && !(Number.isFinite(deadline) && deadline > 0)) return (io.err("--deadline is a time in epoch ms\n"), 2);
 	const call = io.call ?? (async (request: Record<string, unknown>) => {
 		const record = ctx ? await trusted(ctx).catch(() => undefined) : undefined;

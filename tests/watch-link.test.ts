@@ -135,3 +135,38 @@ test("a coordinator that dispatches a watchdog or runs the CLI's watch under a m
 		assert.deepEqual([result(), result()].map((r) => r?.content.at(-1)?.text === STANDING_HINT), expect, kind);
 	}
 });
+
+test("BMWR-F007: a box in two teams is one device: its link keys read the rows and mains of both teams' reports", async () => {
+	const { readLinkKey } = await import("../src/server/linkwatch.ts");
+	const a = { team: "t1", device: DEV, label: "ci-box", units: [{ unit: "moldplan", state: "running", monitors: [], report: "" }], mains: [main()], at: T0 };
+	const b = { team: "t2", device: DEV, label: "ci-box", units: [{ unit: "skald", state: "standing", monitors: [], report: "" }], mains: [main(), main({ handle: "fedcba9876543210", unit: "skald", name: "skald-main" })], at: T0 + 5000 };
+	const deps = { units: () => [a, b], waits: () => [] };
+	const device = readLinkKey({ short: "aaaaaa" }, deps, T0 + 6000);
+	assert.ok(device, "the device reads");
+	assert.deepEqual((device!.view.units as { unit: string }[]).map((u) => u.unit), ["moldplan", "skald"]);
+	assert.deepEqual((device!.view.mains as { handle: string }[]).map((m) => m.handle), [H, "fedcba9876543210"]);
+	assert.equal(device!.view.ageMs, 1000, "the newest report");
+	assert.ok(readLinkKey({ short: "aaaaaa", unit: "skald" }, deps, T0 + 6000));
+	assert.ok(readLinkKey({ short: "aaaaaa", handle: "fedcba9876543210" }, deps, T0 + 6000));
+	assert.equal(readLinkKey({ short: "aaaa" }, { units: () => [a, { ...b, device: "a".repeat(25) + "b" }], waits: () => [] }, T0), undefined, "two devices under one short id stay unknown");
+});
+
+test("BMWR-F012: a malformed --idle or --quiet is a usage error, not dropped", async () => {
+	const call = async () => ({ ok: false, error: "unknown key u1" });
+	for (const flags of [{ idle: "20min" }, { quiet: "soon" }, { idle: true }] as Record<string, string | true>[]) assert.equal(await runWatch(undefined, { key: "u1", ...flags }, { out: () => {}, err: () => {}, call }), 2, JSON.stringify(flags));
+});
+
+test("BMWR-F010: a remote turn whose senders are of several teams gets no waits, as it gets no remote boards", async () => {
+	const { readBoard } = await import("../src/boardread.ts");
+	const { mkdtempSync, rmSync } = await import("node:fs");
+	const { join } = await import("node:path");
+	const { tmpdir } = await import("node:os");
+	const dir = mkdtempSync(join(tmpdir(), "psb-board-waits-"));
+	try {
+		const read = (teams: string[]) => readBoard({ dir, now: T0, net: { sessions: [], ps: [] }, link: { boards: async () => [], remoteScope: () => ({ teams, project: "/x" }) } as never, scope: "all", waits: async () => [{ id: "L1" }] });
+		assert.deepEqual((await read(["t1"])).waits, [{ id: "L1" }]);
+		assert.equal((await read(["t1", "t2"])).waits, undefined);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});

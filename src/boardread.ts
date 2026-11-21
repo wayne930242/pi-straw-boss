@@ -46,9 +46,9 @@ export async function readBoard(o: BoardReadInput): Promise<Record<string, unkno
 		out.local = rows.map((r) => ({ ...(r.role ? { role: r.role } : {}), workspace: r.workspace, tab: r.tab, main: r.main, kind: kinds.get(r.session) ?? null, state: r.state, ...(r.now ? { now: r.now } : {}), items: r.items, ...(r.updatedSecondsAgo !== undefined ? { updatedSecondsAgo: r.updatedSecondsAgo } : {}), ...(r.stale ? { stale: true } : {}) }));
 	}
 	if (o.scope !== "local" || o.device !== undefined) {
-		// Senders of several teams get no ally rows, the same rule as for the local part.
+		// Senders of several teams get no ally rows and no waits (below), the same rule as for the local part.
 		const boards = scope && scope.teams.length > 1 ? [] : await o.link.boards({ ...(scope ? { teams: scope.teams } : {}), ...(o.device !== undefined ? { device: o.device } : {}) });
 		if (boards) out.remote = boards.map(({ teamId: _teamId, ...row }) => row);
 	}
-	return ((w) => (w?.length ? { ...out, waits: w } : out))(o.device === undefined ? await o.waits?.() : undefined);
+	return ((w) => (w?.length ? { ...out, waits: w } : out))(o.device === undefined && !(scope && scope.teams.length > 1) ? await o.waits?.() : undefined);
 }

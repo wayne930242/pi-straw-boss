@@ -38,9 +38,10 @@ export function parseLinkKey(key: string): LinkKey | undefined {
 
 /** The reading of a `link:` key; none while the device, the unit, or the main is not in the latest status (a device unheard for 30 minutes is gone). */
 export function readLinkKey(k: LinkKey, d: LinkWatchDeps, now: number): LinkReading | undefined {
+	// A box in two teams reports once per team: one device still, read as the rows of every team together (BMWR-F007).
 	const seen = d.units().filter((u) => u.device.startsWith(k.short));
-	if (seen.length !== 1) return undefined;
-	const u = seen[0]!, waits = d.waits().filter((w) => w.device === u.device && isOpen(w));
+	if (!seen.length || new Set(seen.map((x) => x.device)).size !== 1) return undefined;
+	const u = seen.length === 1 ? seen[0]! : { ...seen[0]!, units: seen.flatMap((x) => x.units), mains: [...new Map(seen.flatMap((x) => x.mains ?? []).map((m) => [m.handle, m])).values()], at: Math.max(...seen.map((x) => x.at)) }, waits = d.waits().filter((w) => w.device === u.device && isOpen(w));
 	const mains = (u.mains ?? []).map((m) => ({ handle: m.handle, unit: m.unit, name: restrictLabel(m.name), state: m.state, ...(m.kind ? { kind: m.kind } : {}) }));
 	const offlineAt = now - u.at > OFFLINE_MS ? u.at : undefined, base = { device: restrictLabel(u.label), short: u.device.slice(0, 6), ageMs: Math.max(0, now - u.at) };
 	if (k.handle) {
