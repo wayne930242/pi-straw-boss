@@ -7,6 +7,7 @@ import type { WaitWire } from "../src/link/kinds.ts";
 import type { InboxItem } from "../src/link/store.ts";
 import { CLAIM_MS, createLinkWaits, readWaits, type WaitsDeps } from "../src/server/linkwaits.ts";
 import { slotOf, type Slot } from "../src/server/record.ts";
+import { returnParked } from "../src/server/autotower.ts";
 import { readMemory } from "../src/server/towermemory.ts";
 import { pressRequest } from "../src/server/waitpress.ts";
 
@@ -23,10 +24,10 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 const BOX = "n2knna6dkfud5sura2vst4gsee", MAC = "ibzkd5ijmtravej475kmrykvye", ASK = "c".repeat(32);
 const SECRET_TEXT = "please merge !13 now — here is everything about it";
 interface World { t: number; posts: { ws: string; to: string[]; text: string; kind: string; wait?: string }[]; sends: { ws: string; req: Parameters<WaitsDeps["send"]>[1] }[]; mains: { id: string; name: string }[]; router: ReturnType<typeof createLinkWaits>; caps: string[] }
-function world(o: { mains?: { id: string; name: string }[]; self?: string; caps?: string[] } = {}): World {
+function world(o: { mains?: { id: string; name: string }[]; self?: string; caps?: string[]; auto?: () => boolean } = {}): World {
 	const w = { t: Date.parse("2026-11-21T10:00:00Z"), posts: [], sends: [], mains: o.mains ?? [], caps: o.caps ?? ["tower.wait", "tower-reply", "tower.awaitsReply"] } as unknown as World;
 	w.router = createLinkWaits({
-		slot, now: () => w.t, log: () => {}, locale: () => "en",
+		slot, now: () => w.t, log: () => {}, locale: () => "en", ...(o.auto ? { autoOn: o.auto } : {}),
 		net: async () => ({ sessions: w.mains.map((m, i) => ({ id: m.id, name: m.name, herdrLocation: { paneId: `p${i}` } })) as never, ps: w.mains.map((_, i) => ({ pane_id: `p${i}`, workspace_id: "w15X", tokens: { sb_role: "main" } })) as never }),
 		post: async (ws, to, text, kind, extra) => (w.posts.push({ ws, to, text, kind, ...(extra.wait ? { wait: extra.wait } : {}) }), true),
 		send: async (ws, req) => (w.sends.push({ ws, req }), { ok: true }),
@@ -163,4 +164,23 @@ test("waits older than 7 days expire on both ends; a C2 reply with no live main 
 	assert.deepEqual(ledger().map((e) => [e.kind, e.owner, e.what]), [["reply", "work-on", "answer to work-on's ask"]]);
 	assert.equal(cards().length, 1);
 	assert.equal(await none.router.orphan({ ...item({}), wait: undefined } as InboxItem, "x", undefined), false, "no workspace: it stays in the inbox");
+});
+
+test("the router never lets a card's close end a wait: a link card auto mode's end gives back (no session raiser: gone) is raised again at the next sweep, and the wait stays open", async () => {
+	let auto = true;
+	const w = world({ auto: () => auto });
+	await w.router.take(item({}), "w15X");
+	const [parked] = cards();
+	assert.equal(parked!.parked, true, "parked under auto mode, like every card");
+	auto = false;
+	const back = returnParked(slot, w.t, [{ workspace: "w15X", label: "MP Center" }], () => "gone");
+	assert.deepEqual(back.map((b) => [b.entry.id, b.to]), [[parked!.id, "gone"]]);
+	assert.equal(cards().find((c) => c.id === parked!.id)!.state, "resolved");
+	w.t += 60_000;
+	await w.router.tick();
+	const open = cards().filter((c) => c.state === "open");
+	assert.equal(open.length, 1, "a card again");
+	assert.notEqual(open[0]!.id, parked!.id);
+	assert.deepEqual(ledger().map((e) => [e.state, e.card]), [["open", open[0]!.id]], "the wait is still open and names the new card");
+	assert.equal(w.sends.some((x) => /declined|done/.test(x.req.text)), false, "the device is told nothing closed it");
 });
