@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { writeEntry } from "../src/board.ts";
 import { type Agent, until } from "./fakes.ts";
 import { FakeRelay } from "./link/fake-relay.ts";
-import { alice, carol, type Computer, computer, remoteMessage } from "./link/remote-world.ts";
+import { alice, bob, carol, type Computer, computer, remoteMessage } from "./link/remote-world.ts";
 
 // `board_set` on one computer and `board_read` on another, through a holder and an in-memory relay, and what a remote turn may see of it
 // (docs/specs/2026-10-25-straw-link.md, Work board: Writing, Reading).
@@ -90,7 +90,7 @@ test("an auto-filled entry reaches the ally's tower as its name and done count o
 	assert.deepEqual(local.map((r) => [r.main, r.items!.length]).sort(), [["auto /etc/secret", 3], ["set main", 2]]);
 });
 
-test("a computer without a team has no remote key in board_read, and mains and members have no board_read at all", async () => {
+test("a computer without a team has no remote key in board_read; a main reads the board too (0.81.3), and a member is refused", async () => {
 	const c = computer(root, relay, "a", { gateMs: 60 });
 	computers.push(c);
 	await c.tower.start();
@@ -99,7 +99,11 @@ test("a computer without a team has no remote key in board_read, and mains and m
 	const main = c.world.agent({ id: "m", name: "m", pane: "wA:p1", tab: "wA:t1", deps: c.deps });
 	await main.start();
 	await main.promote();
-	assert.ok(!main.tools.has("board_read") && main.tools.has("board_set"));
+	assert.ok(main.tools.has("board_read") && main.tools.has("board_set"));
+	assert.ok(Array.isArray((await read(main, { scope: "local" })).local));
+	const member = c.world.agent({ id: "mem", name: "mem", pane: "wA:p2", tab: "wA:t1", deps: c.deps });
+	await member.start();
+	await assert.rejects(member.tool("board_read", {}), /Only a tab's main agent or a tower reads the work board/);
 });
 
 test("in a remote turn board_read and tower_list show only what the senders already receive: the project their team binds and their teams' boards", async () => {
@@ -161,4 +165,20 @@ test("tab and workspace labels with a path never reach the wire or a remote turn
 	let rows: Row[] = [];
 	await until(async () => ((rows = (await read(b.c.tower)).remote?.[0]?.entries ?? []), rows.length === 1 && Boolean(rows[0]!.now)), "the entry at B");
 	assert.ok(!JSON.stringify(rows).includes("/etc/secret"), "no path in any label at B");
+});
+
+test("live-check B (0.81.3): a joined main has board_read, and its section waits lists its workspace's open waits as the router gives them to it (spec §2.2, the link_wait wake)", async () => {
+	const ops: { body: Record<string, unknown>; from: string }[] = [];
+	const c = computer(root, relay, "a", { gateMs: 60, tower: { waitOps: async (body, from) => (ops.push({ body, from }), body.op === "waits-read" ? { ok: true, waits: [{ id: "L3", device: bob.id, label: "bob-mac", dir: "in", owner: "api main", what: "merge !13", state: "told" }] } : { ok: false, error: "unknown request" }) } });
+	computers.push(c);
+	const main = c.world.agent({ id: "main-a", name: "api main", pane: "wA:p1", tab: "wA:t1", deps: c.deps });
+	c.world.herdr.pane("wA:p1").cwd = c.project;
+	await c.tower.start();
+	await main.start();
+	await main.promote();
+	assert.ok(main.tools.has("board_read"), "a joined main registers board_read");
+	await until(() => c.server.service.status().active, "the holder");
+	const got = JSON.parse(text(await main.tool("board_read", { scope: "local" }))) as Read & { waits?: { id: string; dir: string }[] };
+	assert.deepEqual(got.waits?.map((w) => [w.id, w.dir]), [["L3", "in"]]);
+	assert.deepEqual(ops.map((o) => [o.body.op, o.body.teams, o.from]), [["waits-read", undefined, "main-a"]], "outside a remote turn the router scopes it by the reader's own workspace");
 });
