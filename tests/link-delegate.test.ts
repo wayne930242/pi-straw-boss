@@ -126,6 +126,35 @@ test("(b) an answer counts only while the delegate is still at dispatch here: on
 	assert.match(card!.card!.happened, /no longer at dispatch here, so its answer does not count/);
 });
 
+test("DGR-F001: a device no longer the delegate cannot approve an approval it still holds, even at dispatch: the card goes to the boss", async () => {
+	let delegate: { device: string } = { device: MAC };
+	const b = box(), m = mac();
+	(b as unknown as { router: unknown }).router = createLinkWaits({ ...depsOf(b), level: () => "dispatch", delegate: () => delegate });
+	await memoryTool(toolEnv(b), CARD_ARGS);
+	await pump(b, BOX, "waydosoft", m);
+	await m.router.act("s-work", "L1", "done", "Approved.");
+	delegate = { device: THIRD };
+	await pump(m, MAC, "mac", b);
+	assert.ok(!b.notices.some((n) => /approved/.test(n.text)), "no approval notice");
+	assert.match(cards(b)[0]!.card!.happened, /no longer the boss's delegate here, so its answer does not count/);
+});
+
+test("DGR-F002/F003: an approval's state counts only from its own team, and a late declined does not reopen or relabel an approved one", async () => {
+	const b = box(), m = mac();
+	await memoryTool(toolEnv(b), CARD_ARGS);
+	await pump(b, BOX, "waydosoft", m);
+	await m.router.act("s-work", "L1", "done", "Approved.");
+	const answer = m.sends.splice(0).find((s) => s.wait?.state === "done");
+	const item = (team: string, wait: Send["wait"]): InboxItem => ({ v: 1, id: (++seq).toString(16).padStart(32, "0"), team, from: MAC, fromLabel: "mac", fromShort: "ibzkd5", seq, sentAt: 1, received: 1, fromWorkspace: "x", toWorkspace: "", replyExpected: false, text: "Approved.", wait });
+	await b.router.take(item("t-other", answer!.wait), b.ws);
+	assert.equal(ledger(b)[0]!.state, "open", "a state from another team is not this wait's");
+	await b.router.take(item("t1", answer!.wait), b.ws);
+	assert.equal(ledger(b)[0]!.state, "done");
+	await b.router.take(item("t1", { ...answer!.wait!, state: "declined" }), b.ws);
+	assert.equal(ledger(b)[0]!.state, "done", "a late declined leaves an approved approval as it is");
+	assert.equal(cards(b).length, 0);
+});
+
 test("(c) the delegate escalates: the box raises the card on its boss's list, saying why in the delegate's words; declined does the same", async () => {
 	for (const [state, line] of [["escalated", /The boss's delegate \(work-on on mac\) asks you to decide: «The boss picks the window for a disk change\.»/], ["declined", /The boss's delegate \(work-on on mac\) would not approve it: «Not before the train lands\.»/]] as const) {
 		rmSync(root, { recursive: true, force: true });

@@ -269,9 +269,11 @@ export function createLinkWaits(d: WaitsDeps) {
 		const wire: WaitWire = { id: randomBytes(16).toString("hex"), state: "open", owner: waitOwner(conf.owner ?? ""), what: waitWhat(body.what) || "(no summary)", handle: "", kind: "approval" };
 		const sent = await d.send(ws, { device: conf.device, text: body.text, wait: wire }).catch((e: Error) => ({ ok: false, error: e.message }));
 		if (!sent.ok) return { note: say.send(label, String(sent.error ?? "no reason").slice(0, 120)) };
+		// DGR-F002: the team the holder sent it through is the one its answer must come from.
+		const team = ((t) => (typeof t === "string" ? t : m.team))((sent as { details?: { team?: unknown } }).details?.team);
 		const n = change(ws, (l) => {
 			const id = l.next++;
-			l.entries.push({ n: id, dir: "out", wait: wire.id, kind: "approval", device: conf.device, team: m.team, label: m.label, short: m.short, owner: wire.owner, what: wire.what, text: "", since: d.now(), at: d.now(), state: "open", approval: a });
+			l.entries.push({ n: id, dir: "out", wait: wire.id, kind: "approval", device: conf.device, team, label: m.label, short: m.short, owner: wire.owner, what: wire.what, text: "", since: d.now(), at: d.now(), state: "open", approval: a });
 			return id;
 		});
 		d.log("link-delegate-sent", { ws, n, origin: a.origin });
@@ -424,9 +426,10 @@ export function createLinkWaits(d: WaitsDeps) {
 		const closed: WaitState = state === "done" || state === "declined" || state === "escalated" || state === "cancelled" ? state : "expired";
 		set(ws, w.n, { state: closed, ...(name ? { heldBy: name } : {}) });
 		d.log("link-delegate-answer", { ws, n: w.n, state: closed });
-		if (state === "done" && d.level?.(w.device) === DELEGATE_LEVEL) return approved(ws, w, who, words);
+		// DGR-F001: the answer counts only while that device is still the delegate here, and at dispatch.
+		if (state === "done" && d.level?.(w.device) === DELEGATE_LEVEL && d.delegate?.()?.device === w.device) return approved(ws, w, who, words);
 		const quote = cut(words, DELEGATE_WORDS);
-		await fallback(ws, w, (l) => (state === "done" ? NOTES[l].trustNow(who, label) : state === "escalated" ? NOTES[l].escalated(who, quote) : state === "declined" ? NOTES[l].declined(who, quote) : state === "cancelled" ? NOTES[l].withdrawn(label) : NOTES[l].expired(label)));
+		await fallback(ws, w, (l) => (state === "done" ? (d.delegate?.()?.device === w.device ? NOTES[l].trustNow(who, label) : NOTES[l].notDelegate(who, label)) : state === "escalated" ? NOTES[l].escalated(who, quote) : state === "declined" ? NOTES[l].declined(who, quote) : state === "cancelled" ? NOTES[l].withdrawn(label) : NOTES[l].expired(label)));
 	};
 	/** This computer takes back an approval its delegate did not take or answer: the device hears it was withdrawn or expired, and the card goes to the boss's list. */
 	const withdraw = async (ws: string, w: LinkWait, state: "cancelled" | "expired", note: Note): Promise<void> => {
@@ -534,7 +537,7 @@ export function createLinkWaits(d: WaitsDeps) {
 		 */
 		take: (item: InboxItem, ws: string | undefined): Promise<boolean | "held"> => serial(async () => {
 			const wire = item.wait!;
-			const held = find((e) => e.wait === wire.id && e.device === item.from);
+			const held = find((e) => e.wait === wire.id && e.device === item.from && (e.kind !== "approval" || e.team === item.team));
 			if (wire.state === "open") {
 				if (held) return true; // a copy
 				if (ws === undefined) return false;
@@ -544,7 +547,7 @@ export function createLinkWaits(d: WaitsDeps) {
 				const id = await open(ws, { wait: wire.id, ...(ask ? { ask } : {}), kind, device: item.from, team: item.team, label: item.fromLabel, short: item.fromShort, owner: wire.kind && wire.kind !== "approval" ? "" : waitOwner(wire.owner), what: waitWhat(wire.what) || "(no summary)", text: item.text, ...(wire.handle ? { handle: wire.handle } : {}) });
 				return id ? true : "held";
 			}
-			if (held && held.w.dir === "out" && held.w.state === "done" && wire.state === "declined") {
+			if (held && held.w.dir === "out" && held.w.kind !== "approval" && held.w.state === "done" && wire.state === "declined") { // DGR-F003: an approved approval stays approved
 				set(held.ws, held.w.n, { state: "declined" }); // the reply closed it first; the label follows, no wake (BMWR2-F004)
 				return true;
 			}
