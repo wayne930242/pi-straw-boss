@@ -692,7 +692,7 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 <details>
 <summary>細節</summary>
 
-只有塔台的 `board_read`（和 Straw Link 持有者的 tick）會刪檔案，而且它刪的是不在運作、已 24 小時沒更新的 session 的檔案，以及超過 30 分鐘的已完成自動條目（所有 todo 都完成）；`board_set` 不清除，因為它分不出哪些 session 在運作，而單看年齡會刪掉閒置的運作中主智慧體的條目。
+只有 `board_read`（塔台或主智慧體的）和 Straw Link 持有者的 tick 會刪檔案，而且它們刪的是不在運作、已 24 小時沒更新的 session 的檔案，以及超過 30 分鐘的已完成自動條目（所有 todo 都完成）；`board_set` 不清除，因為它分不出哪些 session 在運作，而單看年齡會刪掉閒置的運作中主智慧體的條目。
 
 </details>
 

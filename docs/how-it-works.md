@@ -692,7 +692,7 @@ A main's `session_shutdown` deletes its own file on `quit`, `new`, `resume`, and
 <details>
 <summary>Details</summary>
 
-Only a tower's `board_read` (and the Straw Link holder's tick) deletes files, and it deletes those of sessions that are not live and have not been updated for 24 hours, and a finished auto entry (all todos done) older than 30 minutes; `board_set` does not purge, because it cannot tell which sessions are live, and age alone would delete an idle live main's entry.
+Only `board_read` (a tower's or a main's) and the Straw Link holder's tick delete files, and they delete those of sessions that are not live and have not been updated for 24 hours, and a finished auto entry (all todos done) older than 30 minutes; `board_set` does not purge, because it cannot tell which sessions are live, and age alone would delete an idle live main's entry.
 
 </details>
 
