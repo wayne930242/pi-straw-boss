@@ -21,7 +21,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `boss_status` | 已加入的 session 與塔台 | 每個分頁的主智慧體與它的種類、這個工作區的塔台、主塔台與其他塔台。 |
 | `boss_duty` | 分頁的主智慧體 | 附理由設定它的種類：`coordinator`、`integrator` 或 `standing`。種類就是它執行的 prompt，並顯示在頁面上。 |
 | `boss_rename` | 已加入的 session | 用一句短語為 session 命名它目前的工作；主智慧體的分頁以它為標籤。角色標籤（塔台的圖示、`train <MMDDx>`）會被拒絕。 |
-| `call_tower` | 已加入的 session 與塔台 | 在標頭之下發訊息給這個工作區的塔台，或另一個工作區的塔台。`why` 是 `milestone`、`shared` 或 `blocked`；通知用 `reply: false`。`blocked` 附 `waitsOn {device, owner?, what}` 表示在等隊友的裝置（`milestone` 附 `cancel: true` 撤回）；`linkWait {id, state}` 認領、回覆或婉拒隊友對本機的等待。見[裝置之間的等待](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#裝置之間的等待)。 |
+| `call_tower` | 已加入的 session 與塔台 | 在標頭之下發訊息給這個工作區的塔台，或另一個工作區的塔台。`why` 是 `milestone`、`shared` 或 `blocked`；通知用 `reply: false`。`blocked` 附 `waitsOn {device, owner?, what}` 表示在等隊友的裝置（`milestone` 附 `cancel: true` 撤回）；`linkWait {id, state}` 認領、回覆或婉拒隊友對本機的等待；`standing {device, what?}` 把訊息改送那台裝置的值守主智慧體，不經塔台：`blocked` 是提問（回覆會回來），`milestone` 是通知。見[裝置之間的等待](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#裝置之間的等待)。 |
 | `boss_broadcast` | 已加入的 session 與塔台 | 發訊息給一個分頁、一個工作區、所有塔台或所有 session，標頭會列出每位收件者。 |
 | `board_set` | 分頁的主智慧體 | 覆寫它自己的工作看板項目（一行與最多 8 個清單項目）；`auto: true` 交還給自動填入，`clear: true` 刪除它。 |
 | `boss_server` | 已加入的 session | sb server 的 `status`（server 沒在跑時也可用）、它的 `logs`（最多 200 行），或附理由 `restart`。老闆停掉 server 或有火車在跑時會被拒絕，每分鐘最多一次，且在遠端 turn 中絕不可用。 |
@@ -29,7 +29,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `boss_open_main` | 塔台 | 為沒有 session 負責的請求，開一個帶新主智慧體的分頁。`role: "train"` 開一列火車；`role: "integrator"` 把車廂單送給專案唯一的整合員，沒有在跑的就開一個。`duty: "standing"` 開一個值守種類的主智慧體（預設為協調者）。見[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。 |
 | `boss_close_main` | 塔台 | 等它裡面沒有東西在跑，關掉這座塔台開的主智慧體；值守主智慧體不會被關，只有老闆能關。 |
 | `tower_list` | 塔台 | 每個工作區的塔台、發給它的訊息會送到誰、它的狀態，以及它的分頁在做什麼（每個分頁的主智慧體及其種類）。 |
-| `tower_send` | 塔台 | 發訊息給另一座塔台（用工作區 id 或標籤）或全部；附 `device` 則發給隊友電腦上的塔台：不給 `reply` 時綁定這次 run 裡唯一等回覆的主智慧體，`reply: false` 是通知，`waitsOn: {event}` 轉送主智慧體對那台裝置的等待。 |
+| `tower_send` | 塔台 | 發訊息給另一座塔台（用工作區 id 或標籤）或全部；附 `device` 則發給隊友電腦上的塔台：不給 `reply` 時綁定這次 run 裡唯一等回覆的主智慧體，`reply: false` 是通知，`waitsOn: {event}` 轉送主智慧體對那台裝置的等待，`standing: "question"` 或 `"notice"`（在 run 裡）改送那台裝置的值守主智慧體；隊友 run 只能送通知。 |
 | `board_read` | 塔台、主智慧體 | 工作看板：每位主智慧體在做什麼、做到哪裡，包括這裡與隊友的電腦，以及本機與隊友裝置之間未結的等待（`waits`）。 |
 | `tower_memory` | 本機塔台 run | 保存 run 結束後還要留著的內容：引用自老闆自己訊息的長期指示或決定，以及塔台的等待事項，包括對老闆的等待（以卡片呈現）。 |
 | `boss_wait_ask` | 主智慧體、本機塔台 run、主塔台 | 讓 sb 在終端機裡把開著的等待卡片一張接一張拿給你看：`ids`（1 到 4 個 `W<n>`），或不指名，代表它範圍內每一張開著的卡片（主智慧體是它提出的，塔台 run 是它那座塔台的，主塔台是任何一張）。sb 照 `/boss wait` 的畫法畫每一張卡片；智慧體不寫字也不選，只有你的按鍵能按。自動模式開著、無人值守的裝置、沒有畫面時都被拒絕；在塔台 run 裡，只有你在這個 run 裡最後說的話來自它的 pane 才會畫。 |
