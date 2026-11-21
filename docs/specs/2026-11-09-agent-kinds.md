@@ -265,6 +265,8 @@ The phrase "re-reads its whole context once" tells the model a switch has a cost
 | tower, tower run, head | Not registered. |
 | pi-herdr-agents child | Not registered. Its kind is fixed at spawn (D4). |
 
+On a local turn, `boss_duty` with `standing` and a standing main's `boss_rename` still succeed but warn if the net shows another live standing main with the same session name (trimmed, case-insensitive) in that workspace, where both would receive link waits with no resolved owner.
+
 `reason` is required, collapsed to one line (`plain()`), and at most 200 characters.
 
 ### 4. The integrator

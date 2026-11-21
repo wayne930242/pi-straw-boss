@@ -36,7 +36,6 @@ export const linkRequestParameters = () => Type.Object({
 	})),
 	reason: Type.String({ description: "One line: why you ask. The boss reads it in the dialog." }),
 });
-
 /** Every tool sb registers, all of them after the child return (index.ts): a role that lists one fails `/boss roles-check` (rolescheck.ts). tests/roles-check.test.ts pins it to the recorded registry. */
 export const PARENT_ONLY: readonly string[] = ["board_read", "board_set", "boss_auto", "boss_broadcast", "boss_close_main", "boss_duty", "boss_open_main", "boss_promote", "boss_rename", "boss_server", "boss_status", "boss_wait_ask", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send", "train_car"];
 
@@ -50,6 +49,12 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 				return { content: [{ type: "text", text }], details };
 			},
 		});
+	const standingTwinWarning = async (name = pi.getSessionName() || s.ownName) => {
+		const folded = name.trim().toLowerCase(), id = me();
+		const net = folded && !s.remoteOrigin ? await read().catch(() => undefined) : undefined, workspace = net?.ps.find((p) => p.pane_id === s.at.paneId)?.workspace_id;
+		const twin = net?.sessions.find((x) => x.id !== id && x.name?.trim().toLowerCase() === folded && net.ps.some((p) => p.pane_id === x.herdrLocation?.paneId && p.workspace_id === workspace && p.tokens?.sb_role === "main" && p.tokens.sb_duty === "standing"));
+		return twin ? `\nWarning: ${JSON.stringify(twin.name?.trim())} (${twin.id.slice(0, 8)}) is another standing main with this name in your workspace. Both would be told the same link waits when no owner is resolved. If you took over from that session, tell it by intercom to complete the handoff: call boss_duty with duty coordinator, then boss_rename itself. Otherwise, rename one of the sessions.` : "";
+	};
 	return {
 		addNetTools() {
 			tool("boss_status", "Show this workspace's Straw Boss coordinators: each tab's main agent and its kind, this workspace's tower, the head tower, and the other towers.", Type.Object({}), async () => {
@@ -135,8 +140,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 					s.boardId = me();
 					return setBoard({ dir: join(guiDir, "board"), stateDir: guiDir, session: me(), isMain: ownsBoard(role()), now: cfg.now(), cwd, input: { now, items }, home, agentDir, autoFill: true });
 				});
-			// The session's name is what the net and the GUI show for it. A main agent names its tab too: the tab is its squad, and pi-auto-tab-name
-			// leaves a tab alone once anyone else labelled it. A tower keeps its own name.
+			// A main names its own tab: pi-auto-tab-name leaves a tab alone once anyone else labelled it.
 			if (!s.isTower) tool("boss_rename", "Name this session with a short phrase for the work it is doing now (e.g. \"MP-3584 mask\", \"重構通知模組\"). The net and the GUI show it whole; a main agent's Herdr tab takes it as its label, cut to 16 characters. More than 40 characters is refused.",
 				Type.Object({ name: Type.String({ description: "The phrase: what this session works on now. 16 characters or fewer show whole in the tab label; at most 40." }) }),
 				async ({ name }) => {
@@ -157,7 +161,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 					const tab = failed === undefined ? "" : failed ? ` The tab kept its label: ${failed}` : ` The tab is now labelled "${label}".`;
 					if (s.joined) await digest.note(s.at.workspaceId, `${was} renamed itself "${phrase}" (tab ${failed === "" ? label : s.info.tab})`).catch(() => {});
 					const kind = migrated ? ` Your kind is now integrator (migrated by name); boss_duty changes it.` : role() === "main" && INTEG_NAME.test(phrase) && s.duty !== undefined && s.duty !== "integrator" ? ` Your kind stays ${s.duty}; boss_duty integrator if you now run trains.` : "";
-					return { text: `This session is now named "${phrase}".${tab}${kind}`, details: { name: phrase } };
+					return { text: `This session is now named "${phrase}".${tab}${kind}${role() === "main" && mainDuty.now() === "standing" ? await standingTwinWarning(phrase) : ""}`, details: { name: phrase } };
 				});
 		},
 		// A main's kind (docs/specs/2026-11-09-agent-kinds.md §3). `integrator` is left out while integration is off.
@@ -173,13 +177,13 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 					if (s.remoteOrigin) throw new Error("A teammate's turn cannot change this main's kind");
 					if (!isCoordinatorDuty(duty) || (duty === "integrator" && !mainDuty.integrationOn())) throw new Error("Integration is off on this computer: no integrator");
 					if (!why || why.length > 200) throw new Error("reason is required: one line of 1 to 200 characters");
-					if (s.duty === duty) return { text: `Your kind is already ${duty}`, details: { duty } };
+					if (s.duty === duty) return { text: `Your kind is already ${duty}${duty === "standing" ? await standingTwinWarning() : ""}`, details: { duty } };
 					if (s.duty === "integrator") {
 						const open = (todosOf(snapshotOfBranch(s.branch())) ?? []).filter((t) => t.sb?.kind === "train" && t.status !== "completed").length;
 						if (open) throw new Error(`${open} of your trains are forming or departing: depart or return them first`);
 					}
 					const { from } = mainDuty.write(duty, why, "boss_duty");
-					return { text: `Your kind is now ${duty} (was ${from ?? "none"}).`, details: { duty, from: from ?? null } };
+					return { text: `Your kind is now ${duty} (was ${from ?? "none"}).${duty === "standing" ? await standingTwinWarning() : ""}`, details: { duty, from: from ?? null } };
 				});
 		},
 		addPromote() {
