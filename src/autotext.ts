@@ -15,7 +15,18 @@ export const refusedText = (since: string | undefined, tool: string, kind: Agent
 export const cancelledText = (since: string | undefined, tool: string, kind: AgentKind) => `sb: auto mode started at ${clock(since)}: this ${tool} was cancelled by sb, not by the boss, who is away. ${tailOf(kind, tool)}`;
 /** The transition notice, once per confirmed rev (a steer while a turn runs, `nextTurn` while idle). */
 export const onNotice = (since: string | undefined) => `sb: auto mode is on since ${clock(since)}: the boss is away until they end it. Nothing that waits for them runs; decide only where the boss's words cover it, or park it; never wait for the boss.`;
-export const offNotice = (at: string | undefined, kind: AgentKind) => `sb: auto mode ended at ${clock(at)}: the boss is back. Parked waits go to them in one list, and their answers reach you as wait_card messages. Never re-ask a parked wait with ask_user_question.${kind === "main" || kind === "run" ? ` When the boss is with you and the answer cannot wait, call boss_wait_ask (its id, or none for every card ${kind === "run" ? "of your tower's (the head's run: any tower's)" : "you raised"}): sb shows the card and his answer resolves it everywhere.` : ""}`; // a parked wait is asked again only through the card sb draws (waitask.ts); a session with no such tool (a subagent, a train) is told only not to re-ask
+/** How each kind asks again for a parked wait that came back when auto mode ended (docs/specs/2026-11-21-auto-return.md, AR-D3). */
+const AGAIN: Record<AgentKind, string> = {
+	main: "Ask them again yourself then, with ask_user_question.",
+	subagent: "Ask again then as your brief allows (caller_ping your dispatcher).",
+	train: "Ask again with call_tower then.",
+	run: "Record it again with tower_memory if it still needs them.",
+};
+/**
+ * The end notice (§8 item 5, amended by AR-D3, boss 2026-11-21): a parked wait is not relayed to the boss; it comes back to its raiser (`wait_returned`, or a tower's event), closed, and the raiser asks again itself. A main and a
+ * tower run are also told of `boss_wait_ask` for a card that was not parked and still waits.
+ */
+export const offNotice = (at: string | undefined, kind: AgentKind) => `sb: auto mode ended at ${clock(at)}: the boss is back. A wait parked for them is not kept for them: it comes back to you as ${kind === "run" ? "an event" : "a wait_returned message"}, and its card is closed. ${AGAIN[kind]}${kind === "main" || kind === "run" ? ` A card that was not parked still waits for them: when the boss is with you and the answer cannot wait, call boss_wait_ask (its id, or none for every card ${kind === "run" ? "of your tower's (the head's run: any tower's)" : "you raised"}): sb shows the card and his answer resolves it everywhere.` : ""}`;
 export const CALL_TOWER_LINE = "Auto mode: no answer from the boss before it ends. Do not wait on this call: the tower parks it; go on with work that does not need it, or stop this line and say so on your board.";
 export const SHOW_DOC_LINE = "Auto mode: the boss sees this when they are back; do not wait for its form.";
 /** A Straw Link gate's denial and the trust question's answer under auto mode (D3, AM-F011): neutral, since a teammate is not told of auto mode (D5). */
