@@ -33,6 +33,7 @@ import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, localTools }
 import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
 import { digestOf, headLabel, openCards, type WaitDigest, type WaitList, waitList, waitRows } from "./waitlist.ts";
 import { claimGate, proofGate, seatGate, type SeatVerdict } from "./typegate.ts";
+import { forwardOpenedWait, raisedWait } from "./allywait.ts";
 import { addAnswer, addRoute, answeredAsks, ALLY_LEDGER, dropAsk, dropOpened, type Peer, readAnswers, readRoutes, removeAnswer, openedFor, routeOf, setStop, spendRoute } from "./allyroute.ts";
 import { createRevoker, type OpenedMain } from "./revoke.ts";
 import { createUnitStop, kindOfPane, type MainFact } from "./unitstop.ts";
@@ -381,7 +382,12 @@ export function createTowers(o: TowersOptions): Towers {
 				const seen = (l.seen ??= openSeen(slot, l.record.workspace, now)), verdict = seen.check(from.id, message.id, message.content.text);
 				if (verdict === "conflict") return log.line("tower-dropped", { workspace: l.record.workspace, from: from.id, why: "the same message id with other content" });
 				const ws = l.record.workspace, route = verdict === "new" ? routeOf(slot, ws, from.id, now()) : undefined, local = route && readExpects(slot, ws, now()).find((e) => e.to === from.id);
-				if (route && (!local || route.at >= local.at)) {
+				if (route && (!local || route.at >= local.at) && route.kind === "opened" && raisedWait(message.content.text)) {
+					// A wait a main an ally run opened raises (allywait.ts): the code forwards it to the opener as a local run's `waitsOn` would, or refuses it, and no run, ally or local, takes it (box-mac-waits §14).
+					seen.add(from.id, message.id, message.content.text);
+					const tell = (to: string, text: string, wait?: string) => l.reach ? l.reach.post(to, text, "link_wait_state", "session", false, undefined, undefined, { ...(wait ? { wait } : {}), peer: { label: route.label, short: route.short } }) : Promise.resolve();
+					void forwardOpenedWait({ ws, now, identity: l.record.id, log: (event, facts) => log.line(event, facts), tell, ...(o.link ? { link: o.link } : {}), ...(o.asks ? { asks: o.asks } : {}), ...(o.waits ? { waits: o.waits } : {}) }, route, { id: from.id, name: phrase(from.name ?? from.id, 40) }, message.id, message.content.text).catch((cause: Error) => error("ally-wait", cause.message));
+				} else if (route && (!local || route.at >= local.at)) {
 					// A session an ally run wrote to or opened is answering the device, not the local run: the answer waits for the device's next ally run.
 					addAnswer(slot, ws, { id: `${Date.now().toString(36)}-${message.id}`.slice(0, 80), device: route.device, label: route.label, short: route.short, team: route.team, teamName: route.teamName, from: { id: from.id, name: phrase(from.name ?? from.id, 40) }, text: message.content.text, at: now(), ...(route.ask ? { ask: route.ask } : {}) }, now());
 					spendRoute(slot, ws, route, now());

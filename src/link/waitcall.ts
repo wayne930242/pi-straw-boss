@@ -47,7 +47,7 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 			if (why !== "blocked") throw new Error("waitsOn goes with why blocked: you wait on a step only that device can take (a milestone report carries no waitsOn)");
 			const what = waitWhat(waitsOn.what ?? "");
 			if (!what) throw new Error("waitsOn.what is required: one line saying the step you wait on");
-			const target = await link.waitOp({ op: "device-resolve", device: waitsOn.device });
+			const target = await link.waitOp({ op: "device-resolve", device: waitsOn.device, raise: true });
 			const sent = await callTower(message, workspace, reply ?? true, why, { waitsOn: { short: String(target.short), what, ...(waitsOn.owner ? { owner: waitOwner(waitsOn.owner) } : {}) } });
 			return { text: `${sent.text} It waits on ${String(target.label)} (${String(target.short)}): the tower forwards it as a wait that device has to route, and you hear each step.`, details: { ...sent.details, waitsOn: target.short } };
 		});

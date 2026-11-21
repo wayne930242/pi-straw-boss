@@ -4,6 +4,7 @@ import type { HolderOptions } from "../link/holder.ts";
 import type { LinkService } from "../link/service.ts";
 import { restrictLabel } from "../link/text.ts";
 import { localeOf } from "../towerprompt/messages.ts";
+import { raiserRefusal } from "./allywait.ts";
 import { createLinkWaits, isOpen, type LinkWaits, readWaits } from "./linkwaits.ts";
 import type { Slot } from "./record.ts";
 import type { Towers } from "./towers.ts";
@@ -95,7 +96,11 @@ export function startLinkWaits(o: StartWaits): WaitsHub {
 		async op(body, from) {
 			try {
 				switch (body.op) {
-					case "device-resolve": return resolve(body.device);
+					case "device-resolve": {
+						// `raise` (a main's `waitsOn`): a main an ally run opened raises a wait on its opener only (allywait.ts).
+						const target = resolve(body.device), no = body.raise === true && target.ok ? raiserRefusal(o.slot, from, target, o.now()) : undefined;
+						return no ? { ok: false, error: no } : target;
+					}
 					case "wait-act": return { ok: true, text: await router.act(from, String(body.id ?? ""), body.state, typeof body.message === "string" ? body.message : undefined) };
 					case "wait-cancel": {
 						const target = resolve(body.device);
