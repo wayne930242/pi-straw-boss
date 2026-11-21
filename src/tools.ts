@@ -12,6 +12,7 @@ import { type CloseMain, refuseStanding } from "./closemain.ts";
 import type { Link } from "./link/runtime.ts";
 import { callTowerTool } from "./link/waitcall.ts";
 import { INTEGRATOR } from "./integrator.ts";
+import { foldName } from "./namefold.ts";
 import { opener } from "./opener.ts";
 import type { Reach } from "./reach.ts";
 import type { ServerLook } from "./server-look.ts";
@@ -50,10 +51,10 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 			},
 		});
 	const standingTwinWarning = async (name = pi.getSessionName() || s.ownName) => {
-		const folded = name.trim().toLowerCase(), id = me();
+		const folded = foldName(name), id = me();
 		const net = folded && !s.remoteOrigin ? await read().catch(() => undefined) : undefined, workspace = net?.ps.find((p) => p.pane_id === s.at.paneId)?.workspace_id;
-		const twin = net?.sessions.find((x) => x.id !== id && x.name?.trim().toLowerCase() === folded && net.ps.some((p) => p.pane_id === x.herdrLocation?.paneId && p.workspace_id === workspace && p.tokens?.sb_role === "main" && p.tokens.sb_duty === "standing"));
-		return twin ? `\nWarning: ${JSON.stringify(twin.name?.trim())} (${twin.id.slice(0, 8)}) is another standing main with this name in your workspace. Both would be told the same link waits when no owner is resolved. If you took over from that session, tell it by intercom to complete the handoff: call boss_duty with duty coordinator, then boss_rename itself. Otherwise, rename one of the sessions.` : "";
+		const twin = net?.sessions.find((x) => x.id !== id && x.name !== undefined && foldName(x.name) === folded && net.ps.some((p) => p.pane_id === x.herdrLocation?.paneId && p.workspace_id === workspace && p.tokens?.sb_role === "main" && p.tokens.sb_duty === "standing"));
+		return twin ? `\nWarning: ${JSON.stringify(twin.name?.trim())} (${twin.id.slice(0, 8)}) is another standing main with this name in your workspace. A link wait that names this session as its owner matches both, so it goes to every standing main instead of to one. If you took over from that session, tell it by intercom to complete the handoff: call boss_duty with duty coordinator, then boss_rename itself. Otherwise, rename one of the sessions.` : "";
 	};
 	return {
 		addNetTools() {

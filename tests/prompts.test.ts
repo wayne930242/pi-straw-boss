@@ -30,8 +30,8 @@ const BUDGETS: Record<string, number> = { "main.md": 501, "tower.md": 417, "memb
 // Fix round of task 8 (prompts-review.md, TP-F001 to F018): budgets = measured: main.md on 720 to 725, tower.md on 471 to 469 (the resident tower forwards nothing), planning.md on 670 to 681 (the check command), integrator.md 380 to 412 (todo lifecycle, legacy trains), train.md 450 to 511 (holds, load and lock, the Record file, the metadata.sb keys).
 // Fix round 2 (prompts-rereview.md TP2-F001 to F004): measured: main.md on 725 to 743 ({{cli}} check line), planning.md on 681 to 693, integrator.md 412 to 453 (todo fields and result, --accept none), train.md 511 to 520 (status, trainboard folder).
 // Whole-batch fix round (batch-review.md TB-F001 to F009): measured: planning.md on 693 to 699 (absolute evidence paths), integrator.md 453 to 509 (sb reads apps.json and refuses, the todo goes in_progress before the call, the code's form, a car with no forward), train.md 520 to 542 (the version refusal, evidence short of the app's requirement, `round` of dropped).
-// 0.81.6 (review HUR-F002, boss 2026-11-21: shared is a heads-up): measured: tower.md on 469 to 480 and off 402 to 417 (answer a shared call only on a clash).
-const ON_BUDGETS: Record<string, number> = { "main.md": 743, "tower.md": 480 };
+// 0.81.6 (review HUR-F002, boss 2026-11-21: shared is a heads-up): measured: tower.md on 469 to 480 and off 402 to 417 (answer a shared call only on a clash); HUR2-F001 on 480 to 487 (the resident tower answers the integrator's train: block).
+const ON_BUDGETS: Record<string, number> = { "main.md": 743, "tower.md": 487 };
 // 2026-11-08 (todo #125 task 5, TP-F004): `{{cli}}` is the command that runs cli.mjs.
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir", "state", "cli", "duty"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
@@ -144,7 +144,7 @@ test("merge train: main hands integration cars over with why shared, planning st
 		const text = readFileSync(`${PROMPT_DIR}/${file}`, "utf8");
 		for (const term of file === "tower.md" ? ["`integration`", "integrator", "boss_open_main"] : ["`integration`", "integrator", "boss_open_main", "integrator.md"]) assert.ok(text.includes(term), `${file} names ${term}`);
 	}
-	for (const off of [false, true]) assert.ok(words(strip(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), off)) <= (off ? 417 : 480)); // wait cards: +31; 0.81.6 shared heads-up: +15/+11, see BUDGETS
+	for (const off of [false, true]) assert.ok(words(strip(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), off)) <= (off ? 417 : 487)); // wait cards: +31; 0.81.6 shared heads-up: +15/+11, see BUDGETS
 	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("finding with evidence"));
 });
 

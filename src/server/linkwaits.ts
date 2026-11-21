@@ -7,6 +7,7 @@ import type { InboxItem } from "../link/store.ts";
 import { restrictLabel, restrictOwner } from "../link/text.ts";
 import type { Locale } from "../locale.ts";
 import { clean } from "../board.ts";
+import { foldName } from "../namefold.ts";
 import { nameOf } from "../reach.ts";
 import type { Slot } from "./record.ts";
 import { addCardWait, cut, iso, MEM, readMemory, resolveWait, updateMemory } from "./towermemory.ts";
@@ -124,7 +125,7 @@ function writeWaits(slot: Slot, ws: string, ledger: Ledger): void {
 	writeDurable(file(slot, ws), ledger);
 }
 
-const fold = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+const fold = foldName;
 /** The words of the router in sb's locale: every line it writes is the code's; a peer's words appear only quoted and marked as theirs (D11). */
 const WORDS = {
 	en: {

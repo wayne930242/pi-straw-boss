@@ -29,7 +29,7 @@ function assertWarning(text: string) {
 	assert.match(text, WARNING);
 	assert.match(text, /work-on API WATCH/);
 	assert.doesNotMatch(text, /12345678-old/, "only the short id is shown");
-	assert.match(text, /both.*link waits/i);
+	assert.match(text, /link wait.*matches both/i);
 	assert.match(text, /intercom.*boss_duty.*coordinator.*boss_rename.*rename one/i);
 }
 
@@ -41,6 +41,14 @@ test("boss_duty declares standing and warns about a live standing twin (trimmed,
 	assert.equal(world.herdr.pane(old.pane).tokens.sb_duty, "standing", "the warning does not demote the other main");
 	assert.match(reply.text, /Your kind is now standing/);
 	assertWarning(reply.text);
+});
+
+// TWR-F001: the warning folds names as the link-wait router does (src/namefold.ts), so names that differ only in inner whitespace are twins.
+test("boss_duty warns about a twin whose name differs only in inner whitespace, as the router folds it", async () => {
+	const { next } = await twoMains({ name: "work-on  API   watch" });
+	const reply = await duty(next);
+	assert.match(reply.text, WARNING);
+	assert.match(reply.text, /matches both/, "TWR-F002: the warning names the harm of the shared name");
 });
 
 test("boss_duty standing warns on a repeated declaration without changing the kind", async () => {
