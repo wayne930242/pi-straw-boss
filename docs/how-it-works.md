@@ -128,8 +128,9 @@ The numbered rules below are the whole behavior.
 | member | every other joined session | a short prompt: with a main in the tab, tell it before dispatching subagents; without one, promote when the work grows |
 | tower | one per workspace, in its own tab labelled with the Nerd Font radio tower glyph (U+F043B) | a prompt for coordinating agents and repairing coordination friction, and for opening a main when no session owns a request; it never asks the user |
 
-**The role section stays put.** After each session start (`startup`, `/new`, `/resume`, `/fork`, or `/reload`), Straw Boss renders the `straw-boss` system section on the first turn that has a role.
-If a turn starts before the session joins the net and has a role, it starts without the section.
+**The role section stays put.** After each session start (`startup`, `/new`, `/resume`, `/fork`, or `/reload`), Straw Boss renders the `straw-boss` system section on the first turn that has a role and the tab and workspace labels its prompt needs.
+Turns without a role start without the section; while labels are pending, a known role arrives as a steer using the labels available at the time.
+If labels are still missing 10 seconds after the first turn that waited for them, the next turn with a role pins the section anyway, marking missing labels as `none yet`.
 Changing this text can force a provider to read the whole conversation again without the cache.
 The section keeps its first tab and workspace labels; `boss_status` shows the current labels, the tower, and each tab's main.
 Only an explicit kind change through `boss_duty` can rewrite the section within that session.
@@ -140,7 +141,8 @@ A queued steer counts as told when pi delivers it; if pi drops it, the next run 
 A steer pi stores while idle counts as told when sent.
 If queued updates arrive out of order, Straw Boss sends the full current instructions.
 
-If the branch already holds a role steer when the section is first rendered, Straw Boss sends the full current instructions to supersede it.
+When it first renders the section, Straw Boss checks the branch's last role steer, ignoring tower digests.
+A whole steer sent after pinning already supplies the current instructions if it matches the current role, kind, and graph; otherwise, if the branch holds a role steer, Straw Boss sends the full current instructions to supersede it.
 After compaction or a `/tree` move, Straw Boss resends the full current instructions so they replace any stale guidance still in the conversation.
 It steers them into a retried turn, stores them without starting a turn if the current turn ends at compaction, or sends them at the next run's start if no run is active.
 None of these paths rewrites the system section.

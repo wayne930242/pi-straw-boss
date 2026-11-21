@@ -50,10 +50,71 @@ test("a turn before join leaves the section unpinned; role changes after pinning
 	assert.match(told(b).at(-1)!, /main agent of Herdr tab work/);
 });
 
+test("a joined member waits to pin until the first membership refresh supplies its tab label", async () => {
+	const run = world.herdr.runFor("wA:p2");
+	const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1", deps: { run: async (args) => {
+		if (args.join(" ") === "workspace list" && b.tools.has("boss_promote")) {
+			entered.resolve();
+			await release.promise;
+		}
+		return run(args);
+	} } });
+	await b.fire("session_start", { reason: "startup" });
+	try {
+		await entered.promise;
+		assert.equal(await section(b), "", "joined, but labels are not ready");
+	} finally {
+		release.resolve();
+		await world.quiet();
+	}
+	const pinned = await section(b);
+	assert.match(pinned, /member of tab work/);
+	b.idle = false;
+	await b.promote();
+	assert.equal(await section(b), pinned);
+	assert.match(told(b).at(-1)!, /main agent of Herdr tab work/);
+});
+
+for (const fallback of [false, true]) {
+	test(`a tower ${fallback ? "pins without labels after the startup grace period" : "waits to pin until its workspace label arrives"}`, async () => {
+		const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+		let now = 0;
+		const tower = world.tower("tower-wA", "wA:t7", "wA:p7", false, { now: () => now, sleep: async (ms) => {
+			if (ms === 2000) { entered.resolve(); await release.promise; }
+		} });
+		await tower.fire("session_start", { reason: "startup" });
+		let pinned = "";
+		try {
+			await entered.promise;
+			assert.equal(await section(tower), "", "the resident tower role is set, but the Herdr look is pending");
+			assert.match(told(tower)[0]!, /tower of Herdr workspace none yet/);
+			if (fallback) {
+				now += 60_000;
+				pinned = await section(tower);
+				assert.match(pinned, /tower of Herdr workspace none yet/);
+			}
+		} finally {
+			release.resolve();
+			await world.quiet();
+		}
+		if (!fallback) {
+			pinned = await section(tower);
+			assert.match(pinned, /tower of Herdr workspace Alpha/);
+			assert.match(told(tower).at(-1)!, /tower of Herdr workspace Alpha/, "the first pin supersedes the provisional steer");
+		}
+		assert.equal(await section(tower), pinned);
+	});
+}
+
+const memberBrief = { name: "member", duty: "", graph: "" };
+const mainBrief = { name: "main", duty: "engineer", graph: "" };
+const historicSteer = (briefed: typeof memberBrief, base: typeof memberBrief | null, provisional?: true) => ({ type: "custom_message", customType: "straw-boss", details: { briefed, base, provisional } });
+
 test("a resumed member replaces a stale main steer once without rewriting its section", async () => {
 	await main("a", "wA:p1", "wA:t1");
 	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
-	b.transcript.push({ type: "custom_message", customType: "straw-boss", details: { briefed: { name: "main", duty: "engineer", graph: "" }, base: null } });
+	b.transcript.push(historicSteer(memberBrief, null), historicSteer(mainBrief, null));
 	await b.fire("session_start", { reason: "resume" });
 	await world.quiet();
 	b.idle = false;
@@ -63,6 +124,36 @@ test("a resumed member replaces a stale main steer once without rewriting its se
 	assert.match(told(b)[0]!, /replacing the system section and any earlier role updates[\s\S]*member of tab work/);
 	assert.equal(await section(b), pinned);
 	assert.equal(told(b).length, 1, "no repeated steer on the next turn");
+});
+
+for (const prior of ["whole", "delta", "provisional"] as const) {
+	test(`a reloaded member handles the latest matching ${prior} steer`, async () => {
+		await main("a", "wA:p1", "wA:t1");
+		const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
+		b.transcript.push(historicSteer(mainBrief, null), historicSteer(memberBrief, prior === "delta" ? memberBrief : null, prior === "provisional" ? true : undefined));
+		await b.fire("session_start", { reason: "reload" });
+		await world.quiet();
+		const pinned = await section(b);
+		assert.match(pinned, /member of tab work/);
+		assert.equal(await section(b), pinned);
+		if (prior === "whole") assert.deepEqual(told(b), [], "the latest whole steer already supplies the matching role");
+		else {
+			assert.equal(told(b).length, 1);
+			assert.match(told(b)[0]!, /replacing the system section and any earlier role updates[\s\S]*member of tab work/);
+		}
+	});
+}
+
+test("a resumed tower does not mistake a details-less digest for a role steer", async () => {
+	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
+	const digest = { type: "custom_message", customType: "straw-boss", content: "Since your last run:\n- A main joined." };
+	tower.transcript.push(digest);
+	await tower.fire("session_start", { reason: "resume" });
+	await world.quiet();
+	const pinned = await section(tower);
+	assert.match(pinned, /tower of Herdr workspace Alpha/);
+	assert.equal(await section(tower), pinned);
+	assert.deepEqual(told(tower), [], "a digest does not override the system section");
 });
 
 test("a main's section is the same bytes with no tower, with its workspace's tower live, and after that tower left", async () => {
