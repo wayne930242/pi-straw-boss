@@ -24,13 +24,14 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 2026-11-06 (seam bindings, docs/specs/2026-11-06-seam-bindings.md): with the train on, main.md carries the `## Seam bindings` block for the `integrating` and `deploying` skills (then pi-anchorloop's by name, since 2026-11-12 whichever declare the merge-train contract), 500 to 680 (off it stays 481);
 // tower.md 380 to 390 for "the integrator answers the coordinator itself" (off it stays 371). A role that has its own on-budget is listed in ON_BUDGETS.
 // 2026-11-07 (wait cards, docs/specs/2026-11-07-wait-cards.md, Prompts; shortened in the GUI review, GR-F012): tower.md +31 for "the boss is not an agent: write a wait for them in plain full sentences" (off 371 to 402, on 393 to 424); main.md +20 for the `wait_card` message and `secret_drop` (off 481 to 501, on 695 to 715). Budgets = measured.
-const BUDGETS: Record<string, number> = { "main.md": 501, "tower.md": 402, "member.md": 140, "member-no-main.md": 150 };
+const BUDGETS: Record<string, number> = { "main.md": 501, "tower.md": 417, "member.md": 140, "member-no-main.md": 150 };
 // Its review fixes (SB-F001, F003, F005: the Approval line quotes words already given and asks only when they are missing, the tower reports nothing back on a forwarded slip): main.md 680 to 700, tower.md 390 to 395, integrator.md 320 to 340 (SB-F002 and F006: the deploy gate before `Merge`, a subagent briefed for one step).
 // Train workers (docs/specs/2026-11-07-train-workers.md §13.1, task 8): tower.md on 424 to 471 (forward with `forward`, open a train with `role: "train"`, a car notice's `blocked`; off stays 402); main.md on 715 to 720 (Batch owner, Handoff route, Record and Approval say who schedules, who departs, who notifies, and where the boss's nod is quoted); integrator.md 340 to 380 and train.md ~450 have their own budgets below.
 // Fix round of task 8 (prompts-review.md, TP-F001 to F018): budgets = measured: main.md on 720 to 725, tower.md on 471 to 469 (the resident tower forwards nothing), planning.md on 670 to 681 (the check command), integrator.md 380 to 412 (todo lifecycle, legacy trains), train.md 450 to 511 (holds, load and lock, the Record file, the metadata.sb keys).
 // Fix round 2 (prompts-rereview.md TP2-F001 to F004): measured: main.md on 725 to 743 ({{cli}} check line), planning.md on 681 to 693, integrator.md 412 to 453 (todo fields and result, --accept none), train.md 511 to 520 (status, trainboard folder).
 // Whole-batch fix round (batch-review.md TB-F001 to F009): measured: planning.md on 693 to 699 (absolute evidence paths), integrator.md 453 to 509 (sb reads apps.json and refuses, the todo goes in_progress before the call, the code's form, a car with no forward), train.md 520 to 542 (the version refusal, evidence short of the app's requirement, `round` of dropped).
-const ON_BUDGETS: Record<string, number> = { "main.md": 743, "tower.md": 469 };
+// 0.81.6 (review HUR-F002, boss 2026-11-21: shared is a heads-up): measured: tower.md on 469 to 480 and off 402 to 417 (answer a shared call only on a clash).
+const ON_BUDGETS: Record<string, number> = { "main.md": 743, "tower.md": 480 };
 // 2026-11-08 (todo #125 task 5, TP-F004): `{{cli}}` is the command that runs cli.mjs.
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir", "state", "cli", "duty"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
@@ -113,7 +114,8 @@ test("merge train: apps-config names the integration fields and points to the sk
 	for (const gone of ["tested-on", "`train/<code>`", "nothing is force pushed", "`maxCars`", "fix-forward", "One train at a time per target", "a blank box means accepted", "(applied to a DB: no|<which>)"]) assert.ok(!integrator.includes(gone), `integrator.md no longer repeats ${gone}`);
 	// 0.75.3 raised 510 to 530 (measured): the rule that a forward with `origin=remote:` covers only `strict` targets its device's boss granted, else blocked (R151-F006, boss 2026-11-12).
 	// 0.77.3 raised 530 to 538 (measured): train_car's `car` is the slip's first ticket, and the slip's `car:` is the app (a coordinator wrote a ticket in car:).
-	assert.ok(words(integrator) <= 538, `integrator.md has ${words(integrator)} words`);
+	// 0.81.6 raised 538 to 544 (measured, review HUR-F001): the departure waits for the tower's answer, unlike a heads-up; a refusal means no train opened.
+	assert.ok(words(integrator) <= 544, `integrator.md has ${words(integrator)} words`);
 });
 
 // Train stages (docs/specs/2026-11-05-train-stages.md, boss form 2026-11-05): one integrator carries a train through merge, deploy, and UAT; Straw Boss names the flow, never an environment.
@@ -142,7 +144,7 @@ test("merge train: main hands integration cars over with why shared, planning st
 		const text = readFileSync(`${PROMPT_DIR}/${file}`, "utf8");
 		for (const term of file === "tower.md" ? ["`integration`", "integrator", "boss_open_main"] : ["`integration`", "integrator", "boss_open_main", "integrator.md"]) assert.ok(text.includes(term), `${file} names ${term}`);
 	}
-	for (const off of [false, true]) assert.ok(words(strip(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), off)) <= (off ? 402 : 469)); // wait cards: +31, see BUDGETS
+	for (const off of [false, true]) assert.ok(words(strip(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), off)) <= (off ? 417 : 480)); // wait cards: +31; 0.81.6 shared heads-up: +15/+11, see BUDGETS
 	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("finding with evidence"));
 });
 
@@ -228,7 +230,7 @@ test("train workers: train.md and integrator.md stay within their budgets, on an
 	const train = read("train.md");
 	assert.ok(words(strip(train, false)) > 300 && words(strip(train, false)) <= 632, `train.md has ${words(strip(train, false))} words on`);
 	assert.equal(words(strip(train, true)), 0, "train.md is empty with the train off");
-	assert.ok(words(read("integrator.md")) > 300 && words(read("integrator.md")) <= 538, `integrator.md has ${words(read("integrator.md"))} words`);
+	assert.ok(words(read("integrator.md")) > 300 && words(read("integrator.md")) <= 544, `integrator.md has ${words(read("integrator.md"))} words`);
 });
 
 test("train workers: train.md ends with its own block of the seven seams in the order of seams.md, and main.md keeps six", () => {
