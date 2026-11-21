@@ -36,6 +36,35 @@ const main = async (id: string, pane: string, tab: string) => {
 	return agent;
 };
 
+test("a turn before join leaves the section unpinned; role changes after pinning use real labels and keep the bytes", async () => {
+	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
+	await b.fire("session_start", { reason: "startup" });
+	assert.equal((await b.run())["straw-boss"], undefined, "join is still pending");
+	await b.fire("agent_settled", { aborted: false });
+	await world.quiet();
+	const pinned = await section(b);
+	assert.match(pinned, /member of tab work/);
+	b.idle = false;
+	await b.promote();
+	assert.equal(await section(b), pinned);
+	assert.match(told(b).at(-1)!, /main agent of Herdr tab work/);
+});
+
+test("a resumed member replaces a stale main steer once without rewriting its section", async () => {
+	await main("a", "wA:p1", "wA:t1");
+	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
+	b.transcript.push({ type: "custom_message", customType: "straw-boss", details: { briefed: { name: "main", duty: "engineer", graph: "" }, base: null } });
+	await b.fire("session_start", { reason: "resume" });
+	await world.quiet();
+	b.idle = false;
+	const pinned = await section(b);
+	assert.match(pinned, /member of tab work/);
+	assert.equal(told(b).length, 1, "the first turn supersedes the history");
+	assert.match(told(b)[0]!, /replacing the system section and any earlier role updates[\s\S]*member of tab work/);
+	assert.equal(await section(b), pinned);
+	assert.equal(told(b).length, 1, "no repeated steer on the next turn");
+});
+
 test("a main's section is the same bytes with no tower, with its workspace's tower live, and after that tower left", async () => {
 	const a = await main("a", "wA:p1", "wA:t1");
 	const none = await section(a);

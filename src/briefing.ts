@@ -1,3 +1,4 @@
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Graph } from "./duty.ts";
 import type { MainDuty } from "./mainduty.ts";
 import { cliCommand } from "./server/version.ts";
@@ -28,15 +29,16 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 		const current = role(), duty = current === "main" ? mainDuty.now() : "";
 		return { name: current === "member" && !s.mainId ? "member-no-main" : current, duty, graph: duty === "coordinator" ? (mainDuty.graph() ?? "") : "" };
 	};
-	// A rewritten section invalidates the system prompt cache. Pin the rendered bytes at the first run, except for an explicit boss_duty change.
+	// A rewritten section invalidates the system prompt cache. Pin the rendered bytes at the first run with a role, except for an explicit boss_duty change.
 	// The section never contains a coordinator's graph. Role and graph changes, including ones on a different branch, reach the agent as messages.
 	// `told` is what the agent holds: the section, then each steer pi delivered (its `message_end`), never one only sent, since pi's queue can drop it first (Esc, the dequeue key, the sb GUI's Edit).
 	// One steer waits in the queue at a time (`flight`), and a change meanwhile is written once it arrived, against what it told. A steer an abort left queued arrives at the next run's start, after that run's
 	// own was written against the older state: `told` is unknown (`undefined`) then, and the next steer is the whole prompt.
 	let idle = () => false, told: Briefed | undefined, flight: Told | undefined, running = false, rewriteKind = false;
-	let section: { base: Briefed; text: string | undefined } | undefined, labels: typeof s.info | undefined;
-	// Keep the first labels for custom templates as well as the shipped ones. Live labels come from boss_status.
-	const compose = ({ name, duty, graph }: Briefed, parts = name ? partsOf(name, duty, graph) : []) => parts.map((part) => prompts[part]).join("\n\n").replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ dir: files ? files.dir : cfg.promptDir, state: guiDir, cli: cliCommand(), ...labels, duty } as Record<string, string | undefined>)[key] || "none yet");
+	let section: { base: Briefed; text: string } | undefined, labels: typeof s.info | undefined;
+	// Keep the first role's labels for custom templates too. A steer before pinning uses the same fields, read live.
+	const labelsOf = () => ({ tab: s.info.tab, workspace: s.info.workspace, head: s.info.head });
+	const compose = ({ name, duty, graph }: Briefed, parts = name ? partsOf(name, duty, graph) : []) => parts.map((part) => prompts[part]).join("\n\n").replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ dir: files ? files.dir : cfg.promptDir, state: guiDir, cli: cliCommand(), ...(labels ?? labelsOf()), duty } as Record<string, string | undefined>)[key] || "none yet");
 	// A compaction that retries no turn gets the message stored, not steered: a steer queued then would make pi continue a run that had ended (runmode.ts does the same with a run's brief).
 	let quiet = false;
 	// A stored message is in the transcript at the turn's end, and pi reports it to no extension: it is told as it is sent. So is a steer sent while pi is idle (awaiting `agent_settled` handlers, or after a run
@@ -90,16 +92,17 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 			rebrief();
 			quiet = false;
 		},
-		begin(sections: Record<string, string>) {
+		begin(sections: Record<string, string>, branch: () => readonly SessionEntry[]) {
 			const now = stateOf();
-			if (!section || (rewriteKind && now.name === "main" && section.base.duty !== now.duty)) {
-				labels ??= { tab: s.info.tab, workspace: s.info.workspace, head: s.info.head };
+			if (now.name && (!section || (rewriteKind && now.name === "main" && section.base.duty !== now.duty))) {
+				labels ??= labelsOf();
 				const base: Briefed = { ...now, graph: "" };
-				if (told === section?.base && !flight) told = base; // no earlier steer to supersede the new section
-				section = { base, text: base.name ? compose(base) : undefined };
+				// On the first pin, an earlier instance's steer may still override the section. Leave `told` unknown so we replace it in a message.
+				if (told === section?.base && !flight && (section || !branch().some((e) => e.type === "custom_message" && e.customType === ENTRY && (e.details as Partial<Told> | undefined)?.briefed))) told = base;
+				section = { base, text: compose(base) };
 			}
-			if (section.text === undefined) delete sections[ENTRY];
-			else sections[ENTRY] = section.text;
+			if (section) sections[ENTRY] = section.text;
+			else delete sections[ENTRY];
 			// An undelivered steer was dropped or waits for this run's start: if it arrives, `delivered` weighs it against what the agent holds.
 			[running, flight, rewriteKind] = [true, undefined, false];
 			rebrief();

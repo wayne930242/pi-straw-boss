@@ -281,11 +281,11 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	});
 
 	// The tower's run starts with what happened in its workspace since its last run, and the digest is cleared as it is read.
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		if (runMode.active()) return;
 		const sections = event.systemPromptOptions.sections;
 		mainDuty.migrate(pi.getSessionName()); // a main's signs: its name and its train todos, read before the prompt is built
-		briefing.begin(sections);
+		briefing.begin(sections, () => ctx.sessionManager.getBranch());
 		if (!s.holdsTower || !sections[ENTRY]) return;
 		const lines = await digest.take(s.at.workspaceId).catch(() => []);
 		if (lines.length) return { message: { customType: ENTRY, content: `Since your last run:\n${lines.map((line) => `- ${line}`).join("\n")}`, display: false } };
