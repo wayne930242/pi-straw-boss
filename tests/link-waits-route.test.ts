@@ -416,3 +416,38 @@ test("WR3B-F002: a card's excerpt of the teammate's message carries no control o
 	assert.doesNotMatch(happened, /[\u0000-\u001f\u007f-\u009f​‪-‮⁦-⁩]/u);
 	assert.match(happened, /«merge \[31m!13\[0m evil now»/);
 });
+
+// D13 (0.81.3): a teammate's question or notice for this computer's standing main comes as a wait with a `kind`; the router tells the standing main in a code-written line, never the main a stray owner names, and the text stays in board_read.
+test("D13: a question for the standing main: a wake that says it asks you with no peer text, a board_read row, and done sends the answer as written to the asker's ask, then the state; with no standing main, a card that says it asks", async () => {
+	const w = world({ mains: [{ id: "s-gma", name: "GMA" }, { id: "s-work", name: "work-on", standing: true }] });
+	assert.equal(await w.router.take(item({ kind: "question", owner: "GMA", what: "merge !13 before the train?" }), "w15X"), true);
+	assert.deepEqual(w.posts.map((p) => [p.to, p.kind, p.wait]), [[["s-work"], "link_wait", "L1"]], "the standing main, not the main the owner names");
+	assert.match(w.posts[0]!.text, /waydosoft asks you, a standing main of this workspace, a question \(L1\)\. Read it with board_read \(section waits\)/);
+	assert.doesNotMatch(w.posts[0]!.text, /merge|please|!13|train/, "no word of the teammate's (D1)");
+	assert.deepEqual(w.router.view({ workspaces: ["w15X"] }).map((r) => [r.id, r.kind, r.owner, r.text, r.state, r.toldTo]), [["L1", "question", "", SECRET_TEXT, "told", ["work-on"]]]);
+	assert.match(await w.router.act("s-work", "L1", "done", "Yes, merge it; the train waits."), /L1 is done\. Your message leaves this computer as written/);
+	const [answer, state] = w.sends.slice(-2).map((x) => x.req);
+	assert.deepEqual([answer!.inReplyTo, answer!.text], [ASK, "Yes, merge it; the train waits."]);
+	assert.deepEqual([state!.wait?.state, state!.wait?.kind], ["done", undefined]);
+	rmSync(join(root, "state"), { recursive: true, force: true });
+	const none = world({ mains: [{ id: "s-gma", name: "GMA" }] });
+	await none.router.take(item({ kind: "question" }), "w15X");
+	assert.deepEqual(none.posts, [], "a coordinator is not told");
+	assert.match(cards()[0]!.card!.happened, /^waydosoft \(teammate device\) asks this computer's standing main: «merge !13»\./);
+});
+
+test("D13: a notice for the standing main is information only: a wake with no peer text, nothing back (no told, no answer), no card even with no main, and its ask is dropped", async () => {
+	const w = world({ mains: [{ id: "s-work", name: "work-on", standing: true }] });
+	assert.equal(await w.router.take(item({ kind: "notice", what: "box train 1121 landed" }, { replyExpected: false }), "w15X"), true);
+	assert.match(w.posts[0]!.text, /waydosoft sent a notice that touches work in this workspace \(L1, .*\): information only, with nothing to answer and no card for the boss/);
+	assert.doesNotMatch(w.posts[0]!.text, /merge|please|!13|train/);
+	assert.deepEqual(ledger().map((e) => [e.kind, e.state, e.ask]), [["notice", "told", undefined]]);
+	assert.match(await w.router.act("s-work", "L1", "done"), /L1 is closed; the device expects nothing back/);
+	assert.deepEqual(w.sends, [], "nothing goes back for a notice, not even told");
+	rmSync(join(root, "state"), { recursive: true, force: true });
+	const none = world();
+	await none.router.take(item({ kind: "notice" }), "w15X");
+	none.t += 2 * CLAIM_MS;
+	await none.router.tick();
+	assert.deepEqual([cards().length, none.posts.length, none.sends.length], [0, 0, 0]);
+});

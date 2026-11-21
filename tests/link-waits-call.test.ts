@@ -53,3 +53,15 @@ test("the router's lines name the teammate device by remote= and device= without
 	assert.deepEqual([f.kind, f.wait, f.remote, f.device, f.verified, f.reply], ["link_wait", "L3", "waydosoft", "n2knna", undefined, "none"]);
 	assert.throws(() => stamp({ from: { id: "x", name: "x", role: "tower" }, kind: "link_wait", scope: "session", to: [], reply: false, peer: { label: "x", short: "NOPE!!" } }, "x"), /short id/);
 });
+
+test("D13: call_tower standing sends the message to the device's standing main through the router's standing-send: a question with why blocked, a notice with milestone; the tower gets no call for it", async () => {
+	const r = rig({ "standing-send": (op) => ({ ok: true, text: `Your ${String(op.kind)} went to the standing main of mac (ibzkd5).`, details: { standing: op.kind } }) });
+	await assert.rejects(r.call({ message: "m", why: "shared", standing: { device: "mac" } }), /standing goes with why blocked \(a question\) or milestone \(a notice\)/);
+	await assert.rejects(r.call({ message: "m", why: "blocked", standing: { device: "mac" }, waitsOn: { device: "mac", what: "x" } }), /do not go together/);
+	const asked = await r.call({ message: "Is approval-api !13 safe to merge before the train?", why: "blocked", standing: { device: "mac", what: "merge !13 before the train?" } });
+	assert.match(asked.text, /^Your question went to the standing main of mac/);
+	const told = await r.call({ message: "The box train 1121 landed.", why: "milestone", standing: { device: "mac" } });
+	assert.match(told.text, /^Your notice went/);
+	assert.deepEqual(r.ops, [{ op: "standing-send", device: "mac", kind: "question", what: "merge !13 before the train?", message: "Is approval-api !13 safe to merge before the train?" }, { op: "standing-send", device: "mac", kind: "notice", what: "", message: "The box train 1121 landed." }]);
+	assert.equal(r.calls.length, 0, "nothing went to the tower");
+});

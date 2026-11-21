@@ -17,6 +17,7 @@ import { ASK_KEEP_MS, type AskEntry } from "./asks.ts";
 import { waitOwner, waitWhat } from "../link/kinds.ts";
 import type { LinkWaits } from "./linkwaits.ts";
 import { markHandled, type WaitEvent } from "./runevents.ts";
+import { sendStanding } from "./standingsend.ts";
 
 // The tower tools a run calls (docs/specs/2026-10-26-sb-backend.md, Tower tools in a run). In a run each tool is a thin client of the server: the run's extension sends `run-tool { token, tool, args }`,
 // and the server does the work as the workspace's tower identity (its reach, its opener, its control channel, the link holder), so the header of everything a run sends names the identity and replies
@@ -379,6 +380,7 @@ async function towerSendDevice(host: ToolHost, args: Record<string, unknown>, fo
 	const message = str(args, "message"), inReplyTo = opt(args, "inReplyTo"), forWho = opt(args, "for");
 	if (inReplyTo !== undefined && (!ally || !(host.who.asks ?? []).includes(inReplyTo))) throw new Error("inReplyTo has to be the ask id of one of this run's messages (see its brief)");
 	if (forWho !== undefined && ally) throw new Error("An ally run asks for no main");
+	if (args.standing !== undefined) return standingSend(host, args, forced, ally);
 	// An ask for a main expects a reply: `for` or `waitsOn` with reply left out sends one (BMWR-F009); only `reply: false` is refused.
 	if ((forWho !== undefined || args.waitsOn !== undefined) && args.reply === false) throw new Error("An ask for a main has to expect a reply: leave reply out or set reply: true");
 	// `waitsOn` (docs/specs/2026-11-21-box-mac-waits.md §2.1): the device, owner, what, and raiser are the event's, never the model's; the raiser's ask is bound as `for` would bind it.
@@ -416,6 +418,24 @@ async function towerSendDevice(host: ToolHost, args: Record<string, unknown>, fo
 	} else if (!ally && args.reply === false) text += " No session will get an answer to this; the device's answer reaches an ally run here.";
 	else if (!ally && reply) text += " No session is bound to this send. The answer reaches an ally run here, not you or any session; pass for with a main of this workspace, or one of another workspace that called you in this run, to have it delivered there; if there is none, tell the requester that nobody gets the answer.";
 	return { text, details: { ...(answer.details as object | undefined), ...(main ? { for: main.id } : {}) } };
+}
+
+/**
+ * `tower_send` `standing` (D13): a question or a notice for the device's standing main, sent by the code (standingsend.ts). A question binds the main that asked, as `for` and the run's one requester bind an ask; an ally run asks for
+ * no main here, so it sends notices only.
+ */
+async function standingSend(host: ToolHost, args: Record<string, unknown>, forced: string | undefined, ally: boolean): Promise<ToolResult> {
+	const kind = args.standing === "question" || args.standing === "notice" ? args.standing : undefined, forWho = opt(args, "for");
+	if (!kind) throw new Error("standing is question or notice");
+	if (args.waitsOn !== undefined || args.inReplyTo !== undefined || args.head !== undefined) throw new Error("standing goes with device and message only (and for, for a question): no waitsOn, inReplyTo, or head");
+	if (args.reply !== undefined && args.reply !== (kind === "question")) throw new Error("A question expects a reply and a notice none: leave reply out");
+	if (kind === "question" && ally) throw new Error("An ally run asks for no main here, so it sends a standing notice only; answer your sender's question in your own reply");
+	if (!host.waits) throw new Error("This computer's sb server keeps no link waits, so nothing was sent");
+	const target = await host.link({ op: "device-resolve", device: forced ?? opt(args, "device") ?? "" });
+	if (!target.ok) throw new Error(String(target.error));
+	const asker = kind === "notice" ? undefined : forWho !== undefined ? await host.mainOf(forWho) : await host.requester();
+	const sent = await sendStanding({ now: host.now, ws: host.who.workspace, identity: host.identity, link: (b) => host.link(b), asks: host.asks, waits: host.waits, log: () => undefined }, { id: String(target.id), short: String(target.short), label: String(target.label) }, kind, str(args, "message"), "", asker);
+	return sent;
 }
 
 // --- a local run ---------------------------------------------------------------------------------------------------------------------------------------------------

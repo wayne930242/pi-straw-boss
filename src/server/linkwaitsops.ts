@@ -5,10 +5,13 @@ import type { LinkService } from "../link/service.ts";
 import { restrictLabel } from "../link/text.ts";
 import { localeOf } from "../towerprompt/messages.ts";
 import { raiserRefusal } from "./allywait.ts";
+import type { Asks } from "./asks.ts";
 import { createLinkWaits, isOpen, type LinkWaits, readWaits } from "./linkwaits.ts";
 import type { Slot } from "./record.ts";
 import type { Towers } from "./towers.ts";
+import { sendStanding } from "./standingsend.ts";
 import { listServices } from "./towerstore.ts";
+import { nameOf } from "../reach.ts";
 
 // The wait router wired into the sb server (docs/specs/2026-11-21-box-mac-waits.md): its seams to the link holder (sends as a workspace's tower identity, a device's caps), to the tower service (a line from a tower identity, a card), and
 // the holder ops sessions and runs ask it through (`device-resolve`, `wait-act`, `wait-cancel`, `waits-read`). Kept out of main.ts, which carries a line budget.
@@ -29,7 +32,7 @@ export interface StartWaits {
 	/** Auto mode's switch: a card is parked while it is on. */
 	autoOn?(): boolean;
 	/** The asks the towers made for their mains (asks.ts): a box's notice about one goes to its main. */
-	asks?: { find(ask: string): { for: string; workspace: string; device: string } | undefined };
+	asks?: { find(ask: string): { for: string; workspace: string; device: string } | undefined } & Partial<Pick<Asks, "open">>;
 	/** A test's clock for the sweep; none starts the minute timer. */
 	tickMs?: number | false;
 }
@@ -113,6 +116,19 @@ export function startLinkWaits(o: StartWaits): WaitsHub {
 						if (teams) return { ok: true, waits: router.view({ teams }) };
 						const ws = await wsOf(from);
 						return { ok: true, waits: ws ? router.view({ workspaces: [ws] }) : [] };
+					}
+					case "standing-send": {
+						// D13: a main's `call_tower` `standing`: a question (why blocked) or a notice (milestone) for a teammate device's standing main, sent by the code as the workspace's tower identity; an opened main reaches only its opener.
+						const n = await net(), me = n.sessions.find((s) => s.id === from), pane = me && n.ps.find((p) => p.pane_id === me.herdrLocation?.paneId), ws = pane?.workspace_id, identity = ws ? o.towers()?.identityOf(ws) : undefined;
+						if (!me || pane?.tokens?.sb_role !== "main" || !ws) return { ok: false, error: "Only a main of this computer calls a teammate's standing main this way" };
+						const link = o.link(), target = resolve(body.device), kind = body.kind === "question" || body.kind === "notice" ? body.kind : undefined;
+						if (!target.ok) return target;
+						if (!kind) return { ok: false, error: "standing is a question (why blocked) or a notice (why milestone)" };
+						const no = raiserRefusal(o.slot, from, target, o.now());
+						if (no) return { ok: false, error: no };
+						if (!identity || !link || !o.asks?.open) return { ok: false, error: "The sb server runs no tower for your workspace or no link holder, so nothing was sent" };
+						const asks = { open: o.asks.open.bind(o.asks) };
+						return { ok: true, ...(await sendStanding({ now: o.now, ws, identity, link: (b) => link.request(b, identity), asks, waits: router, log: o.log }, target, kind, String(body.message ?? ""), String(body.what ?? ""), { id: from, name: nameOf(me) || from })) };
 					}
 					default: return { ok: false, error: "unknown request" };
 				}

@@ -29,9 +29,19 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 				id: Type.String({ description: "The wait's id on this computer (L3), from board_read section waits." }),
 				state: Type.Union([Type.Literal("taken"), Type.Literal("done"), Type.Literal("declined")], { description: "taken: you own it now (no card goes to the boss); done or declined: message goes to the device and the wait closes." }),
 			}, { description: "Answer a teammate device's wait on this workspace (you were told with kind=link_wait)." })),
+			standing: Type.Optional(Type.Object({
+				device: Type.String({ description: "The teammate device: its label, short id, or id (tower_list shows them)." }),
+				what: Type.Optional(Type.String({ description: "One line, at most 200 bytes: what you ask or tell. Left out, the message's first line." })),
+			}, { description: "Instead of your tower: message goes to that device's standing main, as a question with why blocked (its answer comes to you) or a notice with why milestone (nothing comes back). An ally run opened you: only that device." })),
 		}),
-		async ({ message, why, workspace, reply, waitsOn, linkWait }) => {
-			if (waitsOn && linkWait) throw new Error("waitsOn and linkWait do not go together");
+		async ({ message, why, workspace, reply, waitsOn, linkWait, standing }) => {
+			if ([waitsOn, linkWait, standing].filter(Boolean).length > 1) throw new Error("waitsOn, linkWait, and standing do not go together");
+			if (standing) {
+				// D13: the code sends it as the workspace's tower identity; the tower gets no call for it.
+				if (why !== "blocked" && why !== "milestone") throw new Error("standing goes with why blocked (a question) or milestone (a notice)");
+				const sent = await link.waitOp({ op: "standing-send", device: standing.device, kind: why === "blocked" ? "question" : "notice", what: standing.what ?? "", message });
+				return { text: String(sent.text), details: sent.details };
+			}
 			if (linkWait) {
 				const acted = await link.waitOp({ op: "wait-act", id: linkWait.id, state: linkWait.state, ...(linkWait.state !== "taken" ? { message } : {}) });
 				const sent = await callTower(message, workspace, reply ?? false, why, { wait: /^L\d{1,6}$/.test(linkWait.id) ? linkWait.id : undefined });

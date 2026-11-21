@@ -97,7 +97,7 @@ export function operateSink(attended: boolean, o: Pick<ServiceOptions, "operate"
 
 const NOTICES = 10;
 /** The holder ops the wait router answers (src/server/linkwaitsops.ts). */
-const WAIT_OPS = ["device-resolve", "wait-act", "wait-cancel", "waits-read"];
+const WAIT_OPS = ["device-resolve", "wait-act", "wait-cancel", "waits-read", "standing-send"];
 /** A wait a send carries, checked as the wire's encoder will check it again. */
 const waitOf = (v: unknown): WaitWire | undefined => {
 	const w = v as Partial<WaitWire> | null;

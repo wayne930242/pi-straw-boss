@@ -364,3 +364,9 @@ test("D9 (0.81.3): duty-standing.md says the workspace's link waits come to the 
 	assert.ok(standing.includes("This workspace's link waits come to you (`kind=link_wait`): answer one with `call_tower` `linkWait`, or ask the boss that way when the decision is not yours."), "duty-standing.md");
 	for (const file of ["tower.md", "tower-run.md"]) assert.ok(!read(file).includes("linkWait"), `${file} does not answer link waits`);
 });
+
+test("D13 (0.81.3): one clause each says a device's standing main is reached with tower_send standing, and that its questions and notices come to the standing main as link waits", () => {
+	assert.ok(read("duty-standing.md").includes("A device's question or notice for its standing main comes that way too."), "duty-standing.md");
+	assert.ok(read("tower-run.md").includes("For the device's standing main instead of its tower, add `standing: \"question\"` (bound as above) or `standing: \"notice\"`."), "tower-run.md");
+	assert.ok(read("ally-run.md").includes("(`standing: \"notice\"` tells its standing main instead)"), "ally-run.md");
+});

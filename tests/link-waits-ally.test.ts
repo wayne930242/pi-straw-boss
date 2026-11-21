@@ -91,6 +91,27 @@ test("D12 (0.81.3): an ally run's escalation of a message that expects no answer
 	assert.equal((await ask(s, { cmd: "run-done", token, note: "noted the Mac's notice" })).ok, true);
 });
 
+test("D13 (0.81.3): an ally run sends its sender's standing main a notice with tower_send standing, free and with no ask; a question it cannot send, since it asks for no main here", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	world.ally.add("m1", DEV, "Did the box train land?", { awaitsReply: ASK, replyExpected: true });
+	world.expose?.allyWaiting("sb-tower-wa");
+	await until(() => world.pis.size >= 1, "the ally pi");
+	const id = [...world.pis.keys()][0]!, pi = world.pis.get(id)!;
+	await until(() => readRun(world.slot, "wA", id)?.pid, "the pid");
+	const token = String((await ask(s, { cmd: "claim", runId: id, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` })).token);
+	world.linkAnswers.set("device-resolve", () => ({ ok: true, id: DEV, short: DEV.slice(0, 6), label: `label-${DEV}`, team: "team-1" }));
+	world.linkAnswers.set("send", (b) => ({ ok: true, text: "Sent.", details: { team: "team-1", device: DEV, id: "e".repeat(32), waited: b.wait !== undefined } }));
+	const send = (standing: string) => ask(s, { cmd: "run-tool", token, tool: "tower_send", args: { device: DEV, standing, message: "The box train 1121 landed." } });
+	assert.match(String((await send("question")).error), /An ally run asks for no main here, so it sends a standing notice only/);
+	const told = await send("notice");
+	assert.equal(told.ok, true, JSON.stringify(told));
+	const body = world.linkCalls.filter((c) => c.body.op === "send").at(-1)!.body;
+	assert.deepEqual([body.device, body.reply, body.awaitsReply, (body.wait as { kind?: string }).kind], [DEV, false, undefined, "notice"]);
+	assert.deepEqual(readWaits(world.slot, "wA").entries, []);
+});
+
 test("BMWR-F006: on an unattended box an ask the run escalated is the router's to answer: the run's end sends no receipt for it", async () => {
 	world.unattended = () => true;
 	const s = await world.start();

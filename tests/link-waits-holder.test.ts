@@ -132,6 +132,34 @@ test("a wait to a build that takes none goes as text whose first line says so, f
 	await until(() => a.waited.length === 1, 3000, "a's router to take it");
 });
 
+/** Makes `r` hold `device`'s last caps without `feature`, as a build before it lists them (0.81.2 lists tower.wait but not tower.standing). */
+const withoutCap = (r: Rig, device: string, feature: string) => {
+	for (const run of (r.holder as unknown as { runs: Map<string, { caps: Map<string, { features: string[] }> }> }).runs.values()) {
+		const seen = run.caps.get(device);
+		if (seen) seen.features = seen.features.filter((f) => f !== feature);
+	}
+};
+
+test("D13: a wait for the standing main goes with its kind to a build that lists tower.standing, and its router takes it; to a 0.81.2 build (tower.wait, no tower.standing) it is the plain tower of before: no wait field, no lead line, the ask kept", async () => {
+	const { a, b } = await pair({ waits: { b: true } });
+	await until(() => capsOf(a, bob.id).includes("tower.standing"), 3000, "b lists tower.standing");
+	const question = { ...WAIT, owner: "", what: "merge !13 before the train?", kind: "question" as const };
+	const sent = await sendTo(a, "Is !13 safe to merge before the train?", { reply: true, awaitsReply: ASK, wait: question });
+	assert.equal((details(sent) as { waited?: boolean }).waited, true, textOf(sent));
+	await until(() => b.waited.length === 1, 3000, "the router to take it");
+	assert.deepEqual([b.waited[0]!.item.wait, b.waited[0]!.item.awaitsReply], [question, ASK]);
+	assert.equal(b.holder.servedFor("sb-tower-wb").length, 0, "no ally run is told of it");
+	withoutCap(a, bob.id, "tower.standing");
+	const old = await sendTo(a, "Is !13 safe to merge before the train?", { reply: true, awaitsReply: ASK, wait: { ...question, id: "7b".repeat(16) } });
+	assert.equal(old.ok, true, textOf(old));
+	assert.equal((details(old) as { waited?: boolean }).waited, false, "the tool says it went plain");
+	await until(() => b.store.inboxIds().length === 1, 3000, "the plain message in b's inbox");
+	const item = b.store.readInbox(b.store.inboxIds()[0]!)!;
+	assert.deepEqual([item.wait, item.text, item.awaitsReply, item.replyExpected], [undefined, "Is !13 safe to merge before the train?", ASK, true]);
+	assert.equal(b.waited.length, 1, "the router never saw it");
+	assert.equal(b.holder.servedFor("sb-tower-wb").length, 1, "an ally run gets it, as before 0.81.3");
+});
+
 test("C2: a reply for a live main that does not take it stays offered for hours (no fallback); once the main is gone it goes to the router, never to an ally run", async () => {
 	const { a, b } = await pair({ served: false, waits: { b: true } });
 	await until(() => capsOf(a, bob.id).includes("tower-reply"), 3000, "caps");
