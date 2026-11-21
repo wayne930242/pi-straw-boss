@@ -723,7 +723,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			// A `unit-stop` that passed the holder's checks: the tower service decides which main and whose, and the revoker carries it out (unitstop.ts). Its presence puts `unit-stop` in this box's caps.
 			unitStop: (a) => (towers ? towers.unitStop(a) : Promise.reject(new Error("The tower service is not running"))),
 			// The tower service takes part in the holder's work (B6): an ask answered by a `tower-reply` is the main's, messages for a tower identity the server runs wake an ally run, and a `forward` answer reaches its run.
-			tower: { asks: { take: (q) => ((t) => (t && waitsHub?.router.answered(q.ask), t))(asks.take(q)) }, waits: waitsHub!.holder, waitOps: (body, from) => waitsHub!.op(body, from), served: (identity) => towers?.allyWaiting(identity), confirmed: (to, dialogId, allow) => towers?.runs.confirmed(dialogId, allow) ?? false,
+			tower: { asks: { take: (q) => ((t) => ((wait) => (t && wait ? { ...t, wait } : t))(t ? waitsHub?.router.answered(q.ask) : undefined))(asks.take(q)) }, waits: waitsHub!.holder, waitOps: (body, from) => waitsHub!.op(body, from), served: (identity) => towers?.allyWaiting(identity), confirmed: (to, dialogId, allow) => towers?.runs.confirmed(dialogId, allow) ?? false,
 				openTower: towerOpener({ run: cfg.run, towers: () => towers, now, home: o.link?.home ?? homedir(), agentDir: env.PI_CODING_AGENT_DIR ?? join(o.link?.home ?? homedir(), ".pi", "agent"),
 					failed: (from, project, error) => void unitsOut().notify(`tower-open/${from}/${project}/${Math.floor(now() / 600_000)}`, { kind: "tower-open-failed", unit: allyLabel(project), text: `Could not open a tower for ${project}: ${error.message}` }, { device: from }) }) },
 		});

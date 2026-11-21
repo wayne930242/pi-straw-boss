@@ -26,7 +26,7 @@ const ASK = "9".repeat(32);
 const listening = (c: Computer, id: string) => c.world.broker.registrations.some((r) => r.id === id && r.namespace === NAMESPACE);
 
 test("the reply to an ask goes to the main that asked, as a straw-link message with kind=link_reply and for=<tower>, once; the tower and other mains get nothing", async () => {
-	const open = new Map<string, { main: string; mainName: string; tower: string; workspace: string }>();
+	const open = new Map<string, { main: string; mainName: string; tower: string; workspace: string; wait?: string }>();
 	// B asks (its tower made the ask for its main, which the server keeps); A answers.
 	const b = computer(root, relay, "b", { gateMs: 60, tower: { asks: { take: (q) => (q.ask === ASK && q.device === alice.id ? (() => { const hit = open.get(ASK); open.delete(ASK); return hit; })() : undefined) } } });
 	const a = computer(root, relay, "a", { gateMs: 60 });
@@ -36,7 +36,7 @@ test("the reply to an ask goes to the main that asked, as a straw-link message w
 	await Promise.all([a.tower.start(), b.tower.start(), main.start(), other.start()]);
 	await main.promote();
 	await other.promote();
-	open.set(ASK, { main: "main-b", mainName: "api main", tower: "tower-b", workspace: "Beta" });
+	open.set(ASK, { main: "main-b", mainName: "api main", tower: "tower-b", workspace: "Beta", wait: "L3" });
 	await until(() => a.server.service.holder?.capsFor(TEAM_HEX, bob.id).includes("tower-reply"), "A to know B takes replies");
 	// The server's offer goes only to the sessions on the link channel then, and is not made again for `offerAgainMs`: a promoted main is on it at once.
 	assert.ok(listening(b, main.id) && listening(b, other.id), "both mains to be on the link channel as they are promoted");
@@ -48,7 +48,7 @@ test("the reply to an ask goes to the main that asked, as a straw-link message w
 	assert.equal(message.customType, "straw-link");
 	assert.equal(message.triggerTurn, true);
 	assert.match(message.content, /^\[straw net from=alice-mac id=link:[a-z2-7]{26} role=tower .*verified=yes kind=link_reply scope=session to="api main \(main of /);
-	assert.match(message.content, / for=tower-b\] yes, the deploy is green$/);
+	assert.match(message.content, / for=tower-b wait=L3\] yes, the deploy is green$/, "the reply names the wait it closed (live check B, gap a)");
 	assert.equal((message.details as { from: string }).from, alice.id, "the main's remote-turn hooks see the device");
 	await until(() => b.server.service.store.inboxIds().length === 0, "the inbox to be empty");
 	assert.equal(other.sent.length, 0, "another main gets nothing");

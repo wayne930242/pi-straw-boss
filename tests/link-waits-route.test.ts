@@ -201,8 +201,9 @@ test("the sender's side: a wait it sent hears each state in a code-written line 
 	assert.equal(ledger()[0]!.state, "told");
 	assert.deepEqual([box.posts.at(-1)!.to, box.posts.at(-1)!.kind], [["raiser-1"], "link_wait_state"]);
 	assert.match(box.posts.at(-1)!.text, /^mac \(ibzkd5\): your wait L1 \(merge !13\) is told to a main there\.$/);
-	box.router.answered(ASK);
+	assert.equal(box.router.answered(ASK), "L1", "the reply names the wait it closed (live check B, gap a)");
 	assert.equal(ledger()[0]!.state, "done");
+	assert.equal(box.router.answered(ASK), undefined, "a closed wait is not answered twice");
 	box.router.sent("w15X", { wait: "e".repeat(32), device: MAC, team: "t1", label: "mac", short: "ibzkd5", raiser: { id: "raiser-2", name: "gone main" }, owner: "", what: "a review", event: "e2", plain: false });
 	await box.router.tick();
 	assert.equal(ledger()[1]!.state, "open", "one sweep is not enough");

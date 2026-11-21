@@ -512,10 +512,12 @@ export function createLinkWaits(d: WaitsDeps) {
 			d.log("link-wait-sent", { ws, n, device: w.short, plain: w.plain });
 			return `L${n}`;
 		},
-		/** Out: the ask of a wait was answered (a `tower-reply` reached the raiser): the wait is done. Synchronous, like `sent`. */
-		answered(ask: string): void {
+		/** Out: the ask of a wait was answered (a `tower-reply` reached the raiser): the wait is done, and its `L<n>` goes on the reply's header. Synchronous, like `sent`. */
+		answered(ask: string): string | undefined {
 			const held = find((e) => e.dir === "out" && e.ask === ask && isOpen(e));
-			if (held) set(held.ws, held.w.n, { state: "done" });
+			if (!held) return undefined;
+			set(held.ws, held.w.n, { state: "done" });
+			return `L${held.w.n}`;
 		},
 		/**
 		 * One sweep: claim windows that ran out become cards, a link card closed by anything but a press or the router is raised again, waits older than 7 days expire both ends, a raiser gone for two sweeps cancels its waits. A sweep

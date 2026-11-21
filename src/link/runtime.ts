@@ -107,7 +107,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		const from: Party = { name: item.fromLabel, id: `link:${item.from}`, role: "tower", ...(item.fromWorkspace ? { workspace: item.fromWorkspace } : {}) };
 		const team = config().teams.get(item.team)?.name ?? item.team.slice(0, 6);
 		// A reply for a main says which tower asked on its behalf; the text is the device's own words, data under the verified header.
-		return stamp({ from, kind: item.reply ? "link_reply" : "tower_send", scope: item.reply ? "session" : "tower", to: [mine], reply: item.replyExpected, remote: { device: item.fromLabel, short: item.fromShort, team }, ...(item.reply ? { for: item.reply.tower } : {}) }, item.text);
+		return stamp({ from, kind: item.reply ? "link_reply" : "tower_send", scope: item.reply ? "session" : "tower", to: [mine], reply: item.replyExpected, remote: { device: item.fromLabel, short: item.fromShort, team }, ...(item.reply ? { for: item.reply.tower, ...(item.reply.wait ? { wait: item.reply.wait } : {}) } : {}) }, item.text);
 	};
 	/** What this session takes from the inbox: a tower, the plain messages; a main, only the reply to an ask made for it. */
 	const takes = (item: InboxItem) => (item.reply ? s.isMain && item.reply.main === sid() : s.holdsTower);

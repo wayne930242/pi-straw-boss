@@ -74,7 +74,7 @@ export interface HolderOptions {
 	inboxPerSender?: number;
 	inboxMax?: number;
 	/** The asks local towers made for their mains and have not had answered (src/server/asks.ts): a `tower-reply` is taken as a reply only against one, once, from the device asked. */
-	asks?: { take(q: { team: string; device: string; ask: string }): { main: string; mainName: string; tower: string; workspace: string } | undefined };
+	asks?: { take(q: { team: string; device: string; ask: string }): { main: string; mainName: string; tower: string; workspace: string; wait?: string } | undefined };
 	/** Told, at each pass of the inbox, that messages wait for a tower identity the sb server runs (src/server/towers.ts): an ally run is woken for them. */
 	served?: (identity: string) => void;
 	/**
@@ -764,7 +764,7 @@ export class LinkHolder {
 		const item: InboxItem = {
 			v: 1, id: header.id.toString("hex"), team: run.team, from: header.from, fromLabel: sender?.label ?? shortId(header.from), fromShort: shortId(header.from),
 			seq: header.seq, sentAt: header.ts, received: this.now(), fromWorkspace: "", toWorkspace: taken?.workspace ?? "", replyExpected: false, text: message.text,
-			...(taken ? { reply: { ask: message.inReplyTo, main: taken.main, mainName: taken.mainName, tower: taken.tower } } : {}),
+			...(taken ? { reply: { ask: message.inReplyTo, main: taken.main, mainName: taken.mainName, tower: taken.tower, ...(taken.wait ? { wait: taken.wait } : {}) } } : {}),
 		};
 		this.o.store.putInbox(item);
 		this.o.store.log({ event: "tower-in", kind: "tower-reply", team: run.team, from: header.from, id: item.id, ask: message.inReplyTo });
