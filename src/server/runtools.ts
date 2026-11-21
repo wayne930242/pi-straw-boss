@@ -14,6 +14,9 @@ import type { Kind, RunWho } from "./rungate.ts";
 import type { TakeResult } from "./allows.ts";
 import { randomBytes } from "node:crypto";
 import { ASK_KEEP_MS, type AskEntry } from "./asks.ts";
+import { waitOwner, waitWhat } from "../link/kinds.ts";
+import type { LinkWaits } from "./linkwaits.ts";
+import { markHandled, type WaitEvent } from "./runevents.ts";
 
 // The tower tools a run calls (docs/specs/2026-10-26-sb-backend.md, Tower tools in a run). In a run each tool is a thin client of the server: the run's extension sends `run-tool { token, tool, args }`,
 // and the server does the work as the workspace's tower identity (its reach, its opener, its control channel, the link holder), so the header of everything a run sends names the identity and replies
@@ -66,7 +69,7 @@ export interface ToolHost {
 	/** The same asked of every workspace's route table of this server: a main opened for a device stays a peer's whichever tower it writes to (R151-F001). */
 	openedAnywhere?(session: string): string | undefined;
 	/** The live main of this tower's workspace named by id or name (a local run asks for it); throws when there is none or it is ambiguous. */
-	mainOf(query: string): Promise<{ id: string; name: string }>;
+	mainOf(query: string, byId?: boolean): Promise<{ id: string; name: string }>;
 	/** The one live main of this tower's workspace that sent the run a `call_tower` expecting an answer (the events the run took); undefined when there is none or there are several. */
 	requester(): Promise<{ id: string; name: string } | undefined>;
 	/** Whether an ask of the head tower to this tower's workspace is open (headasks.ts): a tower answers with `tower_send {head: true, inReplyTo}` only to one. */
@@ -89,6 +92,12 @@ export interface ToolHost {
 	now(): number;
 	/** When this server started: the refusal of a forward whose slip came in before it says what a restart lost (todo #154). */
 	startedAt?: number;
+	/** The waits-on `call_tower` this run took, by its id (runevents.ts): `tower_send` `waitsOn.event` forwards it (docs/specs/2026-11-21-box-mac-waits.md §2.1). */
+	waitEvent?(id: string): WaitEvent | undefined;
+	/** The wait router (linkwaits.ts). */
+	waits?: Pick<LinkWaits, "sent" | "escalate" | "handleOf" | "newId">;
+	/** An ally run's own messages from its device, with the ask each carries (runs.ts `allyMessages`). */
+	allyMessages?(): { id: string; text: string; ask?: string }[];
 }
 
 export interface SlipEvent { fwd: string; from: { id: string; name?: string }; text: string }
@@ -125,10 +134,10 @@ async function refuseClose(host: ToolHost, query: string): Promise<string> {
 }
 
 /** The tools an ally run may call at all; `call_tower`, `boss_server`, and `link_request` are refused by its kind. */
-const ALLY = new Set(["boss_status", "tower_list", "board_read", "tower_send", "tower_reply", "boss_open_main", "boss_close_main"]);
-export const TOOLS = ["boss_status", "tower_list", "board_read", "call_tower", "tower_send", "tower_reply", "boss_open_main", "boss_close_main", "boss_server", "link_request", "tower_memory"] as const;
-/** The tools an ally run's gate lets through without a confirm below `dispatch`: reading, and writing to its sender (checked below). */
-const FREE = new Set(["boss_status", "tower_list", "board_read"]);
+const ALLY = new Set(["boss_status", "tower_list", "board_read", "tower_send", "tower_reply", "boss_open_main", "boss_close_main", "ally_escalate"]);
+export const TOOLS = ["boss_status", "tower_list", "board_read", "call_tower", "tower_send", "tower_reply", "boss_open_main", "boss_close_main", "boss_server", "link_request", "tower_memory", "ally_escalate"] as const;
+/** The tools an ally run's gate lets through without a confirm below `dispatch`: reading, writing to its sender (checked below), and `ally_escalate`, which writes no peer text into any session. */
+const FREE = new Set(["boss_status", "tower_list", "board_read", "ally_escalate"]);
 
 const str = (args: Record<string, unknown>, name: string, max = 100_000): string => {
 	const v = args[name];
@@ -235,6 +244,7 @@ async function allyTool(host: ToolHost, name: string, args: Record<string, unkno
 		case "tower_list": return scopedList(host);
 		case "board_read": return scopedBoards(host, args);
 		case "tower_send": return towerSendDevice(host, args, who.device!, true);
+		case "ally_escalate": return allyEscalate(host, args);
 		default: return localTool(host, name, args, extra, true);
 	}
 }
@@ -260,7 +270,36 @@ async function scopedBoards(host: ToolHost, args: Record<string, unknown>): Prom
 			return answer.boards as AllyBoard[];
 		},
 	};
-	return json(await readBoard({ dir: host.boardDir, now: host.now(), net: await host.reach.read(), link, scope, ...(device !== undefined ? { device } : {}) }));
+	return json(await readBoard({ dir: host.boardDir, now: host.now(), net: await host.reach.read(), link, scope, ...(device !== undefined ? { device } : {}), waits: waitsOf(host, [team]) }));
+}
+/** The `waits` section of a run's `board_read`: its workspace's link waits, or for an ally run its sender's team's. */
+const waitsOf = (host: ToolHost, teams?: string[]) => () => host.link({ op: "waits-read", ...(teams ? { teams } : {}) }).then((a) => (a.ok ? (a.waits as unknown[]) : undefined), () => undefined);
+
+/** The escalations of each ally run (at most 5, and one item once), for the run's life. */
+const escalated = new Map<string, Set<string>>();
+export const ESCALATE_MAX = 5;
+/**
+ * `ally_escalate` (docs/specs/2026-11-21-box-mac-waits.md §3): a message from the run's device that waits on someone here, names a local main, or reports an incident that touches work here opens a link wait with the device as sender, and the
+ * router of §2.2 takes it from there. Free at every level: it writes no peer text into any session (the wake carries none; the text reaches mains through `board_read` and the boss through a card that quotes it as the teammate's words).
+ */
+async function allyEscalate(host: ToolHost, args: Record<string, unknown>): Promise<ToolResult> {
+	const { who } = host;
+	if (!host.waits || !who.device || !who.team) throw new Error("This server keeps no link waits");
+	const kind = args.kind === undefined || args.kind === "wait" ? "wait" : args.kind === "incident" ? "incident" : undefined;
+	if (!kind) throw new Error("kind is wait or incident");
+	const messages = host.allyMessages?.() ?? [];
+	// A message whose first line says it waits on this computer (the text an older build sends in place of the field) gives `what` when the model gives none.
+	const lead = messages.map((m) => /^\[waits on you: ([^\]\n]{1,400})\]/.exec(m.text)?.[1]).find((x) => x !== undefined);
+	const what = waitWhat(typeof args.what === "string" && args.what.trim() ? args.what : lead ?? "");
+	if (!what) throw new Error("what is required: one line saying what the device waits on or reports");
+	const done = escalated.get(who.id) ?? new Set<string>(), key = `${kind}\n${what.toLowerCase()}`;
+	if (done.size >= ESCALATE_MAX) throw new Error(`Refused: this run escalated ${done.size} items already, the most a run may`);
+	if (done.has(key)) throw new Error("That item is escalated already in this run");
+	const asks = [...new Set(messages.flatMap((m) => (m.ask ? [m.ask] : [])))];
+	const id = await host.waits.escalate(who.workspace, { team: who.team, device: who.device, label: who.deviceLabel ?? who.device.slice(0, 6), short: who.deviceShort ?? who.device.slice(0, 6), ...(typeof args.owner === "string" && args.owner.trim() ? { owner: waitOwner(args.owner) } : {}), what, kind, text: messages.map((m) => m.text).join("\n\n").slice(0, 8192), ...(asks.length === 1 ? { ask: asks[0]! } : {}) });
+	escalated.set(who.id, done.add(key));
+	for (const k of escalated.keys()) if (escalated.size > 200) escalated.delete(k); else break;
+	return { text: `Escalated as ${id}: the server tells the main it names, or every main of the workspace, or the boss's list, and tells the device each step. Nothing of the message went into a session. Close the message with tower_done when nothing else is left.`, details: { id, kind } };
 }
 
 // --- the integrator's door ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -334,27 +373,44 @@ async function openIntegrator(host: ToolHost, args: Record<string, unknown>, all
 
 /** `tower_send` with a device: over Straw Link. An ally run's goes to its sender's full id with `inReplyTo` checked against its own asks; a local run's may carry `for` (an ask for a main). */
 async function towerSendDevice(host: ToolHost, args: Record<string, unknown>, forced?: string, ally = false): Promise<ToolResult> {
-	const device = forced ?? opt(args, "device")!, message = str(args, "message"), reply = args.reply === true, inReplyTo = opt(args, "inReplyTo"), forWho = opt(args, "for");
+	const message = str(args, "message"), inReplyTo = opt(args, "inReplyTo"), forWho = opt(args, "for");
 	if (inReplyTo !== undefined && (!ally || !(host.who.asks ?? []).includes(inReplyTo))) throw new Error("inReplyTo has to be the ask id of one of this run's messages (see its brief)");
 	if (forWho !== undefined && ally) throw new Error("An ally run asks for no main");
-	if (forWho !== undefined && !reply) throw new Error("An ask for a main has to expect a reply (reply: true)");
+	if (forWho !== undefined && args.reply !== true) throw new Error("An ask for a main has to expect a reply (reply: true)");
+	// `waitsOn` (docs/specs/2026-11-21-box-mac-waits.md §2.1): the device, owner, what, and raiser are the event's, never the model's; the raiser's ask is bound as `for` would bind it.
+	const waitsOn = args.waitsOn === undefined ? undefined : (args.waitsOn as { event?: unknown } | null)?.event;
+	const event = typeof waitsOn === "string" ? host.waitEvent?.(waitsOn) : undefined;
+	if (args.waitsOn !== undefined && (ally || !event)) throw new Error(ally ? "An ally run forwards no wait" : `waitsOn.event ${String(waitsOn).slice(0, 40)} is no call_tower with waits-on= that this run took: name the id its event header shows`);
+	if (event && forWho !== undefined) throw new Error("waitsOn binds the raiser of the event: leave for out");
+	const target = event ? await host.link({ op: "device-resolve", device: forced ?? opt(args, "device") ?? event.short }) : undefined;
+	if (target && (!target.ok || target.short !== event!.short)) throw new Error(target.ok ? `The event waits on device ${event!.short}, not ${String(target.short)}: send it there` : String(target.error));
+	const device = forced ?? (target ? String(target.id) : opt(args, "device")!);
 	let main: { id: string; name: string } | undefined, ask: string | undefined;
 	// A tower that sends for a local session records who asked, by the server and not by the model's memory: the device's answer never enters a tower run, so without an ask nobody here would get it.
-	// `for` names the main; without it the run's one requester is taken, and with none or several nothing is guessed.
-	const requester = forWho === undefined && !ally && reply ? await host.requester() : undefined;
-	if (forWho !== undefined) main = await host.mainOf(forWho);
+	// `for` names the main; without it the run's one requester is taken (a send that leaves reply out binds it too, C1), and with none or several nothing is guessed. `reply: false` is a notice.
+	const requester = forWho === undefined && !event && !ally && args.reply !== false ? await host.requester() : undefined;
+	if (event) main = await host.mainOf(event.from.id, true).catch(() => ({ id: event.from.id, name: event.from.name ?? event.from.id }));
+	else if (forWho !== undefined) main = await host.mainOf(forWho);
 	else if (requester) main = requester;
+	const reply = args.reply === true || (args.reply === undefined && main !== undefined);
 	if (main) ask = randomBytes(16).toString("hex");
-	const answer = await host.link({ op: "send", device, text: message, reply, ...(opt(args, "workspace") ? { workspace: opt(args, "workspace") } : {}), ...(ask ? { awaitsReply: ask } : {}), ...(inReplyTo ? { inReplyTo } : {}) });
+	const wait = event && host.waits ? { id: host.waits.newId(), state: "open" as const, owner: waitOwner(event.owner), what: waitWhat(event.what) || "(no summary)", handle: host.waits.handleOf(event.from.id) } : undefined;
+	const answer = await host.link({ op: "send", device, text: message, reply, ...(opt(args, "workspace") ? { workspace: opt(args, "workspace") } : {}), ...(ask ? { awaitsReply: ask } : {}), ...(inReplyTo ? { inReplyTo } : {}), ...(wait ? { wait } : {}) });
 	if (!answer.ok) throw new Error(String(answer.error));
-	const details = (answer.details ?? {}) as { team?: string; device?: string; id?: string; asked?: boolean };
+	const details = (answer.details ?? {}) as { team?: string; device?: string; id?: string; asked?: boolean; waited?: boolean };
 	let text = String(answer.text);
+	if (event && wait && target?.ok && details.team) {
+		const id = host.waits!.sent(host.who.workspace, { wait: wait.id, ...(ask && details.asked ? { ask } : {}), ...(details.id ? { envelope: details.id } : {}), device: String(target.id), team: details.team, label: String(target.label), short: String(target.short), raiser: main!, owner: wait.owner, what: wait.what, event: event.id, plain: details.waited !== true });
+		markHandled(host.who.id, event.id);
+		text += details.waited === true ? ` Recorded as wait ${id}: the device routes it to its owner or its boss and says each step, which ${main!.name} hears.` : ` Recorded as wait ${id}; that device's build takes no wait field, so it went as text that opens with [waits on you: …], which its ally run escalates.`;
+	}
 	if (main && ask) {
 		if (details.asked === true && details.team && details.device && details.id) {
 			host.asks.open({ ask, envelope: details.id, device: details.device, team: details.team, for: main.id, forName: main.name, workspace: host.who.workspace, tower: host.identity, at: host.now(), expires: host.now() + ASK_KEEP_MS });
 			text += ` The answer will come to ${main.name} directly${forWho === undefined ? " (the main that called you for this; pass for to name another)" : ""}.`;
 		} else text += ` The answer will not come to ${main.name}: it will reach an ally run here, whose brief names the main that asked.`;
-	} else if (!ally && reply) text += " No session is bound to this send. The answer reaches an ally run here, not you or any session; pass for with a main of this workspace, or one of another workspace that called you in this run, to have it delivered there; if there is none, tell the requester that nobody gets the answer.";
+	} else if (!ally && args.reply === false) text += " No session will get an answer to this; the device's answer reaches an ally run here.";
+	else if (!ally && reply) text += " No session is bound to this send. The answer reaches an ally run here, not you or any session; pass for with a main of this workspace, or one of another workspace that called you in this run, to have it delivered there; if there is none, tell the requester that nobody gets the answer.";
 	return { text, details: { ...(answer.details as object | undefined), ...(main ? { for: main.id } : {}) } };
 }
 
@@ -385,7 +441,7 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 					return answer.boards as AllyBoard[];
 				},
 			};
-			return json(await readBoard({ dir: host.boardDir, now: host.now(), net: await reach.read(), link, scope, ...(device !== undefined ? { device } : {}) }));
+			return json(await readBoard({ dir: host.boardDir, now: host.now(), net: await reach.read(), link, scope, ...(device !== undefined ? { device } : {}), waits: waitsOf(host) }));
 		}
 		case "call_tower": {
 			const done = await reach.callTower(str(args, "message"), opt(args, "workspace"), args.reply !== false, opt(args, "why"));
@@ -394,7 +450,7 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 		}
 		case "tower_send": {
 			if (args.head === true) return answerHead(host, args);
-			if (opt(args, "device") !== undefined) return towerSendDevice(host, args);
+			if (opt(args, "device") !== undefined || args.waitsOn !== undefined) return towerSendDevice(host, args);
 			if (opt(args, "for") !== undefined || opt(args, "inReplyTo") !== undefined) throw new Error("for and inReplyTo go with a device");
 			const stamped = await forwardOf(host, args), message = stamped?.body ?? str(args, "message");
 			const done = await reach.towerSend(message, opt(args, "workspace"), args.reply === true, stamped ? { fwd: stamped.fwd, fwdFrom: stamped.fwdFrom } : {});

@@ -16,7 +16,7 @@ const CAPS = { talk: 1400, who: 300, mains: 24, mainRow: 200, obligations: 10, d
 export const RUN_CAP_MINUTES = 20;
 
 /** The session a tab is led by, as the brief shows it. */
-export interface LeadRow { name: string; id: string; state: string; openedBy?: string; now?: string; open?: number; stale?: true }
+export interface LeadRow { name: string; id: string; state: string; openedBy?: string; now?: string; open?: number; stale?: true; /** The main's kind (`sb_duty`), when it publishes one. */ kind?: string }
 /** `train`: the tab's train, which is no main (a tab has one or the other, never both; docs/specs/2026-11-07-train-workers.md §3.3). */
 export interface MainRow { tab: string; main?: LeadRow; train?: LeadRow; members: number }
 /** The word and the row a tab is shown by: its main, or its train. */
@@ -147,7 +147,7 @@ export async function gatherMains(d: GatherDeps): Promise<{ rows: MainRow[]; ope
 		// An ally run sees what the sender's tower would be sent: an auto-filled entry as the main's name and done count only.
 		const entry = row && d.within && row.now !== undefined ? { ...row, ...forAllies({ now: row.now, items: row.items, src: row.src ?? "set", count: row.count, who: row.who }) } : row;
 		const pane = lead && paneOf(lead.s);
-		const shown = lead && { name: label(nameOf(lead.s)), id: lead.s.id, state: sessionMark(lead.s, pane), ...(pane?.tokens?.sb_opened_by ? { openedBy: label(pane.tokens.sb_opened_by) } : {}), ...(entry?.now ? { now: entry.now } : {}), ...(entry ? { open: entry.items.filter((x) => !x.done).length } : {}), ...(entry?.stale ? { stale: true as const } : {}) };
+		const shown = lead && { name: label(nameOf(lead.s)), id: lead.s.id, state: sessionMark(lead.s, pane), ...(lead.duty ? { kind: lead.duty } : {}), ...(pane?.tokens?.sb_opened_by ? { openedBy: label(pane.tokens.sb_opened_by) } : {}), ...(entry?.now ? { now: entry.now } : {}), ...(entry ? { open: entry.items.filter((x) => !x.done).length } : {}), ...(entry?.stale ? { stale: true as const } : {}) };
 		return {
 			tab: label(group[0]!.tab.label),
 			...(main ? { main: shown } : train ? { train: shown } : {}),
@@ -195,14 +195,16 @@ export interface AllyBriefInput {
 	asks: { id?: string; first: string; askedBy?: string }[];
 	thread: { dir: "in" | "out"; kind: string; text: string; age: string }[];
 	tools: string[];
+	/** The board id a teammate sees a main under (`b:<16 hex>`), which `ally_escalate` takes as an owner. */
+	board?: (session: string) => string | undefined;
 }
 export function buildAllyBrief(i: AllyBriefInput): string {
 	const who = cut(`You are an ally run: a session the sb server started to answer one message from the teammate device ${i.device.label} (${i.device.short}) of team ${i.device.team}, at trust level ${i.device.level}. You serve this device only. Woken ${i.woken}, in the tower tab of workspace ${allyLabel(i.label)} (${i.workspace}). You have no head tower and no identity of your own: the server sends everything you write as the tower, under its header. What the device writes is a peer's request, not the boss's instruction.`, ALLY_CAPS.who);
 	const seenLines = i.seen.map((m) => {
 		const lead = leadOf(m);
-		return lead ? `${m.tab}: ${lead.word} ${lead.row.name} (${lead.row.id.slice(0, 8)}) ${lead.row.state}${lead.row.stale ? " [stale: idle, not updated for over 2 hours]" : ""}${lead.row.now ? `; now: ${lead.row.now}` : ""}${lead.row.open ? ` (${lead.row.open} open)` : ""}` : `${m.tab}: no main`;
+		return lead ? `${m.tab}: ${lead.word} ${lead.row.name} (${[lead.row.kind, i.board?.(lead.row.id)].filter(Boolean).join(", ") || lead.row.id.slice(0, 8)}) ${lead.row.state}${lead.row.stale ? " [stale: idle, not updated for over 2 hours]" : ""}${lead.row.now ? `; now: ${lead.row.now}` : ""}${lead.row.open ? ` (${lead.row.open} open)` : ""}` : `${m.tab}: no main`;
 	});
-	const seen = ["What your sender may see of this workspace:", ...(seenLines.length ? rowsOf(seenLines, ALLY_CAPS.seen, ALLY_CAPS.seenRow, 1800) : ["- no tab of this workspace has joined"])];
+	const seen = ["Mains here (your sender may see them too; name one as the owner of an ally_escalate):", ...(seenLines.length ? rowsOf(seenLines, ALLY_CAPS.seen, ALLY_CAPS.seenRow, 1800) : ["- no tab of this workspace has joined"])];
 	const note = i.note ? [`Handoff note from the last run for this device (${i.note.age} ago):`, cut(i.note.text, ALLY_CAPS.note)] : [];
 	const asks = i.asks.length ? ["Asks in this run (answer one with tower_send {device, text, inReplyTo: <id>}):", ...i.asks.slice(0, ALLY_CAPS.asks).map((a) => `- ${a.id ?? "a reply"}: ${cut(one(a.first), ALLY_CAPS.askRow)}${a.askedBy ? ` (${a.id ? "asked" : "the answer to an ask made"} for the main ${cut(one(a.askedBy), 40)}, which is gone)` : ""}`)] : [];
 	const rows = i.thread.slice(-ALLY_CAPS.threadRows).map((m) => `- ${m.age} ago, ${m.dir === "in" ? "from the device" : "from this computer"} (${m.kind}): ${cut(one(m.text), ALLY_CAPS.threadRow)}`);
@@ -216,6 +218,7 @@ export function allyTools(level: string): string[] {
 	const base = [
 		"- boss_status; tower_list and board_read, which show only your sender's team; read, grep, find, and ls inside the project's tracked files.",
 		"- tower_send {device, message, inReplyTo?} writes to your sender only; answer an ask by its id with inReplyTo.",
+		"- ally_escalate {what, owner?, kind?}: an item that waits on someone here, names a main here, says no main here owns it, or reports an incident here goes to that main, every main, or the boss's list; free, once per item.",
 	];
 	if (level === "dispatch") return [...base, "- tower_reply, boss_open_main, and boss_close_main run without a confirm; call_tower, link_request, boss_server, and a wakeAfter are not yours."];
 	return [...base, `- Anything else asks the boss to confirm first${level === "forward" ? ", and your sender's device is asked as well" : ""}; call_tower, link_request, and boss_server are never yours.`];

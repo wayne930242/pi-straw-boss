@@ -16,6 +16,7 @@ import { createApproval } from "./link/approval.ts";
 import type { Level } from "./link/config.ts";
 import type { Link } from "./link/runtime.ts";
 import { HERE_ONLY } from "./link/request.ts";
+import { ALLY_ESCALATE_DESCRIPTION, allyEscalateParameters } from "./link/waitcall.ts";
 import type { ServerLook } from "./server-look.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
 import { markRun } from "./runmark.ts";
@@ -291,6 +292,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		tools.addOpenMain();
 		tools.addTowerComms();
 		if (claim!.kind === "local") registerLinkRequest();
+		if (claim!.kind === "ally") pi.registerTool({ name: "ally_escalate", label: "ally_escalate", description: ALLY_ESCALATE_DESCRIPTION, parameters: allyEscalateParameters(), execute: async (id, params) => ((done) => ({ content: [{ type: "text" as const, text: done.text }], details: done.details }))(await tool("ally_escalate", params, id)) });
 		if (claim!.kind === "head") (registerHeadSend(pi, tool), registerBossAuto(pi, tool));
 		// `boss_wait_ask` (waitask.ts): a local run shows its tower's cards, the head's run any tower's. Registered here and not proxied to `run-tool`, because it draws a dialog: its requests are a session's (the hello secret), never this
 		// run's token. An ally run has none: the boss is not its sender. A hand run's turn that an event started is no turn of his either.

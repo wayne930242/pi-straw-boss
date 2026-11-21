@@ -159,7 +159,7 @@ test("the ally brief shows the mains inside the project the sender's team binds 
 	assert.doesNotMatch(bound, /outside-main|docs: /, "a tab outside the project shows nothing of itself");
 	const none = await briefFor(DEV2, undefined);
 	assert.doesNotMatch(none, /inside-main|outside-main/);
-	assert.match(none, /What your sender may see[^]*no tab of this workspace has joined/);
+	assert.match(none, /Mains here[^]*no tab of this workspace has joined/);
 });
 
 test("the run's events are its device's messages, up to 5 oldest first, with the verified header and the ask id; one that arrives meanwhile waits for the next run", async () => {

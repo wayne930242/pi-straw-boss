@@ -185,3 +185,71 @@ test("the requester is looked up by session id only: a main whose name is a depa
 	assert.equal(own.world.linkCalls.at(-1)!.body.awaitsReply, undefined);
 	assert.deepEqual(createAsks(own.world.slot).openOf("wA"), []);
 });
+
+// Box ↔ Mac waits (docs/specs/2026-11-21-box-mac-waits.md). C1: a send to a device that leaves `reply` out binds the run's one requester, as `reply: true` does (D4); `reply: false` stays a notice and says so.
+
+test("C1: a send that leaves reply out binds the one main that called the run expecting an answer; reply false binds nothing and says no session gets the answer", async () => {
+	const bare = await localRun([mine("please have the box run trial 7")]);
+	const done = await bare.send({});
+	assert.equal(done.ok, true, JSON.stringify(done));
+	const body = bare.world.linkCalls.at(-1)!.body;
+	assert.equal(body.reply, true, "the send expects a reply");
+	assert.match(String(body.awaitsReply), /^[0-9a-f]{32}$/, "the ask id went out");
+	assert.deepEqual(createAsks(bare.world.slot).openOf("wA").map((a) => a.for), ["main-1"]);
+	assert.match(String(done.text), /The answer will come to docs-main directly/);
+	const notice = await localRun([mine("please have the box run trial 7")]);
+	const plain = await notice.send({ reply: false });
+	assert.equal(plain.ok, true, JSON.stringify(plain));
+	assert.equal(notice.world.linkCalls.at(-1)!.body.awaitsReply, undefined);
+	assert.deepEqual(createAsks(notice.world.slot).openOf("wA"), []);
+	assert.match(String(plain.text), /No session will get an answer to this; the device's answer reaches an ally run here/);
+	// With no requester a send that leaves reply out stays the notice it was.
+	const none = await localRun([mine("done", "main-1", false)]);
+	const quiet = await none.send({});
+	assert.equal(none.world.linkCalls.at(-1)!.body.reply, false);
+	assert.doesNotMatch(String(quiet.text), /No session/);
+});
+
+const waitsCall = (from: ReturnType<typeof party>, text: string, short = "abcdef", owner = "work-on", what = "merge !13") => stamp({ from, kind: "call_tower", scope: "tower", to: [{ id: "sb-tower-wa", name: "tower", role: "tower", workspace: "Alpha" }], reply: true, why: "blocked", waitsOn: { short, owner, what } }, text);
+const resolveAs = (w: TowerWorld) => w.linkAnswers.set("device-resolve", (b) => (b.device === "abcdef" || b.device === "mac" ? { ok: true, id: DEV, short: "abcdef", label: "mac", team: "t1" } : { ok: false, error: `no device ${String(b.device)}` }));
+
+test("waitsOn.event: the device, owner, what, and raiser come from the event; the raiser's ask is bound and the wait is recorded; an event the run did not take, or the wrong device, is refused before anything is sent", async () => {
+	const { world, send, s, token } = await localRun([{ from: "main-1", text: waitsCall(party("main-1", "docs-main", "main"), "the box main waits on the Mac's merge") }]);
+	resolveAs(world);
+	world.linkAnswers.set("send", (b) => ({ ok: true, text: "Sent.", details: { team: "t1", device: DEV, id: "e".repeat(32), asked: b.awaitsReply !== undefined, waited: b.wait !== undefined } }));
+	const event = (await import("../src/server/towerstore.ts")).readQueue(world.slot, "wA").find((e) => e.from?.id === "main-1")!;
+	const fake = await ask(world, s, { cmd: "run-tool", token, tool: "tower_send", args: { message: "x", waitsOn: { event: "0".repeat(16) } } });
+	assert.equal(fake.ok, false);
+	assert.match(String(fake.error), /is no call_tower with waits-on= that this run took/);
+	const wrong = await send({ device: "someone", waitsOn: { event: event.id } });
+	assert.equal(wrong.ok, false, "a device the event does not name");
+	assert.equal(world.linkCalls.filter((c) => c.body.op === "send").length, 0, "nothing was sent");
+	const done = await send({ device: undefined, message: "please merge !13 for the box main", waitsOn: { event: event.id } });
+	assert.equal(done.ok, true, JSON.stringify(done));
+	const body = world.linkCalls.filter((c) => c.body.op === "send").at(-1)!.body;
+	assert.equal(body.device, DEV);
+	assert.equal(body.reply, true);
+	const wait = body.wait as { id: string; state: string; owner: string; what: string; handle: string };
+	assert.match(wait.id, /^[0-9a-f]{32}$/);
+	assert.deepEqual([wait.state, wait.owner, wait.what], ["open", "work-on", "merge !13"], "the model retyped nothing");
+	assert.deepEqual(createAsks(world.slot).openOf("wA").map((a) => [a.for, a.ask]), [["main-1", body.awaitsReply]]);
+	const { readWaits } = await import("../src/server/linkwaits.ts");
+	assert.deepEqual(readWaits(world.slot, "wA").entries.map((e) => [e.dir, e.state, e.wait, e.raiser?.id, e.event, e.ask]), [["out", "open", wait.id, "main-1", event.id, body.awaitsReply]]);
+	assert.match(String(done.text), /Recorded as wait L1/);
+});
+
+test("tower_done is refused while the run took a waits-on event it neither forwarded nor answered; forwarding it, or a tower_reply to its raiser, lets the run end", async () => {
+	for (const how of ["forward", "reply"] as const) {
+		const { world, s, token, send } = await localRun([{ from: "main-1", text: waitsCall(party("main-1", "docs-main", "main"), "waits on the Mac") }]);
+		resolveAs(world);
+		world.linkAnswers.set("send", (b) => ({ ok: true, text: "Sent.", details: { team: "t1", device: DEV, id: "e".repeat(32), asked: true, waited: b.wait !== undefined } }));
+		const event = (await import("../src/server/towerstore.ts")).readQueue(world.slot, "wA").find((e) => e.from?.id === "main-1")!;
+		const refused = await ask(world, s, { cmd: "run-done", token, note: "nothing left" });
+		assert.equal(refused.ok, false, `${how}: refused first`);
+		assert.match(String(refused.error), new RegExp(`Event ${event.id} \\(call_tower from docs-main\\) waits on device abcdef: forward it with tower_send`));
+		if (how === "forward") assert.equal((await send({ device: undefined, waitsOn: { event: event.id } })).ok, true);
+		else assert.equal((await ask(world, s, { cmd: "run-tool", token, tool: "tower_reply", args: { to: "main-1", message: "the Mac merges it; I told its tower" } })).ok, true);
+		const ended = await ask(world, s, { cmd: "run-done", token, note: "forwarded the box's wait" });
+		assert.equal(ended.ok, true, `${how}: ${JSON.stringify(ended)}`);
+	}
+});

@@ -41,6 +41,8 @@ import { type AllyItem, type AllyPort, createRuns, type Runs, type RunsOptions, 
 import { type ConversationInfo, sessionsRoot } from "./bossconv.ts";
 import { addExpect, clearExpect, lastNote, listRuns, readExpects, readNotes, readTimer } from "./towerrunstore.ts";
 import { runTool, type ServerTools } from "./runtools.ts";
+import { runEvents, unforwardedWait } from "./runevents.ts";
+import type { LinkWaits } from "./linkwaits.ts";
 import { localeOf } from "../towerprompt/messages.ts";
 import { lateNotice, type PressDoor, pressRequest } from "./waitpress.ts";
 import { type Entry, hasWaitOn, markShown, memoryRequest, memorySection, memorySummary, memoryTool, noteMessage, readMemory } from "./towermemory.ts";
@@ -122,6 +124,8 @@ export interface TowersOptions {
 	auto?: Pick<AutoMode, "view" | "decided" | "bossAuto" | "onSwitch">;
 	/** Hands the service to a test as soon as it is built. */
 	expose?: (towers: Towers) => void;
+	/** The wait router (linkwaits.ts): a run's `waitsOn` and `ally_escalate`, and the press of a link card, act through it. */
+	waits?: Pick<LinkWaits, "sent" | "escalate" | "pressed" | "handleOf" | "newId">;
 }
 export interface Ensured { id: string; workspace: string; label: string; tab?: string; pane?: string; opened: boolean; resident?: true; live: boolean }
 export interface TowerRow { workspace: string; label: string; id: string; state: "waiting" | "registering" | "live"; queue: number; service?: ServiceStatus }
@@ -150,6 +154,8 @@ export interface Towers extends Returns {
 	/** A main was closed from the page: every service drops the `opened` route of that session, except one that carries a stop the box accepted, which the revoker lets go itself with its done line and notice (a close the tower makes drops it itself). Never throws. */
 	forget(session: string): void;
 	owns(id: string): boolean; // the session id is the identity of one of the services: it has no pi and no bridge, so it is ended, not asked to quit
+	/** The wait router's seams (linkwaits.ts): a workspace's tower identity, and a code-written line from it to local sessions. */
+	identityOf(workspace: string): string | undefined; post(workspace: string, to: string[], text: string, kind: "link_wait" | "link_wait_state" | "link_notice", extra: Pick<import("../header.ts").Stamp, "wait" | "peer">): Promise<boolean>;
 	/** The runs of the services (runs.ts): claims, the run's requests, the boss's events. */
 	runs: Runs;
 	/** Auto mode (autotower.ts): the open boss waits that are parked, for the watch and the tests. */
@@ -277,7 +283,7 @@ export function createTowers(o: TowersOptions): Towers {
 					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
 					asks: items.filter((i) => i.awaitsReply || i.askedBy).map((i) => ({ ...(i.awaitsReply ? { id: i.awaitsReply } : {}), first: line(i.text), ...(i.askedBy ? { askedBy: i.askedBy } : {}) })),
 					thread: (o.ally?.thread(device) ?? []).map((m) => ({ dir: m.dir, kind: m.kind, text: m.text, age: ageOf(now() - m.at) })),
-					tools: allyTools(rec.level ?? "reply"),
+					tools: allyTools(rec.level ?? "reply"), ...(o.waits ? { board: (session: string) => ((h) => (h ? `b:${h}` : undefined))(o.waits!.handleOf(session)) } : {}),
 				}),
 			};
 		},
@@ -341,7 +347,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const rows = notes.map((n) => `- ${ageOf(now() - Date.parse(n.at))} ago${spoke(n.run) ? ` (the boss spoke in this run ${ageOf(now() - Date.parse(spoke(n.run)!))} ago, so what they said is in that run's session, not in yours)` : ""}: that run's own handoff note, not the boss's words: «${phrase(n.note.split("\n")[0], 340).replace(/[«»]/g, "")}»`);
 		return { line, since: rows };
 	};
-	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), headModel: () => headModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), ...o.runs });
+	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), headModel: () => headModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), unforwarded: (run, ws) => unforwardedWait(slot, ws, run), ...o.runs });
 
 	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.standingWait ? { wait: o.standingWait } : {}), ...(o.runs?.platform ? { platform: o.runs.platform } : {}), ...(o.runs?.alive ? { alive: o.runs.alive } : {}), locale: () => localeOf(o.env, slot.stateDir), attended: () => !o.unattended?.() });
 	const place = (l: Live): Place => ({ paneId: l.record.pane, tabId: l.record.tab, workspaceId: l.record.workspace });
@@ -1086,31 +1092,7 @@ export function createTowers(o: TowersOptions): Towers {
 		// What an ally run waits on or opens is its device's: the routes (allyroute.ts) send those sessions' answers to the device's next ally run, never to a local run, and its opened mains have a ledger of their own.
 		const peer: Peer | undefined = who.kind === "ally" && who.device && who.team ? { device: who.device, label: who.deviceLabel ?? who.device.slice(0, 6), short: who.deviceShort ?? who.device.slice(0, 6), team: who.team, teamName: who.teamName ?? who.team.slice(0, 6) } : undefined;
 		const route = (to: string, name: string, kind: "expect" | "opened", ask?: string, live?: ReadonlySet<string>, panes?: ReadonlySet<string>, pane?: string) => { try { addRoute(slot, ws, { ...peer!, to, name, kind, at: now(), ...(ask ? { ask } : {}), ...(pane ? { pane } : {}), ...(kind === "opened" && who.level ? { level: who.level } : {}) }, now(), live, panes); } catch (cause) { error("ally-route", (cause as Error).message); } };
-		/**
-		 * The sessions that sent this run a `call_tower` expecting an answer, among the events the run took: the header is the sender's own words, so each is checked against the broker and Herdr's pane token before it binds anything.
-		 * An asker may be a main of any workspace on this computer; that is the only way a main outside this workspace becomes a target.
-		 */
-		const callers = () => {
-			const ids = new Set<string>();
-			for (const e of readQueue(slot, ws)) {
-				if (e.taken?.run !== who.id || e.kind !== "intercom" || !e.from) continue;
-				const fields = fieldsOf(e.text);
-				if (fields?.kind === "call_tower" && fields.reply === "expected") ids.add(e.from.id);
-			}
-			return ids;
-		};
-		/**
-		 * The live main named by id or name that an ask may be made for: a main of this tower's workspace, or a main of another workspace on this computer that called this run (`callers`).
-		 * Throws when there is none, several, or it is neither; no other session is a target.
-		 */
-		const mainOf = async (query: string, byId = false) => {
-			const net = await l.reach!.read(), named = net.sessions.filter((x) => x.id === query || (!byId && nameOf(x) === query));
-			if (named.length !== 1) throw new Error(`${named.length ? "Several sessions are named" : "No live session is named or has the id"} "${query}"`);
-			const pane = net.ps.find((p) => p.pane_id === named[0]!.herdrLocation?.paneId);
-			if (pane?.tokens?.sb_role !== "main") throw new Error(`${query} is not a main of workspace ${l.record.label}: an ask for a main names one of its mains, or a main of another workspace that called this tower`);
-			if (pane.workspace_id !== ws && !callers().has(named[0]!.id)) throw new Error(`${query} is not a main of workspace ${l.record.label}, and it did not call this tower in this run: an ask for a main of another workspace names one that did`);
-			return { id: named[0]!.id, name: phrase(nameOf(named[0]!), 40) };
-		};
+		const ev = runEvents({ slot, ws, who, label: l.record.label, read: () => l.reach!.read() }), { mainOf } = ev;
 		const host = {
 			reach: l.reach!, open: peer ? async (request: Parameters<NonNullable<Live["open"]>>[0]) => { const opened = await l.openAlly!(request); const net = await l.reach!.read().catch(() => undefined), live = net && new Set(net.sessions.map((x) => x.id)), panes = net && new Set(net.ps.map((p) => p.pane_id)); route(opened.main, "opened main", "opened", ((u) => (u.length === 1 ? u[0] : undefined))((who.asks ?? []).filter((a) => !answered.has(who.id, a))), live, panes, opened.pane); return opened; } : l.open!, closeMain: (l.control ? async (query: string) => forgetClosed(ws, await l.control!.closeMain(query)) : undefined) as unknown as Control["closeMain"], now, boardDir: join(slot.stateDir, "board"), label: l.record.label,
 			link: async (body: Record<string, unknown>) => ((await o.link?.(body, l.record.id)) ?? { ok: false, code: "no_holder", error: "The link holder is not running in the sb server" }) as { ok: boolean; error?: string },
@@ -1120,12 +1102,7 @@ export function createTowers(o: TowersOptions): Towers {
 			allow: (q: { toolCallId: string; tool: string; args: unknown }) => (o.allows ? o.allows.take({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),
 			allowRequest: (q: { toolCallId: string; lines: string[] }) => (o.allows ? o.allows.takeRequest({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),
 			asks: o.asks ?? { open: () => { throw new Error("this server keeps no asks"); } },
-			// The `call_tower` events (why=shared) this run took: a car slip is forwarded by naming one, and the code stamps the sender the broker named for it (docs/specs/2026-11-07-train-workers.md §5.5).
-			forwardEvent: (id: string) => {
-				const event = readQueue(slot, ws).find((e) => e.id === id && e.taken?.run === who.id && e.kind === "intercom" && e.from);
-				const fields = event && fieldsOf(event.text);
-				return event && fields?.kind === "call_tower" && fields.why === "shared" ? { id: event.id, from: event.from!.id, text: event.text, at: Date.parse(event.at) } : undefined;
-			},
+			forwardEvent: ev.forwardEvent, waitEvent: ev.waitEvent, allyMessages: () => runs.allyMessages(request.token), ...(o.waits ? { waits: o.waits } : {}),
 			// A reply that settles a blocked call_tower this run took, while auto mode is on, is listed for the return list with the basis it names (autotower.ts `basisOf`) or `none`.
 			decided: (to: string, gist: string, basis: unknown) => {
 				if (!o.auto?.view().on) return;
@@ -1166,13 +1143,7 @@ export function createTowers(o: TowersOptions): Towers {
 					return { id: named[0]!.id, name: phrase(nameOf(named[0]!), 40) };
 				},
 			}, margs),
-			mainOf,
-			// Who asked this run for the work it sends a device: the one session that sent it a `call_tower` expecting an answer, if it is a live main (of this workspace or another on this computer). A second asker, or one that is no main, leaves it unknown.
-			requester: async () => {
-				const askers = callers();
-				if (askers.size !== 1) return undefined;
-				return mainOf([...askers][0]!, true).catch(() => undefined);
-			},
+			mainOf, requester: ev.requester,
 		};
 		try {
 			if (who.kind === "head") {
@@ -1196,6 +1167,7 @@ export function createTowers(o: TowersOptions): Towers {
 			// What a tower did in the turn the head's message started is noted on the head's ask (headasks.ts `noteToolCall`).
 			if (who.kind === "local" && isAct(name) && typeof request.turn === "string") noteToolCall(slot, now(), ws, readQueue(slot, ws).find((e) => e.id === request.turn), { name, args, details: done.details });
 			// The ask a run answered is spent on the asking computer: a report of a main the run opened must not name it again.
+			if (who.kind === "local" && name === "tower_reply" && typeof (done.details as { to?: unknown })?.to === "string") ev.replied((done.details as { to: string }).to);
 			if (peer && name === "tower_send" && typeof args.inReplyTo === "string") try { answered.add(who.id, args.inReplyTo); dropAsk(slot, ws, peer.device, args.inReplyTo, now()); } catch (cause) { error("ally-route", (cause as Error).message); }
 			return done;
 		} catch (cause) {
@@ -1247,6 +1219,7 @@ export function createTowers(o: TowersOptions): Towers {
 					live: async (id) => (await l.reach!.read()).sessions.some((x) => x.id === id),
 					send: (to, text, wait) => l.reach!.post(to, text, "wait_card", "session", false, undefined, undefined, { wait }),
 					boss: (text) => void runs.boss(l.record.workspace, text, "the boss (wait card)", { press: true }),
+					...(o.waits ? { linkPress: (card: string, act: string) => o.waits!.pressed(workspace, card, act) } : {}),
 				}, workspace, json, via);
 			}
 			return memoryRequest(slot, workspace, now(), json, log);
@@ -1297,6 +1270,8 @@ export function createTowers(o: TowersOptions): Towers {
 			if (sweep) void revoker.sweep(true);
 		},
 		owns: (id) => [...services.values()].some((l) => l.record.id === id),
+		identityOf: (workspace) => ((l) => (l && !l.stopped && !isHeadL(l) ? l.record.id : undefined))(services.get(workspace)),
+		post: async (workspace, to, text, kind, extra) => ((l) => (l?.reach && !l.stopped ? Promise.all(to.map((id) => l.reach!.post(id, text, kind, "session", false, undefined, undefined, extra))).then((r) => r.every((x) => x.status === "sent")) : false))(services.get(workspace)),
 		status: () => [...services.values()].filter((l) => !isHeadL(l)).map(row),
 		head: {
 			ensure: ensureHead,
