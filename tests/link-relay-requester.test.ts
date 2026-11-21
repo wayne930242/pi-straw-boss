@@ -275,3 +275,15 @@ test("BMWR-F003: the tower_done guard lets the run end when the raiser is gone, 
 		assert.equal(ended.ok, true, `${how}: ${JSON.stringify(ended)}`);
 	}
 });
+
+test("BMWR-F009: for or waitsOn with reply left out is an ask that expects a reply; only reply false is refused", async () => {
+	const { world, send } = await localRun([mine("please")]);
+	const named = await send({ for: "api-main" });
+	assert.equal(named.ok, true, JSON.stringify(named));
+	assert.equal(world.linkCalls.at(-1)!.body.reply, true);
+	assert.deepEqual(createAsks(world.slot).openOf("wA").map((a) => a.for), ["main-2"]);
+	const sends = world.linkCalls.length;
+	assert.match(String((await send({ for: "api-main", reply: false })).error), /leave reply out or set reply: true/);
+	assert.match(String((await send({ waitsOn: { event: "x" }, reply: false })).error), /leave reply out or set reply: true/);
+	assert.equal(world.linkCalls.length, sends, "nothing was sent");
+});

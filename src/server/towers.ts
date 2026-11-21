@@ -1170,6 +1170,8 @@ export function createTowers(o: TowersOptions): Towers {
 			if (who.kind === "local" && isAct(name) && typeof request.turn === "string") noteToolCall(slot, now(), ws, readQueue(slot, ws).find((e) => e.id === request.turn), { name, args, details: done.details });
 			// The ask a run answered is spent on the asking computer: a report of a main the run opened must not name it again.
 			if (who.kind === "local" && name === "tower_reply" && typeof (done.details as { to?: unknown })?.to === "string") ev.replied((done.details as { to: string }).to);
+			// An ask the run escalated is the wait router's to answer (BMWR-F006): the run's end sends no receipt for it.
+			if (peer && name === "ally_escalate" && typeof (done.details as { ask?: unknown })?.ask === "string") answered.add(who.id, (done.details as { ask: string }).ask);
 			if (peer && name === "tower_send" && typeof args.inReplyTo === "string") try { answered.add(who.id, args.inReplyTo); dropAsk(slot, ws, peer.device, args.inReplyTo, now()); } catch (cause) { error("ally-route", (cause as Error).message); }
 			return done;
 		} catch (cause) {

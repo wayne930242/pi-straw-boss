@@ -60,3 +60,29 @@ test("ally_escalate runs at reply with no gate, opens L1 from the message's firs
 	const done = await ask(s, { cmd: "run-done", token, note: "escalated the box's handoff of !13" });
 	assert.equal(done.ok, true, JSON.stringify(done));
 });
+
+test("BMWR-F006: on an unattended box an ask the run escalated is the router's to answer: the run's end sends no receipt for it", async () => {
+	world.unattended = () => true;
+	const s = await world.start();
+	await s.handle.ready;
+	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	world.linkAnswers.set("send", () => ({ ok: true, text: "Sent." }));
+	world.ally.add("m1", DEV, "[waits on you: merge approval-api !13]\nThe box main work-on hands off !13 to the Mac.", { awaitsReply: ASK, replyExpected: true });
+	world.expose?.allyWaiting("sb-tower-wa");
+	await until(() => world.pis.size >= 1, "the ally pi");
+	const id = [...world.pis.keys()][0]!, pi = world.pis.get(id)!;
+	await until(() => readRun(world.slot, "wA", id)?.pid, "the pid");
+	const token = String((await ask(s, { cmd: "claim", runId: id, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` })).token);
+	for (;;) {
+		const event = (await ask(s, { cmd: "run-poll", token, idle: true })).event as { id: string } | undefined;
+		if (!event) break;
+		await ask(s, { cmd: "run-taken", token, id: event.id });
+	}
+	const up = await ask(s, { cmd: "run-tool", token, tool: "ally_escalate", args: {} });
+	assert.equal(up.ok, true, JSON.stringify(up));
+	assert.equal((await ask(s, { cmd: "run-done", token, note: "escalated !13" })).ok, true);
+	world.live.delete(pi.pid);
+	await until(() => readRun(world.slot, "wA", id)?.outcome, "the run's end");
+	await new Promise((r) => setImmediate(r));
+	assert.deepEqual(world.linkCalls.filter((c) => c.body.op === "send" && c.body.inReplyTo === ASK), [], "no receipt burns the ask");
+});

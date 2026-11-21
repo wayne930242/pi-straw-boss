@@ -295,11 +295,11 @@ async function allyEscalate(host: ToolHost, args: Record<string, unknown>): Prom
 	const done = escalated.get(who.id) ?? new Set<string>(), key = `${kind}\n${what.toLowerCase()}`;
 	if (done.size >= ESCALATE_MAX) throw new Error(`Refused: this run escalated ${done.size} items already, the most a run may`);
 	if (done.has(key)) throw new Error("That item is escalated already in this run");
-	const asks = [...new Set(messages.flatMap((m) => (m.ask ? [m.ask] : [])))];
-	const id = await host.waits.escalate(who.workspace, { team: who.team, device: who.device, label: who.deviceLabel ?? who.device.slice(0, 6), short: who.deviceShort ?? who.device.slice(0, 6), ...(typeof args.owner === "string" && args.owner.trim() ? { owner: waitOwner(args.owner) } : {}), what, kind, text: messages.map((m) => m.text).join("\n\n").slice(0, 8192), ...(asks.length === 1 ? { ask: asks[0]! } : {}) });
+	const asks = [...new Set(messages.flatMap((m) => (m.ask ? [m.ask] : [])))], ask = asks.length === 1 ? asks[0] : undefined;
+	const id = await host.waits.escalate(who.workspace, { team: who.team, device: who.device, label: who.deviceLabel ?? who.device.slice(0, 6), short: who.deviceShort ?? who.device.slice(0, 6), ...(typeof args.owner === "string" && args.owner.trim() ? { owner: waitOwner(args.owner) } : {}), what, kind, text: messages.map((m) => m.text).join("\n\n").slice(0, 8192), ...(ask ? { ask } : {}) });
 	escalated.set(who.id, done.add(key));
 	for (const k of escalated.keys()) if (escalated.size > 200) escalated.delete(k); else break;
-	return { text: `Escalated as ${id}: the server tells the main it names, or every main of the workspace, or the boss's list, and tells the device each step. Nothing of the message went into a session. Close the message with tower_done when nothing else is left.`, details: { id, kind } };
+	return { text: `Escalated as ${id}: the server tells the main it names, or every main of the workspace, or the boss's list, and tells the device each step. Nothing of the message went into a session. Close the message with tower_done when nothing else is left.`, details: { id, kind, ...(ask ? { ask } : {}) } };
 }
 
 // --- the integrator's door ----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -376,7 +376,8 @@ async function towerSendDevice(host: ToolHost, args: Record<string, unknown>, fo
 	const message = str(args, "message"), inReplyTo = opt(args, "inReplyTo"), forWho = opt(args, "for");
 	if (inReplyTo !== undefined && (!ally || !(host.who.asks ?? []).includes(inReplyTo))) throw new Error("inReplyTo has to be the ask id of one of this run's messages (see its brief)");
 	if (forWho !== undefined && ally) throw new Error("An ally run asks for no main");
-	if (forWho !== undefined && args.reply !== true) throw new Error("An ask for a main has to expect a reply (reply: true)");
+	// An ask for a main expects a reply: `for` or `waitsOn` with reply left out sends one (BMWR-F009); only `reply: false` is refused.
+	if ((forWho !== undefined || args.waitsOn !== undefined) && args.reply === false) throw new Error("An ask for a main has to expect a reply: leave reply out or set reply: true");
 	// `waitsOn` (docs/specs/2026-11-21-box-mac-waits.md §2.1): the device, owner, what, and raiser are the event's, never the model's; the raiser's ask is bound as `for` would bind it.
 	const waitsOn = args.waitsOn === undefined ? undefined : (args.waitsOn as { event?: unknown } | null)?.event;
 	const event = typeof waitsOn === "string" ? host.waitEvent?.(waitsOn) : undefined;
