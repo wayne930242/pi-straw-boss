@@ -438,6 +438,8 @@ flowchart TD
 
 **值守主智慧體的提問與通知。** 隊友裝置的塔台或主智慧體也能直接聯絡這台電腦的值守主智慧體，不經隊友 run：塔台 run 送出 `tower_send {device, message, standing: "question" | "notice"}`（提問會像 `for` 一樣綁定發問的主智慧體；隊友 run 只能送通知），主智慧體送出 `call_tower {why, message, standing: {device}}`，`why: blocked` 是提問、`milestone` 是通知，由 sb server 自己以工作區塔台的身分送出，絕不經過塔台。它搭在等待欄位上並帶著 `kind`，只送給 `caps` 列有 `tower.standing` 的裝置；較舊的裝置收到的是一般的 `tower`，由它的隊友 run 讀。在那一端，路由器用一行程式寫的訊息通知值守主智慧體（沒有值守時，提問會放上老闆的清單，通知只留在 `board_read`），文字留在 `board_read` 裡。提問像等待一樣用 `linkWait` 回答，回答會送到發問的主智慧體；通知不回傳任何東西，也絕不變成卡片。
 
+**老闆的代理人。** 一台裝置可以指定一部隊友裝置，由那邊的主智慧體替老闆決定這台裝置本來要放上老闆清單的卡片（老闆，2026-11-21：「代理人什麼都能核准，除非他覺得應該問我」）。有人看守的裝置寫在 config.json 的 `link.delegate {device, owner?}`，無人看守的裝置寫在政策檔的 `delegate`，那裡不採用 config.json 的設定；`/boss link status` 會顯示它。設定之後，塔台 run 要給老闆的卡片，以及路由器替隊友等待開的卡片，會先以 `approval` 類的等待送到那部裝置，帶著整張卡片，交給 `owner` 指名的主智慧體，沒有指名就交給它的值守主智慧體；這段期間兩邊老闆的清單都不會出現卡片。那位主智慧體在 `board_read` 讀這張卡片。它什麼都能核准，用 `linkWait {id, state: "done"}` 加上自己的話回覆；它認為該由老闆決定的，用 `why: blocked` 加 `state: "escalated"`（或 `declined`）交回老闆。核准會以 server 通知送到塔台、以一行訊息送到發起者，兩者都把代理人的話標成代理人的話，絕不當成老闆的按鍵或訊息。交回、婉拒、那邊沒有主智慧體、10 分鐘內沒有主智慧體接手，或 7 天沒有回覆，卡片都會照原樣放上老闆的清單，並在 `happened` 寫明原因。代理人裝置不是這個工作區團隊的隊友、在這裡低於 `dispatch`（它回覆時會再檢查一次）、沒有列出 `tower.approval`（版本較舊，或兩小時沒有消息），或正是發出這個等待的裝置時，卡片會直接交給老闆。秘密卡、標了 `bossOnly` 的卡、列車或整合員發起的卡，以及重述的卡，一律不交給代理人。設計記錄：[`docs/specs/2026-11-21-box-mac-waits.md`](specs/2026-11-21-box-mac-waits.md) §15。
+
 **在隊友卡片上。** 在這台電腦有未結等待的盒子主智慧體，會在它那一列、派工者旁邊顯示「等候本機 · L3」，`/boss link units` 也一樣。
 
 </details>
