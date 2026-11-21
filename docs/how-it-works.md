@@ -3243,7 +3243,7 @@ The boss decided (D18, D19) that coordination goes through the tower, and that a
 | `why` | When | Reply |
 |---|---|---|
 | `milestone` | A task landed, a deliverable is ready, or what a tower asked is done. | `reply: false` unless the main needs an answer. |
-| `shared` | Before the main touches anything outside its tab: a port, a database, a shared branch, a deploy target, another app's checkout, a running service. It says what and for how long, then waits for the answer. | Expected. |
+| `shared` | Before the main touches anything outside its tab: a port, a database, a shared branch, a deploy target, another app's checkout, a running service. It says what and for how long, as a heads-up, and goes ahead without waiting; the tower answers only on a clash. | No (a car slip waits for sb's car notice). |
 | `blocked` | The main waits on someone outside its tab, or on a decision its authorizations do not cover. A member reports coordination friction the same way. | Expected. |
 
 <details>
@@ -3260,7 +3260,7 @@ An intercom event whose header says `why=milestone` and `reply=none`, with no lo
 <details>
 <summary>Details</summary>
 
-The tower's run prompt (`prompts/tower-run.md`) says what to do with each reason: a `milestone` updates its obligations, tells whoever waits on it, and closes a main it opened; a `shared` call (a main writing to or changing something outside its tab, not reading) is checked against the board and its obligations and answered go or wait with the owner named; a main that gets no answer in 10 minutes tells the boss and leaves it alone; a `blocked` call is routed to its owner, except a decision only the boss can make, which the tower names in its handoff note as waiting on the boss and tells the main so, not sending it back.
+The tower's run prompt (`prompts/tower-run.md`) says what to do with each reason: a `milestone` updates its obligations, tells whoever waits on it, and closes a main it opened; a `shared` call (a main writing to or changing something outside its tab, not reading) is a heads-up, not a request for go: the main goes ahead, and the tower checks it against the board and its obligations and tells the main and the owner only on a clash; a `blocked` call is routed to its owner, except a decision only the boss can make, which the tower names in its handoff note as waiting on the boss and tells the main so, not sending it back.
 
 A main opened by a tower reports its done report with `call_tower` (`why: milestone`, no reply). It never asks a main for progress, since `board_read` has it.
 

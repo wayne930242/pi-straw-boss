@@ -89,14 +89,14 @@ test("the main's brief closing line covers a rule that says to ask first", () =>
 
 test("D19: the main calls the tower at three points only, routine progress stays on the board, and a milestone goes without a reply", () => {
 	const main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
-	for (const term of ["`call_tower`", "three points only", "`milestone`", "`shared`", "`blocked`", "reply: false", "never call the tower to report", "10 minutes"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	for (const term of ["`call_tower`", "three points only", "`milestone`", "`shared`", "`blocked`", "reply: false", "never call the tower to report", "a heads-up, not a request for go", "go ahead at once"]) assert.ok(main.includes(term), `main.md names ${term}`);
 	assert.doesNotMatch(main, /call_tower reaches the tower \(report coordination friction there\)/);
 	for (const file of ["member.md", "member-no-main.md"]) assert.match(readFileSync(`${PROMPT_DIR}/${file}`, "utf8"), /`call_tower` and `why: blocked`/, `${file} reports friction as blocked`);
 });
 
-test("D19: the tower run reads why= from the header: milestone updates obligations, shared is answered go or wait with the owner named, blocked is routed, and nobody is asked for progress", () => {
+test("D19: the tower run reads why= from the header: milestone updates obligations, shared is a heads-up the tower answers only on a clash, naming the owner, blocked is routed, and nobody is asked for progress", () => {
 	const run = readFileSync(`${PROMPT_DIR}/tower-run.md`, "utf8");
-	for (const term of ["`why=`", "`milestone`", "`shared`", "`blocked`", "go or wait", "owner", "Never ask mains for progress", "board_read"]) assert.ok(run.includes(term), `tower-run.md names ${term}`);
+	for (const term of ["`why=`", "`milestone`", "`shared`", "`blocked`", "a heads-up, not a request for go", "else answer nothing", "owner", "Never ask mains for progress", "board_read"]) assert.ok(run.includes(term), `tower-run.md names ${term}`);
 });
 
 // Merge train, phase 1 (docs/specs/2026-10-30-merge-train.md): prompt-only. Budgets are unchanged; the new text displaced other words.
