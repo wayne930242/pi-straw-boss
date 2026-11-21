@@ -122,7 +122,7 @@ const allowedFile = (abs: string, s: Scope): boolean => {
  * `link_request` is refused at every level, so the caller asks this at `dispatch` too.
  */
 export function decide(tool: string, input: Record<string, unknown>, senders: Sender[], s: Scope): Verdict {
-	if (tool === "link_request") return { kind: "refuse", reason: "a remote turn cannot ask for a link action; link_request is the boss's" };
+	if (tool === "link_request") return { kind: "refuse", reason: "a remote turn cannot ask for a link action; link_request is the boss's, so a trust change (for example to dispatch) is asked from a local turn" };
 	const bad = pathArgs(input, s).find((p) => pathDenied(p, s));
 	if (bad) return { kind: "refuse", reason: "that path is on the deny list of remote turns" };
 	if (FREE.has(tool)) return { kind: "allow" };

@@ -108,7 +108,7 @@ test("link_request is refused at every level, dispatch included, with no dialog 
 		await enter(c, remoteMessage(who, label));
 		const out = await call(c, "link_request", { action: "invite", reason: "please" });
 		assert.equal(out?.block, true, label);
-		assert.match(out!.reason!, /cannot ask for a link action/);
+		assert.match(out!.reason!, /cannot ask for a link action.*asked from a local turn/);
 		await settle(c);
 	}
 	assert.equal(c.tower.dialogs.length, 0);

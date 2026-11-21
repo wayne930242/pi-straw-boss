@@ -54,7 +54,7 @@ test("the dialog: keyed by the call, the sender's label and short id, the tool, 
 	const p = pending[0]!;
 	assert.equal(p.version, 1);
 	assert.equal(p.toolCallId, "tc-1");
-	assert.match(p.select.title, /^Remote request from bob-mac \(\w{6}\): bash\n\n/);
+	assert.match(p.select.title, /^Remote request from bob-mac \(\w{6}, trust (reply|forward); at dispatch such calls run unasked\): bash\n\n/, "the heading names the trust level and how to stop these dialogs");
 	assert.ok(p.select.title.includes(JSON.stringify({ command: "rm -rf build", cwd: "/tmp" }, null, 2)), "every argument, in full");
 	assert.deepEqual(p.select.choices.map((x) => x.label), ["Allow", "Deny"]);
 	assert.equal(p.digest, selectDigest(p.select as never));

@@ -39,7 +39,8 @@ export const DECLINED = "the boss declined a remote request";
 
 /** The arguments of a call as the dialog shows them. */
 export const argsText = (input: Record<string, unknown>) => JSON.stringify(input, null, 2) ?? "{}";
-const nameOf = (senders: RemoteSender[]) => senders.map((s) => `${s.label} (${s.short})`).join(", ") || "an unknown device";
+/** Each sender with the trust level its run is at; below `dispatch` the heading says that `dispatch` runs such calls unasked, so the boss knows how to stop these dialogs (no ": " in it: allows.ts finds the tool after the last one). */
+const nameOf = (senders: RemoteSender[]) => senders.map((s) => `${s.label} (${s.short}, trust ${s.level}${s.level === "dispatch" ? "" : "; at dispatch such calls run unasked"})`).join(", ") || "an unknown device";
 
 export function createGate({ bus, forward, timeoutMs = GATE_MS, onError = () => {} }: { bus: Bus; forward?: ForwardPort; timeoutMs?: number; onError?: (what: string, error: Error) => void }) {
 	const open = new Map<string, { digest: string; count: number; take(choice: number, answerId: string): void; cancel(answerId: string): void }>(), served: string[] = [];
