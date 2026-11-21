@@ -23,7 +23,7 @@ Status: implemented on `feat/auto-return` (base `main` a71441fe, 0.80.17). It am
 2. the turn's starter is reported by the run's extension (`turn`, or the typed line with its `seq`), never by the model, and it is a `boss` event the run took that is no press, or a line the boss typed at the head pane;
 3. the server reads that text itself against the on-list; a question, a negation, both directions in one line, and words used before are refused.
 
-A request staged by another door is cleared by the switch. `off` is unchanged. `/boss auto on` in a terminal still stages and draws its own confirm, and the GUI's two taps still switch; the GUI's confirm button stays for a request staged over the socket. A secondary Herdr slot still refuses `boss_auto`. The head pane's own terminal confirm (`bossconfirm.ts`) is gone, since nothing the head does stages now.
+A request staged by another door is cleared by the switch. `off` is unchanged. `/boss auto on` in a terminal still stages and draws its own confirm, and the GUI's two taps still switch; the GUI's confirm button stays for a request staged over the socket. A secondary Herdr slot still refuses `boss_auto`, and so does an unattended device, which has no auto mode (auto-mode spec §10; review fix AR-F005). The head pane's own terminal confirm (`bossconfirm.ts`) is gone, since nothing the head does stages now.
 
 **Security.** The confirm (D9 of the auto-mode spec) was the one step a misread of the boss's matching line by the model could not skip. That residual is now open for `on` as it always was for `off`: the model can call `boss_auto` against what the boss meant in a turn whose own text matches the on-list. Injected text still cannot pass, because the server reads only the boss's own event or typed line. Every switch is still recorded with its requester, notified to every pane, and listed. The staging and confirm over the control socket are unchanged, so a same-user process still needs two forged steps to turn auto mode on that way.
 
@@ -38,6 +38,7 @@ When auto mode ends by any door, the server closes every parked card that still 
 | The card | Goes to | How |
 |---|---|---|
 | raised by a session (a main, a member, another tower for the head) | that session | One intercom message from the tower's identity to the raiser's session id (never by name), under a new header kind `wait_returned` with `wait=W<n>`, `reply=none`. A tower raiser is told to record the wait again or ask as before; any other raiser to ask the boss itself with `ask_user_question` (or `call_tower` if it cannot). |
+| raised by the head tower (a `tower_send` the tower recorded a wait for) | the head tower | A notice event in the head's queue with the tower raiser's words (record it again, or ask as before), keyed by the tower and the wait id; not an intercom message, which the head's gate refuses as no answer (`headgate.ts`). `returned: "raiser"`. |
 | the tower's own (`self`, or a legacy wait with no raiser) | that tower | A notice event for its next run: record the wait again with `tower_memory` if it still needs the boss. |
 | the head's own | the head tower | The same notice, in the head's queue. |
 
@@ -50,7 +51,9 @@ When auto mode ends by any door, the server closes every parked card that still 
 
 ## AR-D4: a raiser that is gone
 
-A raiser that had left the net when the card was recorded (`from.gone`), one that is not live when the card goes back, a message the broker does not take within 5 s (`NOTICE_WAIT_MS`), and a tower the server no longer serves all close the card with nothing left for the boss: `returned: "gone"`, outcome `closed: <raiser> was gone when auto mode ended` or `closed: <raiser> could not be reached when auto mode ended`. The return list is written at the switch with the routes known then, and again once every message is answered, so a raiser found gone afterwards is listed as closed. The server logs one `wait-returned` line per message with its delivery.
+A raiser that had left the net when the card was recorded (`from.gone`), one that is not live when the card goes back, a message the broker does not take within 5 s (`NOTICE_WAIT_MS`), and a tower the server no longer serves (the head's memory included: it is read under its constant key while no head service stands) all close the card with nothing left for the boss: `returned: "gone"`, outcome `closed: <raiser> was gone when auto mode ended` or `closed: <raiser> could not be reached when auto mode ended`. The return list is written at the switch with the routes known then, and again once every message is answered, so a raiser found gone afterwards is listed as closed. The server logs one `wait-returned` line per message with its delivery (`head` for the head's event).
+
+**A stop or restart.** The cards are closed as `raiser` in the switch's own write, before their messages go. A graceful stop or restart right after the end waits for the messages under way (`towers.returning()`, each bounded by `NOTICE_WAIT_MS`, the read of the net included) before the tower identities leave the broker, so none is cut off with its card saying it went. A crash still loses one: a message goes at most once, and a persisted retry could send it twice after a press the boss is back for. Review fix AR-F004.
 
 ## Amendments
 
@@ -65,4 +68,5 @@ A raiser that had left the net when the card was recorded (`from.gone`), one tha
 
 - AR-D1: `tests/auto-state.test.ts` and `tests/auto-head.test.ts` ("AR-D1: …"): the head's 我要睡了 switches on at once, with no pending record; an event works once; refusals unchanged.
 - AR-D2: `tests/server-standing.test.ts` (`standinReport` with the other towers' count) and `tests/head-service.test.ts` ("AR-D2: …"): a tower's card leaves the head `idle` with the note; the head's own makes it `blocked`.
+- Review fixes: `tests/auto-towers.test.ts` ("AR-F002: …" a closed head's parked card, "AR-F003: …" a card the head raised, "AR-F004: …" a stop drains the returns), `tests/auto-head.test.ts` ("AR-F001: …" the head brief's line, "AR-F005: …" an unattended device refuses `boss_auto`), `tests/wait-cards.test.ts` ("AR-F006: …" a cut card keeps `returned`).
 - AR-D3, AR-D4: `tests/auto-towers.test.ts` ("AR-D3: …", "AR-D4: …"): the main gets one `wait_returned`, the card is closed before any press, a card recorded after the end stays open, an answered parked card is not returned, a gone raiser and a refused message close the card and the list is written again; `tests/auto-gui.test.ts`: the panel's lines and the card's returned line; `tests/auto-cancel.test.ts`: the end notice per kind; `tests/prompts.test.ts`: the prompts' lines.
