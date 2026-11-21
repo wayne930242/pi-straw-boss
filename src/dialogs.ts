@@ -16,7 +16,8 @@ import { todoOk, type TodoSum } from "./todo.ts";
 
 // The hub, in the session that runs the GUI server: it takes the dialog lists bridges relay (bridge.ts), binds each to the unit on the
 // bridge's pane, decides whether the page may answer it, and carries an answer to that bridge. A list counts only from the session intercom
-// places on that pane, for the unit whose session file it names. The page may answer a dialog only when it is the session's one open dialog,
+// places on that pane (not the pane the list names, the HERDR_PANE_ID it started with, which Herdr changes when it moves the pane: its sender writes it, so it never vouched for
+// anything; docs/specs/2026-11-21-operate-probe.md), for the unit whose session file it names. The page may answer a dialog only when it is the session's one open dialog,
 // with no answer on its way, belonging to one of the file's open calls, with a digest that matches its content. A secret_drop is never answerable
 // from a page (SB-F001): pi-intercom identities are self-reported, so a same-user process could pose as the asking session's bridge, relay a secret
 // dialog under its own key, and receive the value sealed to it. A secret dialog, or any other dialog beside a secret_drop, stays in the terminal until
@@ -99,7 +100,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 		change();
 		for (const w of [...watchers]) try { w(); } catch { /* a subscriber must not break the relay */ }
 	};
-	let bound = new Map<string, { from: string; b: Dialogs }>(), targets = new Map<string, Target>(), reach = new Map<string, { from: string; bridgeId: string }>();
+	let bound = new Map<string, { from: string; b: Dialogs }>(), targets = new Map<string, Target>(), reach = new Map<string, { from: string; bridgeId: string }>(), placed = new Map<string, string>();
 	const bridges = new Map<string, Dialogs>(), waiting = new Map<string, (ack?: Ack) => void>(), done = new Map<string, { key: string; at: number; sent: Sent }>(), probes = new Map<string, (e?: Editor) => void>(), lists = new Map<string, (c?: Cmd[]) => void>(), pulls = new Map<string, (p?: Pull) => void>();
 	const closes = new Map<string, (r?: Pick<CloseResult, "accepted" | "reason">) => void>(), checks = new Map<string, (r?: { reason?: string }) => void>();
 	const caps = createCaps(), forms = new Map<string, (r?: FormReply) => void>();
@@ -204,8 +205,8 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 		probe(key: string, nonce?: string, flags?: boolean): Promise<Editor | undefined>; pull(key: string, step: "begin" | "finish", ref?: string): Promise<Pull | undefined>; commands(key: string, prefix: string): Promise<Cmd[] | undefined>; close(key: string, keepPane: boolean, ifStashable?: boolean): Promise<{ accepted: boolean; reason?: string } | undefined>; stashCheck(key: string): Promise<{ reason?: string } | undefined>; doc(cap: string): { key: string; doc: Doc } | undefined; form(cap: string, answerId: string, fields: Fields, answer?: BlockAnswer): Promise<FormResult | undefined>;
 	} = {
 		receive,
-		/** Whether the bridge bound to `key` relays an open dialog of `owner` (a signal from the runtime that owns the approval, not from the session file). With `at` (the unit's pane and file) the bridges are read directly too, so a dialog relayed since the last net reading counts at once. */
-		has: (key, owner, at) => Boolean(bound.get(key)?.b.dialogs.some((d) => d.owner === owner)) || Boolean(at?.pane && at.file && [...bridges.values()].some((b) => b.pane === at.pane && canonical(b.file ?? undefined) === canonical(at.file) && b.dialogs.some((d) => d.owner === owner))),
+		/** Whether the bridge bound to `key` relays an open dialog of `owner` (a signal from the runtime that owns the approval, not from the session file). With `at` (the unit's pane and file) the bridges are read directly too, so a dialog relayed since the last net reading counts at once, on the pane intercom placed it on at that reading or the one it names (a guard's signal: a match only adds a refusal). */
+		has: (key, owner, at) => Boolean(bound.get(key)?.b.dialogs.some((d) => d.owner === owner)) || Boolean(at?.pane && at.file && [...bridges].some(([from, b]) => (b.pane === at.pane || placed.get(from) === at.pane) && canonical(b.file ?? undefined) === canonical(at.file) && b.dialogs.some((d) => d.owner === owner))),
 		get running() { return active; },
 		me,
 		/** Calls `cb` after each change in what bridges relay, with or without a page (`track` suffices); returns the way to stop. */
@@ -240,7 +241,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 		stop() {
 			active = false;
 			change = () => {};
-			[bridges, bound, targets, reach, shelves, gates].forEach((m) => m.clear());
+			[bridges, bound, targets, reach, placed, shelves, gates].forEach((m) => m.clear());
 			caps.clear(); // a capability lives as long as its server
 			[...waiting.values(), ...probes.values(), ...lists.values(), ...pulls.values(), ...forms.values(), ...closes.values(), ...checks.values()].forEach((w) => w());
 			// What was relayed is gone with the page's state: the bridges are asked for their open dialogs again, so a gate still open is known when it closes.
@@ -250,11 +251,12 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 		monitors: () => [...bridges.values()].flatMap((b) => (b.monitors ?? []).filter((x) => x.status === "running").map((x) => ({ pane: b.pane, what: x.what }))),
 		/** Binds each relayed list to a unit, from this net reading's sessions and registry. */
 		relayed(sessions, refs) {
-			[bound, targets, reach] = [new Map(), new Map(), new Map()];
+			[bound, targets, reach, placed] = [new Map(), new Map(), new Map(), new Map()];
 			const shelved: { key: string; from: string; bridgeId: string; docs: Doc[] }[] = [], cut = new Set<string>(), queues = new Map<string, Queued[]>(), mons = new Map<string, Monitor[]>(), todos = new Map<string, TodoSum>();
 			for (const [from, b] of bridges) {
-				const file = sessions.find((s) => s.id === from)?.herdrLocation?.paneId === b.pane ? canonical(b.file ?? undefined) : undefined;
-				const ref = file && [...refs.values()].find((r) => r.pane === b.pane && r.file === file);
+				const pane = sessions.find((s) => s.id === from)?.herdrLocation?.paneId, file = pane ? canonical(b.file ?? undefined) : undefined;
+				if (pane) placed.set(from, pane);
+				const ref = file && [...refs.values()].find((r) => r.pane === pane && r.file === file);
 				if (ref) (reach.set(ref.key, { from, bridgeId: b.bridgeId }), shelved.push({ key: ref.key, from, bridgeId: b.bridgeId, docs: b.documents ?? [] }), b.docsCut && cut.add(ref.key));
 				if (ref && b.queued?.length) queues.set(ref.key, b.queued);
 				if (ref && b.monitors?.length) mons.set(ref.key, b.monitors);

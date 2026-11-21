@@ -44,8 +44,8 @@ function hub({ me = "G", owner = "G" } = {}) {
 	return { h, published, delivered, changes, list, forms, event: (e: Record<string, unknown>) => reg?.onEvent(e), answerWith: (f: typeof reply) => (reply = f), editorIs: (e: Editor | ((nonce?: string) => Editor)) => (editor = e), formWith: (f: typeof formReply) => (formReply = f), pullWith: (f: typeof pullReply) => (pullReply = f) };
 }
 /** The snapshot as the server reads it: S is the unit on pane wA:p1 with session file `path`. */
-async function read(x: ReturnType<typeof hub>, path: string | undefined, { pane = "wA:p1", from = "S" } = {}) {
-	const refs = new Map<string, Ref>([["S", { key: "S", base: "wA", name: "s", role: "main", file: path, pane: "wA:p1" }]]);
+async function read(x: ReturnType<typeof hub>, path: string | undefined, { pane = "wA:p1", from = "S", unitPane = "wA:p1" } = {}) {
+	const refs = new Map<string, Ref>([["S", { key: "S", base: "wA", name: "s", role: "main", file: path, pane: unitPane }]]);
 	const out = net();
 	await withPending(out, (key) => refs.get(key)?.file, x.h.relayed([{ id: from, herdrLocation: { status: "current", paneId: pane } }], refs));
 	return { base: out.bases[0]!, unit: out.bases[0]!.tabs[0]!.units[0]! };
@@ -322,6 +322,27 @@ test("probe: a bridge busy past the first second is asked once more under the sa
 	} finally {
 		mock.timers.reset();
 	}
+});
+
+test("probe: a session whose pane moved (Herdr gives it a new pane id; its bridge still names the one it started in) is reached where intercom places it now, and only there", async () => {
+	const x = hub(), path = file([]);
+	x.h.receive("S", x.list([], { file: path })); // the bridge's pane: wA:p1, from HERDR_PANE_ID at its start
+	await read(x, path, { pane: "wB:p4", unitPane: "wB:p4" });
+	const asked = x.h.probe("S"), sent = x.published.at(-1)?.payload as { type: string; to: string; probeId: string } | undefined;
+	assert.deepEqual([sent?.type, sent?.to], ["probe", "B"], "asked where it is now");
+	x.h.receive("S", { version: 1, type: "probe-result", bridgeId: "B", probeId: sent!.probeId, editor: "empty" } as never);
+	assert.deepEqual(await asked, { editor: "empty" });
+	assert.equal(x.h.has("S", "robot-hand", { pane: "wB:p4", file: path }), false);
+	x.h.receive("S", x.list([dialog()], { file: path }));
+	assert.equal(x.h.has("S", "robot-hand", { pane: "wB:p4", file: path }), true, "a dialog relayed since the reading counts on the pane it is on now");
+	const before = x.published.length;
+	for (const [what, opts] of [["the unit is on the old pane, intercom places the session on the new one", { pane: "wB:p4", unitPane: "wA:p1" }], ["intercom places the session on the old pane, the unit is on the new one", { pane: "wA:p1", unitPane: "wB:p4" }], ["another session on the new pane", { pane: "wB:p4", unitPane: "wB:p4", from: "T" }]] as const) {
+		await read(x, path, opts);
+		assert.equal(await x.h.probe("S"), undefined, what);
+	}
+	await read(x, file([]), { pane: "wB:p4", unitPane: "wB:p4" });
+	assert.equal(await x.h.probe("S"), undefined, "the unit on the new pane runs another file");
+	assert.equal(x.published.length, before, "none of them was asked");
 });
 
 test("commands: the hub asks the bound bridge for a prefix and takes only its matching, well-formed list", async () => {
