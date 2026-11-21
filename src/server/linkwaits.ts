@@ -6,6 +6,7 @@ import { type WaitWire, type WaitWireState, waitOwner, waitWhat } from "../link/
 import type { InboxItem } from "../link/store.ts";
 import { restrictLabel, restrictOwner } from "../link/text.ts";
 import type { Locale } from "../locale.ts";
+import { clean } from "../board.ts";
 import { nameOf } from "../reach.ts";
 import type { Slot } from "./record.ts";
 import { addCardWait, cut, iso, MEM, readMemory, resolveWait, updateMemory } from "./towermemory.ts";
@@ -145,8 +146,8 @@ const WORDS = {
 } as const;
 /** The fold line a third card carries, in either locale (it is replaced, not added to, at each fold). */
 const MORE = / (And \d+ more( from [^;]*)?; see board_read\.|And \d+ more from .*; board_read \(section waits\) lists them\.|另有 \d+ 項(來自 .*，見 board_read 的 waits 區|，見 board_read)。)$/u;
-/** The teammate's message as a card quotes it: its first line `[waits on you: …]` dropped, whitespace folded. */
-const excerptOf = (text: string) => text.replace(/^\[waits on you: [^\]\n]*\]\s*/, "").replace(/\s+/g, " ").trim();
+/** The teammate's message as a card quotes it: its first line `[waits on you: …]` dropped, whitespace folded, control and format characters removed. */
+const excerptOf = (text: string) => clean(text.replace(/^\[waits on you: [^\]\n]*\]\s*/, ""), TEXT_SHOWN); // control and format characters go, as checkCard drops them (WR3B-F002)
 
 export function createLinkWaits(d: WaitsDeps) {
 	const words = () => WORDS[d.locale()];
@@ -387,7 +388,7 @@ export function createLinkWaits(d: WaitsDeps) {
 						// A card closed by something other than a press or the router (auto mode's return, a drop by hand): the wait is still open, so it gets a card again.
 						const card = readMemory(d.slot, ws, now).memory.entries.find((e) => e.id === w.card);
 						if (!card || (card.state !== "open" && card.state !== "answered" && !card.press)) await toList(ws, w.n);
-					} else if (w.folded && w.card) {
+					} else if (w.folded && w.card && w.state !== "taken") {
 						const card = readMemory(d.slot, ws, now).memory.entries.find((e) => e.id === w.card);
 						if (!card || (card.state !== "open" && card.state !== "answered")) (set(ws, w.n, { card: undefined, folded: undefined }), await toList(ws, w.n));
 					}
@@ -461,8 +462,9 @@ export function createLinkWaits(d: WaitsDeps) {
 			if (!isOpen(w)) throw new Error(`L${w.n} is ${w.state} already`);
 			const who: Who = { id: from, name: nameOf(me) || from };
 			if (state === "taken") {
-				set(ws, w.n, { state: "taken", claimedBy: who });
+				// The card goes with the claim (WR3B-F001): a taken wait the sweep finds with no card is routed again when its taker is gone, and one that had folded raises none of its own.
 				closeCard(ws, w, `taken by ${who.name}`);
+				set(ws, w.n, { state: "taken", claimedBy: who, card: undefined, folded: undefined });
 				await ack(ws, w, "taken", `taken by ${restrictOwner(who.name)} on ${d.selfLabel()}`, who.name);
 				return `L${w.n} is yours: nothing goes to the boss's list for it. Answer it with linkWait state done (or declined) and the message for ${restrictLabel(w.label)}.`;
 			}

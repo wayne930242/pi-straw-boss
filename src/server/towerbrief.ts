@@ -218,7 +218,7 @@ export function allyTools(level: string): string[] {
 	const base = [
 		"- boss_status; tower_list and board_read, which show only your sender's team; read, grep, find, and ls inside the project's tracked files.",
 		"- tower_send {device, message, inReplyTo?} writes to your sender only; answer an ask by its id with inReplyTo.",
-		"- ally_escalate {what, owner?, kind?}: an item that waits on someone here, names a main here, says no main here owns it, or reports an incident here goes to that main, every main, or the boss's list; free, once per item.",
+		"- ally_escalate {what, owner?, kind?}: an item that waits on someone here, names a main here, says no main here owns it, or reports an incident here goes to that main, else the standing main here, else the boss's list (a message that expects no answer is a notice, with no card); free, once per item.",
 	];
 	if (level === "dispatch") return [...base, "- tower_reply, boss_open_main, and boss_close_main run without a confirm; call_tower, link_request, boss_server, and a wakeAfter are not yours."];
 	return [...base, `- Anything else asks the boss to confirm first${level === "forward" ? ", and your sender's device is asked as well" : ""}; call_tower, link_request, and boss_server are never yours.`];

@@ -381,3 +381,38 @@ test("BMWR-F002: the server's hand-off routes an open wait only in a workspace w
 	assert.equal(await hub.holder.take(item({}), "w15X"), true);
 	assert.deepEqual(ledger().map((e) => [e.state, !!e.card]), [["open", true]], "routed: no main, so a card");
 });
+
+test("WR3B-F001: a main that takes a wait from the boss's list clears its card, so when that main is gone the wait is routed again, and a folded taken wait raises no second card", async () => {
+	const w = world();
+	await w.router.take(item({ owner: "" }), "w15X");
+	assert.equal(cards().length, 1, "no main here: a card");
+	w.mains = [{ id: "s-work", name: "work-on" }];
+	assert.match(await w.router.act("s-work", "L1", "taken"), /L1 is yours/);
+	assert.deepEqual(ledger().map((e) => [e.state, e.card, e.folded]), [["taken", undefined, undefined]], "the card is the wait's no more");
+	assert.notEqual(cards()[0]!.state, "open", "its card is resolved");
+	w.mains = [{ id: "s-stand", name: "watch", standing: true }];
+	await w.router.tick();
+	await w.router.tick();
+	assert.deepEqual(w.posts.at(-1)!.to, ["s-stand"], "its taker gone for two sweeps: the standing main is told");
+
+	rmSync(join(root, "state"), { recursive: true, force: true });
+	const f = world();
+	for (let i = 0; i < 4; i++) await f.router.take(item({ owner: "", what: `item ${i}` }), "w15X");
+	assert.ok(ledger().some((e) => e.folded), "a fourth wait folds into the third card");
+	f.mains = [{ id: "s-work", name: "work-on" }];
+	const folded = ledger().find((e) => e.folded)!;
+	await f.router.act("s-work", `L${folded.n}`, "taken");
+	const before = cards().length;
+	await f.router.pressed("w15X", ledger().find((e) => e.n === 3)!.card!, "decline");
+	await f.router.tick();
+	assert.equal(cards().length, before, "the taken wait gets no card of its own when the card it folded into closes");
+	assert.equal(ledger().find((e) => e.n === folded.n)!.state, "taken");
+});
+
+test("WR3B-F002: a card's excerpt of the teammate's message carries no control or format characters", async () => {
+	const w = world();
+	await w.router.take(item({ owner: "" }, { text: "merge \u001b[31m!13\u001b[0m ‮evil‬​ now\u0000" }), "w15X");
+	const happened = cards()[0]!.card!.happened;
+	assert.doesNotMatch(happened, /[\u0000-\u001f\u007f-\u009f​‪-‮⁦-⁩]/u);
+	assert.match(happened, /«merge \[31m!13\[0m evil now»/);
+});
