@@ -269,5 +269,5 @@ Where the build differs from §2–§10, or settles what they left open.
 - `idle` counts from the first reading this server takes that finds the unit idle; a server that just started has no older reading to count from.
 - A box main's "waiting on" shows on its ally card row ("waiting on this computer · L3", beside its dispatcher) and in `/boss link units`. `boss_status` lists no box mains, so it is unchanged.
 - `tower.md`: a resident pi tower has no `tower_send` `waitsOn` (it holds no run events), so its prompt says a `waits-on=` blocked needs a tower run. `head-run.md` is unchanged: the head sends nothing to devices.
-- Size caps (measured): `src/server/main.ts` 806 to 808, `src/server/cli.ts` 485 to 489, `src/session.ts` 364 to 366, the page's TypeScript 9195 to 9196. `src/server/towers.ts` went from 1340 down to 1317, since the run's events moved to `runevents.ts`.
+- Size caps (measured): `src/server/main.ts` 806 to 808, `src/server/cli.ts` 485 to 489, `src/session.ts` 364 to 366, the page's TypeScript 9195 to 9196, the page's eager chunk 136,777 to 136,809 bytes and its chat chunks 496,202 to 496,399 (the waiting line). `src/server/towers.ts` went from 1340 down to 1317, since the run's events moved to `runevents.ts`.
 
