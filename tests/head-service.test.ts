@@ -342,7 +342,7 @@ test("the prompt's poll answers as the head's (head: true), and the stand-in is 
 	}
 });
 
-test("the head's stand-in is blocked while any tower's wait card or its own waits for the boss, and names them all", async () => {
+test("AR-D2: the head's stand-in is blocked only while its own wait card waits for the boss; a tower's card is a note on it, not a wait", async () => {
 	const s = await started();
 	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
 	const got = await head().ensure();
@@ -353,10 +353,11 @@ test("the head's stand-in is blocked while any tower's wait card or its own wait
 	try {
 		await until(() => world.herdr.pane(got.pane).agent_status === "idle", "the head's stand-in, idle");
 		updateMemory(world.slot, "wA", Date.now(), (m) => void m.entries.push(wait("W1")));
-		await until(() => world.herdr.pane(got.pane).standinMessage === "1 card waits", "a tower's card on the head's stand-in");
-		assert.equal(world.herdr.pane(got.pane).agent_status, "blocked");
+		await until(() => world.herdr.pane(got.pane).standinMessage === "standing by · 1 card waits at another tower", "a tower's card, noted on the head's stand-in");
+		assert.equal(world.herdr.pane(got.pane).agent_status, "idle", "a tower's card does not make the head wait");
 		updateMemory(world.slot, HEAD_KEY, Date.now(), (m) => void m.entries.push(wait("W1")));
-		await until(() => world.herdr.pane(got.pane).standinMessage === "2 cards wait", "and its own");
+		await until(() => world.herdr.pane(got.pane).standinMessage === "1 card waits · 1 card waits at another tower", "and its own");
+		assert.equal(world.herdr.pane(got.pane).agent_status, "blocked", "the head's own card is a wait of the head");
 	} finally {
 		clearInterval(timer);
 	}
