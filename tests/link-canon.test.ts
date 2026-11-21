@@ -32,3 +32,18 @@ test("integers beyond 2^53 are refused, as are negative and fractional ones", ()
 	for (const bad of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, 2n ** 64n]) assert.throws(() => int(bad), RangeError);
 	assert.throws(() => readInt(Buffer.from("0020000000000000", "hex")), CanonError, "above 2^53 - 1 is not a safe integer");
 });
+
+// A link wait and a notice's ref (docs/specs/2026-11-21-box-mac-waits.md §2.3): they round-trip, and the decoder of 0.80.17, kept here as it was, refuses a 6-field tower and a 4-field notice, so a sender writes either only to a peer whose caps list the feature.
+test("a 6-field tower and a 4-field notice round-trip; the 0.80.17 decoder refuses both, which is why caps gate them", async () => {
+	const { decodePlaintext, encodePlaintext } = await import("../src/link/kinds.ts");
+	const wait = { id: "a".repeat(32), state: "open" as const, owner: "work-on", what: "merge !13", handle: "0123456789abcdef" };
+	const base = { fromWorkspace: "box", toWorkspace: "", replyExpected: true, text: "[waits on you: merge !13]" };
+	for (const message of [{ ...base, wait }, { ...base, awaitsReply: "b".repeat(32), wait }, base, { ...base, awaitsReply: "b".repeat(32) }]) assert.deepEqual(decodePlaintext("tower", encodePlaintext("tower", message)), message);
+	for (const notice of [{ kind: "inbox-stuck", unit: "Beta", text: "waits", ref: "c".repeat(32) }, { kind: "k", unit: "u", text: "t" }]) assert.deepEqual(decodePlaintext("notice", encodePlaintext("notice", notice)), notice);
+	const oldTower = (b: Buffer) => { const f = dec(b); if (f.length !== 4 && f.length !== 5) throw new CanonError(`a tower has 4 or 5 fields, got ${f.length}`); return f; };
+	const oldNotice = (b: Buffer) => dec(b, 3);
+	assert.throws(() => oldTower(encodePlaintext("tower", { ...base, wait })), CanonError);
+	assert.throws(() => oldNotice(encodePlaintext("notice", { kind: "k", unit: "u", text: "t", ref: "c".repeat(32) })), CanonError);
+	assert.doesNotThrow(() => oldTower(encodePlaintext("tower", { ...base, awaitsReply: "b".repeat(32) })), "what a peer of today gets stays 5 fields");
+	assert.throws(() => encodePlaintext("tower", { ...base, wait: { ...wait, state: "lost" as never } }), RangeError);
+});

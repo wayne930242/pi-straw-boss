@@ -84,8 +84,19 @@ function towerCases() {
 		mk("a fifth field of the wrong length", enc(...four, str(ASK_ID.slice(2))), null),
 		mk("six fields", enc(...four, str(ASK_ID), str("x")), null),
 		mk("three fields", enc(...four.slice(0, 3)), null),
+		// The sixth field, a link wait (docs/specs/2026-11-21-box-mac-waits.md §2.3), written only to a device whose caps list tower.wait; the fifth may then be empty.
+		mk("six fields, an ask and a wait", enc(...four, str(ASK_ID), wait(WAIT_ID, "open", "work-on", "merge !13", HANDLE)), { ...base, awaitsReply: ASK_ID, wait: { id: WAIT_ID, state: "open", owner: "work-on", what: "merge !13", handle: HANDLE } }),
+		mk("six fields, no ask (an empty fifth) and a wait with no handle", enc(...four, str(""), wait(WAIT_ID, "told", "", "told work-on", "")), { ...base, wait: { id: WAIT_ID, state: "told", owner: "", what: "told work-on", handle: "" } }),
+		mk("a wait's owner is cut to 40 characters and its what to one line of 200 bytes", enc(...four, str(""), wait(WAIT_ID, "open", "o".repeat(50), `a\nb${"x".repeat(300)}`, "")), { ...base, wait: { id: WAIT_ID, state: "open", owner: "o".repeat(40), what: `a b${"x".repeat(197)}`, handle: "" } }),
+		mk("a wait with a state this build does not know", enc(...four, str(""), wait(WAIT_ID, "lost", "", "x", "")), null),
+		mk("a wait whose id is not 32 lowercase hex digits", enc(...four, str(""), wait(WAIT_ID.toUpperCase(), "open", "", "x", "")), null),
+		mk("a wait with a handle of 15 digits", enc(...four, str(""), wait(WAIT_ID, "open", "", "x", HANDLE.slice(1))), null),
+		mk("a wait with four fields", enc(...four, str(""), enc(str(WAIT_ID), str("open"), str(""), str("x"))), null),
+		mk("seven fields", enc(...four, str(""), wait(WAIT_ID, "open", "", "x", ""), str("x")), null),
 	];
 }
+const WAIT_ID = "7a".repeat(16);
+const wait = (id: string, state: string, owner: string, what: string, handle: string) => enc(str(id), str(state), str(owner), str(what), str(handle));
 
 /** `caps` and `tower-reply` limits and refusals. */
 function capsReplyCases() {
@@ -99,6 +110,11 @@ function capsReplyCases() {
 		mk("a tower-reply with an id of 300 bytes is cut to 256", "tower-reply", enc(str("a".repeat(300)), str("ok")), { inReplyTo: "a".repeat(256), text: "ok" }),
 		mk("a tower-reply with one field", "tower-reply", enc(str(ASK_ID)), null),
 		mk("a tower-reply with three fields", "tower-reply", enc(str(ASK_ID), str("ok"), str("x")), null),
+		// A notice's optional fourth field, the ask it is about (docs/specs/2026-11-21-box-mac-waits.md §4, C4), written only to a device whose caps list notice.ref.
+		mk("a notice with three fields, as before the ref existed", "notice", enc(str("ally-run-ended"), str("Beta"), str("ended")), { kind: "ally-run-ended", unit: "Beta", text: "ended" }),
+		mk("a notice with a ref", "notice", enc(str("inbox-stuck"), str("Beta"), str("waits"), str(ASK_ID)), { kind: "inbox-stuck", unit: "Beta", text: "waits", ref: ASK_ID }),
+		mk("a notice whose ref is not an ask id", "notice", enc(str("inbox-stuck"), str("Beta"), str("waits"), str("x")), null),
+		mk("a notice with five fields", "notice", enc(str("k"), str("u"), str("t"), str(ASK_ID), str("x")), null),
 	];
 }
 

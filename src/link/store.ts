@@ -81,6 +81,8 @@ export interface InboxItem {
 	reply?: { ask: string; main: string; mainName: string; tower: string };
 	/** A reply whose main was gone falls back to an ally run, whose brief says which main asked. */
 	askedBy?: string;
+	/** A `tower` with the sixth field (docs/specs/2026-11-21-box-mac-waits.md §2.3): a link wait, or a state of one. It goes to the wait router (src/server/linkwaits.ts), never to an ally run. */
+	wait?: { id: string; state: string; owner: string; what: string; handle: string };
 }
 
 /** What one device and this computer's towers said to each other, one row per message (docs/specs/2026-10-26-sb-backend.md, The brief, The thread store). */
@@ -539,6 +541,7 @@ export class LinkStore {
 			if (!count(v.seq) || !count(v.sentAt) || !count(v.received) || typeof v.fromWorkspace !== "string" || typeof v.toWorkspace !== "string" || typeof v.replyExpected !== "boolean" || typeof v.text !== "string") return undefined;
 			if (v.awaitsReply !== undefined && !(typeof v.awaitsReply === "string" && HEX16.test(v.awaitsReply))) return undefined;
 			if (v.askedBy !== undefined && typeof v.askedBy !== "string") return undefined;
+			if (v.wait !== undefined && !(isObject(v.wait) && HEX16.test(String(v.wait.id)) && ["state", "owner", "what", "handle"].every((k) => typeof (v.wait as Record<string, unknown>)[k] === "string"))) return undefined;
 			if (v.reply !== undefined && !(isObject(v.reply) && HEX16.test(String(v.reply.ask)) && typeof v.reply.main === "string" && typeof v.reply.mainName === "string" && typeof v.reply.tower === "string")) return undefined;
 			// SAFETY: each field of InboxItem was checked above.
 			return v as unknown as InboxItem;

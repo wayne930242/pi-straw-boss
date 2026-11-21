@@ -66,8 +66,16 @@ export const LIMITS = {
 } as const;
 const short = (s: string) => cutBytes(s, LIMITS.short);
 
-/** `awaitsReply` is the optional fifth field: an ask id, 16 random bytes in hex. Written only to a device whose `caps` list `tower.awaitsReply`. */
-export interface TowerMessage { fromWorkspace: string; toWorkspace: string; replyExpected: boolean; text: string; awaitsReply?: string }
+/**
+ * `awaitsReply` is the optional fifth field: an ask id, 16 random bytes in hex. Written only to a device whose `caps` list `tower.awaitsReply`. `wait` is the optional sixth (docs/specs/2026-11-21-box-mac-waits.md §2.3), written only to
+ * a device whose `caps` list `tower.wait`; with it the fifth field may be empty, which means no ask.
+ */
+export interface TowerMessage { fromWorkspace: string; toWorkspace: string; replyExpected: boolean; text: string; awaitsReply?: string; wait?: WaitWire }
+/** The states a link wait moves through on the wire: the sender opens or cancels it, the receiver tells, takes, answers, or declines it, and either end lets it expire. */
+export const WAIT_STATES = ["open", "told", "taken", "done", "declined", "cancelled", "expired"] as const;
+export type WaitWireState = (typeof WAIT_STATES)[number];
+/** A link wait as it travels: its id (16 random bytes in hex), its state, the owner the sender named (40 characters), what it waits on (one line, 200 bytes), and the sender main's handle (16 hex, or empty). */
+export interface WaitWire { id: string; state: WaitWireState; owner: string; what: string; handle: string }
 export interface Caps { features: string[] }
 export interface TowerReply { inReplyTo: string; text: string }
 /** An ask id as it travels. */
@@ -95,9 +103,26 @@ export interface UnitStop { stopId: string; handle: string; mode: string; reason
 export const handleOk = (handle: string): boolean => /^[0-9a-f]{16}$/.test(handle);
 /** A stop's reason is one line: line breaks, C0 and C1 controls (NEL, the 8-bit CSI), U+2028/2029, bidi overrides and isolates, and invisible or zero-width characters become spaces, and it is cut to its limit. */
 const LINE_BREAKERS = /[\u0000-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\u{e0000}-\u{e0fff}]/gu;
-const oneLine = (text: string) => cutBytes(text.replace(LINE_BREAKERS, " "), LIMITS.stopReason);
+export const oneLine = (text: string, max: number = LIMITS.stopReason) => cutBytes(text.replace(LINE_BREAKERS, " "), max);
+/** A wait's fields cut as they travel: the owner to 40 characters, what it waits on to one line of 200 bytes. */
+export const waitOwner = (text: string) => cutChars(oneLine(text, LIMITS.short).trim(), 40);
+export const waitWhat = (text: string) => oneLine(text, LIMITS.stopReason).trim();
+const encodeWait = (w: WaitWire): Buffer => {
+	if (!askIdOk(w.id)) throw new RangeError("a wait id is 32 lowercase hex digits");
+	if (!(WAIT_STATES as readonly string[]).includes(w.state)) throw new RangeError("a wait's state is one of open, told, taken, done, declined, cancelled, expired");
+	if (w.handle !== "" && !handleOk(w.handle)) throw new RangeError("a main's handle is 16 lowercase hex digits");
+	return enc(str(w.id), str(w.state), str(waitOwner(w.owner)), str(waitWhat(w.what)), str(w.handle));
+};
+const decodeWait = (b: Buffer): WaitWire => {
+	const [id, state, owner, what, handle] = dec(b, 5).map((f) => readStr(f)) as [string, string, string, string, string];
+	if (!askIdOk(id)) throw new CanonError("a wait id is 32 lowercase hex digits");
+	if (!(WAIT_STATES as readonly string[]).includes(state)) throw new CanonError(`a wait's state is not ${JSON.stringify(state.slice(0, 20))}`);
+	if (handle !== "" && !handleOk(handle)) throw new CanonError("a main's handle is 16 lowercase hex digits");
+	return { id, state: state as WaitWireState, owner: waitOwner(owner), what: waitWhat(what), handle };
+};
 export interface UnitStatus { unit: string; state: string; monitors: string[]; report: string }
-export interface Notice { kind: string; unit: string; text: string }
+/** `ref` is the optional fourth field (docs/specs/2026-11-21-box-mac-waits.md §4, C4): the ask id the notice is about, written only to a device whose `caps` list `notice.ref`. */
+export interface Notice { kind: string; unit: string; text: string; ref?: string }
 
 /** The outer layer of `operate` (spec §5.2): `session` is 16 random bytes, and the body depends on `type`. The version (1) is on the wire only; any other is refused. */
 export type OperateType = "open" | "accept" | "refuse" | "frame" | "close";
@@ -157,7 +182,8 @@ const encoders: { [K in Kind]: (p: Plaintexts[K]) => Buffer } = {
 		if (p.awaitsReply !== undefined) {
 			if (!askIdOk(p.awaitsReply)) throw new RangeError("an ask id is 32 lowercase hex digits");
 			fields.push(str(p.awaitsReply));
-		}
+		} else if (p.wait !== undefined) fields.push(str(""));
+		if (p.wait !== undefined) fields.push(encodeWait(p.wait));
 		return enc(...fields);
 	},
 	presence: (p) => enc(str(short(p.label)), int(p.headSeq), p.headHash, list(p.workspaces.map((w) => enc(str(short(w.label)), str(short(w.tower)), list(w.tabs.map((t) => enc(str(short(t.label)), str(short(t.state))))))))),
@@ -175,7 +201,10 @@ const encoders: { [K in Kind]: (p: Plaintexts[K]) => Buffer } = {
 		if (p.mains === undefined) return enc(units);
 		return enc(units, list(p.mains.slice(0, LIMITS.mains).map((m) => enc(str(short(m.handle)), str(short(m.unit)), str(cutChars(m.name, LIMITS.boardLabel)), str(short(m.state)), str(short(m.by)), bool(m.stopping), ...(m.kind !== undefined ? [str(cutBytes(m.kind, LIMITS.mainKind))] : [])))));
 	},
-	notice: (p) => enc(str(short(p.kind)), str(short(p.unit)), str(cutBytes(p.text, LIMITS.noticeText))),
+	notice: (p) => {
+		if (p.ref !== undefined && !askIdOk(p.ref)) throw new RangeError("a notice's ref is an ask id, 32 lowercase hex digits");
+		return enc(str(short(p.kind)), str(short(p.unit)), str(cutBytes(p.text, LIMITS.noticeText)), ...(p.ref !== undefined ? [str(p.ref)] : []));
+	},
 	caps: (p) => enc(list(p.features.slice(0, LIMITS.capsFeatures).map((f) => str(short(f))))),
 	// Sending holds `inReplyTo` to an ask id; decoding only cuts it, since a malformed one just matches no ask and the reply is a plain tower.
 	"tower-reply": (p) => {
@@ -198,14 +227,16 @@ const s = (f: Buffer, max: number = LIMITS.short) => cutBytes(readStr(f), max);
 const decoders: { [K in Kind]: (b: Buffer) => Plaintexts[K] } = {
 	tower: (b) => {
 		const fields = dec(b);
-		if (fields.length !== 4 && fields.length !== 5) throw new CanonError(`a tower has 4 or 5 fields, got ${fields.length}`);
-		const [from, to, reply, text, asked] = fields as [Buffer, Buffer, Buffer, Buffer, Buffer | undefined];
+		if (fields.length < 4 || fields.length > 6) throw new CanonError(`a tower has 4, 5, or 6 fields, got ${fields.length}`);
+		const [from, to, reply, text, asked, wait] = fields as [Buffer, Buffer, Buffer, Buffer, Buffer | undefined, Buffer | undefined];
 		const out: TowerMessage = { fromWorkspace: s(from), toWorkspace: s(to), replyExpected: readBool(reply), text: s(text, LIMITS.towerText) };
 		if (asked) {
 			const id = readStr(asked);
-			if (!askIdOk(id)) throw new CanonError("an ask id is 32 lowercase hex digits");
-			out.awaitsReply = id;
+			// An empty fifth field is no ask, and only beside a sixth: a five-field tower always carries one.
+			if (!(id === "" && wait) && !askIdOk(id)) throw new CanonError("an ask id is 32 lowercase hex digits");
+			if (id) out.awaitsReply = id;
 		}
+		if (wait) out.wait = decodeWait(wait);
 		return out;
 	},
 	presence: (b) => {
@@ -268,8 +299,16 @@ const decoders: { [K in Kind]: (b: Buffer) => Plaintexts[K] } = {
 		return out;
 	},
 	notice: (b) => {
-		const [kind, unit, text] = dec(b, 3) as [Buffer, Buffer, Buffer];
-		return { kind: s(kind), unit: s(unit), text: s(text, LIMITS.noticeText) };
+		const fields = dec(b);
+		if (fields.length !== 3 && fields.length !== 4) throw new CanonError(`a notice has 3 or 4 fields, got ${fields.length}`);
+		const [kind, unit, text, ref] = fields as [Buffer, Buffer, Buffer, Buffer | undefined];
+		const out: Notice = { kind: s(kind), unit: s(unit), text: s(text, LIMITS.noticeText) };
+		if (ref) {
+			const id = readStr(ref);
+			if (!askIdOk(id)) throw new CanonError("a notice's ref is an ask id, 32 lowercase hex digits");
+			out.ref = id;
+		}
+		return out;
 	},
 	caps: (b) => {
 		const [features] = dec(b, 1) as [Buffer];
