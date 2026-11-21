@@ -382,8 +382,9 @@ export function createTowers(o: TowersOptions): Towers {
 				const seen = (l.seen ??= openSeen(slot, l.record.workspace, now)), verdict = seen.check(from.id, message.id, message.content.text);
 				if (verdict === "conflict") return log.line("tower-dropped", { workspace: l.record.workspace, from: from.id, why: "the same message id with other content" });
 				const ws = l.record.workspace, route = verdict === "new" ? routeOf(slot, ws, from.id, now()) : undefined, local = route && readExpects(slot, ws, now()).find((e) => e.to === from.id);
-				if (route && (!local || route.at >= local.at) && route.kind === "opened" && raisedWait(message.content.text)) {
+				if (route?.kind === "opened" && raisedWait(message.content.text)) {
 					// A wait a main an ally run opened raises (allywait.ts): the code forwards it to the opener as a local run's `waitsOn` would, or refuses it, and no run, ally or local, takes it (box-mac-waits §14).
+					// Before the local-expect precedence below: a newer local ask of that main must not bring its waits-on call into a local run, where `tower_send waitsOn.event` has no opener check (WR3-F003).
 					seen.add(from.id, message.id, message.content.text);
 					const tell = (to: string, text: string, wait?: string) => l.reach ? l.reach.post(to, text, "link_wait_state", "session", false, undefined, undefined, { ...(wait ? { wait } : {}), peer: { label: route.label, short: route.short } }) : Promise.resolve();
 					void forwardOpenedWait({ ws, now, identity: l.record.id, log: (event, facts) => log.line(event, facts), tell, ...(o.link ? { link: o.link } : {}), ...(o.asks ? { asks: o.asks } : {}), ...(o.waits ? { waits: o.waits } : {}) }, route, { id: from.id, name: phrase(from.name ?? from.id, 40) }, message.id, message.content.text).catch((cause: Error) => error("ally-wait", cause.message));

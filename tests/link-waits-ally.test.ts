@@ -7,7 +7,7 @@ import { createAsks } from "../src/server/asks.ts";
 import { createLinkWaits, readWaits } from "../src/server/linkwaits.ts";
 import { startLinkWaits } from "../src/server/linkwaitsops.ts";
 import { callControl } from "../src/server/socket.ts";
-import { readRun } from "../src/server/towerrunstore.ts";
+import { addExpect, readRun } from "../src/server/towerrunstore.ts";
 import { type Running, until } from "./server-world.ts";
 import { TowerWorld } from "./tower-world.ts";
 
@@ -167,4 +167,15 @@ test("live-check A: the call itself is refused for an opened main whose waitsOn 
 	assert.match(String((await hub.op({ op: "device-resolve", device: "other", raise: true }, "opened-1")).error), /^An ally run of mac \(aaaaaa\) opened you/);
 	assert.equal((await hub.op({ op: "device-resolve", device: "mac", raise: true }, "opened-1")).id, OPENER);
 	assert.equal((await hub.op({ op: "device-resolve", device: "other" }, "opened-1")).id, OTHER);
+});
+
+test("WR3-F003: a newer local ask of an opened main does not bring its waitsOn call into a local run: the code still forwards it to the opener", async () => {
+	await openedMain();
+	const now = Date.now();
+	addExpect(world.slot, "wA", { to: "opened-1", name: "main", at: now + 1000, first: "a local run asked it" }, now);
+	tower().incoming({ id: "opened-1", name: "main" }, { id: "r3", content: { text: raised("aaaaaa") } } as never);
+	await until(() => world.linkCalls.some((c) => c.body.op === "send"), "the forward to the opener");
+	assert.equal(world.linkCalls.find((c) => c.body.op === "send")!.body.device, OPENER);
+	assert.deepEqual(readWaits(world.slot, "wA").entries.map((w) => [w.dir, w.raiser?.id, w.event]), [["out", "opened-1", "r3"]]);
+	assert.equal(ranAny(), 0, "no local run took it");
 });

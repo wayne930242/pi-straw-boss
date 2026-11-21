@@ -25,6 +25,8 @@ test("waitsOn goes with why blocked and a what; the device resolves before anyth
 	assert.equal(r.calls.length, 0, "nothing went to the tower");
 	const done = await r.call({ message: "the box main is blocked on the Mac", why: "blocked", waitsOn: { device: "mac", owner: "work-on", what: "merge approval-api !13\nnow" } });
 	assert.match(done.text, /It waits on mac \(ibzkd5\)/);
+	// `raise` lets the server refuse an opened main's wait on a device other than its opener (0.81.3, allywait.ts `raiserRefusal`).
+	assert.equal(r.ops.filter((op) => op.op === "device-resolve").at(-1)?.raise, true);
 	const extra = r.calls[0]!.extra as { waitsOn: { short: string; owner: string; what: string } };
 	assert.deepEqual(extra.waitsOn, { short: "ibzkd5", owner: "work-on", what: "merge approval-api !13 now" });
 	const line = stamp({ from: { id: "s1", name: "box main", role: "main", workspace: "MP" }, kind: "call_tower", scope: "tower", to: [], reply: true, why: "blocked", ...extra }, "text");
