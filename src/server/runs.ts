@@ -340,7 +340,7 @@ export interface RunsOptions {
 	/** An ally run ended (C4, docs/specs/2026-11-21-box-mac-waits.md §4): the asks it carried, read before its messages leave the inbox, so the server can tell each asker that got no answer. */
 	allyEnded?: (end: { run: string; workspace: string; device: string; team?: string; outcome: "done" | "crashed" | "timeout" | "quit"; asks: string[] }) => void;
 	/** The `tower_done` guard of a local run (docs/specs/2026-11-21-box-mac-waits.md §2.1): a waits-on event the run took and neither forwarded nor answered (runevents.ts). */
-	unforwarded?: (run: string, workspace: string) => { id: string; from: { id: string; name?: string }; short: string } | undefined;
+	unforwarded?: (run: string, workspace: string) => Promise<{ id: string; from: { id: string; name?: string }; short: string } | undefined>;
 	/** Told of the ends and refusals above; absent on a computer that tells nobody. */
 	signal?: (s: RunSignal) => void | Promise<boolean | undefined>;
 	run: HerdrRun;
@@ -1364,7 +1364,7 @@ export function createRuns(o: RunsOptions) {
 		if (wake !== undefined && (typeof wake !== "number" || !Number.isInteger(wake) || wake < 5 || wake > 240)) return { ok: false as const, error: "wakeAfter is 5 to 240 minutes" };
 		const outstanding = a.rec.kind === "ally" ? allyEvents(a).length : a.offered.size + waitingOf(a.svc, new Set(a.offered.keys())).length;
 		if (outstanding) return { ok: false as const, error: `${outstanding} event${outstanding > 1 ? "s" : ""} still for you: they come to you at your next idle moment; handle them, then call tower_done again` };
-		const waits = a.rec.kind === "local" ? o.unforwarded?.(a.rec.id, a.rec.workspace) : undefined;
+		const waits = a.rec.kind === "local" ? await o.unforwarded?.(a.rec.id, a.rec.workspace) : undefined;
 		if (waits) return { ok: false as const, error: `Event ${waits.id} (call_tower from ${waits.from.name ?? waits.from.id}) waits on device ${waits.short}: forward it with tower_send {device: "${waits.short}", message, waitsOn: {event: "${waits.id}"}}, or answer its raiser with tower_reply, then call tower_done again` };
 		addNote(slot, a.rec.workspace, { kind: a.rec.kind, ...(a.rec.device ? { device: a.rec.device } : {}), run: a.rec.id, at: iso(now()), note });
 		if (a.rec.kind === "local") await a.svc.ref.clearDigest(a.digestKeys).catch(() => {});

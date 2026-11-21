@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { stamp } from "../src/header.ts";
 import { createAsks } from "../src/server/asks.ts";
 import { callControl } from "../src/server/socket.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
+import { towerDir } from "../src/server/towerstore.ts";
 import { type Running, until } from "./server-world.ts";
 import { TowerWorld } from "./tower-world.ts";
 
@@ -250,6 +253,25 @@ test("tower_done is refused while the run took a waits-on event it neither forwa
 		if (how === "forward") assert.equal((await send({ device: undefined, waitsOn: { event: event.id } })).ok, true);
 		else assert.equal((await ask(world, s, { cmd: "run-tool", token, tool: "tower_reply", args: { to: "main-1", message: "the Mac merges it; I told its tower" } })).ok, true);
 		const ended = await ask(world, s, { cmd: "run-done", token, note: "forwarded the box's wait" });
+		assert.equal(ended.ok, true, `${how}: ${JSON.stringify(ended)}`);
+	}
+});
+
+test("BMWR-F003: the tower_done guard lets the run end when the raiser is gone, withdrew the wait in the same run, or the wait is in the ledger already (a restart forgot the forward)", async () => {
+	const cancel = stamp({ from: party("main-1", "docs-main", "main"), kind: "call_tower", scope: "tower", to: [{ id: "sb-tower-wa", name: "tower", role: "tower", workspace: "Alpha" }], reply: false, why: "milestone", waitsOn: { short: "abcdef", cancel: true } }, "never mind");
+	const cases: [string, { from: string; text: string }[], (w: TowerWorld, event: string) => void][] = [
+		["gone", [{ from: "main-1", text: waitsCall(party("main-1", "docs-main", "main"), "waits on the Mac") }], (w) => void (w.sessions = w.sessions.filter((x) => x.id !== "main-1"))],
+		["withdrawn", [{ from: "main-1", text: waitsCall(party("main-1", "docs-main", "main"), "waits on the Mac") }, { from: "main-1", text: cancel }], () => {}],
+		["recorded", [{ from: "main-1", text: waitsCall(party("main-1", "docs-main", "main"), "waits on the Mac") }], (w, event) => {
+			mkdirSync(towerDir(w.slot, "wA"), { recursive: true });
+			writeFileSync(join(towerDir(w.slot, "wA"), "linkwaits.json"), JSON.stringify({ v: 1, next: 2, entries: [{ n: 1, dir: "out", kind: "wait", device: DEV, team: "t1", label: "mac", short: "abcdef", owner: "", what: "x", text: "", since: 1, at: 1, state: "open", event }] }));
+		}],
+	];
+	for (const [how, texts, arrange] of cases) {
+		const { world, s, token } = await localRun(texts);
+		const event = (await import("../src/server/towerstore.ts")).readQueue(world.slot, "wA").find((e) => e.from?.id === "main-1" && /waits-what/.test(e.text))!;
+		arrange(world, event.id);
+		const ended = await ask(world, s, { cmd: "run-done", token, note: "nothing left" });
 		assert.equal(ended.ok, true, `${how}: ${JSON.stringify(ended)}`);
 	}
 });

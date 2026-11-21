@@ -1,6 +1,7 @@
 import { fieldsOf } from "../header.ts";
 import type { Pane, Session } from "../herdr.ts";
 import { nameOf } from "../reach.ts";
+import { readWaits } from "./linkwaits.ts";
 import type { Slot } from "./record.ts";
 import type { RunWho } from "./rungate.ts";
 import { readQueue } from "./towerstore.ts";
@@ -63,13 +64,22 @@ export function runEvents(d: RunEventsDeps) {
 	};
 }
 
-/** The `tower_done` guard (§2.1): the first waits-on event the run took that it neither forwarded with `waitsOn.event` nor answered with `tower_reply` to its raiser, read from the recorded header. */
-export function unforwardedWait(slot: Slot, ws: string, run: string): WaitEvent | undefined {
-	const done = handled.get(run);
-	for (const e of readQueue(slot, ws)) {
-		if (e.taken?.run !== run || e.kind !== "intercom" || done?.has(e.id)) continue;
-		const w = waitOf(e);
-		if (w) return w;
+/**
+ * The `tower_done` guard (§2.1): the first waits-on event the run took that it neither forwarded with `waitsOn.event` nor answered with `tower_reply` to its raiser, read from the recorded header. It lets go of one (and logs why,
+ * BMWR-F003) whose wait the ledger holds already (a restart forgot the forward), whose raiser withdrew it in a `call_tower` this run took too, or whose raiser is no longer live (`live`, when the broker answered): nobody is left to
+ * forward it for, and a run that cannot end is held twice for the run's whole time.
+ */
+export function unforwardedWait(slot: Slot, ws: string, run: string, live?: ReadonlySet<string>, log?: (event: string, facts: Record<string, string>) => void): WaitEvent | undefined {
+	const done = handled.get(run), took = readQueue(slot, ws).filter((e) => e.taken?.run === run && e.kind === "intercom");
+	const recorded = new Set(readWaits(slot, ws).entries.flatMap((w) => (w.event ? [w.event] : [])));
+	const withdrawn = new Set(took.flatMap((e) => ((f) => (f?.kind === "call_tower" && f["waits-on"] && f["waits-cancel"] === "yes" && e.from ? [`${e.from.id}\n${f["waits-on"]}`] : []))(fieldsOf(e.text))));
+	for (const e of took) {
+		const w = done?.has(e.id) ? undefined : waitOf(e);
+		if (!w) continue;
+		const why = recorded.has(e.id) ? "recorded" : withdrawn.has(`${w.from.id}\n${w.short}`) ? "withdrawn" : live?.size && !live.has(w.from.id) ? "raiser-gone" : undefined;
+		if (!why) return w;
+		markHandled(run, e.id);
+		log?.("wait-guard-released", { workspace: ws, run, event: e.id, why });
 	}
 	return undefined;
 }
