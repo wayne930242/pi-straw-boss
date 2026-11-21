@@ -216,6 +216,7 @@ const WORDS = {
 		joining: (state: string, words: string, error: string, project: boolean) => `Joining: ${state}${words ? ` · the words: ${words}` : ""}${project ? " · its folder is not set" : ""}${error ? ` · ${error}` : ""}`,
 		confirmsWait: (n: number) => `${n} confirm${n === 1 ? "" : "s"} wait${n === 1 ? "s" : ""}: /boss link confirms`,
 		asksWait: (n: number) => `${n} forwarded question${n === 1 ? "" : "s"} wait${n === 1 ? "s" : ""}: /boss link asks`,
+		delegate: (who: string, owner: string, why: string) => `The boss's delegate: ${owner || "the standing main"} of ${who}. ${why ? `Not used now: ${why}; your cards come to you.` : "Your cards for the boss go to it first; it escalates what you should decide."}`,
 	},
 	"zh-TW": {
 		usage: { on: "/boss link on", confirms: "/boss link confirms", confirm: "/boss link confirm <id> allow|deny", asks: "/boss link asks", answer: "/boss link answer <id> <選項編號 | 文字> | answer <id>（在 pi 裡逐題問）| answer <id> --cancel", invite: "/boss link invite <團隊> [unattended <裝置 id>] | invite show|cancel <hash>", join: "/boss link join <邀請文字 | @檔案> [--project <資料夾>] [--share status|presence] [--label <名稱>] | join cancel", create: "/boss link create <中繼站> <資料夾> [--share status|presence] [--label <名稱>]", leave: "/boss link leave <團隊> [--force]", operate: "/boss link operate [off|on]", trust: "/boss link trust <裝置> reply|forward|dispatch", role: "/boss link role <團隊> <裝置> admin|member", remove: "/boss link remove <團隊> <裝置>", rotate: "/boss link rotate <團隊>" } as Record<string, string>,
@@ -320,6 +321,7 @@ const WORDS = {
 		joining: (state: string, words: string, error: string, project: boolean) => `加入中：${state}${words ? ` · 單字：${words}` : ""}${project ? " · 還沒有設定資料夾" : ""}${error ? ` · ${error}` : ""}`,
 		confirmsWait: (n: number) => `${n} 個確認在等：/boss link confirms`,
 		asksWait: (n: number) => `${n} 個轉送問題在等：/boss link asks`,
+		delegate: (who: string, owner: string, why: string) => `代理人：${who} 的 ${owner || "值守"}。${why ? `目前沒有作用：${why}；卡片照舊給你。` : "要給你的卡片先交給它；它覺得該由你決定的才轉給你。"}`,
 	},
 } as const;
 
@@ -677,6 +679,7 @@ export function createBossLink({ s, tell }: Pick<Kit, "s" | "tell">, { record, p
 				...(view.join ? [w.joining(view.join.state, view.join.words.map(line).join(" "), line(view.join.error ?? ""), view.join.needsProject)] : []),
 				...(confirming ? [w.confirmsWait(confirming)] : []),
 				...(asking ? [w.asksWait(asking)] : []),
+				...((d) => (d ? [w.delegate(`${line(d.label)} (${line(d.short)})`, line(d.owner ?? ""), d.level !== "dispatch" ? `trust ${d.level}, not dispatch` : !d.approval ? "no tower.approval (an older build, or not heard from for 2 hours)" : "")] : []))(view.delegate),
 			];
 		},
 	};

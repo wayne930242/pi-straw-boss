@@ -27,8 +27,8 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 			}, { description: "With why blocked: your task ends at a step only another device can take. The tower forwards it as a wait that device must route to its owner or its boss. Not for a milestone report." })),
 			linkWait: Type.Optional(Type.Object({
 				id: Type.String({ description: "The wait's id on this computer (L3), from board_read section waits." }),
-				state: Type.Union([Type.Literal("taken"), Type.Literal("done"), Type.Literal("declined")], { description: "taken: you own it now (no card goes to the boss); done or declined: message goes to the device and the wait closes." }),
-			}, { description: "Answer a teammate device's wait on this workspace (you were told with kind=link_wait)." })),
+				state: Type.Union([Type.Literal("taken"), Type.Literal("done"), Type.Literal("declined"), Type.Literal("escalated")], { description: "taken: you own it now (no card goes to the boss); done or declined: message goes to the device and the wait closes. escalated (an approval, with why blocked): you leave that device's card to its boss, message is why." }),
+			}, { description: "Answer a teammate device's wait on this workspace (you were told with kind=link_wait); as the boss's delegate, an approval." })),
 			standing: Type.Optional(Type.Object({
 				device: Type.String({ description: "The teammate device: its label, short id, or id (tower_list shows them)." }),
 				what: Type.Optional(Type.String({ description: "One line, at most 200 bytes: what you ask or tell. Left out, the message's first line." })),
@@ -43,6 +43,7 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 				return { text: String(sent.text), details: sent.details };
 			}
 			if (linkWait) {
+				if (linkWait.state === "escalated" && why !== "blocked") throw new Error("linkWait escalated goes with why blocked: you leave the decision to the boss");
 				const acted = await link.waitOp({ op: "wait-act", id: linkWait.id, state: linkWait.state, ...(linkWait.state !== "taken" ? { message } : {}) });
 				const sent = await callTower(message, workspace, reply ?? false, why, { wait: /^L\d{1,6}$/.test(linkWait.id) ? linkWait.id : undefined });
 				return { text: `${String(acted.text)} ${sent.text}`, details: { ...sent.details, linkWait } };

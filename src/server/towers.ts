@@ -127,7 +127,7 @@ export interface TowersOptions {
 	/** Hands the service to a test as soon as it is built. */
 	expose?: (towers: Towers) => void;
 	/** The wait router (linkwaits.ts): a run's `waitsOn` and `ally_escalate`, and the press of a link card, act through it. */
-	waits?: Pick<LinkWaits, "sent" | "escalate" | "pressed" | "handleOf" | "newId">;
+	waits?: Pick<LinkWaits, "sent" | "escalate" | "pressed" | "handleOf" | "newId" | "delegateCard">;
 }
 export interface Ensured { id: string; workspace: string; label: string; tab?: string; pane?: string; opened: boolean; resident?: true; live: boolean }
 export interface TowerRow { workspace: string; label: string; id: string; state: "waiting" | "registering" | "live"; queue: number; service?: ServiceStatus }
@@ -1144,8 +1144,10 @@ export function createTowers(o: TowersOptions): Towers {
 					const net = await l.reach!.read(), x = net.sessions.find((s) => s.id === id);
 					if (!x) return undefined;
 					const pane = net.ps.find((p) => p.pane_id === x.herdrLocation?.paneId), token = pane?.tokens?.sb_role;
-					return { id, name: phrase(nameOf(x), 40), role: token === "main" || token === "member" || token === "tower" ? token : "session", ...(x.herdrLocation?.workspace?.label ? { workspace: phrase(x.herdrLocation.workspace.label, 40) } : {}), ...(x.herdrLocation?.tab?.label ? { tab: phrase(x.herdrLocation.tab.label, 40) } : {}) };
+					return { id, name: phrase(nameOf(x), 40), role: token === "main" || token === "member" || token === "tower" ? token : "session", ...(x.herdrLocation?.workspace?.label ? { workspace: phrase(x.herdrLocation.workspace.label, 40) } : {}), ...(x.herdrLocation?.tab?.label ? { tab: phrase(x.herdrLocation.tab.label, 40) } : {}), ...((k) => (k ? { kind: k } : {}))(kindOfPane(pane?.tokens)) };
 				},
+				// The boss's delegate (D14) takes a local run's cards first; the head's are the boss's own tower's.
+				...(o.waits && who.kind === "local" ? { delegate: (c: Omit<Parameters<LinkWaits["delegateCard"]>[1], "run">) => o.waits!.delegateCard(ws, { run: who.id, ...c }) } : {}),
 				session: async (query: string) => {
 					const net = await l.reach!.read(), named = net.sessions.filter((x) => x.id === query || nameOf(x) === query);
 					if (named.length !== 1) throw new Error(`${named.length ? "Several sessions are named" : "No live session is named or has the id"} "${query}"`);

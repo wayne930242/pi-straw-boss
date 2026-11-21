@@ -10,6 +10,7 @@ import type { Slot } from "./record.ts";
 import { ageOf } from "./towerbrief.ts";
 import { ensureDir, towerDir, towersDir, writeDurable } from "./towerstore.ts";
 import { secretDir } from "./record.ts";
+import { BOSS_ONLY_KINDS } from "./delegate.ts";
 
 // The tower's memory (docs/specs/2026-10-26-sb-backend.md, Tower memory): `tower/<workspace id>/memory.json`, mode 600, written by rename. It holds the boss's standing instructions and decisions and the waits the tower keeps.
 // Standing and decision text is the boss's: typed by the boss (the GUI, or `/boss memory` in pi), or a run's proposal that the boss confirmed there. A run can only PROPOSE one (or the retiring of one): a proposal
@@ -354,6 +355,8 @@ function cardRow(e: Entry, card: Card, now: number, due: string, open: string): 
 	return row(e.id, `${who}: ${card.do}${due}${open}`, CARD_ROW);
 }
 const CARD_ROW = 350;
+/** A card's `happened` with the line that says why the boss's delegate does not decide it (D14). */
+const CARD_HAPPENED_NOTE = 480;
 function waitRow(e: Entry, now: number): string {
 	if (e.state === "expired") return row(e.id, `expired (open for 7 days): ${e.text}`, MEM.waitText + 60);
 	const who = e.for === "boss" ? "for boss" : `for ${e.on?.name ?? "a session"}`;
@@ -499,6 +502,11 @@ export interface ToolEnv {
 	/** Auto mode (§6): whether it is on (a wait recorded then is parked), and the message to the raiser of a card parked (sent once: the entry was written with `parkedTold`). */
 	auto?: { on(): boolean; told(entry: Entry): Promise<void> };
 	log: Log;
+	/**
+	 * The boss's delegate (docs/specs/2026-11-21-box-mac-waits.md §15, D14): a card for the boss goes to it first, unless it is the boss's alone. `sent`: it went (its `L<n>`); `note`: it did not or cannot, and the card says why;
+	 * undefined: this device names no delegate (linkwaits.ts `delegateCard`).
+	 */
+	delegate?(c: { card: Omit<Card, "from">; from?: Raiser; dueMin?: number }): Promise<{ sent: string; label: string } | { note: string } | undefined>;
 }
 const str = (args: Record<string, unknown>, name: string): string => {
 	const v = args[name];
@@ -537,15 +545,29 @@ export async function memoryTool(env: ToolEnv, args: Record<string, unknown>): P
 		const checked = checkCard(args, ctxOf(first.memory));
 		if (!checked.ok) throw new Error(refusalText(checked.lines));
 		// The raiser is read from the net by id once, before the write; one that is not live is stored with the event's name and marked gone.
-		let raiser: Raiser | undefined;
+		let raiser: Raiser | undefined, raiserKind: string | undefined;
 		if (typeof checked.from === "object" && "id" in checked.from) {
 			const id = checked.from.id, seen = env.intercomEvents().find((e) => e.from.id === id), found = await env.raiser(id).catch(() => undefined);
-			raiser = found ? { ...found, name: clean(found.name, 40) || id, ...(found.workspace ? { workspace: clean(found.workspace, 40) } : {}), ...(found.tab ? { tab: clean(found.tab, 40) } : {}) } : { id, name: clean(seen?.from.name ?? id, 40) || id, role: "session", gone: true };
+			const { kind, ...row } = found ?? { kind: undefined };
+			raiserKind = kind;
+			raiser = found ? { ...(row as Raiser), name: clean(found.name, 40) || id, ...(found.workspace ? { workspace: clean(found.workspace, 40) } : {}), ...(found.tab ? { tab: clean(found.tab, 40) } : {}) } : { id, name: clean(seen?.from.name ?? id, 40) || id, role: "session", gone: true };
+		}
+		// D14: a card goes to the boss's delegate first unless it is the boss's alone: a secret (only the boss enters one), one the run marks bossOnly (a strict train target's auth, a credential, a join), one a train or an
+		// integrator raised (their cards are a strict target's approvals), and a restatement of a card already on the boss's list.
+		const bossOnly = checked.card.type === "secret" || !!checked.restates || args.bossOnly === true || (raiserKind !== undefined && BOSS_ONLY_KINDS.has(raiserKind));
+		let note: string | undefined;
+		if (env.delegate && !bossOnly) {
+			const tried = await env.delegate({ card: checked.card, ...(raiser ? { from: raiser } : {}), ...(checked.dueMin !== undefined ? { dueMin: checked.dueMin } : {}) });
+			if (tried && "sent" in tried) {
+				env.log.line("tower-memory", { workspace, op: "delegate", id: tried.sent, kind: "wait", by: "run", run: env.run.slice(0, 8) });
+				return { text: `Sent to the boss's delegate on ${tried.label} as ${tried.sent}, not to the boss's list: the delegate may approve it on the boss's behalf. Its answer comes to you as a server notice marked as the delegate's words, not the boss's; if it escalates, declines, or cannot take it, sb puts this card on the boss's list and tells you. Keep ${tried.sent} in your handoff note.`, details: { delegated: tried.sent } };
+			}
+			note = tried?.note;
 		}
 		const { value } = updateMemory(slot, workspace, now, (m) => {
 			const again = checkCard(args, ctxOf(m));
 			if (!again.ok) throw new Error(refusalText(again.lines));
-			return addCardWait(m, now, env.run, again, raiser, env.auto?.on() === true);
+			return addCardWait(m, now, env.run, note ? { ...again, card: { ...again.card, happened: cut(`${again.card.happened} ${note}`, CARD_HAPPENED_NOTE) } } : again, raiser, env.auto?.on() === true);
 		});
 		logged("add", value);
 		if (value.parked && value.parkedTold) await env.auto!.told(value).catch((cause: Error) => env.log.line("error", { code: "wait-parked", text: cause.message.slice(0, 200) }));

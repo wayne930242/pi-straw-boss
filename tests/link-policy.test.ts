@@ -243,3 +243,24 @@ test("operateNotes says a malformed operate and the devices that have no effect 
 	notes({ mode: "refused", reason: "x" });
 	assert.equal(logs.length, 1, "other modes say nothing here (the service says why a policy is refused)");
 });
+
+test("D14: the boss's delegate is config.json's link.delegate on an attended device and the policy file's delegate on an unattended one, which never takes config.json's; a malformed entry names none", () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-link-delegate-cfg-"));
+	try {
+		const dirs = { home: join(dir, "home"), agentDir: join(dir, "agent") };
+		writeFileSync(join(dir, "config.json"), JSON.stringify({ link: { delegate: { device: ctrl, owner: "  work-on " } } }));
+		assert.deepEqual(readLinkConfig(dir, dirs).delegate, { device: ctrl, owner: "work-on" });
+		assert.deepEqual(readEffectiveConfig({ mode: "attended" }, dir, dirs).delegate, { device: ctrl, owner: "work-on" });
+		const unattended = readPolicy(fs({ text: file({ delegate: { device: other } }) }));
+		assert.deepEqual(readEffectiveConfig(unattended, dir, dirs).delegate, { device: other }, "the policy's, never config.json's");
+		assert.equal(readEffectiveConfig(readPolicy(fs()), dir, dirs).delegate, undefined, "a policy that names none: none");
+		assert.equal(readPolicy(fs({ text: file({ delegate: { device: "short" } }) })).mode, "unattended", "a malformed delegate leaves the rest of the policy in force");
+		assert.equal(readEffectiveConfig(readPolicy(fs({ text: file({ delegate: { device: "short" } }) })), dir, dirs).delegate, undefined);
+		writeFileSync(join(dir, "config.json"), JSON.stringify({ link: { delegate: { device: ctrl, owner: "x".repeat(41) } } }));
+		const bad = readLinkConfig(dir, dirs);
+		assert.equal(bad.delegate, undefined);
+		assert.match(bad.problems.join("\n"), /delegate: owner is a main's name of at most 40 characters/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});

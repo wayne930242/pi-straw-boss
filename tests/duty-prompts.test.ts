@@ -24,9 +24,10 @@ test("no composed prompt (kind x graph) holds a sentence twice, and the addenda 
 	for (const name of ["dispatch", "duty-standing", "graph-fan-out", "graph-orchestrator-worker"]) assert.deepEqual(sentences(read(name)).filter((x) => plan.has(x)), [], `${name} repeats planning.md`);
 });
 
-test("size caps: a kind addendum is at most 6 lines and 900 characters, a graph addendum 2 lines and 300; integrator.md and dispatch.md are pinned", () => {
+// 2026-11-21 (D14, the boss's delegate, docs/specs/2026-11-21-box-mac-waits.md §15; measured): duty-standing.md 900 to 974 characters: an approval comes to the standing main, which may approve anything and escalates only what the boss should decide.
+test("size caps: a kind addendum is at most 6 lines and 974 characters, a graph addendum 2 lines and 300; integrator.md and dispatch.md are pinned", () => {
 	const standing = read("duty-standing");
-	assert.ok(lines(standing) <= 6 && standing.length <= 900, `duty-standing: ${lines(standing)} lines, ${standing.length} characters`);
+	assert.ok(lines(standing) <= 6 && standing.length <= 974, `duty-standing: ${lines(standing)} lines, ${standing.length} characters`);
 	for (const name of ["graph-fan-out", "graph-orchestrator-worker"]) assert.ok(lines(read(name)) <= 2 && read(name).length <= 300, name);
 	assert.equal(lines(read("integrator")), 13);
 	assert.equal(lines(read("dispatch")), 3);

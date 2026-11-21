@@ -65,3 +65,12 @@ test("D13: call_tower standing sends the message to the device's standing main t
 	assert.deepEqual(r.ops, [{ op: "standing-send", device: "mac", kind: "question", what: "merge !13 before the train?", message: "Is approval-api !13 safe to merge before the train?" }, { op: "standing-send", device: "mac", kind: "notice", what: "", message: "The box train 1121 landed." }]);
 	assert.equal(r.calls.length, 0, "nothing went to the tower");
 });
+
+test("D14: the boss's delegate escalates an approval with linkWait escalated and why blocked only; the router gets the state and the reason", async () => {
+	const r = rig({ "wait-act": (op) => ({ ok: true, text: `L4 is ${String(op.state)}. The card goes to the boss on waydosoft, with your words as the reason.` }) });
+	await assert.rejects(r.call({ message: "the boss picks the window", why: "milestone", linkWait: { id: "L4", state: "escalated" } }), /linkWait escalated goes with why blocked/);
+	assert.equal(r.ops.length, 0, "nothing reached the router");
+	const sent = await r.call({ message: "the boss picks the window", why: "blocked", linkWait: { id: "L4", state: "escalated" } });
+	assert.match(sent.text, /^L4 is escalated\. The card goes to the boss on waydosoft/);
+	assert.deepEqual(r.ops.at(-1), { op: "wait-act", id: "L4", state: "escalated", message: "the boss picks the window" });
+});

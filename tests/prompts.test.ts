@@ -367,7 +367,17 @@ test("D9 (0.81.3): duty-standing.md says the workspace's link waits come to the 
 });
 
 test("D13 (0.81.3): one clause each says a device's standing main is reached with tower_send standing, and that its questions and notices come to the standing main as link waits", () => {
-	assert.ok(read("duty-standing.md").includes("A device's question or notice for its standing main comes that way too."), "duty-standing.md");
+	assert.ok(read("duty-standing.md").includes("A device's question or notice for its standing main comes that way too"), "duty-standing.md");
 	assert.ok(read("tower-run.md").includes("For the device's standing main instead of its tower, add `standing: \"question\"` (bound as above) or `standing: \"notice\"`."), "tower-run.md");
 	assert.ok(read("ally-run.md").includes("(`standing: \"notice\"` tells its standing main instead)"), "ally-run.md");
+});
+
+// D14 (docs/specs/2026-11-21-box-mac-waits.md §15; boss: 「代理人什麼都能核准，除非他覺得應該問我」): the standing main may approve a teammate's card for its boss and escalates only what the boss should decide; a tower run marks the
+// boss-only cards and never quotes a delegate's answer as the boss's.
+test("D14: duty-standing.md lets the standing main approve anything as the boss's delegate and escalate the rest; tower-run.md marks bossOnly and keeps the delegate's words apart from the boss's", () => {
+	assert.ok(read("duty-standing.md").includes("as the boss's delegate you may approve anything (`done`), and leave only what the boss should decide with `why: blocked` and `escalated`."), "duty-standing.md");
+	const on = strip(read("tower-run.md"), false), off = strip(read("tower-run.md"), true);
+	assert.ok(on.includes("Add `bossOnly: true` when only the boss may decide it (a strict train target's auth or approval, a credential, a team join)."), "tower-run.md bossOnly");
+	assert.ok(on.includes("its answer comes as a server notice in the delegate's words, not the boss's; act on it as the card's answer and never quote it as the boss's (not as `auth`)."), "tower-run.md the delegate's words");
+	assert.ok(off.includes("Add `bossOnly: true` when only the boss may decide it (a credential, a team join).") && off.includes("never quote it as the boss's. One it does not approve"), "with the train off the clause names no train");
 });

@@ -1,7 +1,7 @@
 import { accessSync, constants, lstatSync, readFileSync, watch as fsWatch } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { type Level, LEVELS, type LinkConfig, parseTeams, readLinkConfig, type TeamPolicy } from "./config.ts";
+import { type Delegate, delegateOf, type Level, LEVELS, type LinkConfig, parseTeams, readLinkConfig, type TeamPolicy } from "./config.ts";
 
 // An unattended device reads its policy from a fixed file that its own user cannot write (docs/specs/2026-10-25-straw-link.md, Storage and policy):
 // no message or roster entry can change it. The file carries the device's trust levels and its teams, and `readEffectiveConfig` hands them to every reader
@@ -21,7 +21,7 @@ export const OPERATE_GRANTS: readonly OperateGrant[] = ["team", "box"];
 export type Policy =
 	| { mode: "attended" }
 	/** `operate`: who may operate what, empty when the policy has none. `operateRefused`: why a malformed `operate` was dropped (operate is then off for the whole box, `operate` is empty, and the rest of the policy is in force). */
-	| { mode: "unattended"; trust: Map<string, Level>; teams: Map<string, TeamPolicy>; operate: Map<string, OperateGrant>; operateRefused?: string }
+	| { mode: "unattended"; trust: Map<string, Level>; teams: Map<string, TeamPolicy>; operate: Map<string, OperateGrant>; operateRefused?: string; delegate?: Delegate }
 	| { mode: "refused"; reason: string };
 
 /** Seams for tests: the file system's answers about owners and write access. */
@@ -204,7 +204,7 @@ export function readPolicy(d: PolicyDeps = {}): Policy {
 	} catch (error) {
 		return (error as NodeJS.ErrnoException).code === "ENOENT" ? { mode: "attended" } : { mode: "refused", reason: `${path} cannot be read: ${(error as Error).message}` };
 	}
-	let json: { unattended?: unknown; trust?: unknown; teams?: unknown; operate?: unknown };
+	let json: { unattended?: unknown; trust?: unknown; teams?: unknown; operate?: unknown; delegate?: unknown };
 	try {
 		json = JSON.parse(text) as typeof json;
 	} catch {
@@ -213,7 +213,8 @@ export function readPolicy(d: PolicyDeps = {}): Policy {
 	if (json?.unattended !== true) return { mode: "attended" };
 	const problem = policyProblem(path, d);
 	if (problem) return { mode: "refused", reason: problem };
-	const operate = operateOf(json.operate, path);
+	// The boss's delegate (D14) is a grant like trust: a file the box's own user can write never names one. A malformed entry names none, and the rest of the policy holds.
+	const operate = { ...operateOf(json.operate, path), ...((d) => (d ? { delegate: d } : {}))(delegateOf(json.delegate, () => undefined)) };
 	if (json.teams === undefined) return { mode: "unattended", trust: levels(json.trust), teams: new Map(), ...operate };
 	if (typeof json.teams !== "object" || json.teams === null || Array.isArray(json.teams)) return { mode: "refused", reason: `${path}: teams has to be an object of team ids` };
 	const home = d.home ?? homedir(), bad: string[] = [];
@@ -232,7 +233,7 @@ export function unattendedNow(d: PolicyDeps = {}): boolean | undefined {
  * unattended one, which ignores config.json's `link` section entirely (a file its own user can write cannot grant a team); nothing on a refused one, whose holder does not run.
  */
 export function readEffectiveConfig(policy: Policy, stateDir: string, dirs: { home: string; agentDir: string }): LinkConfig {
-	if (policy.mode === "unattended") return { teams: new Map(policy.teams), trust: new Map(policy.trust), problems: [] };
+	if (policy.mode === "unattended") return { teams: new Map(policy.teams), trust: new Map(policy.trust), problems: [], ...(policy.delegate ? { delegate: policy.delegate } : {}) };
 	if (policy.mode === "refused") return { teams: new Map(), trust: new Map(), problems: [] };
 	return readLinkConfig(stateDir, dirs);
 }

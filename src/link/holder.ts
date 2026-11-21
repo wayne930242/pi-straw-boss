@@ -211,6 +211,8 @@ export interface LinkView extends LinkSummary {
 	joinRequests: JoinRequestView[];
 	join: JoinView | undefined;
 	prefill: Prefill | undefined;
+	/** The boss's delegate this device names (link config `delegate`, D14): its label, the level this device gives it, and whether its fresh caps list `tower.approval`. */
+	delegate?: { device: string; short: string; label: string; owner?: string; level: string; approval: boolean };
 }
 const HEAD_DIFF_MS = 2 * 60_000, DOWN_MS = 2 * 60_000, HELD_MS = 10 * 60_000;
 /** A reply for a main that the main has not taken this long after the first offer (an older build never connects to the channel) goes to an ally run, which is told who asked. */
@@ -230,7 +232,7 @@ const BOARD_OFFLINE_MS = 2 * 3600_000, BOARD_MAX_AGE_MS = 7 * 24 * 3600_000;
 /** The board is sent at most this often per team, and once an hour unchanged; a relay without the kind is left alone for an hour. */
 const BOARD_MIN_MS = 15_000, BOARD_REFRESH_MS = 3600_000, BOARD_OFF_MS = 3600_000;
 /** What this build takes (docs/specs/2026-10-26-sb-backend.md, Replies for a main). A `caps` older than 2 hours counts as none. */
-export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing"] as const;
+export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval"] as const;
 export const CAPS_STALE_MS = 2 * 3600_000;
 /** A live frame is worth nothing late: its post gives up after this, so a stalled relay does not hold the serial chain of sends (spec §11.1, task 5). */
 const LIVE_POST_MS = 5000;
@@ -1144,7 +1146,10 @@ export class LinkHolder {
 		const peer = this.capsOf(run, target.id);
 		if ((req.awaitsReply !== undefined && !askIdOk(req.awaitsReply)) || (req.inReplyTo !== undefined && !askIdOk(req.inReplyTo))) return { ok: false, error: "An ask id is 32 lowercase hex digits" };
 		// A wait for the standing main (`kind`, D13) goes as one only to a build that routes it there; to any other it is the plain `tower` it was before 0.81.3, with no lead line.
-		const withAsk = req.awaitsReply !== undefined && peer.includes("tower.awaitsReply"), withWait = req.wait !== undefined && peer.includes("tower.wait") && (req.wait.kind === undefined || peer.includes("tower.standing"));
+		// An approval (D14) and its `escalated` go only to a build that lists `tower.approval`: there is no plain form of a card for another device's boss.
+		const approval = req.wait?.kind === "approval" || req.wait?.state === "escalated";
+		const withAsk = req.awaitsReply !== undefined && peer.includes("tower.awaitsReply"), withWait = req.wait !== undefined && peer.includes("tower.wait") && (req.wait.kind === undefined || peer.includes(approval ? "tower.approval" : "tower.standing")) && (!approval || peer.includes("tower.approval"));
+		if (approval && !withWait) return { ok: false, error: "That device's build takes no approvals (tower.approval), so nothing was sent" };
 		if (req.wait !== undefined && !withWait && req.wait.state !== "open") return { ok: false, error: "That device's build takes no link waits, so the state of one is not sent" };
 		// An open wait to a build that takes none goes as text whose first line says so: its ally run is told to escalate such a message (docs/specs/2026-11-21-box-mac-waits.md §3).
 		const text = req.wait !== undefined && !withWait && req.wait.kind === undefined ? `[waits on you: ${req.wait.what}]\n${req.text}` : req.text;
@@ -1235,7 +1240,7 @@ export class LinkHolder {
 				sent.at = now; // a failed post is tried again after the spacing (`due` is set again by the catch), not at every tick
 				sent.due = false;
 				const hello = sent.hello;
-				const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device.keys, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: (CAPS_FEATURES as readonly string[]).filter((f) => (f !== "unit-stop" || this.o.unitStop) && (f !== "operate/1" || listed) && ((f !== "tower.wait" && f !== "tower.standing") || this.o.waits)).concat(hello ? [HELLO] : []) }) });
+				const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device.keys, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: (CAPS_FEATURES as readonly string[]).filter((f) => (f !== "unit-stop" || this.o.unitStop) && (f !== "operate/1" || listed) && ((f !== "tower.wait" && f !== "tower.standing" && f !== "tower.approval") || this.o.waits)).concat(hello ? [HELLO] : []) }) });
 				await run.client.postEnvelope(run.teamId, envelope);
 				sent.ts = ts;
 				if (hello) sent.hello = false; // the word goes once: a post that failed carries it in the next
@@ -1879,7 +1884,9 @@ export class LinkHolder {
 			const policy = config.teams.get(team);
 			teams.push({ team, name: policy?.name ?? team.slice(0, 6), project: policy?.project ?? "", share: policy?.share ?? "status", relay: "", epoch: 0, headSeq: 0, self: { role: "member", attended: true }, members: [], status: "stopped", stoppedWhy: reason, relayDown: false, secondAdmin: [], onlyAdmin: false });
 		}
-		return { ...this.summary(), deviceId: d.keys.id, short: d.keys.shortId, label: d.label, relay: config.relay, teams, invites: this.admin.invites(), joinRequests: this.admin.joinRequests(), join: this.admin.joinView(), prefill: this.admin.prefill && { ...this.admin.prefill } };
+		const del = config.delegate, mate = del && this.resolveTeammate(del.device);
+		const delegate = del && { device: del.device, short: shortId(del.device), label: mate?.ok ? mate.label : shortId(del.device), ...(del.owner ? { owner: del.owner } : {}), level: config.trust.get(del.device) ?? "reply", approval: !!mate?.ok && this.capsFor(mate.team, del.device).includes("tower.approval") };
+		return { ...this.summary(), deviceId: d.keys.id, short: d.keys.shortId, label: d.label, relay: config.relay, teams, invites: this.admin.invites(), joinRequests: this.admin.joinRequests(), join: this.admin.joinView(), prefill: this.admin.prefill && { ...this.admin.prefill }, ...(delegate ? { delegate } : {}) };
 	}
 
 	/** This device's id, once the holder runs. */

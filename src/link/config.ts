@@ -13,7 +13,21 @@ export interface TeamPolicy { project: string; share: Share; name: string }
 /** What a remote turn from a sender may do (docs/specs/2026-10-25-straw-link.md, Trust levels); a sender with no entry is at `reply`. */
 export type Level = "reply" | "forward" | "dispatch";
 export const LEVELS: readonly Level[] = ["reply", "forward", "dispatch"];
-export interface LinkConfig { relay?: string; teams: Map<string, TeamPolicy>; trust: Map<string, Level>; problems: string[] }
+/**
+ * The boss's delegate (docs/specs/2026-11-21-box-mac-waits.md §15, D14): a teammate device whose main decides, for the boss, the cards this device's towers would put on the boss's list; `owner` names that main (by default the
+ * device's standing main). config.json's `link.delegate` on an attended device, the policy file's `delegate` on an unattended one.
+ */
+export interface Delegate { device: string; owner?: string }
+export interface LinkConfig { relay?: string; teams: Map<string, TeamPolicy>; trust: Map<string, Level>; problems: string[]; delegate?: Delegate }
+
+/** A `delegate` entry: `{ device: <26-character id>, owner?: <a main's name, at most 40 characters> }`; anything else is a problem and no delegate. */
+export function delegateOf(raw: unknown, report: (reason: string) => void): Delegate | undefined {
+	if (raw === undefined) return undefined;
+	const v = raw as { device?: unknown; owner?: unknown } | null;
+	if (typeof v !== "object" || v === null || Array.isArray(v) || typeof v.device !== "string" || !/^[a-z2-7]{26}$/.test(v.device)) return void report("delegate: device has to be a device id, 26 characters of a-z and 2-7");
+	if (v.owner !== undefined && (typeof v.owner !== "string" || !v.owner.trim() || Array.from(v.owner).length > 40)) return void report("delegate: owner is a main's name of at most 40 characters");
+	return { device: v.device, ...(typeof v.owner === "string" ? { owner: v.owner.trim() } : {}) };
+}
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -27,6 +41,8 @@ export function readLinkConfig(stateDir: string, { home, agentDir }: { home: str
 	}
 	if (!isObject(link)) return out;
 	if (typeof link.relay === "string") out.relay = link.relay;
+	const delegate = delegateOf(link.delegate, (reason) => out.problems.push(reason));
+	if (delegate) out.delegate = delegate;
 	if (isObject(link.trust)) {
 		for (const [device, level] of Object.entries(link.trust)) {
 			if (!/^[a-z2-7]{26}$/.test(device)) out.problems.push(`trust ${device}: a device id is 26 characters of a-z and 2-7`);

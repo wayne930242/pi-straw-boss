@@ -20,6 +20,7 @@ export const memoryParameters = () => Type.Object({
 	options: Type.Optional(Type.Array(Type.Object({ label: Type.String({ description: "The button's words, at most 24 characters, unique." }), then: Type.String({ description: "What picking it leads to, at most 120 characters." }) }), { description: "add wait for boss, type choice: 2 to 4 options, one button each." })),
 	secret: Type.Optional(Type.Object({ name: Type.String({ description: "What the secret is, such as the name of a key (at most 60 characters). Never its value." }) }, { description: "add wait for boss, type secret: the secret's name." })),
 	from: Type.Optional(Type.String({ description: "add wait for boss: the session id in the [intercom from <name> (<id>)] line of the message that raised the wait, or \"self\" when you raised it yourself. sb checks it against the messages you received." })),
+	bossOnly: Type.Optional(Type.Boolean({ description: "add wait for boss: true when only the boss may decide it: a strict train target's auth or approval, a credential, a team join. Without it the card may go to the boss's delegate first, where this device names one." })),
 	restates: Type.Optional(Type.String({ description: "add wait for boss: the id (W3) of an open or answered wait for the boss that this card replaces; the old one is dropped in the same write." })),
 	on: Type.Optional(Type.String({ description: "add wait for agent: the session's name or id." })),
 	due: Type.Optional(Type.Number({ description: "add wait: minutes until it is overdue, 5 to 10080." })),

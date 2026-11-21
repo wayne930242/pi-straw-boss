@@ -160,6 +160,26 @@ test("D13: a wait for the standing main goes with its kind to a build that lists
 	assert.equal(b.holder.servedFor("sb-tower-wb").length, 1, "an ally run gets it, as before 0.81.3");
 });
 
+test("D14: an approval goes with its kind only to a build that lists tower.approval, and its router takes it; to any other nothing is sent, and no escalated state either", async () => {
+	const { a, b } = await pair({ waits: { a: true, b: true } });
+	await until(() => capsOf(a, bob.id).includes("tower.approval") && capsOf(b, alice.id).includes("tower.approval"), 3000, "both list tower.approval");
+	const approval = { ...WAIT, owner: "", what: "Approve switching on fstrim", kind: "approval" as const };
+	const sent = await sendTo(a, "A card for the boss of alice-mac …", { wait: approval });
+	assert.equal((details(sent) as { waited?: boolean }).waited, true, textOf(sent));
+	await until(() => b.waited.length === 1, 3000, "the router to take it");
+	assert.deepEqual([b.waited[0]!.item.wait, b.waited[0]!.item.awaitsReply], [approval, undefined]);
+	const back = await sendTo(b, "The boss picks the window.", { wait: { ...approval, state: "escalated", owner: "work-on" } });
+	assert.equal(back.ok, true, textOf(back));
+	await until(() => a.waited.some((x) => x.item.wait?.state === "escalated"), 3000, "the escalation back");
+	withoutCap(a, bob.id, "tower.approval");
+	const old = await sendTo(a, "A card for the boss …", { wait: { ...approval, id: "7c".repeat(16) } });
+	assert.equal(old.ok, false, "no plain form of an approval");
+	assert.match(textOf(old), /takes no approvals/);
+	withoutCap(b, alice.id, "tower.approval");
+	const state = await sendTo(b, "x", { wait: { ...WAIT, state: "escalated" } });
+	assert.equal(state.ok, false, "an older build would refuse the state");
+});
+
 test("C2: a reply for a live main that does not take it stays offered for hours (no fallback); once the main is gone it goes to the router, never to an ally run", async () => {
 	const { a, b } = await pair({ served: false, waits: { b: true } });
 	await until(() => capsOf(a, bob.id).includes("tower-reply"), 3000, "caps");

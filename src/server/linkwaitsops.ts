@@ -61,6 +61,10 @@ export function startLinkWaits(o: StartWaits): WaitsHub {
 		deviceId: () => o.link()?.holder?.deviceId,
 		selfLabel: () => restrictLabel(o.link()?.holder?.deviceLabel ?? "this computer"),
 		workspaces: () => listServices(o.slot).map((r) => r.workspace),
+		// The boss's delegate (D14): link config's (the policy file's on an unattended device), the level this device gives it, its roster entry, and the tower's notice for its answer.
+		delegate: () => o.link()?.config().delegate, level: (device) => o.link()?.levelOf(device) ?? "reply",
+		member: (device) => ((r) => (r?.ok ? { team: r.team, label: r.label, short: r.short } : undefined))(o.link()?.holder?.resolveTeammate(device)),
+		notify: (ws, text, key) => void o.towers()?.runs.notice(ws, text, key),
 	});
 	if (o.tickMs !== false) {
 		const timer = setInterval(() => void router.tick().catch((e: Error) => o.log("link-wait-tick-failed", { error: e.message.slice(0, 160) })), o.tickMs ?? WAIT_TICK_MS);

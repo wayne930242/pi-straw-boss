@@ -9,7 +9,11 @@ export type CardType = "action" | "choice" | "secret";
 export type Lang = "zh-TW" | "en";
 export const TYPES: readonly CardType[] = ["action", "choice", "secret"];
 /** The session that raised a wait, as the net named it at the write; `gone`: it was not live then. */
-export interface Raiser { id: string; name: string; role: string; workspace?: string; tab?: string; gone?: true }
+export interface Raiser {
+	id: string; name: string; role: string; workspace?: string; tab?: string; gone?: true;
+	/** The kind of its pane as the write read it (`train`, `integrator`, …: unitstop.ts `kindOfPane`), for the boss-only check of the delegate (D14); never stored on a card. */
+	kind?: string;
+}
 export interface Option { label: string; then: string }
 export interface Card {
 	type: CardType;
