@@ -43,6 +43,9 @@ interface Rig {
 	skew: number;
 	waited: { item: InboxItem; ws: string | undefined }[];
 	orphans: { item: InboxItem; asker: string; ws: string | undefined }[];
+	notices: string[];
+	/** What the router's take answers (true by default); `false` is a wait no tower here routes. */
+	takes: (ws: string | undefined) => boolean | "held";
 }
 function rig(name: "a" | "b", o: { entries?: ReturnType<typeof rosterOf>; capsMs?: number; waits?: boolean } = {}): Rig {
 	const keys = name === "a" ? alice : bob, entries = o.entries ?? rosterOf();
@@ -55,15 +58,15 @@ function rig(name: "a" | "b", o: { entries?: ReturnType<typeof rosterOf>; capsMs
 	const stateDir = join(root, name, "state");
 	mkdirSync(stateDir, { recursive: true });
 	writeFileSync(join(stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: true } }));
-	const r = { name, dir, project, store, offers: [], served: [], taken: [], open: undefined, skew: 0, waited: [], orphans: [] } as unknown as Rig;
+	const r = { name, dir, project, store, offers: [], served: [], taken: [], open: undefined, skew: 0, waited: [], orphans: [], notices: [], takes: () => true } as unknown as Rig;
 	r.net = netOf([]);
 	r.holder = new LinkHolder({
 		store, stateDir, isHolder: () => true, config: () => config(project)(), net: async () => r.net, relay: clientFor(relay),
-		offer: (tower, id) => void r.offers.push({ tower: tower.id, id }), notify: () => {}, now: () => Date.now() + r.skew, backoff: () => 5, drainMs: 20, presenceMs: 60_000, offerAgainMs: 60_000, postWaitMs: 2000,
+		offer: (tower, id) => void r.offers.push({ tower: tower.id, id }), notify: (text) => void r.notices.push(text), now: () => Date.now() + r.skew, backoff: () => 5, drainMs: 20, presenceMs: 60_000, offerAgainMs: 60_000, postWaitMs: 2000,
 		capsMs: o.capsMs ?? 3600_000, capsMinMs: 5,
 		asks: { take: (q) => (r.taken.push(q), r.open) },
 		served: (identity) => void r.served.push(identity),
-		...(o.waits ? { waits: { take: async (item: InboxItem, ws: string | undefined) => (r.waited.push({ item, ws }), true), orphan: async (item: InboxItem, asker: string, ws: string | undefined) => (r.orphans.push({ item, asker, ws }), true) } } : {}),
+		...(o.waits ? { waits: { take: async (item: InboxItem, ws: string | undefined) => (r.waited.push({ item, ws }), r.takes(ws)), orphan: async (item: InboxItem, asker: string, ws: string | undefined) => (r.orphans.push({ item, asker, ws }), true) } } : {}),
 	});
 	cleanup.push(() => r.holder.stop());
 	relay.addTeam(TEAM, [alice.id, bob.id], entries);
@@ -153,4 +156,36 @@ test("C2: a reply for a live main that does not take it stays offered for hours 
 	await until(() => b.store.inboxIds().length === 0, 3000, "it leaves the inbox");
 	assert.ok(events(b).some((e) => e.event === "reply-routed" && e.why === "gone"));
 	assert.equal(b.holder.servedFor("tower-b").length, 0);
+});
+
+test("BMWR-F002: an open wait no tower here routes is a tower message that found no tower (the boss is told), goes to a tower the server does not run, and never to an ally run", async () => {
+	const { a, b } = await pair({ waits: { b: true } });
+	await until(() => capsOf(a, bob.id).includes("tower.wait"), 3000, "b lists tower.wait");
+	// No tower is open on b: the router takes nothing, and the boss hears a message waits for the project's tower.
+	b.takes = (ws) => (ws === undefined ? false : true);
+	b.net = netOf([]);
+	assert.equal((await sendTo(a, "please merge !13", { wait: WAIT })).ok, true);
+	await until(() => b.notices.some((t) => /a message from alice-mac is not delivered yet/.test(t)), 3000, "the boss's notice");
+	assert.equal(b.store.inboxIds().length, 1, "it stays in the inbox");
+	// A resident pi tower (no identity of the server's: the router answers false) is offered it as a tower message.
+	b.net = netOf([["tower-b", "w-b", "label-b", b.project]]);
+	b.takes = () => false;
+	void b.holder.drain();
+	await until(() => b.offers.some((o) => o.tower === "tower-b"), 3000, "the offer to the resident tower");
+	// A tower the server runs whose router does not take it yet: it waits for the router, never for an ally run.
+	b.net = netOf([["sb-tower-wb", "w-b", "label-b", b.project]]);
+	const before = b.offers.length;
+	void b.holder.drain();
+	await until(() => b.waited.at(-1)?.ws === "w-b", 3000, "the router asked again");
+	await b.holder.drain();
+	assert.equal(b.holder.servedFor("sb-tower-wb").length, 0, "no ally run is told of it");
+	assert.equal(b.offers.length, before);
+	// Held by the router (its device's bound): it stays, and nothing else gets it.
+	b.takes = () => "held";
+	await b.holder.drain();
+	assert.equal(b.store.inboxIds().length, 1);
+	assert.equal(b.holder.servedFor("sb-tower-wb").length, 0);
+	b.takes = () => true;
+	await b.holder.drain();
+	await until(() => b.store.inboxIds().length === 0, 3000, "taken at last");
 });

@@ -110,8 +110,9 @@ export interface HolderOptions {
 	 * or no longer a main (C2): taken, it never reaches an ally run. `notice` gets a box's notice that names an ask (`ref`, C4).
 	 */
 	waits?: {
-		take(item: InboxItem, workspace: string | undefined): Promise<boolean>;
-		orphan?(item: InboxItem, mainName: string, workspace: string | undefined): Promise<boolean>;
+		/** True: taken (it leaves the inbox). False: no tower here routes it (none is open, or one the server does not run), so it is a tower message that found no tower. `held`: it stays in the inbox for a later pass. */
+		take(item: InboxItem, workspace: string | undefined): Promise<boolean | "held">;
+		orphan?(item: InboxItem, mainName: string, workspace: string | undefined): Promise<boolean | "held">;
 		notice?(n: { team: string; device: string; label: string; kind: string; text: string; ref: string }): void;
 		/** The open waits a device's mains have on this computer, by the main's handle (`L<n>` ids): the ally card's "waiting on" line (item D). */
 		openOn?(device: string): Record<string, string[]>;
@@ -881,12 +882,14 @@ export class LinkHolder {
 			}
 			const pickedWs = () => towersFor(net, policy.project, item.toWorkspace)[0]?.workspace.workspace_id;
 			if (item.wait && this.o.waits) {
-				// A link wait, or a state of one: the router takes it (docs/specs/2026-11-21-box-mac-waits.md §2.2); no ally run ever gets it. One it keeps waits here for the next pass.
-				if (await this.o.waits.take(item, pickedWs()).catch((error: Error) => (store.log({ event: "wait-take-failed", id, error: error.message }), false))) {
+				// A link wait, or a state of one: the router takes it (docs/specs/2026-11-21-box-mac-waits.md §2.2); no ally run ever gets it. One it holds waits here for the next pass. One no tower here routes goes on below as a tower
+				// message that found no tower (woken, opened, or told to the boss), or to a tower the server does not run, never to an ally run (BMWR-F002).
+				const took = await this.o.waits.take(item, pickedWs()).catch((error: Error) => (store.log({ event: "wait-take-failed", id, error: error.message }), "held" as const));
+				if (took === true) {
 					this.waiting.delete(id);
 					await store.withLock(() => store.removeInbox(id));
 				}
-				continue;
+				if (took !== false) continue;
 			}
 			if (item.reply) {
 				// An answer to an ask a local tower made for a main goes to that main, as peer data. A main that is gone (not live, or no longer its tab's main) hands it to the wait router, which tells another main of the workspace or the
@@ -897,7 +900,9 @@ export class LinkHolder {
 				if (!live || over || expired) {
 					const { reply, ...plain } = item, why = !main ? "gone" : !live ? "not-main" : expired ? "expired" : "not-taken";
 					this.offered.delete(id);
-					if (this.o.waits?.orphan && (await this.o.waits.orphan(item, reply!.mainName, pickedWs()).catch((error: Error) => (store.log({ event: "wait-take-failed", id, error: error.message }), false)))) {
+					const routed = this.o.waits?.orphan ? await this.o.waits.orphan(item, reply!.mainName, pickedWs()).catch((error: Error) => (store.log({ event: "wait-take-failed", id, error: error.message }), false)) : false;
+					if (routed === "held") continue;
+					if (routed) {
 						store.log({ event: "reply-routed", id, why });
 						this.waiting.delete(id);
 						await store.withLock(() => store.removeInbox(id));
@@ -935,6 +940,8 @@ export class LinkHolder {
 				continue;
 			}
 			if (SERVED_TOWER.test(first.session.id) || (towerRunsEnabled(this.o.stateDir ?? "") && SERVED_RUN.test(first.session.name ?? ""))) {
+				// A wait the router did not take with a tower the server runs (one stopping): it waits for the router's next pass, never for an ally run.
+				if (item.wait && this.o.waits) continue;
 				// The sb server stands in for this tower: the message stays in the inbox until an ally run has it, and the server is told one waits (`servedFor`).
 				Object.assign(this.waiting.get(id)!, { offered: false, served: true, identity: first.session.id });
 				servedNow.add(first.session.id);

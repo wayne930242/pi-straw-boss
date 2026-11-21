@@ -63,6 +63,7 @@ export function startLinkWaits(o: StartWaits): WaitsHub {
 		timer.unref?.();
 		o.stops.push(() => clearInterval(timer));
 	}
+	const served = (ws: string | undefined) => (ws !== undefined && o.towers()?.identityOf(ws) ? ws : undefined);
 	/** The workspace a session or a tower identity is in, from the broker and Herdr. */
 	const wsOf = async (from: string) => {
 		const n = await net(), me = n.sessions.find((s) => s.id === from);
@@ -76,7 +77,8 @@ export function startLinkWaits(o: StartWaits): WaitsHub {
 	return {
 		router,
 		holder: {
-			take: (item, ws) => router.take(item, ws), orphan: (item, asker, ws) => router.orphan(item, asker, ws),
+			// Only a workspace whose tower the server runs routes a wait: a resident pi tower holds no identity to wake mains or answer the device with, and its ledger would be swept by nobody (BMWR-F002).
+			take: (item, ws) => router.take(item, served(ws)), orphan: (item, asker, ws) => router.orphan(item, asker, served(ws)),
 			openOn: (device) => {
 				const by: Record<string, string[]> = {};
 				for (const ws of listServices(o.slot)) for (const w of readWaits(o.slot, ws.workspace).entries) if (w.dir === "in" && w.device === device && w.handle && isOpen(w)) (by[w.handle] ??= []).push(`L${w.n}`);
