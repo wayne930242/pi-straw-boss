@@ -48,7 +48,7 @@ test("the mirror's ended reasons are said in the page's language, and an unknown
 	assert.equal(endedWhy("Something else.", "zh-TW"), "Something else.");
 });
 
-const OPERATE_WORDS = ["binding", "binding-unread", "foreground", "terminal", "unread", "shell", "boss-command", "command", "draft", "ended", "route", "enter-chord", "chord", "leaves-editor", "out-of-scope", "not-granted", "not-admin", "local-only", "policy"];
+const OPERATE_WORDS = ["binding", "binding-unread", "foreground", "terminal", "unread", "noanswer", "shell", "boss-command", "command", "draft", "ended", "route", "enter-chord", "chord", "leaves-editor", "out-of-scope", "not-granted", "not-admin", "local-only", "policy"];
 const op = (why: string) => ({ ok: false, status: 403, body: { error: "operate_refused", reason: "the server's words", why } });
 
 test("every why word the keys, the routes and the box refuse an operate session with is said in the page's words; the table lists no other", () => {

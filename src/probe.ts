@@ -51,15 +51,19 @@ export type Holds = Partial<Record<keyof typeof HOME, string[]>>;
 /** What the bridge tells with an operate probe: the pad keys bound to an action outside the editor, the keys that hold each guarded action, and whether pi has the terminal in raw mode (pi's TUI restores cooked mode before it hands the terminal to $EDITOR or stops on Ctrl+Z). */
 export interface Report { keys: string[]; holds: Holds; raw: boolean }
 
-export type OperateWhy = "shell" | "boss-command" | "command" | "unread" | "draft";
+export type OperateWhy = "noanswer" | "shell" | "boss-command" | "command" | "unread" | "draft";
+
+/** No answer at all (the bridge was not reached, or answered neither the probe nor its resend, dialogs.ts) is not an answer of `unknown`: every operate refusal says it first, so the page can say try again (docs/specs/2026-11-21-operate-probe.md). */
+const NOANSWER = { why: "noanswer", reason: "The session did not answer in time (it may be busy), so nothing is sent from here; try again in a moment." } as const;
 
 /**
  * Why an operate session's key may not go, from what the bridge's pi says of itself: it could not say (an older bridge, or a pi whose app actions the live manager does not hold), pi does not hold the terminal in raw mode (an external editor or
  * a suspended pi runs below it), the user's keybindings put another app action, the external editor among them, or an extension's shortcut, on this key, or put submit, follow-up, clear or interrupt on a key whose guard is not written for it.
  * Checked before every operate key, whatever it is: a rebound Tab or arrow is as much a way out of the editor as a rebound chord.
  */
-export function operateKeyRefusal(e: Editor | undefined, key: string): { why: "binding" | "binding-unread" | "terminal"; reason: string } | undefined {
-	if (!e?.keys || !e.holds) return { why: "binding-unread", reason: "pi's key bindings on the box could not be read, so nothing is sent from here: a key might do something other than edit." };
+export function operateKeyRefusal(e: Editor | undefined, key: string): { why: "noanswer" | "binding" | "binding-unread" | "terminal"; reason: string } | undefined {
+	if (!e) return NOANSWER;
+	if (!e.keys || !e.holds) return { why: "binding-unread", reason: "pi's key bindings on the box could not be read, so nothing is sent from here: a key might do something other than edit." };
 	const raw = operateRawRefusal(e);
 	if (raw) return raw;
 	if (e.keys.includes(key) || Object.entries(e.holds).some(([action, held]) => held.includes(key) && !HOME[action as keyof typeof HOME]?.includes(key))) return { why: "binding", reason: "pi on the box binds that key to an action outside its editor, so it is not sent from here." };
@@ -67,16 +71,17 @@ export function operateKeyRefusal(e: Editor | undefined, key: string): { why: "b
 }
 
 /** Why anything written into the pane may not go, from the probe: pi did not say it holds the terminal in raw mode, which pi's own TUI leaves before it starts $EDITOR or stops. */
-export function operateRawRefusal(e: Editor | undefined): { why: "terminal"; reason: string } | undefined {
-	return e?.raw === true ? undefined : { why: "terminal", reason: "pi does not hold the terminal right now (an external editor or a suspended pi may), or the box cannot say, so nothing is sent from here." };
+export function operateRawRefusal(e: Editor | undefined): { why: "noanswer" | "terminal"; reason: string } | undefined {
+	return !e ? NOANSWER : e.raw === true ? undefined : { why: "terminal", reason: "pi does not hold the terminal right now (an external editor or a suspended pi may), or the box cannot say, so nothing is sent from here." };
 }
 
 /**
  * Why an operate session's Enter (or the composer's text) may not go, from what the probe says of the draft, or nothing when it may: a `!` shell line, a `/boss` command, any other `/` draft (see below), or an editor that cannot be read well enough to tell
- * (no answer, no UI, or a `command` whose bridge did not tell the flags, which an older bridge never does). The confirms a paired device may give do not lift any of them.
+ * (no UI, or a `command` whose bridge did not tell the flags, which an older bridge never does; no answer at all is `noanswer`, above). The confirms a paired device may give do not lift any of them.
  */
 export function operateRefusal(e: Editor | undefined): { why: OperateWhy; reason: string } | undefined {
-	if (!e || e.editor === "unknown" || (e.editor === "command" && (typeof e.shell !== "boolean" || typeof e.boss !== "boolean"))) return { why: "unread", reason: "The session's editor could not be read well enough to tell what Enter would run, so nothing is sent from here." };
+	if (!e) return NOANSWER;
+	if (e.editor === "unknown" || (e.editor === "command" && (typeof e.shell !== "boolean" || typeof e.boss !== "boolean"))) return { why: "unread", reason: "The session's editor could not be read well enough to tell what Enter would run, so nothing is sent from here." };
 	if (e.shell) return { why: "shell", reason: "A shell line (`!`) is not run from here: the box takes no arbitrary shell over the link." };
 	if (e.boss) return { why: "boss-command", reason: "A /boss command is not run from here: on the box it reaches other teams' sessions and the box's own settings." };
 	// A `/` draft is refused whole, not only `/boss`: with the command menu open (a bare `/`, `/b`, `/bos`), Enter applies the highlighted completion and runs it, so the draft as typed does not say what runs.

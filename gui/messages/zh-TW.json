@@ -907,6 +907,7 @@
 	"refuse_operate_foreground": "機器的終端機可能被 pi 以外的程式佔著（或機器無法確認），所以不從這裡送出任何內容。",
 	"refuse_operate_terminal": "機器上的 pi 目前沒有握著終端機（可能開著外部編輯器，或 pi 已暫停），或機器無法確認，所以不從這裡送出任何內容。",
 	"refuse_operate_unread": "機器讀不到這個 session 的編輯器狀態，無法確認 Enter 會執行什麼，所以不從這裡送出任何內容。",
+	"refuse_operate_noanswer": "這個 session 沒有及時回應（可能正忙著跑一輪），所以沒有送出任何內容；請稍候再試一次。",
 	"refuse_operate_shell": "以 ! 開頭的 shell 指令不會從這裡執行：機器不接受透過連線傳來的任意 shell。",
 	"refuse_operate_boss_command": "/boss 指令不會從這裡執行：它在機器上能碰到其他團隊的 session 和機器本身的設定。",
 	"refuse_operate_command": "斜線指令不會從這裡執行：Enter 會套用指令選單上反白的選項，而這個頁面無法從草稿判斷是哪一個。",

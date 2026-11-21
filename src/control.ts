@@ -392,7 +392,7 @@ export function createControl({ auto, board, bridge, lan, overlay, link, server:
 			if ("status" in asked) return asked;
 			job = async () => {
 				const plan = await pad.send(key, found, await live(found), asked);
-				if (asked.key === "enter") await live(found); // the editor check took up to a second: still pi, on this file
+				if (asked.key === "enter") await live(found); // the editor check took up to 4 s (dialogs.ts): still pi, on this file
 				// A link_request's call may have opened since the guard looked; its terminal confirm takes Enter as Yes, so look again right before each write.
 				for (const [i, [method, params]] of plan.calls.entries()) {
 					if (i) await new Promise((r) => setTimeout(r, 60));

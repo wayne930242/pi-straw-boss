@@ -34,7 +34,7 @@ test("the composer: other texts go through, among them ones that only look alike
 });
 
 test("the composer under operate looks at the editor first and sends only into an empty one (the text joins any draft, OR-F001): shell, /boss, other `/` drafts, text drafts and an unreadable editor are refused", async () => {
-	for (const [editor, want] of [[SHELL, [403, "operate_refused", "shell"]], [BOSS, [403, "operate_refused", "boss-command"]], [PLAIN, [403, "operate_refused", "command"]], [{ editor: "text" }, [403, "operate_refused", "draft"]], [{ editor: "text", ending: "reload" }, [403, "operate_refused", "draft"]], [undefined, [403, "operate_refused", "unread"]], [{ editor: "unknown" }, [403, "operate_refused", "unread"]], [{ editor: "command" }, [403, "operate_refused", "unread"]]] as const) {
+	for (const [editor, want] of [[SHELL, [403, "operate_refused", "shell"]], [BOSS, [403, "operate_refused", "boss-command"]], [PLAIN, [403, "operate_refused", "command"]], [{ editor: "text" }, [403, "operate_refused", "draft"]], [{ editor: "text", ending: "reload" }, [403, "operate_refused", "draft"]], [undefined, [403, "operate_refused", "noanswer"]], [{ editor: "unknown" }, [403, "operate_refused", "unread"]], [{ editor: "command" }, [403, "operate_refused", "unread"]]] as const) {
 		const x = await world({ editor: editor as Editor | undefined });
 		assert.deepEqual(refusal(await x.session.request("POST", ["sessions", "sess-1", "input"], Q, { text: "echo x", as: "send" }, scope)), want, JSON.stringify(editor));
 		assert.deepEqual(x.typed(), [], "no prompt typed");
@@ -70,8 +70,9 @@ test("the pad: a /boss line is refused at Enter; an unreadable editor, or a brid
 	await x.attach(scope);
 	x.w.editor = BOSS;
 	assert.deepEqual(refusal(await key("enter")), [403, "operate_refused", "boss-command"]);
-	x.w.editor = undefined;
-	assert.deepEqual(refusal(await key("enter", { confirmed: "unread" })), [403, "operate_refused", "unread"]);
+	x.w.editor = undefined; // the session did not answer: told apart from an editor it answered it cannot read
+	assert.deepEqual(refusal(await key("enter", { confirmed: "unread" })), [403, "operate_refused", "noanswer"]);
+	assert.deepEqual(refusal(await key("up")), [403, "operate_refused", "noanswer"], "a key probed for its binding too");
 	x.w.editor = { editor: "unknown" };
 	assert.deepEqual(refusal(await key("enter", { confirmed: "unread" })), [403, "operate_refused", "unread"]);
 	x.w.editor = { editor: "command" }; // an older bridge: a `command` that tells nothing of its line

@@ -26,7 +26,8 @@ import { todoOk, type TodoSum } from "./todo.ts";
 // gives the unit the documents its bridge lists, each by a capability (documents.ts), and carries a form answer for one to that bridge.
 
 export const PULL_MS = 4000, PULL_BUDGET_MS = 2500;
-const ACK_MS = 5000, PROBE_MS = 1000, FORM_MS = 5000, KEEP_MS = 600_000, KEEP = 256, MAX_TEXT = 8192, MAX_NOTE = 2048, MAX_ALL = 12_288;
+export const PROBE_MS = 1000, PROBE_AGAIN_MS = 3000;
+const ACK_MS = 5000, FORM_MS = 5000, KEEP_MS = 600_000, KEEP = 256, MAX_TEXT = 8192, MAX_NOTE = 2048, MAX_ALL = 12_288;
 export const ANSWER_ID = /^[A-Za-z0-9_-]{16,64}$/, CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable"; ownerOnly?: boolean }): void }
 type Event = { type: string; fromSessionId?: string; sessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: unknown };
@@ -160,18 +161,23 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 			if (bridges.delete(e.sessionId)) changed();
 		}
 	};
-	/** One question to the bridge bound to `key`'s pane and file (this session's answers in-process): undefined with no such bridge or no answer within 1 s. */
-	const request = async <T>(key: string, map: Map<string, (x?: T) => void>, mine: () => T | undefined | Promise<T | undefined>, msg: (id: string) => Record<string, unknown>, ms = PROBE_MS): Promise<T | undefined> => {
+	/** One question to the bridge bound to `key`'s pane and file (this session's answers in-process): undefined with no such bridge or no answer within `ms`, or with `again` sent once more at `ms` under the same id and waited on that much longer (the first answer to either send is taken). */
+	const request = async <T>(key: string, map: Map<string, (x?: T) => void>, mine: () => T | undefined | Promise<T | undefined>, msg: (id: string) => Record<string, unknown>, ms = PROBE_MS, again = 0): Promise<T | undefined> => {
 		const t = reach.get(key);
 		if (!t || !active) return undefined;
 		if (t.from === me) return mine();
-		const id = randomUUID(), k = [t.from, t.bridgeId, id].join("\n"), got = wait(map, k, ms);
-		try {
-			if (!owner()) throw new Error("not the owner");
-			channel!.publish({ version: 1, to: t.bridgeId, ...msg(id) }, { audience: "capable", ownerOnly: true });
-		} catch {
-			map.get(k)?.(); // unreachable: no answer
-		}
+		const id = randomUUID(), k = [t.from, t.bridgeId, id].join("\n"), got = wait(map, k, ms + again);
+		const ask = () => {
+			try {
+				if (!owner()) throw new Error("not the owner");
+				channel!.publish({ version: 1, to: t.bridgeId, ...msg(id) }, { audience: "capable", ownerOnly: true });
+			} catch {
+				map.get(k)?.(); // unreachable: no answer
+			}
+		};
+		ask();
+		const timer = again && map.has(k) ? setTimeout(() => map.has(k) && ask(), ms) : undefined;
+		void got.then(() => clearTimeout(timer));
 		return got;
 	};
 	// `calls`: the file's open calls (several when its newest assistant message left more than one unanswered); without them, the file's one call.
@@ -290,8 +296,8 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 			for (const [id, old] of done) if (done.size > KEEP || Date.now() - old.at > KEEP_MS) done.delete(id);
 			return sent;
 		},
-		/** What the session's editor would submit (unknown when undefined). */
-		probe: (key, nonce, flags) => request(key, probes, () => checkProbe({ ...local.probe(nonce, flags) }), (probeId) => ({ type: "probe", probeId, ...(nonce && { nonce }), ...(flags && { flags: true }) })),
+		/** What the session's editor would submit; undefined for no answer, which is not `unknown` (docs/specs/2026-11-21-operate-probe.md). A turn or a loaded machine can hold the bridge past a second, so it is asked again at 1 s and waited on 3 s more (4 s at most, well inside the link's 20 s and Herdr's 15 s); a probe only reads, so the resend changes nothing there. */
+		probe: (key, nonce, flags) => request(key, probes, () => checkProbe({ ...local.probe(nonce, flags) }), (probeId) => ({ type: "probe", probeId, ...(nonce && { nonce }), ...(flags && { flags: true }) }), PROBE_MS, PROBE_AGAIN_MS),
 		/**
 		 * One step of taking the session's queue back (pull.ts): `begin` carries the page's `take` id, `finish` the ticket. The bridge may spend 1.5 s on `finish`
 		 * and is told to answer within `PULL_BUDGET_MS` of now (the clock is this machine's) or clear nothing; the hub waits longer than that, so an answer that

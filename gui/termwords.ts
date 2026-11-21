@@ -10,7 +10,7 @@ const CODE: Record<string, () => string> = {
 };
 /** An operate refusal says why by a word of its own beside the code; every word the box, the keys and the routes give has page words (src/keys.ts, src/probe.ts, src/control.ts, src/operateseam.ts, src/operateroutes.ts, src/server/operatescope.ts). */
 const OPERATE_WHY: Record<string, () => string> = {
-	binding: m.refuse_operate_binding, "binding-unread": m.refuse_operate_binding_unread, foreground: m.refuse_operate_foreground, terminal: m.refuse_operate_terminal, unread: m.refuse_operate_unread, shell: m.refuse_operate_shell,
+	binding: m.refuse_operate_binding, "binding-unread": m.refuse_operate_binding_unread, foreground: m.refuse_operate_foreground, terminal: m.refuse_operate_terminal, unread: m.refuse_operate_unread, noanswer: m.refuse_operate_noanswer, shell: m.refuse_operate_shell,
 	"boss-command": m.refuse_operate_boss_command, command: m.refuse_operate_command, draft: m.refuse_operate_draft, ended: m.refuse_operate_ended, route: m.refuse_operate_route, "enter-chord": m.refuse_operate_enter_chord, chord: m.refuse_operate_chord,
 	"leaves-editor": m.refuse_operate_leaves_editor, "out-of-scope": m.refuse_operate_out_of_scope, "not-granted": m.refuse_operate_not_granted, "not-admin": m.refuse_operate_not_admin, "local-only": m.refuse_operate_local_only, policy: m.refuse_operate_policy,
 };

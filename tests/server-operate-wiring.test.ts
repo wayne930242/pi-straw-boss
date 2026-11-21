@@ -190,10 +190,10 @@ test("a pad key goes through the Mac's page to the box's own guard: the terminal
 	const mirror = await postJson(w.gui, `api/sessions/${w.unit.key}/mirror`, { stream: w.stream, on: true });
 	assert.deepEqual([mirror.status, mirror.body], [200, { attached: true }]);
 	await until(() => w.page.events.some((e) => e.event === "mirror" && e.data.includes(w.unit.key)), "a frame of the box's terminal on the page's stream", WAIT);
-	// The Mac checks what it can (a fresh frame on this stream), the box the rest. A box with no pi bridge cannot read its pi's key bindings, so it refuses every key, and says so in its own words.
+	// The Mac checks what it can (a fresh frame on this stream), the box the rest. A box with no pi bridge gets no answer about its pi's key bindings, so it refuses every key, and says so in its own words.
 	const key = await postJson(w.gui, `api/sessions/${w.unit.key}/keys`, { key: "up", stream: w.stream });
-	assert.deepEqual([key.status, key.body.error, key.body.why], [403, "operate_refused", "binding-unread"]);
-	assert.deepEqual(w.boxLog().filter((l) => l.event === "operate-refused").map((l) => [l.route, l.reason]), [["sessions/*/keys", "binding-unread"]], "the request reached the box's guard and was logged there");
+	assert.deepEqual([key.status, key.body.error, key.body.why], [403, "operate_refused", "noanswer"]);
+	assert.deepEqual(w.boxLog().filter((l) => l.event === "operate-refused").map((l) => [l.route, l.reason]), [["sessions/*/keys", "noanswer"]], "the request reached the box's guard and was logged there");
 	// A key for a page that shows no terminal never leaves the Mac.
 	const stale = await postJson(w.gui, `api/sessions/${w.unit.key}/keys`, { key: "up", stream: "no-such-stream" });
 	assert.equal(stale.status, 409);

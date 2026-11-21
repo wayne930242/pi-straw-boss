@@ -124,7 +124,7 @@ export function createKeys({ overlay, fresh, secret, answerable, linkRequest = a
 				if (a.operate) { // typed text and a paste go into whatever has the terminal: pi's raw mode, told by the bridge, is the proof that it is pi's editor
 					const barred = operateRawRefusal(await probe(session, undefined, true));
 					if (barred) throw no(403, "operate_refused", barred.reason, { why: barred.why });
-					await guard(session, found, pane, a); // the probe took up to a second: a secret or a dialog may have opened meanwhile
+					await guard(session, found, pane, a); // the probe took up to 4 s (dialogs.ts): a secret or a dialog may have opened meanwhile
 				}
 				return { keys: [], double: false, calls: [["pane.send_text", { pane_id: pane.pane_id, text: a.text }]] };
 			}
@@ -145,7 +145,7 @@ export function createKeys({ overlay, fresh, secret, answerable, linkRequest = a
 			}
 			if (probed) {
 				const e = await probe(session, a.run === undefined ? undefined : run?.nonce(session, a.run), a.operate); // the grant's nonce goes with a `run` Enter's probe only: no other Enter has a MAC of the draft made
-				await guard(session, found, pane, a); // the probe took up to a second: a secret or a dialog may have opened meanwhile
+				await guard(session, found, pane, a); // the probe took up to 4 s (dialogs.ts): a secret or a dialog may have opened meanwhile
 				const barred = a.operate ? operateRefusal(e) : undefined; // an operate session's Enter never runs a shell line or a /boss command, and no confirm lifts that
 				if (barred) throw no(403, "operate_refused", barred.reason, { why: barred.why });
 				const unbound = a.operate ? operateKeyRefusal(e, a.key) : undefined; // and Enter's own binding, as the bridge's pi has it, must be the editor's

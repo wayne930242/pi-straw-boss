@@ -7,7 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { withPending } from "../src/ask.ts";
 import { type Ack, type AnswerMessage, type Dialogs, type FormMessage, type FormReply, guiNamespace, REGISTER } from "../src/bridge.ts";
 import type { Doc } from "../src/documents.ts";
-import { checkAnswer, createHub, PULL_BUDGET_MS, PULL_MS } from "../src/dialogs.ts";
+import { checkAnswer, createHub, PROBE_AGAIN_MS, PROBE_MS, PULL_BUDGET_MS, PULL_MS } from "../src/dialogs.ts";
 import { canonical } from "../src/history.ts";
 import type { Net, Ref } from "../src/net.ts";
 import { type Dialog, secretDigest, selectDigest } from "../src/owners.ts";
@@ -299,6 +299,31 @@ test("probe (OT-F004): a nonce goes to the bridge in the probe message only when
 	assert.deepEqual(seen, [nonce, undefined]);
 });
 
+test("probe: a bridge busy past the first second is asked once more under the same id, and its answer at 1.5 s is taken; the late answer to the first ask counts too", async () => {
+	mock.timers.enable({ apis: ["setTimeout"] });
+	try {
+		const x = hub(), path = file([]);
+		x.h.receive("S", x.list([], { file: path }));
+		await read(x, path);
+		const asked = x.h.probe("S", undefined, true), first = x.published.at(-1)!.payload as { probeId: string; flags?: boolean }, sent = x.published.length;
+		mock.timers.tick(PROBE_MS);
+		const again = x.published.at(-1)!.payload as { probeId: string; flags?: boolean };
+		assert.deepEqual([x.published.length - sent, again.probeId, again.flags], [1, first.probeId, true], "the same probe, sent again");
+		mock.timers.tick(500);
+		x.h.receive("S", { version: 1, type: "probe-result", bridgeId: "B", probeId: first.probeId, editor: "empty" } as never);
+		assert.deepEqual(await asked, { editor: "empty" });
+		mock.timers.tick(PROBE_AGAIN_MS);
+		assert.equal(x.published.length - sent, 1, "nothing more is asked once it answered");
+		const quick = x.h.probe("S");
+		x.h.receive("S", { version: 1, type: "probe-result", bridgeId: "B", probeId: (x.published.at(-1)!.payload as { probeId: string }).probeId, editor: "text" } as never);
+		assert.deepEqual(await quick, { editor: "text" });
+		mock.timers.tick(PROBE_MS);
+		assert.equal(x.published.length - sent, 2, "an answer within the second asks nothing again");
+	} finally {
+		mock.timers.reset();
+	}
+});
+
 test("commands: the hub asks the bound bridge for a prefix and takes only its matching, well-formed list", async () => {
 	const x = hub(), path = file([]);
 	assert.equal(await x.h.commands("S", "re"), undefined, "no bridge at all");
@@ -349,9 +374,16 @@ test("probe: no bound bridge, another pane or file, a hub that does not own the 
 	assert.equal(await x.h.probe("S"), undefined, "the unit's file is another one");
 	assert.equal(x.published.length, before, "nothing was asked");
 	await read(x, path);
-	const start = Date.now();
-	assert.equal(await x.h.probe("S"), undefined, "a bridge that never answers");
-	assert.ok(Date.now() - start >= 950, "after a second");
+	mock.timers.enable({ apis: ["setTimeout"] });
+	try {
+		const silent = x.h.probe("S"), first = x.published.length;
+		mock.timers.tick(PROBE_MS);
+		assert.equal(x.published.length, first + 1, "asked once more at 1 s");
+		mock.timers.tick(PROBE_AGAIN_MS);
+		assert.equal(await silent, undefined, "a bridge that never answers");
+	} finally {
+		mock.timers.reset();
+	}
 	const other = hub({ owner: "Z" });
 	other.h.receive("S", other.list([], { file: path }));
 	await read(other, path);

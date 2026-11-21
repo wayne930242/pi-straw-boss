@@ -1089,6 +1089,7 @@
 	"refuse_operate_foreground": "Something other than pi may be holding the box's terminal (or the box cannot say), so nothing is sent from here.",
 	"refuse_operate_terminal": "The box’s pi does not hold its terminal right now (an external editor or a suspended pi may), or the box cannot say, so nothing is sent from here.",
 	"refuse_operate_unread": "The box could not tell what Enter would run in this session's editor, so nothing is sent from here.",
+	"refuse_operate_noanswer": "The session did not answer in time (it may be busy with a turn), so nothing was sent; try again in a moment.",
 	"refuse_operate_shell": "A shell line (starting with !) is not run from here: the box takes no arbitrary shell over the link.",
 	"refuse_operate_boss_command": "A /boss command is not run from here: on the box it reaches other teams' sessions and the box's own settings.",
 	"refuse_operate_command": "A slash command is not run from here: Enter would apply the command menu's highlighted choice, which this page cannot tell from the draft.",
