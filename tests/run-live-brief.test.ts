@@ -94,6 +94,25 @@ test("another main's state flip reaches a live head run as a newer live text: th
 	assert.ok(turns[2]!.messages.indexOf("docs-main idle") < turns[2]!.messages.indexOf("docs-main working"));
 });
 
+test("a tree move followed immediately by reload resends the brief without changing the section", async () => {
+	const srv = server(), turns: Turn[] = [];
+	srv.push("e1", "EVENT-ONE");
+	const r = await makeRig(root, (q) => srv.ask(q), sessions);
+	r.faux.setResponses([spy(turns) as never, spy(turns) as never]);
+	await until(() => turns.length === 1 && srv.taken.length === 1 && !r.session.isStreaming, "the first turn to settle");
+	assert.equal(count(turns[0]!.messages, BRIEF_MARK), 1);
+	const manager = r.session.sessionManager;
+	const beforeBrief = manager.getBranch().find((entry) => entry.type === "custom_message" && entry.content === eventText({ kind: "intercom", text: "EVENT-ONE", from: { id: "sb-tower-wa" } }));
+	assert.ok(beforeBrief, "the waking event precedes the brief");
+	await r.session.navigateTree(beforeBrief.id);
+	assert.ok(!r.session.messages.some((m) => (m as { details?: { brief?: boolean } }).details?.brief), "the new branch has no brief");
+	await r.session.reload();
+	srv.push("e2", "EVENT-TWO");
+	await until(() => turns.length === 2, "the first turn after reload");
+	assert.equal(turns[1]!.system, turns[0]!.system);
+	assert.equal(count(turns[1]!.messages, BRIEF_MARK), 1, "the new branch receives the brief after reload");
+});
+
 test("a whole brief and its refresh are delivered without rewriting the run's section", async () => {
 	const whole = `${FIXED} WHOLE-MARK\n\nWorkspaces now:\n- Alpha (wA): tower standing by`;
 	const srv = server({ whole }), turns: Turn[] = [];

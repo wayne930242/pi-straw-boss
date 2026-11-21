@@ -505,7 +505,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	});
 	// A compaction folds the brief into its summary with the rest: the session is given it again, behind the summary (stored without a turn of its own; steered into the turn only when the compaction retries one).
 	pi.on("session_compact", (event) => { const brief = currentBrief(); if (brief) pi.sendMessage(liveBrief(brief), event.willRetry ? { deliverAs: "steer" } : { triggerTurn: false }); });
-	pi.on("session_tree", () => void (briefSent = undefined));
+	pi.on("session_tree", () => { briefSent = undefined; keep(); });
 	/** A pane the server owns: this pi quits with the server's reason. */
 	const quitPane = (context: ExtensionContext, reason?: string) => {
 		mode = "run";
