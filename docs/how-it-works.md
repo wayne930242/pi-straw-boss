@@ -706,16 +706,16 @@ The button is disabled while its request is on its way. The writer's auto-fill c
 
 ### Auto mode
 
-For when the boss is away and nothing may wait for them (`src/auto.ts`, `autostate.ts`, `autotext.ts`, `autoscope.ts`, `bossauto.ts`, `declined.ts`, `server/automode.ts`, `autoops.ts`, `autoback.ts`, `autotower.ts`, `gui/auto.ts`; the design is `docs/specs/2026-11-09-auto-mode.md`). It covers this computer and every Herdr slot on it; Straw Link teammates are not told, and an unattended device has none.
+For when the boss is away and nothing may wait for them (`src/auto.ts`, `autostate.ts`, `autotext.ts`, `autoscope.ts`, `bossauto.ts`, `declined.ts`, `server/automode.ts`, `autoops.ts`, `autoback.ts`, `autotower.ts`, `autoreturn.ts`, `gui/auto.ts`; the design is `docs/specs/2026-11-09-auto-mode.md`, amended by `docs/specs/2026-11-21-auto-return.md`). It covers this computer and every Herdr slot on it; Straw Link teammates are not told, and an unattended device has none.
 
 The states and the doors between them:
 
 ```mermaid
 flowchart TD
-    Off(["Off"]) -->|"/boss auto on,<br/>or the head's boss_auto"| Staged(["Staged"])
+    Off(["Off"]) -->|"/boss auto on"| Staged(["Staged"])
     Staged -->|"the boss confirms"| On(["On"])
     Staged -->|"lapses after<br/>10 minutes"| Off
-    Off -->|"the page's two taps"| On
+    Off -->|"the page's two taps,<br/>or the head's boss_auto"| On
     On -->|"any door;<br/>the return list is written"| Off
 ```
 
@@ -725,11 +725,11 @@ The primary server writes `<state>/auto.json` (`on`, `since`, who switched it, a
 
 #### Who switches it
 
-Only the boss's own act: a typed `/boss auto` (`on` stages a request and the terminal asks; nothing over the socket switches on in one step), the GUI switch, and the head tower's `boss_auto`. The head's tool acts on the boss's words in the turn the run reports as started by the boss (an event that is no press, or a line typed at the head pane), which the server reads against a fixed list: a question, a negation, two directions at once, or words used before are refused. An `on` from any door but the GUI's two taps needs the confirm of a pending record, which lapses after 10 minutes and tells the head. A run token, an operate session, and a workspace tower get nothing.
+Only the boss's own act: a typed `/boss auto` (`on` stages a request and the terminal asks; nothing over the socket switches on in one step), the GUI switch, and the head tower's `boss_auto`. The head's tool acts on the boss's words in the turn the run reports as started by the boss (an event that is no press, or a line typed at the head pane), which the server reads against a fixed list: a question, a negation, two directions at once, or words used before are refused. It switches either way at once, with no confirm (the boss's decision of 2026-11-21, 「on/off 都直接切」). An `on` over the control socket stages a pending record that needs the boss's confirm (in that terminal or with the GUI's button); it lapses after 10 minutes. A run token, an operate session, and a workspace tower get nothing.
 
 #### What it refuses
 
-In every session (main, member, train, subagent) a new `ask_user_question`, `question`, `robot_hand`, `secret_drop`, `link_request`, or `mcp` browser login is refused with a note that says the boss is away; a confirm or prompt opened inside a tool call is answered as Escape without being drawn; a Straw Link gate confirm is denied (`no one can confirm this here now`); pi's trust question is answered "not trusted", except in a pane the page's `open/base` started: a person asked for that project, so its question is asked as usual. An agent's `boss_wait_ask` is refused as well, and one that is open ends: the cards wait for the boss in the GUI and the return list.
+In every session (main, member, train, subagent) a new `ask_user_question`, `question`, `robot_hand`, `secret_drop`, `link_request`, or `mcp` browser login is refused with a note that says the boss is away; a confirm or prompt opened inside a tool call is answered as Escape without being drawn; a Straw Link gate confirm is denied (`no one can confirm this here now`); pi's trust question is answered "not trusted", except in a pane the page's `open/base` started: a person asked for that project, so its question is asked as usual. An agent's `boss_wait_ask` is refused as well, and one that is open ends: the cards stay parked until auto mode ends.
 
 <details>
 <summary>Details</summary>
@@ -744,7 +744,7 @@ When it turns on, a session that sees the server's `auto-check` cancels the wait
 
 #### Towers
 
-Every tower and head brief gains one line while it is on. A boss wait recorded then is parked (`parked` on the memory entry), and so is every open one when it turns on; the card's raiser gets one `wait_parked` message. A `tower_reply` to a session whose `blocked` `call_tower` the run took is noted with its `basis` (a memory id or a boss event that is no press, else `none`). A secret card's start button is refused.
+Every tower and head brief gains one line while it is on. A boss wait recorded then is parked (`parked` on the memory entry), and so is every open one when it turns on; the card's raiser gets one `wait_parked` message, which says the card comes back to it as a `wait_returned` message when the boss is back. A `tower_reply` to a session whose `blocked` `call_tower` the run took is noted with its `basis` (a memory id or a boss event that is no press, else `none`). A secret card's start button is refused.
 
 #### The watch
 
@@ -761,11 +761,11 @@ The notice is bounded: three items of a kind in a workspace, ten workspaces with
 
 #### The return list
 
-When it ends by any door the server writes `<state>/auto-report.json` for that period (parked waits per tower and the head, cancels and refusals per session, replies a tower decided, waits that could not be cancelled, foreign writes, and what the watch saw and did: its readings, the calm ones, its wakes, the readings with no head tower open, the messages the head tower sent on its own, the workspaces with no output for 2 hours or more, and every finding it saw in one place: still open at the last reading (told, and still there), told to nobody (no head run took it, marked when it was gone by the last reading), carried only by notices parked after two head runs crashed with them, or in the last notice, which a head run still holds; at most 20 a list with the rest counted, a finding told and gone left out), makes the parked cards ordinary again, and gives the head one event. `/boss auto off` prints it, `boss_status` shows its summary, and `/boss memory done|choose|decline W<n>` acts on a parked wait.
+When it ends by any door the server first closes every parked card that still waits (open, never pressed) and sends it back to whoever raised it, so no tower relays it to the boss (`server/autoreturn.ts`; the boss's decision of 2026-11-21: 「auto off 以後就直接發回原 agent 請他們再問、再要求一次」): a session's card as one `wait_returned` message from the tower's identity to the raiser's session id, a tower's own card (and the head's own) as that tower's event, each telling the raiser to ask again itself. The card is `resolved` with `returned` (`raiser`, `tower`, or `gone`) and an outcome that says so. A raiser that is gone, a message the broker does not take within 5 s, or a tower no longer served closes the card as `gone`, with nothing left for the boss. A parked card the boss answered while away only loses the flag, and a card that was not parked is unchanged. Then the server writes `<state>/auto-report.json` for that period (the parked waits per tower and the head with where each went, written again once every message is answered, cancels and refusals per session, replies a tower decided, waits that could not be cancelled, foreign writes, and what the watch saw and did: its readings, the calm ones, its wakes, the readings with no head tower open, the messages the head tower sent on its own, the workspaces with no output for 2 hours or more, and every finding it saw in one place: still open at the last reading (told, and still there), told to nobody (no head run took it, marked when it was gone by the last reading), carried only by notices parked after two head runs crashed with them, or in the last notice, which a head run still holds; at most 20 a list with the rest counted, a finding told and gone left out), and gives the head one event. `/boss auto off` prints it, `boss_status` shows its summary, and the GUI's return panel lists where each parked card went; `/boss memory done|choose|decline W<n>` still acts on a card that was not parked.
 
 #### What remains possible
 
-A process of the same user can write files, speak to the control socket, or type into a pane. Every switch and staging is notified to every pane and listed with its requester; the head's confirm record is the one a forged request cannot skip.
+A process of the same user can write files, speak to the control socket, or type into a pane. Every switch and staging is notified to every pane and listed with its requester; a request staged over the socket still needs the boss's confirm. The head's `boss_auto` needs none, so a model that misreads a matching line of the boss's can switch auto mode on as it could always switch it off; injected text cannot, since the server reads only the boss's own words.
 
 ### Opening a main
 
@@ -2366,7 +2366,7 @@ Agents the net does not know come last, in Herdr's workspace, tab and pane order
 
 ### The tower between runs
 
-A tower the sb server runs keeps its row when no run is live: the server reports a stand-in agent `tower` on the standing pane (idle, with `standing by`, `3 queued` or `held` as its message; blocked, with `2 cards wait` first, while wait cards wait for the boss) while the tower prompt runs there ([The standing pane](#the-standing-pane)), so the row sits first in its workspace as the tower's mark and `agent.list` shows it. It is a row and nothing more: no net, dashboard, stash, closer or reaper check counts it as an agent, a main, or a member, and an idle report starts no toast, sound, or attention count. A blocked one is Herdr's own waiting state, with whatever attention Herdr gives it, and the workspace's rollup follows it, so the dashboard's tower row and the page's base show waiting; the page's tower unit stays idle between runs and raises no alert of its own (the cards are its alerts already). A run replaces it with pi's own row, and it comes back when the run ends. An ally run's pane is a row too, right under the tower (`[ally] <device label>`, see [Ally runs](#ally-runs)).
+A tower the sb server runs keeps its row when no run is live: the server reports a stand-in agent `tower` on the standing pane (idle, with `standing by`, `3 queued` or `held` as its message; blocked, with `2 cards wait` first, while its wait cards wait for the boss; the head's pane counts only its own) while the tower prompt runs there ([The standing pane](#the-standing-pane)), so the row sits first in its workspace as the tower's mark and `agent.list` shows it. It is a row and nothing more: no net, dashboard, stash, closer or reaper check counts it as an agent, a main, or a member, and an idle report starts no toast, sound, or attention count. A blocked one is Herdr's own waiting state, with whatever attention Herdr gives it, and the workspace's rollup follows it, so the dashboard's tower row and the page's base show waiting; the page's tower unit stays idle between runs and raises no alert of its own (the cards are its alerts already). A run replaces it with pi's own row, and it comes back when the run ends. An ally run's pane is a row too, right under the tower (`[ally] <device label>`, see [Ally runs](#ally-runs)).
 
 <details>
 <summary>Details</summary>
@@ -3158,7 +3158,7 @@ A service held because the pane runs a program of the boss's is started again by
 
 On Windows, where the foreground list cannot tell an idle shell from a running program, Retry reads the process table first and types only when that read succeeds and finds no program of the boss's below the pane's shell (the tower prompt aside): a read that fails says so and types nothing, a program found holds the service on it again and names it, and Retry asks again. The give-back marks the pane fresh for a minute at most, and not at all while the pane is parked. A notice of a start that failed goes when Retry is pressed, when the boss writes to a held tower, and when a later run claims.
 
-It reports the stand-in while the prompt has polled in the last 6 seconds, again when its message or state changes and every 4 minutes. The state is `blocked` while wait cards wait for the boss (open and not pressed; a secret's first step still waits): a tower's own, and at the head every tower's and its own, as the head's runs reach them; `idle` otherwise, and always on an unattended device, where nobody answers. Auto mode leaves it blocked: the cards still wait, parked, and the page shows them. The message names the cards first, then `held` or the queue (`2 cards wait · 1 queued`), in [sb's language](#language). Before a run starts pi in the pane it releases the stand-in (Herdr refuses `agent start` in a pane with an agent: `agent_pane_busy`), tells the prompt to leave, waits up to 3 seconds for it to be gone, and sends Ctrl+C only when the pane's foreground is that very prompt (by PID).
+It reports the stand-in while the prompt has polled in the last 6 seconds, again when its message or state changes and every 4 minutes. The state is `blocked` while wait cards wait for the boss (open and not pressed; a secret's first step still waits): a tower's own, and at the head only its own (a tower's card is no wait of the head's: the boss's decision of 2026-11-21); `idle` otherwise, and always on an unattended device, where nobody answers. Auto mode leaves it blocked: the cards still wait, parked, and the page shows them. The message names the cards first, then at the head the other towers' cards as a note that never blocks (`3 cards wait at other towers`), then `held` or the queue (`2 cards wait · 1 queued`, `standing by · 3 cards wait at other towers`), in [sb's language](#language). Before a run starts pi in the pane it releases the stand-in (Herdr refuses `agent start` in a pane with an agent: `agent_pane_busy`), tells the prompt to leave, waits up to 3 seconds for it to be gone, and sends Ctrl+C only when the pane's foreground is that very prompt (by PID).
 
 Then, on macOS and Linux, it waits up to 2 seconds for the prompt's process itself to be gone (the prompt saying it leaves is not its exit: Herdr admits `agent start` a few ms after the exit while zsh does not read yet, and the command's Enter is lost) and 300 ms more to settle; a prompt typed in the last 15 seconds that has not polled yet is waited for the same way, and one that does not exit in time is named in the log (`run-yield`) and the run goes on.
 

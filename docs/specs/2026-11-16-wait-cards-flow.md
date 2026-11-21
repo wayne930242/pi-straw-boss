@@ -76,3 +76,7 @@ An agent has sb show the boss open wait cards again; it cannot ask them itself w
 ## Left open
 
 - The card view on Windows (D5) waits for one VM round.
+
+## Amendment: parked waits go back (2026-11-21)
+
+The end notice no longer says "Never re-ask a parked wait with ask_user_question": a parked wait comes back to its raiser as a `wait_returned` message (a tower's own as its event), with its card closed, and the raiser asks again then. `boss_wait_ask` stays for the cards that were not parked. See [2026-11-21-auto-return.md](2026-11-21-auto-return.md), AR-D3.

@@ -288,3 +288,7 @@ The Out section left the alert queue as it was. Under auto mode (`2026-11-09-aut
 ## Amendment: the terminal (2026-11-10)
 
 Cards are also pressed in a terminal, with typed keys under the here mark: `/boss wait` in any pi, in a tower run's own pane, and the stand-in prompt's `/wait`, with the open cards shown as a block and a widget. The presses are this spec's `press` op unchanged, the secret's first step stays at this computer's keyboard and off under auto mode, and the log of a press records its door. See `2026-11-10-wait-cards-tui.md`.
+
+## Amendment: auto mode's end (2026-11-21)
+
+A parked card is no longer made an ordinary open wait when auto mode ends: it is closed (`resolved`, `returned`) and goes back to whoever raised it, to ask the boss again directly; a raiser that is gone closes it with nothing left for the boss. A card that was not parked is unchanged. See [2026-11-21-auto-return.md](2026-11-21-auto-return.md), AR-D3 and AR-D4.
