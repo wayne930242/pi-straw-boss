@@ -33,7 +33,8 @@ test("a session joins the net as a member at start: channel, tokens, net tools a
 	const a = world.agent({ id: "a", pane: "wA:p1", tab: "wA:t1" });
 	await a.start();
 	// `boss_wait_ask` (2026-11-16, tests/wait-ask.test.ts) is registered with the net tools; a member that calls it is refused.
-	assert.deepEqual([...a.tools.keys()].sort(), ["board_set", "boss_broadcast", "boss_duty", "boss_promote", "boss_rename", "boss_status", "boss_wait_ask", "call_tower", "link_request"]);
+	// `board_read` (0.81.3, box-mac-waits §14) is a net tool too; a member that calls it is refused (tests/board.test.ts).
+	assert.deepEqual([...a.tools.keys()].sort(), ["board_read", "board_set", "boss_broadcast", "boss_duty", "boss_promote", "boss_rename", "boss_status", "boss_wait_ask", "call_tower", "link_request"]);
 	assert.deepEqual(world.broker.registrations.map((r) => [r.id, r.namespace, r.ownerEligible]), [["a", hex("wA:t1"), true]]);
 	assert.deepEqual(a.tokens, { sb_role: "member" });
 	assert.deepEqual(a.entries, [], "joining writes no session entry");
