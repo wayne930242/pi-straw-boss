@@ -43,6 +43,8 @@ export interface PressDeps {
 	waitMs?: number;
 	/** Whether auto mode is on: a secret card's start button is refused then (the boss is not at the keyboard; docs/specs/2026-11-09-auto-mode.md §6, AM-F013). */
 	autoOn?(): boolean;
+	/** A card a teammate device raised (`link:<device>`, docs/specs/2026-11-21-box-mac-waits.md §2.4) has no session to tell: the wait router tells the device, and says how that went (undefined: no wait of its own). */
+	linkPress?(card: string, act: string): Promise<Delivery | undefined>;
 }
 
 /** What a press decided: the notice for the raiser and how the event reads once the delivery is known. */
@@ -185,7 +187,8 @@ export async function pressRequest(d: PressDeps, workspace: string, json: Record
 	}
 	const raiser = plan.card?.from?.id;
 	let status: Delivery | undefined;
-	if (plan.notice && raiser) {
+	if (raiser?.startsWith("link:") && d.linkPress) status = await d.linkPress(plan.entry.id, plan.act).catch((): Delivery => "failed");
+	else if (plan.notice && raiser) {
 		const asked = via === "ask" && json.asker === raiser;
 		status = await (async (): Promise<Delivery> => {
 			try {

@@ -8,6 +8,7 @@ import { type Channel, type Kit, REGISTER } from "../state.ts";
 import type { DeviceKeys } from "./device.ts";
 import { holderAlive, LinkElection } from "./election.ts";
 import { LinkHolder, type HolderOptions, type RelayPort, type SendResult } from "./holder.ts";
+import { WAIT_STATES, type WaitWire } from "./kinds.ts";
 import { createLevelOf } from "./level.ts";
 import { createOperateNotes, type Policy, type PolicyDeps, POLICY_PATH, policyStamp, readEffectiveConfig, readPolicy, unattendedNow } from "./policy.ts";
 import { RelayClient } from "./relay.ts";
@@ -77,7 +78,9 @@ export interface ServiceOptions {
 	/** Told after a holder runs and after it is gone (the operate host's clock follows the holder: one that comes after a page is connected must start it). */
 	onHolder?: () => void;
 	/** The tower service of the same server (towers.ts), when it runs: the asks local towers made for their mains, and what to tell when messages wait for a tower identity it runs. */
-	tower?: Pick<HolderOptions, "asks" | "served" | "openTower"> & {
+	tower?: Pick<HolderOptions, "asks" | "served" | "openTower" | "waits"> & {
+		/** The wait router's holder ops (src/server/linkwaitsops.ts `WAIT_OPS`): a main's `linkWait` and `waitsOn`, and the `waits` section of `board_read`. */
+		waitOps?: (body: Record<string, unknown>, from: string) => Promise<unknown>;
 		/** An answer to a `forward` confirm for a tower identity the server runs (an ally run waits for it): true when the server took it, so it is not published on the channel. */
 		confirmed?: (tower: string, dialogId: string, allow: boolean) => boolean;
 	};
@@ -93,6 +96,13 @@ export function operateSink(attended: boolean, o: Pick<ServiceOptions, "operate"
 }
 
 const NOTICES = 10;
+/** The holder ops the wait router answers (src/server/linkwaitsops.ts). */
+const WAIT_OPS = ["device-resolve", "wait-act", "wait-cancel", "waits-read"];
+/** A wait a send carries, checked as the wire's encoder will check it again. */
+const waitOf = (v: unknown): WaitWire | undefined => {
+	const w = v as Partial<WaitWire> | null;
+	return typeof w === "object" && w !== null && typeof w.id === "string" && typeof w.state === "string" && (WAIT_STATES as readonly string[]).includes(w.state) && typeof w.owner === "string" && typeof w.what === "string" && typeof w.handle === "string" ? (w as WaitWire) : undefined;
+};
 /** What a request is told when nothing is set up: no holder is coming until someone presses Set up, so it is not told to ask again. */
 const NOT_SET_UP = "Straw Link is not set up on this computer: no link holder runs here. Open Teams in the GUI and press Set up";
 
@@ -186,7 +196,7 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 				if (!tower?.confirmed?.(to, dialogId, allow)) void publish({ version: 1, type: "confirmed", to, id: dialogId, allow });
 			},
 			drainMs: opts.drainMs, presenceMs: opts.presenceMs, boardMinMs: opts.boardMs, offerAgainMs: opts.offerAgainMs, capsMs: opts.capsMs, capsMinMs: opts.capsMinMs,
-			...(tower?.asks ? { asks: tower.asks } : {}), ...(tower?.served ? { served: tower.served } : {}), ...(dialogAnswer ? { dialogAnswer } : {}), ...(unitStop ? { unitStop } : {}), ...operateSink(attended(), { operate, controller }), ...(operate && !attended() ? { operateOn: () => operateGranted(policy()), ...(operateWatch ? { operateChanged: operateWatch } : {}) } : {}), ...(onRoster ? { onRoster } : {}), ...(tower?.openTower ? { openTower: tower.openTower } : {}),
+			...(tower?.asks ? { asks: tower.asks } : {}), ...(tower?.served ? { served: tower.served } : {}), ...(dialogAnswer ? { dialogAnswer } : {}), ...(unitStop ? { unitStop } : {}), ...operateSink(attended(), { operate, controller }), ...(operate && !attended() ? { operateOn: () => operateGranted(policy()), ...(operateWatch ? { operateChanged: operateWatch } : {}) } : {}), ...(onRoster ? { onRoster } : {}), ...(tower?.openTower ? { openTower: tower.openTower } : {}), ...(tower?.waits ? { waits: tower.waits } : {}),
 		});
 		holder = fresh;
 		await fresh.start();
@@ -247,9 +257,11 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 		if (op.op === "list") return { ok: true, teams: holder.list(only) };
 		if (op.op === "board-read") return holder.boards({ ...(only ? { only } : {}), ...(typeof op.device === "string" ? { device: op.device } : {}) });
 		if (op.op === "send" && typeof op.device === "string" && typeof op.text === "string") {
-			const r = body as { awaitsReply?: unknown; inReplyTo?: unknown };
-			return holder.send({ fromSession: from, device: op.device, text: op.text, reply: op.reply === true, ...(typeof op.workspace === "string" && op.workspace ? { workspace: op.workspace } : {}), ...(typeof r.awaitsReply === "string" ? { awaitsReply: r.awaitsReply } : {}), ...(typeof r.inReplyTo === "string" ? { inReplyTo: r.inReplyTo } : {}) });
+			const r = body as { awaitsReply?: unknown; inReplyTo?: unknown; wait?: unknown };
+			const wait = waitOf(r.wait);
+			return holder.send({ fromSession: from, device: op.device, text: op.text, reply: op.reply === true, ...(typeof op.workspace === "string" && op.workspace ? { workspace: op.workspace } : {}), ...(typeof r.awaitsReply === "string" ? { awaitsReply: r.awaitsReply } : {}), ...(typeof r.inReplyTo === "string" ? { inReplyTo: r.inReplyTo } : {}), ...(wait ? { wait } : {}) });
 		}
+		if (typeof op.op === "string" && WAIT_OPS.includes(op.op)) return tower?.waitOps ? tower.waitOps(body as Record<string, unknown>, from) : { ok: false, error: "This server keeps no link waits" };
 		if (op.op === "taken" && typeof op.id === "string") return (await holder.taken(op.id, from), { ok: true });
 		if (op.op === "confirm-request" && [op.team, op.device, op.dialogId, op.digest, op.tool, op.args, op.tower].every((v) => typeof v === "string")) {
 			return holder.requestConfirm({ fromSession: from, team: op.team as string, device: op.device as string, dialogId: op.dialogId as string, digest: op.digest as string, tool: op.tool as string, args: op.args as string, tower: op.tower as string });

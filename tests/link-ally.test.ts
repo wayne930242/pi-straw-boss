@@ -89,8 +89,8 @@ const capsOf = (r: Rig, device: string) => r.holder.capsFor(TEAM_HEX, device);
 
 test("caps: each holder sends its features at its stream start, keeps the peer's, and counts one older than 2 hours as none", async () => {
 	const { a, b } = await pair();
-	await until(() => capsOf(a, bob.id).length === 4 && capsOf(b, alice.id).length === 4, 3000, "both caps");
-	assert.deepEqual(capsOf(a, bob.id), ["tower.awaitsReply", "tower-reply", "unit-status.mains", "unit-status.kind"]);
+	await until(() => capsOf(a, bob.id).length === 5 && capsOf(b, alice.id).length === 5, 3000, "both caps");
+	assert.deepEqual(capsOf(a, bob.id), ["tower.awaitsReply", "tower-reply", "unit-status.mains", "unit-status.kind", "notice.ref"], "tower.wait only with a wait router");
 	a.skew += 3 * 3600_000;
 	assert.deepEqual(capsOf(a, bob.id), [], "stale");
 	assert.deepEqual(capsOf(a, "x".repeat(26)), [], "a device that sent none");
@@ -107,7 +107,7 @@ test("a relay that refuses the caps kind is logged once and left alone for an ho
 	relay.rejectKinds.clear();
 	a.skew += 90 * 60_000;
 	b.skew = a.skew;
-	await until(() => capsOf(b, alice.id).length === 4, 3000, "caps once the hour is over");
+	await until(() => capsOf(b, alice.id).length === 5, 3000, "caps once the hour is over");
 });
 
 test("an ask id is written as the fifth field only to a device whose caps list it; to any other the tower goes plain and the answer says so", async () => {
@@ -120,7 +120,7 @@ test("an ask id is written as the fifth field only to a device whose caps list i
 	assert.equal(details(plain).asked, false);
 	assert.match(textOf(plain), /does not take ask ids/);
 	await b.holder.start();
-	await until(() => capsOf(a, bob.id).length === 4, 3000, "b's caps");
+	await until(() => capsOf(a, bob.id).length === 5, 3000, "b's caps");
 	const asked = await sendTo(a, "ask with caps", { reply: true, awaitsReply: ASK });
 	assert.equal(details(asked).asked, true);
 	await until(() => b.holder.servedFor("sb-tower-wb").length === 2, 3000, "both messages");
@@ -150,7 +150,7 @@ test("a message for a tower identity the server runs stays in the inbox, is told
 
 test("a reply goes as a tower-reply to a device whose caps list it; otherwise, and when the relay refuses the kind, as the plain tower, logged once", async () => {
 	const { a, b } = await pair({ served: false });
-	await until(() => capsOf(a, bob.id).length === 4, 3000, "caps");
+	await until(() => capsOf(a, bob.id).length === 5, 3000, "caps");
 	const reply = await sendTo(a, "the answer", { inReplyTo: ASK });
 	assert.equal(details(reply).as, "tower-reply");
 	assert.ok(relay.stored.some((s) => s.envelope.header.kind === "tower-reply"));
@@ -167,7 +167,7 @@ test("a reply goes as a tower-reply to a device whose caps list it; otherwise, a
 
 test("a tower-reply is the reply to an ask only when the server has the ask open: then it waits for the main, is offered to it, and no run gets it; any other is a plain tower for an ally run", async () => {
 	const { a, b } = await pair({ served: false });
-	await until(() => capsOf(a, bob.id).length === 4, 3000, "caps");
+	await until(() => capsOf(a, bob.id).length === 5, 3000, "caps");
 	await sendTo(a, "unasked", { inReplyTo: ASK });
 	await until(() => b.store.inboxIds().length === 1, 3000, "the message");
 	assert.deepEqual(b.taken, [{ team: TEAM_HEX, device: alice.id, ask: ASK }]);
@@ -195,7 +195,7 @@ test("a tower-reply is the reply to an ask only when the server has the ask open
 
 test("a reply offered to a main that does not take it (an older build, a main that never connects to the channel) falls back to an ally run after 5 minutes, not before (RV6-F005)", async () => {
 	const { a, b } = await pair({ served: false });
-	await until(() => capsOf(a, bob.id).length === 4, 3000, "caps");
+	await until(() => capsOf(a, bob.id).length === 5, 3000, "caps");
 	b.open = { main: "main-1", mainName: "docs-main", tower: "sb-tower-wb", workspace: "label-b" };
 	b.net = { ...netOf([["tower-b", "w-b", "label-b", b.project]]), sessions: [{ id: "tower-b", herdrLocation: { status: "current", paneId: "p0" } }, { id: "main-1", name: "docs-main", herdrLocation: { status: "current", paneId: "p9" } }] as never };
 	b.net.panes.push({ pane_id: "p9", tab_id: "w-b:t1", workspace_id: "w-b", cwd: b.project, agent_status: "idle", tokens: { sb_role: "main" } } as never);
@@ -222,7 +222,7 @@ test("a reply offered to a main that does not take it (an older build, a main th
 
 test("the thread store keeps both directions per device, mode 600, the last 20 messages, none older than 7 days", async () => {
 	const { a, b } = await pair({ served: false });
-	await until(() => capsOf(a, bob.id).length === 4, 3000, "caps");
+	await until(() => capsOf(a, bob.id).length === 5, 3000, "caps");
 	for (let i = 0; i < 12; i++) await sendTo(a, `to bob ${i}`);
 	await until(() => b.store.inboxIds().length === 12, 5000, "the messages");
 	const mine = a.store.readThread(bob.id);
@@ -241,7 +241,7 @@ test("the thread store keeps both directions per device, mode 600, the last 20 m
 
 test("a device that is no member of any team file loses its thread at the next pass", async () => {
 	const { a } = await pair({ served: false });
-	await until(() => capsOf(a, bob.id).length === 4, 3000, "caps");
+	await until(() => capsOf(a, bob.id).length === 5, 3000, "caps");
 	await sendTo(a, "hello");
 	assert.equal(a.store.threadDevices().length, 1);
 	await a.store.withLock(() => a.store.appendThread("b".repeat(26), { dir: "in", at: Date.now(), id: "1", kind: "tower", text: "stranger" }));

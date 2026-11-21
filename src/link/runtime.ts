@@ -264,6 +264,13 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 				return [];
 			}
 		},
+		/** A request to the server's wait router (docs/specs/2026-11-21-box-mac-waits.md): `device-resolve`, `wait-act`, `wait-cancel`, `waits-read`. Throws with the router's refusal. */
+		async waitOp(op: Record<string, unknown>): Promise<Record<string, unknown>> {
+			if (!inUse()) throw new Error("Straw Link is not set up on this computer");
+			const answer = await ask(op);
+			if (!answer.ok) throw new Error(String(answer.error));
+			return answer;
+		},
 		/** The allies' work boards for `board_read`; undefined when Straw Link is not set up here. A device that is not found, or is ambiguous, is an error that says so. */
 		async boards(o: { teams?: readonly string[]; device?: string } = {}): Promise<AllyBoard[] | undefined> {
 			if (!inUse()) return undefined;

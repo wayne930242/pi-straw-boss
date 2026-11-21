@@ -16,6 +16,7 @@ import { createAllows } from "./allows.ts";
 import { tellVia } from "./boardpanel.ts";
 import { allyPort } from "./allyport.ts";
 import { createAsks } from "./asks.ts";
+import { startLinkWaits, type WaitsHub } from "./linkwaitsops.ts";
 import { cliBeside, createGuiHost, spawnRestart } from "./guihost.ts";
 import { runningTrains, trainsRefusal } from "./restartguard.ts";
 import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
@@ -121,7 +122,7 @@ export interface ServerOptions {
 	stall?: StartStall["over"];
 	/** The auto watch's seams (watchops.ts), for tests: without them a test run has no watch. */
 	autoWatch?: StartWatch["over"];
-	/** The watchdog routes' seams (watchdogops.ts), for tests: the hold's length, the read interval, the timer. */ watchdog?: StartWatchdog["over"];
+	/** The watchdog routes' seams (watchdogops.ts), for tests: the hold's length, the read interval, the timer. */ watchdog?: StartWatchdog["over"]; /** The wait router's sweep (linkwaitsops.ts), for tests: its interval, or false for none. */ waits?: number | false;
 	touchMs?: number;
 	brokerMs?: number;
 	herdrGoneMs?: number;
@@ -190,7 +191,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const follower = slot.primary ? undefined : createAutoFollower({ dir: slot.stateDir, primary: { ...slot, primary: true, dir: slot.stateDir }, log: (event, facts) => log.line(event, facts), returnParked: () => towers?.returnParked(), tellHead: (text) => { const workspace = towers?.head.status()?.workspace; if (workspace) towers!.runs.notice(workspace, text, `auto:${now()}`); } });
 	// An unattended device has no boss at it (autoops.ts): the link holder says which this computer is.
 	const unattended = () => Boolean(link?.holder) && !link!.attended();
-	let dog: Watchdog | undefined, cars: Cars | undefined; // the watchdog routes (watchdogops.ts), assigned with the GUI host; the book of cars and the notice sender (carops.ts), assigned before the first request is taken
+	let dog: Watchdog | undefined, cars: Cars | undefined, waitsHub: WaitsHub | undefined; // the watchdog routes (watchdogops.ts), assigned with the GUI host; the book of cars and the notice sender (carops.ts), and the wait router (linkwaitsops.ts), assigned before the first request is taken
 	// The Allows the dialog hub gave (a gate or an approval closed with a yes) and the asks the towers made for their mains: both are held for the tower service (B6).
 	const allows = createAllows({ now }), asks = createAsks(slot, now);
 
@@ -633,8 +634,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	};
 	dog = startWatchdog({ net: guiHost.watchNet(), env, now, client: () => (client?.isConnected() ? client : undefined), log: (event, facts) => log.line(event, facts), stops, ...(o.watchdog ? { over: o.watchdog } : {}) });
 	cars = startCars({ slot, run: cfg.run, now, startedAt, client: () => (client?.isConnected() ? client : undefined), startOf, log: (event, facts) => log.line(event, facts), stops });
+	waitsHub = startLinkWaits({ slot, env, now, log: (event, facts) => log.line(event, facts), run: cfg.run, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, link: () => link, stops, autoOn: () => auto?.view().on === true, ...(o.waits !== undefined ? { tickMs: o.waits } : {}) });
 	towers = createTowers({
-		ally: allyPort(() => link), allows, asks, cars: cars.book,
+		ally: allyPort(() => link), allows, asks, cars: cars.book, waits: waitsHub.router,
 		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => towerRuns().enabled, server: serverTools, unattended,
 		link: async (body, from) => (!slot.primary ? { ok: false, code: "no_link", error: NO_LINK } : link ? link.request(body, from) : { ok: false, code: "no_holder", error: "The link holder is not running in the sb server yet; ask again in a moment" }),
 		sessions: () => (client ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))),
@@ -721,7 +723,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			// A `unit-stop` that passed the holder's checks: the tower service decides which main and whose, and the revoker carries it out (unitstop.ts). Its presence puts `unit-stop` in this box's caps.
 			unitStop: (a) => (towers ? towers.unitStop(a) : Promise.reject(new Error("The tower service is not running"))),
 			// The tower service takes part in the holder's work (B6): an ask answered by a `tower-reply` is the main's, messages for a tower identity the server runs wake an ally run, and a `forward` answer reaches its run.
-			tower: { asks: { take: (q) => asks.take(q) }, served: (identity) => towers?.allyWaiting(identity), confirmed: (to, dialogId, allow) => towers?.runs.confirmed(dialogId, allow) ?? false,
+			tower: { asks: { take: (q) => ((t) => (t && waitsHub?.router.answered(q.ask), t))(asks.take(q)) }, waits: waitsHub!.holder, waitOps: (body, from) => waitsHub!.op(body, from), served: (identity) => towers?.allyWaiting(identity), confirmed: (to, dialogId, allow) => towers?.runs.confirmed(dialogId, allow) ?? false,
 				openTower: towerOpener({ run: cfg.run, towers: () => towers, now, home: o.link?.home ?? homedir(), agentDir: env.PI_CODING_AGENT_DIR ?? join(o.link?.home ?? homedir(), ".pi", "agent"),
 					failed: (from, project, error) => void unitsOut().notify(`tower-open/${from}/${project}/${Math.floor(now() / 600_000)}`, { kind: "tower-open-failed", unit: allyLabel(project), text: `Could not open a tower for ${project}: ${error.message}` }, { device: from }) }) },
 		});

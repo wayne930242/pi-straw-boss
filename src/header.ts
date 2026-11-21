@@ -7,7 +7,7 @@
 
 import { restrictLabel } from "./link/text.ts";
 
-export type Kind = "call_tower" | "broadcast" | "tower_send" | "tower_reply" | "handoff" | "link_reply" | "wait_card" | "car_notice" | "board_clear" | "auto_notice" | "wait_parked" | "wait_returned" | "watch_report";
+export type Kind = "call_tower" | "broadcast" | "tower_send" | "tower_reply" | "handoff" | "link_reply" | "wait_card" | "car_notice" | "board_clear" | "auto_notice" | "wait_parked" | "wait_returned" | "watch_report" | "link_wait" | "link_wait_state" | "link_notice";
 /** The roles a joined session publishes in its pane's `sb_role` token, and so the roles a header names (`train`: the worker the tower opened for an integrator's manifest). */
 export const ROLE_WORDS = ["tower", "main", "member", "train"] as const;
 /** `session` is a pi session that did not join the net (a scope `all` broadcast reaches it). `head`: the tower of the head workspace. */
@@ -21,7 +21,7 @@ const FOR = /^[A-Za-z0-9_.:-]{1,80}$/;
 /** The verified sender of a message that came over Straw Link: its device label and short id from the roster, and the team. */
 export interface Remote { device: string; short: string; team: string }
 /** `origin`: `remote:<device id>` on a message a tower sent to a local session during a Straw Link remote turn, so its receiver knows a peer's text started it. */
-export interface Stamp { from: Party; kind: Kind; scope: string; to: Party[]; reply: boolean; remote?: Remote; origin?: string; /** The ask id the message carries (a `tower` with `awaitsReply`): an ally run answers it with `inReplyTo`. */ asks?: string; /** A `link_reply` for a main: the tower identity that asked on its behalf. */ for?: string; /** A `call_tower`: why the main calls. */ why?: Why; /** The head tower's forward: the ask it opened (`H12`), and `boss:<event id>` when the boss's own turn made it. */ ask?: string; relay?: string; /** A tower's answer to the head's ask. */ inReplyTo?: string; /** A `wait_card`: the wait the boss pressed a card of (`W9`). */ wait?: string; /** A tower's forward of a car slip: the id of the `call_tower` event it came in and the session id that sent it (docs/specs/2026-11-07-train-workers.md §5.5); the code writes both from the event it recorded, and they go together. */ fwd?: string; fwdFrom?: string }
+export interface Stamp { from: Party; kind: Kind; scope: string; to: Party[]; reply: boolean; remote?: Remote; origin?: string; /** The ask id the message carries (a `tower` with `awaitsReply`): an ally run answers it with `inReplyTo`. */ asks?: string; /** A `link_reply` for a main: the tower identity that asked on its behalf. */ for?: string; /** A `call_tower`: why the main calls. */ why?: Why; /** The head tower's forward: the ask it opened (`H12`), and `boss:<event id>` when the boss's own turn made it. */ ask?: string; relay?: string; /** A tower's answer to the head's ask. */ inReplyTo?: string; /** A `wait_card`: the wait the boss pressed a card of (`W9`). */ wait?: string; /** A link wait (docs/specs/2026-11-21-box-mac-waits.md): the teammate device a code-written `link_wait`, `link_wait_state`, or `link_notice` line is about (`remote=`, `device=`; no `verified=`, since no peer wrote it). */ peer?: { label: string; short: string }; /** A main's `call_tower` that waits on a teammate device (§2.1): its short id, the owner and what, from the call's own fields; `cancel` withdraws the open wait to it. */ waitsOn?: { short: string; owner?: string; what?: string; cancel?: true }; /** A tower's forward of a car slip: the id of the `call_tower` event it came in and the session id that sent it (docs/specs/2026-11-07-train-workers.md §5.5); the code writes both from the event it recorded, and they go together. */ fwd?: string; fwdFrom?: string }
 const ORIGIN = /^remote:[a-z2-7]{26}$/;
 /** A remote sender's `id=`: never a session id of this machine, so a reply cannot be aimed at a local session by a remote's choice. */
 export const REMOTE_ID = /^link:[a-z2-7]{26}$/;
@@ -35,8 +35,9 @@ const MAX_NAMED = 20;
 const recipient = (p: Party) => `${clean(p.name)} (${roleOf(p)}${p.workspace ? ` of ${clean(p.workspace)}` : ""})`;
 
 const FWD = /^[0-9a-f]{16}$/, FWD_FROM = /^[A-Za-z0-9_.:@-]{1,128}$/;
-const WAIT = /^W\d{1,6}$/, HEAD_ASK = /^H\d{1,6}$/, RELAY = /^boss:[A-Za-z0-9_.-]{1,80}$/;
-export function header({ from, kind, scope, to, reply, remote, origin, asks, for: asked, why, ask, relay, inReplyTo, wait, fwd, fwdFrom }: Stamp): string {
+const WAIT = /^[WL]\d{1,6}$/, HEAD_ASK = /^H\d{1,6}$/, RELAY = /^boss:[A-Za-z0-9_.-]{1,80}$/;
+export function header({ from, kind, scope, to, reply, remote, origin, asks, for: asked, why, ask, relay, inReplyTo, wait, fwd, fwdFrom, peer, waitsOn }: Stamp): string {
+	if ((peer && !/^[a-z2-7]{6}$/.test(peer.short)) || (waitsOn && !/^[a-z2-7]{6}$/.test(waitsOn.short))) throw new Error("A teammate device is named by its short id");
 	if ((fwd === undefined) !== (fwdFrom === undefined)) throw new Error("A forward names both the event it came in and its sender");
 	if (fwd !== undefined && !FWD.test(fwd)) throw new Error("A forward is the 16-hex id of the call_tower event it came in");
 	if (fwdFrom !== undefined && !FWD_FROM.test(fwdFrom)) throw new Error("A forward names its sender by session id");
@@ -54,9 +55,11 @@ export function header({ from, kind, scope, to, reply, remote, origin, asks, for
 	const fields = [
 		`from=${quote(text(from.name || from.id))}`, `id=${quote(from.id)}`, `role=${from.role}`, ...(from.head ? ["head=yes"] : []),
 		...(from.workspace ? [`workspace=${quote(text(from.workspace))}`] : []),
+		...(peer && !remote ? [`remote=${quote(restrictLabel(peer.label))}`, `device=${peer.short}`] : []),
 		...(remote ? [`remote=${quote(restrictLabel(remote.device))}`, `device=${remote.short}`, `team=${quote(clean(remote.team).slice(0, 80))}`, "verified=yes"] : []),
 		`kind=${kind}`, `scope=${scope}`, `to=${quote([...to.slice(0, MAX_NAMED).map(recipient), ...(to.length > MAX_NAMED ? [`+${to.length - MAX_NAMED} more`] : [])].join("; "))}`, `reply=${reply ? "expected" : "none"}`,
 		...(why ? [`why=${why}`] : []),
+		...(waitsOn ? [`waits-on=${waitsOn.short}`, ...(waitsOn.cancel ? ["waits-cancel=yes"] : [...(waitsOn.owner ? [`waits-owner=${quote(waitsOn.owner)}`] : []), `waits-what=${quote(waitsOn.what ?? "")}`])] : []),
 		...(origin ? [`origin=${origin}`] : []),
 		...(asks ? [`asks=${asks}`] : []),
 		...(asked ? [`for=${asked}`] : []),

@@ -10,7 +10,7 @@ import { type Level, LEVELS, type LinkConfig, type Share } from "./config.ts";
 import { shortId, type DeviceKeys } from "./device.ts";
 import { buildEnvelope, openEnvelope, parseEnvelope, recordTaken, type Header, type ReceiveState } from "./envelope.ts";
 import { PayloadTooLargeError, ProtocolError, RelayError, UnauthorizedError } from "./errors.ts";
-import { askIdOk, type Board, type BoardWireEntry, type Caps, type ConfirmAnswer, type ConfirmRequest, type DialogAnswer, type DialogClose, type DialogOpen, encodePlaintext, handleOk, KINDS, kindOk, LIMITS, type MainStatus, type Notice, type OperateMessage, operateDirectionOk, type Presence, type TowerMessage, type TowerReply, type UnitStatus, type UnitStop, type WorkspaceState } from "./kinds.ts";
+import { askIdOk, type Board, type BoardWireEntry, type Caps, type ConfirmAnswer, type ConfirmRequest, type DialogAnswer, type DialogClose, type DialogOpen, encodePlaintext, handleOk, KINDS, kindOk, LIMITS, type MainStatus, type Notice, type OperateMessage, operateDirectionOk, type Presence, type TowerMessage, type TowerReply, type UnitStatus, type UnitStop, type WaitWire, type WorkspaceState } from "./kinds.ts";
 import { type AdminRun, type InviteView, type JoinRequestView, type JoinView, type Prefill, TeamAdmin, type TeamView } from "./admin.ts";
 import { Outbox, type QueuedEnvelope } from "./outbox.ts";
 import { Requests } from "./request.ts";
@@ -104,6 +104,16 @@ export interface HolderOptions {
 	onRoster?: (team: string) => void;
 	/** An unattended device: where a `unit-stop` goes once the holder's checks passed (docs/specs/2026-11-07-link-remote-stop.md §4: this device unattended, an attended sender at `dispatch` now, a request no older than 15 minutes, a known mode). The server's checks follow there. */
 	unitStop?: (a: UnitStopInput) => void | Promise<void>;
+	/**
+	 * The wait router of the sb server (src/server/linkwaits.ts, docs/specs/2026-11-21-box-mac-waits.md): with it this device lists `tower.wait` in its caps. `take` gets every inbox message that carries a wait (an open one for this
+	 * computer, or a state of one either end holds) with the workspace delivery picks for its project, and answers whether it is taken (it then leaves the inbox) or waits there. `orphan` gets the reply to an ask whose main is gone
+	 * or no longer a main (C2): taken, it never reaches an ally run. `notice` gets a box's notice that names an ask (`ref`, C4).
+	 */
+	waits?: {
+		take(item: InboxItem, workspace: string | undefined): Promise<boolean>;
+		orphan?(item: InboxItem, mainName: string, workspace: string | undefined): Promise<boolean>;
+		notice?(n: { team: string; device: string; label: string; kind: string; text: string; ref: string }): void;
+	};
 }
 
 /** An `operate` message the holder took (docs/specs/2026-11-07-link-operate.md §5.1): checked, decrypted and in the right direction for its sender. `dropped` is the relay's resync hint. */
@@ -132,7 +142,8 @@ export interface ConfirmView { dialogId: string; team: string; from: string; fro
 const CONFIRM_MAX_MS = 10 * 60_000;
 const CONFIRM_MAX = 20;
 /** `awaitsReply`: an ask id (32 hex) a local tower made for a main; `inReplyTo`: the ask id of the message this one answers (an ally run's reply). Each is written to the wire only against the peer's `caps` (Replies for a main). */
-export interface SendRequest { fromSession: string; device: string; workspace?: string; text: string; reply: boolean; awaitsReply?: string; inReplyTo?: string }
+/** `wait`: a link wait or its state (docs/specs/2026-11-21-box-mac-waits.md §2.3), written as the sixth field to a peer whose `caps` list `tower.wait`; to any other an open wait goes as text whose first line is `[waits on you: <what>]`, and a state is not sent. */
+export interface SendRequest { fromSession: string; device: string; workspace?: string; text: string; reply: boolean; awaitsReply?: string; inReplyTo?: string; wait?: WaitWire }
 export type SendResult = { ok: true; text: string; details: Record<string, unknown> } | { ok: false; error: string };
 /** What the GUI shows as a notice. `data` is plain text and numbers: the page puts them in text nodes. */
 export type AlertKind = "join-request" | "confirm" | "dialog" | "fork" | "mismatch" | "unreachable" | "inbox" | "held" | "served" | "notice";
@@ -199,6 +210,8 @@ export interface LinkView extends LinkSummary {
 const HEAD_DIFF_MS = 2 * 60_000, DOWN_MS = 2 * 60_000, HELD_MS = 10 * 60_000;
 /** A reply for a main that the main has not taken this long after the first offer (an older build never connects to the channel) goes to an ally run, which is told who asked. */
 const REPLY_OFFER_MS = 5 * 60_000;
+/** With a wait router (C2, docs/specs/2026-11-21-box-mac-waits.md §4) a live main keeps the offer of its reply until the ask itself ends (24 hours, src/server/asks.ts `ASK_KEEP_MS`). */
+const REPLY_HOLD_MS = 24 * 3600_000;
 
 export interface AllyDevice { id: string; short: string; label: string; online: boolean; unattended?: true; ageMs: number | null; roster: number | null; workspaces: WorkspaceState[] }
 export interface AllyTeam { team: string; name: string; devices: AllyDevice[] }
@@ -210,7 +223,7 @@ const BOARD_OFFLINE_MS = 2 * 3600_000, BOARD_MAX_AGE_MS = 7 * 24 * 3600_000;
 /** The board is sent at most this often per team, and once an hour unchanged; a relay without the kind is left alone for an hour. */
 const BOARD_MIN_MS = 15_000, BOARD_REFRESH_MS = 3600_000, BOARD_OFF_MS = 3600_000;
 /** What this build takes (docs/specs/2026-10-26-sb-backend.md, Replies for a main). A `caps` older than 2 hours counts as none. */
-export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1"] as const;
+export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref"] as const;
 export const CAPS_STALE_MS = 2 * 3600_000;
 /** A live frame is worth nothing late: its post gives up after this, so a stalled relay does not hold the serial chain of sends (spec §11.1, task 5). */
 const LIVE_POST_MS = 5000;
@@ -711,10 +724,10 @@ export class LinkHolder {
 		const item: InboxItem = {
 			v: 1, id: header.id.toString("hex"), team: run.team, from: header.from, fromLabel: sender?.label ?? shortId(header.from), fromShort: shortId(header.from),
 			seq: header.seq, sentAt: header.ts, received: this.now(), fromWorkspace: message.fromWorkspace, toWorkspace: message.toWorkspace, replyExpected: message.replyExpected, text: message.text,
-			...(message.awaitsReply !== undefined ? { awaitsReply: message.awaitsReply } : {}),
+			...(message.awaitsReply !== undefined ? { awaitsReply: message.awaitsReply } : {}), ...(message.wait !== undefined ? { wait: message.wait } : {}),
 		};
 		this.o.store.putInbox(item);
-		this.o.store.log({ event: "tower-in", kind: "tower", team: run.team, from: header.from, id: item.id, ...(message.awaitsReply !== undefined ? { ask: message.awaitsReply } : {}) });
+		this.o.store.log({ event: "tower-in", kind: "tower", team: run.team, from: header.from, id: item.id, ...(message.awaitsReply !== undefined ? { ask: message.awaitsReply } : {}), ...(message.wait !== undefined ? { wait: message.wait.id.slice(0, 8), state: message.wait.state } : {}) });
 		this.thread(header.from, { dir: "in", at: item.received, id: item.id, kind: "tower", ...(message.awaitsReply !== undefined ? { awaitsReply: message.awaitsReply } : {}), text: message.text });
 	}
 	/** An ally run took the inbox message `id` into its session: one `link.log` line names the run, the sender, the team and the ask, never the text (docs/specs/2026-11-05-link-shared-box.md, Audit). */
@@ -856,24 +869,33 @@ export class LinkHolder {
 				await store.withLock(() => store.removeInbox(id));
 				continue;
 			}
+			const pickedWs = () => towersFor(net, policy.project, item.toWorkspace)[0]?.workspace.workspace_id;
+			if (item.wait && this.o.waits) {
+				// A link wait, or a state of one: the router takes it (docs/specs/2026-11-21-box-mac-waits.md §2.2); no ally run ever gets it. One it keeps waits here for the next pass.
+				if (await this.o.waits.take(item, pickedWs()).catch((error: Error) => (store.log({ event: "wait-take-failed", id, error: error.message }), false))) {
+					this.waiting.delete(id);
+					await store.withLock(() => store.removeInbox(id));
+				}
+				continue;
+			}
 			if (item.reply) {
-				// An answer to an ask a local tower made for a main goes to that main, as peer data; a main that is gone (not live, or no longer its tab's main) hands it to an ally run, which is told who asked.
+				// An answer to an ask a local tower made for a main goes to that main, as peer data. A main that is gone (not live, or no longer its tab's main) hands it to the wait router, which tells another main of the workspace or the
+				// boss's list (C2, docs/specs/2026-11-21-box-mac-waits.md §4); only a build with no router hands it to an ally run, which is told who asked. A live main keeps the offer, again every 30 s, until the ask's 24 hours end.
 				const main = net.sessions.find((s) => s.id === item.reply!.main), mainPane = main && net.panes.find((p) => p.pane_id === main.herdrLocation?.paneId);
-				if (!main || mainPane?.tokens?.sb_role !== "main") {
-					const { reply, ...plain } = item;
+				const live = !!main && mainPane?.tokens?.sb_role === "main", was = this.offered.get(id), first = live && was?.tower === main.id ? (was.first ?? was.at) : this.now();
+				const over = live && !this.o.waits && this.now() - first >= REPLY_OFFER_MS, expired = this.now() - item.received >= REPLY_HOLD_MS;
+				if (!live || over || expired) {
+					const { reply, ...plain } = item, why = !main ? "gone" : !live ? "not-main" : expired ? "expired" : "not-taken";
+					this.offered.delete(id);
+					if (this.o.waits?.orphan && (await this.o.waits.orphan(item, reply!.mainName, pickedWs()).catch((error: Error) => (store.log({ event: "wait-take-failed", id, error: error.message }), false)))) {
+						store.log({ event: "reply-routed", id, why });
+						this.waiting.delete(id);
+						await store.withLock(() => store.removeInbox(id));
+						continue;
+					}
 					await store.withLock(() => store.putInbox({ ...plain, askedBy: reply!.mainName }));
 					if (main) this.noteReplyFallback(id, main.id);
-					store.log({ event: "reply-fallback", id, why: main ? "not-main" : "gone" });
-					this.again = true;
-					continue;
-				}
-				const was = this.offered.get(id), first = was?.tower === main.id ? (was.first ?? was.at) : this.now();
-				if (this.now() - first >= REPLY_OFFER_MS) {
-					const { reply, ...plain } = item;
-					this.offered.delete(id);
-					await store.withLock(() => store.putInbox({ ...plain, askedBy: reply!.mainName }));
-					this.noteReplyFallback(id, main.id);
-					store.log({ event: "reply-fallback", id, why: "not-taken" });
+					store.log({ event: "reply-fallback", id, why });
 					this.again = true;
 					continue;
 				}
@@ -1081,7 +1103,10 @@ export class LinkHolder {
 		// A field or a kind this peer's build may not take goes to it only against its last `caps`; otherwise the message is the plain `tower` an older build reads (Replies for a main).
 		const peer = this.capsOf(run, target.id);
 		if ((req.awaitsReply !== undefined && !askIdOk(req.awaitsReply)) || (req.inReplyTo !== undefined && !askIdOk(req.inReplyTo))) return { ok: false, error: "An ask id is 32 lowercase hex digits" };
-		const withAsk = req.awaitsReply !== undefined && peer.includes("tower.awaitsReply");
+		const withAsk = req.awaitsReply !== undefined && peer.includes("tower.awaitsReply"), withWait = req.wait !== undefined && peer.includes("tower.wait");
+		if (req.wait !== undefined && !withWait && req.wait.state !== "open") return { ok: false, error: "That device's build takes no link waits, so the state of one is not sent" };
+		// An open wait to a build that takes none goes as text whose first line says so: its ally run is told to escalate such a message (docs/specs/2026-11-21-box-mac-waits.md §3).
+		const text = req.wait !== undefined && !withWait ? `[waits on you: ${req.wait.what}]\n${req.text}` : req.text;
 		let kind: "tower" | "tower-reply" = req.inReplyTo !== undefined && peer.includes("tower-reply") && this.now() >= run.replyOffUntil ? "tower-reply" : "tower";
 		const submit = (as: "tower" | "tower-reply") => run.outbox.submit((seq) => {
 			const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch);
@@ -1090,7 +1115,7 @@ export class LinkHolder {
 				team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq, ts: this.now(), kind: as, to: [target.id],
 				plaintext: as === "tower-reply"
 					? encodePlaintext("tower-reply", { inReplyTo: req.inReplyTo!, text: req.text })
-					: encodePlaintext("tower", { fromWorkspace: allyLabel(workspace?.label), toWorkspace: req.workspace ?? "", replyExpected: req.reply, text: req.text, ...(withAsk ? { awaitsReply: req.awaitsReply! } : {}) }),
+					: encodePlaintext("tower", { fromWorkspace: allyLabel(workspace?.label), toWorkspace: req.workspace ?? "", replyExpected: req.reply, text, ...(withAsk ? { awaitsReply: req.awaitsReply! } : {}), ...(withWait ? { wait: req.wait! } : {}) }),
 			});
 		});
 		const post = async (as: "tower" | "tower-reply") => {
@@ -1127,7 +1152,7 @@ export class LinkHolder {
 		this.lastSent.set(`${pane.workspace_id}\n${target.id}`, { text: req.text, at: this.now() });
 		while (this.lastSent.size > 64) this.lastSent.delete(this.lastSent.keys().next().value!);
 		store.log({ event: "send", team: run.team, to: target.id, id, outcome: outcome === undefined ? "queued" : outcome === "posted" ? "posted" : String(outcome) });
-		const details = { team: run.team, device: target.id, id, seq: queued.seq, as: kind, ...(req.awaitsReply !== undefined ? { asked: withAsk } : {}) };
+		const details = { team: run.team, device: target.id, id, seq: queued.seq, as: kind, ...(req.awaitsReply !== undefined ? { asked: withAsk } : {}), ...(req.wait !== undefined ? { waited: withWait } : {}) };
 		const how = req.awaitsReply !== undefined ? (withAsk ? " It carries your ask id, so its answer comes back to the main that asked." : " That device\'s build does not take ask ids, so it went as a plain message and the answer will reach a fresh ally run here, not the main.") : req.inReplyTo !== undefined ? (kind === "tower-reply" ? " Sent as a reply to the ask." : " Sent as a plain message: that device\'s build takes no replies to an ask.") : "";
 		if (outcome === "posted") return { ok: true, text: `Sent to the tower of ${name}${req.workspace ? ` (workspace ${req.workspace})` : ""} through the relay. ${req.reply ? "It replies through tower_send." : "It is told no reply is expected."}${how}`, details: { ...details, status: "posted" } };
 		if (outcome === "halted") return { ok: true, text: `The relay refused this device just now; the message to ${name} is saved on this computer and tried again within ${Math.round((this.o.haltRetryMs ?? 60_000) / 1000)} s.`, details: { ...details, status: "queued" } };
@@ -1169,7 +1194,7 @@ export class LinkHolder {
 				sent.at = now; // a failed post is tried again after the spacing (`due` is set again by the catch), not at every tick
 				sent.due = false;
 				const hello = sent.hello;
-				const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device.keys, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: (CAPS_FEATURES as readonly string[]).filter((f) => (f !== "unit-stop" || this.o.unitStop) && (f !== "operate/1" || listed)).concat(hello ? [HELLO] : []) }) });
+				const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device.keys, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: (CAPS_FEATURES as readonly string[]).filter((f) => (f !== "unit-stop" || this.o.unitStop) && (f !== "operate/1" || listed) && (f !== "tower.wait" || this.o.waits)).concat(hello ? [HELLO] : []) }) });
 				await run.client.postEnvelope(run.teamId, envelope);
 				sent.ts = ts;
 				if (hello) sent.hello = false; // the word goes once: a post that failed carries it in the next
@@ -1188,7 +1213,7 @@ export class LinkHolder {
 		for (const [id, w] of this.waiting) {
 			if (!w.served || w.identity !== identity) continue;
 			const item = this.o.store.readInbox(id);
-			if (item && !item.reply) items.push(item);
+			if (item && !item.reply && !item.wait) items.push(item);
 		}
 		return items.sort((a, b) => a.received - b.received || (a.id < b.id ? -1 : 1));
 	}
@@ -1810,6 +1835,24 @@ export class LinkHolder {
 	/** This device's id, once the holder runs. */
 	get deviceId(): string | undefined {
 		return this.device?.keys.id;
+	}
+	/** This device's own label. */
+	get deviceLabel(): string | undefined {
+		return this.device?.label;
+	}
+	/** A teammate device named by a label, a short id, or an id, among every team this holder runs (a main's `waitsOn`, docs/specs/2026-11-21-box-mac-waits.md §2.1): one that fits two, or this device, is refused with the candidates. */
+	resolveTeammate(device: string): { ok: true; id: string; short: string; label: string; team: string } | { ok: false; error: string } {
+		if (!this.running || !this.device) return { ok: false, error: "This computer's link holder is not running" };
+		const members: MemberRef[] = oneTeamEach([...this.runs.values()].filter((run) => !run.dead).flatMap((run) => {
+			try {
+				return [...this.loadTeam(run.team).state.members].map(([id, m]) => ({ team: run.team, id, ...(m.label !== undefined ? { label: m.label } : {}) }));
+			} catch {
+				return [];
+			}
+		}));
+		const target = resolveDevice(device, members, this.device.keys.id);
+		if (!target.ok) return { ok: false, error: target.error };
+		return { ok: true, id: target.id, short: shortId(target.id), label: members.find((m) => m.id === target.id)?.label ?? shortId(target.id), team: target.team };
 	}
 	/** The label, short id, and team name a header names the sender of an inbox item by. */
 	senderOf(item: InboxItem): { label: string; short: string; team: string } {
