@@ -6,7 +6,7 @@ import { type Change, type AutoMode, readReportFile, type View } from "./automod
 
 // A secondary Herdr slot's part of auto mode (docs/specs/2026-11-09-auto-mode.md, §1 and §10: one computer, every Herdr slot on it; AMC-F002). Only the primary server writes `auto.json` and holds the record of what it wrote, so a
 // secondary server follows the same files: it answers a session's `auto-check` from them, forwards every other `auto-*` request to the primary server's socket, and gives its towers the primary's state, so the brief line, the
-// parking of open waits, and the end of the period reach this slot too.
+// parking of open waits, and the return of the parked cards at the end of the period reach this slot too.
 
 /** What the tower service and the backstop of a secondary server read: the primary's state from the files, and what must reach the primary's records forwarded. */
 export type AutoFollower = Pick<AutoMode, "view" | "note" | "decided" | "bossAuto" | "onSwitch" | "check"> & { tick(): void; reply(request: Request): Promise<Reply> | undefined };
@@ -16,8 +16,11 @@ export interface FollowDeps {
 	/** The primary server's slot: its record names the socket. */
 	primary: Slot;
 	log(event: string, facts: Record<string, string | number | boolean | undefined>): void;
-	/** This slot's towers: the waits parked at the switch on are told by the tower service itself; the end of the period makes them ordinary again, and the head is told once. */
-	unpark?(): void;
+	/**
+	 * This slot's towers: the waits parked at the switch on are told by the tower service itself; at the end of the period every parked card goes back to whoever raised it and is closed (docs/specs/2026-11-21-auto-return.md,
+	 * AR-D3, AR-D4), and the head is told once. The return list is the primary's: this slot's cards are not on it.
+	 */
+	returnParked?(): { settled: Promise<unknown> } | undefined;
 	tellHead?(text: string): void;
 	/** A seam for tests: one request to the primary server. */
 	call?(request: Request): Promise<Reply>;
@@ -57,7 +60,7 @@ export function createAutoFollower(d: FollowDeps): AutoFollower {
 		if (next.on === from.on) return;
 		try {
 			if (!next.on) {
-				d.unpark?.();
+				void d.returnParked?.()?.settled.catch((error: Error) => d.log("auto-return", { text: error.message }));
 				const report = readReportFile(d.dir);
 				if (report) d.tellHead?.(endEvent(report));
 			}

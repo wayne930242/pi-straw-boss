@@ -5,12 +5,13 @@ import { h, nodes } from "./dom.ts";
 import { type Answer, post } from "./post.ts";
 import { m } from "./sentences.ts";
 
-// The return panel (docs/specs/2026-11-09-auto-mode.md, section 8, point 3): when the boss is back, one panel with what auto mode left. The parked waits come first as the same cards the tower's rows draw (pressable), then the rest folded:
+// The return panel (docs/specs/2026-11-09-auto-mode.md, section 8, point 3): when the boss is back, one panel with what auto mode left. The parked waits come first: since 2026-11-21 (docs/specs/2026-11-21-auto-return.md, AR-D3) as
+// lines that say where each went back to, to be asked again there; a list written before draws them as the same cards the tower's rows draw (pressable). Then the rest folded:
 // what was cancelled or refused, what a tower answered on its own, what still waits, the boss's other computers' asks. Closing it leaves the cards as open waits. The list is the server's (`auto/report`); the panel opens once per report on
 // each device, on the next page load or when this page's own switch ends auto mode.
 
 /** One parked wait of the list, as the server wrote it (src/server/autotower.ts `ParkedRow`). */
-export interface BackRow { workspace: string; head?: true; tower: string; id: string; text: string; type: string; from?: string; at: string }
+export interface BackRow { workspace: string; head?: true; tower: string; id: string; text: string; type: string; from?: string; at: string; /** Where the card went when auto mode ended (docs/specs/2026-11-21-auto-return.md, AR-D3, AR-D4); absent in a list written before. */ returned?: "raiser" | "tower" | "gone" }
 export interface BackLine { session: string; tool: string; kind: string; count: number; first: string; gist: string }
 /** The last period's return list, the fields the panel reads (src/server/autotower.ts `Report`). */
 export interface BackReport {
@@ -68,7 +69,10 @@ export function mountBack(host: HTMLElement, d: BackDeps) {
 		cards = new Map();
 		find = new Map();
 		let settled = 0;
-		const drawn = report.parked.flatMap((row) => {
+		// Since AR-D3 a parked card is closed and goes back to whoever raised it: the list says where, and nothing is left here to press.
+		const returned = report.parked.filter((row) => row.returned);
+		const wentTo = (row: BackRow) => (row.returned === "tower" ? m.back_to_tower({}, o) : row.returned === "gone" ? m.back_gone({ name: row.from ?? "?" }, o) : m.back_to_raiser({ name: row.from ?? "?" }, o));
+		const drawn = report.parked.filter((row) => !row.returned).flatMap((row) => {
 			const at = openWait(net, row);
 			if (!at) return (settled++, []);
 			const key = `${at.ws}\u001f${row.id}`, card = kit.waitCard({ host: "row", wait: at.wait, ...(at.ws === HEAD_KEY ? { head: true } : {}), actions: kit.waitActions({ ws: at.ws, id: row.id, tower: at.key }, kit.answerPost(at.key)), done: (line) => (said.textContent = line) });
@@ -88,7 +92,8 @@ export function mountBack(host: HTMLElement, d: BackDeps) {
 		host.replaceChildren(...nodes(
 			h("h2", { class: "auto-back-title", id: "auto-back-title" }, m.back_title({}, o)),
 			h("p", { class: "auto-back-when" }, m.back_when({ from: clockOf(report.since), until: clockOf(report.until) }, o)),
-			drawn.length ? h("section", { class: "auto-back-parked" }, h("h3", null, m.back_parked({ n: String(drawn.length) }, o)), h("ul", { class: "auto-back-cards" }, ...drawn), said) : h("p", { class: "auto-back-none" }, m.back_none({}, o)),
+			returned.length ? h("section", { class: "auto-back-returned" }, h("h3", null, m.back_returned({ n: String(returned.length) }, o)), h("ul", null, ...returned.map((row) => h("li", null, `${row.id} · ${row.tower}: ${row.text} — ${wentTo(row)}`)))) : null,
+			drawn.length ? h("section", { class: "auto-back-parked" }, h("h3", null, m.back_parked({ n: String(drawn.length) }, o)), h("ul", { class: "auto-back-cards" }, ...drawn), said) : returned.length ? null : h("p", { class: "auto-back-none" }, m.back_none({}, o)),
 			settled ? h("p", { class: "auto-back-settled" }, m.back_settled({ n: String(settled) }, o)) : null,
 			rest, h("div", { class: "auto-back-acts" }, close)));
 		host.hidden = false;

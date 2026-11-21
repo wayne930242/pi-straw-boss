@@ -25,9 +25,11 @@ export interface AutoDeps {
 	id?(): string;
 	/** One event to the head tower (a staged request that expired; the end of auto mode). */
 	tellHead?(text: string): void;
-	/** The parked boss waits now open across the towers and the head (towers.ts), for the return list; and the end of the period, which makes them ordinary again. */
-	parked?(): ParkedRow[];
-	unpark?(): void;
+	/**
+	 * The end of the period for the towers and the head (towers.ts `returnParked`): every parked card is closed and goes back to whoever raised it (docs/specs/2026-11-21-auto-return.md, AR-D3, AR-D4). `rows` go on the return list
+	 * at once; `settled` gives them again once each raiser's message is known, and the list is written again when one changed.
+	 */
+	returnParked?(): { rows: ParkedRow[]; settled: Promise<ParkedRow[]> } | undefined;
 	/** The asks of the boxes this computer controls that were left waiting (D6). */
 	boxes?(): BoxAsk[];
 	/** The watch's section of the return list (autowatch.ts `watchSection`), from the period that ends. */
@@ -185,14 +187,23 @@ export function createAutoMode(d: AutoDeps) {
 		try {
 			const p = period ?? { since: change.from.since ?? iso(), notes: [], foreign: [], decided: [] };
 			const until = iso();
-			// The watch's section is the watch's alone: one that cannot be built costs that section, never the list or the unpark.
+			// The watch's section is the watch's alone: one that cannot be built costs that section, never the list or the cards' return.
 			let watch: WatchReport | undefined;
 			try { watch = d.watch?.(p, until); } catch (error) { d.log("auto-watch-report", { text: (error as Error).message }); }
-			last = buildReport(p, change.from.by, by, until, d.parked?.() ?? [], d.boxes?.() ?? [], watch);
-			write(REPORT_FILE, last);
-			text = reportText(last);
-			d.unpark?.();
-			d.tellHead?.(endEvent(last));
+			// The parked cards are closed and sent back first, so the list names where each went and no press lands on one after the boss is back (AR-D3).
+			let back: { rows: ParkedRow[]; settled: Promise<ParkedRow[]> } | undefined;
+			try { back = d.returnParked?.(); } catch (error) { d.log("auto-return", { text: (error as Error).message }); }
+			const report = buildReport(p, change.from.by, by, until, back?.rows ?? [], d.boxes?.() ?? [], watch);
+			last = report;
+			write(REPORT_FILE, report);
+			text = reportText(report);
+			d.tellHead?.(endEvent(report));
+			// A raiser that could not be told is known only after its message (AR-D4): the list of this period is written again with it, unless a newer period ended meanwhile.
+			void back?.settled.then((rows) => {
+				if (last !== report || rows.every((r, i) => r.returned === report.parked[i]?.returned)) return;
+				last = { ...report, parked: rows };
+				write(REPORT_FILE, last);
+			}).catch((error: Error) => d.log("auto-return", { text: error.message }));
 		} catch (error) {
 			d.log("auto-report", { text: (error as Error).message });
 		}

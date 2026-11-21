@@ -23,7 +23,8 @@ import { asked, checkSupersedes, closeAsk, isAct, noteToolCall, openAsk, openAsk
 import { headBrief, headIntake, relayOnlyFromHead, stateWord } from "./headside.ts";
 import type { Requester } from "../autostate.ts";
 import type { AutoMode } from "./automode.ts";
-import { basisOf, briefLine, type ParkedRow, parkedRows, parkedText, parkOpen, type Target, unpark } from "./autotower.ts";
+import { basisOf, briefLine, type ParkedRow, parkedRows, parkedText, parkOpen, type Target } from "./autotower.ts";
+import { returnAll } from "./autoreturn.ts";
 import { autoAnswer, headHost, headTool, type HeadPort } from "./headtools.ts";
 import type { Allows } from "./allows.ts";
 import type { Asks } from "./asks.ts";
@@ -149,9 +150,10 @@ export interface Towers {
 	owns(id: string): boolean; // the session id is the identity of one of the services: it has no pi and no bridge, so it is ended, not asked to quit
 	/** The runs of the services (runs.ts): claims, the run's requests, the boss's events. */
 	runs: Runs;
-	/** Auto mode (autotower.ts): the open boss waits that are parked, for the return list; and the end of the period, which makes them ordinary waits again. */
+	/** Auto mode (autotower.ts): the open boss waits that are parked, for the watch and the tests. */
 	parked(): ParkedRow[];
-	unpark(): void;
+	/** The end of the period (autoreturn.ts; docs/specs/2026-11-21-auto-return.md, AR-D3, AR-D4): every parked card is closed and sent back to whoever raised it; `settled` holds the rows once each raiser's message is known. */
+	returnParked(): { rows: ParkedRow[]; settled: Promise<ParkedRow[]> };
 	/** The head tower (head.ts): a service of kind `head` in a workspace of its own, made on first use and kept after; the same machinery as a workspace tower's service. */
 	head: {
 		ensure(): Promise<HeadEnsured>;
@@ -1219,10 +1221,7 @@ export function createTowers(o: TowersOptions): Towers {
 	// The boss's waits for the list and the polls' digests (waitlist.ts): the head's memory is read under its constant key, a workspace's under its id.
 	const autoView = () => ((v) => ({ on: v?.on === true, ...(v?.since ? { since: v.since } : {}) }))(o.auto?.view());
 	const listed = (): Target[] => [...services.values()].filter((l) => !l.stopped && !isHeadL(l)).map((l) => ({ workspace: l.record.workspace, label: l.record.label }));
-	/**
-	 * The cards that make a stand-in wait for the boss (standing.ts `standinReport`): a tower's own, and the head's own at the head. The other towers' cards are only named on the head's stand-in (`cardsElsewhere`): a tower's
-	 * wait is no wait of the head's (docs/specs/2026-11-21-auto-return.md, AR-D2, boss 2026-11-21). A memory that cannot be read counts none.
-	 */
+	/** The cards that make a stand-in wait (standing.ts `standinReport`): a tower's own, the head's own at the head; the other towers' are only named on the head's (`cardsElsewhere`, AR-D2). An unreadable memory counts none. */
 	const cardsFor = (l: Live): number => openCards(waitRows(slot, isHeadL(l) ? HEAD_KEY : l.record.workspace, now(), isHeadL(l)).rows);
 	const cardsElsewhere = (): number => listed().reduce((n, t) => n + openCards(waitRows(slot, t.workspace, now(), false).rows), 0);
 	const api: Towers = {
@@ -1235,7 +1234,7 @@ export function createTowers(o: TowersOptions): Towers {
 			return l && !l.stopped ? digestOf(waitRows(slot, isHeadL(l) ? HEAD_KEY : workspace, now(), isHeadL(l)).rows, o.auto?.view().on === true) : undefined;
 		},
 		parked: () => parkedRows(slot, now(), targets()),
-		unpark: () => unpark(slot, now(), targets()),
+		returnParked: () => returnAll({ slot, now, log, error, targets: targets(), reach: (workspace) => services.get(workspace)?.reach, notice: (workspace, text, key) => runs.notice(workspace, text, key) }),
 		runTool: runToolFor,
 		memory: (workspace, json, via) => {
 			// The head's constant key reaches head/ whether or not a head service stands (towerstore.ts `HEAD_KEY`).

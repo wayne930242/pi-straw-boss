@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { fieldsOf, header } from "../src/header.ts";
 import { reportSummary } from "../src/autostate.ts";
-import { basisOf, briefLine, buildReport, endEvent, parkedText, reportText } from "../src/server/autotower.ts";
+import { basisOf, briefLine, buildReport, endEvent, ownReturnedText, parkedText, reportText, returnedText } from "../src/server/autotower.ts";
 import { buildHeadBrief } from "../src/server/headbrief.ts";
 import type { Slot } from "../src/server/record.ts";
 import { buildBrief } from "../src/server/towerbrief.ts";
@@ -93,6 +93,7 @@ test("a card recorded while on is parked and its raiser is told once under wait_
 	assert.equal(told.length, 1);
 	assert.equal(told[0]!.fields.wait, "W1");
 	assert.ok(told[0]!.text.endsWith(parkedText("W1")), told[0]!.text);
+	assert.equal(parkedText("W1"), "Wait W1 is parked: the boss is away (auto mode). Do not wait on it; when they are back it comes back to you as a wait_returned message, and you ask them again yourself then.", "AR-D3: no wait_card answer is promised");
 	assert.equal(told[0]!.fields.role, "tower");
 	// recorded while on
 	assert.equal((await tool(s, token, "tower_memory", card({ happened: "Another go is needed." }))).ok, true);
@@ -161,7 +162,7 @@ test("a secret card's start button is refused while auto mode is on, and a plain
 	assert.equal((await pressRequest(deps(false), "wS", { op: "press", id: "W1", act: "secret" })).status, 200);
 });
 
-test("the return list covers the towers and the head: the parked waits per tower, the cancels and refusals by session, the head's one event, and boss_status shows the summary", async () => {
+test("AR-D3: the return list covers the towers and the head: the parked waits per tower go back to the towers that raised them, the cancels and refusals by session, the head's one event, and boss_status shows the summary", async () => {
 	const s = await setup();
 	const head = await world.expose!.head.ensure();
 	const now = Date.now();
@@ -181,18 +182,27 @@ test("the return list covers the towers and the head: the parked waits per tower
 	assert.deepEqual(report.stillWaiting.map((l) => l.session), ["main-3"]);
 	const text = String(off.report);
 	assert.ok(text.indexOf("Parked waits (2)") >= 0 && text.indexOf("Parked waits") < text.indexOf("Cancelled or refused"), "the parked waits come first");
-	assert.match(text, /^Parked waits \(2\)\. Answer them at the tower pane, with \/boss wait, or in the GUI:$/m); // 2026-11-16: the cards are answered where they are drawn, no W<n> to type
+	// AR-D3: they are not answered at the tower pane any more; each went back to whoever raised it (here the towers themselves: waits with no raiser)
+	assert.match(text, /^Parked waits \(2\) went back to whoever raised them, to ask you again directly; sb closed the cards:$/m);
+	assert.match(text, /^- W1 \(Alpha, legacy\): Approve the production deploy → back to the tower$/m);
 	assert.match(text, /- main-1: ask_user_question cancelled "Which database\?" \(from \d\d:\d\d\); robot_hand refused ×2/);
-	// the parked flag lived for the period
-	assert.equal(memory().entries[0]!.parked, undefined);
-	assert.equal(loadMemory(world.slot, head.workspace).memory.entries[0]!.parked, undefined);
-	// the panel lists them, so they are `listed`: open waits with no second notice
-	assert.equal(memory().entries[0]!.listed, true);
-	assert.equal(loadMemory(world.slot, head.workspace).memory.entries[0]!.listed, true);
+	assert.deepEqual(report.parked.map((p) => p.returned), ["tower", "tower"]);
+	// the parked flag lived for the period, and the card is closed as returned
+	for (const e of [memory().entries[0]!, loadMemory(world.slot, head.workspace).memory.entries[0]!]) {
+		assert.equal(e.parked, undefined);
+		assert.equal(e.state, "resolved");
+		assert.equal(e.returned, "tower");
+		assert.equal(e.outcome, "returned to the tower to ask again (auto mode ended)");
+	}
+	// each tower gets its own card back as an event, to record it again if it still needs the boss
+	const back = (ws: string) => readQueue(world.slot, ws).filter((e) => e.kind === "notice" && e.text.startsWith("Your wait W1"));
+	assert.equal(back("wA").length, 1);
+	assert.match(back("wA")[0]!.text, /^Your wait W1 \(Approve the production deploy\) was parked while the boss was away\. Auto mode ended at \d\d:\d\d and the boss is back; sb closed the card instead of keeping it for them\. If it still needs the boss, record it again with tower_memory \(add kind wait\): it reaches them now as a new card\.$/);
+	assert.equal(back(head.workspace).length, 1, "the head's own card goes to the head");
 	// the head gets one event
 	const events = readQueue(world.slot, head.workspace).filter((e) => e.kind === "notice" && e.text.startsWith("Auto mode ended at"));
 	assert.equal(events.length, 1);
-	assert.match(events[0]!.text, /^Auto mode ended at \d\d:\d\d \(pi: a pi\): 2 parked waits on 2 towers, 4 cancels or refusals\.$/);
+	assert.match(events[0]!.text, /^Auto mode ended at \d\d:\d\d \(pi: a pi\): 2 parked waits on 2 towers went back to whoever raised them, to ask the boss again; 4 cancels or refusals\.$/);
 	// boss_status (the files a waking session reads)
 	assert.deepEqual(reportSummary(world.slot.stateDir), { since: report.since, until: report.until, off: "pi: a pi", parked: 2, towers: 2, cancels: 4, decided: 0, stillWaiting: 1 });
 	// a second off changes nothing and builds no second report
@@ -206,10 +216,10 @@ test("the report text and the head event are built from one period: pure", () =>
 	const period = { since: "2026-11-09T15:10:00Z", notes: [{ session: "s1", tool: "robot_hand", kind: "refused" as const, gist: "x", at: "2026-11-09T16:00:00Z" }], foreign: [{ at: "2026-11-09T17:00:00Z", why: "foreign" }], decided: [] };
 	const r = buildReport(period, by, { via: "head", name: "head tower" }, "2026-11-09T23:40:00Z", [{ workspace: "wA", tower: "Alpha", id: "W4", text: "Go?", type: "action", at: "2026-11-09T16:00:00Z" }], [{ box: "box-1", gist: "Allow edit?" }]);
 	const text = reportText(r);
-	assert.match(text, /- W4 \(Alpha, action\): Go\?/);
+	assert.match(text, /- W4 \(Alpha, action\): Go\? → back to the raiser/);
 	assert.match(text, /Asks of the boxes you control, left waiting:\n- box-1: Allow edit\?/);
 	assert.match(text, /1 foreign or unreadable write to the state file were put back/);
-	assert.match(endEvent(r), /^Auto mode ended at \d\d:\d\d \(head: head tower\): 1 parked waits on 1 towers, 1 cancels or refusals\.$/);
+	assert.match(endEvent(r), /^Auto mode ended at \d\d:\d\d \(head: head tower\): 1 parked waits on 1 towers went back to whoever raised them, to ask the boss again; 1 cancels or refusals\.$/);
 	assert.ok(header({ from: { name: "t", id: "sb-tower-wa", role: "tower" }, kind: "wait_parked", scope: "session", to: [{ name: "m", id: "m", role: "main" }], reply: false, wait: "W4" }).includes("kind=wait_parked"));
 });
 
@@ -219,4 +229,84 @@ test("AMC-F006: the return list says the boxes' asks are not collected, and list
 	const listed = reportText(buildReport(p, by, by, "2026-11-10T07:00:00Z", [], [{ box: "ginlee", gist: "Deploy?" }]));
 	assert.match(listed, /- ginlee: Deploy\?/);
 	assert.ok(!listed.includes("not collected"));
+});
+
+// --- AR-D3, AR-D4 (docs/specs/2026-11-21-auto-return.md): a parked card goes back to its raiser when auto mode ends ----------------------------------------------------------------
+
+/** A card raised by main-1, parked at the switch on; the run that recorded it, and the raiser told it was parked. */
+async function parkedCard(s: Running) {
+	const { token } = await run(s, ["hello"]);
+	assert.equal((await tool(s, token, "tower_memory", card())).ok, true);
+	await autoOn(s);
+	await until(() => sentTo("main-1").some((m) => m.fields.kind === "wait_parked"), "the parked notice");
+	return token;
+}
+
+test("AR-D3: at the end of auto mode a parked card goes back to the main that raised it under wait_returned, is closed as returned, and is on the list as such; a card recorded after the end is an ordinary card", async () => {
+	const s = await setup();
+	const token = await parkedCard(s);
+	const off = await ask(s, { cmd: "auto-off", ...WHO });
+	assert.equal(off.ok, true);
+	// closed in the same write as the switch: no press can land on it for the boss
+	const e = memory().entries[0]!;
+	assert.deepEqual([e.state, e.returned, e.parked, e.outcome], ["resolved", "raiser", undefined, "returned to docs-main to ask the boss again (auto mode ended)"]);
+	assert.equal((await pressRequest({ slot: world.slot, now: Date.now, log: { line() {}, hide() {} }, locale: "en", live: async () => true, send: async () => ({ status: "sent" }), boss: () => {} }, "wA", { op: "press", id: "W1", act: "done" })).status, 409, "a press after the end is refused");
+	await until(() => sentTo("main-1").some((m) => m.fields.kind === "wait_returned"), "the message to the raiser");
+	const told = sentTo("main-1").filter((m) => m.fields.kind === "wait_returned");
+	assert.equal(told.length, 1);
+	assert.equal(told[0]!.fields.wait, "W1");
+	assert.match(told[0]!.text, /Wait W1 \(Say go in the terminal\.\) comes back to you: auto mode ended at \d\d:\d\d and the boss is back\. sb closed the card instead of keeping it for them, so no wait_card answer will come for it\. If you still need it, ask them again yourself now with ask_user_question \(or call_tower again if this session cannot ask them\)\.$/);
+	assert.ok(sentTo("main-1").every((m) => m.fields.kind !== "wait_card"), "the tower relays nothing: no wait_card");
+	assert.deepEqual(reportFile().parked.map((p) => [p.id, p.from, p.returned]), [["W1", "docs-main", "raiser"]]);
+	assert.match(String(off.report), /^- W1 \(Alpha, action, from docs-main\): Say go in the terminal\. → back to docs-main$/m);
+	assert.equal(readQueue(world.slot, "wA").filter((ev) => ev.kind === "notice" && /Your wait W1/.test(ev.text)).length, 0, "a card a main raised is not the tower's to ask again");
+	// a card recorded while auto mode is off is not parked, and nothing returns it
+	assert.equal((await tool(s, token, "tower_memory", card({ happened: "One more go." }))).ok, true);
+	const later = memory().entries.find((x) => x.id === "W2")!;
+	assert.deepEqual([later.state, later.parked, later.returned], ["open", undefined, undefined]);
+	assert.equal((await ask(s, { cmd: "auto-off", ...WHO })).changed, false);
+	assert.equal(memory().entries.find((x) => x.id === "W2")!.state, "open");
+	assert.equal(sentTo("main-1").filter((m) => m.fields.kind === "wait_returned").length, 1);
+});
+
+test("AR-D3: a parked card the boss answered while away is not returned: it only loses the flag, and the tower resolves it", async () => {
+	const s = await setup();
+	await parkedCard(s);
+	const pressed = await pressRequest({ slot: world.slot, now: Date.now, log: { line() {}, hide() {} }, locale: "en", live: async () => true, send: async () => ({ status: "sent" }), boss: () => {} }, "wA", { op: "press", id: "W1", act: "done" });
+	assert.equal(pressed.status, 200);
+	assert.equal((await ask(s, { cmd: "auto-off", ...WHO })).ok, true);
+	const e = memory().entries[0]!;
+	assert.deepEqual([e.state, e.parked, e.returned, e.listed], ["answered", undefined, undefined, true]);
+	assert.deepEqual(reportFile().parked, []);
+	await new Promise((r) => setImmediate(r));
+	assert.equal(sentTo("main-1").filter((m) => m.fields.kind === "wait_returned").length, 0);
+});
+
+test("AR-D4: a raiser that is gone at the end is told nothing, its card is closed as such, and the return list says so", async () => {
+	const s = await setup();
+	await parkedCard(s);
+	world.sessions = [] as never; // main-1 closed
+	assert.equal((await ask(s, { cmd: "auto-off", ...WHO })).ok, true);
+	await until(() => memory().entries[0]!.returned === "gone", "the card closed as gone");
+	assert.deepEqual([memory().entries[0]!.state, memory().entries[0]!.outcome], ["resolved", "closed: docs-main was gone when auto mode ended"]);
+	await until(() => reportFile().parked[0]?.returned === "gone", "the list written again");
+	assert.equal(sentTo("main-1").filter((m) => m.fields.kind === "wait_returned").length, 0);
+	assert.equal(readQueue(world.slot, "wA").filter((ev) => ev.kind === "notice" && /Your wait W1/.test(ev.text)).length, 0, "nothing is left for the boss or the tower");
+});
+
+test("AR-D4: a message the broker does not take closes the card as not reached", async () => {
+	const s = await setup();
+	await parkedCard(s);
+	world.client("sb-tower-wa")!.deliver = { delivered: false, delivery: "failed", reason: "no route" };
+	assert.equal((await ask(s, { cmd: "auto-off", ...WHO })).ok, true);
+	await until(() => memory().entries[0]!.returned === "gone", "the card closed");
+	assert.equal(memory().entries[0]!.outcome, "closed: docs-main could not be reached when auto mode ended");
+	await until(() => reportFile().parked[0]?.returned === "gone", "the list written again");
+});
+
+test("AR-D3: returnedText tells a tower raiser to record the wait again, and ownReturnedText names the tower's own card", () => {
+	assert.match(returnedText("W2", "Pick a host.", "2026-11-21T07:40:00Z", "tower"), /If you still need it, record it again with tower_memory as a wait for the boss, or ask as you asked before\.$/);
+	assert.match(returnedText("W2", "Pick a host.", "2026-11-21T07:40:00Z", "main"), /ask them again yourself now with ask_user_question/);
+	assert.match(ownReturnedText("W3", "Look.", "2026-11-21T07:40:00Z"), /^Your wait W3 \(Look\.\) was parked while the boss was away\./);
+	assert.ok(header({ from: { name: "t", id: "sb-tower-wa", role: "tower" }, kind: "wait_returned", scope: "session", to: [{ name: "m", id: "m", role: "main" }], reply: false, wait: "W2" }).includes("kind=wait_returned"));
 });
