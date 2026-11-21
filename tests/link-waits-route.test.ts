@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -24,11 +24,11 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 const BOX = "n2knna6dkfud5sura2vst4gsee", MAC = "ibzkd5ijmtravej475kmrykvye", ASK = "c".repeat(32);
 const SECRET_TEXT = "please merge !13 now — here is everything about it";
-interface World { t: number; hold?: Promise<void>; posts: { ws: string; to: string[]; text: string; kind: string; wait?: string }[]; sends: { ws: string; req: Parameters<WaitsDeps["send"]>[1] }[]; mains: { id: string; name: string }[]; router: ReturnType<typeof createLinkWaits>; caps: string[] }
+interface World { t: number; logs: string[]; hold?: Promise<void>; posts: { ws: string; to: string[]; text: string; kind: string; wait?: string }[]; sends: { ws: string; req: Parameters<WaitsDeps["send"]>[1] }[]; mains: { id: string; name: string }[]; router: ReturnType<typeof createLinkWaits>; caps: string[] }
 function world(o: { mains?: { id: string; name: string }[]; self?: string; caps?: string[]; auto?: () => boolean } = {}): World {
-	const w = { t: Date.parse("2026-11-21T10:00:00Z"), posts: [], sends: [], mains: o.mains ?? [], caps: o.caps ?? ["tower.wait", "tower-reply", "tower.awaitsReply"] } as unknown as World;
+	const w = { t: Date.parse("2026-11-21T10:00:00Z"), logs: [], posts: [], sends: [], mains: o.mains ?? [], caps: o.caps ?? ["tower.wait", "tower-reply", "tower.awaitsReply"] } as unknown as World;
 	w.router = createLinkWaits({
-		slot, now: () => w.t, log: () => {}, locale: () => "en", ...(o.auto ? { autoOn: o.auto } : {}),
+		slot, now: () => w.t, log: (event: string) => void w.logs.push(event), locale: () => "en", ...(o.auto ? { autoOn: o.auto } : {}),
 		net: async () => ({ sessions: w.mains.map((m, i) => ({ id: m.id, name: m.name, herdrLocation: { paneId: `p${i}` } })) as never, ps: w.mains.map((_, i) => ({ pane_id: `p${i}`, workspace_id: "w15X", tokens: { sb_role: "main" } })) as never }),
 		// A test that sets `hold` holds every wake and send made while it is set until it resolves; each is recorded when it is made.
 		post: async (ws, to, text, kind, extra) => (w.posts.push({ ws, to, text, kind, ...(extra.wait ? { wait: extra.wait } : {}) }), await w.hold, true),
@@ -281,6 +281,26 @@ test("BMWR-F004: a device's text is kept as board_read shows it, its open waits 
 	assert.equal(kept.filter((e) => e.state === "done").length, CLOSED_PER_DEVICE);
 	assert.equal(Math.min(...kept.filter((e) => e.state === "done").map((e) => e.n)), 110, "the oldest went");
 	assert.deepEqual(kept.filter((e) => e.state !== "done").map((e) => e.n), [200]);
+});
+
+test("BMWR2-F001: a held wait the holder offers again every 5 s, while its device stays full, writes nothing and is logged full once", async () => {
+	const w = world();
+	for (let i = 0; i < OPEN_PER_DEVICE; i++) assert.equal(await w.router.take(item({ what: `w${i}` }), "w15X"), true);
+	const at = join(towerDir(slot, "w15X"), "linkwaits.json"), before = statSync(at), held = item({ what: "one more" });
+	for (let i = 0; i < 3; i++) assert.equal(await w.router.take(held, "w15X"), "held");
+	const after = statSync(at);
+	assert.deepEqual([after.ino, after.mtimeMs], [before.ino, before.mtimeMs], "the ledger is not written");
+	assert.equal(w.logs.filter((e) => e === "link-wait-full").length, 1);
+});
+
+test("BMWR2-F004: a declined state that comes after the reply closed the sender's wait as done relabels it declined, with no wake", async () => {
+	const w = world();
+	mkdirSync(towerDir(slot, "w15X"), { recursive: true });
+	const id = "d".repeat(32);
+	writeFileSync(join(towerDir(slot, "w15X"), "linkwaits.json"), JSON.stringify({ v: 1, next: 2, entries: [{ n: 1, dir: "out", kind: "wait", wait: id, device: BOX, team: "t1", label: "waydosoft", short: "n2knna", owner: "", what: "merge", text: "", since: w.t, at: w.t, state: "done", raiser: { id: "s-work", name: "work-on" } }] }));
+	assert.equal(await w.router.take(item({ id, state: "declined" }), "w15X"), true);
+	assert.deepEqual(ledger().map((e) => e.state), ["declined"]);
+	assert.equal(w.posts.length, 0, "nobody is woken");
 });
 
 test("BMWR-F011: a ledger that cannot be read is never written over; the next id is past every id the ledger holds", async () => {

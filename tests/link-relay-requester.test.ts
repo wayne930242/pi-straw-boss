@@ -276,6 +276,14 @@ test("BMWR-F003: the tower_done guard lets the run end when the raiser is gone, 
 	}
 });
 
+test("BMWR2-F003: a cancel earlier in the run's batch does not withdraw a wait raised after it; the run cannot end until that wait is forwarded", async () => {
+	const cancel = stamp({ from: party("main-1", "docs-main", "main"), kind: "call_tower", scope: "tower", to: [{ id: "sb-tower-wa", name: "tower", role: "tower", workspace: "Alpha" }], reply: false, why: "milestone", waitsOn: { short: "abcdef", cancel: true } }, "never mind");
+	const { world, s, token } = await localRun([{ from: "main-1", text: cancel }, { from: "main-1", text: waitsCall(party("main-1", "docs-main", "main"), "waits on the Mac again") }]);
+	assert.ok(world);
+	const ended = await ask(world, s, { cmd: "run-done", token, note: "nothing left" });
+	assert.equal(ended.ok, false, JSON.stringify(ended));
+});
+
 test("BMWR-F009: for or waitsOn with reply left out is an ask that expects a reply; only reply false is refused", async () => {
 	const { world, send } = await localRun([mine("please")]);
 	const named = await send({ for: "api-main" });

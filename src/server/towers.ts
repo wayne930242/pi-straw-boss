@@ -1274,7 +1274,7 @@ export function createTowers(o: TowersOptions): Towers {
 			if (sweep) void revoker.sweep(true);
 		},
 		owns: (id) => [...services.values()].some((l) => l.record.id === id),
-		identityOf: (workspace) => ((l) => (l && !l.stopped && !isHeadL(l) ? l.record.id : undefined))(services.get(workspace)),
+		identityOf: (workspace) => ((l) => (l && l.state === "live" && !l.stopped && !isHeadL(l) ? l.record.id : undefined))(services.get(workspace)),
 		post: async (workspace, to, text, kind, extra) => ((l) => (l?.reach && !l.stopped ? Promise.all(to.map((id) => l.reach!.post(id, text, kind, "session", false, undefined, undefined, extra))).then((r) => r.every((x) => x.status === "sent")) : false))(services.get(workspace)),
 		status: () => [...services.values()].filter((l) => !isHeadL(l)).map(row),
 		head: {

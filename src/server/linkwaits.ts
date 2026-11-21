@@ -240,7 +240,14 @@ export function createLinkWaits(d: WaitsDeps) {
 		await ack(ws, w, "told", `told ${to.map((m) => restrictOwner(m.name)).join(", ")} (main${to.length > 1 ? "s" : ""} on ${d.selfLabel()})`, to.length === 1 ? to[0]!.name : "");
 	};
 	/** A new wait in a workspace's ledger, routed at once; none while the device has `OPEN_PER_DEVICE` open here already. The device's closed entries past `CLOSED_PER_DEVICE` go, oldest first. */
+	const full = new Set<string>(); // workspace + device pairs logged full; the holder retries a held wait every 5 s (BMWR2-F001)
 	const open = async (ws: string, w: Omit<LinkWait, "n" | "since" | "at" | "state" | "dir">): Promise<string | undefined> => {
+		const key = `${ws}\n${w.device}`, before = loadWaits(d.slot, ws);
+		if (!before.problem && before.ledger.entries.filter((e) => e.device === w.device && e.dir === "in" && isOpen(e)).length >= OPEN_PER_DEVICE) {
+			if (!full.has(key)) (full.add(key), d.log("link-wait-full", { ws, device: w.short, open: OPEN_PER_DEVICE }));
+			return undefined; // read only: nothing is written while the device stays full
+		}
+		full.delete(key);
 		const n = change(ws, (l) => {
 			const mine = l.entries.filter((e) => e.device === w.device);
 			if (mine.filter((e) => e.dir === "in" && isOpen(e)).length >= OPEN_PER_DEVICE) return undefined;
@@ -363,6 +370,10 @@ export function createLinkWaits(d: WaitsDeps) {
 				if (ws === undefined) return false;
 				const id = await open(ws, { wait: wire.id, ...(item.awaitsReply ? { ask: item.awaitsReply } : {}), kind: "wait", device: item.from, team: item.team, label: item.fromLabel, short: item.fromShort, owner: waitOwner(wire.owner), what: waitWhat(wire.what) || "(no summary)", text: item.text, ...(wire.handle ? { handle: wire.handle } : {}) });
 				return id ? true : "held";
+			}
+			if (held && held.w.dir === "out" && held.w.state === "done" && wire.state === "declined") {
+				set(held.ws, held.w.n, { state: "declined" }); // the reply closed it first; the label follows, no wake (BMWR2-F004)
+				return true;
 			}
 			if (!held || !isOpen(held.w)) return true;
 			const { ws: at, w } = held;

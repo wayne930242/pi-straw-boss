@@ -647,6 +647,16 @@ test("B4R-F002: a failed session list keeps the service waiting beside a live re
 	assert.equal(tokens().tower, "old-tower");
 });
 
+test("BMWR2-F002: a service waiting beside a live resident lends no identity to the wait router, so a box's wait goes to the resident tower", async () => {
+	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7", "pi");
+	resident();
+	standing();
+	await started();
+	await sleep(100);
+	assert.equal(world.client("sb-tower-wa"), undefined, "still waiting");
+	assert.equal(world.expose?.identityOf("wA"), undefined);
+});
+
 test("B4R-F002: a waiting service whose pane Herdr renumbered after a restart publishes nothing over the live resident", async () => {
 	world.herdr.addTab("wA:t7", TOWER_LABEL, "wA:p7", "pi");
 	resident();

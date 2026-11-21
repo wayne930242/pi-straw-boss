@@ -287,3 +287,10 @@ Where the build differs from §2–§10, or settles what they left open.
 - `cli.mjs watch` exits 2 on an `--idle` or `--quiet` it cannot read (BMWR-F012).
 - Size caps: none raised. `src/server/towers.ts` 1317 to 1319 (the guard's liveness reading, the escalated ask), under its 1340.
 
+
+Re-check fixes (second review, 2026-11-21):
+
+- A wait the holder offers again while its device is full is checked read-only: the ledger is not written, and `link-wait-full` is logged once per workspace and device while it stays full (BMWR2-F001).
+- `identityOf` names only a live tower service, so a service still waiting beside a resident tower lends the router no identity and the wait goes to the resident tower (BMWR2-F002).
+- A `waits-cancel=yes` withdraws only a wait raised before it in the same run's batch (BMWR2-F003).
+- A `declined` state that arrives after the reply closed the sender's wait as `done` relabels it `declined`, with no wake (BMWR2-F004).

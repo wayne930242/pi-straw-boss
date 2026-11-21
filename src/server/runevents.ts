@@ -72,11 +72,12 @@ export function runEvents(d: RunEventsDeps) {
 export function unforwardedWait(slot: Slot, ws: string, run: string, live?: ReadonlySet<string>, log?: (event: string, facts: Record<string, string>) => void): WaitEvent | undefined {
 	const done = handled.get(run), took = readQueue(slot, ws).filter((e) => e.taken?.run === run && e.kind === "intercom");
 	const recorded = new Set(readWaits(slot, ws).entries.flatMap((w) => (w.event ? [w.event] : [])));
-	const withdrawn = new Set(took.flatMap((e) => ((f) => (f?.kind === "call_tower" && f["waits-on"] && f["waits-cancel"] === "yes" && e.from ? [`${e.from.id}\n${f["waits-on"]}`] : []))(fieldsOf(e.text))));
-	for (const e of took) {
+	const cancels = took.map((e) => ((f) => (f?.kind === "call_tower" && f["waits-on"] && f["waits-cancel"] === "yes" && e.from ? `${e.from.id}\n${f["waits-on"]}` : undefined))(fieldsOf(e.text)));
+	for (const [i, e] of took.entries()) {
 		const w = done?.has(e.id) ? undefined : waitOf(e);
 		if (!w) continue;
-		const why = recorded.has(e.id) ? "recorded" : withdrawn.has(`${w.from.id}\n${w.short}`) ? "withdrawn" : live?.size && !live.has(w.from.id) ? "raiser-gone" : undefined;
+		const withdrawn = cancels.slice(i + 1).includes(`${w.from.id}\n${w.short}`); // only a cancel after the wait withdraws it (BMWR2-F003)
+		const why = recorded.has(e.id) ? "recorded" : withdrawn ? "withdrawn" : live?.size && !live.has(w.from.id) ? "raiser-gone" : undefined;
 		if (!why) return w;
 		markHandled(run, e.id);
 		log?.("wait-guard-released", { workspace: ws, run, event: e.id, why });
