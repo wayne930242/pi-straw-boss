@@ -8,7 +8,11 @@ import { World } from "./fakes.ts";
 let world: World;
 afterEach(() => world.stopAll());
 
-const digestOf = (sections: Record<string, string>) => sections["straw-boss"]?.split("Since your last run:")[1] ?? "";
+const nextRun = async (agent: ReturnType<World["agent"]>) => {
+	const sections: Record<string, string> = {};
+	const result = await agent.fireResult("before_agent_start", { systemPromptOptions: { sections } }) as { message?: { content: string } } | undefined;
+	return { section: sections["straw-boss"], digest: result?.message?.content ?? "" };
+};
 
 test("the tower's next run reads what happened in its workspace since its last run, once", async () => {
 	world = new World();
@@ -22,20 +26,22 @@ test("the tower's next run reads what happened in its workspace since its last r
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
 	await tower.start();
 
-	const first = digestOf(await tower.run());
+	const { section, digest: first } = await nextRun(tower);
+	assert.ok(section);
+	assert.equal((await nextRun(tower)).section === section, true, "reading the digest must not rewrite the role section");
 	assert.match(first, /a1 joined tab/);
 	assert.match(first, /a1 renamed itself "MP-1 export"/);
 	assert.match(first, /MP-1 export started subagent lint-sweep \(worker\)/);
 	assert.doesNotMatch(first, /failed-one/, "a launch that failed started nothing");
 	assert.doesNotMatch(first, /b1/, "another workspace's events belong to its own tower");
-	assert.equal(digestOf(await tower.run()), "", "the digest is cleared once read");
+	assert.equal((await nextRun(tower)).digest, "", "the digest is cleared once read");
 });
 
 test("a member's run carries no digest", async () => {
 	world = new World();
 	const a1 = world.agent({ id: "a1", pane: "wA:p1", tab: "wA:t1" });
 	await a1.start();
-	assert.equal(digestOf(await a1.run()), "");
+	assert.equal((await nextRun(a1)).digest, "");
 });
 
 test("the digest keeps its newest lines within Herdr's token limits and leaves the workspace's other tokens alone", async () => {

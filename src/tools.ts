@@ -167,7 +167,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 						const open = (todosOf(snapshotOfBranch(s.branch())) ?? []).filter((t) => t.sb?.kind === "train" && t.status !== "completed").length;
 						if (open) throw new Error(`${open} of your trains are forming or departing: depart or return them first`);
 					}
-					const { from } = mainDuty.write(duty, why);
+					const { from } = mainDuty.write(duty, why, "boss_duty");
 					return { text: `Your kind is now ${duty} (was ${from ?? "none"}).`, details: { duty, from: from ?? null } };
 				});
 		},

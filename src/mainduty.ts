@@ -17,11 +17,11 @@ export interface MainDuty {
 	/** Whether integration is on for both reads (the train guard's and the prompts'). */
 	integrationOn(): boolean;
 	/** Writes a kind entry (all four fields), sets `s.duty`, and returns what it was. */
-	write(duty: CoordinatorDuty, why: string): { from: CoordinatorDuty | undefined };
+	write(duty: CoordinatorDuty, why: string, source?: "boss_duty"): { from: CoordinatorDuty | undefined };
 	/** The migration (§2): only while `s.duty` is unset and integration is on. Returns the sign that matched, if one did. */
 	migrate(name: string | undefined): "name" | "train todos" | undefined;
 	/** Called after every write of a kind (a switch or a migration): the rebrief, the publish, and the digest line hang here. */
-	onWrite(cb: (change: { from: CoordinatorDuty | undefined; to: CoordinatorDuty; why: string }) => void): void;
+	onWrite(cb: (change: { from: CoordinatorDuty | undefined; to: CoordinatorDuty; why: string; source: "boss_duty" | undefined }) => void): void;
 	/** How the train guard's load-time read is told: `() => Boolean(guard)`. Before it is set the switch is read live. Both reads must have integration on (AK3-F003). */
 	trainOn(read: () => boolean): void;
 	/** Called by the briefing's owner: how the loaded prompts say integration is off. */
@@ -41,11 +41,11 @@ export function createMainDuty(kit: Kit): MainDuty {
 		trainOn: (read) => void (guarded = read),
 		now: () => (s.duty === "integrator" && !integrationOn() ? "coordinator" : (s.duty ?? "coordinator")),
 		graph: () => planGraph(todosOfBranch(s.branch()) ?? []),
-		write(duty, why) {
+		write(duty, why, source) {
 			const from = isCoordinatorDuty(s.duty) ? s.duty : undefined;
 			pi.appendEntry(ENTRY, { duty, dutyFrom: from ?? null, dutyWhy: why, dutyAt: cfg.now() });
 			s.duty = duty;
-			for (const cb of listeners) cb({ from, to: duty, why });
+			for (const cb of listeners) cb({ from, to: duty, why, source });
 			return { from };
 		},
 		migrate(name) {

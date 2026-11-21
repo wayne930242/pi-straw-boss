@@ -65,16 +65,16 @@ export function createMembership({ pi, cfg, s, me, tell }: Kit, { presence, elec
 			const snap = s.c.snapshot();
 			if (snap.owner?.sessionId !== me()) s.pinned = undefined;
 			const sessions = await s.c.listSessions();
-			// A main that has left leaves the tab without one until a member promotes.
 			const recorded = (snap.state?.payload as { main?: string } | undefined)?.main;
 			if (s.pinned === recorded) s.pinned = undefined; // the broker has echoed it
+			const hadMain = Boolean(s.mainId), wasMain = s.isMain;
 			s.mainId = sessions.find((x) => x.id === (s.pinned ?? recorded))?.id;
 			const ws = (await workspaces(run)).find((w) => w.workspace_id === s.at.workspaceId);
 			const tab = sessions.find((x) => x.id === me())?.herdrLocation?.tab?.label ?? s.at.tabId;
-			s.info = { tab, workspace: ws?.label ?? s.at.workspaceId, main: nameOf(sessions.find((x) => x.id === s.mainId)) }; // `main` is for boss_promote's answer only: the role prompt names no other session (briefing.ts `render`)
-			const wasMain = s.isMain;
+			s.info = { tab, workspace: ws?.label ?? s.at.workspaceId, main: nameOf(sessions.find((x) => x.id === s.mainId)) }; // `main` is for boss_promote's answer only: the role prompt names no other session (briefing.ts)
 			s.isMain = s.mainId === me();
 			if (s.isMain !== wasMain) (tell(`This session is ${s.isMain ? "now" : "no longer"} the main agent of ${s.info.tab}`), briefing.rebrief());
+			else if (Boolean(s.mainId) !== hadMain) briefing.rebrief();
 			await presence.publish(sessions);
 			if (s.isMain && !wasMain) {
 				(roles.remember("main"), onMain?.()); // a main joins the link channel for the reply to its ask now, not at the next tick

@@ -128,7 +128,20 @@ stateDiagram-v2
 | 成員 | 其他每個已加入的 session | 一段簡短的 prompt：分頁裡有主智慧體時，派子智慧體前先告訴它；沒有時，工作變大就升任 |
 | 塔台 | 每個工作區一座，在自己的分頁裡，分頁標籤是 Nerd Font 的無線電塔字符（U+F043B） | 一段 prompt：協調智慧體、修復協調上的摩擦，以及在沒有 session 擁有某個請求時開啟主智慧體；它從不詢問使用者 |
 
-**角色段落不會被改寫**。一個 session 的 `straw-boss` 段落只寫屬於它自己的東西：所在分頁的標籤、所在工作區的標籤，以及主智慧體的類型。它不寫其他任何 session 的名字，不論是工作區的塔台還是分頁的主智慧體：名字寫在這裡的話，那個 session 一離開、一回來或一改名，段落就會被改寫，而 system 段落一變，模型就得不靠快取把整段對話重讀一遍。`boss_status` 會列出塔台和每個分頁的主智慧體目前是誰，`boss_promote` 拒絕時也會說出主智慧體的名字。屬於這個 session 自己的變動仍然會改到它的段落：主智慧體的 `boss_rename`（它的分頁跟著改名）、它的角色、它的類型，以及成員所在的分頁多了或少了主智慧體。協調者的協調圖則不會：同一個 session 裡，段落保留它算出時的圖，之後圖若有變，會以一則 steer 告訴模型一次，說明它在段落裡加上、取代或拿掉什麼（`Your plan's graph is now …`）；`todo` 呼叫在執行中改了圖，就在那次執行裡說，否則在下一次執行開始時說（0.80.12 之前的追蹤：圖的 `## Dispatch` 和 `## Graph:` 兩部分在執行開始時來回切換，一天造成 22 + 22 次嚴格的快取未命中，約 3.9M token）。steer 要等 pi 送達才算說過，送出時不算：在送達前就被 pi 的佇列丟掉的 steer（Esc、pi 的 dequeue 鍵，或頁面佇列下方會按下那個鍵的**編輯**），會在下一次執行開始時再說一次。pi 的佇列裡同時只會有一則這樣的 steer 在等，這段期間的變動要等它送達後才說，並以它說過的內容為準。pi 閒置時（例如在等一次執行結束時的處理器）會把 steer 直接存進對話，這種 steer 在送出時就算說過。中止時留在佇列裡的 steer（執行到一半的壓縮、透過 RPC 或 SDK 的中止，或沒能開始的執行；在 pi 的 TUI 裡，sb 自己的中止會清空佇列）會在下一次執行開始時送達；它若落在一則依較舊狀態寫成的 steer 之後，下一則 steer 就是完整的角色 prompt。快取或那些 steer 本來就不在的地方，段落會帶著計畫目前的圖重新算出：每次 session 開始（startup、`/new`、`/resume`、`/fork`，以及 `/reload`，它會重建擴充並重讀 prompt 檔）、壓縮之後、`/tree` 移動之後，以及角色或類型改變時。執行到一半發生壓縮時，那次執行仍沿用原本的段落，所以每次壓縮都會把段落算出之後的變動再說一次：pi 重試那一輪時用 steer，不重試時存成一則訊息，pi 會在那一輪結束時才把它加進去，所以壓縮後的第一個回應還看不到它（用 steer 雖然來得及送到那個回應，卻會讓 pi 把隨壓縮結束的執行接著跑下去）。
+**角色段落不會被改寫**。每次 session 啟動（`startup`、`/new`、`/resume`、`/fork` 或 `/reload`）後，Straw Boss 會在第一輪產生 `straw-boss` 的 system prompt 段落。
+改動這段文字，可能讓模型供應商無法沿用快取，得把整段對話重讀一遍。
+這個段落保留當時的分頁和工作區標籤；要查目前的標籤、塔台或各分頁的主智慧體，用 `boss_status`。
+同一個 session 裡，只有透過 `boss_duty` 主動切換類型，才會改寫這個段落。
+
+協調者從 steer 收到派工規則和協調圖的附錄，即使第一輪就已經有協調圖也是如此。
+設定、更換或清除協調圖時，Straw Boss 會再送一則 steer；角色改變或類型自動遷移時也是如此。
+排進佇列的 steer 要等 pi 送達才算說過；若 pi 把它丟掉，下一次執行會再送。
+pi 閒置時會直接存入 steer，這種情況在送出時就算說過。
+如果佇列裡的更新沒有按順序送達，Straw Boss 會送出目前完整的指示。
+
+壓縮或 `/tree` 切換分支後，Straw Boss 會重送目前完整的指示，取代對話裡可能殘留的舊指示。
+pi 重試當前輪次時用 steer；若當前輪次隨壓縮結束，就存成訊息，不另開一輪；若沒有執行中的輪次，則在下次執行開始時送出。
+這些情況都不會改寫 system prompt 的段落。
 
 主智慧體在第一次派工之前會讀 `prompts/planning.md`，拆分工作時則讀 `prompts/apps-config.md`，這樣規劃規則就不會佔著每次執行的 system prompt。它會選一種協調圖：single-loop（一項任務，自己做或交給一個子智慧體）不需要計畫。fan-out/fan-in 和 orchestrator-worker 則把計畫寫成 pi 的 `todo` 項目：每項任務一個，`owner` 是子智慧體（或 `self`），它依賴的任務放進 `blockedBy`（其餘的就保持平行，上限 4 個），並在描述和 metadata 裡寫上檢查它的錨點。共用同一個錨點的任務共用一個檢查點 todo，而不是每個分支各檢查同一件事。
 
@@ -146,7 +159,7 @@ stateDiagram-v2
 
 ### 塔台的摘要
 
-塔台不用問就知道它的工作區有什麼變動。工作區的網裡每個 session 會寫一行：加入時（`a1 joined tab billing`）、它的 `subagent` 或 `subagent_resume` 呼叫無誤地回傳時（`MP-1 export started subagent lint-sweep (worker)`），以及它呼叫 `boss_rename` 時（`a1 renamed itself "MP-1 export" (tab billing)`）。每一行都以本地時間（`HH:MM`）開頭。每次執行開始時，塔台會依最舊到最新讀這些行，放進它角色段落的 `Since your last run:` 之下，然後清掉，所以每一行只會讀一次。成員或主智慧體的執行從不讀它們。
+塔台不用問就知道它的工作區有什麼變動。工作區的網裡每個 session 會寫一行：加入時（`a1 joined tab billing`）、它的 `subagent` 或 `subagent_resume` 呼叫無誤地回傳時（`MP-1 export started subagent lint-sweep (worker)`），以及它呼叫 `boss_rename` 時（`a1 renamed itself "MP-1 export" (tab billing)`）。每一行都以本地時間（`HH:MM`）開頭。每次執行開始時，塔台會從最舊到最新讀取這些行，收到一則以 `Since your last run:` 開頭的訊息，然後清掉這些行，所以每行只讀一次。成員或主智慧體的執行從不讀它們。
 
 <details>
 <summary>細節</summary>
@@ -233,7 +246,7 @@ sb server 在第一次需要主塔台時（老闆從任何頻道送出的第一�
 <details>
 <summary>細節</summary>
 
-**簡報是一則訊息**。執行在認領時說 `liveBrief`，server 就把簡報分成兩段文字回答（`buildHeadSplit`，`src/server/headbrief.ts`）。`brief` 放進執行的 `straw-boss` 段落，接在 `prompts/head-run.md` 後面：主塔台是誰、簡報怎麼送到它手上，以及它的工具。`live` 是其餘的部分（章節和誰喚醒了這次執行、目前的工作區、未結的 ask、記憶、上一份交接筆記、限制），執行把它當成一則 `straw-tower` 訊息交給模型，第一行是 `[brief from the sb server]`，時機是還沒拿過這段文字的第一個輪次開始時；這則訊息留在 session 裡，但不顯示在 pane 裡，也不顯示在主塔台頁面上。存活的執行在它的記憶、自動模式或上一則備註變動時會拿到較新的一份（輪詢回答裡 `brief` 旁邊的 `live`），它自己開的 ask 或 ask 的回答則不會讓它再拿一份，因為回答本來就會以事件送到。主智慧體的狀態改變不會動到任何簡報：`tower_list` 和 `board_read` 有當下的狀態。compaction 之後，執行會把簡報再交給 session 一次，接在摘要後面。舊版的 pi 在認領時什麼都不說，於是整份簡報都在 `brief` 裡；舊版的 server 只回答一段文字，執行就把它放進段落，兩者都和以前一樣。
+**簡報是一則訊息**。執行在認領時說 `liveBrief`，server 就把簡報分成兩段文字回答（`buildHeadSplit`，`src/server/headbrief.ts`）。`brief` 放進執行的 `straw-boss` 段落，接在 `prompts/head-run.md` 後面：主塔台是誰、簡報怎麼送到它手上，以及它的工具。`live` 是其餘的部分（章節和誰喚醒了這次執行、目前的工作區、未結的 ask、記憶、上一份交接筆記、限制），執行把它當成一則 `straw-tower` 訊息交給模型，第一行是 `[brief from the sb server]`，時機是還沒拿過這段文字的第一個輪次開始時；這則訊息留在 session 裡，但不顯示在 pane 裡，也不顯示在主塔台頁面上。存活的執行在它的記憶、自動模式或上一則備註變動時會拿到較新的一份（輪詢回答裡 `brief` 旁邊的 `live`），它自己開的 ask 或 ask 的回答則不會讓它再拿一份，因為回答本來就會以事件送到。主智慧體的狀態改變不會動到任何簡報：`tower_list` 和 `board_read` 有當下的狀態。壓縮或 `/tree` 切換分支後，執行會再把簡報交給 session 一次。舊版的 pi 在認領時不帶 `liveBrief`，所以整份簡報都在 `brief` 裡。如果舊版 server 只回答一段文字，目前的執行會把它送成訊息，不放進角色段落。
 
 **它的工具，以及誰能找到它**。`read`、`grep`、`find`、`ls`、`tower_list`、`board_read`、`tower_send`、`tower_memory`、`tower_done` 和 `boss_server`：沒有 shell、不能編輯、沒有 `boss_open_main`、沒有 `call_tower`，也沒有 Straw Link（帶 `device` 的 `tower_send` 會被拒絕）。任何東西排進佇列之前，伺服器的關卡只放行老闆自己的話（GUI、`/boss head`、常駐 pane 的 prompt）和對它未結 ask 的回答；廣播、主智慧體的訊息，或沒有未結 ask 的回答，只會得到回條，不喚醒任何東西。
 
@@ -3296,7 +3309,7 @@ run 的 pi 在加入任何東西之前，先靠**認領**（claim）證明自己
 
 #### 執行
 
-它不加入任何網、不發佈 token、不跑守衛。它的角色段落是 `prompts/tower-run.md`，加上 server 建好的 brief（誰、為什麼、它監督的主智慧體、未了的義務、記憶、摘要、上一份交接筆記、工具、旗標；最多 8,000 字元）。它每秒向 server 輪詢一次，每個閒置時刻取一個等待中的事件，當成帶 `triggerTurn` 的 `straw-tower` 訊息，然後確認為 `taken`。
+它不加入任何網、不發佈 token、不跑守衛。它的角色段落來自 `prompts/tower-run.md`。Server 的簡報（誰、為什麼、它監督的主智慧體、未了的義務、記憶、摘要、上一份交接筆記、工具、旗標；最多 8,000 字元）另以訊息送達，後續更新也是。它每秒向 server 輪詢一次，每個閒置時刻取一個等待中的事件，當成帶 `triggerTurn` 的 `straw-tower` 訊息，然後確認為 `taken`。
 
 <details>
 <summary>細節</summary>
@@ -3684,7 +3697,7 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 
 轉發除了 `fwd` 與 `fwd-from` 之外還帶 `origin=remote:<device id>`，它的 `fwd` 是答案 id 的摘要，因為答案沒有事件 id。這節車廂的協調者是裝置的主智慧體，所以 sb server 依 session id 把車廂通知送給它，它的報告照舊送達裝置。一個裝置仍然只有一個主智慧體：要求隊友 run 再開第二個來當整合員，照舊被拒絕（這次修正要解決的 2026-11-10 案例）。
 
-**Brief 與對話串。** 執行的角色段落是 `prompts/ally-run.md`，加上 server 建的 brief（誰、哪個等級、發送者能看到工作區的什麼、這個裝置的上一份交接筆記、執行帶著的請求、裝置對話串的最後六列，以及它的工具；至多 4,000 字元）。**對話串儲存**（`link/threads/<device id>.jsonl`，模式 600）保留兩個方向，每個裝置最後 20 則訊息，沒有比 7 天更舊的，並隨裝置的名冊項目一起刪除。它靜態保存著對等端的文字。
+**Brief 與對話串。** 執行的角色段落來自 `prompts/ally-run.md`。Server 的簡報另以訊息送達（誰、哪個等級、發送者能看到工作區的什麼、這個裝置的上一份交接筆記、執行帶著的請求、裝置對話串的最後六列，以及它的工具；至多 4,000 字元）。**對話串儲存**（`link/threads/<device id>.jsonl`，模式 600）保留兩個方向，每個裝置最後 20 則訊息，沒有比 7 天更舊的，並隨裝置的名冊項目一起刪除。它靜態保存著對等端的文字。
 
 </details>
 

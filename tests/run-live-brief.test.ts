@@ -94,16 +94,21 @@ test("another main's state flip reaches a live head run as a newer live text: th
 	assert.ok(turns[2]!.messages.indexOf("docs-main idle") < turns[2]!.messages.indexOf("docs-main working"));
 });
 
-test("a server of an older build answers one text: the run puts it in its section as before and gives no message", async () => {
+test("a whole brief and its refresh are delivered without rewriting the run's section", async () => {
 	const whole = `${FIXED} WHOLE-MARK\n\nWorkspaces now:\n- Alpha (wA): tower standing by`;
 	const srv = server({ whole }), turns: Turn[] = [];
 	srv.push("e1", "EVENT-ONE");
 	const r = await makeRig(root, (q) => srv.ask(q), sessions);
-	r.faux.setResponses([spy(turns) as never]);
+	r.faux.setResponses([spy(turns) as never, spy(turns) as never]);
 	await until(() => turns.length === 1, "the first turn");
-	assert.match(turns[0]!.system, /WHOLE-MARK/);
-	assert.match(turns[0]!.system, /Workspaces now/);
-	assert.equal(count(turns[0]!.messages, BRIEF_MARK), 0);
+	srv.refresh({ brief: whole.replace("WHOLE-MARK", "UPDATED-MARK") });
+	await until(() => srv.refreshed(), "the poll that takes the newer brief");
+	srv.push("e2", "EVENT-TWO");
+	await until(() => turns.length === 2, "the second turn");
+	assert.equal(turns[1]!.system === turns[0]!.system, true, "the refreshed whole brief must not rewrite the role section");
+	assert.doesNotMatch(turns[0]!.system, /WHOLE-MARK|Workspaces now:/);
+	assert.match(turns[0]!.messages, /WHOLE-MARK/);
+	assert.match(turns[1]!.messages, /UPDATED-MARK/);
 });
 
 test("a compaction folds the brief into its summary, so the session is given it again behind the summary, and the next turn is given no third", async () => {

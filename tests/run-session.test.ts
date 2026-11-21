@@ -94,7 +94,7 @@ test("a run claims with its run id and PID, puts the brief in its role section, 
 // The merge-train switch (tests/trainswitch.test.ts): a tower run is briefed by tower-run.md, which loses its integration text when STRAW_BOSS_INTEGRATION is off.
 test("a tower run with the merge train off is briefed without the integrator, and answers a car: block that it is off; with it on the role prompt is whole", async () => {
 	const seen: string[] = [];
-	const spy = (context: { messages: unknown[]; systemPrompt?: string }) => (seen.push((context.systemPrompt ?? "") + JSON.stringify(context.messages)), fauxAssistantMessage("ok"));
+	const spy = (context: { messages: { role: string; sections?: Record<string, string> }[] }) => (seen.push(context.messages.find((m) => m.role === "system")?.sections?.["straw-boss"] ?? ""), fauxAssistantMessage("ok"));
 	for (const [env, off] of [[{ STRAW_BOSS_INTEGRATION: "off" }, true], [{}, false]] as const) {
 		seen.length = 0;
 		const srv = server();
@@ -102,8 +102,8 @@ test("a tower run with the merge train off is briefed without the integrator, an
 		const r = await rig(srv, { env: { ...env } });
 		r.faux.setResponses([spy as never]);
 		await until(() => seen.length === 1, "the turn");
-		const role = seen[0]!.slice(seen[0]!.indexOf("You are a run of the tower"), seen[0]!.indexOf("BRIEF-MARK"));
-		assert.match(role, /^You are a run of the tower of Herdr workspace Alpha/);
+		const role = seen[0]!;
+		assert.match(role, /^<straw-boss>\nYou are a run of the tower of Herdr workspace Alpha/);
 		assert.equal(/integrator|car slip|merge train/.test(role), !off);
 		assert.equal(/`car:` block[^.]*integration is off on this computer/.test(role), off);
 		assert.doesNotMatch(role, /<!--/);

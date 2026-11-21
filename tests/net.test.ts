@@ -119,13 +119,14 @@ test("/boss from a member forces a claim even when the tab has a main; the two s
 	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
 	await Promise.all([a.start(), b.start()]);
 	await a.promote();
-	await a.run();
-	await b.run();
+	const firstA = (await a.run())["straw-boss"], firstB = (await b.run())["straw-boss"];
 	await b.command();
 	await settle();
 	assert.deepEqual([a.tokens, b.tokens], [{ sb_role: "member" }, { sb_role: "main" }]);
-	assert.match((await b.run())["straw-boss"]!, /^You are the main agent/);
-	assert.match((await a.run())["straw-boss"]!, /^Straw Boss: you are a member of tab work of workspace Alpha, and the tab has a main agent/);
+	assert.equal((await b.run())["straw-boss"], firstB);
+	assert.equal((await a.run())["straw-boss"], firstA);
+	assert.match(b.sent.find((m) => m.customType === "straw-boss")!.content, /You are the main agent/);
+	assert.match(a.sent.find((m) => m.customType === "straw-boss")!.content, /you are a member of tab work of workspace Alpha, and the tab has a main agent/);
 	assert.equal(((await a.tool("boss_status")).details as { tabs: { main: string }[] }).tabs[0]!.main, "b", "boss_status names the new main");
 	assert.deepEqual(a.notices.map((n) => n.text), ["This session is now the main agent of work", "This session is no longer the main agent of work"]);
 	assert.ok(b.notices.some((n) => n.text === "This session is now the main agent of work"));

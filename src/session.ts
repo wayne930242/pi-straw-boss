@@ -288,13 +288,13 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		briefing.begin(sections);
 		if (!s.holdsTower || !sections[ENTRY]) return;
 		const lines = await digest.take(s.at.workspaceId).catch(() => []);
-		if (lines.length) sections[ENTRY] += `\n\nSince your last run:\n${lines.map((line) => `- ${line}`).join("\n")}`;
+		if (lines.length) return { message: { customType: ENTRY, content: `Since your last run:\n${lines.map((line) => `- ${line}`).join("\n")}`, display: false } };
 	});
 	// A rename from any source (boss_rename, /name, another extension) can make this main an integrator (§2); its todos are read again after each todo call.
 	pi.on("session_info_changed", (event) => void (!runMode.active() && mainDuty.migrate((event as { name?: string }).name)));
 	pi.on("agent_settled", () => void (!runMode.active() && briefing.settled()));
 	pi.on("message_end", (event) => void (!runMode.active() && briefing.delivered(event.message))); // a role steer counts as told once pi delivers it (briefing.ts `told`)
-	// A compaction drops the cache and may summarize the steers away, and a tree move may leave them on another branch: the next run renders the role section anew (briefing.ts `fresh`).
+	// Compaction and tree navigation can remove earlier steers. Resend current guidance without touching the role section.
 	pi.on("session_compact", (event) => void (!runMode.active() && briefing.fresh(event.willRetry)));
 	pi.on("session_tree", () => void (!runMode.active() && briefing.fresh()));
 

@@ -83,13 +83,14 @@ test("migration by name: a ledger integrator named `integ FE2` gets integrator.m
 test("takeover: a rename to `integ v3` mid-run migrates through boss_rename, with one steer carrying integrator.md and the reply naming the kind", async () => {
 	world = new World();
 	const a = await main("Session 脈絡毀損接手");
-	await text(a);
+	const original = await text(a);
 	const reply = await a.tool("boss_rename", { name: "integ v3" });
 	assert.match((reply.content[0] as { text: string }).text, /Your kind is now integrator \(migrated by name\); boss_duty changes it\./);
 	await settle();
 	assert.equal(steers(a).length, 1);
 	assert.match(steers(a)[0]!, /# Integrator/);
 	assert.equal(token(), "integrator");
+	assert.equal(await text(a), original, "a rename-triggered migration is not a boss_duty declaration");
 });
 
 test("a rename through pi's session_info_changed migrates; renaming away keeps the kind", async () => {

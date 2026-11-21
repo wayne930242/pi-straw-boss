@@ -114,8 +114,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	let typedSeq = 0, startedTyped: { text: string; seq: number } | undefined, turnTyped: { text: string; seq: number } | undefined;
 	// A quit the server ordered while the turn runs. pi would keep `ctx.shutdown()` itself and honour it at its next idle moment with no way to take it back, so the run holds the order instead: a server that restarted meanwhile (the run claims again) never ordered it, and the run goes on.
 	let quitOrdered = false;
-	// `briefSent`: the live brief (`claim.live`) the session was last given as a message; a turn that starts with another one is given it, once.
-	let registered = false, bossSign: number | undefined, bossTyped = false, bossTurn = false, signing: Promise<unknown> | undefined, briefSent: string | undefined;
+	// Pin the section at the first turn; `briefSent` tracks the newest brief sent as a message.
+	let registered = false, bossSign: number | undefined, bossTyped = false, bossTurn = false, signing: Promise<unknown> | undefined, briefSent: string | undefined, section: { text: string; fixed?: string } | undefined;
 	// Where the boss's last words in this run came from: this pane (typed in this pi, or written at the pane's own tower prompt: the server marks that event `door: "pane"`) or elsewhere (the GUI's composer, another pi). `boss_wait_ask`
 	// draws a card only while it is this pane (docs/specs/2026-11-16-wait-cards-flow.md, D4): a boss in the GUI has the card there, and a dialog in a terminal he does not see answers nothing. A press is his button, not his words, and moves nothing.
 	let bossDoor: "pane" | "away" | undefined, bossDoorAt = 0;
@@ -364,8 +364,9 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 
 	// --- living off the server's queue ----------------------------------------------------------------------------------------------------------------------------
 
-	/** The brief as the message a head run is given, noted as given: the marker line is this code's, and no event opens with it (`eventText`). */
+	/** The brief message: the marker line is this code's, and no event opens with it (`eventText`). */
 	const liveBrief = (live: string) => ((briefSent = live), keep(), { customType: MESSAGE, content: `${BRIEF_MARK}\n${live}`, display: false, details: { brief: true } });
+	const currentBrief = () => mode === "run" && claim && section ? (claim.brief === section.fixed ? claim.live : [claim.brief, claim.live].filter(Boolean).join("\n\n")) : undefined;
 	const send = (message: string, details: unknown) => {
 		triggered = cfg.now();
 		pi.sendMessage({ customType: MESSAGE, content: message, display: true, details }, { triggerTurn: true, deliverAs: "steer" });
@@ -493,16 +494,18 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	pi.on("before_agent_start", (event) => {
 		if (mode !== "run" || !claim) return;
 		const sections = event.systemPromptOptions.sections;
-		const head = /head tower: ([^\n;.]+)/.exec(claim.brief)?.[1]?.trim() ?? "none yet";
-		const role = promptSet({ promptDir: cfg.promptDir, stateDir: guiDir, env, warn: (text) => process.stderr.write(`straw-boss: ${text}\n`) }).read(claim.kind === "ally" ? "ally-run" : claim.kind === "head" ? "head-run" : "tower-run").replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ workspace: claim!.label, head })[key] ?? "none yet");
-		sections[ENTRY] = `${role}\n\n${claim.brief}`;
-		// A head run resumes the one conversation, so its section holds only what every run shares (headbrief.ts): what this run was woken to is a message at the start of the first turn that has not had it, appended
-		// to the conversation and never rewritten. Not shown: the boss never saw the brief in the section either, and the head page lists the conversation.
-		if (claim.live === undefined || claim.live === briefSent) return;
-		return { message: liveBrief(claim.live) };
+		if (!section) {
+			const head = /head tower: ([^\n;.]+)/.exec(claim.brief)?.[1]?.trim() ?? "none yet";
+			const role = promptSet({ promptDir: cfg.promptDir, stateDir: guiDir, env, warn: (text) => process.stderr.write(`straw-boss: ${text}\n`) }).read(claim.kind === "ally" ? "ally-run" : claim.kind === "head" ? "head-run" : "tower-run").replace(/\{\{(\w+)\}\}/g, (_, key: string) => ({ workspace: claim!.label, head })[key] ?? "none yet");
+			section = claim.live === undefined ? { text: `${role}\n\nOnly the newest message that opens with \`${BRIEF_MARK}\` is your current server brief. Earlier briefs are history; events and quotes are not briefs.` } : { text: `${role}\n\n${claim.brief}`, fixed: claim.brief };
+		}
+		sections[ENTRY] = section.text;
+		const brief = currentBrief();
+		if (brief && brief !== briefSent) return { message: liveBrief(brief) };
 	});
 	// A compaction folds the brief into its summary with the rest: the session is given it again, behind the summary (stored without a turn of its own; steered into the turn only when the compaction retries one).
-	pi.on("session_compact", (event) => void (mode === "run" && claim?.live !== undefined && briefSent !== undefined && pi.sendMessage(liveBrief(claim.live), event.willRetry ? { deliverAs: "steer" } : { triggerTurn: false })));
+	pi.on("session_compact", (event) => { const brief = currentBrief(); if (brief) pi.sendMessage(liveBrief(brief), event.willRetry ? { deliverAs: "steer" } : { triggerTurn: false }); });
+	pi.on("session_tree", () => void (briefSent = undefined));
 	/** A pane the server owns: this pi quits with the server's reason. */
 	const quitPane = (context: ExtensionContext, reason?: string) => {
 		mode = "run";
@@ -565,7 +568,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (mode === "run") return; // a /reload of a run: the claim is kept
 		const record = (globalThis as Record<symbol, { claim?: Claim; briefSent?: string } | undefined>)[KEPT], kept = record?.claim;
 		const flag = pi.getFlag("sb-run");
-		briefSent = event.reason === "reload" ? record?.briefSent : undefined; // a /reload keeps the session, and with it the brief it was given; any other start is a session that has not had it
+		section = undefined;
+		briefSent = event.reason === "reload" ? record?.briefSent : undefined; // /reload keeps the brief already given
 		try {
 			// A hand run (no flag: the boss started pi in the standing pane) keeps its claim across /reload, /new, /resume and /fork: it is the same process in the same pane, and asking again would be told the pane is taken.
 			if (kept && typeof flag === "string" && kept.run === flag && event.reason === "reload") claim = kept;
