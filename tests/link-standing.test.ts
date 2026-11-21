@@ -55,7 +55,7 @@ async function boxRun() {
 	}
 	world.linkAnswers.set("device-resolve", (b) => (b.device === "mac" ? { ok: true, id: MAC, short: "ibzkd5", label: "mac", team: "t1" } : { ok: false, error: `no device ${String(b.device)}` }));
 	world.linkAnswers.set("send", (b) => ({ ok: true, text: "Sent.", details: { team: "t1", device: MAC, id: ENVELOPE, asked: b.awaitsReply !== undefined, waited: b.wait !== undefined } }));
-	return { world, send: (args: Record<string, unknown>) => ask(world, s, { cmd: "run-tool", token, tool: "tower_send", args: { device: "mac", ...args } }) };
+	return { world, send: (args: Record<string, unknown>) => ask(world, s, { cmd: "run-tool", token, tool: "tower_send", args: { device: "mac", ...args } }), raw: (args: Record<string, unknown>) => ask(world, s, { cmd: "run-tool", token, tool: "tower_send", args }) };
 }
 
 /** The Mac: a wait router with one coordinator and the standing main work-on in workspace w15X. */
@@ -105,7 +105,11 @@ test("D13: a tower run's question for the Mac's standing main: the wait goes wit
 });
 
 test("D13: a notice goes with no ask and is recorded nowhere; a question needs a main to answer to; an ally run sends notices only", async () => {
-	const { world, send } = await boxRun();
+	const { world, send, raw } = await boxRun();
+	// WR3C-F001: standing with no device fails, and nothing goes to this computer's towers.
+	const sentBefore = world.client("sb-tower-wa")!.sent.length;
+	assert.match(String((await raw({ standing: "notice", message: "The box train 1121 landed." })).error), /standing goes to a teammate device: name it with device/);
+	assert.equal(world.client("sb-tower-wa")!.sent.length, sentBefore, "no local tower got it");
 	const told = await send({ standing: "notice", message: "The box train 1121 landed." });
 	assert.equal(told.ok, true, JSON.stringify(told));
 	assert.match(String(told.text), /^Your notice went to the standing main of mac \(ibzkd5\)\. Nothing comes back for it\./);

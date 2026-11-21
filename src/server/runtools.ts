@@ -475,6 +475,7 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 		case "tower_send": {
 			if (args.head === true) return answerHead(host, args);
 			if (opt(args, "device") !== undefined || args.waitsOn !== undefined) return towerSendDevice(host, args);
+			if (args.standing !== undefined) throw new Error("standing goes to a teammate device: name it with device"); // WR3C-F001: never to this computer's towers
 			if (opt(args, "for") !== undefined || opt(args, "inReplyTo") !== undefined) throw new Error("for and inReplyTo go with a device");
 			const stamped = await forwardOf(host, args), message = stamped?.body ?? str(args, "message");
 			const done = await reach.towerSend(message, opt(args, "workspace"), args.reply === true, stamped ? { fwd: stamped.fwd, fwdFrom: stamped.fwdFrom } : {});
