@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 /** What the head tower's `tower_send` tells the model; `supersedes` is how a correction says which earlier broadcast it replaces (docs/specs/2026-11-07-head-log-cards.md). */
@@ -22,18 +22,17 @@ export function registerHeadSend(pi: ExtensionAPI, tool: (name: string, args: un
 	});
 }
 
-/** What the head's `boss_auto` tells the model (docs/specs/2026-11-09-auto-mode.md, §2). */
-export const BOSS_AUTO_DESCRIPTION = "Switch auto mode (the boss is away: nothing may wait for them) on or off. Call it only when the boss's own words in the turn you are answering ask for it (for example 我要睡了 to start, 我起床了 to end); the server reads those words itself and refuses anything else, a tower's message or a board line included. `on` only stages a request: auto mode starts when the boss confirms it in the GUI or at the head pane, so tell the boss to confirm. `off` takes effect at once.";
+/** What the head's `boss_auto` tells the model (docs/specs/2026-11-09-auto-mode.md, §2; docs/specs/2026-11-21-auto-return.md, AR-D1). */
+export const BOSS_AUTO_DESCRIPTION = "Switch auto mode (the boss is away: nothing may wait for them) on or off. Call it only when the boss's own words in the turn you are answering ask for it (for example 我要睡了 to start, 我起床了 to end); the server reads those words itself and refuses anything else, a tower's message or a board line included. Either direction takes effect at once: tell the boss it is on (or off), and that /boss auto off or the GUI switch ends it.";
 
-/** The head's `boss_auto`. The run sends the starter of the turn with the call (the server checks it); when the boss typed the turn at this pane and the call staged an `on`, this code, not the model, draws the confirm in the terminal and sends the boss's yes. */
-export function registerBossAuto(pi: ExtensionAPI, tool: (name: string, args: unknown, toolCallId?: string) => Promise<{ text: string; details?: unknown }>, confirm: (pending: { id: string; said: string; expires?: number }, context: ExtensionContext) => Promise<string | undefined>): void {
+/** The head's `boss_auto`. The run sends the starter of the turn with the call (the server checks it); the model only says the direction. */
+export function registerBossAuto(pi: ExtensionAPI, tool: (name: string, args: unknown, toolCallId?: string) => Promise<{ text: string; details?: unknown }>): void {
 	pi.registerTool({
 		name: "boss_auto", label: "boss_auto", description: BOSS_AUTO_DESCRIPTION,
-		parameters: Type.Object({ on: Type.Boolean({ description: "true: stage the start of auto mode; false: end it." }) }),
-		execute: async (id, params, _signal, _update, context) => {
-			const done = await tool("boss_auto", params, id), details = done.details as { pending?: { id: string; said: string; expires?: number }; typed?: boolean } | undefined;
-			const more = details?.pending && details.typed && context.hasUI ? await confirm(details.pending, context) : undefined;
-			return { content: [{ type: "text", text: more ? `${done.text}. ${more}` : done.text }], details: done.details };
+		parameters: Type.Object({ on: Type.Boolean({ description: "true: start auto mode; false: end it." }) }),
+		execute: async (id, params) => {
+			const done = await tool("boss_auto", params, id);
+			return { content: [{ type: "text", text: done.text }], details: done.details };
 		},
 	});
 }

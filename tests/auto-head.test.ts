@@ -89,7 +89,7 @@ test("a run token is refused every auto command; there is no tool that switches 
 	assert.equal(r.ok, false, "boss_status is not a head tool either");
 });
 
-test("boss_auto is refused for 「狀況如何？」, and acts on 「我要睡了」 by staging only; the confirm turns it on", async () => {
+test("AR-D1: boss_auto is refused for 「狀況如何？」, and 「我要睡了」 switches auto mode on at once, with no confirm", async () => {
 	const { s, ws } = await setup();
 	const first = await talk(s, ws, 1, "狀況如何？");
 	const refused = await bossAuto(s, first.token, true, { turn: first.ids[0] });
@@ -99,16 +99,15 @@ test("boss_auto is refused for 「狀況如何？」, and acts on 「我要睡�
 	assert.equal(second.ok, true);
 	const next = (await ask(s, { cmd: "run-poll", token: first.token, idle: true })).event as { id: string };
 	await ask(s, { cmd: "run-taken", token: first.token, id: next.id });
-	const staged = await bossAuto(s, first.token, true, { turn: next.id });
-	assert.equal(staged.ok, true, JSON.stringify(staged));
-	assert.match(String(staged.text), /pending: not on until the boss confirms \(10 min\)/);
-	assert.equal((await state(s)).on, false);
+	const on = await bossAuto(s, first.token, true, { turn: next.id });
+	assert.equal(on.ok, true, JSON.stringify(on));
+	assert.equal(String(on.text), "Auto mode is on.");
+	assert.equal((await state(s)).on, true);
+	assert.equal((await state(s)).pending, undefined, "no staged record");
 	const again = await bossAuto(s, first.token, true, { turn: next.id });
 	assert.equal(again.ok, false, "an event works once");
-	const pending = (await state(s)).pending!;
-	assert.equal(pending.said, "我要睡了，今晚麻煩你盯著");
-	assert.equal((await ask(s, { cmd: "auto-confirm", id: pending.id })).ok, true);
 	assert.equal(file().on, true);
+	assert.equal(file().by.via, "head");
 	assert.equal(file().by.said, "我要睡了，今晚麻煩你盯著");
 });
 

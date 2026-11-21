@@ -1185,7 +1185,7 @@ export function createTowers(o: TowersOptions): Towers {
 						const token = request.token, turn = typeof request.turn === "string" ? request.turn : undefined;
 						const event = typeof token === "string" && turn !== undefined && runs.bossTaken(token, turn) ? runs.bossEvents(token).find((e) => e.id === turn) : undefined;
 						const typed = typeof request.typed === "string" && Number.isInteger(request.seq) ? { text: request.typed, run: who.id, seq: request.seq as number } : undefined;
-						return autoAnswer(o.auto.bossAuto(on, { ...(event ? { event } : {}), ...(typed ? { typed } : {}) }, { session: who.id }));
+						return autoAnswer(on, o.auto.bossAuto(on, { ...(event ? { event } : {}), ...(typed ? { typed } : {}) }, { session: who.id }));
 					},
 				} satisfies HeadPort);
 				return await headTool(head, name, args, { ...(typeof request.toolCallId === "string" ? { toolCallId: request.toolCallId } : {}), ...(typeof request.turn === "string" ? { turn: request.turn } : {}) });

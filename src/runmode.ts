@@ -20,8 +20,6 @@ import type { ServerLook } from "./server-look.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
 import { markRun } from "./runmark.ts";
 import { registerBossAuto, registerHeadSend } from "./runhead.ts";
-import { asBoss } from "./autoscope.ts";
-import { confirmStaged, drawOpts, type Staged } from "./bossconfirm.ts";
 import { refusedForRun } from "./runallow.ts";
 import { startOf as processStart } from "./startof.ts";
 import { promptSet } from "./trainswitch.ts";
@@ -236,11 +234,6 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		const answer = await call({ cmd: "run-tool", tool: name, args, ...(toolCallId ? { toolCallId } : {}), ...(turnStarter ? { turn: turnStarter } : {}), ...(turnTyped ? { typed: turnTyped.text, seq: turnTyped.seq } : {}) });
 		return { text: text(answer.text) || "(no text)", ...(answer.details !== undefined ? { details: answer.details } : {}) };
 	};
-	/** The head pane's own confirm of a staged `on` (D9): drawn by this code in the terminal where the boss typed the turn, never relayed, and answered with a session request (a run's token may not confirm). */
-	const confirmAuto = (pending: Staged, context: ExtensionContext): Promise<string | undefined> => confirmStaged(pending, {
-		draw: (title, body, opts) => asBoss(() => context.ui.confirm(title, body, drawOpts(opts))),
-		ask, now: () => cfg.now(), who: { session: env.PI_INTERCOM_SESSION_ID, pane: env.HERDR_PANE_ID, pid: process.pid },
-	});
 	// `/boss wait` in the run's own pane (waitcmd.ts): the one /boss command a run takes, typed by the boss. It makes the requests a session makes (the hello secret, never this run's token: `tower-memory` and `boss-waits` stay refused to a run
 	// token) and draws its dialogs terminal-only, under the here mark. The run's model is given no tool that presses, and an event reaches it as a message, never as typed input, so nothing a model or a peer writes can run the command.
 	const bossHere = createHereMark({ ask: (request) => ask(request), pane: env.HERDR_PANE_ID ?? null, every: cfg.face?.every ?? every });
@@ -298,7 +291,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		tools.addOpenMain();
 		tools.addTowerComms();
 		if (claim!.kind === "local") registerLinkRequest();
-		if (claim!.kind === "head") (registerHeadSend(pi, tool), registerBossAuto(pi, tool, confirmAuto));
+		if (claim!.kind === "head") (registerHeadSend(pi, tool), registerBossAuto(pi, tool));
 		// `boss_wait_ask` (waitask.ts): a local run shows its tower's cards, the head's run any tower's. Registered here and not proxied to `run-tool`, because it draws a dialog: its requests are a session's (the hello secret), never this
 		// run's token. An ally run has none: the boss is not its sender. A hand run's turn that an event started is no turn of his either.
 		if (claim!.kind !== "ally") registerWaitAsk(pi, {
