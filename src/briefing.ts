@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Graph } from "./duty.ts";
 import type { MainDuty } from "./mainduty.ts";
@@ -13,9 +14,10 @@ const GRAPH_ADDENDUM: Partial<Record<Graph, string>> = { "fan-out/fan-in": "grap
 
 /** What a run was briefed with: the role, a main's kind, and the graph a coordinator's plan named (an integrator and a standing main carry `dispatch.md` whatever their plan says, so they have none here). */
 interface Briefed { name: string | undefined; duty: string; graph: Graph | "" }
-/** A steer's `details`: what it tells, and what it was written against (`null`: it replaces the whole role prompt, whatever the model held). */
-interface Told { briefed: Briefed; base: Briefed | null; provisional?: true }
+/** A steer's `details`: what it tells, and what it was written against (`null`: it replaces the whole role prompt, whatever the model held); a whole one also signs the role prompt it carries (`sig`). */
+interface Told { briefed: Briefed; base: Briefed | null; provisional?: true; sig?: string }
 const same = (a: Briefed, b: Briefed) => a.name === b.name && a.duty === b.duty && a.graph === b.graph;
+const sign = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
 /** The role prompt: a system prompt section, set when a run starts, and a steer when the role, the kind, or a coordinator's plan changes during one. */
 export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty: MainDuty) {
@@ -40,9 +42,10 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 	let section: { base: Briefed; text: string } | undefined, labels: typeof s.info | undefined, labelDeadline: number | undefined;
 	// Keep the first role's labels for custom templates too. A steer before pinning uses the same fields, read live.
 	const labelsOf = () => ({ tab: s.info.tab, workspace: s.info.workspace, head: s.info.head });
+	// Empty labels are valid for unnamed tabs. The optional {{head}} is not a gate, and stock train prompts have no location slots.
+	const labelled = (name: string, duty: string) => LOCATION_LABELS.every((key) => s.info[key] !== undefined || !partsOf(name, duty, "").some((part) => prompts[part]?.includes(`{{${key}}}`)));
 	const readyToPin = (name: string, duty: string) => {
-		// Empty labels are valid for unnamed tabs. The optional {{head}} is not a gate, and stock train prompts have no location slots.
-		if (LOCATION_LABELS.every((key) => s.info[key] !== undefined || !partsOf(name, duty, "").some((part) => prompts[part]?.includes(`{{${key}}}`)))) return true;
+		if (labelled(name, duty)) return true;
 		// Give the asynchronous Herdr look time, but never keep a known role unpinned forever if it fails.
 		const now = cfg.now();
 		return now >= (labelDeadline ??= now + LABEL_GRACE_MS);
@@ -52,16 +55,18 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 	let quiet = false;
 	// A stored message is in the transcript at the turn's end, and pi reports it to no extension: it is told as it is sent. So is a steer sent while pi is idle (awaiting `agent_settled` handlers, or after a run
 	// that failed to start past `before_agent_start`): pi stores it at once (`_appendCustomMessage`), with no `message_end`.
-	const steer = (text: string, base: Briefed | null, briefed: Briefed) => {
-		const details: Told = { briefed, base, ...(!section ? { provisional: true } : {}) };
+	const steer = (text: string, base: Briefed | null, briefed: Briefed, sig?: string) => {
+		const details: Told = { briefed, base, ...(!section && briefed.name && !labelled(briefed.name, briefed.duty) ? { provisional: true } : {}), ...(sig ? { sig } : {}) };
 		pi.sendMessage({ customType: ENTRY, content: `<straw-boss>\n${text}\n</straw-boss>`, display: true, details }, quiet ? { triggerTurn: false } : { deliverAs: "steer" });
 		if (quiet || idle()) told = briefed;
 		else flight = details;
 	};
+	/** The role prompt a whole steer carries for `now`. */
+	const wholeText = (now: Briefed) => compose(now) || "No Straw Boss role applies.";
 	/** Steers what changed from `was` to `now`, if anything: a role or a kind gets its whole prompt, which replaces the section's, as does an unknown `was`; a coordinator's graph only what it adds, replaces, or drops (§2a). */
 	const steerChange = (was: Briefed | undefined, now: Briefed) => {
 		if ((was && same(was, now)) || (!now.name && !section?.base.name && !was?.name)) return;
-		const whole = (lead: string) => steer(`${lead} Follow only these Straw Boss role instructions, replacing the system section and any earlier role updates:\n\n${compose(now) || "No Straw Boss role applies."}`, null, now);
+		const text = wholeText(now), whole = (lead: string) => steer(`${lead} Follow only these Straw Boss role instructions, replacing the system section and any earlier role updates:\n\n${text}`, null, now, sign(text));
 		if (!was) return whole("Some of your Straw Boss role updates may be missing or out of order.");
 		if (now.name !== was.name) return whole("Your Straw Boss role changed.");
 		if (now.duty !== was.duty) return whole(`Your kind is now ${now.duty}.`);
@@ -107,11 +112,13 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 				labels ??= labelsOf();
 				const base: Briefed = { ...now, graph: "" };
 				if (!section) {
-					// A matching whole steer supersedes everything before it. A delta may have lost its base to compaction; a provisional steer may carry missing labels.
-					const last = branch().findLast((e) => e.type === "custom_message" && e.customType === ENTRY && (e.details as Partial<Told> | undefined)?.briefed);
-					const prior = last?.type === "custom_message" ? last.details as Told : undefined;
+					// A whole steer with the text this one would carry supersedes everything before it, while the model sees it: pi's context drops what precedes the last compaction's first kept
+					// entry (`buildContextEntries`), and a summary may keep older role text. A delta may have lost its base; a provisional steer may lack labels; an unsigned one (0.81.1 and earlier) may hold older prompts.
+					const path = branch(), at = path.findLastIndex((e) => e.type === "custom_message" && e.customType === ENTRY && (e.details as Partial<Told> | undefined)?.briefed);
+					const cut = path.findLastIndex((e) => e.type === "compaction"), compaction = path[cut], prior = path[at]?.type === "custom_message" ? path[at].details as Told : undefined;
+					const seen = compaction?.type !== "compaction" || path.some((e, i) => i <= at && i < cut && e.id === compaction.firstKeptEntryId) || at > cut;
 					if (flight) told = undefined;
-					else if (prior) told = prior.base === null && !prior.provisional && same(prior.briefed, now) ? prior.briefed : undefined;
+					else if (prior) told = seen && prior.base === null && !prior.provisional && same(prior.briefed, now) && prior.sig === sign(wholeText(now)) ? prior.briefed : undefined;
 					else told = told === undefined ? base : undefined;
 				} else if (told === section.base && !flight) told = base;
 				section = { base, text: compose(base) };

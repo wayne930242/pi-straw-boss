@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { cpSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { type Agent, PROMPT_DIR, settle, World } from "./fakes.ts";
 
@@ -126,8 +127,9 @@ test("a resumed member replaces a stale main steer once without rewriting its se
 	assert.equal(told(b).length, 1, "no repeated steer on the next turn");
 });
 
-for (const prior of ["whole", "delta", "provisional"] as const) {
-	test(`a reloaded member handles the latest matching ${prior} steer`, async () => {
+// A whole steer written by 0.81.0 or 0.81.1 carries no signature of its text, a delta may have lost its base to compaction, and a provisional steer may carry missing labels: each is resent.
+for (const prior of ["unsigned whole", "delta", "provisional"] as const) {
+	test(`a reloaded member replaces the latest matching ${prior} steer`, async () => {
 		await main("a", "wA:p1", "wA:t1");
 		const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
 		b.transcript.push(historicSteer(mainBrief, null), historicSteer(memberBrief, prior === "delta" ? memberBrief : null, prior === "provisional" ? true : undefined));
@@ -136,13 +138,74 @@ for (const prior of ["whole", "delta", "provisional"] as const) {
 		const pinned = await section(b);
 		assert.match(pinned, /member of tab work/);
 		assert.equal(await section(b), pinned);
-		if (prior === "whole") assert.deepEqual(told(b), [], "the latest whole steer already supplies the matching role");
-		else {
-			assert.equal(told(b).length, 1);
-			assert.match(told(b)[0]!, /replacing the system section and any earlier role updates[\s\S]*member of tab work/);
-		}
+		assert.equal(told(b).length, 1);
+		assert.match(told(b)[0]!, /replacing the system section and any earlier role updates[\s\S]*member of tab work/);
 	});
 }
+
+/** Writes the session's latest role steer to its transcript, as pi stores a delivered message. */
+const keep = (a: Agent, extra: { id?: string } = {}) => {
+	const steer = a.sent.filter((m) => m.customType === "straw-boss").at(-1) as unknown as { customType: string; details: unknown };
+	a.transcript.push({ type: "custom_message", customType: steer.customType, details: steer.details, ...extra });
+};
+/** A `/reload` and the run after it: the number of role steers sent so far. */
+const reload = async (a: Agent) => {
+	await a.fire("session_start", { reason: "reload" });
+	await world.quiet();
+	await section(a);
+	return told(a).length;
+};
+
+test("a reloaded member reuses its latest whole steer only while that steer carries the text it would send now", async () => {
+	const promptDir = join(world.stateDir, "test-prompts");
+	cpSync(PROMPT_DIR, promptDir, { recursive: true });
+	await main("a", "wA:p1", "wA:t1");
+	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1", deps: { promptDir } });
+	b.transcript.push(historicSteer(mainBrief, null));
+	await b.fire("session_start", { reason: "resume" });
+	await world.quiet();
+	b.idle = false;
+	await section(b);
+	assert.equal(told(b).length, 1);
+	keep(b);
+	assert.equal(await reload(b), 1, "the same text: the steer is reused");
+	writeFileSync(join(promptDir, "member.md"), `${readFileSync(join(promptDir, "member.md"), "utf8").trim()}\n\nA rule an upgrade added.`);
+	assert.equal(await reload(b), 2, "a changed prompt (an sb upgrade, a custom prompt, the integration switch): the steer is resent");
+	assert.match(told(b)[1]!, /replacing the system section and any earlier role updates[\s\S]*A rule an upgrade added\./);
+});
+
+// pi's getBranch returns the whole path, while the model sees nothing before the last compaction's first kept entry.
+test("a reload resends a whole steer the last compaction summarized away, and reuses one it kept", async () => {
+	const a = await main("a", "wA:p1", "wA:t1");
+	await plan(a, "fan-out");
+	await section(a);
+	keep(a, { id: "s1" });
+	assert.equal(await reload(a), 2, "the graph delta may have lost its base: the whole prompt");
+	keep(a, { id: "s2" });
+	a.transcript.push({ type: "message", id: "m1", message: { role: "user", content: "go on" } }, { type: "compaction", id: "c1", firstKeptEntryId: "s2" });
+	assert.equal(await reload(a), 2, "a compaction that kept the steer: reused");
+	a.transcript.push({ type: "message", id: "m2", message: { role: "user", content: "go on" } }, { type: "compaction", id: "c2", firstKeptEntryId: "m2" }); // a /compact while idle: nothing is steered then
+	assert.equal(await reload(a), 3, "a compaction that summarized the steer away: resent");
+	assert.match(told(a)[2]!, /replacing the system section and any earlier role updates[\s\S]*## Dispatch[\s\S]*## Graph: fan-out\/fan-in/);
+});
+
+test("a member that joins during its first run is steered once: the first pin reuses that steer, its labels complete", async () => {
+	await main("a", "wA:p1", "wA:t1");
+	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
+	await b.fire("session_start", { reason: "startup" });
+	b.idle = false;
+	assert.equal((await b.run())["straw-boss"], undefined, "join is still pending");
+	await world.quiet();
+	await b.deliver();
+	await b.fire("agent_settled", { aborted: false });
+	assert.equal(told(b).length, 1);
+	assert.match(told(b)[0]!, /member of tab work of workspace Alpha/);
+	keep(b);
+	const pinned = await section(b);
+	assert.match(pinned, /member of tab work/);
+	assert.equal(told(b).length, 1, "no second whole steer at the first pin");
+	assert.equal(await section(b), pinned);
+});
 
 test("a resumed tower does not mistake a details-less digest for a role steer", async () => {
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
