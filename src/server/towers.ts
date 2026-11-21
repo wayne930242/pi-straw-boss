@@ -25,6 +25,7 @@ import type { Requester } from "../autostate.ts";
 import type { AutoMode } from "./automode.ts";
 import { basisOf, briefLine, type ParkedRow, parkedRows, parkedText, parkOpen, type Target } from "./autotower.ts";
 import { returner, type Returns } from "./autoreturn.ts";
+import { UNATTENDED } from "./autoops.ts";
 import { autoAnswer, headHost, headTool, type HeadPort } from "./headtools.ts";
 import type { Allows } from "./allows.ts";
 import type { Asks } from "./asks.ts";
@@ -1182,7 +1183,7 @@ export function createTowers(o: TowersOptions): Towers {
 					boss: (turn) => (typeof request.token === "string" && turn !== undefined ? runs.bossEvents(request.token).find((e) => e.id === turn)?.text : undefined),
 					// The boss's own words in this turn (§2): the event the run's extension reports as the turn's starter, if this run took it as a boss event, or the line the boss typed at the head pane; the model supplies neither.
 					auto: (on) => {
-						if (!o.auto) throw new Error("auto mode is held by the primary server of this computer");
+						if (!o.auto || o.unattended?.()) throw new Error(o.auto ? UNATTENDED : "auto mode is held by the primary server of this computer"); // an unattended device has no auto mode (§10), as the socket and the GUI say
 						const token = request.token, turn = typeof request.turn === "string" ? request.turn : undefined;
 						const event = typeof token === "string" && turn !== undefined && runs.bossTaken(token, turn) ? runs.bossEvents(token).find((e) => e.id === turn) : undefined;
 						const typed = typeof request.typed === "string" && Number.isInteger(request.seq) ? { text: request.typed, run: who.id, seq: request.seq as number } : undefined;

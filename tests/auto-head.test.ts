@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { AUTO_FILE } from "../src/autostate.ts";
+import { HEAD_TOOLS } from "../src/server/headbrief.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
 import { callControl } from "../src/server/socket.ts";
 import { type Running, until } from "./server-world.ts";
@@ -109,6 +110,24 @@ test("AR-D1: boss_auto is refused for 「狀況如何？」, and 「我要睡了
 	assert.equal(file().on, true);
 	assert.equal(file().by.via, "head");
 	assert.equal(file().by.said, "我要睡了，今晚麻煩你盯著");
+});
+
+test("AR-F001: the head brief's line for boss_auto says both directions switch at once, as the tool and the role say", () => {
+	const line = HEAD_TOOLS.find((l) => l.startsWith("- boss_auto"))!;
+	assert.doesNotMatch(line, /stages|confirm/);
+	assert.match(line, /Either direction takes effect at once/);
+});
+
+test("AR-F005: on an unattended device boss_auto is refused both ways, as the socket and the GUI refuse it", async () => {
+	world.unattended = () => true;
+	const { s, ws } = await setup();
+	const { token, ids } = await talk(s, ws, 1, "我要睡了，今晚麻煩你盯著");
+	for (const on of [true, false]) {
+		const r = await bossAuto(s, token, on, { turn: ids[0] });
+		assert.equal(r.ok, false);
+		assert.match(String(r.error), /an unattended device has no boss at it/);
+	}
+	assert.equal((await state(s)).on, false);
 });
 
 test("a board line or a press in a boss-started turn never counts, nor does a turn id the run did not take", async () => {

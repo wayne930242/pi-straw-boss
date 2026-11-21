@@ -126,6 +126,8 @@ export class TowerWorld extends ServerWorld {
 	standingTimers: Partial<StandingTimers> = {};
 	/** The clock of a run's wait for the prompt's exit and the settle after it (`standing.ts` `wait`). A world's fake prompt never polls or leaves, so by default the wait costs no machine time and a run starts when its wake is acted on; a test of the wait sets a held clock. */
 	standingWait: { now: () => number; sleep: (ms: number) => Promise<void> } | undefined = fakeClock();
+	/** The device has no boss at it (main.ts `unattended`, from the link holder): set to stand for an unattended device. */
+	unattended: (() => boolean) | undefined;
 	/**
 	 * The clock of the runs (the age of a run, the idle time, the quit grace) when a test sets one: the watcher still ticks every 20 ms, but it sees only the ages the test gives it, so a tick that comes late under load cannot step over a
 	 * time (the steer is skipped when the first tick that sees a run is already past the cap). Unset, the runs use the server's clock.
@@ -177,7 +179,7 @@ export class TowerWorld extends ServerWorld {
 			} }),
 			herdr: { run: this.herdr.runFor("none"), events: this.herdr.events, api: this.herdr.api, watch: (cb: () => void, lost?: () => void) => (this.takeovers.push(cb), lost && this.losts.push(lost), () => {}) },
 			towers: {
-				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.refreshMs ? { refreshMs: this.refreshMs } : {}), ...(this.revokeMs ? { revokeMs: this.revokeMs } : {}), standing: { ...FAST_STANDING, ...this.standingTimers }, ...(this.standingWait ? { standingWait: this.standingWait } : {}), ...(this.serverAllows ? {} : { allows: this.allows }), expose: (t: Towers) => void (this.expose = t),
+				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.refreshMs ? { refreshMs: this.refreshMs } : {}), ...(this.revokeMs ? { revokeMs: this.revokeMs } : {}), standing: { ...FAST_STANDING, ...this.standingTimers }, ...(this.standingWait ? { standingWait: this.standingWait } : {}), ...(this.serverAllows ? {} : { allows: this.allows }), ...(this.unattended ? { unattended: this.unattended } : {}), expose: (t: Towers) => void (this.expose = t),
 				link: async (body, from) => {
 					const b = body as Record<string, unknown>;
 					this.linkCalls.push({ body: b, from });
