@@ -62,7 +62,7 @@ async function pair() {
 	a.net = netOf([["tower-x", "w-a", "label-a", a.project]]);
 	b.net = netOf([["sb-tower-wb", "w-b", "label-b", b.project]]);
 	await Promise.all([a.holder.start(), b.holder.start()]);
-	await until(() => a.holder.capsFor(TEAM_HEX, bob.id).length === 4, 3000, "b's caps");
+	await until(() => a.holder.capsFor(TEAM_HEX, bob.id).includes("notice.ref"), 3000, "b's caps"); // the last of the features a holder without a wait router lists
 	return { a, b };
 }
 const sendTo = (r: Rig, text: string, over: Partial<Parameters<LinkHolder["send"]>[0]> = {}) => r.holder.send({ fromSession: r.net.sessions[0]!.id, device: r.name === "a" ? "bob-mac" : "alice-mac", text, reply: false, ...over });
