@@ -212,6 +212,8 @@ const HEAD_DIFF_MS = 2 * 60_000, DOWN_MS = 2 * 60_000, HELD_MS = 10 * 60_000;
 const REPLY_OFFER_MS = 5 * 60_000;
 /** With a wait router (C2, docs/specs/2026-11-21-box-mac-waits.md §4) a live main keeps the offer of its reply until the ask itself ends (24 hours, src/server/asks.ts `ASK_KEEP_MS`). */
 const REPLY_HOLD_MS = 24 * 3600_000;
+/** How long a box lets a message with an ask wait with no run started before it tells the asker (C4). */
+export const STUCK_MS = 10 * 60_000;
 
 export interface AllyDevice { id: string; short: string; label: string; online: boolean; unattended?: true; ageMs: number | null; roster: number | null; workspaces: WorkspaceState[] }
 export interface AllyTeam { team: string; name: string; devices: AllyDevice[] }
@@ -315,6 +317,9 @@ export class LinkHolder {
 	private wakes = new Map<string, WakeState>();
 	private wakingFor = new Map<string, string>();
 	private waiting = new Map<string, Waiting>();
+	/** C4 (docs/specs/2026-11-21-box-mac-waits.md §4): the inbox messages an ally run took (no longer stuck), and the stuck notices told, once per message and reason. */
+	private deliveredIds = new Set<string>();
+	private stuckTold = new Set<string>();
 	/** When a `tower-reply` last fell back to a plain `tower`, by device, so the log tells it once an hour. */
 	private fellBack = new Map<string, number>();
 	/** What `operateOn` read at the last tick (nothing before the first). */
@@ -732,6 +737,7 @@ export class LinkHolder {
 	}
 	/** An ally run took the inbox message `id` into its session: one `link.log` line names the run, the sender, the team and the ask, never the text (docs/specs/2026-11-05-link-shared-box.md, Audit). */
 	delivered(id: string, run: string): void {
+		this.deliveredIds.add(id);
 		const item = this.o.store.readInbox(id);
 		if (item) this.o.store.log({ event: "tower-run", run, team: item.team, from: item.from, id, ...(item.awaitsReply !== undefined ? { ask: item.awaitsReply } : {}) });
 	}
@@ -945,6 +951,28 @@ export class LinkHolder {
 				store.log({ event: "served-failed", error: String(error) });
 			}
 		}
+		await this.tellStuck();
+	}
+
+	/**
+	 * C4 (b), (c) (docs/specs/2026-11-21-box-mac-waits.md §4; boss decision D6): an unattended box tells the asker of a message that carries an ask and has waited 10 minutes with no run started, or whose tower would not open, why, in a
+	 * `notice` whose `ref` names the ask (a build that takes no ref gets the notice without it). Once per message and reason; it does not close the ask.
+	 */
+	private async tellStuck(refused?: string): Promise<void> {
+		if (this.o.attended?.() ?? true) return;
+		for (const key of [...this.stuckTold]) if (!this.waiting.has(key.split("\n")[0]!)) this.stuckTold.delete(key);
+		for (const id of [...this.deliveredIds]) if (!this.waiting.has(id)) this.deliveredIds.delete(id);
+		for (const [id, w] of this.waiting) {
+			if (this.deliveredIds.has(id) || (!refused && this.now() - w.since < STUCK_MS) || (refused && w.project !== basename(refused))) continue;
+			const item = this.o.store.readInbox(id);
+			if (!item?.awaitsReply || item.reply || item.wait) continue;
+			const reason = refused ? "a tower could not be opened for it here" : w.served ? "it waits for an ally run of the tower here, whose runs are busy, held, or at their limit" : w.offered ? "the tower here was offered it and has not taken it yet" : w.local === "off" ? "tower runs are switched off here" : `no tower here takes messages for project ${w.project ?? "?"} yet`;
+			if (this.stuckTold.has(`${id}\n${reason}`)) continue;
+			this.stuckTold.add(`${id}\n${reason}`);
+			const minutes = Math.max(1, Math.round((this.now() - w.since) / 60_000));
+			await this.sendDialog(item.team, item.from, "notice", { kind: refused ? "inbox-refused" : "inbox-stuck", unit: w.workspace ?? w.project ?? "", text: `Your message has waited ${minutes} min here and no run took it yet: ${reason}.`, ref: item.awaitsReply })
+				.then(() => this.o.store.log({ event: "stuck-notice", id, to: item.from }), (error: Error) => this.o.store.log({ event: "stuck-notice-failed", id, error: error.message }));
+		}
 	}
 
 	/** What a message that found no tower may do: an attended device wakes (a teammate at `reply` or higher, every member the roster holds), an unattended one opens (a `dispatch` sender); with no seam, nothing. */
@@ -969,6 +997,7 @@ export class LinkHolder {
 				store.log({ event: "tower-opened", project });
 			} catch (error) {
 				store.log({ event: "tower-open-failed", project, error: (error as Error).message });
+				await this.tellStuck(project).catch(() => undefined);
 			}
 		})().finally(() => {
 			this.openEnded.set(project, this.now());
@@ -1383,7 +1412,9 @@ export class LinkHolder {
 		await run.outbox.submit((seq) => {
 			const { state } = this.loadTeam(team), key = state.keys.get(state.epoch);
 			if (!key) throw new Error(`This device holds no key for epoch ${state.epoch}`);
-			return buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq, ts: this.now(), kind, to: [device], plaintext: encodePlaintext(kind, payload as never) });
+			// A notice's ref goes only to a device whose caps list it (C4); an older build reads the three fields it knows.
+			const body = kind === "notice" && (payload as Notice).ref !== undefined && !this.capsOf(run, device).includes("notice.ref") ? (({ ref: _ref, ...rest }) => rest)(payload as Notice) : payload;
+			return buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq, ts: this.now(), kind, to: [device], plaintext: encodePlaintext(kind, body as never) });
 		});
 	}
 	/** A `unit-status` to one device of a team (ephemeral: no queue, no acknowledgement; the receiver keeps the latest). A relay that does not know the kind refuses it, and the reporter's next pass tries again. */
@@ -1451,6 +1482,8 @@ export class LinkHolder {
 		if (this.notices.some((n) => n.id === id)) return;
 		this.notices.push({ id, team: run.team, device: header.from, at: this.now(), kind: p.kind, unit: p.unit, text: p.text });
 		while (this.notices.length > NOTICES_KEPT) this.notices.shift();
+		// A notice about an ask this computer made goes to the main that asked too (C4), in a line the server writes.
+		if (p.ref) try { this.o.waits?.notice?.({ team: run.team, device: header.from, label: sender.label ?? shortId(header.from), kind: p.kind, text: p.text, ref: p.ref }); } catch (error) { this.o.store.log({ event: "notice-ref-failed", error: (error as Error)?.name ?? "Error" }); }
 	}
 	/** A roster member's label in `team`, or its short id when the roster cannot be read or names no such device. */
 	memberLabel(team: string, device: string): string {

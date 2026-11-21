@@ -634,7 +634,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	};
 	dog = startWatchdog({ net: guiHost.watchNet(), env, now, client: () => (client?.isConnected() ? client : undefined), log: (event, facts) => log.line(event, facts), stops, ...(o.watchdog ? { over: o.watchdog } : {}) });
 	cars = startCars({ slot, run: cfg.run, now, startedAt, client: () => (client?.isConnected() ? client : undefined), startOf, log: (event, facts) => log.line(event, facts), stops });
-	waitsHub = startLinkWaits({ slot, env, now, log: (event, facts) => log.line(event, facts), run: cfg.run, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, link: () => link, stops, autoOn: () => auto?.view().on === true, ...(o.waits !== undefined ? { tickMs: o.waits } : {}) });
+	waitsHub = startLinkWaits({ slot, env, now, log: (event, facts) => log.line(event, facts), run: cfg.run, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, link: () => link, stops, asks, autoOn: () => auto?.view().on === true, ...(o.waits !== undefined ? { tickMs: o.waits } : {}) });
 	towers = createTowers({
 		ally: allyPort(() => link), allows, asks, cars: cars.book, waits: waitsHub.router,
 		slot, cfg, env, connect: () => mod.connect(), log, pid, startedAt, enabled: () => towerRuns().enabled, server: serverTools, unattended,

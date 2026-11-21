@@ -41,6 +41,7 @@ export function allyPort(link: () => LinkService | undefined): AllyPort {
 		},
 		project: (team) => link()?.config().teams.get(team)?.project,
 		box: () => link()?.holder?.deviceId,
+		selfLabel: () => link()?.holder?.deviceLabel,
 		admin: (team, device) => link()?.holder?.isAdmin(team, device) ?? false,
 		label: (team, device) => link()?.holder?.memberLabel(team, device) ?? device.slice(0, 6),
 		async tell(team, device, notice) {

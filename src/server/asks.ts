@@ -53,6 +53,14 @@ export function createAsks(slot: Slot, now: () => number = Date.now) {
 		openOf(workspace: string): AskEntry[] {
 			return read(slot, workspace).filter((e) => e.expires > now() && !e.used);
 		},
+		/** An open ask by its id, whichever workspace made it, without using it (a box's notice about it, C4). */
+		find(ask: string): AskEntry | undefined {
+			for (const service of listServices(slot)) {
+				const hit = read(slot, service.workspace).find((e) => e.ask === ask);
+				if (hit) return hit.used || hit.expires <= now() ? undefined : hit;
+			}
+			return undefined;
+		},
 		/** A `tower-reply` arrived: the main that asked, when the ask is open and the reply comes from the device asked; the ask is closed then. Undefined for anything else. */
 		take(q: { team: string; device: string; ask: string }): Taken | undefined {
 			for (const service of listServices(slot)) {

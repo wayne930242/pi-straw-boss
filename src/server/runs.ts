@@ -153,6 +153,8 @@ export interface AllyPort {
 	thread(device: string): { dir: "in" | "out"; at: number; kind: string; text: string }[];
 	/** A remote stop of one main (docs/specs/2026-11-07-link-remote-stop.md; absent in a world without a holder, where no stop is ever accepted): this device's id, whether `device` is an admin of `team`, a roster label, one notice told to one device alone, and a line for the holder's link.log. */
 	box?(): string | undefined;
+	/** This device's own label (a box's receipt names it, linkreceipts.ts). */
+	selfLabel?(): string | undefined;
 	admin?(team: string, device: string): boolean;
 	label?(team: string, device: string): string;
 	tell?(team: string, device: string, notice: { kind: string; unit: string; text: string }): Promise<void>;
@@ -335,6 +337,8 @@ export type RunSignal =
 
 export interface RunsOptions {
 	slot: Slot;
+	/** An ally run ended (C4, docs/specs/2026-11-21-box-mac-waits.md §4): the asks it carried, read before its messages leave the inbox, so the server can tell each asker that got no answer. */
+	allyEnded?: (end: { run: string; workspace: string; device: string; team?: string; outcome: "done" | "crashed" | "timeout" | "quit"; asks: string[] }) => void;
 	/** The `tower_done` guard of a local run (docs/specs/2026-11-21-box-mac-waits.md §2.1): a waits-on event the run took and neither forwarded nor answered (runevents.ts). */
 	unforwarded?: (run: string, workspace: string) => { id: string; from: { id: string; name?: string }; short: string } | undefined;
 	/** Told of the ends and refusals above; absent on a computer that tells nobody. */
@@ -975,6 +979,7 @@ export function createRuns(o: RunsOptions) {
 		slots = Math.max(0, slots - 1);
 		if (svc.run === a) svc.run = undefined;
 		const ally = a.rec.kind === "ally";
+		if (ally && a.rec.device && (outcome === "done" || outcome === "crashed" || outcome === "timeout" || outcome === "quit")) try { o.allyEnded?.({ run: a.rec.id, workspace: ws, device: a.rec.device, ...(a.rec.team ? { team: a.rec.team } : {}), outcome, asks: itemsOf(a, true).flatMap((i) => (!i.local && i.awaitsReply ? [i.awaitsReply] : [])) }); } catch (cause) { error("run-receipt", (cause as Error).message); }
 		const mine = ally ? [] : readQueue(slot, ws), taken = mine.filter((e) => e.taken?.run === a.rec.id);
 		const failed = outcome === "crashed" || outcome === "timeout";
 		// The device keeps its run until its messages are handed back: a run begun meanwhile would take them again (A6).

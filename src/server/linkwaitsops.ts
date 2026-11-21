@@ -27,6 +27,8 @@ export interface StartWaits {
 	stops: (() => void)[];
 	/** Auto mode's switch: a card is parked while it is on. */
 	autoOn?(): boolean;
+	/** The asks the towers made for their mains (asks.ts): a box's notice about one goes to its main. */
+	asks?: { find(ask: string): { for: string; workspace: string; device: string } | undefined };
 	/** A test's clock for the sweep; none starts the minute timer. */
 	tickMs?: number | false;
 }
@@ -73,7 +75,16 @@ export function startLinkWaits(o: StartWaits): WaitsHub {
 	};
 	return {
 		router,
-		holder: { take: (item, ws) => router.take(item, ws), orphan: (item, asker, ws) => router.orphan(item, asker, ws) },
+		holder: {
+			take: (item, ws) => router.take(item, ws), orphan: (item, asker, ws) => router.orphan(item, asker, ws),
+			// C4: a box's notice about an ask this computer made reaches the main that asked, in a line the server writes; the notice itself stays in the Link notices.
+			notice: (n) => {
+				const ask = o.asks?.find(n.ref);
+				if (!ask || ask.device !== n.device) return;
+				const why = n.kind === "inbox-stuck" ? "it waits in its inbox and no run took it yet" : n.kind === "inbox-refused" ? "no tower could be opened for it there" : "it sent a notice about it (the Link notices show it)";
+				void o.towers()?.post(ask.workspace, [ask.for], `${restrictLabel(n.label)} could not take your message yet: ${why}. Your ask stays open; its answer still comes to you.`, "link_notice", { peer: { label: restrictLabel(n.label), short: n.device.slice(0, 6) } });
+			},
+		},
 		async op(body, from) {
 			try {
 				switch (body.op) {
