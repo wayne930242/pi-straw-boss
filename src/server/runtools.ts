@@ -97,7 +97,7 @@ export interface ToolHost {
 	/** The wait router (linkwaits.ts). */
 	waits?: Pick<LinkWaits, "sent" | "escalate" | "handleOf" | "newId">;
 	/** An ally run's own messages from its device, with the ask each carries (runs.ts `allyMessages`). */
-	allyMessages?(): { id: string; text: string; ask?: string }[];
+	allyMessages?(): { id: string; text: string; ask?: string; expects?: boolean }[];
 }
 
 export interface SlipEvent { fwd: string; from: { id: string; name?: string }; text: string }
@@ -296,10 +296,13 @@ async function allyEscalate(host: ToolHost, args: Record<string, unknown>): Prom
 	if (done.size >= ESCALATE_MAX) throw new Error(`Refused: this run escalated ${done.size} items already, the most a run may`);
 	if (done.has(key)) throw new Error("That item is escalated already in this run");
 	const asks = [...new Set(messages.flatMap((m) => (m.ask ? [m.ask] : [])))], ask = asks.length === 1 ? asks[0] : undefined;
-	const id = await host.waits.escalate(who.workspace, { team: who.team, device: who.device, label: who.deviceLabel ?? who.device.slice(0, 6), short: who.deviceShort ?? who.device.slice(0, 6), ...(typeof args.owner === "string" && args.owner.trim() ? { owner: waitOwner(args.owner) } : {}), what, kind, text: messages.map((m) => m.text).join("\n\n").slice(0, 8192), ...(ask ? { ask } : {}) });
+	// Whether the device expects an answer is the messages' own (an ask, reply expected), never the model's word: one that expects none and does not say it waits here is a notice, never a wait (D12).
+	const expects = messages.some((m) => m.ask !== undefined || m.expects === true);
+	const { id, kind: opened } = await host.waits.escalate(who.workspace, { team: who.team, device: who.device, label: who.deviceLabel ?? who.device.slice(0, 6), short: who.deviceShort ?? who.device.slice(0, 6), ...(typeof args.owner === "string" && args.owner.trim() ? { owner: waitOwner(args.owner) } : {}), what, kind, text: messages.map((m) => m.text).join("\n\n").slice(0, 8192), ...(ask ? { ask } : {}), expects, lead: lead !== undefined });
 	escalated.set(who.id, done.add(key));
 	for (const k of escalated.keys()) if (escalated.size > 200) escalated.delete(k); else break;
-	return { text: `Escalated as ${id}: the server tells the main it names, or every main of the workspace, or the boss's list, and tells the device each step. Nothing of the message went into a session. Close the message with tower_done when nothing else is left.`, details: { id, kind, ...(ask ? { ask } : {}) } };
+	if (opened === "notice") return { text: `Noted as ${id}, a notice: the message expects no answer and says it waits on nobody here, so it opens no wait and no card; the standing main here, or the main it names, is told it as information. Close the message with tower_done when nothing else is left.`, details: { id, kind: opened } };
+	return { text: `Escalated as ${id}: the server tells the main it names, else the workspace's standing main, else the boss's list, and tells the device each step. Nothing of the message went into a session. Close the message with tower_done when nothing else is left.`, details: { id, kind, ...(ask ? { ask } : {}) } };
 }
 
 // --- the integrator's door ----------------------------------------------------------------------------------------------------------------------------------------------------

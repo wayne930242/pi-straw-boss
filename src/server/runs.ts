@@ -1805,12 +1805,12 @@ export function createRuns(o: RunsOptions) {
 			const took = new Set(a.rec.events);
 			return itemsOf(a, true).flatMap((i) => (i.local && took.has(i.id) ? [{ id: i.id, from: i.local, text: i.text }] : []));
 		},
-		/** The device's own messages an ally run took, oldest first, with the ask each carries: `ally_escalate` (docs/specs/2026-11-21-box-mac-waits.md §3) keeps the text for `board_read` and the one ask it answers. */
-		allyMessages(token: unknown): { id: string; text: string; ask?: string }[] {
+		/** The device's own messages an ally run took, oldest first, with the ask each carries and whether it expects a reply: `ally_escalate` (docs/specs/2026-11-21-box-mac-waits.md §3) keeps the text for `board_read`, the one ask it answers, and tells a notice from a wait (D12). */
+		allyMessages(token: unknown): { id: string; text: string; ask?: string; expects?: boolean }[] {
 			const a = of(token);
 			if (!a || a.ended || a.rec.kind !== "ally") return [];
 			const took = new Set(a.rec.events);
-			return itemsOf(a, true).flatMap((i) => (!i.local && took.has(i.id) ? [{ id: i.id, text: i.text, ...(i.awaitsReply ? { ask: i.awaitsReply } : {}) }] : []));
+			return itemsOf(a, true).flatMap((i) => (!i.local && took.has(i.id) ? [{ id: i.id, text: i.text, ...(i.awaitsReply ? { ask: i.awaitsReply } : {}), ...(i.replyExpected ? { expects: true } : {}) }] : []));
 		},
 		/**
 		 * The pi session file the run's pane reports, kept in the record. An ally run's file is kept only when it is named for the pi session the run reports (`<time>_<session id>.jsonl`, as pi names it), so a run cannot

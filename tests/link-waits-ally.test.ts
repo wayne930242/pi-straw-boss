@@ -7,6 +7,7 @@ import { createAsks } from "../src/server/asks.ts";
 import { createLinkWaits, readWaits } from "../src/server/linkwaits.ts";
 import { startLinkWaits } from "../src/server/linkwaitsops.ts";
 import { callControl } from "../src/server/socket.ts";
+import { readMemory } from "../src/server/towermemory.ts";
 import { addExpect, readRun } from "../src/server/towerrunstore.ts";
 import { type Running, until } from "./server-world.ts";
 import { TowerWorld } from "./tower-world.ts";
@@ -64,6 +65,30 @@ test("ally_escalate runs at reply with no gate, opens L1 from the message's firs
 	assert.equal(readWaits(world.slot, "wA").entries.length, 5);
 	const done = await ask(s, { cmd: "run-done", token, note: "escalated the box's handoff of !13" });
 	assert.equal(done.ok, true, JSON.stringify(done));
+});
+
+test("D12 (0.81.3): an ally run's escalation of a message that expects no answer and does not say it waits here is a notice whatever kind the run names: no wait, no card, nothing back", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	// The live check's shape: a plain tower with no ask that reports work done (the L6 done answer that came back as two incident cards).
+	world.ally.add("m1", DEV, "Live check: the Mac received L6 and is marking it done. No other action.");
+	world.expose?.allyWaiting("sb-tower-wa");
+	await until(() => world.pis.size >= 1, "the ally pi");
+	const id = [...world.pis.keys()][0]!, pi = world.pis.get(id)!;
+	await until(() => readRun(world.slot, "wA", id)?.pid, "the pid");
+	const token = String((await ask(s, { cmd: "claim", runId: id, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` })).token);
+	for (;;) {
+		const event = (await ask(s, { cmd: "run-poll", token, idle: true })).event as { id: string } | undefined;
+		if (!event) break;
+		await ask(s, { cmd: "run-taken", token, id: event.id });
+	}
+	const up = await ask(s, { cmd: "run-tool", token, tool: "ally_escalate", args: { kind: "incident", what: "live check L6 marked done" } });
+	assert.equal(up.ok, true, JSON.stringify(up));
+	assert.match(String(up.text), /^Noted as L1, a notice: the message expects no answer/);
+	assert.deepEqual(readWaits(world.slot, "wA").entries.map((w) => [w.kind, w.state, w.card]), [["notice", "open", undefined]], "no main here and still no card");
+	assert.deepEqual(readMemory(world.slot, "wA", Date.now()).memory.entries.filter((e) => e.kind === "wait"), [], "nothing on the boss's list");
+	assert.equal((await ask(s, { cmd: "run-done", token, note: "noted the Mac's notice" })).ok, true);
 });
 
 test("BMWR-F006: on an unattended box an ask the run escalated is the router's to answer: the run's end sends no receipt for it", async () => {

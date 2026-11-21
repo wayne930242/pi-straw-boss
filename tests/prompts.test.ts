@@ -358,3 +358,9 @@ test("box-mac waits: main.md blocks with waitsOn and names standing, tower-run.m
 	assert.ok(standing.includes("{{cli}} watch <key> --idle 20m"), "duty-standing.md");
 	assert.ok(tower.includes("A `waits-on=` blocked needs a tower run"), "tower.md");
 });
+
+test("D9 (0.81.3): duty-standing.md says the workspace's link waits come to the standing main, answered with linkWait or taken to the boss with why blocked; the tower's prompts gain no clause to answer them", () => {
+	const standing = read("duty-standing.md");
+	assert.ok(standing.includes("This workspace's link waits come to you (`kind=link_wait`): answer one with `call_tower` `linkWait`, or ask the boss that way when the decision is not yours."), "duty-standing.md");
+	for (const file of ["tower.md", "tower-run.md"]) assert.ok(!read(file).includes("linkWait"), `${file} does not answer link waits`);
+});

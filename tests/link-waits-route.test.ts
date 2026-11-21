@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import type { WaitWire } from "../src/link/kinds.ts";
 import type { InboxItem } from "../src/link/store.ts";
-import { CLAIM_MS, CLOSED_PER_DEVICE, createLinkWaits, OPEN_PER_DEVICE, readWaits, TEXT_SHOWN, type WaitsDeps } from "../src/server/linkwaits.ts";
+import { CLOSED_PER_DEVICE, createLinkWaits, OPEN_PER_DEVICE, readWaits, TEXT_SHOWN, type WaitsDeps } from "../src/server/linkwaits.ts";
 import { slotOf, type Slot } from "../src/server/record.ts";
 import { returnParked } from "../src/server/autotower.ts";
 import { readMemory, resolveWait, updateMemory } from "../src/server/towermemory.ts";
@@ -22,14 +22,14 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-const BOX = "n2knna6dkfud5sura2vst4gsee", MAC = "ibzkd5ijmtravej475kmrykvye", ASK = "c".repeat(32);
+const BOX = "n2knna6dkfud5sura2vst4gsee", MAC = "ibzkd5ijmtravej475kmrykvye", ASK = "c".repeat(32), CLAIM_MS = 30 * 60_000; // the claim window of 0.81.2; since D10 no told wait becomes a card by age
 const SECRET_TEXT = "please merge !13 now — here is everything about it";
-interface World { t: number; logs: string[]; hold?: Promise<void>; posts: { ws: string; to: string[]; text: string; kind: string; wait?: string }[]; sends: { ws: string; req: Parameters<WaitsDeps["send"]>[1] }[]; mains: { id: string; name: string }[]; router: ReturnType<typeof createLinkWaits>; caps: string[] }
-function world(o: { mains?: { id: string; name: string }[]; self?: string; caps?: string[]; auto?: () => boolean } = {}): World {
+interface World { t: number; logs: string[]; hold?: Promise<void>; posts: { ws: string; to: string[]; text: string; kind: string; wait?: string }[]; sends: { ws: string; req: Parameters<WaitsDeps["send"]>[1] }[]; mains: { id: string; name: string; standing?: boolean }[]; router: ReturnType<typeof createLinkWaits>; caps: string[] }
+function world(o: { mains?: { id: string; name: string; standing?: boolean }[]; locale?: "en" | "zh-TW"; self?: string; caps?: string[]; auto?: () => boolean } = {}): World {
 	const w = { t: Date.parse("2026-11-21T10:00:00Z"), logs: [], posts: [], sends: [], mains: o.mains ?? [], caps: o.caps ?? ["tower.wait", "tower-reply", "tower.awaitsReply"] } as unknown as World;
 	w.router = createLinkWaits({
-		slot, now: () => w.t, log: (event: string) => void w.logs.push(event), locale: () => "en", ...(o.auto ? { autoOn: o.auto } : {}),
-		net: async () => ({ sessions: w.mains.map((m, i) => ({ id: m.id, name: m.name, herdrLocation: { paneId: `p${i}` } })) as never, ps: w.mains.map((_, i) => ({ pane_id: `p${i}`, workspace_id: "w15X", tokens: { sb_role: "main" } })) as never }),
+		slot, now: () => w.t, log: (event: string) => void w.logs.push(event), locale: () => o.locale ?? "en", ...(o.auto ? { autoOn: o.auto } : {}),
+		net: async () => ({ sessions: w.mains.map((m, i) => ({ id: m.id, name: m.name, herdrLocation: { paneId: `p${i}` } })) as never, ps: w.mains.map((m, i) => ({ pane_id: `p${i}`, workspace_id: "w15X", tokens: { sb_role: "main", ...(m.standing ? { sb_duty: "standing" } : {}) } })) as never }),
 		// A test that sets `hold` holds every wake and send made while it is set until it resolves; each is recorded when it is made.
 		post: async (ws, to, text, kind, extra) => (w.posts.push({ ws, to, text, kind, ...(extra.wait ? { wait: extra.wait } : {}) }), await w.hold, true),
 		send: async (ws, req) => (w.sends.push({ ws, req }), await w.hold, { ok: true }),
@@ -52,11 +52,11 @@ test("a wait that names a live main by name is told to that main alone, in a cod
 	const [wake] = w.posts;
 	assert.deepEqual([wake!.to, wake!.kind, wake!.wait], [["s-work"], "link_wait", "L1"]);
 	assert.doesNotMatch(wake!.text, /merge|please|!13/, "no word of the teammate's reaches the wake");
-	assert.match(wake!.text, /waydosoft waits on this workspace \(wait L1, owner asked: you\)\. Read it with board_read/);
+	assert.match(wake!.text, /waydosoft waits on this workspace \(wait L1, it names you\)\. Read it with board_read/);
 	assert.deepEqual(ledger().map((e) => [e.dir, e.state, e.toldTo?.map((m) => m.name)]), [["in", "told", ["work-on"]]]);
 	const ack = w.sends.at(-1)!.req;
 	assert.deepEqual([ack.device, ack.wait?.state, ack.wait?.owner], [BOX, "told", "work-on"]);
-	assert.match(ack.text, /^told work-on \(main on mac\)$/);
+	assert.match(ack.text, /^told work-on \(the main it named on mac\)$/);
 	// A copy of the same envelope's wait is taken and nothing more happens.
 	const again = item({}, {});
 	again.wait!.id = ledger()[0]!.wait!;
@@ -67,34 +67,63 @@ test("a wait that names a live main by name is told to that main alone, in a cod
 	assert.deepEqual(w.router.view({ teams: ["other"] }), []);
 });
 
-test("no owner and two mains: one wake whose to lists both; no main: a card on the boss's list with code-written fields", async () => {
+test("D9: no owner it names: the workspace's standing mains are told, never every main; with no standing main, a card at once and no wake", async () => {
+	const w = world({ mains: [{ id: "s-gma", name: "GMA" }, { id: "s-work", name: "work-on", standing: true }, { id: "s-docs", name: "docs" }] });
+	await w.router.take(item({ owner: "" }), "w15X");
+	await w.router.take(item({ owner: "integ moldplan-center" }), "w15X");
+	assert.deepEqual(w.posts.map((p) => p.to), [["s-work"], ["s-work"]], "the standing main only, also for an owner that matches nobody");
+	assert.match(w.posts[0]!.text, /\(wait L1, it names no main here, and you are a standing main of this workspace\)/);
+	assert.match(w.posts[0]!.text, /when the decision is not yours, ask the boss with call_tower why=blocked/);
+	assert.doesNotMatch(w.posts[0]!.text, /merge|please|!13/, "no word of the teammate's (D1)");
+	assert.match(w.sends.at(-1)!.req.text, /^told work-on \(standing main on mac\)$/);
+	assert.equal(cards().length, 0);
+	rmSync(join(root, "state"), { recursive: true, force: true });
 	const two = world({ mains: [{ id: "s-a", name: "alpha" }, { id: "s-b", name: "beta" }] });
 	await two.router.take(item({ owner: "" }), "w15X");
-	assert.deepEqual(two.posts.map((p) => p.to), [["s-a", "s-b"]]);
-	assert.match(two.posts[0]!.text, /owner asked: anyone here/);
-	rmSync(join(root, "state"), { recursive: true, force: true });
-	const none = world();
-	await none.router.take(item({ owner: "work-on" }), "w15X");
-	assert.equal(none.posts.length, 0);
-	const [card] = cards();
-	assert.ok(card, "a card");
-	assert.equal(card!.card!.type, "action");
-	assert.equal(card!.card!.from!.id, `link:${BOX}`);
-	assert.match(card!.card!.happened, /^waydosoft \(teammate device\) waits on this computer: «merge !13» \(the teammate's words\)\.$/);
-	assert.match(card!.card!.do, /Find who here owns it and have them answer the wait, or decline it so waydosoft stops waiting/);
-	assert.deepEqual(ledger().map((e) => [e.state, e.card]), [["open", card!.id]]);
-	assert.match(none.sends.at(-1)!.req.text, /^on the boss's list of mac \(W1\)$/);
+	assert.deepEqual(two.posts, [], "a coordinator is told only when it is named");
+	assert.equal(cards().length, 1);
+	assert.match(two.sends.at(-1)!.req.text, /^on the boss's list of mac \(W1\)$/);
 });
 
-test("a told wait no main takes within 30 minutes becomes a card; one a main takes never does, and its done answers the sender's ask and closes it", async () => {
+test("D11: a card says what the device waits on, quotes its message as the teammate's words, says nobody here was told, and what each press does; zh-TW too", async () => {
+	const none = world();
+	await none.router.take(item({ owner: "work-on" }, { text: "[waits on you: merge !13]\nPlease merge approval-api !13; the box train waits on it." }), "w15X");
+	assert.equal(none.posts.length, 0);
+	const [card] = cards();
+	assert.equal(card!.card!.type, "action");
+	assert.equal(card!.card!.from!.id, `link:${BOX}`);
+	assert.equal(card!.card!.happened, "waydosoft (teammate device) waits on this computer: «merge !13». Its message, in the teammate's words: «Please merge approval-api !13; the box train waits on it.». No main here to tell.");
+	assert.match(card!.card!.do, /^Press done if it is handled here: waydosoft hears that you marked it done and stops waiting\. Press decline if nobody here will do it: waydosoft hears it was declined\./);
+	assert.deepEqual(ledger().map((e) => [e.state, e.card]), [["open", card!.id]]);
+	assert.ok(Array.from(card!.card!.happened).length <= 320);
+	rmSync(join(root, "state"), { recursive: true, force: true });
+	const zh = world({ locale: "zh-TW" });
+	await zh.router.take(item({ what: "合併 !13" }, { text: "x".repeat(1000) }), "w15X");
+	const [c] = cards();
+	assert.match(c!.card!.happened, /^waydosoft（隊友裝置）在等這台電腦：「合併 !13」。它的訊息（隊友原話）：「x+…」。這裡沒有可以通知的主智慧體。$/);
+	assert.ok(Array.from(c!.card!.happened).length <= 320, "the excerpt is cut to fit the card");
+	assert.match(c!.card!.do, /^這裡處理好了就按完成：waydosoft 會收到你已標為完成，不再等待。這裡沒有人會做就按婉拒：waydosoft 會收到婉拒。/);
+	assert.doesNotMatch(c!.card!.do, /找出這裡負責相關工作的人/);
+});
+
+test("D10: a told main holds the wait, with no card at any age; when it is gone for two sweeps the wait goes to a standing main, else to a card that names who was told", async () => {
 	const w = world({ mains: [{ id: "s-work", name: "work-on" }] });
 	await w.router.take(item({ owner: "work-on" }), "w15X");
-	w.t += CLAIM_MS - 1000;
+	w.t += 2 * CLAIM_MS;
 	await w.router.tick();
-	assert.equal(cards().length, 0, "not before the window ends");
-	w.t += 2000;
+	assert.equal(cards().length, 0, "no card while its main is here");
+	w.mains = [{ id: "s-stand", name: "watch", standing: true }];
 	await w.router.tick();
-	assert.equal(cards().length, 1, "a card once it ends");
+	assert.equal(w.posts.length, 1, "one sweep with its main gone is not enough");
+	await w.router.tick();
+	assert.deepEqual(w.posts.at(-1)!.to, ["s-stand"], "its main gone: a standing main is told");
+	assert.deepEqual(ledger().map((e) => [e.state, e.toldTo?.map((m) => m.name), e.missed]), [["told", ["watch"], ["work-on"]]]);
+	w.mains = [{ id: "s-other", name: "docs" }];
+	await w.router.tick();
+	await w.router.tick();
+	const [card] = cards();
+	assert.ok(card, "no standing main left: a card");
+	assert.match(card!.card!.happened, / Told work-on, watch, gone without answering\.$/);
 
 	rmSync(join(root, "state"), { recursive: true, force: true });
 	const k = world({ mains: [{ id: "s-work", name: "work-on" }] });
@@ -111,6 +140,33 @@ test("a told wait no main takes within 30 minutes becomes a card; one a main tak
 	assert.deepEqual([state!.inReplyTo, state!.wait?.state, state!.text], [undefined, "done", "done on mac"], "then the wait's state, which closes it there after the ask's 24 hours too (BMWR-F008)");
 	assert.equal(ledger()[0]!.state, "done");
 	await assert.rejects(k.router.act("s-work", "L1", "declined"), /L1 is done already/);
+});
+
+test("D12: a notice (no ask, no reply expected, no [waits on you] line) opens no wait that can become a card: the standing main hears it as information, and with no main nothing reaches the boss", async () => {
+	const esc = (r: World, kind: "wait" | "incident", text: string, over: { expects?: boolean; ask?: string } = {}) => r.router.escalate("w15X", { team: "t1", device: BOX, label: "waydosoft", short: "n2knna", what: "box train held", kind, text, expects: over.expects ?? false, lead: /^\[waits on you: /.test(text), ...(over.ask ? { ask: over.ask } : {}) });
+	const none = world();
+	assert.deepEqual(await esc(none, "incident", "FYI: the box train is held on MP-5166."), { id: "L1", kind: "notice" });
+	assert.deepEqual(await esc(none, "wait", "Report: done, no reply needed."), { id: "L2", kind: "notice" });
+	none.t += 2 * CLAIM_MS;
+	await none.router.tick();
+	assert.equal(cards().length, 0, "no card, now or later");
+	assert.deepEqual(none.posts, []);
+	assert.deepEqual(none.sends, [], "nothing goes back for a notice");
+	none.t += 86_400_000;
+	await none.router.tick();
+	assert.deepEqual(ledger().map((e) => [e.kind, e.state]), [["notice", "expired"], ["notice", "expired"]], "it lapses after a day");
+	rmSync(join(root, "state"), { recursive: true, force: true });
+	const s = world({ mains: [{ id: "s-gma", name: "GMA" }, { id: "s-work", name: "work-on", standing: true }] });
+	await esc(s, "incident", "FYI: the box train is held.");
+	assert.deepEqual(s.posts.map((p) => [p.to, p.kind]), [[["s-work"], "link_wait"]]);
+	assert.match(s.posts[0]!.text, /sent a notice that touches work in this workspace \(L1, .*\): information only, with nothing to answer and no card for the boss/);
+	assert.doesNotMatch(s.posts[0]!.text, /FYI|held/, "no word of the teammate's (D1)");
+	assert.match(await s.router.act("s-work", "L1", "done"), /L1 is closed; the device expects nothing back/);
+	assert.deepEqual(s.sends, []);
+	// A message that waits (its first line says so, it carries an ask, or it expects a reply) is still a wait or an incident.
+	assert.equal((await esc(s, "wait", "[waits on you: merge !13]\nplease")).kind, "wait");
+	assert.equal((await esc(s, "incident", "the box is down", { ask: ASK })).kind, "incident");
+	assert.equal((await esc(s, "incident", "the box is down, answer please", { expects: true })).kind, "incident");
 });
 
 test("the boss declines a link card: the device gets the code-written words, the wait closes, and the tower's event says the device got it", async () => {
@@ -132,7 +188,7 @@ test("a fourth open card of one device folds into the third: three cards, the th
 	for (let i = 0; i < 4; i++) await w.router.take(item({ what: `step ${i}` }), "w15X");
 	const shown = cards();
 	assert.equal(shown.length, 3);
-	assert.match(shown[2]!.card!.happened, / And 1 more; see board_read\.$/);
+	assert.match(shown[2]!.card!.happened, / And 1 more from waydosoft; board_read \(section waits\) lists them\.$/);
 	assert.deepEqual(ledger().map((e) => [e.card, e.folded ?? false]), [[shown[0]!.id, false], [shown[1]!.id, false], [shown[2]!.id, false], [shown[2]!.id, true]]);
 });
 
@@ -217,11 +273,10 @@ test("BMWR-F001: a sweep while a new wait's wake is under way waits its turn: on
 });
 
 test("BMWR-F001: a main takes a wait while the sweep is under way: the sweep acts on the wait as it is now, so no card comes back for a taken wait and no told goes after taken", async () => {
-	const w = world({ mains: [{ id: "s-work", name: "work-on" }] });
+	const w = world();
 	await w.router.take(item({ owner: "work-on", what: "one" }), "w15X");
 	await w.router.take(item({ owner: "work-on", what: "two" }), "w15X");
-	w.t += CLAIM_MS;
-	await w.router.tick();
+	w.mains = [{ id: "s-work", name: "work-on" }]; // no main when they came, so each has a card (D10); a main of the workspace may answer them
 	const [c1, c2] = cards();
 	assert.deepEqual(ledger().map((e) => e.card), [c1!.id, c2!.id]);
 	// L1's card is closed by hand, so the sweep raises it again and its ack to the device is held.
@@ -236,7 +291,7 @@ test("BMWR-F001: a main takes a wait while the sweep is under way: the sweep act
 	await Promise.all([sweeping, taking]);
 	const open = cards().filter((c) => c.state === "open");
 	assert.equal(open.length, 1, "L1's new card only");
-	assert.deepEqual(ledger().map((e) => [e.state, e.card === open[0]!.id]), [["told", true], ["taken", false]]);
+	assert.deepEqual(ledger().map((e) => [e.state, e.card === open[0]!.id]), [["open", true], ["taken", false]]);
 	const l2 = w.sends.filter((x) => x.req.wait?.what === "two").map((x) => x.req.wait!.state);
 	assert.equal(l2.at(-1), "taken", `L2's acks end with taken: ${l2.join(" ")}`);
 });
@@ -272,7 +327,7 @@ test("BMWR-F004: a device's text is kept as board_read shows it, its open waits 
 	assert.equal(await w.router.take(item({ what: "one more" }), "w15X"), "held");
 	assert.equal(ledger().filter((e) => e.state === "open").length, OPEN_PER_DEVICE);
 	assert.equal(cards().length, 3, "D7: three cards, the rest folded");
-	await assert.rejects(w.router.escalate("w15X", { team: "t1", device: BOX, label: "waydosoft", short: "n2knna", what: "x", kind: "wait", text: "x" }), /open waits on this computer already/);
+	await assert.rejects(w.router.escalate("w15X", { team: "t1", device: BOX, label: "waydosoft", short: "n2knna", what: "x", kind: "wait", text: "x", expects: true, lead: false }), /open waits on this computer already/);
 	// Closed entries of the device: the newest are kept.
 	const closed = Array.from({ length: CLOSED_PER_DEVICE + 10 }, (_, i) => ({ n: 100 + i, dir: "in", kind: "wait", device: BOX, team: "t1", label: "waydosoft", short: "n2knna", owner: "", what: "old", text: "", since: w.t, at: w.t + i, state: "done" }));
 	writeFileSync(join(towerDir(slot, "w15X"), "linkwaits.json"), JSON.stringify({ v: 1, next: 200, entries: closed }));
@@ -318,7 +373,7 @@ test("BMWR-F011: a ledger that cannot be read is never written over; the next id
 test("BMWR-F002: the server's hand-off routes an open wait only in a workspace whose tower it runs; a resident pi tower's workspace is no place for it", async () => {
 	const { startLinkWaits } = await import("../src/server/linkwaitsops.ts");
 	let identity: string | undefined;
-	const hub = startLinkWaits({ slot, env: {}, now: () => Date.parse("2026-11-21T10:00:00Z"), log: () => {}, run: async () => { throw new Error("no Herdr in this test"); }, sessions: async () => [], towers: () => ({ identityOf: () => identity, post: async () => false }) as never, link: () => undefined, stops: [], tickMs: false });
+	const hub = startLinkWaits({ slot, env: {}, now: () => Date.parse("2026-11-21T10:00:00Z"), log: () => {}, run: async () => JSON.stringify({ result: { panes: [] } }), sessions: async () => [], towers: () => ({ identityOf: () => identity, post: async () => false }) as never, link: () => undefined, stops: [], tickMs: false });
 	assert.equal(await hub.holder.take(item({}), "w15X"), false, "a resident tower: the holder treats it as a message that found no tower");
 	assert.deepEqual(ledger(), []);
 	assert.equal(await hub.holder.orphan!({ ...item({}), wait: undefined } as InboxItem, "work-on", "w15X"), false);
