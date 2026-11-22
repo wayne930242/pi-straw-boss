@@ -12,19 +12,22 @@ import { checkoutProject, noTrainRefusal, openRefusal, repoRoot } from "./train/
 import { slipsInText } from "./train/cars.ts";
 import { appFromRequest, isRoleLabel, readMaxTrains, TRAIN, type TrainId, trainFromRequest, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
 import { waitPastTrust } from "./trust/wait.ts";
+import { reviveMain } from "./reviver.ts";
+export { openSuccessor, type Successor, type SuccessorEnv, type SuccessorRequest, successorPrompt } from "./reviver.ts";
 
 // The one thing a tower does besides routing: when no session owns a request, it opens a main for it (docs/how-it-works.md, "Opening a main").
 // It is narrow on purpose: one new tab in the tower's own workspace, started without focus, in which Straw Boss starts pi. It types into no pane
 // that already exists, and `STRAW_BOSS_ROLE=main` makes that pi promote itself once it has joined (index.ts).
 
-const MAIN_WAIT_MS = 60_000;
+export const MAIN_WAIT_MS = 60_000;
 /** At most this many mains opened by towers are alive in one workspace, and at most one per sender. */
-const MAX_OPENED_MAINS = 2;
+export const MAX_OPENED_MAINS = 2;
 /** The wait before the second look for a project's integrator where its ledger says one ran and none is seen. */
 const INTEGRATOR_REREAD_MS = 2_000;
 
 /** A limit was hit: nothing opened, and the same request may be tried again once an opened main has finished. A folder pi must not start in (SettingsRefused) is refused the same way. */
-class OpenLimitError extends Error {}
+export class OpenLimitError extends Error {}
+
 
 export interface OpenerEnv {
 	run: HerdrRun;
@@ -52,7 +55,16 @@ export interface OpenerEnv {
 	 * `entries` are the outcomes of the last 24 h, and `put` records one as it ends. Without it (a tower session) the ledger lives for the session.
 	 */
 	ledger?: { entries(): LedgerRow[]; put(row: LedgerRow): void };
+	/** pi's sessions folder, inside which a revived session file must be (revive.ts `fileRefusal`); default `sessionsDir()`. */
+	sessionsRoot?: string;
+	/** Whether Herdr's recovery window after a restart is open (the server's towers.ts): no revive then, since Herdr may be bringing the session back itself. */
+	recovering?(): boolean;
+	/** The waits a session holds, one line each, for its revive handoff (the server reads its link waits and the tower's wait cards). */
+	waitsOf?(session: string): string[];
 }
+/** `boss_revive_main revive` (docs/specs/2026-11-23-tower-revive.md §4): the session by id, prefix, or name; the run's reason; `by` is the tower that asks. */
+export interface ReviveRequest { session: string; reason: string }
+export interface Revived { tab: string; pane: string; main: string; file: string; name?: string; kind?: CoordinatorDuty; train?: TrainId; openedBy?: string; /** The old tab was the tower's and held only the dead pane at a bare shell, so it was closed (D3). */ closedOld?: string }
 /** A request's outcome as the ledger keeps it: the key is the hash of the sender and the request. */
 export interface LedgerRow { key: string; sender: string; outcome: "opened" | "failed"; at: number; opened?: Opened; error?: string }
 /** A teammate's device that is the sender (an ally run opens a main for the device it serves): not a session of this computer, so it is not looked up among them, and the main reports to the tower alone. Only the server sets it, from the run's own claim. */
@@ -261,7 +273,12 @@ export function opener(env: OpenerEnv) {
 		}
 	};
 	let queue: Promise<unknown> = Promise.resolve();
-	return (input: OpenRequest): Promise<Opened> => {
+	const revive = (input: ReviveRequest): Promise<Revived> => {
+		const pending = queue.then(() => reviveMain(env, input), () => reviveMain(env, input));
+		queue = pending.catch(() => {});
+		return pending;
+	};
+	const openOne = (input: OpenRequest): Promise<Opened> => {
 		// An integrator's open is answered from the live net each time and kept in no ledger: the project's integrator closes when idle, and the next slip, even the same one sent again, opens it anew. Opens stay serialised.
 		if (input.role === INTEGRATOR) {
 			const pending = queue.then(() => open(input), () => open(input));
@@ -282,4 +299,6 @@ export function opener(env: OpenerEnv) {
 		}).catch(() => {});
 		return pending;
 	};
+	return Object.assign(openOne, { revive });
 }
+

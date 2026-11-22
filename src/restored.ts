@@ -87,8 +87,8 @@ export function restored(d: Restored) {
 	const done = new Set<string>(), closing = new Set<string>(), continued = new Set<string>(), terminals = new Map<string, string>();
 	for (const e of d.entries()) {
 		if (e.type !== "custom" || e.customType !== d.type) continue;
-		const { resumed, nudged, gaveUp, closing: closed, unclosed, seen, terminal, continued: told } = (e.data ?? {}) as Record<string, unknown>;
-		for (const key of [resumed, nudged, gaveUp]) if (typeof key === "string") done.add(key);
+		const { resumed, nudged, gaveUp, inherited, closing: closed, unclosed, seen, terminal, continued: told } = (e.data ?? {}) as Record<string, unknown>;
+		for (const key of [resumed, nudged, gaveUp, inherited]) if (typeof key === "string") done.add(key);
 		if (typeof closed === "string") closing.add(closed);
 		if (typeof told === "string") continued.add(told);
 		if (typeof unclosed === "string") closing.delete(unclosed);

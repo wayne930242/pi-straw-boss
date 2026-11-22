@@ -32,6 +32,8 @@ export interface BriefInput {
 	/** The tower identity replies leave under. */
 	identity: string;
 	mains: MainRow[];
+	/** The mains and trains of this workspace that ended without a close and are not live (docs/specs/2026-11-23-tower-revive.md §3): one line each, from the last sweep (revive.ts `rowLine`). */
+	dead?: string[];
 	obligations: string[];
 	/** The Memory section (towermemory.ts `memorySection`): the boss's standing instructions and decisions as the boss wrote or confirmed them, and the open waits; empty when there is none. */
 	memory?: string;
@@ -88,7 +90,8 @@ export function buildBrief(i: BriefInput): string {
 		const lead = leadOf(m);
 		return lead ? `${m.tab}: ${lead.word} ${lead.row.name} (${lead.row.id.slice(0, 8)}) ${lead.row.state}${lead.row.openedBy ? `, opened by ${lead.row.openedBy}` : ""}${lead.row.stale ? " [stale: idle, not updated for over 2 hours]" : ""}${lead.row.now ? `; now: ${lead.row.now}` : ""}${lead.row.open ? ` (${lead.row.open} open)` : ""}${m.members ? `; ${m.members} members` : ""}` : `${m.tab}: no main${m.members ? `; ${m.members} members` : ""}`;
 	});
-	const mains = ["Mains you supervise:", ...(mainLines.length ? rowsOf(mainLines, CAPS.mains, CAPS.mainRow, 2400) : ["- none: no tab of this workspace has joined"])].join("\n");
+	const mains = ["Mains you supervise:", ...(mainLines.length ? rowsOf(mainLines, CAPS.mains, CAPS.mainRow, 2400) : ["- none: no tab of this workspace has joined"])].join("\n")
+		+ (i.dead?.length ? `\n${["Mains that ended without a close (boss_revive_main revives a dead one):", ...rowsOf(i.dead, 6, 400, 1600)].join("\n")}` : "");
 	// The tools, the tower_done line, the crash flags, and the 20-minute line are never cut. When the rest does not fit, the memory beyond its floor goes first, then the mains, the digest, the note, the rest of the memory, and the obligations.
 	const talk = cut([i.conversation ?? "", ...(i.since?.length ? ["Since you last talked with the boss:", ...i.since.slice(0, 3)] : [])].filter(Boolean).join("\n"), CAPS.talk);
 	const parts: Record<string, string> = { talk, mains, obligations, memory: i.memory ?? "", digest, note };
@@ -169,7 +172,7 @@ export const withWaitLanguage = (lines: readonly string[], locale: Locale): stri
 export const LOCAL_TOOLS = [
 	"- tower_list: every workspace's tower and what it works on; board_read: what each main works on now.",
 	"- boss_status and call_tower route inside your workspace; tower_send writes to another tower or, with device, a teammate's tower; tower_reply answers one local session by id or name.",
-	"- boss_open_main opens a main for a request no session owns; boss_close_main closes one you opened, after its done report.",
+	"- boss_open_main opens a main for a request no session owns; boss_close_main closes one you opened, after its done report; boss_revive_main brings back a main that died (a main_died notice names it) as the same session.",
 	"- boss_server: the sb server's status, its log, and its restart.",
 	"- tower_memory keeps what outlives runs: you propose the boss's standing instructions and decisions (the boss confirms them) and keep your waits (add, resolve, drop); read lists it all.",
 	"- tower_done ends your run. A main's result comes back as a new event, so do not wait for it.",

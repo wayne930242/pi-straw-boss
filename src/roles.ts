@@ -24,34 +24,57 @@ import { TRAIN, type TrainId, trainFromToken, trainLabel, trainToken } from "./t
 // (docs/specs/2026-11-07-train-workers.md §29).
 
 const KEEP_MS = 90 * 24 * 3600_000;
-export interface RoleRecord { role: "tower" | "main" | "train"; pane: string; tab: string; workspace: string; terminal?: string; file?: string; openedBy?: string; /** A train's project and code (docs/specs/2026-11-07-train-workers.md §3.3). */ train?: TrainId; /** A main's kind, for a restore before its first message, when pi has written no entry yet (docs/specs/2026-11-09-agent-kinds.md §6). */ duty?: CoordinatorDuty; at: number }
+/**
+ * How a session with a record ended without a close on purpose (docs/specs/2026-11-23-tower-revive.md §2): `quit` is a /quit, Ctrl-D, or another session of the same pi (/new, /resume, /fork), `signal` a SIGHUP or SIGTERM
+ * pi turned into a quit. A crash, a kill -9, and a pane or tab Herdr closed leave no mark: pi never runs its shutdown then (§1, P0). The mark says nothing to `held`: a Herdr restore brings the session back whatever it says, and the next record a start writes has none.
+ */
+export interface Ended { at: number; reason: "quit" | "new" | "resume" | "fork" | "signal" }
+export interface RoleRecord { role: "tower" | "main" | "train"; pane: string; tab: string; workspace: string; terminal?: string; file?: string; openedBy?: string; /** A train's project and code (docs/specs/2026-11-07-train-workers.md §3.3). */ train?: TrainId; /** A main's kind, for a restore before its first message, when pi has written no entry yet (docs/specs/2026-11-09-agent-kinds.md §6). */ duty?: CoordinatorDuty; at: number; ended?: Ended }
 /** Where a session runs now: the pane, tab, and workspace of the record must all be these. `tabLabel` is the label Herdr lists for the tab now, the proof of a tower's or a train's tab; left out, neither role is given back. */
 export interface Here { paneId?: string; tabId?: string; workspaceId?: string; terminalId?: string; tabLabel?: string }
 
 const keyOf = (file: string) => createHash("sha256").update(file).digest("hex").slice(0, 32);
+const ENDED = new Set<Ended["reason"]>(["quit", "new", "resume", "fork", "signal"]);
+/** The folder of the role records in a state folder, and the record of one session file there. */
+export const rolesDir = (stateDir: string) => join(stateDir, "roles");
+export const recordPath = (stateDir: string, file: string) => join(rolesDir(stateDir), `${keyOf(file)}.json`);
+/** One record as written, or undefined when it is missing or proves nothing (a role it may not name, a field of the wrong type). `problem` hears why a file that is there could not be read. */
+export function loadRecord(record: string, problem?: (why: string) => void): RoleRecord | undefined {
+	let raw: string;
+	try {
+		raw = readFileSync(record, "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") problem?.((error as Error).message);
+		return undefined;
+	}
+	try {
+		const r = JSON.parse(raw) as Partial<RoleRecord>;
+		if (r.duty !== undefined && !isCoordinatorDuty(r.duty)) delete r.duty; // a kind that is none says nothing; the role still stands
+		if (r.ended !== undefined && !(typeof r.ended === "object" && r.ended !== null && typeof r.ended.at === "number" && ENDED.has(r.ended.reason))) delete r.ended; // a mark that cannot be read says the session did not end cleanly
+		if (r.role === TRAIN && !(r.train && trainFromToken(trainToken(r.train as TrainId)))) return undefined; // a train record names its project and code, or proves nothing
+		return (r.role === "tower" || r.role === "main" || r.role === TRAIN) && typeof r.pane === "string" && typeof r.tab === "string" && typeof r.workspace === "string" && (r.terminal === undefined || typeof r.terminal === "string") && (r.file === undefined || typeof r.file === "string") && (r.openedBy === undefined || typeof r.openedBy === "string") ? (r as RoleRecord) : undefined;
+	} catch {
+		return undefined; // a record that cannot be read proves nothing
+	}
+}
+/** Every record of the state folder that names its session file, with the path it was read from. */
+export function readRecords(stateDir: string): { path: string; record: RoleRecord & { file: string } }[] {
+	let names: string[] = [];
+	try {
+		names = readdirSync(rolesDir(stateDir)).filter((name) => /^[0-9a-f]{32}\.json$/.test(name));
+	} catch { /* no records */ }
+	return names.flatMap((name) => {
+		const path = join(rolesDir(stateDir), name), record = loadRecord(path);
+		// The file a record names has to be the one its name is the key of: a record copied under another key claims a session it was not written for.
+		return record?.file && path === recordPath(stateDir, record.file) ? [{ path, record: record as RoleRecord & { file: string } }] : [];
+	});
+}
 
 /** The role records of the sessions on this machine, in `roles/` of the state directory. */
 export function createRoles({ cfg, s, guiDir, tell }: Kit) {
-	const dir = join(guiDir, "roles");
-	const path = (file: string) => join(dir, `${keyOf(file)}.json`);
-	const load = (record: string, quiet = false): RoleRecord | undefined => {
-		let raw: string;
-		try {
-			raw = readFileSync(record, "utf8");
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-			if (!quiet) tell(`Straw Boss: could not read this session's role record: ${(error as Error).message}`, "warning");
-			return undefined;
-		}
-		try {
-			const r = JSON.parse(raw) as Partial<RoleRecord>;
-			if (r.duty !== undefined && !isCoordinatorDuty(r.duty)) delete r.duty; // a kind that is none says nothing; the role still stands
-			if (r.role === TRAIN && !(r.train && trainFromToken(trainToken(r.train as TrainId)))) return undefined; // a train record names its project and code, or proves nothing
-			return (r.role === "tower" || r.role === "main" || r.role === TRAIN) && typeof r.pane === "string" && typeof r.tab === "string" && typeof r.workspace === "string" && (r.terminal === undefined || typeof r.terminal === "string") && (r.file === undefined || typeof r.file === "string") && (r.openedBy === undefined || typeof r.openedBy === "string") ? (r as RoleRecord) : undefined;
-		} catch {
-			return undefined; // a record that cannot be read proves nothing
-		}
-	};
+	const dir = rolesDir(guiDir);
+	const path = (file: string) => recordPath(guiDir, file);
+	const load = (record: string, quiet = false): RoleRecord | undefined => loadRecord(record, quiet ? undefined : (why) => tell(`Straw Boss: could not read this session's role record: ${why}`, "warning"));
 	const within = (here: Here): RoleRecord | undefined => {
 		const record = s.file ? load(path(s.file)) : undefined;
 		return record && here.paneId === record.pane && here.tabId === record.tab && here.workspaceId === record.workspace ? record : undefined;
@@ -141,6 +164,20 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 			}
 		},
 		forget,
+		/**
+		 * The session ended without a close on purpose (session.ts, `session_shutdown`): its record, if it has one, keeps how (`Ended`). A tower's revive reads it (dead.ts): a quit is no death. Written in place, nothing else changed,
+		 * so a Herdr restore that follows still finds the record as `held` reads it.
+		 */
+		markEnded(reason: Ended["reason"]) {
+			if (!s.file) return;
+			const file = path(s.file), record = load(file, true);
+			if (!record) return;
+			try {
+				const temp = `${file}.${process.pid}.tmp`;
+				writeFileSync(temp, JSON.stringify({ ...record, ended: { at: cfg.now(), reason } } satisfies RoleRecord), { mode: 0o600 });
+				renameSync(temp, file);
+			} catch { /* a mark that is not written leaves the session looking dead: the tower run that hears of it decides */ }
+		},
 	};
 }
 export type Roles = ReturnType<typeof createRoles>;

@@ -5,7 +5,7 @@ import { createHeadlessKit, type HeadlessKit, type Incoming, type IntercomLike }
 import { createCloseMain, type Control } from "../closemain.ts";
 import { createDigest } from "../digest.ts";
 import { createTab, headModel, isHead, isStandin, isSub, type Pane, panes, parentOf, type Place, report, SEAT_LABEL, type ServiceKind, type Session, STANDIN_HEAD, tabs, TOWER_LABEL, towerModel, type Workspace, workspaces } from "../herdr.ts";
-import { type Opened, opener } from "../opener.ts";
+import { type Opened, opener, type OpenRequest } from "../opener.ts";
 import { netTokens } from "../order.ts";
 import { allyLabel } from "../boardauto.ts";
 import { fieldsOf, stamp } from "../header.ts";
@@ -36,6 +36,9 @@ import { claimGate, proofGate, seatGate, type SeatVerdict } from "./typegate.ts"
 import { forwardOpenedWait, raisedWait } from "./allywait.ts";
 import { addAnswer, addRoute, answeredAsks, ALLY_LEDGER, dropAsk, dropOpened, type Peer, readAnswers, readRoutes, removeAnswer, openedFor, routeOf, setStop, spendRoute } from "./allyroute.ts";
 import { createRevoker, type OpenedMain } from "./revoke.ts";
+import { createDeadWatch } from "./deadwatch.ts";
+import { gatherDead, noteMissed, rowLine, sessionsDir } from "../revive.ts";
+import { isOpen, readWaits } from "./linkwaits.ts";
 import { createUnitStop, kindOfPane, type MainFact } from "./unitstop.ts";
 import type { UnitStopInput } from "../link/holder.ts";
 import { type AllyItem, type AllyPort, createRuns, type Runs, type RunsOptions, type ServiceRef, type ServiceStatus } from "./runs.ts";
@@ -67,7 +70,7 @@ const UNKNOWN = "(unknown)";
 /** A run's request is held 30 s (server-look.ts): the server's resends for a tool stop at about 20 s, so a tool never fails while a copy is still going out. */
 export const RUN_SEND_CAP_MS = 20_000;
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
-const REPUBLISH_MS = 300, REVOKE_MS = 15_000, REFRESH_MS = 4 * 60_000, RECOVER_MS = 60_000, RECOVER_POLL_MS = 2000, RESIDENT_MS = 2000, REGISTER_WAIT_MS = 3000, LEAVE_MS = 2000;
+const DEAD_MS = 60_000, REPUBLISH_MS = 300, REVOKE_MS = 15_000, REFRESH_MS = 4 * 60_000, RECOVER_MS = 60_000, RECOVER_POLL_MS = 2000, RESIDENT_MS = 2000, REGISTER_WAIT_MS = 3000, LEAVE_MS = 2000;
 /** How old a caller's "I just made this pane" may be and still be believed (the desk step asks within a second or two of making the base). */
 const MADE_WITHIN_MS = 30_000;
 /** What a tab is called once its standing pane was replaced and it kept other panes. */
@@ -97,6 +100,8 @@ export interface TowersOptions {
 	refreshMs?: number;
 	/** How often a controller's opened mains are checked against the roster and the policy (15 s; revoke.ts). */
 	revokeMs?: number;
+	/** How often the role records are swept for dead mains (60 s; deadwatch.ts). */
+	deadMs?: number;
 	republishMs?: number;
 	residentMs?: number;
 	/** How long `ensure` waits for the identity to register before it answers. */
@@ -194,9 +199,11 @@ interface Live {
 	kit?: HeadlessKit;
 	reach?: Reach;
 	control?: Control;
-	open?: ReturnType<typeof opener>;
+	open?: (input: OpenRequest) => Promise<Opened>;
+	/** The revive of a dead main of this workspace (opener.ts `revive`), on the same queue as the opens. */
+	revive?: ReturnType<typeof opener>["revive"];
 	/** The opener an ally run opens mains with: its ledger is the ally runs' own (allyroute.ts), so the local brief never lists them. */
-	openAlly?: ReturnType<typeof opener>;
+	openAlly?: (input: OpenRequest) => Promise<Opened>;
 	/** The start in flight: the wait for a resident tower, then the registration, then the tokens. */
 	starting?: Promise<void>;
 	registered?: Promise<boolean>;
@@ -227,6 +234,32 @@ export function createTowers(o: TowersOptions): Towers {
 	let republishTimer: ReturnType<typeof setTimeout> | undefined;
 	let republishSoon = () => {};
 	const digest = createDigest(run, now);
+	/** The dead mains of the workspaces served (docs/specs/2026-11-23-tower-revive.md §3): swept once a minute, each death raised once as a `main_died` notice. */
+	const deadWatch = createDeadWatch({
+		stateDir: slot.stateDir, run, now, root: sessionsDir(o.env), recovering: () => now() < recoverUntil,
+		sessions: () => o.sessions(),
+		workspaces: async () => {
+			const all = await workspaces(run);
+			return [...services.values()].filter((l) => !isHeadL(l) && l.state === "live" && !l.stopped).map((l) => ({ workspace: l.record.workspace, ...((c) => (c ? { checkout: c } : {}))(all.find((w) => w.workspace_id === l.record.workspace)?.worktree?.checkout_path) }));
+		},
+		notice: (workspace, text, key) => runs.notice(workspace, text, key),
+		log: (event, facts) => log.line(event, facts),
+	});
+	/** What a session holds in a workspace, for its revive handoff: the link waits told to it or claimed by it, and the wait cards it raised that are not resolved (an answer it missed is named). */
+	const waitsHeld = (workspace: string, session: string): string[] => {
+		const lines: string[] = [];
+		try {
+			for (const w of readWaits(slot, workspace).entries) if (isOpen(w) && (w.claimedBy?.id === session || w.toldTo?.some((m) => m.id === session) || w.raiser?.id === session)) lines.push(`link wait L${w.n} (${w.dir === "in" ? "a teammate's device waits on you" : "you wait on a teammate's device"}): ${phrase(w.what, 160)}; state ${w.state}`);
+		} catch { /* a ledger that cannot be read lists nothing */ }
+		try {
+			for (const e of readMemory(slot, workspace, now()).memory.entries) {
+				if (e.kind !== "wait" || e.state === "resolved" || e.state === "expired" || e.card?.from?.id !== session) continue;
+				const press = e.press, missed = press && press.main && !["delivered", "queued", "asked"].includes(press.main.status);
+				lines.push(`wait card ${e.id}: ${phrase(e.card?.do ?? e.text, 160)}; ${press ? `the boss pressed ${press.act}${press.option !== undefined ? ` (option ${press.option})` : ""}${press.reason ? `: ${phrase(press.reason, 200)}` : ""} at ${press.at}${missed ? "; that notice did not reach you" : ""}` : "still open"}`);
+			}
+		} catch { /* the same */ }
+		return lines;
+	};
 	/** The head tower is a service like a workspace tower's, of its own kind: its seat glyph, tokens, and folder differ (head.ts). */
 	const isHeadL = (l: Live) => l.record.kind === "head";
 	const kindOf = (l: Live): ServiceKind => (isHeadL(l) ? "head" : "tower");
@@ -308,7 +341,7 @@ export function createTowers(o: TowersOptions): Towers {
 				text: buildBrief({
 					label: l.record.label, workspace: ws, head: headState(), woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, counts, identity: l.record.id,
 					...(autoLine() ? { auto: autoLine()! } : {}), ...(refresh ? { refreshed: true as const } : {}), ...(talk ? { conversation: talk.line, since: talk.since } : {}),
-					memory: section.text, mains: mains.rows, obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
+					memory: section.text, mains: mains.rows, dead: deadWatch.rows(ws).map((r) => rowLine(r, now())), obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
 					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
 					flags: [
 						...(crashed.length ? [`${crashed.length} event${crashed.length > 1 ? "s were" : " was"} possibly handled by a run that crashed: check before acting.`] : []),
@@ -434,9 +467,15 @@ export function createTowers(o: TowersOptions): Towers {
 					const openerFor = (file?: string) => opener({
 						run, sleep, workspaceId: l.record.workspace, cwd: l.record.cwd ?? slot.stateDir, sessions: () => (l.client ?? client).listSessions(), send: (to, message) => l.reach!.send(to, message),
 						tower: () => ({ id: l.record.id, name: l.record.name }), trustDir: trustDir(slot.stateDir), integrationOff: () => integrationOff(o.env, slot.stateDir), stateDir: slot.stateDir,
+						sessionsRoot: sessionsDir(o.env), recovering: () => now() < recoverUntil, waitsOf: (session) => waitsHeld(l.record.workspace, session),
 						ledger: { entries: () => readLedger(slot, l.record.workspace, now(), file), put: (row) => { try { putLedger(slot, l.record.workspace, row, now(), file); } catch (cause) { error("ledger", (cause as Error).message); } } },
 					});
-					if (!isHeadL(l)) (l.open = noteTrains(openerFor(), { cars: o.cars, checkout: async () => (await workspaces(run)).find((w) => w.workspace_id === l.record.workspace)?.worktree?.checkout_path ?? l.record.cwd, error }), l.openAlly = openerFor(ALLY_LEDGER));
+					if (!isHeadL(l)) {
+						const local = openerFor();
+						l.open = noteTrains(local, { cars: o.cars, checkout: async () => (await workspaces(run)).find((w) => w.workspace_id === l.record.workspace)?.worktree?.checkout_path ?? l.record.cwd, error });
+						l.revive = local.revive;
+						l.openAlly = openerFor(ALLY_LEDGER);
+					}
 				}
 				l.kit.attach(client);
 				l.client = client;
@@ -884,6 +923,7 @@ export function createTowers(o: TowersOptions): Towers {
 			}
 		}, o.refreshMs ?? REFRESH_MS));
 		timers.push(setInterval(() => void revoker.sweep(), o.revokeMs ?? REVOKE_MS));
+		timers.push(setInterval(() => void deadWatch.sweep(), o.deadMs ?? DEAD_MS));
 		// A service whose tab is not found yet (Herdr is restoring) is looked for until the minute is over; one waiting for a resident looks at it. Both stop themselves.
 		const poll = o.recoverPollMs ?? RECOVER_POLL_MS;
 		timers.push(setInterval(() => { if (now() < recoverUntil + poll) look(); }, poll));
@@ -1155,6 +1195,17 @@ export function createTowers(o: TowersOptions): Towers {
 				},
 			}, margs),
 			mainOf, requester: ev.requester,
+			// The revive (docs/specs/2026-11-23-tower-revive.md §4): a local run's, never an ally run's (runtools.ts refuses the tool by its kind as well).
+			...(!peer && l.revive ? {
+				revive: l.revive,
+				dead: async () => gatherDead({ stateDir: slot.stateDir, run, now: now(), sessions: () => l.client!.listSessions(), root: sessionsDir(o.env), workspace: ws, ...((c) => (c ? { checkout: c } : {}))((await workspaces(run)).find((w) => w.workspace_id === ws)?.worktree?.checkout_path), recovering: now() < recoverUntil, allNotes: true }),
+				missed: async (to: string, text: string) => {
+					const row = (await gatherDead({ stateDir: slot.stateDir, run, now: now(), sessions: () => l.client!.listSessions(), root: sessionsDir(o.env), workspace: ws, allNotes: true })).find((r) => (r.session === to || r.name === to) && (r.verdict.state === "dead" || r.verdict.state === "quit" || r.verdict.state === "restoring"));
+					if (!row) return undefined;
+					noteMissed(slot.stateDir, row.file, now(), l.record.name, text);
+					return `Not delivered: ${row.name ?? row.session.slice(0, 8)} (session ${row.session.slice(0, 8)}) is ${row.verdict.state}: ${row.verdict.reason}. The message is kept, and its revive handoff carries it; revive it with boss_revive_main {action: "revive", session: "${row.session}", reason} if its work is not done.`;
+				},
+			} : {}),
 		};
 		try {
 			if (who.kind === "head") {

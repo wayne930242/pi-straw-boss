@@ -38,7 +38,8 @@ export function tracked(): Set<string> | undefined {
 }
 
 export function orphans(d: Orphans) {
-	const nudged = new Set(d.entries().flatMap((e) => (e.type === "custom" && e.customType === d.type && typeof (e.data as { nudged?: unknown } | undefined)?.nudged === "string" ? [(e.data as { nudged: string }).nudged] : [])));
+	// A run a revived main was told of (inherit.ts `inherited`) is handled: its result went to the model already.
+	const nudged = new Set(d.entries().flatMap((e) => (e.type === "custom" && e.customType === d.type ? [(e.data as { nudged?: unknown } | undefined)?.nudged, (e.data as { inherited?: unknown } | undefined)?.inherited].filter((v): v is string => typeof v === "string") : [])));
 	// A child counts as a miss when its pane (running its own launch script) or its intercom session cannot be found; after GIVE_UP misses it is left alone.
 	const misses = new Map<string, number>();
 	let before = new Set<string>(), busy = false, stopped = false;

@@ -1,7 +1,8 @@
 import { readBoard } from "../boardread.ts";
 import { type Control, refuseStanding } from "../closemain.ts";
 import { ForwardAsBefore, INTEGRATOR } from "../integrator.ts";
-import type { Opened, OpenRequest, PeerSender } from "../opener.ts";
+import type { Opened, OpenRequest, PeerSender, Revived, ReviveRequest } from "../opener.ts";
+import { type DeadRow, ReviveRefused, revivedText, rowLine } from "../revive.ts";
 import { bodyOf } from "../header.ts";
 import { headsIn, slipsInText } from "../train/cars.ts";
 import { remoteTowers } from "../link/remotelist.ts";
@@ -99,6 +100,11 @@ export interface ToolHost {
 	waits?: Pick<LinkWaits, "sent" | "escalate" | "handleOf" | "newId">;
 	/** An ally run's own messages from its device, with the ask each carries (runs.ts `allyMessages`). */
 	allyMessages?(): { id: string; text: string; ask?: string; expects?: boolean }[];
+	/** The mains and trains of this workspace with a role record, classified (revive.ts `gatherDead`), and the revive of one (opener.ts `revive`): a local run's only (docs/specs/2026-11-23-tower-revive.md §4). */
+	dead?(): Promise<DeadRow[]>;
+	revive?(request: ReviveRequest): Promise<Revived>;
+	/** A message for a session that is no live one: when it names a dead main of this workspace, the message is kept for its revive and the hint returned (§4, missed deliveries). */
+	missed?(to: string, text: string): Promise<string | undefined>;
 }
 
 export interface SlipEvent { fwd: string; from: { id: string; name?: string }; text: string }
@@ -136,7 +142,7 @@ async function refuseClose(host: ToolHost, query: string): Promise<string> {
 
 /** The tools an ally run may call at all; `call_tower`, `boss_server`, and `link_request` are refused by its kind. */
 const ALLY = new Set(["boss_status", "tower_list", "board_read", "tower_send", "tower_reply", "boss_open_main", "boss_close_main", "ally_escalate"]);
-export const TOOLS = ["boss_status", "tower_list", "board_read", "call_tower", "tower_send", "tower_reply", "boss_open_main", "boss_close_main", "boss_server", "link_request", "tower_memory", "ally_escalate"] as const;
+export const TOOLS = ["boss_status", "tower_list", "board_read", "call_tower", "tower_send", "tower_reply", "boss_open_main", "boss_close_main", "boss_revive_main", "boss_server", "link_request", "tower_memory", "ally_escalate"] as const;
 /** The tools an ally run's gate lets through without a confirm below `dispatch`: reading, writing to its sender (checked below), and `ally_escalate`, which writes no peer text into any session. */
 const FREE = new Set(["boss_status", "tower_list", "board_read", "ally_escalate"]);
 
@@ -490,6 +496,9 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 			if (ally) await refuseTarget(host, to);
 			const net = await reach.read();
 			const named = net.sessions.filter((s) => s.id === to || s.name === to);
+			// A dead main of this workspace keeps the reply for its revive handoff, and the run hears how to bring it back (an ally run's text is never kept for a local session).
+			const kept = named.length === 0 && !ally ? await host.missed?.(to, message) : undefined;
+			if (kept) throw new Error(kept);
 			if (named.length !== 1) throw new Error(`${named.length ? "Several sessions are named" : "No live session is named or has the id"} "${to}"`);
 			const target = named[0]!, shown = clean(target.name ?? target.id, 40);
 			// The head's gate takes a `tower_send` that names its ask, never a `tower_reply`: say so here, before anything is sent, instead of leaving the run to read a refused receipt (or none) as an answer given.
@@ -511,6 +520,8 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 			const text = opened.repeated ? `A main was already opened for this request (tab ${opened.tab}); nothing new opened.` : opt(args, "duty") === "standing" ? `Opened tab ${opened.tab} with a standing main (session ${opened.main}) and handed it the request. It tells ${peer ? "the tower" : sender} once and sends no done report; do not close it, only the boss does.` : `Opened tab ${opened.tab} with a main agent (session ${opened.main}) and handed it the request. ${peer ? `It reports to the tower only; each report wakes a run for ${peer.label} that sends it to the sender.` : `It reports to ${opened.sender} and to you.`}`;
 			return { text, details: opened };
 		}
+		case "boss_revive_main":
+			return reviveTool(host, args);
 		case "boss_close_main": {
 			// An ally run closes the session its own check resolved, not the name again: the name may have been reused since.
 			const main = str(args, "main", 300), target = ally ? await refuseClose(host, main) : main;
@@ -536,6 +547,29 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 			await host.server.restart(reason, `tower run of ${host.label}`);
 			return { text: "The sb server is restarting; pages reconnect on the same URL, and this run keeps its claim through the restart.", details: { restarting: true } };
 		}
+	}
+}
+
+/**
+ * `boss_revive_main` of a local run (docs/specs/2026-11-23-tower-revive.md §4): `list` the mains and trains of the workspace with a role record and their state, or `revive` one. An ally run and the head never reach this (the tool is not in their
+ * sets), so a peer's text cannot revive a session of this computer.
+ */
+async function reviveTool(host: ToolHost, args: Record<string, unknown>): Promise<ToolResult> {
+	if (!host.dead || !host.revive) throw new Error("This tower revives no mains (the head tower opens none)");
+	const action = args.action ?? "list";
+	if (action === "list") {
+		const rows = await host.dead(), now = host.now();
+		const shown = rows.filter((r) => r.verdict.state !== "closed");
+		return { text: shown.length ? ["The mains and trains of this workspace with a role record:", ...shown.map((r) => `- ${rowLine(r, now)}`), "Revive a dead one with action revive; a quit one only when a request names it."].join("\n") : "No main or train of this workspace has a role record.", details: shown.map((r) => ({ session: r.session, name: r.name ?? null, role: r.record.role, kind: r.kind ?? null, state: r.verdict.state, reason: r.verdict.reason, tab: r.record.tab, openedBy: r.openedBy ?? null, ...(r.train ? { train: r.train } : {}), ...(r.orphans ? { orphans: r.orphans } : {}) })) };
+	}
+	if (action !== "revive") throw new Error("action is list or revive");
+	const session = str(args, "session", 200), reason = str(args, "reason", 300);
+	try {
+		const done = await host.revive({ session, reason });
+		return { text: revivedText(done), details: done };
+	} catch (error) {
+		if (error instanceof ReviveRefused) throw new Error(`Not revived: ${error.message}`);
+		throw error;
 	}
 }
 

@@ -62,6 +62,7 @@ export function createTower({ pi, cfg, s, guiDir, me, tell }: Kit, { membership,
 		s.info = { workspace: ws?.label ?? s.at.workspaceId, head: headOf(all)?.label ?? "" };
 		tools.addNetTools();
 		tools.addOpenMain();
+		tools.addReviveMain();
 		tools.addTowerComms();
 		control.register();
 		presence.keepFresh();

@@ -13,6 +13,9 @@ import { type CoordinatorDuty, dutyOfAgent, isCoordinatorDuty } from "./duty.ts"
 import type { MainDuty } from "./mainduty.ts";
 import { plannedInMessage } from "./planmsg.ts";
 import { orphans } from "./orphan.ts";
+import { inherited, RESULT } from "./inherit.ts";
+import { keyOf, REVIVE_TOKEN } from "./revive.ts";
+import { armSignals, signalSeen } from "./signalseen.ts";
 import { restored } from "./restored.ts";
 import type { RunMode } from "./runmode.ts";
 import type { Presence } from "./presence.ts";
@@ -37,12 +40,22 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	// What the tower learns at its next run (digest.ts); a line that cannot be written is not worth failing anything for.
 	const note = (text: string) => void digest.note(s.at.workspaceId, text).catch(() => {});
 	// Watches for subagents this session launched whose result can no longer reach it (orphan.ts), and the watch on the Herdr server.
-	let nudges: ReturnType<typeof orphans> | undefined, restores: ReturnType<typeof restored> | undefined, nudgeTimer: ReturnType<typeof setInterval> | undefined, unwatch: (() => void) | undefined, retryTimer: ReturnType<typeof setTimeout> | undefined;
+	let startInherit = () => {};
+	/** The revive token of this pane (opener.ts `revive`): a pi a tower revived consumes it with its claim, and that start picks up its subagents. Only the token of this very file counts. */
+	const revivedNow = (tokens: Record<string, string> | undefined) => {
+		const token = tokens?.[REVIVE_TOKEN];
+		if (!token || !s.file || token !== keyOf(s.file)) return false;
+		pi.appendEntry(ENTRY, { revived: cfg.now() });
+		return true;
+	};
+	let nudges: ReturnType<typeof orphans> | undefined, restores: ReturnType<typeof restored> | undefined, inherits: ReturnType<typeof inherited> | undefined, nudgeTimer: ReturnType<typeof setInterval> | undefined, unwatch: (() => void) | undefined, retryTimer: ReturnType<typeof setTimeout> | undefined;
 	const stopWatching = () => {
 		clearInterval(nudgeTimer);
 		clearTimeout(retryTimer);
 		nudges?.stop();
 		restores?.stop();
+		inherits?.stop();
+		inherits = undefined;
 		unwatch?.();
 		unwatch = undefined;
 	};
@@ -105,7 +118,9 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			const tower = (await workspaces(run).catch(() => [])).find((w) => w.workspace_id === s.at.workspaceId)?.tokens?.tower;
 			mainDuty.write(duty, `opened by tower ${tower ?? `of workspace ${s.at.workspaceId}`} as ${duty}`);
 		}
-		await report(run, "pane", s.at.paneId, { sb_open_main: null, ...(mine.tokens.sb_open_duty !== undefined ? { sb_open_duty: null } : {}) }).catch(() => {});
+		const revived = revivedNow(mine.tokens);
+		await report(run, "pane", s.at.paneId, { sb_open_main: null, ...(mine.tokens.sb_open_duty !== undefined ? { sb_open_duty: null } : {}), ...(mine.tokens[REVIVE_TOKEN] !== undefined ? { [REVIVE_TOKEN]: null } : {}) }).catch(() => {});
+		if (revived) startInherit();
 		return true;
 	};
 
@@ -122,6 +137,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		s.duty = isCoordinatorDuty(s.saved.duty) ? s.saved.duty : undefined; // the migration's guard is this live value (docs/specs/2026-11-09-agent-kinds.md §2)
 		s.branch = () => ctx.sessionManager.getBranch();
 		s.file = ctx.sessionManager.getSessionFile();
+		armSignals(); // pi has its signal handlers by now; a SIGHUP or SIGTERM is told apart from a typed /quit at the shutdown (signalseen.ts)
 		// A tower here is one by its process: started with STRAW_BOSS_ROLE=tower (state.ts), or a tower already in an earlier start of this process. A Herdr restore resumes the pane into this session
 		// file without the variable: the saved entry or the role record then claims the role, and the claim is proven against Herdr with the workspace check below (`towerProof`), never taken from the file.
 		const log = ctx.sessionManager;
@@ -129,7 +145,14 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
 		// Subagents a Herdr restart brought back as plain pi sessions are closed, and this session is asked to resume them (restored.ts).
 		restores = restored({ run, sleep: cfg.sleep, file: () => log.getSessionFile(), entries: () => log.getEntries(), active: () => !s.isTower, launcher: () => (me() ? { id: me(), name: who() } : undefined), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), resume: (text, details) => pi.sendMessage({ customType: RESUME, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
-		nudgeTimer = setInterval(() => void Promise.allSettled([nudges?.poll(), restores?.poll()]), cfg.nudgeMs).unref();
+		// A session a tower revived picks up the subagents it launched before it died (inherit.ts), at its claim and at every start after (a /reload), until none is left to watch.
+		startInherit = () => {
+			if (inherits || s.isTower) return;
+			inherits = inherited({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), deliver: (text, details) => pi.sendMessage({ customType: RESULT, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
+			void inherits.poll();
+		};
+		if (typeof s.saved.revived === "number") startInherit();
+		nudgeTimer = setInterval(() => void Promise.allSettled([nudges?.poll(), restores?.poll(), inherits?.poll()]), cfg.nudgeMs).unref();
 		// Starting runs in the background: pi awaits session_start handlers in turn, and pi-intercom connects in its own, after this one.
 		const asTower = () => {
 			s.trainSettled = true; // a tower is no train
@@ -154,14 +177,14 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		// What a joinable session does once it is placed: join, and the opener and restore bookkeeping that goes with it. Once per start, whoever got the answer first.
 		// How this pi came to be a train: the tower's one-time claim (the pane's `sb_open_main` with a valid `sb_train`), the same pi in the same pane after a /reload (its saved entry), or a Herdr restore (its record). It is known before the join: the
 		// join publishes the role, and the guard looks at the tab as soon as the join ends, so neither may ever see a train as a member that can be crowned.
-		let trainHow: "claim" | "reload" | "restore" | undefined;
+		let trainHow: "claim" | "reload" | "restore" | undefined, trainRevived = false;
 		const trainIdentity = async () => {
 			if (s.isTrain || !placed) return;
 			// A pane list that fails is no answer for a pi that was started as a train: it is asked again, and the guard stays closed meanwhile (trainguard.ts).
 			const mine = opensAsTrain ? (await panes(run, placed.workspaceId).catch((error) => { throw Object.assign(error as Error, { joining: true }); })).find((p) => p.pane_id === placed!.paneId) : undefined;
 			const token = trainFromToken(mine?.tokens?.sb_train);
 			const saved = trainFromToken(s.saved.train && trainToken(s.saved.train));
-			if (mine?.tokens?.sb_open_main === "1" && token) return void ([s.isTrain, s.train, s.openedBy, trainHow] = [true, token, mine.tokens.sb_opened_by, "claim"]);
+			if (mine?.tokens?.sb_open_main === "1" && token) return void ([s.isTrain, s.train, s.openedBy, trainHow, trainRevived] = [true, token, mine.tokens.sb_opened_by, "claim", revivedNow(mine.tokens)]);
 			// The saved entry and the role record are files the session's own shell can write: they name the train it claims to be, and Herdr proves it, by the tab that carries the train's code
 			// (`train <MMDDx>`, set by the open and kept by a restore; docs/specs/2026-11-07-train-workers.md §29). A tab list that fails is no answer, as the pane list above.
 			const entry = event.reason !== "startup" && saved && s.saved.openedPane === placed.paneId ? saved : undefined;
@@ -208,7 +231,8 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			if (s.isTrain) {
 				pi.events.emit(TRAIN_EVENT, { train: true });
 				// A train is never promoted. The tower that opened it may close it (closemain.ts), a Herdr restore brings it back (roles.ts), and a /reload in this pane finds it again (the entry).
-				if (trainHow === "claim") await report(run, "pane", s.at.paneId, { sb_open_main: null }).catch(() => {});
+				if (trainHow === "claim") await report(run, "pane", s.at.paneId, { sb_open_main: null, ...(trainRevived ? { [REVIVE_TOKEN]: null } : {}) }).catch(() => {});
+				if (trainRevived) startInherit();
 				if (trainHow !== "reload") pi.appendEntry(ENTRY, { openedBy: s.openedBy ?? null, openedPane: s.at.paneId, train: s.train });
 				control.register();
 				roles.remember(TRAIN);
@@ -302,6 +326,12 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
 	pi.on("tool_call", async (event, ctx) => {
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || runMode.active()) return;
+		// Two pis on one session file corrupt it: a run whose session a live pane runs (its own pane, a restore, or another launcher's resume) is not resumed (docs/specs/2026-11-23-tower-revive.md §6).
+		if (event.toolName === "subagent_resume") {
+			const path = (event.input as { sessionPath?: unknown } | undefined)?.sessionPath;
+			const holder = typeof path === "string" ? (await panes(run).catch(() => [])).find((p) => p.agent_session?.value === path) : undefined;
+			if (holder) return { block: true, reason: `sb: pane ${holder.pane_id} runs that session file now, and two pis on one file corrupt it: do not resume it. Wait for its result, or ask it over intercom.` };
+		}
 		await checked; // a subagent launched while session start still asks Herdr about the workspace waits for the answer
 		await s.recheck?.(); // a Herdr that could not answer then is asked again now, not at the next timer
 		if (s.barred) return;
@@ -338,6 +368,8 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		if (event.reason !== "reload" && s.boardId) removeEntry(join(guiDir, "board"), s.boardId);
 		s.boardId = undefined;
 		if (s.closing) roles.forget(); // closed on purpose: a Herdr restore does not bring it back (roles.ts)
+		// Ended without a close: how is kept on the record, so a tower's revive tells a quit from a death (dead.ts). A crash or a pane Herdr closed runs none of this, and leaves no mark.
+		else if (event.reason !== "reload") roles.markEnded(signalSeen() ? "signal" : event.reason === "new" || event.reason === "resume" || event.reason === "fork" ? event.reason : "quit");
 		// A closed session, and a tower that quits however it was asked, take their pane with them (and an emptied tab); a /reload, /new, resume or fork keeps it.
 		if ((s.closing ? !s.closing.keepPane : s.isTower) && event.reason === "quit" && env.HERDR_PANE_ID) {
 			// A herdr or sh that is not found throws; the shutdown goes on (the GUI is released below), and the pane is left open with the reason on stderr.

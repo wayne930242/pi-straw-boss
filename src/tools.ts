@@ -1,5 +1,6 @@
+import { lstatSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { Type, type Static, type TSchema } from "typebox";
 import { readBoard } from "./boardread.ts";
 import type { BoardFill } from "./boardfill.ts";
@@ -13,18 +14,19 @@ import type { Link } from "./link/runtime.ts";
 import { callTowerTool } from "./link/waitcall.ts";
 import { INTEGRATOR } from "./integrator.ts";
 import { foldName } from "./namefold.ts";
-import { opener } from "./opener.ts";
+import { openSuccessor, opener } from "./opener.ts";
+import { gatherDead, ReviveRefused, revivedText, rowLine, sessionsDir } from "./revive.ts";
 import type { Reach } from "./reach.ts";
 import type { ServerLook } from "./server-look.ts";
-import type { Kit } from "./state.ts";
+import { ENTRY, type Kit } from "./state.ts";
 import { snapshotOfBranch } from "./todo.ts";
 import { todosOf } from "./items.ts";
 import { integrationOff } from "./trainswitch.ts";
 import { isRoleLabel, ownsBoard, trainLabel } from "./trainrole.ts";
 import { trustDir } from "./trust/files.ts";
 
-/** The tab label for a name, cut at 16 characters as pi-auto-tab-name cuts it, so that extension takes the label as its own and keeps it. */
-export const tabLabel = (name: string): string => Array.from(name).length > 16 ? `${Array.from(name).slice(0, 16).join("").trimEnd()}…` : name;
+import { tabLabel } from "./tablabel.ts";
+export { tabLabel };
 const arg = (description: string) => Type.Optional(Type.String({ description }));
 export const FORWARD_DESCRIPTION = "Tower run only, for a car slip: pass the ID from [event id: <id>] on the first line of the call_tower event (why=shared) that carried the slip. The code stamps the slip's sender (fwd and fwd-from); the integrator checks it against the slip's coordinator. Send the slip as it came.";
 /** `link_request`: the description and the parameters a session and a tower run register (runmode.ts) alike. */
@@ -38,7 +40,14 @@ export const linkRequestParameters = () => Type.Object({
 	reason: Type.String({ description: "One line: why you ask. The boss reads it in the dialog." }),
 });
 /** Every tool sb registers, all of them after the child return (index.ts): a role that lists one fails `/boss roles-check` (rolescheck.ts). tests/roles-check.test.ts pins it to the recorded registry. */
-export const PARENT_ONLY: readonly string[] = ["board_read", "board_set", "boss_auto", "boss_broadcast", "boss_close_main", "boss_duty", "boss_open_main", "boss_promote", "boss_rename", "boss_server", "boss_status", "boss_wait_ask", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send", "train_car"];
+export const PARENT_ONLY: readonly string[] = ["board_read", "board_set", "boss_auto", "boss_broadcast", "boss_close_main", "boss_duty", "boss_handover", "boss_open_main", "boss_promote", "boss_rename", "boss_revive_main", "boss_server", "boss_status", "boss_wait_ask", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send", "train_car"];
+/** `boss_revive_main` (docs/specs/2026-11-23-tower-revive.md §4): its description and parameters, the same for a tower session and a tower run (runmode.ts proxies the latter to the server). */
+export const REVIVE_DESCRIPTION = "List the mains and trains of this workspace that have a role record, with their state (live, dead, quit, restoring, stale, invalid), or revive a dead one: the same pi session comes back in a new tab as the same Straw Boss identity (its role, kind, name, board row, todos, and the waits it held), and it picks up its own subagents. Call it when a main_died notice names one and its work is not done, or when a request names a main that died. Revive a quit one only when a request names it. Refused, with the reason, for members, towers, mains opened for a teammate's device, a session a live pane runs, a second try of one death, and a session that died twice in a day after a revive.";
+export const reviveParameters = () => Type.Object({
+	action: Type.Union([Type.Literal("list"), Type.Literal("revive")], { description: "list (default) or revive." }),
+	session: Type.Optional(Type.String({ description: "With revive: the session's id, an id prefix of 8 or more characters, or its name, as list shows it." })),
+	reason: Type.Optional(Type.String({ description: "With revive: one line, why you revive it (the main reads it in its handoff)." })),
+});
 
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
 export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, promote, digest, closeMain, link, server, towerCall, boardFill, waitAsk }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill; /** Registers `boss_wait_ask` for a joined session (waitask.ts `mainWaitAsk`); a tower run registers its own (runmode.ts). */ waitAsk?: () => void }) {
@@ -187,6 +196,33 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 					return { text: `Your kind is now ${duty} (was ${from ?? "none"}).${duty === "standing" ? await standingTwinWarning() : ""}`, details: { duty, from: from ?? null } };
 				});
 		},
+		// A main's own session rotation (docs/specs/2026-11-23-tower-revive.md §8): it opens its successor itself, with the handoff file as the new pi's first prompt; no /new, no boss.
+		addHandover() {
+			tool("boss_handover", "Main only: when your session-rotation rule says to rotate, open your successor yourself. Write the handoff file first; this opens a new tab in your workspace with a new pi under your name and kind, which reads the handoff as its first prompt and tells you by intercom when it took over. Then give up your role as the rule says. One live successor at a time; refused for a member, a train, a tower, and in a teammate's turn.",
+				Type.Object({
+					handoff: Type.String({ description: "The handoff file (scratch/handoff-<name>.md): absolute, or relative to your working folder. It must exist." }),
+					reason: Type.String({ description: "One line, at most 200 characters: the concrete problem that makes you rotate." }),
+				}),
+				async ({ handoff, reason }) => {
+					if (s.remoteOrigin || link.remoteScope()) throw new Error("A teammate's turn cannot open a successor of this main");
+					if (s.isTower || role() === "tower") throw new Error("A tower hands over by itself (the server adopts its service); boss_handover is a main's");
+					if (role() === "train") throw new Error("A train does not rotate: it ends with its milestone report");
+					if (role() !== "main") throw new Error("Only a tab's main agent hands over; a member has no role to pass on");
+					const why = reason.replace(/\s+/g, " ").trim();
+					if (!why || why.length > 200) throw new Error("reason is required: one line of 1 to 200 characters");
+					const cwd = process.cwd(), path = isAbsolute(handoff) ? handoff : resolve(cwd, handoff);
+					let regular = false;
+					try { regular = lstatSync(path).isFile(); } catch { /* missing */ }
+					if (!regular) throw new Error(`The handoff file ${path} does not exist (or is no regular file): write it first`);
+					const held = s.saved.successor;
+					if (held && (await read().catch(() => undefined))?.ps.some((p) => p.pane_id === held.pane && p.agent)) throw new Error(`Your successor in pane ${held.pane} (tab ${held.tab}) is still live: one at a time. Tell it by intercom, or wait until it took over.`);
+					const name = pi.getSessionName() || s.ownName || me().slice(0, 8);
+					const next = await openSuccessor({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd, sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), trustDir: trustDir(guiDir) }, { from: { id: me(), name }, handoff: path, reason: why, ...(s.duty ? { duty: s.duty } : {}), ...(s.openedBy ? { openedBy: s.openedBy } : {}) });
+					s.saved.successor = { pane: next.pane, tab: next.tab, at: cfg.now() };
+					pi.appendEntry(ENTRY, { successor: s.saved.successor });
+					return { text: `Opened your successor in tab ${next.tab} (session ${next.main}) and handed it ${path}. When it tells you it took over, give up your role as your rule says: boss_duty coordinator (if you are standing or integrator), boss_rename to "old ${name} (handed over to ${next.main.slice(0, 8)})", stop your monitors and loops, clear your board, and wait to be closed.`, details: next };
+				});
+		},
 		addPromote() {
 			tool("boss_promote", "Become the main agent of this Herdr tab when your work grows: several steps, dispatching workers, or touching more than one app. Refused when the tab already has a main agent.", Type.Object({}), async () => {
 				const { promoted, text } = await promote(false);
@@ -215,6 +251,23 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 						: opened.repeated ? `A main was already opened for this request (tab ${opened.tab}); nothing new opened.` : input.duty === "standing" ? `Opened tab ${opened.tab} with a standing main (session ${opened.main}) and handed it the request. It tells ${opened.sender} once and sends no done report; do not close it, only the boss does.` : `Opened tab ${opened.tab} with a main agent (session ${opened.main}) and handed it the request. It reports to ${opened.sender} and to you.`;
 					return { text, details: opened };
 				});
+		},
+		// Tower only (and a local tower run, through the server): bring a dead main of this workspace back as itself.
+		addReviveMain() {
+			const open = opener({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd: process.cwd(), sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), tower: () => ({ id: me(), name: s.ownName || me() }), trustDir: trustDir(guiDir), integrationOff: () => integrationOff(cfg.env, guiDir), stateDir: guiDir, sessionsRoot: sessionsDir(cfg.env) });
+			tool("boss_revive_main", REVIVE_DESCRIPTION, reviveParameters(), async ({ action, session, reason }) => {
+				if ((action ?? "list") === "list") {
+					const rows = (await gatherDead({ stateDir: guiDir, run: cfg.run, now: cfg.now(), sessions: () => s.c.listSessions(), root: sessionsDir(cfg.env), workspace: s.at.workspaceId, allNotes: true })).filter((r) => r.verdict.state !== "closed");
+					return { text: rows.length ? rows.map((r) => `- ${rowLine(r, cfg.now())}`).join("\n") : "No main or train of this workspace has a role record.", details: rows.map((r) => ({ session: r.session, name: r.name ?? null, state: r.verdict.state, reason: r.verdict.reason })) };
+				}
+				if (!session || !reason) throw new Error("revive needs session and reason");
+				try {
+					const done = await open.revive({ session, reason });
+					return { text: revivedText(done), details: done };
+				} catch (error) {
+					throw error instanceof ReviveRefused ? new Error(`Not revived: ${error.message}`) : error;
+				}
+			});
 		},
 		// Tower only. Towers talk to each other with these: who is out there, and one message to one tower or all. Closing is for the mains a tower opened itself.
 		addTowerComms() {

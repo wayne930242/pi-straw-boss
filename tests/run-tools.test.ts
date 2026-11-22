@@ -74,7 +74,7 @@ test("a run's pi is given the tower tools and read-only files and nothing else: 
 	const r = await rig(srv, { tools: LOCAL_RUN_TOOLS });
 	await until(() => srv.requests.some((q) => q.cmd === "run-file"), "the run to be set up");
 	const active = r.session.getActiveToolNames().sort();
-	const registered = ["boss_status", "call_tower", "boss_server", "tower_list", "board_read", "tower_send", "boss_open_main", "boss_close_main", "tower_memory", "tower_reply", "tower_done", "link_request", "boss_wait_ask"];
+	const registered = ["boss_status", "call_tower", "boss_server", "tower_list", "board_read", "tower_send", "boss_open_main", "boss_close_main", "boss_revive_main", "tower_memory", "tower_reply", "tower_done", "link_request", "boss_wait_ask"];
 	for (const n of [...registered, ...RUN_FILE_TOOLS]) assert.ok(active.includes(n), `${n} is active`);
 	assert.deepEqual(active, [...registered, ...RUN_FILE_TOOLS].sort(), "and nothing else is");
 	const all = r.session.getAllTools().map((t) => t.name);
@@ -82,7 +82,7 @@ test("a run's pi is given the tower tools and read-only files and nothing else: 
 });
 
 test("the allowlist names exactly the tools the run registers, and every tool the tower prompt and the brief name", () => {
-	assert.deepEqual([...RUN_TOWER_TOOLS].sort(), ["board_read", "boss_close_main", "boss_open_main", "boss_server", "boss_status", "boss_wait_ask", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send"]);
+	assert.deepEqual([...RUN_TOWER_TOOLS].sort(), ["board_read", "boss_close_main", "boss_open_main", "boss_revive_main", "boss_server", "boss_status", "boss_wait_ask", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send"]);
 	assert.deepEqual([...RUN_FILE_TOOLS], ["read", "grep", "find", "ls"]);
 	const named = (text: string) => [...new Set(text.match(/\b(?:tower_[a-z]+|boss_[a-z_]+|board_read|call_tower|link_request)\b/g) ?? [])];
 	// A quoted request the run passes to a main it opens ("... call `boss_duty` ...") names that main's tool, not the run's.
