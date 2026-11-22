@@ -28,6 +28,8 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `link_request` | 有人看管的電腦上的每個 session，以及本機塔台 run | 附理由請求一個 Straw Link 動作（create、invite、join、trust、leave、remove、role、rotate）。它絕不會未經詢問就執行：老闆要在對話框裡核准。 |
 | `boss_open_main` | 塔台 | 為沒有 session 負責的請求，開一個帶新主智慧體的分頁。`role: "train"` 開一列火車；`role: "integrator"` 把車廂單送給專案唯一的整合員，沒有在跑的就開一個。`duty: "standing"` 開一個值守種類的主智慧體（預設為協調者）。見[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。 |
 | `boss_close_main` | 塔台 | 等它裡面沒有東西在跑，關掉這座塔台開的主智慧體；值守主智慧體不會被關，只有老闆能關。 |
+| `boss_revive_main` | 塔台（pi 塔台與本機塔台執行） | `list` 列出工作區裡死掉與已退出的主智慧體；`revive` 附理由把其中一個救回成它自己（同一個 session、新分頁，帶著它的角色、種類、名稱、看板、待辦與等待）。成員、塔台、隊友裝置開的主智慧體與活著的 session 會被拒絕。 |
+| `boss_handover` | 分頁的主智慧體 | 為 session 輪替開出自己的接班者：用它的名稱與種類的新分頁，第一個提示是 `handoff` 檔；一次一個。 |
 | `tower_list` | 塔台 | 每個工作區的塔台、發給它的訊息會送到誰、它的狀態，以及它的分頁在做什麼（每個分頁的主智慧體及其種類）。 |
 | `tower_send` | 塔台 | 發訊息給另一座塔台（用工作區 id 或標籤）或全部；附 `device` 則發給隊友電腦上的塔台：不給 `reply` 時綁定這次 run 裡唯一等回覆的主智慧體，`reply: false` 是通知，`waitsOn: {event}` 轉送主智慧體對那台裝置的等待，`standing: "question"` 或 `"notice"`（在 run 裡）改送那台裝置的值守主智慧體；隊友 run 只能送通知。 |
 | `board_read` | 塔台、主智慧體 | 工作看板：每位主智慧體在做什麼、做到哪裡，包括這裡與隊友的電腦，以及本機與隊友裝置之間未結的等待（`waits`）。 |

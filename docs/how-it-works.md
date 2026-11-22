@@ -920,6 +920,47 @@ Straw Boss passes it to pi as `--model` whenever it starts a tower, and reads th
 
 </details>
 
+### Reviving a dead main
+
+A main that dies (a crash, a kill, its pane or tab closed in Herdr) is brought back by its tower as itself: the same pi session in a new tab, with its role, kind, name, board row, todos, and the waits it held. The code finds the death and wakes a tower run with a `main_died` notice; the run decides with `boss_revive_main`. A main never revives another main, and nothing is revived without a run's decision.
+
+<details>
+<summary>Details</summary>
+
+**What a death looks like.** A main's role record (`roles/<key>.json` in the state folder) is dropped only by a close on purpose. A shutdown that is no close and no `/reload` writes `ended: {at, reason}` into the record: `quit` for a `/quit` or Ctrl-D, `new`, `resume`, or `fork` for another session of the same pi, and `signal` when pi turned a SIGHUP or SIGTERM into its quit (a listener added after pi's own tells the two apart). A crash, a `kill -9`, and a pane or tab Herdr closes run no shutdown at all and leave no mark: a probe on 2026-11-23 found `herdr pane close` and `herdr tab close` end pi with no `session_shutdown`. One table (`src/dead.ts`) then decides each record: `closed` (no record), `invalid` (its file fails the checks below), `live` (a pane runs its file, the broker lists its id, or the file moved in the last minute), `quit`, `stale` (the file has not moved for 24 h), `restoring` (Herdr's recovery window is open, or the death was seen only once), and `dead`.
+
+**Who acts.** The sb server's tower sweeps every workspace it serves once a minute. A main or train that is `dead` in two looks a minute apart, outside Herdr's recovery window, becomes one `main_died` notice on that workspace's queue, once per death (the session file's size and mtime when it was found); the notice names the main, its kind, its tab, its board line, how long ago its file moved, and its subagents by class. A main that dies within 10 minutes of a revive is listed and not raised. The run's brief lists the workspace's dead and quit mains under "Mains that ended without a close", a `tower_reply` to a dead main is kept for its revive and the run is told so, and `boss_open_main` for a sender whose own main died says that main can be revived. A pi tower has the same tool; it sweeps nothing.
+
+**`boss_revive_main {action, session, reason}`.** `list` shows the mains and trains of the workspace that have a role record, with their state; `revive` takes the session's id, an id prefix of 8 or more characters, or its name, and one line of reason. A local run and a pi tower have it; an ally run and the head tower do not. It refuses, with the reason and with nothing opened:
+
+- a member (it has no role record and holds nothing a tower restores: resume it with `pi --session`) and a tower (it comes back by itself);
+- a main opened for a teammate's device (`sb_opened_by=link:<device>`): its route has lapsed and the device's trust may have changed, so the device asks again;
+- a session a live pane runs, the broker lists, or whose file moved in the last minute, checked once more just before pi starts;
+- a session file that is no regular file under pi's sessions folder, whose header id is not the id in its name, that has a subagent's policy sidecar, or whose working folder is outside the workspace's checkout;
+- a session of another workspace (that workspace's tower revives it);
+- a tower-opened main whose sender has another opened main now, or a workspace at its two opened mains;
+- an integrator while integration is off or its project has a live integrator;
+- a death already tried once (a failed revive is not tried again by a tower), and a session revived twice in the last 24 h.
+
+A `quit` main is revived only when a request names it. Revives and opens share the opener's queue, and a lock in the state folder keeps a pi tower and the server's tower from reviving one file at once.
+
+**How.** The tower makes a new tab in the record's workspace (cwd: the session's own folder; label: the session's name, a train's code label for a train) with `STRAW_BOSS_ROLE=main` (`train` for a train), writes `sb_open_main=1`, `sb_revive=<key of the file>`, the record's `sb_opened_by`, a train's `sb_train`, and the record's kind as `sb_open_duty` where the session has none, and starts `pi --session <file>` with no `--name` (pi restores its own). It waits up to 60 s for the pane's `sb_role` and for the broker to list the dead session's own id there; another id is a failure. If another pane runs the file by then, the revived pi's tab is closed and that one keeps it. The revived pi consumes the tokens as an opened main does and gets one handoff, written by the code: when and how it ended, which tower revived it and why, what came back and what did not (monitors, loops, watches, subagent watchers), what to do now, the link waits and wait cards it holds (a boss press whose notice did not reach it is named), and the messages kept for it. The old tab is closed only when the tower opened it and its one pane is the dead pane at a bare shell (`herdr pane process-info` lists the shell alone); every other old tab stays. Each try is kept in `<state>/revive/<key>.json`.
+
+**What comes back.** The intercom id is the pi session id, so everything keyed by it finds the revived main without a copy: its board row, the towers' expected replies, the link waits told to it, the wait cards it raised, and its todos (in its own session). Its role, kind, opener, and name come from the record and the session's entries. A train comes back as the same train when its trainboard says it is under way, its writer is gone, it wrote that board, and no live pane carries its code; the open's "a code is used once" is set aside on this path only.
+
+</details>
+
+### A main's own handover
+
+A main that rotates its session opens its successor itself with `boss_handover`: no `/new`, and nothing for the boss to do. The successor is a new tab in the same workspace, under the old main's name and kind, and its first prompt is the handoff file.
+
+<details>
+<summary>Details</summary>
+
+`boss_handover {handoff, reason}` is a joined main's tool. The handoff file must exist; `reason` is one line. It goes through the opener's safe start: the settings check of the main's folder, a new unfocused tab labelled with the main's name, `STRAW_BOSS_ROLE=main` with the one-time `sb_open_main`, the main's own `sb_opened_by` and its kind as `sb_open_duty`, `sb_handover_from=<old id>`, and pi started with `--name <old name>`. Once the new pi is the tab's main it gets one message: read the handoff and follow the session-rotation rule, its kind is already set, and tell the old main by intercom that it took over. The old main is then told how to give up its role (`boss_duty coordinator`, `boss_rename` to `old <name> (handed over to <id>)`, monitors and loops stopped, board cleared). One live successor at a time: a second call while the first successor's pane lives is refused. A member, a train, a tower (which has no such tool), and a teammate's turn are refused; a failure closes the tab it made.
+
+</details>
+
 ### Merge train
 
 A project may give each app a merge train: one integrator main merges the coordinators' work instead of each coordinator merging for itself. It is opt-in. The procedure is prompt-only and not in Straw Boss, but since 0.65.0 the extension and the server do read and write some files for it (the trainboards and car files, the car notices, the `landed` git check, the sweep, `apps.json`'s `integration.accept` and `stages`; see [Trains as their own workers](#trains-as-their-own-workers)). Since 0.60.0 the procedure is not in Straw Boss: it is the `integrating` (merge) and `deploying` (deploy) skills of whichever package implements the [merge-train contract](#requires-skills-that-declare-the-merge-train-contract) (pi-anchorloop is one), and Straw Boss binds the places those skills leave open.
@@ -1198,6 +1239,26 @@ Straw Boss then sends that session one intercom message: the launcher's session 
 A child whose pane cannot be found or does not run its launch script, or that has no pi-intercom session of its own, is given up on after four looks, until the next session start (a reload counts). A subagent whose process has exited cannot be asked; its result stays in its session file. A resumed run (`subagent_resume`) has an id of its own that nothing in its pane's session file names, so it is never found and never asked.
 
 The subagent's own launcher does this, not a tower: only the launcher's process knows what it tracks, so a tower never nudges the subagents of other sessions, and a subagent that launches subagents of its own does not (it runs no Straw Boss).
+
+</details>
+
+### A revived main picks up its subagents
+
+A main a tower revived runs the same session file, so its artifacts folder is the dead main's own: it picks up the subagents it launched before it died itself, with no handover to another session.
+
+<details>
+<summary>Details</summary>
+
+At its claim (the pane's `sb_revive` names its file), and at every start after it, the revived main looks at each run in its `subagent-activity/` that pi-herdr-agents does not track and whose result is not in its transcript, and hands its model one steering message (`straw-boss-orphan-result`):
+
+- **finished** (the child's `.exit` sidecar says `done` or `error`): the child's last message, which is its report, read by Straw Boss and framed line by line (every line prefixed with `| `, control and invisible characters written out, at most 16,000 characters), so a child's text cannot pass for Straw Boss's or the boss's;
+- **asked for help** (`.exit` says `ping`): its question, framed the same way, and the `subagent_resume` arguments to answer it;
+- **cut off** (no `.exit`, no pane runs it): listed for `subagent_resume` with its session path, name, and a follow-up, and what its transcript says of its last turn;
+- **still running** in its pane: watched, and its result brought the same way when its `.exit` appears;
+- **idle** at its prompt: left to the orphan nudge above, which asks it once to report;
+- **a managed worktree run** or **a persistent specialist**: listed, never resumed (pi-herdr-agents refuses both).
+
+Each run is told once: a `straw-boss` entry with an `inherited` key is written before the message goes, and the orphan nudge and the restore below read the same entries, so nothing repeats after a `/reload`. `subagent_resume` is refused, in any session, for a session file a live pane runs: two pis on one file would corrupt it.
 
 </details>
 
@@ -3771,6 +3832,8 @@ Straw Boss gives agents a set of tools (`boss_*`, `tower_*`, `call_tower`, `boar
 | `boss_status` | joined sessions and towers | The main agent of each tab, this workspace's tower, the head tower, and the other towers. |
 | `boss_open_main` | towers only | Open a new tab in the tower's workspace with a new pi as its main agent and hand it a request no session owns, once per request (see [Opening a main](#opening-a-main)). With `role: "train"` it opens a train; with `role: "integrator"`, in a run of the sb server, it sends a car slip to the project's one integrator, opening it as the tower's own main when none runs. |
 | `boss_close_main` | towers only | Ask a main this tower opened (by intercom name or session id) to quit as `/boss close` does. Refused for a main the boss opened, one in another workspace, one Herdr reports working, and one with a turn, a queued message, a dialog, a monitor, or a subagent running, and a standing main, which only the boss closes (see [Closing an opened main](#closing-an-opened-main)). |
+| `boss_revive_main` | pi towers and local tower runs (not ally runs or the head tower) | `list` the workspace's mains and trains that have a role record, with their state (`dead`, `quit`, `live`, `stale`, ...); `revive` one by session id, an id prefix of 8 or more, or name, with a one-line reason: the same session in a new tab, as itself. Refused for a member, a tower, a main opened for a teammate's device, a live session, a file that fails the checks, another workspace's session, a sender or workspace at its cap, an integrator while integration is off or its project has one, a death tried once, and a third revive in 24 h (see [Reviving a dead main](#reviving-a-dead-main)). |
+| `boss_handover` | a tab's main (refused for a member, a train, a tower, and in a teammate's turn) | Open its own successor for a session rotation: a new tab in its workspace, a pi under its name and kind whose first prompt is the `handoff` file; one live successor at a time (see [A main's own handover](#a-mains-own-handover)). |
 | `tower_list` | towers only | Every workspace's tower or, without one, its mains or members: `reach`, state, head and self marks, and each tab's main and members by name (see [Talking between towers](#talking-between-towers)). |
 | `tower_send` | towers only | One message to another tower (workspace id or exact label, default every other tower), under a header; with `device`, to the tower of a teammate's computer over Straw Link ([the link holder](#straw-link-towers-across-computers-the-link-holder)); a workspace without a tower is reached through its mains, else its members. `reply` says whether an answer is expected. In a head tower run it takes only `workspace` and `message` (it opens that workspace's tower), and in a workspace tower's run `head: true` with `inReplyTo` (an ask id) answers the head tower ([The head tower](#the-head-tower)). In a tower run, `for` (a live main of the workspace; with `device` and `reply`) sends the device's answer to that main (left out, the server takes the one main that called the tower for this; [Who the tower sends for](#ally-runs)), and in an ally run `inReplyTo` (an ask id) answers an ask for a main ([Ally runs](#ally-runs)). |
 
