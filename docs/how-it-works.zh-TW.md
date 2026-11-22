@@ -927,9 +927,9 @@ Straw Boss 每次啟動塔台時，都會把它當作 `--model` 傳給 pi，並�
 <details>
 <summary>細節</summary>
 
-**死亡長什麼樣子。** main 的角色紀錄（狀態資料夾裡的 `roles/<key>.json`）只有刻意關閉才會刪掉。不是關閉、也不是 `/reload` 的關機，會在紀錄裡寫上 `ended: {at, reason}`：`/quit` 或 Ctrl-D 寫 `quit`，同一個 pi 換到別的 session 寫 `new`、`resume` 或 `fork`，pi 把 SIGHUP 或 SIGTERM 轉成退出時寫 `signal`（一個加在 pi 自己的監聽器之後的監聽器分得出兩者）。當掉、`kill -9`，以及 Herdr 關掉的窗格或分頁，完全不跑關機流程，也就不留標記：2026-11-23 的實測發現 `herdr pane close` 和 `herdr tab close` 結束 pi 時沒有 `session_shutdown`。接著由一張表（`src/dead.ts`）判定每筆紀錄：`closed`（沒有紀錄）、`invalid`（它的檔案沒通過下面的檢查）、`live`（有窗格在跑它的檔案、broker 列出它的 id，或檔案在最近一分鐘內動過）、`quit`、`stale`（檔案 24 小時沒動）、`restoring`（Herdr 的復原時窗還開著，或這次死亡只看到一次），以及 `dead`。
+**死亡長什麼樣子。** main 的角色紀錄（狀態資料夾裡的 `roles/<key>.json`）只有刻意關閉才會刪掉。不是關閉、也不是 `/reload` 的關機，會在紀錄裡寫上 `ended: {at, reason}`：`/quit` 或 Ctrl-D 寫 `quit`，同一個 pi 換到別的 session 寫 `new`、`resume` 或 `fork`，pi 把 SIGHUP 或 SIGTERM 轉成退出時寫 `signal`（一個加在 pi 自己的監聽器之後的監聽器分得出兩者）。當掉、`kill -9`，以及 Herdr 關掉的窗格或分頁，完全不跑關機流程，也就不留標記：2026-11-23 的實測發現 `herdr pane close` 和 `herdr tab close` 結束 pi 時沒有 `session_shutdown`。接著由一張表（`src/dead.ts`）判定每筆紀錄：`closed`（沒有紀錄）、`invalid`（它的檔案沒通過下面的檢查）、`live`（有窗格在跑它的檔案、broker 列出它的 id，或檔案在最近一分鐘內動過）、`quit`、`stale`（檔案 24 小時沒動）、`restoring`（Herdr 的復原時窗還開著，或這次死亡只看到一次），以及 `dead`。用 `boss_handover` 交接過的 main 不論之後怎麼結束都判為 `handed`，從不通知也不救回：它的工作在接班者手上。
 
-**誰動手。** sb server 的塔台每分鐘巡一次它服務的每個工作區。一個 main 或火車若在相隔一分鐘的兩次巡視中都是 `dead`，且不在 Herdr 的復原時窗內，就成為該工作區佇列上的一則 `main_died` 通知，每次死亡一則（以發現時 session 檔的大小與 mtime 為準）；通知寫出這個 main、它的種類、分頁、看板那一行、檔案多久沒動，以及依類別分的子智慧體。救回後 10 分鐘內又死的 main 只列出、不通知。執行的簡報在「未經關閉就結束的 main」下列出工作區裡死掉與已退出的 main，給死掉 main 的 `tower_reply` 會留給它的救回並告訴執行這件事，而替一個自己的 main 已死的寄件者呼叫 `boss_open_main` 時，結果會說那個 main 可以救回。pi 塔台有同一個工具，但不巡視。
+**誰動手。** sb server 的塔台每分鐘巡一次它服務的每個工作區。一個 main 或火車若在相隔一分鐘的兩次巡視中都是 `dead`，且不在 Herdr 的復原時窗內，就成為該工作區佇列上的一則 `main_died` 通知，每次死亡一則（以發現時 session 檔的大小與 mtime 為準）；通知寫出這個 main、它的種類、分頁、看板那一行、檔案多久沒動，以及依類別分的子智慧體。救回後 10 分鐘內又死的 main，或最近 24 小時內救回失敗過的 main，只列出、不通知。執行的簡報在「未經關閉就結束的 main」下列出工作區裡死掉與已退出的 main，給死掉 main 的 `tower_reply` 會留給它的救回並告訴執行這件事，而替一個自己的 main 已死的寄件者呼叫 `boss_open_main` 時，結果會說那個 main 可以救回。pi 塔台有同一個工具，但不巡視。
 
 **`boss_revive_main {action, session, reason}`。** `list` 列出工作區裡有角色紀錄的 main 與火車及其狀態；`revive` 接受 session 的 id、8 個字元以上的 id 前綴或它的名稱，以及一行理由。本機執行與 pi 塔台有這個工具；盟友執行與總塔台沒有。以下情況它會拒絕、說明理由，並且什麼都不開：
 
@@ -938,13 +938,13 @@ Straw Boss 每次啟動塔台時，都會把它當作 `--model` 傳給 pi，並�
 - 有窗格在跑、broker 列出，或檔案在最近一分鐘內動過的 session，pi 啟動前會再查一次；
 - session 檔不是 pi 的 sessions 資料夾裡的一般檔案、標頭 id 與檔名中的 id 不同、帶著子智慧體的 policy 附檔，或工作資料夾在工作區的 checkout 之外；
 - 別的工作區的 session（由那個工作區的塔台救）；
-- 塔台開的 main，而它的寄件者現在已有另一個開啟的 main，或工作區已有兩個開啟的 main；
+- 塔台開的 main，而它的寄件者現在已有另一個開啟的 main，或工作區已有兩個開啟的 main（這裡、整合者與火車代號的檢查，都只在窗格裡有 pi 在跑、且 broker 在那裡列出 session 時才算它：死掉的 pi 留下、最多存活 10 分鐘的 token 不算，死掉 main 自己的舊窗格也不算）；
 - 整合關閉時，或它的專案已有活著的整合者時的整合者；
-- 已經試過一次的死亡（救回失敗後塔台不再試），以及最近 24 小時內已救回兩次的 session。
+- 已經試過一次的死亡、最近 24 小時內救回失敗過的 session（失敗的救回關掉的 pi 會留下一次新的死亡，所以失敗是記在檔案上，要不要重試由老闆決定），以及最近 24 小時內已救回兩次的 session。
 
-`quit` 的 main 只有在請求點名它時才救。救回與開啟共用開啟者的佇列，狀態資料夾裡的一把鎖讓 pi 塔台和 server 的塔台不會同時救同一個檔案。
+`quit` 的 main 只有在請求點名它時才救。救回與開啟共用開啟者的佇列（pi 塔台的兩個工具共用一個開啟者；server 的盟友執行在自己的佇列上開啟），狀態資料夾裡的一把鎖讓 pi 塔台和 server 的塔台不會同時救同一個檔案。
 
-**怎麼做。** 塔台在紀錄的工作區開新分頁（cwd：session 自己的資料夾；標籤：session 的名稱，火車則用它代號的標籤），帶 `STRAW_BOSS_ROLE=main`（火車是 `train`），寫上 `sb_open_main=1`、`sb_revive=<key of the file>`、紀錄的 `sb_opened_by`、火車的 `sb_train`，以及在 session 沒有種類時把紀錄的種類寫成 `sb_open_duty`，再啟動 `pi --session <file>`，不給 `--name`（pi 會還原它自己的）。它最多等 60 秒，等窗格的 `sb_role`，也等 broker 在那裡列出死掉 session 自己的 id；換成別的 id 就算失敗。若那時已有另一個窗格在跑這個檔案，就關掉救回的 pi 的分頁，讓那一個保有它。救回的 pi 像開啟的 main 一樣消耗這些 token，並收到一則由程式寫的交接：它何時、如何結束，哪個塔台救了它、為什麼，什麼回來了、什麼沒有（監控、迴圈、看守、子智慧體的監看器），現在要做什麼，它握著的連結等待與等待卡（老闆按下但通知沒送到它的那次會點出），以及替它留下的訊息。舊分頁只有在由塔台開啟、且唯一的窗格是停在空 shell 的死窗格時才關掉（`herdr pane process-info` 只列出 shell）；其他舊分頁都留著。每次嘗試都記在 `<state>/revive/<key>.json`。
+**怎麼做。** 塔台在紀錄的工作區開新分頁（cwd：session 自己的資料夾；標籤：session 的名稱，火車則用它代號的標籤），帶 `STRAW_BOSS_ROLE=main`（火車是 `train`），寫上 `sb_open_main=1`、`sb_revive=<key of the file>`、紀錄的 `sb_opened_by`、火車的 `sb_train`，以及在 session 沒有種類時把紀錄的種類寫成 `sb_open_duty`，再啟動 `pi --session <file>`，不給 `--name`（pi 會還原它自己的）。它最多等 60 秒，等窗格的 `sb_role`，也等 broker 在那裡列出死掉 session 自己的 id；換成別的 id 就算失敗。若那時已有另一個窗格在跑這個檔案，就關掉救回的 pi 的分頁，讓那一個保有它。救回的 pi 像開啟的 main 一樣消耗這些 token，並收到一則由程式寫的交接：它何時、如何結束，哪個塔台救了它、為什麼（在隊友的回合裡給的理由會框成那位隊友的話），什麼回來了、什麼沒有（監控、迴圈、看守、子智慧體的監看器），現在要做什麼，它握著的連結等待與等待卡（老闆按下但通知沒送到它的那次會點出；server 的塔台知道這些，pi 塔台的救回一項也不列），以及替它留下的訊息。舊分頁只有在由塔台開啟、且唯一的窗格是停在空 shell 的死窗格時才關掉（`herdr pane process-info` 只列出 shell）；其他舊分頁都留著。每次嘗試都記在 `<state>/revive/<key>.json`。
 
 **什麼會回來。** intercom id 就是 pi 的 session id，所以以它為鍵的一切不必複製就找得到救回的 main：它的看板列、塔台等的回覆、告知它的連結等待、它提出的等待卡，以及它的待辦（在它自己的 session 裡）。它的角色、種類、開啟者與名稱來自紀錄與 session 的條目。火車在它的火車看板說仍在進行、寫入者已不在、那塊看板是它寫的、且沒有活著的窗格帶著它的代號時，會以同一列火車回來；開啟時「一個代號只用一次」的規則只在這條路上放寬。
 
@@ -957,7 +957,7 @@ Straw Boss 每次啟動塔台時，都會把它當作 `--model` 傳給 pi，並�
 <details>
 <summary>細節</summary>
 
-`boss_handover {handoff, reason}` 是已加入的 main 的工具。交接檔必須存在；`reason` 是一行。它走開啟者的安全啟動：檢查 main 資料夾的設定、開一個不搶焦點、以 main 名稱為標籤的新分頁、帶一次性 `sb_open_main` 的 `STRAW_BOSS_ROLE=main`、main 自己的 `sb_opened_by` 與寫成 `sb_open_duty` 的種類、`sb_handover_from=<old id>`，並以 `--name <old name>` 啟動 pi。新 pi 成為分頁的 main 後會收到一則訊息：讀交接檔並照 session 輪替規則做，它的種類已經設好，並用 intercom 告訴舊 main 它已接手。接著舊 main 會被告知如何交出角色（`boss_duty coordinator`、`boss_rename` 成 `old <name> (handed over to <id>)`、停掉監控與迴圈、清空看板）。一次只能有一個活著的接班者：第一個接班者的窗格還在時，第二次呼叫會被拒絕。成員、火車、塔台（它沒有這個工具）以及隊友的回合都會被拒絕；失敗時會關掉它建立的分頁。
+`boss_handover {handoff, reason}` 是已加入的 main 的工具。交接檔必須存在；`reason` 是一行。它走開啟者的安全啟動：檢查 main 資料夾的設定、開一個不搶焦點、以 main 名稱為標籤的新分頁、帶一次性 `sb_open_main` 的 `STRAW_BOSS_ROLE=main`、main 自己的 `sb_opened_by` 與寫成 `sb_open_duty` 的種類、`sb_handover_from=<old id>`，並以 `--name <old name>` 啟動 pi。新 pi 成為分頁的 main 後會收到一則訊息：讀交接檔並照 session 輪替規則做，它的種類已經設好，並用 intercom 告訴舊 main 它已接手。接著舊 main 會被告知如何交出角色（`boss_duty coordinator`、`boss_rename` 成 `old <name> (handed over to <id>)`、停掉監控與迴圈、清空看板）。它的角色紀錄會標成已交接，之後它的分頁被關掉時不會發 `main_died`，也沒有塔台會救它。一次只能有一個活著的接班者：第一個接班者的窗格還在時，第二次呼叫會被拒絕；交接進行中，或 Herdr 說不出那個窗格是否還活著時也一樣。成員、火車、塔台（它沒有這個工具）、替隊友裝置開的 main（它的接班者會跑在裝置的撤銷與簽章停止之外）以及隊友的回合都會被拒絕；失敗時會關掉它建立的分頁。
 
 </details>
 
@@ -3832,8 +3832,8 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 | `boss_status` | 已加入的 session 與塔台 | 每個分頁的主智慧體、這個工作區的塔台、主塔台，以及其他塔台。 |
 | `boss_open_main` | 僅塔台 | 在塔台的工作區開一個新分頁，以新的 pi 作為它的主智慧體，交給它一個沒有任何 session 擁有的請求，每個請求一次（見[開啟主智慧體](#開啟主智慧體)）。帶 `role: "train"` 時開啟火車；在 sb server 的執行裡帶 `role: "integrator"` 時，把車廂單送給專案唯一的整合員，沒有在跑的就開一個，當成塔台自己的主智慧體。 |
 | `boss_close_main` | 僅塔台 | 要求這個塔台開啟的主智慧體（依 intercom 名稱或 session id）像 `/boss close` 那樣 quit。對老闆開啟的主智慧體、另一個工作區的主智慧體、Herdr 回報在工作中的，以及正在進行一輪、有排隊訊息、有對話框、有 monitor 或有子智慧體在跑的，以及值守主智慧體（只有老闆能關），都會被拒絕（見[關閉開啟的主智慧體](#關閉開啟的主智慧體)）。 |
-| `boss_revive_main` | pi 塔台與本機塔台執行（盟友執行與總塔台沒有） | `list` 列出工作區裡有角色紀錄的 main 與火車及其狀態（`dead`、`quit`、`live`、`stale` 等）；`revive` 依 session id、8 個字元以上的 id 前綴或名稱，附一行理由救回其中一個：同一個 session 開在新分頁，回來的是它自己。成員、塔台、替隊友裝置開的 main、活著的 session、沒通過檢查的檔案、別的工作區的 session、寄件者或工作區已達上限、整合關閉或專案已有整合者時的整合者、已試過一次的死亡，以及 24 小時內的第三次救回，都會被拒絕（見[救回死掉的主智慧體](#救回死掉的主智慧體)）。 |
-| `boss_handover` | 分頁的主智慧體（成員、火車、塔台與隊友的回合會被拒絕） | 為 session 輪替開出自己的接班者：工作區裡的新分頁，一個用它的名稱與種類、第一個提示是 `handoff` 檔的 pi；一次只能有一個活著的接班者（見[主智慧體自己交接](#主智慧體自己交接)）。 |
+| `boss_revive_main` | pi 塔台與本機塔台執行（盟友執行與總塔台沒有） | `list` 列出工作區裡有角色紀錄的 main 與火車及其狀態（`dead`、`quit`、`live`、`stale` 等）；`revive` 依 session id、8 個字元以上的 id 前綴或名稱，附一行理由救回其中一個：同一個 session 開在新分頁，回來的是它自己。成員、塔台、替隊友裝置開的 main、活著的 session、沒通過檢查的檔案、別的工作區的 session、寄件者或工作區已達上限、整合關閉或專案已有整合者時的整合者、已試過一次的死亡、最近 24 小時內救回失敗過的 session、交接過的 main，以及 24 小時內的第三次救回，都會被拒絕（見[救回死掉的主智慧體](#救回死掉的主智慧體)）。 |
+| `boss_handover` | 分頁的主智慧體（成員、火車、塔台、替隊友裝置開的 main 與隊友的回合會被拒絕） | 為 session 輪替開出自己的接班者：工作區裡的新分頁，一個用它的名稱與種類、第一個提示是 `handoff` 檔的 pi；一次只能有一個活著的接班者（見[主智慧體自己交接](#主智慧體自己交接)）。 |
 | `tower_list` | 僅塔台 | 每個工作區的塔台，沒有塔台時則是它的主智慧體或成員：`reach`、狀態、主塔台與自己的標記，以及每個分頁的主智慧體與成員的名稱（見[塔台之間的交談](#塔台之間的對話)）。 |
 | `tower_send` | 僅塔台 | 在標頭之下送一則訊息給另一個塔台（工作區 id 或完整標籤，預設是其他每個塔台）；帶 `device` 時，經 Straw Link 送到隊友電腦的塔台（[連線持有者](#straw-link跨電腦的塔台連線持有者)）；沒有塔台的工作區透過它的主智慧體觸及，否則透過它的成員。`reply` 說明是否期望答案。在主塔台的執行裡它只接受 `workspace` 與 `message`（它會開啟那個工作區的塔台），而在工作區塔台的執行裡，`head: true` 加 `inReplyTo`（請求 id）回答主塔台（[主塔台](#主塔台)）。在塔台 run裡，`for`（工作區裡一個還活著的主智慧體；搭配 `device` 和 `reply`）把裝置的答案送給那個主智慧體（省略時，server 取為這件事呼叫塔台的那一個主智慧體；[塔台為誰送](#隊友-run)），而在隊友 run 裡，`inReplyTo`（請求 id）回答對主智慧體的請求（[隊友 run](#隊友-run)）。 |
 

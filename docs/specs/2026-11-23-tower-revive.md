@@ -49,6 +49,7 @@ So a pane or tab closed in Herdr does not look like a quit: Herdr kills the pane
 | `closed` | no record: a close on purpose forgot it |
 | `invalid` | the record's file fails the checks of §5 |
 | `live` | a pane runs the file, the broker lists its id, or the file moved in the last 60 s; it wins over every mark |
+| `handed` | the record's `handedOver` mark: the main opened its successor with `boss_handover` (§8); never raised or revived, whatever ended it after |
 | `quit` | the record carries `ended` |
 | `stale` | the file has not moved for 24 h |
 | `restoring` | Herdr's recovery window is open, or the death was seen in fewer than 2 looks 60 s apart |
@@ -56,7 +57,7 @@ So a pane or tab closed in Herdr does not look like a quit: Herdr kills the pane
 
 ## 3. Detection and the `main_died` notice
 
-The sb server's tower (`src/server/deadwatch.ts`, on the server's refresh timer) sweeps each workspace it serves once a minute. A main or train found `dead` in two looks at least 60 s apart, outside the recovery window, becomes one `main_died` event on that workspace's tower queue, keyed by the death (the file's size and mtime when found), so a death raises once. The text is code-written: the main, its kind, tab, board line, file age, the sender that opened it, and its subagents by class. A main that dies within 10 minutes of a revive is listed and not raised (the crash-loop guard of §5).
+The sb server's tower (`src/server/deadwatch.ts`, on the server's refresh timer) sweeps each workspace it serves once a minute. A main or train found `dead` in two looks at least 60 s apart, outside the recovery window, becomes one `main_died` event on that workspace's tower queue, keyed by the death (the file's size and mtime when found), so a death raises once. The text is code-written: the main, its kind, tab, board line, file age, the sender that opened it, and its subagents by class. A main that dies within 10 minutes of a revive is listed and not raised (the crash-loop guard of §5), and so is one whose revive failed in the last 24 h (RVR-F003).
 
 The run's brief (`towerbrief.ts`) lists the workspace's dead and quit mains under "Mains that ended without a close". `boss_open_main` for a sender whose own opened main died adds a note that the dead main can be revived once this one closes, since a sender gets one opened main at a time. A `tower_reply` to a dead main fails as before, and its text is kept in the revive ledger for the revive's handoff ("missed deliveries"); the run is told it was kept.
 
@@ -75,11 +76,11 @@ A pi tower gets the tool and the brief, not the sweep: the server's tower owns d
 
 At `dispatch` a run calls it without a confirm, as it calls `boss_open_main`.
 
-**Steps.** Revives and opens share the opener's queue, and a `wx` lock in `<state>/revive/` keeps a pi tower and the server's tower off one file at once.
+**Steps.** Revives and opens share the opener's queue (a pi tower builds one opener for both tools, RVR-F005), and a `wx` lock in `<state>/revive/` keeps a pi tower and the server's tower off one file at once.
 
 1. Re-read the record and the panes and refuse as in §5.
 2. Create a tab in the record's workspace, cwd the session header's folder, label `tabLabel(name)` (a train: `trainLabel(code)`), env `STRAW_BOSS_ROLE=main` (`train` for a train).
-3. Write the tokens: `sb_open_main=1`, `sb_revive=<key of the file>`, the record's `sb_opened_by`, a train's `sb_train`, and the record's kind as `sb_open_duty` when the session's entries hold none (the entries win).
+3. Write the tokens: `sb_open_main=1`, `sb_revive=<key of the file>`, the record's `sb_opened_by`, a train's `sb_train`, and the record's kind as `sb_open_duty` when the session's entries hold none (the entries win; RVR-F008 made the code read the entries, not the merged kind).
 4. Check once more that no pane runs the file, then start `pi --session <file>` with no `--name`: pi restores its own name.
 5. Wait up to 60 s for the pane's `sb_role` and for the broker to list the dead session's own id there. Another id is a failure, and the tab closes.
 6. If another pane runs the file by then (a Herdr restore or a manual `pi --session` raced it), close the revived pi's tab and refuse: that one keeps it.
@@ -125,9 +126,10 @@ Each refusal is a `ReviveRefused` (an `OpenLimitError`) whose message the run re
 - **The file** (`fileRefusal`): a regular file (`lstat`, no link) under pi's sessions folder; pi's header with `type: "session"` and an id equal to the id in the file name (a differing id means `PI_INTERCOM_STABLE_ID` or a renamed file, so nothing it held would find it); no `.pi-herdr-subagent-policy.json` sidecar; the header's cwd inside the workspace's checkout.
 - **The workspace**: only the record's workspace's tower revives it.
 - **A live holder**: a pane runs the file, the broker lists the id, or the file moved in the last 60 s; checked at step 1, again before `startPi`, and after it (step 6).
-- **Once per death**: a death tried once is refused, failed or not; the boss decides a retry.
+- **Once per death**: a death tried once is refused, failed or not; the boss decides a retry. A failed revive also holds for the file for 24 h (RVR-F003): one that failed after its pi joined wrote to the session file through the claim, and its closed tab ended that pi with no shutdown, which is a new death with a new key. So the tower refuses it and the sweep lists it without raising it.
 - **Crash loop**: at most 2 revives of one file in 24 h, and none raised unasked within 10 minutes of a revive.
 - **Caps**: a tower-opened main is refused while its sender has another opened main live, or while the workspace has 2 tower-opened mains. A boss-opened main counts toward neither.
+- **What counts as live** (RVR-F001), for the caps, the integrator twin, and a train's code: a pane where pi runs and the broker lists a session, never the record's own old pane. A dead pi's sb tokens stay on its pane until their TTL (10 min, refreshed every 4) runs out, which is just when its death is raised, so tokens alone count for nothing.
 - **The role**: as the table of §4.
 
 ## 6. The revived main picks up its orphans (O1)
@@ -158,14 +160,15 @@ No pi-herdr-agents change was made.
 | The boss closed the tab on purpose | not acted on by code: a run decides, and its handoff note says why; a revived main can be closed again |
 | Crash loop | §5 |
 | A forged role record (a same-user process can write `roles/`) | the record is a claim, checked against the file, its header, its sidecar, its cwd, the workspace, and the live panes; a same-user process can already run `pi --session` itself |
-| Remote turns | ally runs get neither the tool, the event, nor the brief section; link-opened mains are refused; `main_died` never leaves the computer; the handoff and the pickup carry code text and framed child text only |
+| Remote turns | ally runs get neither the tool, the event, nor the brief section; link-opened mains are refused, for a revive and for a handover; `main_died` never leaves the computer; the handoff and the pickup carry code text and framed child text only. A pi tower's `boss_revive_main` in a teammate's turn passes its `remoteOrigin`, and the handoff frames the reason as that peer's words (`<<<…>>>`), not the tower's (RVR-F011) |
 
 ## 8. A main opens its own successor
 
 `boss_handover {handoff, reason}` (`src/tools.ts`, `openSuccessor` in `src/reviver.ts`), a joined main's tool, listed in `PARENT_ONLY`.
 
-- Refused in a teammate's turn, for a tower, a train ("a train ends with its milestone report"), and a member; `reason` is one line of up to 200 characters; the handoff file must be a regular file; a main whose name is a role label renames first.
-- One live successor: the successor's pane is kept in the session (`straw-boss {successor}`), and a second call while that pane runs an agent is refused.
+- Refused in a teammate's turn, for a tower, a train ("a train ends with its milestone report"), a member, and a main opened for a teammate's device (RVR-F002: the device's revoke and signed stop reach the mains its route rows name by session id, and a successor has none; D4 refuses a revive for the same reason); `reason` is one line of up to 200 characters; the handoff file must be a regular file; a main whose name is a role label renames first.
+- One live successor: the successor's pane is kept in the session (`straw-boss {successor}`), and a second call while that pane runs an agent is refused. A call while another is under way is refused before either awaits, and one is refused when Herdr cannot be read while a successor is held (RVR-F006).
+- Once the successor took the handoff, the old main's role record gets `handedOver: {at, to}`, and every record it writes after (a `boss_duty`, a `/reload`) keeps it from the `successor` entry, so a later Herdr close of its tab is `handed`, not `dead` (RVR-F004).
 - It goes through the opener's safe start: the settings check of the main's folder, a new unfocused tab labelled with the main's name, `STRAW_BOSS_ROLE=main` with `sb_open_main`, the main's own `sb_opened_by` and kind (`sb_open_duty`), `sb_handover_from=<old id>`, and pi started with `--name <old name>`.
 - Once the new pi is the tab's main it gets one message: read the handoff and follow the session-rotation rule; its kind is set already; tell the old main by intercom that it took over. The old main's result tells it how to step down: `boss_duty coordinator` (when standing or integrator), `boss_rename` to `old <name> (handed over to <id>)`, monitors and loops stopped, board cleared, then wait to be closed.
 - A failure closes the tab it made.
@@ -185,6 +188,7 @@ The main prompt has no rotation line, so none was changed; the tool's descriptio
 | P3 | `tests/inherit.test.ts` (each class, the `.exit` watch, no repeat after `/reload`); `tests/revive.test.ts` (pickup at the claim; the `subagent_resume` guard) |
 | P4 | `tests/revive.test.ts` (a train comes back as itself; an ended train, a live writer, and a pane with its code are refused) |
 | Handover | `tests/handover-main.test.ts` (one successor tab with the name, kind, and handoff prompt; a second while it lives is refused; a member, a missing file, a tower, and a remote turn are refused) |
+| Review RVR | `tests/revive.test.ts` (F001 the dead's own and dead panes with fresh tokens; F003 a failed revive held for the file; F005 one queue; F008 `sb_open_duty`; F011 the framed reason), `tests/handover-main.test.ts` (F002, F004, F006), `tests/deadwatch.test.ts` (F003, F004), `tests/dead.test.ts` (`handed`) |
 
 Each was written red first and seen red against the code it pins.
 
@@ -192,4 +196,11 @@ Each was written red first and seen red against the code it pins.
 
 - P5: a tower hands a dead main's orphans to another main (O2), and `/boss revive` for the boss.
 - An upstream pi-herdr-agents watcher rehydration; sb steps aside on its own when it lands, since those ids are tracked again.
+- Known limits from the review (RVR, 2026-11-23), left for a later round:
+  - F005 (rest): a pi tower knows neither Herdr's recovery window nor the waits a session holds, so its revive may run inside the window and its handoff lists no waits; the server's tower passes both. The server's ally opener keeps a queue of its own, beside the local run's (as before this feature).
+  - F007: a tower-opened main's successor carries the old main's `sb_opened_by`, so until someone closes the old main the sender counts two opened mains (new opens for it are refused) and the workspace can exceed its 2.
+  - F009: the `subagent_resume` guard compares the raw `sessionPath` with Herdr's absolute path, so a relative path, `./`, `//`, or a symlink to the same file passes, and it lets the call through when Herdr cannot be read.
+  - F010: the revive lock goes stale at 5 min while `waitPastTrust` may wait 10, and `unlock` removes the lock without checking it still holds our pid.
+  - F012: an idle orphan that `orphan.ts` nudged is not marked handled in `inherit.ts`, so its later `.exit` can be delivered again, or a pane closed without `.exit` makes it `cut` and asked to finish its task.
+  - A Herdr restore still gives a handed-over main its role back in its old tab (`roles.held` reads no `handedOver`); it is the same old main that waits to be closed.
 - The live check of the plan (kill -9 a tower-opened main with two workers in scratch workspaces, revive, both results arrive) was not run by the build; it belongs to the release's live check.
