@@ -8,7 +8,7 @@ import type { InboxItem } from "../src/link/store.ts";
 import { CLOSED_PER_DEVICE, createLinkWaits, OPEN_PER_DEVICE, readWaits, TEXT_SHOWN, type WaitsDeps } from "../src/server/linkwaits.ts";
 import { slotOf, type Slot } from "../src/server/record.ts";
 import { returnParked } from "../src/server/autotower.ts";
-import { readMemory, resolveWait, updateMemory } from "../src/server/towermemory.ts";
+import { loadMemory, readMemory, resolveWait, updateMemory } from "../src/server/towermemory.ts";
 import { towerDir } from "../src/server/towerstore.ts";
 import { pressRequest } from "../src/server/waitpress.ts";
 
@@ -43,7 +43,7 @@ const item = (wait: Partial<WaitWire>, over: Partial<InboxItem> = {}): InboxItem
 	wait: { id: n.toString(16).padStart(32, "a"), state: "open", owner: "", what: "merge !13", handle: "0123456789abcdef", ...wait }, ...over,
 });
 const ledger = () => readWaits(slot, "w15X").entries;
-const cards = () => readMemory(slot, "w15X", Date.now()).memory.entries.filter((e) => e.kind === "wait" && e.card?.from?.id === `link:${BOX}`);
+const cards = () => loadMemory(slot, "w15X").memory.entries.filter((e) => e.kind === "wait" && e.card?.from?.id === `link:${BOX}`);
 
 test("a wait that names a live main by name is told to that main alone, in a code-written line with no peer text; the sender is told who has it", async () => {
 	const w = world({ mains: [{ id: "s-work", name: "work-on" }, { id: "s-integ", name: "integ moldplan-center" }] });
