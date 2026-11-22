@@ -208,7 +208,7 @@ test("an event whose text is /boss wait, and a message another extension sends a
 		assert.deepEqual(invoked, ["true:wait"], "the editor's own input is what dispatches it");
 		// the tools of the run: none presses by itself (the press is the boss's route, refused to a run's token). `boss_wait_ask` only asks sb to draw a card's dialog for the boss's keys.
 		const names = r.session.getAllTools().map((t) => t.name).filter((n) => !["subagent", "subagent_resume", "intercom", "bash", "edit", "find", "grep", "ls", "powershell", "read", "write"].includes(n)).sort();
-		assert.deepEqual(names, ["board_read", "boss_close_main", "boss_open_main", "boss_server", "boss_status", "boss_wait_ask", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send"]);
+		assert.deepEqual(names, ["board_read", "boss_close_main", "boss_open_main", "boss_revive_main", "boss_server", "boss_status", "boss_wait_ask", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send"]);
 		assert.deepEqual(names.filter((n) => /press|wait|answer|decline/.test(n)), ["boss_wait_ask"]);
 		// The model calls it with an act and an option of its own, in a turn the boss typed at this pane: this session has no screen, so no dialog can be drawn, and without the boss's key nothing is read or pressed.
 		await until(() => JSON.stringify(r.session.messages).includes("three") && !r.session.isStreaming, "the turn of the user message to end");

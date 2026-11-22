@@ -172,7 +172,7 @@ export const withWaitLanguage = (lines: readonly string[], locale: Locale): stri
 export const LOCAL_TOOLS = [
 	"- tower_list: every workspace's tower and what it works on; board_read: what each main works on now.",
 	"- boss_status and call_tower route inside your workspace; tower_send writes to another tower or, with device, a teammate's tower; tower_reply answers one local session by id or name.",
-	"- boss_open_main opens a main for a request no session owns; boss_close_main closes one you opened, after its done report; boss_revive_main brings back a main that died (a main_died notice names it) as the same session.",
+	"- boss_open_main opens a main for a request no session owns; boss_close_main closes one you opened, after its done report.",
 	"- boss_server: the sb server's status, its log, and its restart.",
 	"- tower_memory keeps what outlives runs: you propose the boss's standing instructions and decisions (the boss confirms them) and keep your waits (add, resolve, drop); read lists it all.",
 	"- tower_done ends your run. A main's result comes back as a new event, so do not wait for it.",
