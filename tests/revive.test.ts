@@ -294,3 +294,39 @@ test("subagent_resume is refused for a session file a live pane runs: two pis on
 	const free = await w.sender.fireResult("tool_call", { toolName: "subagent_resume", toolCallId: "c", input: { sessionPath: "/s/other.jsonl" } }) as { block?: boolean } | undefined;
 	assert.notEqual(free?.block, true);
 });
+
+test("P4: a crashed train comes back as the same train: its tab is labelled with its code and carries its token, its board's writer is gone; an ended train, a live writer, and a pane with its code are refused", async () => {
+	const w = await setup();
+	const { writeBoard } = await import("../src/train/board.ts");
+	const TRAIN_ID = "e7e7e7e7-0000-4000-8000-000000000001";
+	const train = { project: "acme", code: "2026-11-23-a" };
+	const board = (code: string, session: string, pid: number, over: Record<string, unknown> = {}) => writeBoard(world.stateDir, { v: 1, project: "acme", app: "web", code, writer: { session, pid, started: new Date().toISOString() }, updated: new Date().toISOString(), round: 1, cars: [], steps: [{ id: 1, kind: "assemble", name: "assemble", status: "in_progress", round: 1 }], ...over } as never);
+	const file = crashed(w, { id: TRAIN_ID, name: "train 1123a", record: { role: "train", train, openedBy: "sender-1" }, entries: [{ train, openedBy: "sender-1", openedPane: "wA:p40" }] });
+	board(train.code, TRAIN_ID, 999_999);
+	const started = revives(w, [{ train, openedBy: "sender-1", openedPane: "wA:p40" }], "train 1123a");
+	const result = await w.tower.tool("boss_revive_main", { action: "revive", session: TRAIN_ID, reason: "its cars are half way" });
+	assert.deepEqual(world.herdr.commands("tab", "create")[0], ["tab", "create", "--workspace", "wA", "--label", "train 1123a", "--cwd", w.checkout, "--no-focus", "--env", "STRAW_BOSS_ROLE=train"]);
+	assert.deepEqual(started[0]!.slice(-2), ["--session", file]);
+	const report = world.herdr.calls.find((c) => c[1] === "report-metadata" && c.includes("sb_open_main=1"))!;
+	assert.ok(report.includes("sb_train=acme/2026-11-23-a"), "the train's token, which its claim reads");
+	const revived = world.agents.find((a) => a.id === TRAIN_ID)!;
+	assert.equal(revived.tokens.sb_role, "train", "it is the train again, not a main");
+	assert.match(textOf(result), /Revived train 1123a \(session e7e7e7e7-.*\) in tab wA:t100 as the same session, kind train/);
+	// Refusals: each opens nothing more.
+	const refused = async (id: string, reason: RegExp) => {
+		const before = world.herdr.commands("tab", "create").length;
+		await assert.rejects(w.tower.tool("boss_revive_main", { action: "revive", session: id, reason: "try" }), reason);
+		assert.equal(world.herdr.commands("tab", "create").length, before);
+	};
+	const ended = { project: "acme", code: "2026-11-23-b" }, liveWriter = { project: "acme", code: "2026-11-23-c" }, carried = { project: "acme", code: "2026-11-23-d" };
+	crashed(w, { id: "e7e7e7e7-0000-4000-8000-000000000002", name: "train 1123b", record: { role: "train", train: ended } });
+	board(ended.code, "e7e7e7e7-0000-4000-8000-000000000002", 999_999, { steps: [{ id: 1, kind: "land", name: "land", status: "completed", round: 1, outcome: "passed" }] });
+	await refused("e7e7e7e7-0000-4000-8000-000000000002", /has ended \(its board says so\); a new train takes a new code/);
+	crashed(w, { id: "e7e7e7e7-0000-4000-8000-000000000003", name: "train 1123c", record: { role: "train", train: liveWriter } });
+	board(liveWriter.code, "e7e7e7e7-0000-4000-8000-000000000003", process.pid);
+	await refused("e7e7e7e7-0000-4000-8000-000000000003", /the writer of train 1123c's board \(pid \d+\) is still running/);
+	crashed(w, { id: "e7e7e7e7-0000-4000-8000-000000000004", name: "train 1123d", record: { role: "train", train: carried } });
+	board(carried.code, "e7e7e7e7-0000-4000-8000-000000000004", 999_999);
+	world.herdr.addPane("wA:p80", "wA:t80").tokens = { sb_train: "acme/2026-11-23-d" };
+	await refused("e7e7e7e7-0000-4000-8000-000000000004", /a live pane carries train 1123d of project acme/);
+});
