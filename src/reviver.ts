@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { alive } from "./remote.ts";
 import { boardState, readTrainboards } from "./train/board.ts";
-import { createTab, panes, report, type HerdrRun, type Session, type Sleep, startPi, workspaces } from "./herdr.ts";
+import { createTab, type Pane, panes, report, type HerdrRun, type Session, type Sleep, startPi, workspaces } from "./herdr.ts";
 import { integratorOf } from "./integrator.ts";
 import type { CoordinatorDuty } from "./duty.ts";
 import { assertSettingsSafe } from "./trust/settings.ts";
@@ -9,10 +9,16 @@ import { isRoleLabel, TRAIN, trainFromToken, trainLabel, trainToken } from "./tr
 import { waitPastTrust } from "./trust/wait.ts";
 import { tabLabel } from "./tablabel.ts";
 import { MAIN_WAIT_MS, MAX_OPENED_MAINS, OpenLimitError, type OpenerEnv, type Revived, type ReviveRequest } from "./opener.ts";
-import { type DeadRow, deathKey, gatherDead, keyOf, MAX_REVIVES, pick, readLedger, REVIVABLE, REVIVE_TOKEN, ReviveRefused, reviveHandoff, revivedIn, roleRefusal, sessionHeader, sessionsDir, takeLock, updateLedger } from "./revive.ts";
+import { type DeadRow, deathKey, failedIn, gatherDead, keyOf, MAX_REVIVES, pick, readLedger, REVIVABLE, REVIVE_TOKEN, ReviveRefused, reviveHandoff, revivedIn, roleRefusal, sessionHeader, sessionNotes, sessionsDir, takeLock, updateLedger } from "./revive.ts";
 
 // The two openings a tower's and a main's own: the revive of a dead main or train (docs/specs/2026-11-23-tower-revive.md §4), which the opener runs on its queue (opener.ts `revive`), and a main's
 // successor (§8, tools.ts `boss_handover`). Both make a tab the way an open does (createTab, the one-time claim, startPi, the wait for the pi's role) and close it when they fail.
+
+/**
+ * The panes whose pi is live, as the caps, the integrator twin, and the train code count them (RVR-F001): pi runs there and the broker lists a session at it. A pi that died leaves its sb tokens on its pane until their
+ * TTL runs out (up to 10 min, herdr.ts), which is just when its death is raised, so a pane is counted by its live pi and never by its tokens alone; and the dead session's own old pane is never its rival.
+ */
+export const livePanes = (ps: Pane[], sessions: Session[], own?: string): Pane[] => ps.filter((p) => p.pane_id !== own && p.agent === "pi" && sessions.some((s) => s.herdrLocation?.paneId === p.pane_id));
 
 /** The tab label of a revived session: its train's, or its own name's. */
 const reviveLabel = (r: DeadRow) => (r.train ? trainLabel(r.train.code) : r.name ? tabLabel(r.name) : undefined);
@@ -21,7 +27,7 @@ const reviveLabel = (r: DeadRow) => (r.train ? trainLabel(r.train.code) : r.name
  * The revive of a dead main or train (docs/specs/2026-11-23-tower-revive.md §4): the same session file in a new tab of this workspace, as the same sb identity. It shares the open's queue, so an open and a revive never count the
  * caps at once; a refusal opens nothing and is kept in the session's ledger with its reason.
  */
-export async function reviveMain(env: OpenerEnv, { session, reason }: ReviveRequest): Promise<Revived> {
+export async function reviveMain(env: OpenerEnv, { session, reason, origin }: ReviveRequest): Promise<Revived> {
 	const { run, sleep } = env;
 	if (!env.stateDir) throw new ReviveRefused("this tower keeps no state folder, so it reads no role record");
 	const why = reason.trim();
@@ -40,13 +46,16 @@ export async function reviveMain(env: OpenerEnv, { session, reason }: ReviveRequ
 	if (row.record.workspace !== workspace.workspace_id) throw new ReviveRefused(`it is a session of workspace ${row.record.workspace}; that workspace's tower revives it`);
 	if (row.record.role === TRAIN && !row.train) throw new ReviveRefused("its record names no train");
 	if (!REVIVABLE.includes(row.verdict.state)) throw new ReviveRefused(`it is ${row.verdict.state}: ${row.verdict.reason}`);
-	const refusal = roleRefusal(row, { integrationOff: env.integrationOff?.() ?? false, live: first.everywhere, sessions: first.sessions });
+	const rivals = livePanes(first.everywhere, first.sessions, row.record.pane);
+	const refusal = roleRefusal(row, { integrationOff: env.integrationOff?.() ?? false, live: rivals, sessions: first.sessions });
 	if (refusal) throw new ReviveRefused(refusal);
 	const unlock = takeLock(env.stateDir, row.file, Date.now());
 	try {
 		const now = Date.now(), ledger = readLedger(env.stateDir, row.file, row.session), key = deathKey(row.file) ?? "";
 		const tried = ledger.attempts.find((a) => a.key === key && a.outcome !== "refused");
 		if (tried) throw new ReviveRefused(`this death was already tried at ${new Date(tried.at).toISOString()} (${tried.outcome}${tried.error ? `: ${tried.error}` : ""}); a tower tries each death once, and the boss decides a retry`);
+		const failed = failedIn(ledger, now).at(-1);
+		if (failed) throw new ReviveRefused(`a revive of it failed at ${new Date(failed.at).toISOString()} (${failed.error ?? "no reason kept"}); a tower does not try it again for 24 h, and the boss decides a retry`);
 		const recent = revivedIn(ledger, now);
 		if (recent.length >= MAX_REVIVES) throw new ReviveRefused(`it was revived ${recent.length} times in the last 24 h (the limit is ${MAX_REVIVES}): it keeps dying, so the boss looks at it first`);
 		// A train has its own checks (§4, P4): its board says it is still under way, its writer is gone, and no pane carries its code; the open's "a code is used once" is set aside on this path only.
@@ -57,11 +66,11 @@ export async function reviveMain(env: OpenerEnv, { session, reason }: ReviveRequ
 			if (read.end || boardState(read.board, { now, alive: false, ...(read.end ? { end: read.end } : {}) }) === "ended") throw new ReviveRefused(`${trainLabel(train.code)} of project ${train.project} has ended (its board says so); a new train takes a new code`);
 			if (read.board.writer.session !== row.session) throw new ReviveRefused(`the trainboard of ${trainLabel(train.code)} was written by session ${read.board.writer.session.slice(0, 8)}, not this one`);
 			if (alive(read.board.writer.pid)) throw new ReviveRefused(`the writer of ${trainLabel(train.code)}'s board (pid ${read.board.writer.pid}) is still running`);
-			if (first.everywhere.some((p) => trainFromToken(p.tokens?.sb_train)?.code === train.code && trainFromToken(p.tokens?.sb_train)?.project === train.project)) throw new ReviveRefused(`a live pane carries ${trainLabel(train.code)} of project ${train.project}`);
+			if (rivals.some((p) => trainFromToken(p.tokens?.sb_train)?.code === train.code && trainFromToken(p.tokens?.sb_train)?.project === train.project)) throw new ReviveRefused(`a live pane carries ${trainLabel(train.code)} of project ${train.project}`);
 			if (env.integrationOff?.()) throw new ReviveRefused("a train is not revived: integration is off on this computer");
 		}
 		// The caps of an opened main (§5): a tower-opened main takes its place back, so a sender that has another opened main now, or a workspace at the limit, refuses it. A boss-opened main counts toward neither.
-		const here = first.everywhere.filter((p) => p.workspace_id === workspace.workspace_id);
+		const here = rivals.filter((p) => p.workspace_id === workspace.workspace_id);
 		const marked = here.filter((p) => p.tokens?.sb_opened_by && !integratorOf(p.tokens.sb_opened_by) && p.tokens.sb_role !== TRAIN && !(p.tokens.sb_role === undefined && p.tokens.sb_train));
 		if (!train && row.openedBy && !integratorOf(row.openedBy)) {
 			const ofSender = marked.filter((p) => p.tokens!.sb_opened_by === row.openedBy).length;
@@ -76,7 +85,7 @@ export async function reviveMain(env: OpenerEnv, { session, reason }: ReviveRequ
 		const { tabId, paneId } = await createTab(run, workspace.workspace_id, cwd, [`STRAW_BOSS_ROLE=${train ? TRAIN : "main"}`], reviveLabel(row));
 		const attempt = (outcome: "revived" | "failed", more: { error?: string; tab?: string; pane?: string } = {}) => updateLedger(env.stateDir!, row.file, Date.now(), (l) => void l.attempts.push({ at: Date.now(), key, by: env.tower().id, outcome, reason: why, ...more }));
 		try {
-			await report(run, "pane", paneId, { sb_open_main: "1", [REVIVE_TOKEN]: keyOf(row.file), ...(row.openedBy ? { sb_opened_by: row.openedBy } : {}), ...(train ? { sb_train: trainToken(train) } : {}), ...(!train && row.record.duty && !row.kind ? { sb_open_duty: row.record.duty } : {}) });
+			await report(run, "pane", paneId, { sb_open_main: "1", [REVIVE_TOKEN]: keyOf(row.file), ...(row.openedBy ? { sb_opened_by: row.openedBy } : {}), ...(train ? { sb_train: trainToken(train) } : {}), ...(!train && row.record.duty && !sessionNotes(row.file).duty ? { sb_open_duty: row.record.duty } : {}) });
 			// pi restores the session's own name under --session, so no --name is given.
 			await startPi(run, sleep, `revive-${randomUUID().slice(0, 8)}`, paneId, ["--session", row.file]);
 			const wanted = train ? TRAIN : "main";
@@ -92,7 +101,7 @@ export async function reviveMain(env: OpenerEnv, { session, reason }: ReviveRequ
 			const twins = (await panes(run)).filter((p) => p.pane_id !== paneId && p.agent_session?.value === row.file);
 			if (twins.length) throw new ReviveRefused(`another pane (${twins.map((p) => p.pane_id).join(", ")}) runs this session file now; the revived pi was closed, and that one keeps it`);
 			const missed = readLedger(env.stateDir, row.file, row.session).missed;
-			const sent = await env.send(main.id, reviveHandoff({ row, tower: env.tower(), tab: tabId, workspace: workspace.label, reason: why, waits: env.waitsOf?.(row.session) ?? [], missed, now: Date.now() }));
+			const sent = await env.send(main.id, reviveHandoff({ row, tower: env.tower(), tab: tabId, workspace: workspace.label, reason: why, waits: env.waitsOf?.(row.session) ?? [], missed, now: Date.now(), ...(origin ? { origin } : {}) }));
 			if (sent.status !== "sent") throw new Error(`The revived ${wanted} ${main.name ?? main.id} did not take the handoff: ${sent.status} ${sent.code ?? ""} ${sent.detail ?? ""}`.trim());
 			updateLedger(env.stateDir, row.file, Date.now(), (l) => void (l.missed = []));
 			attempt("revived", { tab: tabId, pane: paneId });

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { HerdrRun, Session } from "../herdr.ts";
-import { type DeadRow, diedText, gatherDead, LOOP_MS, readLedger, updateLedger } from "../revive.ts";
+import { type DeadRow, diedText, failedIn, gatherDead, LOOP_MS, readLedger, updateLedger } from "../revive.ts";
 
 // The sweep of the resident tower (docs/specs/2026-11-23-tower-revive.md §3): once a minute it reads the role records of each workspace it serves, and a main or train that is dead in two looks a minute apart, outside
 // Herdr's recovery window, becomes one `main_died` notice on that workspace's queue, once per death. The notice wakes a run, which decides (D1 A): the code never revives on its own.
@@ -39,7 +39,7 @@ export function createDeadWatch(d: DeadWatchDeps) {
 			}
 			const now = d.now(), dying = new Set<string>();
 			for (const [workspace, found] of rows) {
-				last.set(workspace, found.filter((r) => r.verdict.state !== "closed" && r.verdict.state !== "live"));
+				last.set(workspace, found.filter((r) => r.verdict.state !== "closed" && r.verdict.state !== "live" && r.verdict.state !== "handed"));
 				for (const r of found) {
 					if (r.verdict.state === "restoring" && !d.recovering()) {
 						// Seen dead but not confirmed yet: this look counts.
@@ -53,12 +53,13 @@ export function createDeadWatch(d: DeadWatchDeps) {
 					if (!r.key) continue;
 					const ledger = readLedger(d.stateDir, r.file, r.session);
 					if (ledger.detections.some((x) => x.key === r.key)) continue;
-					// The crash-loop guard: a session that died within 10 minutes of a revive is listed, not raised.
+					// The crash-loop guard: a session that died within 10 minutes of a revive is listed, not raised; and one whose revive failed in the last 24 h is the boss's (RVR-F003), whatever its death's key.
 					const revived = ledger.attempts.filter((a) => a.outcome === "revived").at(-1);
 					const loop = revived !== undefined && r.ageMs !== undefined && now - r.ageMs - revived.at < LOOP_MS;
+					const failed = failedIn(ledger, now).length > 0;
 					updateLedger(d.stateDir, r.file, now, (l) => void l.detections.push({ key: r.key!, at: now }));
-					if (loop) {
-						d.log("main-died-loop", { workspace, session: r.session });
+					if (loop || failed) {
+						d.log(failed ? "main-died-failed" : "main-died-loop", { workspace, session: r.session });
 						continue;
 					}
 					const queued = d.notice(workspace, diedText(r, now), `main_died:${r.key}`);

@@ -23,6 +23,9 @@ test("the classifier: closed, invalid, live, quit, stale, restoring, dead, each 
 		["seen twice a minute apart", { seen: { first: NOW - 61_000, looks: 1 } }, "dead", /no shutdown/],
 		["an explicit look (no seen)", {}, "dead", /crash, a kill, or its pane or tab closed/],
 		["a signal mark", { record: { role: "main", ended: { at: NOW - 600_000, reason: "signal" } } }, "dead", /signal/],
+		// RVR-F004: a main that handed over is never raised or revived, however it ended; its successor holds its work.
+		["handed over, then closed in Herdr", { record: { role: "main", handedOver: { at: NOW - 600_000, to: "next-main-0001" } } }, "handed", /handed over to session next-mai .*its successor holds its work/],
+		["handed over, then quit", { record: { role: "main", handedOver: { at: NOW - 600_000, to: "next-main-0001" }, ended: { at: NOW - 60_000, reason: "quit" } } }, "handed", /handed over/],
 	];
 	for (const [what, facts, state, reason] of rows) {
 		const got = classify({ ...base, ...facts });
@@ -36,4 +39,5 @@ test("the classifier: closed, invalid, live, quit, stale, restoring, dead, each 
 test("live wins over every mark: a session someone resumed is live, whatever its record says", () => {
 	assert.equal(classify({ ...base, record: { role: "main", ended: { at: NOW, reason: "quit" } }, held: true }).state, "live");
 	assert.equal(classify({ ...base, mtimeMs: NOW - 26 * 3600_000, listed: true }).state, "live");
+	assert.equal(classify({ ...base, record: { role: "main", handedOver: { at: NOW, to: "x" } }, held: true }).state, "live", "an old main still running is live");
 });

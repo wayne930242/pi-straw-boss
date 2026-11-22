@@ -15,6 +15,7 @@ import { callTowerTool } from "./link/waitcall.ts";
 import { INTEGRATOR } from "./integrator.ts";
 import { foldName } from "./namefold.ts";
 import { openSuccessor, opener } from "./opener.ts";
+import { markHandedOver } from "./roles.ts";
 import { gatherDead, ReviveRefused, revivedText, rowLine, sessionsDir } from "./revive.ts";
 import type { Reach } from "./reach.ts";
 import type { ServerLook } from "./server-look.ts";
@@ -65,6 +66,14 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		const twin = net?.sessions.find((x) => x.id !== id && x.name !== undefined && foldName(x.name) === folded && net.ps.some((p) => p.pane_id === x.herdrLocation?.paneId && p.workspace_id === workspace && p.tokens?.sb_role === "main" && p.tokens.sb_duty === "standing"));
 		return twin ? `\nWarning: ${JSON.stringify(twin.name?.trim())} (${twin.id.slice(0, 8)}) is another standing main with this name in your workspace. A link wait that names this session as its owner matches both, so it goes to every standing main instead of to one. If you took over from that session, tell it by intercom to complete the handoff: call boss_duty with duty coordinator, then boss_rename itself. Otherwise, rename one of the sessions.` : "";
 	};
+	/**
+	 * A pi tower's one opener (RVR-F005): boss_open_main and boss_revive_main share its queue, so an open and a revive never count the caps at once. A pi tower knows neither Herdr's recovery window nor the waits a
+	 * session holds (the server's tower does), so its revives pass neither: the spec lists that as a known limit.
+	 */
+	let shared: ReturnType<typeof opener> | undefined;
+	const towerOpener = () => (shared ??= opener({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd: process.cwd(), sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), tower: () => ({ id: me(), name: s.ownName || me() }), trustDir: trustDir(guiDir), integrationOff: () => integrationOff(cfg.env, guiDir), stateDir: guiDir, sessionsRoot: sessionsDir(cfg.env) }));
+	/** A handover of this main under way (RVR-F006): set before the successor's tab is made, so a second call in parallel is refused before either await. */
+	let handing = false;
 	return {
 		addNetTools() {
 			tool("boss_status", "Show this workspace's Straw Boss coordinators: each tab's main agent and its kind, this workspace's tower, the head tower, and the other towers.", Type.Object({}), async () => {
@@ -208,19 +217,33 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 					if (s.isTower || role() === "tower") throw new Error("A tower hands over by itself (the server adopts its service); boss_handover is a main's");
 					if (role() === "train") throw new Error("A train does not rotate: it ends with its milestone report");
 					if (role() !== "main") throw new Error("Only a tab's main agent hands over; a member has no role to pass on");
+					// RVR-F002: the device's revoke and signed stop reach the mains its route rows name, by session id; a successor has none, so it would act on the peer's work outside them (D4 refuses a revive for the same reason).
+					if (s.openedBy?.startsWith("link:")) throw new Error(`A main opened for a teammate's device (${s.openedBy.slice(0, 40)}) does not hand over: its successor would run outside the device's revoke and signed stop. Finish or report what you can; the device asks again`);
 					const why = reason.replace(/\s+/g, " ").trim();
 					if (!why || why.length > 200) throw new Error("reason is required: one line of 1 to 200 characters");
 					const cwd = process.cwd(), path = isAbsolute(handoff) ? handoff : resolve(cwd, handoff);
 					let regular = false;
 					try { regular = lstatSync(path).isFile(); } catch { /* missing */ }
 					if (!regular) throw new Error(`The handoff file ${path} does not exist (or is no regular file): write it first`);
-					const held = s.saved.successor;
-					if (held && (await read().catch(() => undefined))?.ps.some((p) => p.pane_id === held.pane && p.agent)) throw new Error(`Your successor in pane ${held.pane} (tab ${held.tab}) is still live: one at a time. Tell it by intercom, or wait until it took over.`);
-					const name = pi.getSessionName() || s.ownName || me().slice(0, 8);
-					const next = await openSuccessor({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd, sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), trustDir: trustDir(guiDir) }, { from: { id: me(), name }, handoff: path, reason: why, ...(s.duty ? { duty: s.duty } : {}), ...(s.openedBy ? { openedBy: s.openedBy } : {}) });
-					s.saved.successor = { pane: next.pane, tab: next.tab, at: cfg.now() };
-					pi.appendEntry(ENTRY, { successor: s.saved.successor });
-					return { text: `Opened your successor in tab ${next.tab} (session ${next.main}) and handed it ${path}. When it tells you it took over, give up your role as your rule says: boss_duty coordinator (if you are standing or integrator), boss_rename to "old ${name} (handed over to ${next.main.slice(0, 8)})", stop your monitors and loops, clear your board, and wait to be closed.`, details: next };
+					if (handing) throw new Error("A handover of this main is under way: one at a time. Wait for its result.");
+					handing = true;
+					try {
+						const held = s.saved.successor;
+						if (held) {
+							const net = await read().catch(() => undefined);
+							if (!net) throw new Error(`Herdr cannot say whether your successor in pane ${held.pane} (tab ${held.tab}) is still live, so no second one opens now; try again shortly.`);
+							if (net.ps.some((p) => p.pane_id === held.pane && p.agent)) throw new Error(`Your successor in pane ${held.pane} (tab ${held.tab}) is still live: one at a time. Tell it by intercom, or wait until it took over.`);
+						}
+						const name = pi.getSessionName() || s.ownName || me().slice(0, 8);
+						const next = await openSuccessor({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd, sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), trustDir: trustDir(guiDir) }, { from: { id: me(), name }, handoff: path, reason: why, ...(s.duty ? { duty: s.duty } : {}), ...(s.openedBy ? { openedBy: s.openedBy } : {}) });
+						s.saved.successor = { pane: next.pane, tab: next.tab, at: cfg.now(), main: next.main };
+						pi.appendEntry(ENTRY, { successor: s.saved.successor });
+						// RVR-F004: the successor took the handoff, so this main's record says so: a later Herdr close of this tab raises no main_died, and no tower revives it.
+						if (s.file) try { markHandedOver(guiDir, s.file, { at: s.saved.successor.at, to: next.main }); } catch { /* the entry above keeps it for the next record this session writes */ }
+						return { text: `Opened your successor in tab ${next.tab} (session ${next.main}) and handed it ${path}. When it tells you it took over, give up your role as your rule says: boss_duty coordinator (if you are standing or integrator), boss_rename to "old ${name} (handed over to ${next.main.slice(0, 8)})", stop your monitors and loops, clear your board, and wait to be closed.`, details: next };
+					} finally {
+						handing = false;
+					}
 				});
 		},
 		addPromote() {
@@ -233,7 +256,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		// Tower only. The tower runs no commands: this is its one way to start work, in a new tab of its own workspace.
 		addOpenMain() {
 			// The request reaches the new main under a header, and names the tower the main reports to as well as the sender.
-			const open = opener({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd: process.cwd(), sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), tower: () => ({ id: me(), name: s.ownName || me() }), trustDir: trustDir(guiDir), integrationOff: () => integrationOff(cfg.env, guiDir), stateDir: guiDir });
+			const open = towerOpener();
 			tool("boss_open_main", "Open a new tab in this workspace with a new pi as its main agent and hand it a request that no session owns. Does not ask the boss and does not take focus. Opens at most one main per request; when it fails, tell the sender. The main reports its outcome to the sender and to you; close it with boss_close_main after its done report. With duty standing it tells the sender once, sends no done report, and is closed only by the boss: do not close it.",
 				Type.Object({
 					request: Type.String({ description: "The sender's request exactly as it reached you, with every boss decision it quotes kept verbatim." }),
@@ -254,7 +277,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		},
 		// Tower only (and a local tower run, through the server): bring a dead main of this workspace back as itself.
 		addReviveMain() {
-			const open = opener({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd: process.cwd(), sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), tower: () => ({ id: me(), name: s.ownName || me() }), trustDir: trustDir(guiDir), integrationOff: () => integrationOff(cfg.env, guiDir), stateDir: guiDir, sessionsRoot: sessionsDir(cfg.env) });
+			const open = towerOpener();
 			tool("boss_revive_main", REVIVE_DESCRIPTION, reviveParameters(), async ({ action, session, reason }) => {
 				if ((action ?? "list") === "list") {
 					const rows = (await gatherDead({ stateDir: guiDir, run: cfg.run, now: cfg.now(), sessions: () => s.c.listSessions(), root: sessionsDir(cfg.env), workspace: s.at.workspaceId, allNotes: true })).filter((r) => r.verdict.state !== "closed");
@@ -262,7 +285,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 				}
 				if (!session || !reason) throw new Error("revive needs session and reason");
 				try {
-					const done = await open.revive({ session, reason });
+					const done = await open.revive({ session, reason, ...(s.remoteOrigin ? { origin: s.remoteOrigin } : {}) });
 					return { text: revivedText(done), details: done };
 				} catch (error) {
 					throw error instanceof ReviveRefused ? new Error(`Not revived: ${error.message}`) : error;

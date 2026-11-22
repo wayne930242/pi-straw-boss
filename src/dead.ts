@@ -8,19 +8,20 @@ import type { RoleRecord } from "./roles.ts";
 // | closed    | no role record: a close on purpose forgets it                                                     | never                                                     |
 // | invalid   | the record or its session file fails the checks of revive.ts (`fileRefusal`)                      | never; the reason is listed                               |
 // | live      | a pane runs the file, the broker lists the session id, or the file moved in the last 60 s          | no                                                        |
+// | handed    | the record says the main handed over to a successor (boss_handover), whatever ended it after   | never; its successor holds its work                       |
 // | quit      | the record's `ended` mark is a quit (/quit, Ctrl-D, /new, /resume, /fork)                         | not unasked: listed, revived only when a request names it |
 // | stale     | the file has not moved for 24 h                                                                    | listed only                                               |
 // | restoring | Herdr's recovery window is open, or the death was seen in fewer than 2 looks 60 s apart            | waits                                                     |
 // | dead      | none of the above: a crash, a kill, a pane or tab Herdr closed (no shutdown ran), or a signal      | raises `main_died`; a run decides with boss_revive_main   |
 
-export type DeadState = "closed" | "invalid" | "live" | "quit" | "stale" | "restoring" | "dead";
+export type DeadState = "closed" | "invalid" | "live" | "handed" | "quit" | "stale" | "restoring" | "dead";
 /** How long a moving session file counts as held, how old a file is stale, and how far apart the two looks that confirm a death must be. */
 export const LIVE_MS = 60_000, STALE_MS = 24 * 3600_000, CONFIRM_MS = 60_000, LOOKS = 2;
 
 export interface DeadFacts {
 	now: number;
 	/** The session's role record, or undefined when there is none. */
-	record?: Pick<RoleRecord, "role" | "ended">;
+	record?: Pick<RoleRecord, "role" | "ended" | "handedOver">;
 	/** Why the record or its file proves nothing (revive.ts `fileRefusal`). */
 	invalid?: string;
 	/** The session file's mtime; undefined when the file is gone. */
@@ -43,6 +44,8 @@ export function classify(f: DeadFacts): DeadVerdict {
 	if (f.held) return { state: "live", reason: "a pane runs its session file" };
 	if (f.listed) return { state: "live", reason: "the broker lists its session" };
 	if (f.now - f.mtimeMs < LIVE_MS) return { state: "live", reason: "its session file moved in the last minute" };
+	const handed = f.record.handedOver;
+	if (handed) return { state: "handed", reason: `it handed over to session ${handed.to.slice(0, 8)} at ${new Date(handed.at).toISOString()}; its successor holds its work` };
 	const ended = f.record.ended;
 	if (ended && ended.reason !== "signal") return { state: "quit", reason: `it quit (${ended.reason}) at ${new Date(ended.at).toISOString()}` };
 	if (f.now - f.mtimeMs > STALE_MS) return { state: "stale", reason: "its session file has not moved for over 24 h" };

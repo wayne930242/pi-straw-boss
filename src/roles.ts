@@ -29,7 +29,9 @@ const KEEP_MS = 90 * 24 * 3600_000;
  * pi turned into a quit. A crash, a kill -9, and a pane or tab Herdr closed leave no mark: pi never runs its shutdown then (§1, P0). The mark says nothing to `held`: a Herdr restore brings the session back whatever it says, and the next record a start writes has none.
  */
 export interface Ended { at: number; reason: "quit" | "new" | "resume" | "fork" | "signal" }
-export interface RoleRecord { role: "tower" | "main" | "train"; pane: string; tab: string; workspace: string; terminal?: string; file?: string; openedBy?: string; /** A train's project and code (docs/specs/2026-11-07-train-workers.md §3.3). */ train?: TrainId; /** A main's kind, for a restore before its first message, when pi has written no entry yet (docs/specs/2026-11-09-agent-kinds.md §6). */ duty?: CoordinatorDuty; at: number; ended?: Ended }
+export interface RoleRecord { role: "tower" | "main" | "train"; pane: string; tab: string; workspace: string; terminal?: string; file?: string; openedBy?: string; /** A train's project and code (docs/specs/2026-11-07-train-workers.md §3.3). */ train?: TrainId; /** A main's kind, for a restore before its first message, when pi has written no entry yet (docs/specs/2026-11-09-agent-kinds.md §6). */ duty?: CoordinatorDuty; at: number; ended?: Ended; /** A main that opened its successor with boss_handover, once that successor took the handoff (RVR-F004): never raised as dead or revived, however it ends. */ handedOver?: HandedOver }
+/** The successor a main handed its work to: when, and its session id. */
+export interface HandedOver { at: number; to: string }
 /** Where a session runs now: the pane, tab, and workspace of the record must all be these. `tabLabel` is the label Herdr lists for the tab now, the proof of a tower's or a train's tab; left out, neither role is given back. */
 export interface Here { paneId?: string; tabId?: string; workspaceId?: string; terminalId?: string; tabLabel?: string }
 
@@ -51,12 +53,23 @@ export function loadRecord(record: string, problem?: (why: string) => void): Rol
 		const r = JSON.parse(raw) as Partial<RoleRecord>;
 		if (r.duty !== undefined && !isCoordinatorDuty(r.duty)) delete r.duty; // a kind that is none says nothing; the role still stands
 		if (r.ended !== undefined && !(typeof r.ended === "object" && r.ended !== null && typeof r.ended.at === "number" && ENDED.has(r.ended.reason))) delete r.ended; // a mark that cannot be read says the session did not end cleanly
+		if (r.handedOver !== undefined && !(typeof r.handedOver === "object" && r.handedOver !== null && typeof r.handedOver.at === "number" && typeof r.handedOver.to === "string")) delete r.handedOver;
 		if (r.role === TRAIN && !(r.train && trainFromToken(trainToken(r.train as TrainId)))) return undefined; // a train record names its project and code, or proves nothing
 		return (r.role === "tower" || r.role === "main" || r.role === TRAIN) && typeof r.pane === "string" && typeof r.tab === "string" && typeof r.workspace === "string" && (r.terminal === undefined || typeof r.terminal === "string") && (r.file === undefined || typeof r.file === "string") && (r.openedBy === undefined || typeof r.openedBy === "string") ? (r as RoleRecord) : undefined;
 	} catch {
 		return undefined; // a record that cannot be read proves nothing
 	}
 }
+/** Writes `patch` into a session's own record in place, nothing else changed; nothing when it has none. */
+function patchRecord(stateDir: string, file: string, patch: Partial<RoleRecord>): void {
+	const path = recordPath(stateDir, file), record = loadRecord(path);
+	if (!record) return;
+	const temp = `${path}.${process.pid}.tmp`;
+	writeFileSync(temp, JSON.stringify({ ...record, ...patch } satisfies RoleRecord), { mode: 0o600 });
+	renameSync(temp, path);
+}
+/** RVR-F004: the main of `file` handed its work over (tools.ts `boss_handover`); the records it writes later keep the mark from its session's `successor` entry. */
+export const markHandedOver = (stateDir: string, file: string, h: HandedOver): void => patchRecord(stateDir, file, { handedOver: h });
 /** Every record of the state folder that names its session file, with the path it was read from. */
 export function readRecords(stateDir: string): { path: string; record: RoleRecord & { file: string } }[] {
 	let names: string[] = [];
@@ -142,7 +155,7 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 				try {
 					mkdirSync(dir, { recursive: true, mode: 0o700 });
 					const file = path(s.file), temp = `${file}.${process.pid}.tmp`, at = cfg.now();
-					writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, ...(s.at.terminalId ? { terminal: s.at.terminalId } : {}), file: s.file, ...(openedBy ? { openedBy } : {}), ...(role === TRAIN && s.train ? { train: s.train } : {}), ...(role === "main" && isCoordinatorDuty(s.duty) ? { duty: s.duty } : {}), at } satisfies RoleRecord), { mode: 0o600 });
+					writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, ...(s.at.terminalId ? { terminal: s.at.terminalId } : {}), file: s.file, ...(openedBy ? { openedBy } : {}), ...(role === TRAIN && s.train ? { train: s.train } : {}), ...(role === "main" && isCoordinatorDuty(s.duty) ? { duty: s.duty } : {}), ...(role === "main" && s.saved.successor?.main ? { handedOver: { at: s.saved.successor.at, to: s.saved.successor.main } } : {}), at } satisfies RoleRecord), { mode: 0o600 });
 					renameSync(temp, file);
 				} catch (error) {
 					return void tell(`Straw Boss: could not record this session's role, so a Herdr restore will not bring it back: ${(error as Error).message}`, "warning");
@@ -170,12 +183,8 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 		 */
 		markEnded(reason: Ended["reason"]) {
 			if (!s.file) return;
-			const file = path(s.file), record = load(file, true);
-			if (!record) return;
 			try {
-				const temp = `${file}.${process.pid}.tmp`;
-				writeFileSync(temp, JSON.stringify({ ...record, ended: { at: cfg.now(), reason } } satisfies RoleRecord), { mode: 0o600 });
-				renameSync(temp, file);
+				patchRecord(guiDir, s.file, { ended: { at: cfg.now(), reason } });
 			} catch { /* a mark that is not written leaves the session looking dead: the tower run that hears of it decides */ }
 		},
 	};

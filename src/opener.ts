@@ -63,7 +63,7 @@ export interface OpenerEnv {
 	waitsOf?(session: string): string[];
 }
 /** `boss_revive_main revive` (docs/specs/2026-11-23-tower-revive.md §4): the session by id, prefix, or name; the run's reason; `by` is the tower that asks. */
-export interface ReviveRequest { session: string; reason: string }
+export interface ReviveRequest { session: string; reason: string; /** The remote turn a pi tower was asked in (`s.remoteOrigin`): the handoff frames the reason as a peer's words (RVR-F011). */ origin?: string }
 export interface Revived { tab: string; pane: string; main: string; file: string; name?: string; kind?: CoordinatorDuty; train?: TrainId; openedBy?: string; /** The old tab was the tower's and held only the dead pane at a bare shell, so it was closed (D3). */ closedOld?: string }
 /** A request's outcome as the ledger keeps it: the key is the hash of the sender and the request. */
 export interface LedgerRow { key: string; sender: string; outcome: "opened" | "failed"; at: number; opened?: Opened; error?: string }

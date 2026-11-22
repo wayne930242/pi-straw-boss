@@ -23,6 +23,7 @@ const NEW = { tab: "wA:t100", pane: "wA:p101", main: "opened-wA:p101" };
 async function main() {
 	world.autoMains();
 	const m = world.agent({ id: "main-1", name: "box watch", pane: "wA:p1", tab: "wA:t1" });
+	m.file = join(mkdtempSync(join(tmpdir(), "psb-handover-s-")), "2026-11-23T00-00-00-000Z_main-1.jsonl");
 	await m.start();
 	await m.promote();
 	await m.tool("boss_duty", { duty: "standing", reason: "it minds the box" });
@@ -52,6 +53,21 @@ test("a main's handover opens one successor tab in its workspace with its name a
 	assert.deepEqual(world.herdr.commands("tab", "focus"), [], "the boss's focus stays where it is");
 });
 
+test("RVR-F004: a main that handed over marks its role record, keeps the mark through its step-down, and is never raised as dead or revived", async () => {
+	const { m, handoff } = await main();
+	const { recordPath } = await import("../src/roles.ts");
+	const { readFileSync } = await import("node:fs");
+	const record = () => JSON.parse(readFileSync(recordPath(world.stateDir, m.file!), "utf8")) as { role: string; handedOver?: { to: string; at: number } };
+	assert.equal(record().handedOver, undefined);
+	await m.tool("boss_handover", { handoff, reason: "stalls" });
+	assert.equal(record().handedOver?.to, NEW.main, "the record names the successor");
+	await m.tool("boss_duty", { duty: "coordinator", reason: "stepping down after the handover" });
+	assert.equal(record().role, "main");
+	assert.equal(record().handedOver?.to, NEW.main, "a rewrite of the record keeps the mark");
+	const { REVIVABLE } = await import("../src/revive.ts");
+	assert.ok(!REVIVABLE.includes("handed"));
+});
+
 test("a second handover while the successor lives is refused; once its pane is gone another is allowed", async () => {
 	const { m, handoff } = await main();
 	await m.tool("boss_handover", { handoff, reason: "stalls" });
@@ -60,6 +76,18 @@ test("a second handover while the successor lives is refused; once its pane is g
 	world.herdr.panes = world.herdr.panes.filter((p) => p.pane_id !== NEW.pane);
 	await m.tool("boss_handover", { handoff, reason: "the first one never took over" });
 	assert.equal(world.herdr.commands("tab", "create").length, 2);
+});
+
+test("RVR-F006: two handovers at once open one successor, and one is refused while Herdr cannot say whether the last successor lives", async () => {
+	const { m, handoff } = await main();
+	const both = await Promise.allSettled([m.tool("boss_handover", { handoff, reason: "stalls" }), m.tool("boss_handover", { handoff, reason: "stalls too" })]);
+	assert.deepEqual(both.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
+	assert.match(String((both.find((r) => r.status === "rejected") as PromiseRejectedResult).reason), /A handover of this main is under way: one at a time/);
+	assert.equal(world.herdr.commands("tab", "create").length, 1);
+	world.herdr.failPanes = true;
+	await assert.rejects(m.tool("boss_handover", { handoff, reason: "again" }), /Herdr cannot say whether your successor in pane wA:p101 \(tab wA:t100\) is still live/);
+	world.herdr.failPanes = false;
+	assert.equal(world.herdr.commands("tab", "create").length, 1);
 });
 
 test("a member, a missing handoff file, and a tower are refused; nothing opens", async () => {
@@ -75,6 +103,19 @@ test("a member, a missing handoff file, and a tower are refused; nothing opens",
 	assert.equal(world.herdr.commands("tab", "create").length, 0);
 	const { RUN_TOWER_TOOLS } = await import("../src/runallow.ts");
 	assert.ok(!(RUN_TOWER_TOOLS as readonly string[]).includes("boss_handover"), "nor does a tower run");
+});
+
+test("RVR-F002: a main opened for a teammate's device does not hand over: its successor would run outside the device's revoke and signed stop", async () => {
+	world.autoMains();
+	world.herdr.addTab("wA:t5", "peer work");
+	world.herdr.addPane("wA:p5", "wA:t5").tokens = { sb_open_main: "1", sb_opened_by: "link:DEVICE01" };
+	const m = world.agent({ id: "peer-main", name: "peer work", pane: "wA:p5", tab: "wA:t5", env: { STRAW_BOSS_ROLE: "main" } });
+	await m.start();
+	assert.equal(m.tokens.sb_opened_by, "link:DEVICE01", "the claim took the device's mark");
+	const handoff = join(mkdtempSync(join(tmpdir(), "psb-handover-")), "handoff-peer.md");
+	writeFileSync(handoff, "# Handoff\n");
+	await assert.rejects(m.tool("boss_handover", { handoff, reason: "stalls" }), /A main opened for a teammate's device \(link:DEVICE01\) does not hand over: .*the device asks again/);
+	assert.equal(world.herdr.commands("tab", "create").length, 0);
 });
 
 test("a remote turn cannot open a successor, whatever its sender's level", async () => {

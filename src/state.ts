@@ -31,7 +31,7 @@ export interface Channel {
 }
 export interface SendResult { requestId?: string; status: string; code?: string; detail?: string }
 /** `duty*`: the main's kind and why it has it, written whole at each switch (docs/specs/2026-11-09-agent-kinds.md §2: entries merge field by field, so every entry carries all four). */
-export interface Saved { tower?: boolean; openedBy?: string | null; openedPane?: string; train?: TrainId; duty?: CoordinatorDuty; dutyFrom?: CoordinatorDuty | null; dutyWhy?: string; dutyAt?: number; /** When a tower revived this session (docs/specs/2026-11-23-tower-revive.md §6): its inherited subagents are looked at from every start after. */ revived?: number; /** The successor this main opened with boss_handover (handover.ts): its pane, while it lives, refuses a second one. */ successor?: { pane: string; tab: string; at: number } }
+export interface Saved { tower?: boolean; openedBy?: string | null; openedPane?: string; train?: TrainId; duty?: CoordinatorDuty; dutyFrom?: CoordinatorDuty | null; dutyWhy?: string; dutyAt?: number; /** When a tower revived this session (docs/specs/2026-11-23-tower-revive.md §6): its inherited subagents are looked at from every start after. */ revived?: number; /** The successor this main opened with boss_handover (handover.ts): its pane, while it lives, refuses a second one. */ successor?: { pane: string; tab: string; at: number; /** Its session id: the role record's `handedOver` mark (roles.ts). */ main?: string } }
 export type Role = "tower" | "main" | "member" | "train";
 export type Scope = "tab" | "workspace" | "towers" | "all";
 /**

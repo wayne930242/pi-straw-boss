@@ -85,3 +85,33 @@ test("a quit, a live pane, a member (no record), and a death within 10 minutes o
 	assert.ok(w.logs.includes("main-died-loop"), "the loop is logged, not raised");
 	assert.deepEqual(w.watch.rows("wA").map((r) => r.verdict.state).sort(), ["dead", "quit"], "the brief lists the quit and the looping one; the live one is left out");
 });
+
+test("RVR-F003: a session whose revive failed in the last 24 h is listed, not raised, though its death has a new key", async () => {
+	const w = world();
+	const failed = w.crash("d1ad0000-0000-4000-8000-000000000006");
+	updateLedger(w.stateDir, failed, w.now(), (l) => void l.attempts.push({ at: w.now() - 3 * 3600_000, key: "an-older-death", by: "sb-tower-wa", outcome: "failed", error: "did not join" }));
+	await w.watch.sweep();
+	w.step(61_000);
+	await w.watch.sweep();
+	assert.deepEqual(w.notices, []);
+	assert.ok(w.logs.includes("main-died-failed"), "logged, not raised");
+	assert.deepEqual(w.watch.rows("wA").map((r) => r.verdict.state), ["dead"], "the brief still lists it");
+	// A day later the boss's retry is a fresh death again.
+	w.step(24 * 3600_000);
+	const again = w.crash("d1ad0000-0000-4000-8000-000000000006");
+	assert.equal(again, failed);
+	await w.watch.sweep();
+	w.step(61_000);
+	await w.watch.sweep();
+	assert.equal(w.notices.length, 1);
+});
+
+test("RVR-F004: a main that handed over is neither raised nor listed when its tab is closed in Herdr", async () => {
+	const w = world();
+	w.crash("d1ad0000-0000-4000-8000-000000000007", { handedOver: { at: w.now() - 700_000, to: "next-main-0001" } });
+	await w.watch.sweep();
+	w.step(61_000);
+	await w.watch.sweep();
+	assert.deepEqual(w.notices, []);
+	assert.deepEqual(w.watch.rows("wA"), []);
+});
