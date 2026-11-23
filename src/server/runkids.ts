@@ -24,7 +24,8 @@ export interface KidsPort {
 /** A run's dialog. `approval`: one the server raised itself (pi's trust question before the claim, the approval of a `link_request` or of an ally run's gated call), which only this computer's viewer or local page answers: never a paired device (`NO_RELAY`). */
 export interface Dialog { key: string; run: string; workspace: string; method: string; title: string; message?: string; options?: string[]; at: number; approval?: true }
 type Held = Dialog & { timer: ReturnType<typeof setTimeout>; settle?: (yes: boolean) => void };
-interface Kid { child: RunChild; nonce: string; workspace: string; exit?: ChildExit }
+/** `writing`: the text of the assistant message the run is writing now, for the page's `live` (a local or head run's only: an ally run is a teammate's, read-only in its own comms). */
+interface Kid { child: RunChild; nonce: string; workspace: string; kind: string; exit?: ChildExit; writing: string }
 /** How long a server restart gives its headless runs to settle (decision F-5). */
 export const DRAIN_MS = 60_000;
 /** How long a run's dialog waits for the boss before it is cancelled. */
@@ -71,6 +72,9 @@ export function createKids(o: { port: KidsPort; log: Log; now: () => number; dia
 				pi: o.port.pi(), args: ["--mode", "rpc", ...input.args], cwd: input.cwd, env: runEnv(o.port.env, nonce, o.port.herdr), stderr: stderrFile(dir, input.run),
 				onRecord: (rec) => {
 					if (rec.type === "extension_ui_request") return onUi(input.run, input.workspace, rec);
+					const ev = rec.type === "message_update" ? (rec.assistantMessageEvent as { type?: unknown; delta?: unknown } | undefined) : undefined;
+					if (ev?.type === "text_delta" && typeof ev.delta === "string") kid.writing = (kid.writing + ev.delta).slice(-8000);
+					else if (rec.type === "message_end" || rec.type === "agent_settled") kid.writing = "";
 					const said = ring(input.workspace).record(rec), f = follows.get(input.workspace);
 					// A tower the boss addressed from the head's viewer: each finished message of its run is one line there (docs/specs/2026-11-23-f-entry.md §2.6).
 					if (said && f) ring(f.head).add(`[${f.label}] ${said.slice(0, 160)}`);
@@ -78,7 +82,7 @@ export function createKids(o: { port: KidsPort; log: Log; now: () => number; dia
 				onBad: () => o.log.line("rpc-bad-record", { run: input.run }),
 				...(o.port.spawn ? { spawn: o.port.spawn } : {}), ...(o.port.platform ? { platform: o.port.platform } : {}), ...(o.port.killGroup ? { killGroup: o.port.killGroup } : {}), ...(o.port.taskkill ? { taskkill: o.port.taskkill } : {}),
 			});
-			const kid: Kid = { child, nonce, workspace: input.workspace };
+			const kid: Kid = { child, nonce, workspace: input.workspace, kind: input.kind, writing: "" };
 			kids.set(input.run, kid);
 			o.log.line("run-spawn", { run: input.run, kind: input.kind, pid: child.pid, workspace: input.workspace });
 			const f = follows.get(input.workspace);
@@ -107,6 +111,8 @@ export function createKids(o: { port: KidsPort; log: Log; now: () => number; dia
 			return false;
 		},
 		ring: (workspace: string) => ring(workspace),
+		/** The text of the message a live run of the workspace is writing now ("" when none is): the GUI's `live` (docs/specs/2026-11-23-lite-b2-d-e-f.md §4.4, The GUI). */
+		liveText: (workspace: string) => ((k) => (k ? k.writing.split("\n").map((l) => plain(l, 4000)).join("\n").trim().slice(-4000) : ""))([...kids.values()].find((k) => k.workspace === workspace && k.kind !== "ally" && !k.child.done)),
 		/** The boss addressed this tower from the head's viewer: its runs' finished messages show there too, as one line each, until the tower's next run starts on its own. */
 		follow: (workspace: string, label: string, head: string) => void follows.set(workspace, { label: plain(label).slice(0, 40), head }),
 		dropRing: (workspace: string) => void rings.delete(workspace),

@@ -136,7 +136,7 @@ export function sentLine(g: { sent?: string; boss?: string; first: string }): st
 }
 const STATE: Record<HeadAskRow["state"], (o?: Opts) => string> = { waiting: (o) => m.head_ask_waiting({}, o), answered: (o) => m.head_ask_answered({}, o), handled: (o) => m.head_ask_handled({}, o), received: (o) => m.head_ask_received({}, o), silent: (o) => m.head_ask_silent({}, o), parked: (o) => m.head_ask_parked({}, o) };
 /** Whether nothing can come of this row: the net has no tower of the workspace and it never handled it, so waiting is a word it cannot keep. */
-export const gone = (t: AskTower) => !t.route && !handled(t.state);
+export const gone = (t: AskTower) => !t.route && !handled(t.state) && t.state !== "parked"; // a parked notice waits in a workspace with no tower yet: it says parked, not that there is none
 /** A tower's state word; for a workspace the net has no tower of and that never handled it, that there is none (muted, no wait). */
 export const towerState = (t: AskTower, o?: Opts) => (gone(t) ? m.head_ask_no_tower({}, o) : STATE[t.state](o));
 

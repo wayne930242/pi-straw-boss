@@ -3891,17 +3891,19 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 
 **啟動。** 伺服器用它 `PATH` 上的 `node` 執行 `pi` 背後的真實檔案（Windows 上是 npm shim 指向的 JS，不經 `cmd.exe`），有設 `towerRuns.pi` 就用它；工作目錄是工作區的 checkout，先過 `assertSettingsSafe`。run 的環境變數拿掉 `STRAW_BOSS_*`、`HERDR_*`、`PI_SUBAGENT_*` 與 `PI_INTERCOM_SESSION_ID`，再加上 32 位十六進位的 `STRAW_BOSS_RUN_NONCE`。認領時要帶伺服器 spawn 出來的 PID 和這個 nonce，其他認領一律拒絕。stdout 是 RPC（只以 LF 分行），stderr 寫到 `tower/<ws>/runs/<run8>.stderr`（256 KB，保留最近 20 個 run 或一天）。
 
-**只有伺服器會寫 run 的 stdin**，而且只寫 `abort`、`extension_ui_response` 和 `get_state`。老闆的話透過 run 的 extension 以 `straw-tower` 訊息交給模型，從不當成 pi 的輸入，所以開頭是 `/` 或 `!` 的一行只是文字。run 的 `select`、`confirm` 或 `input`（包括 `link_request` 的核准）會在 viewer 裡等老闆用 `/yes N`、`/no N` 或 `/pick N` 回答；60 秒沒人回答就取消，核准因此視為不准。
+**只有伺服器會寫 run 的 stdin**，而且只寫 `abort`、`extension_ui_response` 和 `get_state`。老闆的話透過 run 的 extension 以 `straw-tower` 訊息交給模型，從不當成 pi 的輸入，所以開頭是 `/` 或 `!` 的一行只是文字。run 的 `select`、`confirm` 或 `input` 會在 viewer（`/yes N`、`/no N`、`/pick N`）和這台電腦的網頁上等老闆回答；網頁只用按鈕和打字回答（`door: page`），配對的裝置永遠收不到。無介面 run 的 `link_request` 和 ally run 受管制的呼叫，都是伺服器自己開的對話框：老闆答應，或 `forward` 請求由寄件裝置答應，就記下一筆 Allow，綁定那個 run、那次呼叫和核准的內容。run 認領之前，pi 問的專案信任問題也這樣問，答應只對那個 run 信任該資料夾。對話框沒人回答，60 秒後取消（核准是 10 分鐘），核准因此視為不准。
 
 **結束。** 沒有 `tower_done` 就退出的 run 立刻記為 `crashed`，它的事件放回佇列並加上標記。30 秒沒有輪詢的 run 會被殺掉：殺它的行程群組，Windows 上用 `taskkill /pid <pid> /T /F`。重啟時先排空：不再開新的 run，每個還活著的 run 最多有 60 秒收尾，然後關掉 stdin；沒拿走的事件留在佇列，老闆對話在老闆下一句話時接續同一個工作階段。
 
 **服務與 viewer。** 服務不需要分頁：主塔台的轉送、ally 喚醒和控制端的開啟都不開分頁。session 的 `ensure-tower`（升格、main 呼叫塔台、單打 `/boss tower`）在有人值守的裝置上會要一個 viewer：開一個分頁，只打一次 `exec node "<cli.mjs>" prompt …`（Windows 上加 `; exit`），而且只限這次呼叫開出分頁後一分鐘內、viewer 第一次輪詢之前（typegate.ts `onceGate`）。viewer 結束時窗格跟著關，服務則在沒有分頁的情況下繼續。
 
-**viewer** 就是塔台提示，輸入列上方多了 run 的即時文字：`│` 是助理的文字，`▸` 與 `✓`/`✗` 是工具，`·` 是 run 的狀態，`?` 是對話框；每一行都在伺服器清掉跳脫序列，viewer 再清一次，也沒有一行會被讀成卡片。單獨打的一行可以是 `/stop`（伺服器寫入 `abort`；老闆的下一行等 run 閒下來才送）或 `@<workspace> <text>`：老闆的話直接送到那個塔台，用 id 或完整標籤指定，子工作區送到它的上層；主塔台的佇列和詢問都看不到。貼上的文字從不算指令或指定對象。主塔台的 viewer 會列出每個 run 的對話框（自己的排前面），也會顯示被指定的塔台的 run：開始時一行 `↳`，每則講完的訊息一行 `[label]`，結束時一行 `✓` 或 `✗`。
+**viewer** 就是塔台提示，輸入列上方多了 run 的即時文字：`│` 是助理的文字，`▸` 與 `✓`/`✗` 是工具，`·` 是 run 的狀態，`?` 是對話框；每一行都在伺服器清掉跳脫序列，viewer 再清一次，也沒有一行會被讀成卡片。單獨打的一行可以是 `/stop`（伺服器寫入 `abort`；老闆的下一行等 run 閒下來才送）或 `@<workspace> <text>`：老闆的話直接送到那個塔台，用 id 或完整標籤指定，子工作區送到它的上層；主塔台的佇列和詢問都看不到。貼上的文字從不算指令或指定對象。主塔台的 viewer 會列出每個 run 的對話框（自己的排前面），也會顯示被指定的塔台的 run：開始時一行 `↳`，每則講完的訊息一行 `[label]`，結束時一行 `✓` 或 `✗`；別的塔台有等待卡開啟或關閉時，它的卡片檢視會重讀一次。老闆在 viewer 打的話以 `door: viewer` 排入佇列，在這台電腦的網頁上打的以 `door: page` 排入。
 
 **主塔台會暫放通知。** 主塔台的 `tower_send` 若是 `reply: false`、沒有 `relay=boss`，而目標工作區沒有服務也沒有加入的 session，就什麼都不開：它在那個工作區的佇列寫一則安靜事件（同樣的文字會取代上一則），主塔台頁面上那則詢問顯示 `parked`，下一個在那裡執行的 run 會把它拿走。只有安靜事件的佇列不會喚醒 run；它跟著佇列的 24 小時一起過期。
 
-**開關打開後還沒有的：** 本機網頁還不能回答 run 的對話框（viewer 可以），`/to` 和 `/runs` 還沒做，主塔台的 viewer 關掉時主塔台會像分頁關掉一樣結束，Windows VM 和 box 也還沒跑過。
+**網頁。** 塔台的通訊在紀錄最後一筆之後，以純文字顯示 run 正在寫的訊息，每台裝置都看得到。還沒有 viewer 時，終端機分頁會說 run 是無介面的、要看通訊；塔台頁面上的 **開觀看分頁** 會要一個（`ensure-tower` 帶 `view`，只限這台電腦的網頁）。這台電腦的網頁會在輸入框上方列出 run 的對話框，核准會標成核准。主塔台頁面的輸入框和 viewer 一樣接受 `@<workspace> <text>`（`@@` 送出字面上的 `@`），每張詢問卡都連到該塔台的通訊。ally run 是塔台上的一個小標籤，沒有窗格列。
+
+**開關打開後還沒有的：** `/to` 和 `/runs` 還沒做，主塔台的 viewer 關掉時主塔台會像分頁關掉一樣結束，Windows VM 和 box 也還沒跑過。
 
 ## 工具
 

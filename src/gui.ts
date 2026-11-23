@@ -12,6 +12,7 @@ import type { Hub } from "./dialogs.ts";
 import { type Answered, answeredOf, createAnswered } from "./answered.ts";
 import { createDocs } from "./docs.ts";
 import { canonical, readers } from "./history.ts";
+import { HEAD_KEY } from "./headkey.ts";
 import { createGrants } from "./answerpane.ts";
 import { createMirrors } from "./mirror.ts";
 import { createOperate, type Operate } from "./operateseam.ts";
@@ -132,7 +133,14 @@ export async function startGui({ auto, board, read, net, call, hub, answered = c
 		}
 	})();
 	const library = createMusic(music);
-	const files: Files = { lookup: (key) => net?.lookup(key), workspace: (id) => net?.workspace(id) ?? [], readers: readers() };
+	// A tower's or the head's key reaches its headless runs' live text and dialogs (watch.ts `RunSide`) through the tower panel; any other key has none.
+	const runSide = (key: string) => {
+		const f = net?.lookup(key);
+		if (!tower?.liveText || (f?.role !== "tower" && f?.role !== "head")) return undefined;
+		const ws = f.role === "head" ? HEAD_KEY : f.base;
+		return { live: () => tower.liveText!(ws), dialogs: () => tower.dialogs?.(ws) ?? [] };
+	};
+	const files: Files = { lookup: (key) => net?.lookup(key), workspace: (id) => net?.workspace(id) ?? [], readers: readers(), run: runSide };
 	// Turning remote access off ends the streams of remote pages, and unpairing a device ends that device's (`remotes` names each stream's device); their next request finds the cookie void.
 	const clients = new Map<ServerResponse, Watch | undefined>(), remotes = new Map<ServerResponse, { device: string; net: Network }>();
 	// A device's streams end with it (`device` names it), or all of a network's when only `net` is named, or every remote one when neither is (a new token).
@@ -195,7 +203,7 @@ export async function startGui({ auto, board, read, net, call, hub, answered = c
 		const left = host?.page();
 		if (last) hello();
 		// A box's unit or base (a key of the operate host's) is watched through its session; any other target is a local one.
-		const watch = (target && host?.bridge.watch(target, to)) || (target?.startsWith("w:") ? watchWorkspace(files, target.slice(2), to) : target ? watchSession(files, target, to) : undefined);
+		const watch = (target && host?.bridge.watch(target, to)) || (target?.startsWith("w:") ? watchWorkspace(files, target.slice(2), to) : target ? watchSession(files, target, to, { local: !remote }) : undefined);
 		clients.set(res, watch);
 		if (last) res.write(`data: ${last}\n\n`);
 		pulse();

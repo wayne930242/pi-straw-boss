@@ -141,7 +141,7 @@ What has to outlive a run sits in the tower's memory: your standing instructions
 A tower can only propose a standing instruction or a decision; it takes effect when you confirm it.
 See [Tower memory](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/#tower-memory).
 
-With `towerRuns.headless` on (off by default in 0.85.0), a run is pi in RPC mode as the server's own child, with no pane. A tower's tab is then a viewer: it shows the run's live text and takes your words, but nothing is typed into it after it starts.
+With `towerRuns.headless` on (off by default in 0.85.0), a run is pi in RPC mode as the server's own child, with no pane. A tower's tab is then a viewer: it shows the run's live text and takes your words, but nothing is typed into it after it starts. With no viewer, the comms show the run's text and this computer's page answers its dialogs.
 A workspace nobody works in gets no tab, and a notice the head forwards there waits quietly for the next run.
 You still talk to a main in its own pane as before; the head's viewer is for zen or lazy mode, where `@<workspace> <text>` reaches a tower directly.
 

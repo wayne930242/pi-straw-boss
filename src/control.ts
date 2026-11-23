@@ -11,7 +11,7 @@ import type { Asked } from "./gui.ts";
 import type { Overlay } from "./lan/faces.ts";
 import { linkRequest as linkRequestOwner } from "./owners.ts";
 import type { createMirrors } from "./mirror.ts";
-import type { Found } from "./net.ts";
+import type { Found, RunDialog } from "./net.ts";
 import { upload } from "./upload.ts";
 import { ENDING, operateKeyRefusal, operateRawRefusal, operateTextRefusal } from "./probe.ts";
 import { OPERATE_REFUSED } from "./operateroutes.ts";
@@ -84,7 +84,8 @@ export interface ServerPanel { status(): unknown; restart(reason: string): Promi
 export interface TowerPanel {
 	has(workspace: string): boolean;
 	live(workspace: string): boolean;
-	event(workspace: string, text: string): Promise<{ ok: boolean; error?: string }>;
+	/** `door`: written on this computer's own page (with headless runs a run may then show the boss a card). */
+	event(workspace: string, text: string, door?: "page"): Promise<{ ok: boolean; error?: string }>;
 	act(workspace: string, what: "retry" | "deliver" | "drop", id?: string): Promise<{ ok: boolean; error?: string }>;
 	/** The boss leaves the conversation, or starts a fresh one (runs.ts `leave`, `fresh`): the pi twins are `/boss tower leave` and `/boss tower new`, which reach the same functions over the control socket. */
 	conversation?(workspace: string, what: "leave" | "new"): Promise<{ ok: boolean; error?: string; left?: boolean; fresh?: boolean; already?: boolean }>;
@@ -94,6 +95,16 @@ export interface TowerPanel {
 	close?(workspace: string): Promise<{ ok: boolean; error?: string }>;
 	/** Whether the key is the head tower's (its constant key or its Herdr workspace): the head answers api/head/… only, so api/tower/… refuses it. */
 	isHead?(workspace: string): boolean;
+	/** Headless runs (docs/specs/2026-11-23-f-entry.md §2.8): the dialogs a tower's runs wait on (the head's: every run's), for this computer's own page only. */
+	dialogs?(workspace: string): RunDialog[];
+	/** The page's answer to one of those dialogs: refused for a key that is not one of the workspace's. */
+	answer?(workspace: string, key: string, reply: { value?: string; confirmed?: boolean; cancelled?: boolean }): Promise<{ ok: boolean; error?: string }>;
+	/** Open viewer: `ensure-tower {view: true}`, a viewer tab when none runs. */
+	viewer?(workspace: string): Promise<{ ok: boolean; error?: string }>;
+	/** The head composer's `@<workspace> <text>`: the boss's words straight to that tower; `page` when this computer's own page wrote it. */
+	direct?(to: string, text: string, door?: "page"): Promise<{ ok: boolean; error?: string; label?: string }>;
+	/** The text the workspace's live run is writing now, for the comms' `live` ("" when none). */
+	liveText?(workspace: string): string;
 }
 /** Auto mode's panel (server/autoops.ts): the switch, the head's pending `on` and its confirm, all the server's own state. A write here is the boss's own act (the page's token and CSRF, a paired phone too); an operate session never reaches it. */
 export interface AutoPanel { /** What the page snapshot carries (net.ts `AutoSnap`): undefined when auto mode is off and nothing waits. */ snap(): { on: boolean; since?: string; pending?: { id: string; said: string; expires: number } } | undefined; /** Whether this server can switch auto mode at all (not an unattended device): the page shows its chip only then. */ available(): boolean; state(): Reply; /** The last return list, or `{ report: null }` (the page's return panel). */ report(): Reply; set(on: boolean, remote: boolean): Reply; confirm(id: unknown, remote: boolean): Reply }
@@ -105,6 +116,25 @@ const LINK_NAMES = ["enable", "state", "create", "invite", "invite-text", "invit
 export interface ControlDeps { /** Auto mode (server/autoops.ts): `auto {on}` and `auto/confirm {id}`. */ auto?: AutoPanel; /** The work board's Clear (server/boardpanel.ts): `board/clear {session}`, decided from the server's own reading. */ board?: { clear(json: Record<string, unknown>): Promise<Reply> }; /** The units of the boxes this computer operates (server/operatehost.ts): a request that names one goes to its session, after the guards a paired device's write meets, and never to a local route. */ bridge?: Pick<RemoteBridge, "claim">; lan?: LanPanel; /** The marks of the `/boss gui lan` overlay: a paired device's write into a marked pane is Escape only (lan/faces.ts). */ overlay?: Overlay; lookup(key: string): Found | undefined; call?: HerdrCall; csrf: string; canonical(file?: string): string | undefined; pair?(): { url: string; rows: string[] } | undefined; remoteOn?(): Promise<void>; remoteOff?(): Promise<void>; tower?: TowerPanel; paired?: { on(): boolean; list(): unknown; unpair(id: string): boolean; unpairAll(): number; unsaved(): string | undefined }; saveFailed?(reason: string): void; spawn?(parts: string[], json: Record<string, unknown>): Promise<Reply>; close?(kind: string, json: Record<string, unknown>, refresh?: () => Promise<unknown>): Promise<Reply>; dismiss?(key: unknown): Promise<boolean>; dismissAll?(): Promise<number>; stop?(asked: Asked): boolean | void; link?: LinkPort; /** The panes accepted answers opened (answerpane.ts). */ grants?: Pick<Grants, "before" | "claim" | "get" | "live" | "drop">; server?: ServerPanel; mirrors?: Pick<ReturnType<typeof createMirrors>, "toggle" | "fresh">; secret?(file: string): Promise<boolean>; linkRequest?(file: string): Promise<boolean>; answers?: Pick<Hub, "has" | "replay" | "ended" | "send" | "probe" | "commands" | "pull"> & { target(key: string): Promise<Target | undefined> }; trust?(json: Record<string, unknown>): Promise<Reply>; /** The documents the page shows (docs.ts): the answer of a Markdown block. */ docs?: { answer(cap: string, json: Record<string, unknown>): Promise<Reply> }; /** The record of answered blocks (answered.ts): a chat block's `input` carries `block {entry, index, fields}` and is recorded in the same request. */ answered?: Answered }
 
 const no = (status: number, error: string, reason: string, extra = {}): Reply => ({ status, body: { error, reason, ...extra } });
+
+/**
+ * `POST api/tower/<workspace>/dialog {key, confirmed | value | cancelled}` answers a headless run's dialog, and `…/viewer` opens the tower's viewer tab (docs/specs/2026-11-23-f-entry.md §2.8). Both are this computer's own page's:
+ * a paired device or a box's controller is refused (`far`), as the `NO_RELAY` approvals say. Exported for the head's routes, which take `head/dialog` the same way.
+ */
+export async function runRoute(tower: TowerPanel | undefined, workspace: string, action: "dialog" | "viewer", json: Record<string, unknown>, far: boolean): Promise<Reply> {
+	if (far) return no(403, "local_only", action === "dialog" ? "A tower run's dialog is answered on this computer's own page or in a viewer, never from a paired device." : "A viewer tab opens on this computer's own page.");
+	if (action === "viewer") {
+		if (!tower?.viewer || !tower.has(workspace)) return no(404, "not_found", "No such tower.");
+		const done = await tower.viewer(workspace);
+		return done.ok ? { status: 200, body: { opened: true } } : no(409, "refused", done.error ?? "The tower refused it.");
+	}
+	const key = typeof json.key === "string" && json.key.length <= 200 ? json.key : undefined;
+	if (!key) return no(400, "bad_request", "Name the dialog.");
+	if (!tower?.answer || !tower.has(workspace)) return no(404, "not_found", "No such tower.");
+	const reply = { ...(typeof json.value === "string" && json.value.length <= 4000 ? { value: json.value } : {}), ...(typeof json.confirmed === "boolean" ? { confirmed: json.confirmed } : {}), ...(json.cancelled === true ? { cancelled: true } : {}) };
+	const done = await tower.answer(workspace, key, reply);
+	return done.ok ? { status: 200, body: { answered: true } } : no(409, "refused", done.error ?? "The dialog was not answered.");
+}
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
 /** The request body as JSON, or the reply that refuses it. A body past the limit is drained, not kept. */
@@ -283,6 +313,8 @@ export function createControl({ auto, board, bridge, lan, overlay, link, server:
 		if (remote && json.op === "press" && json.act === "secret" && ((scope === "tower" && action === "memory") || (scope === "head" && key === "memory"))) return no(409, "refused", "Enter it at the computer: this step is taken on this computer's own page or in pi."); // WC-D4: a secret card's first step says the boss is at this computer, so only its own page (or pi) takes it
 		if (scope === "tower") {
 			if (key.startsWith("@") || tower?.isHead?.(key)) return no(404, "not_found", "No such tower.");
+			// A headless run's dialog and the viewer tab are this computer's own (docs/specs/2026-11-23-f-entry.md §5): a paired device and a box's controller never get an approval card (`NO_RELAY`), and a tab opens where the boss sits.
+			if (action === "dialog" || action === "viewer") return runRoute(tower, key, action, json, Boolean(remote || operate));
 			if (action === "memory") return tower?.memory && tower.has(key) ? tower.memory(key, json) : no(404, "not_found", "No such tower.");
 			if (action === "leave" || action === "new") {
 				if (!tower?.conversation || !tower.has(key)) return no(404, "not_found", "No such tower.");
@@ -298,7 +330,7 @@ export function createControl({ auto, board, bridge, lan, overlay, link, server:
 		}
 		// A tower unit of the sb server's service: the composer's Send is a boss event for its next run, and with no run live there is no terminal to key into or show.
 		const unit = tower && scope === "sessions" ? lookup(key) : undefined, ws = unit?.role === "tower" && tower?.has(unit.base) ? unit.base : undefined;
-		if (scope === "head" || unit?.role === "head") { const head = await headRoutes(tower, [scope, key, action], json, checkText); if (head) return head; }
+		if (scope === "head" || unit?.role === "head") { const head = await headRoutes(tower, [scope, key, action], json, checkText, Boolean(remote || operate)); if (head) return head; }
 		if (tower && ws) {
 			if (action === "input") {
 				const text = checkText(json.text), answers = answersOf(json);
@@ -307,7 +339,7 @@ export function createControl({ auto, board, bridge, lan, overlay, link, server:
 				// The conversation's two commands, as at the tower prompt: exactly `/quit` leaves it and `/new` starts over (the Leave and New buttons post to tower/<ws>/leave and /new).
 				const command = await commandReply(tower, ws, text, answers, "The tower refused it.");
 				if (command) return command;
-				const done = await tower.event(ws, text);
+				const done = await tower.event(ws, text, remote || operate ? undefined : "page");
 				return done.ok ? { status: 200, body: { accepted: true, woke: true, ...(answers ? await markAnswered(tower, ws, answers) : {}) } } : no(409, "refused", done.error ?? "The tower did not take it.");
 			}
 			if (action === "dequeue") return no(409, "server_queue", "These messages wait in the sb server's queue for the tower's next run; they are taken when it runs.");

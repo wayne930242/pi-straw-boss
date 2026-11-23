@@ -273,12 +273,13 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 			say(d.state(now.state, now.words));
 		}
 		// The block of waiting cards, printed again only when its digest changes (and never over the picker); it makes no bell.
-		const waits = Array.isArray(polled.answer.waits) ? polled.answer.waits : [], key = JSON.stringify(waits);
+		// The head's viewer also reads again when another tower's card comes or goes (`elsewhere`, headless runs): its card view lists every tower's, its own first.
+		const waits = Array.isArray(polled.answer.waits) ? polled.answer.waits : [], key = JSON.stringify(waits), all = polled.answer.elsewhere?.length ? JSON.stringify([waits, polled.answer.elsewhere]) : key;
 		cards?.attend(polled.answer.unattended !== true);
 		// Where the card view shows the cards, it reads them when the digest changes, and at every poll while the boss answers (a card of another tower is not in this digest).
 		if (cards?.shows()) {
-			if (key !== shownWaits || cards.engaged()) {
-				shownWaits = key;
+			if (all !== shownWaits || cards.engaged()) {
+				shownWaits = all;
 				if (ready) void cards.sync();
 				else syncFirst = true;
 			}

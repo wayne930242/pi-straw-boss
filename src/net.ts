@@ -64,7 +64,11 @@ export interface TowerService {
 	lastRun?: { endedAt: string; outcome: string }; crashes?: number; // `crashes`: runs that crashed or timed out in the loop window, when any did
 	notices: { id: string; level: "info" | "warning" | "error"; kind: string; text: string; at: number; detail?: string }[];
 	parked: { id: string; kind: string; from?: string; first: string }[];
+	/** Runs are headless (`towerRuns.headless`): no run has a pane. `viewer`: a viewer pane runs, which the Terminal tab mirrors; without one the comms are where runs show. */
+	headless?: true; viewer?: true;
 }
+/** A dialog a headless run waits on (src/server/runkids.ts): pi's own select, confirm, or input, or an approval the server raised (`approval`). This computer's page shows it; a paired device never gets it. */
+export interface RunDialog { key: string; workspace: string; method: string; title: string; message?: string; options?: string[]; approval?: true }
 export type TowerView = TowerService & { queue: Queued[]; file?: string; /** The session files of the live ally runs, by run id. */ allyFiles?: Record<string, string>; /** The session files of the recent event runs, by run id. */ eventFiles?: Record<string, string> };
 /**
  * A base that is an unattended box's, shown through an operate session (docs/specs/2026-11-07-link-operate.md §6.4; src/server/operatehost.ts makes it): the controller's own net reading adds it, the box never sends it. `device` and `short` are the

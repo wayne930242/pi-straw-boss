@@ -28,7 +28,7 @@ const ZH: typeof EN = {
 export function dialogLines(answer: PollAnswer, locale: Locale, last: string): { key: string; lines: string[] } {
 	const words = locale === "zh-TW" ? ZH : EN, dialogs = answer.dialogs ?? [], key = JSON.stringify(dialogs.map((d) => d.key));
 	if (key === last || !dialogs.length) return { key, lines: [] };
-	return { key, lines: [...dialogs.flatMap((d, i) => [words.dialog(i + 1, shown(d.title, 160)), ...(d.message ? [`  ${shown(d.message, 300)}`] : []), ...(d.options ?? []).map((o, j) => `  ${j + 1}. ${shown(o, 80)}`)]), words.answerHow] };
+	return { key, lines: [...dialogs.flatMap((d, i) => [words.dialog(i + 1, shown(d.title, 160)), ...(d.message ? d.message.split("\n").slice(0, 200).map((l) => `  ${shown(l, 2000)}`) : []), ...(d.options ?? []).map((o, j) => `  ${j + 1}. ${shown(o, 80)}`)]), words.answerHow] };
 }
 
 /**

@@ -1715,7 +1715,7 @@ export function createRuns(o: RunsOptions) {
 			if (!pendingTakeovers) herdrLostAt = undefined;
 		},
 		/** The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`, the tower prompt): an event ahead of the rest; a held service wakes again. */
-		boss(workspace: string, text: string, from = "the boss", opts: { present?: boolean; press?: true; door?: "pane"; requester?: Requester } = {}): QueuedEvent {
+		boss(workspace: string, text: string, from = "the boss", opts: { present?: boolean; press?: true; door?: "pane" | "viewer" | "page"; requester?: Requester } = {}): QueuedEvent {
 			const svc = services.get(workspace);
 			if (!svc) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
 			const written = append(slot, svc.ref.record(), { kind: "boss", from: { id: "boss", name: from }, text, at: iso(now()), ...(opts.press ? { press: true as const } : {}), ...(opts.door ? { door: opts.door } : {}), ...(opts.requester ? { requester: opts.requester } : {}) });
@@ -2018,7 +2018,9 @@ export function createRuns(o: RunsOptions) {
 			// The event runs among the last local runs are read-only units of their own; the conversation's file is the tower unit's.
 			const eventFiles = Object.fromEntries(listRuns(slot, workspace).filter((r) => r.kind === "local" && !r.conversation && r.file).slice(-RUNS_SHOWN).map((r) => [r.id, r.file!]));
 			const memory = find(workspace)?.ref.memory?.();
-			return { ...status, ...(memory ? { memory } : {}), queue: rows, ...(file ? { file } : {}), ...(Object.keys(allyFiles).length ? { allyFiles } : {}), ...(Object.keys(eventFiles).length ? { eventFiles } : {}) };
+			// Headless runs: the tower has a terminal only while a viewer pane runs (the service record names it); the page says so in its place.
+			const headless = headlessOn() ? { headless: true as const, ...(find(workspace)?.ref.record().pane ? { viewer: true as const } : {}) } : {};
+			return { ...status, ...headless, ...(memory ? { memory } : {}), queue: rows, ...(file ? { file } : {}), ...(Object.keys(allyFiles).length ? { allyFiles } : {}), ...(Object.keys(eventFiles).length ? { eventFiles } : {}) };
 		},
 	};
 	return api;

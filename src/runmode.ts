@@ -406,7 +406,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		// Idle and nothing queued are read again at the moment of delivery, after the round trip: a run that got busy meanwhile is offered the event again at its next idle poll.
 		if (!idle() || ctx?.hasPendingMessages()) return;
 		startedBy = event.id;
-		if (event.kind === "boss" && !event.press) (bossDoor = event.door === "pane" ? "pane" : "away"), (bossDoorAt = cfg.now());
+		// A viewer on this computer (`viewer`, or `pane` from a standing prompt of before 0.85.0) or this computer's page (`page`) is where he is; any other way (a session's /boss, a paired device) is not.
+		if (event.kind === "boss" && !event.press) (bossDoor = event.door === "pane" || event.door === "viewer" || event.door === "page" ? "pane" : "away"), (bossDoorAt = cfg.now());
 		send(eventText(event), { id: event.id, kind: event.kind, ...(event.from ? { from: event.from } : {}) });
 		await call({ cmd: "run-taken", id: event.id }).catch((error: Error) => tell(`Straw Boss: the server did not take note of an event: ${error.message}`, "warning"));
 	};

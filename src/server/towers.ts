@@ -28,6 +28,7 @@ import { returner, type Returns } from "./autoreturn.ts";
 import { UNATTENDED } from "./autoops.ts";
 import { autoAnswer, headHost, headTool, type HeadPort } from "./headtools.ts";
 import type { Allows } from "./allows.ts";
+import { runApprover } from "./runapprove.ts";
 import type { Asks } from "./asks.ts";
 import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, localTools } from "./towerbrief.ts";
 import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
@@ -183,7 +184,7 @@ export interface Towers extends Returns {
 		close(): Promise<{ workspace: string; id: string } | undefined>;
 		status(): TowerRow | undefined;
 		/** The boss's words to the head, from any channel: the head workspace is made when it is missing, and a boss event with `present` wakes a run (or goes into the live one). */
-		event(text: string, requester?: Requester, door?: "pane"): Promise<{ workspace: string; id: string }>;
+		event(text: string, requester?: Requester, door?: "pane" | "viewer" | "page"): Promise<{ workspace: string; id: string }>;
 	};
 	/** The tower prompt in a standing pane (standing.ts): its poll, Ctrl+D, and exit. */
 	prompt(cmd: "prompt-poll" | "prompt-leave" | "prompt-gone", workspace: string, pid: number, answering?: boolean): Promise<PromptReply | { ok: true }>;
@@ -1331,37 +1332,7 @@ export function createTowers(o: TowersOptions): Towers {
 	 * run's gated tool and arguments. Only the boss answers it (`run-dialog` from a viewer or this computer's page; a run token is refused that command and a paired device never gets it), and his yes is noted as
 	 * the one Allow for that run and call id (allows.ts `noteRun`), which the tool's own `run-tool` then uses up. `drop` withdraws one the run no longer waits for.
 	 */
-	const runApproveFor = async (request: Record<string, unknown>): Promise<{ approved: boolean }> => {
-		const who = runs.runOf(request.token), kids = runs.kids();
-		if (!who) throw new Error("unknown_token");
-		if (!who.headless || !kids) throw new Error("only a headless run asks the server for its approvals; a run in a pane shows its own");
-		const toolCallId = typeof request.toolCallId === "string" && /^[\w.:-]{1,128}$/.test(request.toolCallId) ? request.toolCallId : undefined;
-		if (!toolCallId) throw new Error("an approval is for one tool call: its id");
-		const id = `approve-${toolCallId}`;
-		if (request.drop === true) return (kids.withdraw(who.id, id), { approved: false });
-		if (kids.dialogs(who.workspace).filter((d) => d.run === who.id && d.approval).length >= 4) throw new Error("this run already waits on four approvals");
-		const l = services.get(who.workspace);
-		if (!l || l.stopped) throw new Error(`The sb server stands in for no tower of workspace ${who.workspace}`);
-		if (request.kind === "request" && who.kind === "local") {
-			const lines = l.requests.get(String(request.id));
-			if (!lines) throw new Error("This run opened no such request");
-			const body = [...lines, `Asked by session: tower run of ${l.record.label} (${who.id.slice(0, 8)})`].join("\n");
-			if (body.length > 12_000) throw new Error(`a link request whose description is ${body.length} characters long cannot be confirmed (the most is 12000); it is refused`);
-			const approved = await kids.confirm({ run: who.id, workspace: who.workspace, id, title: `Link request from the tower run of ${l.record.label}`, message: body });
-			if (approved) o.allows?.noteRun({ run: who.id, toolCallId, lines });
-			return { approved };
-		}
-		if (request.kind === "gate" && who.kind === "ally") {
-			const tool = typeof request.tool === "string" && /^[\w-]{1,64}$/.test(request.tool) ? request.tool : undefined, args = request.args;
-			if (!tool || typeof args !== "object" || args === null || Array.isArray(args)) throw new Error("a gated call's approval names its tool and its arguments");
-			const shown = JSON.stringify(args, null, 2) ?? "{}";
-			if (shown.length > 12_000) throw new Error(`a remote request whose arguments are ${shown.length} characters long cannot be confirmed (the most is 12000); it is refused`);
-			const approved = await kids.confirm({ run: who.id, workspace: who.workspace, id, title: `Remote request from ${who.deviceLabel ?? "a teammate's device"} (${who.deviceShort ?? "?"}, trust ${who.level ?? "reply"}): ${tool}`, message: shown });
-			if (approved) o.allows?.noteRun({ run: who.id, toolCallId, tool, args });
-			return { approved };
-		}
-		throw new Error("a local run asks approval for a link_request, an ally run for a gated call");
-	};
+	const runApproveFor = runApprover({ runOf: (t) => runs.runOf(t), kids: () => runs.kids(), live: (ws) => services.get(ws), allows: () => o.allows });
 
 	// Auto mode and the towers (§6): the waits open when it turns on are parked, and a raiser is told once under `wait_parked`. The head's memory is read under its constant key while no head service stands, as the list reads it, so its parked cards go back (as `gone`) with the rest (AR-F002).
 	const targets = (): Target[] => ((ts) => (ts.some((t) => t.head) ? ts : [...ts, { workspace: HEAD_KEY, label: headLabel(localeOf(o.env, slot.stateDir)), head: true as const }]))([...services.values()].map((l) => ({ workspace: l.record.workspace, label: l.record.label, ...(isHeadL(l) ? { head: true as const } : {}) })));

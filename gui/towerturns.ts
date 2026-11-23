@@ -100,6 +100,8 @@ export function towerWhy(r: Pick<Answer, "status" | "body">, o?: Opts): string |
 
 /** The sentence that stands where a terminal would be, for a tower with no run live (the server answers its keys and mirror with 409 `standing`); undefined when it has one. */
 export function termHold(service: TowerService | undefined, o?: Opts): string | undefined {
+	// Headless runs have no pane: the Terminal tab mirrors a viewer when one runs, else it says where the runs show (docs/specs/2026-11-23-lite-b2-d-e-f.md §4.4, The GUI).
+	if (service?.headless) return service.viewer ? undefined : m.tower_term_headless({}, o);
 	if (!service || service.run) return undefined;
 	return service.state === "held" ? m.tower_term_held({}, o) : m.tower_term_standing({}, o);
 }

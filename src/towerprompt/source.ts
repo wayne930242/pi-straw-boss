@@ -24,6 +24,8 @@ export interface PollAnswer {
 	/** Headless runs: the transcript lines since the last poll (the server's ring, prefixes its own), and the dialogs its runs wait on (entry.ts). */
 	lines?: string[];
 	dialogs?: { key: string; method: string; title: string; message?: string; options?: string[] }[];
+	/** The head's viewer under headless runs: the open wait cards of the other towers (`<workspace>:<id>`), so its card view reads them again when one comes or goes; only the head's own block it. */
+	elsewhere?: string[];
 }
 /** The answer of one poll: the state; the server stands in for no tower here any more (the prompt ends for good); or no usable answer yet (the server is down, restarting, or still loading). */
 export type Polled = { kind: "state"; answer: PollAnswer } | { kind: "gone"; error?: string } | { kind: "wait"; why: string };

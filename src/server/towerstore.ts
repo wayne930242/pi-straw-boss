@@ -59,7 +59,8 @@ export interface QueuedEvent {
 	/** A boss event that is a press of a wait card: the comms draw it as the boss's button, not as typed words (docs/specs/2026-11-07-wait-cards.md). */
 	press?: true;
 	/** A boss event the standing pane's own prompt posted: the boss wrote it at this tower's pane (the GUI's composer and another pi name none), so the run may show him a wait card there (runmode.ts, `boss_wait_ask`). */
-	door?: "pane";
+	/** Where the boss wrote it: the standing pane's prompt (`pane`, headless runs off), a viewer on this computer, or its page. */
+	door?: "viewer" | "page" | "pane";
 	/** Who sent a boss event over the control socket, as the request reported it (auto mode records it; docs/specs/2026-11-09-auto-mode.md, §2). */
 	requester?: Requester;
 	/** A parked notice (headless runs, docs/specs/2026-11-23-f-entry.md §2.5): it wakes no run, and the next run there, woken by any other event, takes it. */

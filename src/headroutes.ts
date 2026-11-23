@@ -1,4 +1,4 @@
-import type { Reply, TowerPanel } from "./control.ts";
+import { type Reply, runRoute, type TowerPanel } from "./control.ts";
 import { HEAD_KEY, HEAD_NEEDS_SERVICE } from "./headkey.ts";
 
 // The head tower's routes (docs/specs/2026-11-04-head-tower.md, The GUI channel, Posting): the composer of its session key and `POST api/head/<action>` run the tower panel's functions with the head's key, so a paired
@@ -32,21 +32,29 @@ export async function markAnswered(tower: TowerPanel, workspace: string, id: str
  * One request on the head: `scope` is `head` (the buttons, `head/<action>`) or `sessions` on the head's key (`sessions/<key>/<action>`). The reply is the route's own, or undefined for a session action the generic route takes
  * from here (the keys, mirror, focus, and commands of a live run's pane). `text` is control.ts's check of a composer's text.
  */
-export async function headRoutes(tower: TowerPanel | undefined, [scope, key = "", action = ""]: string[], json: Record<string, unknown>, text: (value: unknown) => string | Reply): Promise<Reply | undefined> {
+export async function headRoutes(tower: TowerPanel | undefined, [scope, key = "", action = ""]: string[], json: Record<string, unknown>, text: (value: unknown) => string | Reply, far = false): Promise<Reply | undefined> {
 	if (!tower?.has(HEAD_KEY)) return no(409, "refused", HEAD_NEEDS_SERVICE);
 	if (scope === "sessions") {
 		if (action === "input") {
 			const typed = text(json.text), answers = answersOf(json);
 			if (typeof typed !== "string") return typed;
 			if (typeof answers === "object") return answers;
+			// `@<workspace>` at the head's composer (docs/specs/2026-11-23-f-entry.md §2.4): the page read it and sends `to`; the server never reads `@` out of the text. A paired device may, as it may write to that tower's page.
+			if (json.to !== undefined) {
+				if (typeof json.to !== "string" || !json.to || json.to.length > 300 || answers) return no(400, "bad_request", "`to` names one workspace, and a direct line answers no wait.");
+				if (!tower.direct) return no(409, "refused", "This server takes no direct line.");
+				const sent = await tower.direct(json.to, typed, far ? undefined : "page");
+				return done(sent, { status: 200, body: { accepted: true, woke: true, to: sent.label ?? json.to } }, "The tower did not take it.");
+			}
 			const command = await commandReply(tower, HEAD_KEY, typed, answers, "The head tower refused it.");
 			if (command) return command;
-			const sent = await tower.event(HEAD_KEY, typed);
+			const sent = await tower.event(HEAD_KEY, typed, far ? undefined : "page");
 			return done(sent, { status: 200, body: { accepted: true, woke: true, ...(answers && sent.ok ? await markAnswered(tower, HEAD_KEY, answers) : {}) } }, "The head tower did not take it.");
 		}
 		if (action === "dequeue") return no(409, "server_queue", "These messages wait in the sb server's queue for the head tower's next run; they are taken when it runs.");
 		return ["keys", "mirror", "focus"].includes(action) && !tower.live(HEAD_KEY) ? no(409, "standing", STANDING) : undefined;
 	}
+	if (key === "dialog" && !action) return runRoute(tower, HEAD_KEY, "dialog", json, far);
 	if (action) return no(404, "not_found", "No such action.");
 	if (key === "memory") return tower.memory ? tower.memory(HEAD_KEY, json) : no(404, "not_found", "No such action.");
 	if (key === "close") return tower.close ? done(await tower.close(HEAD_KEY), { status: 200, body: {} }) : no(404, "not_found", "No such action.");

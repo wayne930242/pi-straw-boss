@@ -56,7 +56,7 @@ import { createBackstop } from "./autoback.ts";
 import { headSeam } from "./headnet.ts";
 import { towerPanel } from "./towerpanel.ts";
 import { runsStopMs } from "./runs.ts";
-import { entryReply, withLines } from "./entrycmds.ts";
+import { bossDoor, entryReply, withLines } from "./entrycmds.ts";
 import { DRAIN_MS } from "./runkids.ts";
 import { askRefused, doorOf, NOTICE_WAIT_MS } from "./waitpress.ts";
 import { readTowerRuns } from "./towerruns.ts";
@@ -490,7 +490,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				if (request.answers !== undefined && !answers) return Promise.resolve({ ok: false, error: "answers names a wait: W and its number" });
 				const refusal = request.cmd === "head-event" ? notAnAnswer(answers, text(request.text, 16_384)) : undefined;
 				if (refusal) return Promise.resolve(refusal);
-				return answer((t) => headCommand(t, request.cmd, text(request.text, 16_384), { ...(request.door === "pane" ? { door: "pane" as const } : {}), ...(requesterFrom(request) ? { requester: requesterFrom(request)! } : {}), ...(answers ? { answers } : {}), ...(text(request.id, 64) ? { id: text(request.id, 64)! } : {}) }));
+				return answer((t) => headCommand(t, request.cmd, text(request.text, 16_384), { ...(bossDoor(request.door) ? { door: bossDoor(request.door)! } : {}), ...(requesterFrom(request) ? { requester: requesterFrom(request)! } : {}), ...(answers ? { answers } : {}), ...(text(request.id, 64) ? { id: text(request.id, 64)! } : {}) }));
 			}
 			case "close-tower":
 				return workspace ? answer((t) => t.close(workspace)) : Promise.resolve({ ok: false, error: "close-tower needs a workspace" });
@@ -523,12 +523,12 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			case "tower-event": {
 				const body = text(request.text, 16_384);
 				// `present`: the boss wrote it at the tower prompt in the standing pane, so they are at the keyboard and the run it wakes stays for them (runs.ts, the boss's presence).
-				// `door: "pane"`: the standing pane's own prompt posted it, so the run may show him a card there (`boss_wait_ask`, runmode.ts); the GUI's composer and another pi name none.
+				// `door`: a viewer (`viewer`; `pane` from an older prompt) or this computer's page (`page`) posted it, so the run may show him a card there (`boss_wait_ask`, runmode.ts); the GUI's composer and another pi name none.
 				const answers = request.answers === undefined ? undefined : waitId(request.answers);
 				if (request.answers !== undefined && !answers) return Promise.resolve({ ok: false, error: "answers names a wait: W and its number" });
 				const refusal = notAnAnswer(answers, body);
 				if (refusal) return Promise.resolve(refusal);
-				return workspace && body ? answer(async (t) => ({ queued: t.runs.boss(workspace, body, "the boss", { present: request.present === true, ...(request.door === "pane" ? { door: "pane" as const } : {}), ...(requesterFrom(request) ? { requester: requesterFrom(request)! } : {}) }).id, ...(answers ? { answered: await markWaitAnswered(t, workspace, answers) } : {}) })) : Promise.resolve({ ok: false, error: "tower-event needs a workspace and text" });
+				return workspace && body ? answer(async (t) => ({ queued: t.runs.boss(workspace, body, "the boss", { present: request.present === true, ...(bossDoor(request.door) ? { door: bossDoor(request.door)! } : {}), ...(requesterFrom(request) ? { requester: requesterFrom(request)! } : {}) }).id, ...(answers ? { answered: await markWaitAnswered(t, workspace, answers) } : {}) })) : Promise.resolve({ ok: false, error: "tower-event needs a workspace and text" });
 			}
 			// The tower prompt in the standing pane (towerprompt/, standing.ts): it polls for the state it shows and for the order to leave, says Ctrl+D, and says it is gone. It starts nothing and holds no run token;
 			// its requests are a session's or a shell's, as the CLI's, and a server that is still loading tells it to wait.
@@ -624,7 +624,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		restart: gui.restart ?? ((reason) => spawnRestart(cliBeside(), reason, "the GUI", serverEnv(env), slot.dir, undefined, true)),
 		failed: (code, text) => recordError(code, text), tailscale: gui.tailscale, bundle: gui.bundle, bindWaitMs: gui.bindWaitMs, ...(gui.lan ? { lan: gui.lan } : {}), ...(gui.trainyard ? { trainyard: gui.trainyard } : {}),
 		// The page's tower units: the service's state and queue in the net, the composer as a boss event, and the notices' buttons (towers is built below, after the GUI host, and may be absent).
-		tower: towerPanel(() => towers), head: headSeam(slot, now), trainCars: () => cars?.book,
+		tower: towerPanel(() => towers, cfg.run), head: headSeam(slot, now), trainCars: () => cars?.book,
 		...(slot.primary ? { operateHost: makeOperateHost } : {}),
 	});
 	// The tower service (behind `towerRuns.enabled`): it stands in for each workspace's tower, and finds the tabs again when a new Herdr server takes over.

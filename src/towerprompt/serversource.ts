@@ -54,6 +54,8 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 	const here: Here = createHereMark({ ask: (request) => ask(request, TELL_MS).then((reply) => ({ ok: reply.ok === true, ...reply }), (cause: Error) => ({ ok: false, error: cause instanceof Absent ? "no server" : cause.message })), pane, every });
 	let head = false; // the last poll said this prompt stands in for the head tower
 	let cursor: number | undefined; // the last transcript line this viewer printed (headless runs)
+	// Where the boss's words are written: a viewer, while the polls carry a transcript (headless runs on); the standing pane's prompt, 0.84.0's `pane`, while they do not.
+	let door: "viewer" | "pane" = "pane";
 	const pick: PickSource = {
 		waits: async () => {
 			const reply = await sure({ cmd: "boss-waits", own: workspace });
@@ -66,7 +68,7 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 		},
 		reply: async (tower, text, answers) => {
 			// `door`: a reply to this pane's own tower (the head, when the last poll said this pane is the head's) is written at its pane, as a posted line is (D4); another tower's run is in a pane the boss is not at.
-			const reply = await sure(tower.head ? { cmd: "head-event", text, answers, ...(head ? { door: "pane" } : {}) } : { cmd: "tower-event", workspace: tower.workspace, text, present: true, answers, ...(tower.workspace === workspace ? { door: "pane" } : {}) });
+			const reply = await sure(tower.head ? { cmd: "head-event", text, answers, ...(head ? { door } : {}) } : { cmd: "tower-event", workspace: tower.workspace, text, present: true, answers, ...(tower.workspace === workspace ? { door } : {}) });
 			return typeof reply.answered === "string" ? { answered: reply.answered } : {};
 		},
 		here,
@@ -83,8 +85,9 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 			if (reply.ok === true && typeof reply.label === "string" && typeof reply.state === "string" && typeof reply.queued === "number" && typeof reply.leave === "boolean") {
 				head = reply.head === true;
 				if (typeof reply.cursor === "number") cursor = reply.cursor;
+				door = Array.isArray(reply.lines) ? "viewer" : "pane";
 				// SAFETY: a state word this build does not know is shown as the server sent it (prompt.ts cleans it of control characters), not made into one it does.
-				return { kind: "state", answer: { label: reply.label, state: reply.state as ServiceState, queued: reply.queued, leave: reply.leave, ...(reply.head === true ? { head: true as const } : {}), ...(Array.isArray(reply.waits) ? { waits: reply.waits as never[] } : {}), ...(typeof reply.auto === "boolean" ? { auto: reply.auto } : {}), ...(reply.holding === true ? { holding: true as const } : {}), ...(reply.unattended === true ? { unattended: true as const } : {}), ...(Array.isArray(reply.lines) ? { lines: reply.lines.map(String) } : {}), ...(Array.isArray(reply.dialogs) ? { dialogs: reply.dialogs as never[] } : {}) } };
+				return { kind: "state", answer: { label: reply.label, state: reply.state as ServiceState, queued: reply.queued, leave: reply.leave, ...(reply.head === true ? { head: true as const } : {}), ...(Array.isArray(reply.waits) ? { waits: reply.waits as never[] } : {}), ...(typeof reply.auto === "boolean" ? { auto: reply.auto } : {}), ...(reply.holding === true ? { holding: true as const } : {}), ...(reply.unattended === true ? { unattended: true as const } : {}), ...(Array.isArray(reply.lines) ? { lines: reply.lines.map(String) } : {}), ...(Array.isArray(reply.dialogs) ? { dialogs: reply.dialogs as never[] } : {}), ...(Array.isArray(reply.elsewhere) ? { elsewhere: reply.elsewhere.map(String) } : {}) } };
 			}
 			const error = String(reply.error ?? "no usable answer");
 			return reply.gone === true ? { kind: "gone", error } : { kind: "wait", why: error };
@@ -92,7 +95,7 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 		async post(text: string) {
 			let reply;
 			try {
-				reply = await ask({ cmd: "tower-event", workspace, text, present: true, door: "pane" }, POST_MS); // `door`: written at this tower's own pane, so the run it wakes may show the boss a card here (runmode.ts, `boss_wait_ask`)
+				reply = await ask({ cmd: "tower-event", workspace, text, present: true, door }, POST_MS); // `door`: written at this tower's own pane, so the run it wakes may show the boss a card here (runmode.ts, `boss_wait_ask`)
 			} catch (cause) {
 				throw new Error(cause instanceof Unreachable ? `the sb server did not answer: ${cause.message}` : (cause as Error).message);
 			}
@@ -108,7 +111,7 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 			if (reply.ok !== true) throw new Error(String(reply.error ?? "the sb server gave no reason"));
 		},
 		abort: async () => (await sure({ cmd: "run-abort", workspace })).aborted === true,
-		direct: async (to, text) => ({ label: String((await sure({ cmd: "head-event", to, text, door: "pane" })).label ?? to) }),
+		direct: async (to, text) => ({ label: String((await sure({ cmd: "head-event", to, text, door: "viewer" })).label ?? to) }),
 		answer: async (key, reply) => void (await sure({ cmd: "run-dialog", key, ...reply })),
 		leave: () => tell("prompt-leave"),
 		gone: () => tell("prompt-gone"),

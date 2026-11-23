@@ -2,7 +2,7 @@ import type { Pending } from "../src/ask.ts";
 import type { Mark } from "../src/netdata.ts";
 import type { Shelf } from "../src/documents.ts";
 import type { Item, Todo } from "../src/items.ts";
-import type { Queued, TowerService } from "../src/net.ts";
+import type { Queued, RunDialog, TowerService } from "../src/net.ts";
 import type { Monitor } from "../src/monitors.ts";
 import { h, replay } from "./dom.ts";
 import { createFollow, reach } from "./follow.ts";
@@ -83,7 +83,7 @@ export function createChat(cap = CAP) {
 	};
 }
 
-export interface HistoryEvent { key: string; state?: string; successor?: string; base?: string; name?: string; role?: string; reset?: boolean; items?: Item[]; before?: string; header?: { id?: string; cwd?: string }; unreadable?: number; todos?: Todo[] | null }
+export interface HistoryEvent { key: string; state?: string; successor?: string; base?: string; name?: string; role?: string; reset?: boolean; items?: Item[]; before?: string; header?: { id?: string; cwd?: string }; unreadable?: number; todos?: Todo[] | null; /** A tower's headless run: the message it writes now ("" when none; src/watch.ts). */ live?: string; /** The dialogs its runs wait on, on this computer's page only. */ dialogs?: RunDialog[] }
 /** `post` stands in for the server's input API (composer.ts) in the dev fixture. */
 /** `pic` is the URL of an entry's n-th image. */
 export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; pic?(id: string, n: number): string; post?: Post }
@@ -343,6 +343,14 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 	keep.observe(list);
 	keep.observe(scroller);
 
+	/** The run's message under way, after the last entry; "" takes it away. */
+	const live = h("article", { class: "tx live", "aria-live": "polite" }, h("small", { class: "live-tag" }, m.run_live_label()), h("p", { class: "live-text" }));
+	function writing(text: string) {
+		if (!text) return void live.remove();
+		live.querySelector(".live-text")!.textContent = text;
+		if (!live.isConnected || live.nextSibling) list.append(live);
+		if (follow.pinned && !model.detached && !touching()) toBottom();
+	}
 	return {
 		log: scroller,
 		docs,
@@ -357,6 +365,8 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 			place();
 		},
 		apply(e) {
+			// A headless run's message under way (src/watch.ts `live`): shown after the log's last entry until the session file has the message, which arrives as an entry and takes its place.
+			if (e.live !== undefined || e.reset || e.items?.some((it) => it.kind === "assistant")) writing(e.live !== undefined ? e.live : "");
 			if (e.reset) {
 				paint(model.reset({ items: e.items ?? [], before: e.before }));
 				loaded = true;
@@ -368,6 +378,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 				if (follow.arrived(d.added.length, selecting()) && !model.detached && !touching()) toBottom();
 				else button();
 			}
+			if (live.isConnected) list.append(live); // the message under way stays the last thing in the log
 		},
 		reveal(at) {
 			target = at;

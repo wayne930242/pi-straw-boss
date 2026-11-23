@@ -2,14 +2,16 @@ import { stat } from "node:fs/promises";
 import { fileOfEntry, pageThrough } from "./headhistory.ts";
 import { type readers as makeReaders, PAGE, type Reader } from "./history.ts";
 import { lastLine } from "./items.ts";
-import type { Found, Ref } from "./net.ts";
+import type { Found, Ref, RunDialog } from "./net.ts";
 
 // What a page watching one session or one workspace receives on the stream, and the paged API behind it. Everything is read
 // through the registry (net.lookup): a key it does not know, or that has no file yet, never reaches the file system.
 
 /** The finished runs an operate session reaches (docs/specs/2026-11-07-link-operate.md §9, server/operateledger.ts), narrowed to its scope: a key `t<id>` is looked up here and nowhere else, so out of scope it is not found (the ledger holds the path, a request never does) and `GET api/transcripts` is answered from it. Only the box's operate hub has one. */
 export interface Transcripts { has(key: string): boolean; lookup(key: string): Found | undefined; list(query: URLSearchParams): Promise<{ status: number; body: unknown }> }
-export interface Hub { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; readers: ReturnType<typeof makeReaders>; transcripts?: Transcripts }
+/** A tower's or the head's headless runs (docs/specs/2026-11-23-lite-b2-d-e-f.md §4.4, The GUI): the text the live run writes now, and the dialogs its runs wait on. */
+export interface RunSide { live(): string; dialogs(): RunDialog[] }
+export interface Hub { lookup(key: string): Found | undefined; workspace(id: string): Ref[]; readers: ReturnType<typeof makeReaders>; transcripts?: Transcripts; /** The runs behind a tower's or the head's key, under headless runs. */ run?(key: string): RunSide | undefined }
 const foundOf = (hub: Pick<Hub, "lookup" | "transcripts">, key: string): Found | undefined => (hub.transcripts && /^t[0-9a-f]{16}$/.test(key) ? hub.transcripts.lookup(key) : hub.lookup(key));
 export type Send = (event: string, data: unknown) => void;
 /** `refresh` runs after every net reading: it retries what could not attach yet and reports changes the file events missed. */
@@ -19,12 +21,22 @@ export interface Watch { refresh(): Promise<void>; stop(): void }
  * The history of one session: the newest page at once, then every change the reader reports; a state change when the key leaves the net.
  * A key whose file changes re-attaches (the page resets); a first page that fails releases the reader, and the next refresh tries again.
  */
-export function watchSession(hub: Hub, key: string, send: Send): Watch {
+export function watchSession(hub: Hub, key: string, send: Send, { local = false }: { local?: boolean } = {}): Watch {
 	let reader: Reader | undefined, file: string | undefined, unsub: (() => void) | undefined, signature: string | undefined, stopped = false, attaching = false;
+	// A tower's headless run: what it writes now (`live`, every page) and the dialogs it waits on (`dialogs`, this computer's own page only: a paired device never gets an approval card), each sent when it changed.
+	let liveWas = "", dialogsWas = "[]";
+	const runSide = () => {
+		const side = hub.run?.(key);
+		if (!side) return;
+		const live = side.live(), dialogs = local ? JSON.stringify(side.dialogs()) : "[]";
+		if (live !== liveWas) (liveWas = live), send("history", { key, items: [], live });
+		if (dialogs !== dialogsWas) (dialogsWas = dialogs), send("history", { key, items: [], dialogs: JSON.parse(dialogs) as RunDialog[] });
+	};
 	const meta = (f?: Found) => ({ key, state: f ? (f.live ? "live" : "recent") : "unknown", successor: f?.successor, base: f?.base, name: f?.name, role: f?.role });
 	const detach = () => (unsub?.(), file && hub.readers.release(file), (reader = file = unsub = undefined));
 	async function refresh() {
 		if (stopped || attaching) return;
+		runSide();
 		const found = foundOf(hub, key), sig = JSON.stringify(meta(found));
 		if (reader && found?.file && found.file !== file) detach();
 		if (!reader && found?.file) {

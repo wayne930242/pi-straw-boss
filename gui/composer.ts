@@ -1,6 +1,7 @@
 import type { Mark } from "../src/netdata.ts";
 import { h } from "./dom.ts";
 import { m } from "./sentences.ts";
+import { headLine } from "./headline.ts";
 import { type Answer, sendFile } from "./post.ts";
 import { mountSlash } from "./slash.ts";
 import { operateWhy } from "./termwords.ts";
@@ -34,7 +35,7 @@ const flights = new Map<string, Flight>();
 export interface Activity { text: string; mark: Mark; kind: "thinking" | "tool" | "monitoring" }
 /** `live`: its channel is open (scene.ts `closed`). `answerable`: its question panel on the page answers it. */
 /** `wakes`: the tower of the sb server's service, which has no pi to type into while it stands by: Send posts a boss event that wakes it (the server's tower route). `held`: the service stopped waking after repeated crashes; a boss event still wakes it. `allyLive`: an ally run is working and no local run is (a message wakes a run of the boss's own). `ally`: the unit is an ally run's comms, which are read and never written to. */
-export interface Unit { /** The head tower: its composer wakes it, and says so (it exists only from the first message). */ head?: boolean; wakes?: boolean; /** The boss conversation is live (and not ending): a message continues it. */ conversation?: boolean; held?: boolean; allyLive?: boolean; /** The boss is in the live event run: a message goes to it. */ eventRun?: boolean; ally?: boolean; /** The unit is an event run's comms (read only; the boss writes to the tower). */ run?: boolean; name: string; control: boolean; live: boolean; mark: Mark; online: boolean; /** The unit is a remote base's and its box cannot take typing now (greyed: not live): the notice says so, not that the stream is down. */ away?: boolean; answerable?: boolean; /** Zen's words-only item: it waits with no dialog open, so a reply in words is the answer and the waiting rule does not apply. */ unlocked?: boolean; activity?: Activity }
+export interface Unit { /** The head tower: its composer wakes it, and says so (it exists only from the first message). */ head?: boolean; /** Tower runs are headless: the head's composer reads `@<workspace>` (headline.ts). */ headless?: boolean; wakes?: boolean; /** The boss conversation is live (and not ending): a message continues it. */ conversation?: boolean; held?: boolean; allyLive?: boolean; /** The boss is in the live event run: a message goes to it. */ eventRun?: boolean; ally?: boolean; /** The unit is an event run's comms (read only; the boss writes to the tower). */ run?: boolean; name: string; control: boolean; live: boolean; mark: Mark; online: boolean; /** The unit is a remote base's and its box cannot take typing now (greyed: not live): the notice says so, not that the stream is down. */ away?: boolean; answerable?: boolean; /** Zen's words-only item: it waits with no dialog open, so a reply in words is the answer and the waiting rule does not apply. */ unlocked?: boolean; activity?: Activity }
 
 /** The server's input API for one session. */
 /** A file pasted, dropped, or picked: stored by the server, its path goes into the message (upload.ts). */
@@ -219,7 +220,8 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		if (new TextEncoder().encode(text).length > MAX_TEXT) return say(m.too_long(), "error");
 		const command = !confirmed && endsSession(text, unit);
 		if (command) return ask(m.ends_session({ command }), m.send_command({ command }), () => submit(as, text));
-		void call("input", { text, as, confirmed }, text);
+		// The head's composer reads `@<workspace>` (headline.ts): the rest goes straight to that tower. Headless runs only; the server refuses `to` with them off.
+		void call("input", { ...(unit.head && unit.headless ? headLine(text) : { text }), as, confirmed }, text);
 	}
 	function draw() {
 		const line = barOf(unit), parts = [form.querySelector(".cmp-row"), form.querySelector(".cmp-foot")] as HTMLElement[];

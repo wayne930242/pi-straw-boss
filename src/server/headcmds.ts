@@ -10,7 +10,7 @@ export async function markWaitAnswered(t: Towers, workspace: string, id: string)
 }
 const NOT_OPEN = "The head tower is not open: its first message opens it.";
 /** `head-open` makes the head workspace when there is none and names its tab; `head-event` is the boss's words (a boss event with `present`); `head-leave`, `head-new`, and `head-close` are the conversation's buttons, and `head-retry`, `head-deliver`, and `head-drop` the notices' (with `answers` a `head-event` marks the wait answered once the head took it; with `door` it was written at the head's own pane, as a `tower-event` says of a tower's). */
-export async function headCommand(t: Towers, cmd: string, text: string | undefined, extra: { answers?: string; id?: string; requester?: Requester; door?: "pane" } = {}): Promise<Record<string, unknown>> {
+export async function headCommand(t: Towers, cmd: string, text: string | undefined, extra: { answers?: string; id?: string; requester?: Requester; door?: "pane" | "viewer" | "page" } = {}): Promise<Record<string, unknown>> {
 	if (cmd === "head-open") {
 		const got = await t.head.ensure();
 		return { workspace: got.workspace, tab: got.tab, pane: got.pane, label: got.label, opened: got.opened };

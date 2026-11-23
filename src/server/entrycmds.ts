@@ -51,15 +51,24 @@ export function entryReply(towers: Towers | undefined, run: HerdrRun, request: R
 	}
 	const to = text(request.to), body = text(request.text, 16_384);
 	if (!to || !body) return Promise.resolve({ ok: false, error: "a direct line needs `to` and text" });
-	// The direct path is the boss's words at that tower, exactly as `/boss tower -w` sends them: the head's queue, its asks, and its model see nothing of it. The service is ensured with no tab.
-	return go(async (t) => {
-		const target = await resolveTo(run, to);
-		await t.ensure({ workspace: target.workspace });
-		const queued = t.runs.boss(target.workspace, body, "the boss", { present: true, ...(request.door === "pane" ? { door: "pane" as const } : {}) }).id;
-		const head = t.head.status()?.workspace;
-		if (head) t.runs.kids()?.follow(target.workspace, target.label, head);
-		return { queued, workspace: target.workspace, label: target.label };
-	});
+	return go((t) => directLine(t, run, to, body, bossDoor(request.door)));
+}
+
+/** Where the boss's line was written: a viewer on this computer (`viewer`), this computer's page (`page`), or, with headless runs off, the standing pane's prompt (`pane`, 0.84.0's word, kept as it is). Anything else carries none. */
+export type Door = "pane" | "viewer" | "page";
+export const bossDoor = (door: unknown): Door | undefined => (door === "viewer" || door === "pane" || door === "page" ? door : undefined);
+
+/**
+ * `@<workspace>`: the boss's words straight to that tower, exactly as `/boss tower -w` sends them (docs/specs/2026-11-23-f-entry.md §2.4): the head's queue, its asks, and its model see nothing of it. The service is ensured
+ * with no tab, and the head's viewer follows the tower's run. The viewer, the head page's composer, and a paired device's head composer all come here.
+ */
+export async function directLine(t: Towers, run: HerdrRun, to: string, body: string, door?: Door): Promise<{ queued: string; workspace: string; label: string }> {
+	const target = await resolveTo(run, to);
+	await t.ensure({ workspace: target.workspace });
+	const queued = t.runs.boss(target.workspace, body, "the boss", { present: true, ...(door ? { door } : {}) }).id;
+	const head = t.head.status()?.workspace;
+	if (head) t.runs.kids()?.follow(target.workspace, target.label, head);
+	return { queued, workspace: target.workspace, label: target.label };
 }
 
 /** `prompt-poll` under headless runs: the transcript lines after the viewer's cursor, and the dialogs its runs wait on. Unchanged with the switch off. */
@@ -70,5 +79,8 @@ export function withLines<T extends object>(towers: Towers, workspace: string, c
 	// The head's viewer lists every run's dialogs (its own first); a workspace's viewer its own (docs/specs/2026-11-23-f-entry.md §2.6).
 	const head = towers.head.status()?.workspace === workspace;
 	const dialogs = kids.dialogs(head ? undefined : workspace).sort((a, b) => Number(b.workspace === workspace) - Number(a.workspace === workspace)).map((d) => ({ key: d.key, method: d.method, title: d.title, ...(d.message ? { message: d.message } : {}), ...(d.options ? { options: d.options } : {}) }));
-	return { ...reply, lines: got.lines, cursor: got.cursor, ...(dialogs.length ? { dialogs } : {}) };
+	// The head's viewer: the other towers' open cards, so its card view reads them again when one comes or goes (docs/specs/2026-11-23-f-entry.md §2.6).
+	let elsewhere: string[] = [];
+	if (head) try { elsewhere = towers.waitList(undefined, workspace).towers.filter((t) => !t.own).flatMap((t) => t.waits.filter((r) => r.state === "open").map((r) => `${t.workspace}:${r.id}`)); } catch { /* a memory that cannot be read lists nothing */ }
+	return { ...reply, lines: got.lines, cursor: got.cursor, ...(dialogs.length ? { dialogs } : {}), ...(elsewhere.length ? { elsewhere } : {}) };
 }
