@@ -146,7 +146,12 @@ export const placeholderOf = (unit: Unit) => (unit.wakes ? (unit.held ? m.placeh
 /** What a tower's service tells the composer: it wakes (never steers), is held, continues a live boss conversation that is not ending, or has only an ally run live. */
 export const wakeOf = (service?: { state: string; run?: unknown; allyRuns: unknown[]; conversation?: { closing?: boolean }; bossIn?: unknown }): Pick<Unit, "wakes" | "held" | "conversation" | "allyLive" | "eventRun"> => ({ eventRun: Boolean(service?.bossIn && !service.conversation), wakes: Boolean(service), held: service?.state === "held", conversation: Boolean(service?.conversation && !service.conversation.closing), allyLive: Boolean(service?.allyRuns.length && !service.run) });
 
-export function mountComposer(root: HTMLElement, key: string, post: Post, upload = (file: File) => sendFile(`sessions/${encodeURIComponent(key)}/upload`, file)) {
+/**
+ * The target button of the head's composer (docs/specs/2026-11-24-zen-f.md §6, targetpicker.ts), at the row's start: `to` names the workspace a line goes to when it is not the head (the server's `to`, headless runs only), and `placeholder` says so in the box.
+ * A typed `@<workspace> text` still works and does not move the button.
+ */
+export interface ComposerTarget { button: HTMLElement; to(): string | undefined; placeholder(): string | undefined }
+export function mountComposer(root: HTMLElement, key: string, post: Post, upload = (file: File) => sendFile(`sessions/${encodeURIComponent(key)}/upload`, file), o: { target?: ComposerTarget } = {}) {
 	const store = `sb-draft:${key}`, touch = matchMedia("(pointer: coarse)").matches;
 	const box = h("textarea", { rows: "1", maxlength: String(MAX_TEXT), "aria-label": m.message(), enterkeyhint: touch ? "enter" : "send" });
 	const send = h("button", { type: "submit", class: "cmp-send" }, m.send()), follow = h("button", { type: "button", class: "cmp-alt" }, m.follow_up()), stop = h("button", { type: "button", class: "cmp-alt cmp-stop" }, m.stop());
@@ -156,6 +161,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 	const bar = h("p", { class: "cmp-bar", role: "status" }), activity = h("p", { class: "cmp-activity", role: "status", "aria-live": "polite" }); // the unit's state in words, for assistive tech: the ring round the box is its picture
 	bar.hidden = true;
 	const form = h("form", { class: "composer" }, menu, h("div", { class: "cmp-row" }, attach, picker, box, h("div", { class: "cmp-acts" }, send, follow, stop)), h("div", { class: "cmp-foot" }, note), bar, activity);
+	if (o.target) form.querySelector(".cmp-row")!.prepend(o.target.button);
 	root.replaceChildren(form);
 	let unit: Unit = { name: "", control: false, live: false, mark: "unknown", online: false }, busy = false, asking = false;
 	const keep = (use: () => void) => {
@@ -221,7 +227,8 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		const command = !confirmed && endsSession(text, unit);
 		if (command) return ask(m.ends_session({ command }), m.send_command({ command }), () => submit(as, text));
 		// The head's composer reads `@<workspace>` (headline.ts): the rest goes straight to that tower. Headless runs only; the server refuses `to` with them off.
-		void call("input", { ...(unit.head && unit.headless ? headLine(text) : { text }), as, confirmed }, text);
+		const line = unit.head && unit.headless ? headLine(text) : { text }, to = !line.to && unit.headless ? o.target?.to() : undefined;
+		void call("input", { ...line, ...(to ? { to } : {}), as, confirmed }, text);
 	}
 	function draw() {
 		const line = barOf(unit), parts = [form.querySelector(".cmp-row"), form.querySelector(".cmp-foot")] as HTMLElement[];
@@ -231,7 +238,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		for (const [name, value] of [["activity", doing?.mark], ["kind", doing?.kind]] as const) value === undefined ? delete form.dataset[name] : (form.dataset[name] = value);
 		if (activity.textContent !== (doing?.text ?? "")) activity.textContent = doing?.text ?? "";
 		const why = blocked(unit), working = unit.mark === "working";
-		box.placeholder = why ?? placeholderOf(unit);
+		box.placeholder = why ?? o.target?.placeholder() ?? placeholderOf(unit);
 		box.disabled = attach.disabled = !typable(unit); // a closed channel (the session left the net, or a finished subagent's pi exited) takes no typing at all, as it takes no sending
 		send.disabled = busy || Boolean(why) || !box.value.trim(); // nothing typed, nothing to send
 		follow.hidden = stop.hidden = !working || Boolean(why) || Boolean(unit.wakes); // a tower's run is woken, not steered or stopped from here
@@ -332,5 +339,5 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 		if (kept) say(kept[1], kept[0]);
 		else if (recallTake(key)) unsure(); // a take-back whose answer never came: its button asks for the messages again
 	});
-	return { box, update: (next: Unit) => ((unit = next), draw()), ready: () => !blocked(unit), takeQueue };
+	return { box, update: (next: Unit) => ((unit = next), draw()), ready: () => !blocked(unit), takeQueue, /** Draws again (the target changed). */ redraw: draw };
 }

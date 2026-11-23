@@ -117,6 +117,11 @@ A companion session shows its live log and composer.
 ### Cards of their own
 Besides questions, Zen shows as cards a tower's wait on you, a confirm a teammate's tower asks of this computer, a dialog a Straw Link box forwarded, a phone's pair request, and a tower's memory proposal.
 
+### Headless runs
+With headless tower runs on, a dialog a run waits on is a card on this computer's page only, queued for Enter like any other: Allow or Deny, an option and Send, or a field and Send. An approval card holds off a fast or held Enter for 400 ms.
+The input under the circle starts with a button that names where your words go. Pick a tower from its list, or type `@<workspace> text`, and that tower's conversation is your companion until you press Esc or go back to the head; the message its run is writing shows in still grey text.
+See [Headless runs in Zen](/pi-straw-boss/docs/reference/how-it-works/browser-view/#headless-runs-in-zen).
+
 ### Sound and music
 Sound effects follow the settings page's Sound effects switch (off by default): a singing bowl when an item takes the screen, a wooden fish when one is done.
 Put audio files in `~/.pi/agent/straw-boss-music/` and Zen shows a ♪ in the corner that plays them on a loop, while the Background sound switch is on.

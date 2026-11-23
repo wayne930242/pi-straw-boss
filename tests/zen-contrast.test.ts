@@ -137,3 +137,11 @@ test("the strip has no boxes: its hairline and box are a transparent border with
 	}
 	assert.ok(!css.split("\n").some((l) => /\.zen-(head|hl)/.test(l) && /color: var\(--zen-seal\)/.test(l) && !/text-decoration|border-bottom-color/.test(l)), "the seal marks only a line under a word, never a text colour");
 });
+
+test("ZF (docs/specs/2026-11-24-zen-f.md §8.7): the quiet live text and the target list's state word are --zen-ash, which holds 7 : 1 on both grounds, and nothing of either is in the seal", () => {
+	const of = (sel: string) => rulesOf(css).filter((r) => r.parts.some((p) => p.endsWith(sel))).flatMap((r) => declarations(r.body)).filter(([p]) => p === "color").map(([, v]) => v);
+	for (const [sel, name] of [[".tx.live-quiet .live-text", "the quiet live text"], [".target-state", "the state word"]] as const) {
+		assert.ok(of(sel).includes("var(--zen-ash)"), `${name} is ash`);
+		for (const g of ["ground", "ground-2"]) assert.ok(contrast(tokens.ash!, tokens[g]!) >= 7, `${name} on --zen-${g}`);
+	}
+});

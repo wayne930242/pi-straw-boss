@@ -516,6 +516,13 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			case "run-release": return answer(async (t) => ({ ...(await t.runs.release(request)) }));
 			case "run-tool": return answer(async (t) => ({ ...(await t.runTool(request)) }));
 			case "run-approve": return answer(async (t) => ({ ...(await t.runApprove(request)) }));
+			// A headless run's `boss_wait_ask` shows a wait card (or stopped showing one): its dialogs carry the wait, so Zen draws that card and no second one (docs/specs/2026-11-24-zen-f.md ZF-3).
+			case "run-wait-shown": return answer(async (t) => {
+				const who = t.runs.runOf(request.token), w = request.wait as { workspace?: unknown; id?: unknown } | undefined;
+				if (!who) throw new Error("unknown_token");
+				t.runs.kids()?.waitShown(who.id, w && typeof w.workspace === "string" && typeof w.id === "string" ? { workspace: w.workspace, id: w.id } : undefined);
+				return {};
+			});
 			// pi's project-trust question in a headless run before its claim: asked with the run's PID and nonce, no token yet (runs.ts `trust`).
 			case "run-trust": return answer(async (t) => ({ ...(await t.runs.trust(request)) }));
 			case "run-file": return answer(async (t) => (t.runs.setFile(request.token, request.file, request.session), {}));
@@ -672,6 +679,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		sessions: () => (client ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))),
 		promptCommand: (workspace) => promptCommand(cliBeside(), slot.stateDir, workspace), ...((auto ?? follower) ? { auto: (auto ?? follower)! } : {}), ...o.towers,
 		// A seam that watches the runs (tests) sees every signal too, and does not take the place of the notice to the controllers.
+		kidsPort: { pages: () => guiHost?.pages() ?? 0, ...o.towers?.kidsPort },
 		runs: { ...o.towers?.runs, signal: (sig) => { const r = runNotice(sig), sent = reporter?.notify(r.key, r.notice, r.scope); o.towers?.runs?.signal?.(sig); return sent; } },
 	});
 	stops.push(cfg.watch(() => {

@@ -1,7 +1,11 @@
 import { HEAD_KEY } from "../src/headkey.ts";
 import type { BossWait, Net } from "../src/net.ts";
 import { type Alert, unitOf } from "./alerts.ts";
-import { cardAlerts, cardSig, explainer } from "./cardalerts.ts";
+import { cardAlerts, cardSig, explainer, withRuns } from "./cardalerts.ts";
+import type { RunDialog } from "../src/net.ts";
+import { runPanel } from "./zenrun.ts";
+import { pickable, targetsOf } from "./targets.ts";
+import { mountTarget, type TargetPicker } from "./targetpicker.ts";
 import { answerPost, canAnswer, trustPost } from "./answer.ts";
 import { forwardedAnswer, outcome, waitActions } from "./asks.ts";
 import { type AnswerPost, mountAsk } from "./ask.ts";
@@ -47,8 +51,9 @@ export type { Exit, Mounts, ZenDeps } from "./zentypes.ts";
 export const real: Mounts = { ask: mountAsk, trust: trustPanel, composer: mountComposer, chat: () => import("./chat.ts").then((c) => c.mountChat) };
 type Composer = ReturnType<typeof mountComposer>;
 interface Card { key: string; /** What the card's answer is bound to (cardalerts.ts `cardSig`): another one is another question, and the card is made again. */ sig: string; el: HTMLElement; said: HTMLElement; out: HTMLElement; skip: HTMLButtonElement; update(a: Alert, outcome?: Outcome): void; enter(): boolean; /** Presses the question's Cancel when it has one. */ cancel(): boolean; /** Whether the card's answer is on its way. */ sending(): boolean; /** The question ended while the card was shown (`elsewhere`, `gone`, `error`): it stays until the boss closes it. */ ended?: boolean; /** The context (session log) expanded on the card, when the unit has one. */ hist?: ReturnType<typeof mountHistory>; /** Expands or collapses the context; false when the card has none. */ toggle(): boolean; /** Collapses it, the focus going back to its link. */ collapse(): void; /** The wait card's answer box is unfolded. */ replying?(): boolean; /** Folds it with the draft kept, the focus going back to Handle. */ foldReply?(): boolean }
-interface Company { seen?: boolean; key: string; ws: string; name: HTMLElement; where: HTMLElement; /** The header, and the quiet line in it once the session ended or lost control: the screen stays, with its input off, until the boss leaves (Z-D20). */ header: HTMLElement; note: HTMLElement; over?: "ended" | "lost"; /** The way back to the breath, made when the session is over. */ leave?: HTMLButtonElement; /** The cue that says how many cards wait for Enter (zenhead.ts), under the name: a card never takes this screen by itself. */ cue: ReturnType<typeof mountCue>; chat?: Chat; composer?: Composer; queue: HistoryEvent[]; /** Appends that came while the newest page was in flight: applied again after it, which they may not be in. */ late?: HistoryEvent[]; state?: string }
+interface Company { seen?: boolean; key: string; ws: string; name: HTMLElement; where: HTMLElement; /** The header, and the quiet line in it once the session ended or lost control: the screen stays, with its input off, until the boss leaves (Z-D20). */ header: HTMLElement; note: HTMLElement; over?: "ended" | "lost"; /** The way back to the breath, made when the session is over. */ leave?: HTMLButtonElement; /** The cue that says how many cards wait for Enter (zenhead.ts), under the name: a card never takes this screen by itself. */ cue: ReturnType<typeof mountCue>; chat?: Chat; composer?: Composer; queue: HistoryEvent[]; /** Appends that came while the newest page was in flight: applied again after it, which they may not be in. */ late?: HistoryEvent[]; state?: string; /** An addressed tower's screen (docs/specs/2026-11-24-zen-f.md §5.3): its target button, and whether the tower has no unit yet. */ picker?: TargetPicker; bare?: boolean }
 
+const RUN_WAIT_MS = 10 * 60_000; // how long a run's dialog waits while this computer has a page open (src/server/runkids.ts PAGE_DIALOG_MS, ZF-2)
 const UPGRADE_MS = 1000; // how often a waiting new build looks for the breath
 const DWELL_MS = 400; // how long the card the chain takes (Z-D22) holds off the key and the tap that answered the one before it: the confirm bar's dwell (confirmbar.ts, ZNR-F007), kept apart so the page's first file does not export it
 export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real) {
@@ -56,10 +61,26 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 	let line: ReturnType<typeof mountLine> | undefined, escAt: number | undefined, stopEsc = () => {}, net: Net | undefined, alerts = new Map<string, Alert>(), unitAlerts = new Map<string, Alert>(), pairList: PairRequest[] = [], pairsAt = 0, shown: Screen = { kind: "companion" }, card: Card | undefined, company: Company | undefined, view: Screen["kind"] | undefined, active = false, cancel = () => {}, turn = 0, picked: With | undefined, histOpen = false, chain: { key: string; at: number; stamp: number } | undefined, deadTap = false; // picked: this visit's companion (its start, or the one stepped to); none is the circle. histOpen: the head tower's whole conversation, as a companion, on the circle screen (zenhead.ts)
 	/** The alerts Standard raises, and beside them the cards (cardalerts.ts): the Link confirms and forwarded dialogs and the towers' proposals from the snapshot, the pair requests from the page's poll. A pair request is this computer's to decide (the server refuses a paired device `lan/*`), so a paired device is given none. */
 	const remote = deps.remote ?? globalThis.location?.hostname !== "127.0.0.1";
-	const withCards = () => new Map([...unitAlerts, ...(net ? cardAlerts(net, now(), { pairs: remote ? [] : pairList, pairsAt }) : []).map((a) => [a.key, a] as const)]);
+	// A headless run's dialogs (docs/specs/2026-11-24-zen-f.md §2): this computer's page alone is sent them (`run-dialogs`), and a paired device's page draws none even if it were.
+	let runs: RunDialog[] = [];
+	const withCards = () => withRuns(new Map([...unitAlerts, ...(net ? cardAlerts(net, now(), { pairs: remote ? [] : pairList, pairsAt }) : []).map((a) => [a.key, a] as const)]), net, remote ? [] : runs, now());
+	/** Why a run's dialog the server stopped listing went, when it was not answered elsewhere: it waited the full ten minutes (ZF-2: this page is open), or its run is no longer live. */
+	const runEnd = (a: Alert): "ended" | "expired" | undefined => {
+		const d = a.card?.kind === "run" ? a.card.dialog : undefined;
+		if (!d) return undefined;
+		if (now() - (d.at ?? a.since ?? now()) >= RUN_WAIT_MS - 5000) return "expired";
+		const run = d.key.slice(0, d.key.indexOf(":")), svc = d.run === "head" ? net?.head?.service : net?.bases.find((b) => b.id === d.workspace)?.tower?.service;
+		return svc?.run?.id === run || svc?.allyRuns.some((x) => x.id === run) ? undefined : "ended";
+	};
 	const to = (key: string) => answerPost(key, deps.post), trustTo: TrustPost = trustPost(deps.trust);
-	const model = createZen({ now, covered: () => !active || !document.hasFocus() || term.isOpen() || palette.isOpen() || menu.isOpen() || Boolean(music?.isOpen()) }), explain = explainer(deps.debug ?? ((line) => console.debug(line)), (key) => (active ? model.why(key) : "the Zen layer is not shown")); // a question that waits off the page says why in the console
-	const head = mountHead({ now, later, post: (action, body) => answerPost(net?.head?.key ?? HEAD_KEY, deps.post)(action, body), latest: () => deps.data(net?.head?.key ?? HEAD_KEY).latest(), online: deps.online, sound: deps.sound, rest: (on) => void line?.away(!on), history: () => void openHistory(), cards: () => model.queued().length, take: () => void enter() });
+	const model = createZen({ now, endOf: (a) => runEnd(a), covered: () => !active || !document.hasFocus() || term.isOpen() || palette.isOpen() || menu.isOpen() || Boolean(music?.isOpen()) }), explain = explainer(deps.debug ?? ((line) => console.debug(line)), (key) => (active ? model.why(key) : "the Zen layer is not shown")); // a question that waits off the page says why in the console
+	// The towers the boss addressed in this visit, oldest first, and the one whose conversation is the companion now (§5.3): gone when Zen hides, never stored (ZF-7).
+	let addressed: string | undefined;
+	const visited: string[] = [];
+	const targets = () => (pickable(net) ? targetsOf(net, visited, noun("head_tower")) : undefined);
+	const baseOf = (to: string) => net?.bases.find((b) => !b.box && b.id === to) ?? net?.bases.find((b) => !b.box && b.label === to);
+	const head = mountHead({ now, later, post: (action, body) => answerPost(net?.head?.key ?? HEAD_KEY, deps.post)(action, body), latest: () => deps.data(net?.head?.key ?? HEAD_KEY).latest(), online: deps.online, sound: deps.sound, rest: (on) => void line?.away(!on), history: () => void openHistory(), cards: () => model.queued().length, take: () => void enter(),
+		targets, pick: (t, draft) => address(t.ws, draft), address: (to) => ((b) => b && address(b.id))(baseOf(to)) });
 	/** Enter, or a tap on the cue (Z-D19): the next card takes the screen; with none waiting on the circle, the head tower is called back (its input unfolds). */
 	const enter = () => (model.queued().length ? (apply(model.take()), true) : onCircle() && head.unfold());
 	/** Enter on a card with no control focused (the focus was lost): a card whose question ended closes; any other goes to its primary control, where the next Enter acts (the same rule as when the card is taken). */
@@ -77,7 +98,7 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 	const strip = h("p", { class: "zen-strip" }); // how many units work and how many are idle (the core's selector): nothing about what waits
 	strip.hidden = true;
 	const palette = mountPalette({ entries: () => paletteEntries(), inert: (on) => [stage, corner].forEach((el) => el.toggleAttribute("inert", on)), closed: () => refocus() });
-	root.replaceChildren(h("div", { class: "zen-drift", "aria-hidden": "true" }, h("i", null), h("i", null)), ripples.el, corner, ...(fs.hint ? [fs.hint] : []), live, esc, update, stage, strip, palette.el);
+	root.replaceChildren(h("div", { class: "zen-drift", "aria-hidden": "true" }, h("i", null), h("i", null)), ripples.el, corner, ...(fs.hint ? [fs.hint] : []), live, esc, update, stage, strip, palette.el, ...(head.veil ? [head.veil] : [])); // the target list's veil lies over everything, the corner and the strip included
 	// The terminal layer (zenterm.ts) lies over all of it: what is under takes no focus while it is on, and the item's card gets it back on return.
 	const term = mountZenTerm(root, { terminals: deps.terminals, now, later, inert: (on) => [stage, corner].forEach((el) => el.toggleAttribute("inert", on)), closed: () => refocus() });
 	const openTerm = (key: string, armed?: boolean) => term.terminal({ key, armed }, net);
@@ -108,6 +129,8 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 		const gone = view === "item" && (o.screen.kind !== "item" || o.screen.item.key !== card?.key || cardSig(o.screen.item) !== card?.sig) ? card?.el : undefined; // a card that leaves dissolves: the boss's answer or Not now ended it (the model never swaps one card for another)
 		shown = o.screen;
 		chain = o.chained && shown.kind === "item" ? { key: shown.item.key, at: now(), stamp: globalThis.performance?.now?.() ?? 0 } : chain?.key === (shown.kind === "item" ? shown.item.key : undefined) ? chain : undefined; // the card the chain took (Z-D22) keeps its guard while it is on the screen
+		// A run's approval card takes the confirm bar's dwell when it is drawn (ZF-8): an Enter within 400 ms of it, a repeating one, or one that began before it presses nothing.
+		if (shown.kind === "item" && shown.item.card?.kind === "run" && shown.item.card.dialog.approval && card?.key !== shown.item.key && chain?.key !== shown.item.key) chain = { key: shown.item.key, at: now(), stamp: globalThis.performance?.now?.() ?? 0 };
 		if (o.sound) deps.sound(o.sound);
 		if (shown.kind === "item") drawItem(shown);
 		else (card?.hist?.close(), card = undefined, shown.kind === "pause" ? drawPause() : drawCompany());
@@ -131,20 +154,23 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 	/** What a card holds was swapped: it fades in over a short moment (opacity only, zen.css) while the box takes its new size at once. */
 	const fade = (el: HTMLElement) => (el.removeAttribute("data-fade"), void el.offsetWidth, el.setAttribute("data-fade", "")); // the read restarts the animation
 	/** The card's title: a project's question, a wait's tower once in the page's language (its raw name is English; the unit's role and place are the title), or the unit's name. */
-	const cardTitle = (a: Alert) => (a.card?.kind === "pair" ? m.zen_pair_title({ label: a.name }) : a.card?.kind === "proposal" ? waitTitle(a.role, deps.label(a.ws)) : m.zen_link_title({ label: a.name })); // a proposal is the tower's, named once like its waits
+	const runName = (a: Alert) => (a.role === "head" ? noun("head_tower") : a.name);
+	const cardTitle = (a: Alert) => (a.card?.kind === "run" ? (a.card.dialog.approval ? m.zen_run_approval_title({ name: runName(a) }) : m.zen_run_title({ name: runName(a) })) : a.card?.kind === "pair" ? m.zen_pair_title({ label: a.name }) : a.card?.kind === "proposal" ? waitTitle(a.role, deps.label(a.ws)) : m.zen_link_title({ label: a.name })); // a proposal is the tower's, named once like its waits
 	const titleOf = (a: Alert) => (a.trust ? m.trust_title() : a.wait ? waitTitle(a.role, deps.label(a.ws)) : a.card ? cardTitle(a) : a.name);
 	/** Whether the card's question ended while it was shown (Z-D20): it stays with its words, and nothing on it answers. */
-	const endedOf = (outcome?: Outcome) => outcome === "elsewhere" || outcome === "gone" || outcome === "error";
+	const endedOf = (outcome?: Outcome) => outcome === "elsewhere" || outcome === "gone" || outcome === "error" || outcome === "ended" || outcome === "expired";
+	/** Who asks on a run card (§2.3): the tower and its base, the head, or a teammate's run on this computer. */
+	const runWho = (a: Alert, d: RunDialog) => (a.role === "head" ? noun("head_tower") : d.run === "ally" ? m.zen_run_ally({ device: d.label ?? "", name: deps.label(d.workspace) }) : `${m.zen_run_who({ name: a.name })}${deps.label(d.workspace) && deps.label(d.workspace) !== a.name ? `   ${deps.label(d.workspace)}` : ""}`);
 	/** What a card asks, in the page's language: the long sentence of the Link notice, the request's line, or the run's proposal with the message it comes from. */
-	const cardSaid = (c: NonNullable<Alert["card"]>) => (c.kind === "confirm" ? confirmLine(c.confirm) : c.kind === "dialog" ? c.line : c.kind === "pair" ? pairLine(c.request) : proposalText(c.proposal));
+	const cardSaid = (c: NonNullable<Alert["card"]>) => (c.kind === "confirm" ? confirmLine(c.confirm) : c.kind === "dialog" ? c.line : c.kind === "pair" ? pairLine(c.request) : c.kind === "run" ? "" : proposalText(c.proposal));
 	/** A control that can be pressed takes the focus; false when there is none, or it is off. */
 	const focusOn = (b?: HTMLElement | null | false) => Boolean(b && b.isConnected && !(b as HTMLButtonElement).disabled && (b.focus(), true));
 	function makeCard(a: Alert): Card {
 		const trust = a.trust, key = unitOf(a), said = h("p", { class: "zen-said" }), out = h("p", { class: "zen-out", role: "status" });
 		const slot = h("div", { class: "zen-answer" }), skip = h("button", { type: "button", class: "cmp-alt zen-skip" }, m.zen_not_now());
-		const unit = unitOf(a), hist = trust || a.wait || a.card ? undefined : mountHistory({ key: unit, chat: mounts.chat, data: deps.data, who: () => locate(net, unit)?.u ?? { key: unit, name: a.name, role: a.role, mark: a.mark }, away: () => !can(locate(net, unit)?.base, "input"), watch: deps.watch, changed: () => sync() });
+		const unit = unitOf(a), run = a.card?.kind === "run" ? a.card.dialog : undefined, hist = trust || a.wait || (a.card && !(run && a.unit)) ? undefined : mountHistory({ key: unit, chat: mounts.chat, data: deps.data, who: () => locate(net, unit)?.u ?? { key: unit, name: a.name, role: a.role, mark: a.mark }, away: () => !can(locate(net, unit)?.base, "input"), watch: deps.watch, changed: () => sync() });
 		const ctx = h("button", { type: "button", class: "cmp-link zen-history-btn", "aria-keyshortcuts": "H", "aria-expanded": "false", "aria-controls": hist?.el.getAttribute("id") ?? "" }, m.zen_history());
-		const inner = h("div", { class: "zen-card-in" }, h("h2", { class: "zen-who" }, titleOf(a)), a.wait || a.card ? null : h("p", { class: "zen-meta" }, trust ? whereOf(trust) : `${((u) => (u ? roleWord(u.role, u.duty) : roleName(a.role)))(locate(net, unit)?.u)} · ${deps.label(a.ws)}`), trust ? null : said, slot, hist?.el, h("div", { class: "zen-acts" }, hist && ctx, skip), out);
+		const inner = h("div", { class: "zen-card-in" }, run ? h("p", { class: "zen-meta zen-run-who" }, runWho(a, run)) : null, h("h2", { class: "zen-who" }, titleOf(a)), run ? h("p", { class: "zen-run-title" }, run.title) : null, a.wait || a.card ? null : h("p", { class: "zen-meta" }, trust ? whereOf(trust) : `${((u) => (u ? roleWord(u.role, u.duty) : roleName(a.role)))(locate(net, unit)?.u)} · ${deps.label(a.ws)}`), trust || run ? null : said, slot, run ? said : null, hist?.el, h("div", { class: "zen-acts" }, hist && ctx, skip), out);
 		const el = h("section", { class: "zen-card", tabindex: "-1" }, inner);
 		const sync = () => {
 			const has = Boolean(hist) && hasHistory(net, unit);
@@ -159,6 +185,7 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 		ctx.hidden = true;
 		skip.onclick = () => apply(model.skip());
 		if (a.wait) said.hidden = true; // a wait for the boss is the card (waitcard.ts): it says what happened and what to do, not what the tower last said
+		else if (run) void (a.unit ? deps.recent(a.unit) : Promise.resolve([])).then((items) => (said.textContent = intel(items).said ?? ""), () => {}); // what the tower last said, in ash under the question
 		else if (a.card) said.textContent = cardSaid(a.card);
 		else if (!trust) void deps.recent(key).then((items) => (said.textContent = intel(items).said ?? ""), () => {});
 		const answer: AnswerPost = (action, body) => tell(a.key, to(key)(action, body));
@@ -186,6 +213,12 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 				} };
 			}
 			const wrap = (reply: Promise<Answer>) => tell(a.key, reply);
+			if (c.kind === "run") {
+				// A headless run's dialog (zenrun.ts): its answer is `runDialogActions`, Standard's call; Esc is its Cancel (for an approval, Deny). The context (H) is the tower's log.
+				const panel = runPanel(c.dialog, wrap);
+				slot.replaceChildren(panel.el);
+				return { key: a.key, sig: cardSig(a), el, said, out, skip, hist, toggle, collapse: () => hist?.close(ctx), enter: panel.enter, cancel: panel.cancel, sending: panel.sending, update: (_x, outcome) => (panel.update(deps.online() && !endedOf(outcome)), say(out, outcome, _x), sync()) };
+			}
 			let rev = c.kind === "proposal" ? c.rev : 0; // the memory moves while the card is shown: a Confirm names the rev of the newest snapshot
 			const panel = c.kind === "confirm" ? confirmPanel(c.confirm, wrap) : c.kind === "pair" ? pairPanel(c.request, wrap) : proposalPanel({ ...c, rev: () => rev }, wrap);
 			slot.replaceChildren(panel.el);
@@ -221,7 +254,7 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 	}
 	const say = (out: HTMLElement, outcome: Outcome | undefined, a: Alert) => {
 		out.dataset.tone = outcome === "error" ? "error" : "";
-		const text = outcome === "elsewhere" ? m.zen_elsewhere() : outcome === "gone" ? m.zen_gone() : outcome === "error" ? (alerts.get(a.key)?.note ?? m.mark_error()) : "";
+		const text = outcome === "elsewhere" ? m.zen_elsewhere() : outcome === "gone" ? m.zen_gone() : outcome === "ended" ? m.zen_run_ended() : outcome === "expired" ? m.zen_run_expired() : outcome === "error" ? (alerts.get(a.key)?.note ?? m.mark_error()) : "";
 		if (out.textContent !== text) (out.textContent = text, text && fade(out));
 	};
 	/** The free-focus rule: the item takes the focus only when the page has it, the boss is not typing somewhere else, and neither the terminal layer nor the palette is on. */
@@ -256,6 +289,7 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 		view = "pause";
 	}
 	function disposeCompany() {
+		company?.picker?.veil.remove();
 		turn++;
 		company = undefined;
 		histOpen = false;
@@ -264,7 +298,10 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 	/** The head tower's whole conversation, as a companion on the circle screen; and the way back, to the breath: the strip at rest, its input folded. */
 	const openHistory = () => !!net?.head && active && onCircle() && (disposeCompany(), (histOpen = true), drawCompany(), true);
 	const closeHistory = () => histOpen && (disposeCompany(), head.fold(), head.hush(), drawCompany(), true); // the way back is to the breath: the strip is at rest
+	/** The addressed tower's session: its tower's key while the net lists one, else a stand-in key (its first words wake it through the head's route, §5.3). */
+	const addressedOf = (ws: string) => ((t) => (t ? { key: t.key, ws } : { key: `addr:${ws}`, ws }))(net?.bases.find((b) => b.id === ws)?.tower);
 	function drawCompany() {
+		if (addressed && !histOpen) return drawAddressed(addressedOf(addressed));
 		const live = histOpen ? { key: net?.head?.key ?? company?.key ?? HEAD_KEY, ws: HEAD_KEY } : companionOf(net, company ?? picked), c = live ?? (company && company.ws !== HEAD_KEY ? { key: company.key, ws: company.ws } : undefined); // a session on the screen that ended or lost control stays (Z-D20): it is not taken from the boss. The head's conversation is none of those: a snapshot without the head (an older server) leaves it open, its composer off, and its Back to the breath works (ZNR-F002)
 		if (!c) {
 			[company, view] = [undefined, "companion"];
@@ -291,6 +328,44 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 			if (company!.composer) company!.composer.box.readOnly = Boolean(over); // the box keeps its draft but takes no typing: a session that lost control is off, not just unsendable (R2, ZNR)
 		}
 	}
+	/** An addressed tower as the companion (§5.3): the screen names it (its name, Direct · its base), its log with the live text, and its composer with the target button. A tower with no unit yet has the faint circle, one ash line, and a composer that posts through the head's route with `to`. */
+	function drawAddressed(c: { key: string; ws: string }) {
+		stopLine();
+		if (view !== "companion" || company?.key !== c.key) {
+			const draft = company?.ws === c.ws ? company.composer?.box.value : undefined; // the tower woke while he typed: the words stay
+			openCompany(c);
+			if (draft) company!.composer!.box.value = draft;
+		}
+		view = "companion";
+		const u = locate(net, c.key), label = deps.label(c.ws) || baseOf(c.ws)?.label || c.ws;
+		company!.name.textContent = label;
+		company!.where.textContent = m.zen_direct({ base: label });
+		company!.cue.set(model.queued().length);
+		company!.picker?.sync();
+		const facts = u ? composerUnit(u.u, { name: label, mk: u.u.mark, state: company!.state, online: deps.online() && can(u.base, "input"), away: !can(u.base, "input") }) : { name: label, control: true, live: true, mark: "idle" as const, online: deps.online(), wakes: true };
+		company!.composer?.update(facts);
+	}
+	/** The boss addressed a tower (a pick, or a typed `@<workspace> text` the server accepted): it is the companion for the rest of the visit, with the draft in its box and the focus (§5.3, ZF-6, ZF-7). */
+	function address(ws: string, draft = "") {
+		if (!active) return;
+		visited.includes(ws) && visited.splice(visited.indexOf(ws), 1);
+		visited.push(ws);
+		[addressed, picked] = [ws, undefined];
+		head.fold();
+		if (shown.kind !== "companion") return; // a card is on the screen: the tower is the companion when the boss is back from it
+		disposeCompany();
+		drawCompany();
+		const box = company?.composer?.box;
+		if (box) (draft && (box.value = draft), box.focus(), box.dispatchEvent?.(new Event("input")));
+		live.textContent = m.zen_with({ name: company?.name.textContent ?? ws });
+	}
+	/** Back from an addressed tower to the circle: by the picker's head row the strip wakes with the input open (he chose to talk to the head); by Esc or Back to the breath it rests. */
+	function unaddress(toHead: boolean) {
+		addressed = undefined;
+		swapCompany();
+		if (toHead) head.unfold();
+		else (head.fold(), head.hush());
+	}
 	/** The session for company ended or lost control (Z-D20, never interrupted): the screen stays with a quiet line and the way back to the breath; the composer is off (its own words say why). */
 	function markOver(co: Company, over: Company["over"]) {
 		if (co.over === over) return;
@@ -305,18 +380,30 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 	}
 	/** The companion's log and composer for a session; the log is a chunk of its own, and the history that arrives before it does waits in `queue`. */
 	function openCompany(c: { key: string; ws: string }) {
+		company?.picker?.veil.remove();
 		const mine = ++turn, cue = mountCue(() => void enter()), header = h("header", null), co: Company = (company = { ...c, name: h("h2", { class: "zen-who" }), where: h("p", { class: "zen-meta" }), header, note: h("p", { class: "zen-company-note", role: "status", "aria-live": "polite" }), cue, queue: [] });
 		const logRoot = h("div", { class: "zen-log" }), composerRoot = h("div", { class: "zen-compose" });
 		const back = histOpen && h("button", { type: "button", class: "zen-rest" }, m.zen_rest()); // the head's history: the way back to the breath, at its top
 		if (back) back.onclick = () => void closeHistory();
 		header.append(co.name, co.where, ...(back ? [back] : []), co.note, cue.el);
 		stage.replaceChildren(circle(), h("section", { class: "zen-company" }, header, logRoot, composerRoot));
-		const sent = answerPost(c.key, deps.post);
-		co.composer = mounts.composer(composerRoot, c.key, sent);
+		const ws = addressed && !histOpen ? c.ws : undefined, bare = Boolean(ws && c.key.startsWith("addr:"));
+		const toHeadRoute = (action: string, body: Record<string, unknown>) => (action === "input" ? answerPost(net?.head?.key ?? HEAD_KEY, deps.post)("input", { ...body, to: ws }) : Promise.resolve({ ok: false, status: 409, body: { reason: m.zen_no_tower_yet() } } as Answer));
+		const sent = bare ? toHeadRoute : answerPost(c.key, deps.post);
+		if (ws) co.picker = mountTarget({ rows: () => targets() ?? [], chosen: () => addressed ?? HEAD_KEY, pick: (t) => (t.ws === HEAD_KEY ? unaddress(true) : t.ws !== addressed && address(t.ws, co.composer?.box.value ?? "")) });
+		co.bare = bare;
+		co.composer = mounts.composer(composerRoot, c.key, sent, undefined, co.picker ? { target: { button: co.picker.button, to: () => undefined, placeholder: () => m.zen_target_placeholder({ name: deps.label(c.ws) || c.ws }) } } : {});
+		if (co.picker) (co.picker.button.isConnected || composerRoot.prepend(co.picker.button), root.append(co.picker.veil)); // a composer that has no row for it (a stand-in) still gets the button first
+		if (bare) {
+			// No tower yet: the faint circle behind one ash line and the composer; its log mounts once the snapshot lists the tower (drawAddressed opens it again under its key).
+			logRoot.replaceChildren(h("p", { class: "zen-no-tower" }, m.zen_no_tower_yet()));
+			stage.querySelector(".zen-circle")?.setAttribute("data-faint", "");
+			return void deps.watch(null);
+		}
 		deps.watch(c.key);
 		void mounts.chat().then((mountChat) => {
 			if (mine !== turn) return;
-			co.chat = mountChat(logRoot, deps.data(c.key), { who: () => locate(net, c.key)?.u ?? { key: c.key, name: c.key, role: "member", mark: "unknown" }, link: () => undefined, away: () => !can(locate(net, c.key)?.base, "input") }), histOpen && quietForwards(logRoot);
+			co.chat = mountChat(logRoot, deps.data(c.key), { who: () => locate(net, c.key)?.u ?? { key: c.key, name: c.key, role: "member", mark: "unknown" }, link: () => undefined, away: () => !can(locate(net, c.key)?.base, "input"), live: "quiet" }), histOpen && quietForwards(logRoot);
 			co.chat.reveal();
 			co.queue.splice(0).forEach((e) => co.chat?.apply(e));
 			if (!co.seen) {
@@ -371,13 +458,14 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 		const to = ring[(at + dir + ring.length) % ring.length];
 		if (!to && !company) return false;
 		picked = to && { key: to.key, ws: to.ws };
+		addressed = undefined;
 		swapCompany();
 		live.textContent = to ? m.zen_with({ name: company?.name.textContent ?? to.key }) : m.zen_rest();
 		return true;
 	}
 	/** The palette's way back to the breathing circle for the rest of this visit. */
 	function rest() {
-		picked = undefined;
+		[picked, addressed] = [undefined, undefined];
 		swapCompany();
 		live.textContent = m.zen_rest();
 	}
@@ -419,6 +507,7 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 			music?.hide();
 			palette.close();
 			picked = undefined;
+			[addressed, visited.length] = [undefined, 0]; // the addressed tower goes with the visit (ZF-7): the next starts at the breath with the head
 			head.reset(); // the draft goes with the visit
 			disposeCompany();
 			view = undefined;
@@ -434,6 +523,12 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 			company?.chat?.box(); // the blocks in the logs read the box again
 			if (active) apply(model.update(alerts));
 			explain(alerts);
+		},
+		/** Every headless run's dialogs, as the server's `run-dialogs` event lists them now (this computer's page only): each is a card that waits for Enter, never one that takes the screen. */
+		runs(list: RunDialog[]) {
+			runs = list;
+			alerts = withCards();
+			if (active) apply(model.update(alerts));
 		},
 		/** The pair requests `lan/pending` lists now (the page polls it: lanwait.ts); a request the server no longer lists is no item. */
 		pairs(list: PairRequest[]) {
@@ -466,10 +561,13 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 			const at = document.activeElement as HTMLInputElement | null, inside = Boolean(at && at !== document.body && root.contains(at));
 			const type = inside ? (at!.getAttribute?.("type") ?? at!.type ?? "text") : "", editable = inside && (/^textarea$/i.test(at!.tagName) || (/^input$/i.test(at!.tagName) && !/^(checkbox|radio|range|button|submit|reset|file|color|image)$/i.test(type)));
 			const armed = escAt !== undefined && now() - escAt < ESC_MS;
-			const step = escStep({ menu: menu.isOpen() || palette.isOpen() || Boolean(music?.isOpen()), history: Boolean(card?.hist?.isOpen()) || histOpen, reply: Boolean(card?.replying?.()) && !card?.sending(), head: head.isOpen(), rest: onCircle() && head.restable(), field: !editable ? "none" : at!.value !== "" ? "text" : "empty", item: shown.kind === "item" && !shown.outcome && Boolean(card && !card.sending()), ended: shown.kind === "item" && endedOf(shown.outcome) && Boolean(card && !card.sending()), over: Boolean(company?.over) && shown.kind === "companion", armed, repeat: e.repeat });
+			const picking = head.picking() || Boolean(company?.picker?.isOpen());
+			const step = escStep({ pick: picking, back: Boolean(addressed) && shown.kind === "companion" && Boolean(company) && !histOpen, menu: menu.isOpen() || palette.isOpen() || Boolean(music?.isOpen()), history: Boolean(card?.hist?.isOpen()) || histOpen, reply: Boolean(card?.replying?.()) && !card?.sending(), head: head.isOpen(), rest: onCircle() && head.restable(), field: !editable ? "none" : at!.value !== "" ? "text" : "empty", item: shown.kind === "item" && !shown.outcome && Boolean(card && !card.sending()), ended: shown.kind === "item" && endedOf(shown.outcome) && Boolean(card && !card.sending()), over: Boolean(company?.over) && shown.kind === "companion", armed, repeat: e.repeat });
 			if (step === "none" || (step === "item" && dwelling())) return true; // Esc cancels the question or puts the card aside: not a card that was just drawn under the Esc that answered the one before (Z-D22)
 			if (step !== "hint") clearEsc();
-			if (step === "menu") (menu.close(), palette.close(), music?.close());
+			if (step === "pick") head.closePick() || company?.picker?.close();
+			else if (step === "back") unaddress(false);
+			else if (step === "menu") (menu.close(), palette.close(), music?.close());
 			else if (step === "history") histOpen ? closeHistory() : card!.collapse();
 			else if (step === "reply") card!.foldReply!();
 			else if (step === "head") head.fold(true);

@@ -34,3 +34,28 @@ test("the run's message under way is the log's last thing, as plain text, and go
 	chat.apply({ key, items: [], live: "" });
 	assert.equal(live(), null, "the run stopped writing");
 });
+
+test("ZF-4 (docs/specs/2026-11-24-zen-f.md §3): with live quiet the message under way has no tag and no live region, and the entry that replaces it comes with no fade", async () => {
+	const root = new El("div"), key = "sb-tower-wa";
+	const data = { older: async () => ({ items: [] }), latest: async () => ({ items: [] }), entry: async () => undefined };
+	const chat = mountChat(root as unknown as HTMLElement, data as never, { who: () => ({ key, name: "tower · Alpha", role: "tower", mark: "working" as const }), link: () => undefined, live: "quiet" });
+	const said = (id: string, text: string): Item => ({ id, kind: "assistant", text, model: "m" });
+	chat.apply({ key, reset: true, items: [said("a1", "Earlier answer")] });
+	await whenDrawn();
+	chat.apply({ key, items: [], live: "Looking at the ledger" });
+	const live = root.querySelector(".live")!;
+	assert.ok(live.classes.has("live-quiet"));
+	assert.equal(live.querySelector(".live-tag"), null, "no Writing now tag");
+	assert.equal(live.getAttribute("aria-live"), null, "no live region: a region that grows every 2 s would be read again and again");
+	chat.apply({ key, items: [said("a2", "Looking at the ledger. Done.")] });
+	await whenDrawn();
+	assert.equal(root.querySelector(".live"), null);
+	assert.equal(root.querySelectorAll(".fresh").length, 0, "the entry took its place with no fade");
+	// Standard keeps its own: the tag, the live region, and the fade.
+	const plain = new El("div"), std = mountChat(plain as unknown as HTMLElement, data as never, { who: () => ({ key, name: "t", role: "tower", mark: "working" as const }), link: () => undefined });
+	std.apply({ key, reset: true, items: [said("a1", "x")] });
+	await whenDrawn();
+	std.apply({ key, items: [], live: "y" });
+	assert.ok(plain.querySelector(".live-tag"));
+	assert.equal(plain.querySelector(".live")!.getAttribute("aria-live"), "polite");
+});

@@ -318,6 +318,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		// run's token. An ally run has none: the boss is not its sender. A hand run's turn that an event started is no turn of his either.
 		if (claim!.kind !== "ally") registerWaitAsk(pi, {
 			lang: localeOf(env, guiDir), scope: () => (claim!.kind === "head" ? { kind: "all" } : { kind: "tower", workspace: claim!.workspace }), auto: { on: () => s.autoOn?.() === true }, ask: paneAsk, here: bossHere, now: cfg.now, every: cfg.face?.every ?? every, tell,
+			...(claim!.headless ? { shown: async (wait: { workspace: string; id: string } | undefined) => void (await call({ cmd: "run-wait-shown", ...(wait ? { wait } : {}) })) } : {}),
 			refusal: () => (claim?.hand && !bossTurn ? "In the boss's own pi (a hand run) boss_wait_ask works only in a turn the boss started; the card stays open for the GUI and /boss wait."
 				: bossDoor !== "pane" || cfg.now() - bossDoorAt >= BOSS_AT_PANE_MS ? "The boss is not at this pane: his last words in this run came from the GUI or another session, or he has not spoken at this pane for 10 minutes. The card stays open for the GUI and /boss wait; a dialog here would wait where he does not look." : undefined),
 		});

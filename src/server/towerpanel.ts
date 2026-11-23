@@ -40,7 +40,13 @@ export function towerPanel(towers: () => Towers | undefined, run?: HerdrRun): { 
 		const kids = t?.runs.headless() ? t.runs.kids() : undefined;
 		if (!t || !kids) return [];
 		const head = workspace === HEAD_KEY || t.head.status()?.workspace === workspace, own = head ? t.head.status()?.workspace : workspace;
-		return kids.dialogs(head ? undefined : workspace).sort((a, b) => Number(b.workspace === own) - Number(a.workspace === own)).map((d) => ({ key: d.key, workspace: d.workspace, method: d.method, title: d.title, ...(d.message ? { message: d.message } : {}), ...(d.options ? { options: d.options } : {}), ...(d.approval ? { approval: true as const } : {}) }));
+		const labels = new Map(t.status().map((r) => [r.workspace, r.label] as const));
+		const kindOf = (d: { kind?: string; workspace: string }): RunDialog["run"] => (d.kind === "ally" ? "ally" : d.kind === "head" || d.workspace === t.head.status()?.workspace ? "head" : "local");
+		const labelOf = (d: { run: string; workspace: string }, kind: RunDialog["run"]) => (kind === "ally" ? t.runs.view(d.workspace)?.allyRuns.find((a) => a.id === d.run)?.label : labels.get(d.workspace));
+		return kids.dialogs(head ? undefined : workspace).sort((a, b) => Number(b.workspace === own) - Number(a.workspace === own)).map((d) => {
+			const run = kindOf(d), label = labelOf(d, run);
+			return { key: d.key, workspace: d.workspace, method: d.method, title: d.title, ...(d.message ? { message: d.message } : {}), ...(d.options ? { options: d.options } : {}), ...(d.approval ? { approval: true as const } : {}), at: d.at, run, ...(label ? { label } : {}), ...(d.wait ? { wait: d.wait } : {}) };
+		});
 	};
 	return {
 		view: (workspace) => (serving(workspace) ? towers()?.runs.view(workspace) : undefined),

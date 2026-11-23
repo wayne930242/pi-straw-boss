@@ -20,21 +20,25 @@ export interface KidsPort {
 	platform?: NodeJS.Platform;
 	killGroup?: (pid: number) => void;
 	taskkill?: (pid: number) => void;
+	/** How many of this computer's own pages have a stream open (gui.ts): a dialog waits for the boss up to `PAGE_DIALOG_MS` while one does (ZF-2, docs/specs/2026-11-24-zen-f.md). None: 0. */
+	pages?: () => number;
 }
 /** A run's dialog. `approval`: one the server raised itself (pi's trust question before the claim, the approval of a `link_request` or of an ally run's gated call), which only this computer's viewer or local page answers: never a paired device (`NO_RELAY`). */
-export interface Dialog { key: string; run: string; workspace: string; method: string; title: string; message?: string; options?: string[]; at: number; approval?: true }
+export interface Dialog { key: string; run: string; workspace: string; method: string; title: string; message?: string; options?: string[]; at: number; approval?: true; /** The run's kind: `local`, `head`, or `ally`. */ kind?: string; /** The wait card a run's `boss_wait_ask` shows with this dialog (the run said so before drawing it: `waitShown`). */ wait?: { workspace: string; id: string } }
 type Held = Dialog & { timer: ReturnType<typeof setTimeout>; settle?: (yes: boolean) => void };
 /** `writing`: the text of the assistant message the run is writing now, for the page's `live` (a local or head run's only: an ally run is a teammate's, read-only in its own comms). */
-interface Kid { child: RunChild; nonce: string; workspace: string; kind: string; exit?: ChildExit; writing: string }
+interface Kid { child: RunChild; nonce: string; workspace: string; kind: string; exit?: ChildExit; writing: string; /** The wait card the run's `boss_wait_ask` shows now: its dialogs carry it. */ showing?: { workspace: string; id: string } }
 /** How long a server restart gives its headless runs to settle (decision F-5). */
 export const DRAIN_MS = 60_000;
 /** How long a run's dialog waits for the boss before it is cancelled. */
 export const DIALOG_MS = 60_000;
+/** How long it waits while this computer has a page open, where Zen queues it as a card the boss takes when he is ready (ZF-2, docs/specs/2026-11-24-zen-f.md §7). */
+export const PAGE_DIALOG_MS = 10 * 60_000;
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 /** How long an approval the server raised waits for the boss: the gate's and `link_request`'s own ten minutes. */
 export const APPROVAL_MS = 10 * 60_000;
 
-export function createKids(o: { port: KidsPort; log: Log; now: () => number; dialogMs?: number }) {
+export function createKids(o: { port: KidsPort; log: Log; now: () => number; dialogMs?: number; pageDialogMs?: number }) {
 	const follows = new Map<string, { label: string; head: string }>();
 	const kids = new Map<string, Kid>(), rings = new Map<string, Ring>(), dialogs = new Map<string, Held>();
 	const ring = (workspace: string) => rings.get(workspace) ?? (rings.set(workspace, createRing()), rings.get(workspace)!);
@@ -52,14 +56,24 @@ export function createKids(o: { port: KidsPort; log: Log; now: () => number; dia
 			if (method === "notify" && typeof rec.message === "string") ring(workspace).add(`· ${plain(rec.message).slice(0, 160)}`);
 			return;
 		}
-		const d: Dialog = { key: `${run}:${id}`, run, workspace, method, title: plain(String(rec.title ?? "")).slice(0, 200), ...(typeof rec.message === "string" ? { message: plain(rec.message).slice(0, 400) } : {}), ...(Array.isArray(rec.options) ? { options: rec.options.slice(0, 9).map((x) => plain(String(x)).slice(0, 80)) } : {}), at: o.now() };
-		const timer = setTimeout(() => {
-			o.log.line("run-dialog-cancelled", { run, method });
-			answerTo(d, { cancelled: true });
-			ring(workspace).add(`· a ${method} nobody answered was cancelled: ${d.title.slice(0, 80)}`);
-		}, o.dialogMs ?? DIALOG_MS);
-		timer.unref?.();
-		dialogs.set(d.key, { ...d, timer });
+		const k = kids.get(run);
+		const d: Dialog = { key: `${run}:${id}`, run, workspace, method, title: plain(String(rec.title ?? "")).slice(0, 200), ...(typeof rec.message === "string" ? { message: plain(rec.message).slice(0, 400) } : {}), ...(Array.isArray(rec.options) ? { options: rec.options.slice(0, 9).map((x) => plain(String(x)).slice(0, 80)) } : {}), at: o.now(), ...(k ? { kind: k.kind } : {}), ...(k?.showing ? { wait: { ...k.showing } } : {}) };
+		// ZF-2: `dialogMs` (60 s) with no page of this computer open; while one is, it is looked at again every `dialogMs` up to `PAGE_DIALOG_MS` from when it came.
+		const short = o.dialogMs ?? DIALOG_MS, long = Math.max(short, o.pageDialogMs ?? PAGE_DIALOG_MS);
+		const arm = (ms: number) => {
+			const timer = setTimeout(() => {
+				const held = dialogs.get(d.key);
+				if (held?.timer !== timer) return;
+				const age = o.now() - d.at;
+				if ((o.port.pages?.() ?? 0) > 0 && age < long) return arm(Math.min(short, long - age));
+				o.log.line("run-dialog-cancelled", { run, method });
+				answerTo(d, { cancelled: true });
+				ring(workspace).add(`· a ${method} nobody answered was cancelled: ${d.title.slice(0, 80)}`);
+			}, ms);
+			timer.unref?.();
+			dialogs.set(d.key, { ...d, timer });
+		};
+		arm(short);
 		ring(workspace).add(`? ${d.title.slice(0, 120)} · answer in the viewer's card view or on this computer's page`);
 	};
 	return {
@@ -116,6 +130,14 @@ export function createKids(o: { port: KidsPort; log: Log; now: () => number; dia
 		/** The boss addressed this tower from the head's viewer: its runs' finished messages show there too, as one line each, until the tower's next run starts on its own. */
 		follow: (workspace: string, label: string, head: string) => void follows.set(workspace, { label: plain(label).slice(0, 40), head }),
 		dropRing: (workspace: string) => void rings.delete(workspace),
+		/** A run's `boss_wait_ask` is about to show the wait card `wait` (or has stopped showing one: undefined): the run's dialogs carry it meanwhile, so Zen draws the wait card and no second one (ZF-3). */
+		waitShown(run: string, wait: { workspace: string; id: string } | undefined) {
+			const k = kids.get(run);
+			if (!k) return false;
+			if (wait) k.showing = { workspace: plain(wait.workspace).slice(0, 120), id: plain(wait.id).slice(0, 12) };
+			else delete k.showing;
+			return true;
+		},
 		/** The dialogs waiting, of one workspace or all, oldest first. */
 		dialogs: (workspace?: string): Dialog[] => [...dialogs.values()].filter((d) => !workspace || d.workspace === workspace).map(({ timer: _t, settle: _s, ...d }) => d),
 		/**
@@ -134,7 +156,7 @@ export function createKids(o: { port: KidsPort; log: Log; now: () => number; dia
 					resolve(false);
 				}, input.ms ?? APPROVAL_MS);
 				timer.unref?.();
-				dialogs.set(key, { key, run: input.run, workspace: input.workspace, method: "confirm", title: plain(input.title).slice(0, 200), ...(input.message ? { message: input.message.split("\n").map((l) => plain(l, 12_000)).join("\n") } : {}), at: o.now(), approval: true, timer, settle: resolve });
+				dialogs.set(key, { key, run: input.run, workspace: input.workspace, ...(kids.get(input.run) ? { kind: kids.get(input.run)!.kind } : {}), method: "confirm", title: plain(input.title).slice(0, 200), ...(input.message ? { message: input.message.split("\n").map((l) => plain(l, 12_000)).join("\n") } : {}), at: o.now(), approval: true, timer, settle: resolve });
 				ring(input.workspace).add(`? ${plain(input.title).slice(0, 120)} · answer in a viewer's card view or on this computer's page`);
 			});
 		},

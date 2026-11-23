@@ -38,6 +38,8 @@ export interface WaitAskDeps {
 	/** Runs `fn` every `ms` until the returned function is called (the look at the list while a dialog is open). */
 	every(fn: () => void, ms: number): () => void;
 	tell(text: string, level?: "info" | "warning" | "error"): void;
+	/** A headless run tells the server which wait card its dialogs show now (undefined: none), before drawing it: Zen then draws that card, not the dialog (docs/specs/2026-11-24-zen-f.md ZF-3). */
+	shown?(wait: { workspace: string; id: string } | undefined): Promise<void>;
 }
 type Row = Listed["rows"][number];
 const LOOK_MS = 2000, LEFT_MS = 10 * 60_000, QUIET_MS = 60_000, CAP_MS = 5 * 60_000;
@@ -115,6 +117,7 @@ export function createWaitAsk(d: WaitAskDeps) {
 			};
 			if (signal?.aborted) stopped();
 			signal?.addEventListener("abort", stopped, { once: true });
+			await d.shown?.({ workspace: row.tower.workspace, id: row.wait.id }).catch(() => {});
 			const unwatch = d.every(() => void (!looking && !cut && ((looking = true), look().catch(() => {}).finally(() => (looking = false)))), LOOK_MS);
 			try {
 				for (;;) {
@@ -129,6 +132,7 @@ export function createWaitAsk(d: WaitAskDeps) {
 				}
 			} finally {
 				unwatch();
+				void d.shown?.(undefined).catch(() => {});
 				signal?.removeEventListener("abort", stopped);
 			}
 		};

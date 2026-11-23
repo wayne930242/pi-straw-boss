@@ -68,7 +68,13 @@ export interface TowerService {
 	headless?: true; viewer?: true;
 }
 /** A dialog a headless run waits on (src/server/runkids.ts): pi's own select, confirm, or input, or an approval the server raised (`approval`). This computer's page shows it; a paired device never gets it. */
-export interface RunDialog { key: string; workspace: string; method: string; title: string; message?: string; options?: string[]; approval?: true }
+export interface RunDialog {
+	key: string; workspace: string; method: string; title: string; message?: string; options?: string[]; approval?: true;
+	/** When it came (epoch ms): Zen takes the one that waited longest first (docs/specs/2026-11-24-zen-f.md §2.2). */ at?: number;
+	/** Whose run: this computer's tower (`local`), the head's (`head`), or a teammate's on this computer (`ally`). */ run?: "local" | "head" | "ally";
+	/** The tower's base label, or for an ally run the teammate's device. */ label?: string;
+	/** The wait card a run's `boss_wait_ask` shows with it: Zen draws that card and not this one (ZF-3). */ wait?: { workspace: string; id: string };
+}
 export type TowerView = TowerService & { queue: Queued[]; file?: string; /** The session files of the live ally runs, by run id. */ allyFiles?: Record<string, string>; /** The session files of the recent event runs, by run id. */ eventFiles?: Record<string, string> };
 /**
  * A base that is an unattended box's, shown through an operate session (docs/specs/2026-11-07-link-operate.md §6.4; src/server/operatehost.ts makes it): the controller's own net reading adds it, the box never sends it. `device` and `short` are the

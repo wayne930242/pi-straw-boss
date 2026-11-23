@@ -6,7 +6,7 @@ import { followLabel } from "./viewlabel.ts";
 import { m } from "./sentences.ts";
 import { getLocale } from "./paraglide/runtime.js";
 import { HEAD_KEY } from "../src/headkey.ts";
-import type { Net } from "../src/net.ts";
+import type { Net, RunDialog } from "../src/net.ts";
 import type { Data, HistoryEvent } from "./chat.ts";
 import type { Post } from "./composer.ts";
 import type { Alert } from "./alerts.ts";
@@ -90,6 +90,8 @@ const openTile = (tile: Tile, take?: boolean) => withPanels((p) => p.tiles.open(
 // The Zen layer (zen.ts, with the pure model in zenmodel.ts) is a chunk of its own, fetched the first time the page shows Zen (pagecore.ts says when it does).
 type Zen = ReturnType<typeof mountZen>;
 let zen: Zen | undefined, zenLoading: Promise<Zen> | undefined;
+/** Every headless run's dialogs, as the server's last `run-dialogs` event listed them (this computer's page only; docs/specs/2026-11-24-zen-f.md §7.3): Zen's run cards. */
+let runDialogs: RunDialog[] = [];
 const withZen = (call: (z: Zen) => void) => {
 	zenLoading ??= loadTheme("zen").then(({ mountZen, zenPage }) => {
 		const host = zenPage({ sound: notify.sound, api: fixture?.api ?? api, snapshot: core.newest }); // the effects, the music, and the companion readers (zenpage.ts) are built in the chunk
@@ -100,7 +102,7 @@ const withZen = (call: (z: Zen) => void) => {
 			menu: { language: { get: getLocale, names: localeNames, set: setLocale }, view: { choice: () => view.choice(), set: (c) => view.set(c), auto: () => followLabel(view.server()) }, sound: { effects: { ...notify.sound.effects, try: host.menuSound.try, all: host.menuSound.all }, background: notify.sound.background } }, // the corner menu's rows act through the settings page's own switches
 			music: host.music,
 			leave: core.leaveZen, terminals, watch: core.watchLog, companions: host.companions, activity: host.activity, trains: host.trains, settings: core.openSettings, start: fixture?.start,
-		}));
+		}), zen.runs(runDialogs), zen);
 	});
 	void zenLoading.then(call);
 };
@@ -263,6 +265,7 @@ const open = () => {
 	const source = fixture ? fixture.open(watching) : live(watching);
 	source.listen("history", (d) => forward("history", d));
 	source.listen("cards", (d) => forward("cards", d));
+	source.listen("run-dialogs", (d) => { try { runDialogs = JSON.parse(d) as RunDialog[]; zen?.runs(runDialogs); } catch {} }); // the next event replaces one the page cannot read
 	// The stream's name (terminal tiles attach to it) and their frames go to the overlay layer, which parses them.
 	source.listen("hello", (d) => (rebuilt(d) ? core.upgrade(() => location.reload()) : ((hello = d), serverView(d), panels?.terminal.hello())));
 	// The server's default view changed (`/boss gui view`): a page that follows the server switches without a reload. A hello says it too, so a stream that missed the event heals when it reconnects.

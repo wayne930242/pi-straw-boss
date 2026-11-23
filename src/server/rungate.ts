@@ -19,7 +19,7 @@ export const LOCAL_LINK_OPS = ["list", "board-read", "send"] as const;
 /** What an ally run may send the holder: its sender's device is asked to confirm a call at `forward`, and the ask is forgotten when the dialog ends another way (the server pins the device and the team). */
 export const ALLY_LINK_OPS = ["confirm-request", "forget-confirm"] as const;
 /** Commands that carry a run's own token as their credential (runs.ts): the token is checked there. */
-const OWN_TOKEN = new Set(["run-poll", "run-taken", "run-done", "run-boss", "run-release", "run-file", "run-tool", "run-approve"]);
+const OWN_TOKEN = new Set(["run-poll", "run-taken", "run-done", "run-boss", "run-release", "run-file", "run-tool", "run-approve", "run-wait-shown"]);
 /** Whether a command carries the run's own token as its credential (a drained run's requests are taken during a restart: main.ts). */
 export const ownToken = (cmd: string) => OWN_TOKEN.has(cmd);
 const LOCAL_ONLY_OWN_WORKSPACE = new Set(["open-main", "close-main"]);

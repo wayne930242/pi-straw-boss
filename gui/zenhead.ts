@@ -6,6 +6,10 @@ import { h } from "./dom.ts";
 import { CLEAR_MS, createFade, FILL, type HeadLine, headLines, SHOWN } from "./headlines.ts";
 import { m } from "./sentences.ts";
 import type { Answer } from "./post.ts";
+import { HEAD_KEY } from "../src/headkey.ts";
+import { headLine } from "./headline.ts";
+import type { Target } from "./targets.ts";
+import { mountTarget } from "./targetpicker.ts";
 
 // The strip under Zen's breathing circle (docs/specs/2026-11-04-head-tower.md, Zen: the strip under the circle): the last lines of the head's conversation, fading from the moment each is first on screen, and the input that is a hairline
 // until a click or Enter unfolds it. The strip knows no page: zen.ts gives it the stream's events, the head unit of each snapshot, and the few things it calls back (the post, the model's look, the history).
@@ -31,6 +35,13 @@ export interface HeadIo {
 	cards(): number;
 	/** Enter, or a tap on the cue: the next card takes the screen; with none, the head tower is called back. */
 	take(): void;
+	/**
+	 * Headless runs (docs/specs/2026-11-24-zen-f.md §5): the target picker's rows, or none when the head takes no `to` (runs are not headless, or an older server), and then no button is drawn and `@` is the head's text as in 0.84.0. `pick`: the boss chose a tower;
+	 * the draft goes with him. `address`: a typed `@<workspace> text` was accepted (2xx), naming the workspace as typed.
+	 */
+	targets?(): Target[] | undefined;
+	pick?(target: Target, draft: string): void;
+	address?(to: string): void;
 }
 
 /** A wheel gesture over the circle screen: the sign of the travel once it passes a notch (24 px), once per gesture (events within 100 ms of each other are one, inertia included). `edge` is true when the gesture began at the end of what scrolls. */
@@ -107,7 +118,9 @@ export function mountHead(io: HeadIo) {
 	const hint = h("button", { type: "button", class: "zen-head-hint" }, m.zen_head_hint());
 	const cue = mountCue(() => io.take()); // the one line that says a card waits for Enter (Z-D19)
 	const box = h("textarea", { class: "zen-head-box", rows: "1", maxlength: "20000", "aria-label": m.zen_head_placeholder(), placeholder: m.zen_head_placeholder(), enterkeyhint: "send" }) as HTMLTextAreaElement;
-	const note = h("p", { class: "zen-head-note", role: "alert" }), form = h("form", { class: "zen-head-form" }, box, note);
+	// The target button at the start of the unfolded input (§5.1): the head, by name, until the boss picks a tower, which then becomes the companion (§5.3). Only with headless runs.
+	const picker = io.targets ? mountTarget({ rows: () => io.targets?.() ?? [], chosen: () => HEAD_KEY, pick: (t) => { if (t.ws === HEAD_KEY) return void box.focus(); const draft = box.value; box.value = ""; grow(); fold(); io.pick?.(t, draft); } }) : undefined;
+	const note = h("p", { class: "zen-head-note", role: "alert" }), form = h("form", { class: "zen-head-form" }, h("div", { class: "zen-head-row" }, ...(picker ? [picker.button] : []), box), note);
 	const el = h("section", { class: "zen-head", role: "group", "aria-label": m.zen_head_label() }, list, working, live, h("div", { class: "zen-head-meta" }, whole, cue.el), hint, form);
 	[working.hidden, form.hidden, el.hidden] = [true, true, true];
 	el.dataset.hushed = "";
@@ -167,6 +180,7 @@ export function mountHead(io: HeadIo) {
 		if (!off && hint.textContent !== say) hint.textContent = say; // Enter takes a card first while one waits; not rewritten when unchanged, so a press on the hint keeps its text node (WebKit drops the click otherwise)
 		hint.hidden = unfolded && !off;
 		form.hidden = !unfolded || off;
+		if (picker) (picker.button.hidden = !io.targets?.()?.length, picker.sync());
 	}
 
 	function load(reset: boolean, next: Item[]) {
@@ -297,8 +311,10 @@ export function mountHead(io: HeadIo) {
 		[busy, box.value] = [true, ""];
 		grow();
 		say("");
+		// `@<workspace> text` (headline.ts) with headless runs: straight to that tower, so no line waits here for the head's history to bring it back (it never would); once accepted, that tower is the companion (§5.3).
+		const line = io.targets?.()?.length ? headLine(text) : { text };
 		const mine = { id: `local-${++local}`, text, seen: bosses(one(text)) };
-		pending.push(mine);
+		if (!line.to) pending.push(mine);
 		draw();
 		const refuse = (why: string) => {
 			if (pending.includes(mine)) pending.splice(pending.indexOf(mine), 1);
@@ -308,7 +324,8 @@ export function mountHead(io: HeadIo) {
 			io.sound("low");
 		};
 		try {
-			const r = await io.post("input", { text, as: "send" });
+			const r = await io.post("input", line.to ? { text: line.text, to: line.to, as: "send" } : { text, as: "send" });
+			if (r.ok && line.to) io.address?.(line.to);
 			if (!r.ok) refuse(m.zen_head_refused({ reason: joined(r.body.reason ?? r.body.error ?? String(r.status)) }));
 		} catch {
 			refuse(m.zen_head_unreachable());
@@ -317,6 +334,7 @@ export function mountHead(io: HeadIo) {
 		if (showing) draw();
 	}
 	box.addEventListener("keydown", (e: KeyboardEvent) => {
+		if (e.key === "ArrowDown" && e.altKey && picker && !picker.button.hidden) return void (e.preventDefault(), picker.show()); // Alt+↓ opens the target list (§5.2)
 		if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
 		e.preventDefault();
 		void send();
@@ -328,10 +346,11 @@ export function mountHead(io: HeadIo) {
 	// A blur with an empty box folds; with a draft it stays. The hint's own blur is not the box's: a click on the folded hint focuses it, and unfolding hides it, which Chrome reports as a focusout of the hint just before the box takes the focus.
 	// The strip rests again when the focus leaves it (the input folded or never opened): a window that lost the focus is not the boss leaving, and a move to another control inside the strip is not either.
 	el.addEventListener("focusout", (e: FocusEvent) => {
-		const closing = e.target !== hint && unfolded && box.value === "" && !busy;
+		const into = e.relatedTarget as Node | null, picking = Boolean(picker && (picker.isOpen() || (into && (form.contains(into) || picker.veil.contains(into))))); // to the target button or its list: the input stays unfolded
+		const closing = e.target !== hint && unfolded && box.value === "" && !busy && !picking;
 		if (closing) fold();
 		const to = e.relatedTarget as Node | null, away = !(to && el.contains(to)) && (typeof document === "undefined" || typeof document.hasFocus !== "function" || document.hasFocus());
-		if (away && !unfolded && (closing || e.target === hint)) hush();
+		if (away && !unfolded && !picking && (closing || e.target === hint)) hush();
 	});
 
 	return {
@@ -359,6 +378,7 @@ export function mountHead(io: HeadIo) {
 		/** Zen hid: the draft is dropped and the input folded. */
 		reset() {
 			stop();
+			picker?.close(false);
 			fold();
 			[hushed, hushLines, first] = [true, new Set(headLines(items).map((l) => l.id)), true]; // the next visit starts at rest, and what is in memory now is not news to it
 			el.dataset.hushed = "";
@@ -381,6 +401,11 @@ export function mountHead(io: HeadIo) {
 		/** The lines are on show and Esc can send them away (zenkeys.ts `rest`). */
 		restable,
 		isOpen: () => unfolded && showing,
+		/** The target list's veil: the layer puts it at its root, over everything the page shows (zen.ts). */
+		veil: picker?.veil,
+		/** The target list is open (zenkeys.ts `pick`): Esc closes it, nothing else. */
+		picking: () => Boolean(picker?.isOpen()),
+		closePick: () => Boolean(picker?.close()),
 		/** Nothing is clear and nothing is held. */
 		rested: () => restOn ?? true,
 		/** A press somewhere on the page: a tap elsewhere ends the touch that holds the lines clear. */

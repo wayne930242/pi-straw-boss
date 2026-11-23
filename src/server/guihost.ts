@@ -390,6 +390,8 @@ export function createGuiHost(o: GuiHostOptions) {
 	/** A reading of the net for the dialog forwarder (src/link/dialogs-out.ts): it binds the hub's relayed dialogs to units whether or not a page listens. */
 	let forwardNet: ReturnType<typeof netSource> | undefined;
 	return {
+		/** How many of this computer's own pages have a stream open now (runkids.ts ZF-2). */
+		pages: () => gui?.pages() ?? 0,
 		/** The hub and a net reading that binds its dialogs, for the forwarder an unattended device runs. */
 		dialogs: () => ({ hub: theHub(), read: async () => void (await (forwardNet ??= netSource({ ...(o.tower ? { services: (workspace: string) => o.tower!.view(workspace) } : {}), run: cfg.run, world: cfg.world, sessions, hub: theHub() })).read()), /** The unit the hub files dialogs under `key` (known after a `read`): its pane for the dispatcher, its name and role for the label a controller is told. */ lookup: (key: string) => forwardNet?.lookup(key) }),
 		/** The readings of the net for the watchdog routes (watchread.ts): every reading a GUI makes, the last one, the registry of the last reading, and a reading made now, which a stopped GUI's source (or a new one) gives. */

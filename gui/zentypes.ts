@@ -69,4 +69,4 @@ export interface ZenDeps {
 	/** The page's timer (a test moves its own): runs `fn` after `ms` and returns what cancels it. */
 	later?(fn: () => void, ms: number): () => void;
 }
-export type Mounts = { ask: typeof mountAsk; trust: typeof trustPanel; composer: typeof mountComposer; chat(): Promise<(root: HTMLElement, data: Data, deps: { who(): Who; link(): undefined; away(): boolean }) => Chat> };
+export type Mounts = { ask: typeof mountAsk; trust: typeof trustPanel; composer: typeof mountComposer; chat(): Promise<(root: HTMLElement, data: Data, deps: { who(): Who; link(): undefined; away(): boolean; live?: "quiet" }) => Chat> };

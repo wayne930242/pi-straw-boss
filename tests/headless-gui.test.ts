@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { afterEach, beforeEach, test } from "node:test";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
+import { PassThrough, Writable } from "node:stream";
+import { afterEach, beforeEach, mock, test } from "node:test";
+import { createKids } from "../src/server/runkids.ts";
 import { callControl } from "../src/server/socket.ts";
 import { towerPanel } from "../src/server/towerpanel.ts";
 import { runRoute, type TowerPanel } from "../src/control.ts";
@@ -59,7 +63,8 @@ test("the tower panel: a run's text under way is `live`, its dialogs are listed 
 	k.say({ type: "extension_ui_request", id: "c1", method: "confirm", title: "Allow it?", message: "an extension asks" });
 	await until(() => p.dialogs!("wA").length === 1, "the dialog for the page");
 	const d = p.dialogs!("wA")[0]!;
-	assert.deepEqual({ ...d, key: undefined }, { key: undefined, workspace: "wA", method: "confirm", title: "Allow it?", message: "an extension asks" });
+	assert.equal(typeof d.at, "number", "the dialog says when it came (Zen orders by it)");
+	assert.deepEqual({ ...d, key: undefined, at: undefined }, { key: undefined, at: undefined, workspace: "wA", method: "confirm", title: "Allow it?", message: "an extension asks", run: "local", label: "Alpha" }, "with whose run it is and the base's label");
 	assert.deepEqual(p.dialogs!("wB"), [], "another tower's page lists none of it");
 	assert.match(String((await p.answer!("wB", d.key, { confirmed: true })).error), /not waiting/, "a key is answered from its own tower's page only");
 	assert.equal((await p.answer!("wA", d.key, { confirmed: true })).ok, true);
@@ -192,4 +197,77 @@ test("a viewer's words carry door viewer, kept on the event; the head's viewer i
 	assert.ok(Array.isArray(polled.elsewhere) && (polled.elsewhere as string[]).some((x) => x.startsWith("wA:")), JSON.stringify(polled.elsewhere));
 	const own = await ask(s, { cmd: "prompt-poll", workspace: "wA", pid: 4243 });
 	assert.equal(own.elsewhere, undefined, "a workspace's viewer is told nothing of the others");
+});
+
+/** A fake pi for createKids: what it was written, and a stdout to speak on. */
+const fakeSpawn = () => {
+	const kid = Object.assign(new EventEmitter(), { pid: 77, stdout: new PassThrough(), stderr: new PassThrough(), written: [] as unknown[], stdin: undefined as unknown as Writable });
+	kid.stdin = new Writable({ write: (c, _e, done) => (kid.written.push(JSON.parse(String(c))), done()) });
+	return { kid, spawn: () => kid as unknown as ChildProcess };
+};
+const flush = () => new Promise((r) => setImmediate(r));
+
+test("ZF-2 (docs/specs/2026-11-24-zen-f.md): a run's dialog waits up to 10 minutes while this computer has a page open and is cancelled at 60 s with none; the run's kind and the wait card its boss_wait_ask shows ride on it", async () => {
+	let pages = 1, now = 0;
+	mock.timers.enable({ apis: ["setTimeout"] });
+	const { kid, spawn } = fakeSpawn();
+	const kids = createKids({ port: { on: () => true, pi: () => ({ node: "n", cli: "c" }), env: {}, dir: () => "/nonexistent-sb-test", spawn, pages: () => pages }, log: { line: () => {} } as never, now: () => now });
+	kids.start({ run: "r1", workspace: "wA", kind: "head", args: [], cwd: "/", onExit: () => {} });
+	assert.equal(kids.waitShown("r1", { workspace: "wB", id: "W3" }), true);
+	kid.stdout.write(`${JSON.stringify({ type: "extension_ui_request", id: "s1", method: "select", title: "W3", options: ["a", "b"] })}\n`);
+	await flush();
+	kids.waitShown("r1", undefined);
+	kid.stdout.write(`${JSON.stringify({ type: "extension_ui_request", id: "c1", method: "confirm", title: "Plain?" })}\n`);
+	await flush();
+	const [sel, plainOne] = kids.dialogs("wA");
+	assert.deepEqual([sel?.kind, sel?.wait], ["head", { workspace: "wB", id: "W3" }], "the select boss_wait_ask draws carries its wait");
+	assert.equal(plainOne?.wait, undefined, "a dialog after the card was shown carries none");
+	try {
+		const pass = async (ms: number) => ((now += ms), mock.timers.tick(ms), await flush());
+		await pass(60_000);
+		assert.equal(kids.dialogs("wA").length, 2, "a page is open: past 60 s they still wait");
+		await pass(5 * 60_000);
+		assert.equal(kids.dialogs("wA").length, 2);
+		pages = 0;
+		await pass(60_000);
+		assert.equal(kids.dialogs("wA").length, 0, "the page closed: cancelled at the next look");
+		assert.deepEqual(kid.written.map((w) => (w as { cancelled?: boolean }).cancelled), [true, true]);
+	} finally {
+		mock.timers.reset();
+	}
+	// With no page at all, 60 s as before.
+	const two = fakeSpawn();
+	now = 0;
+	mock.timers.enable({ apis: ["setTimeout"] });
+	const lone = createKids({ port: { on: () => true, pi: () => ({ node: "n", cli: "c" }), env: {}, dir: () => "/nonexistent-sb-test", spawn: two.spawn, pages: () => 0 }, log: { line: () => {} } as never, now: () => now });
+	lone.start({ run: "r2", workspace: "wA", kind: "local", args: [], cwd: "/", onExit: () => {} });
+	try {
+		two.kid.stdout.write(`${JSON.stringify({ type: "extension_ui_request", id: "i1", method: "input", title: "Name?" })}\n`);
+		await flush();
+		assert.equal(lone.dialogs().length, 1);
+		now += 60_000;
+		mock.timers.tick(60_000);
+		await flush();
+		assert.equal(lone.dialogs().length, 0, "no page open: cancelled at 60 s");
+	} finally {
+		mock.timers.reset();
+	}
+	pages = 1;
+	now = 0;
+	mock.timers.enable({ apis: ["setTimeout"] });
+	try {
+		const three = fakeSpawn();
+		const capped = createKids({ port: { on: () => true, pi: () => ({ node: "n", cli: "c" }), env: {}, dir: () => "/nonexistent-sb-test", spawn: three.spawn, pages: () => pages }, log: { line: () => {} } as never, now: () => now });
+		capped.start({ run: "r3", workspace: "wA", kind: "local", args: [], cwd: "/", onExit: () => {} });
+		three.kid.stdout.write(`${JSON.stringify({ type: "extension_ui_request", id: "i1", method: "input", title: "Name?" })}\n`);
+		await flush();
+		for (let i = 0; i < 9; i++) (now += 60_000, mock.timers.tick(60_000), await flush());
+		assert.equal(capped.dialogs().length, 1, "at 9 minutes it still waits");
+		now += 60_000;
+		mock.timers.tick(60_000);
+		await flush();
+		assert.equal(capped.dialogs().length, 0, "at 10 minutes it is cancelled even with a page open");
+	} finally {
+		mock.timers.reset();
+	}
 });

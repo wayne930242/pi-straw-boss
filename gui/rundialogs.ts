@@ -2,7 +2,7 @@ import type { RunDialog } from "../src/net.ts";
 import { h } from "./dom.ts";
 import { post } from "./post.ts";
 import { m } from "./sentences.ts";
-import { towerRoute } from "./towermodel.ts";
+import { runDialogActions } from "./asks.ts";
 
 // The dialogs a tower's headless runs wait on (docs/specs/2026-11-23-f-entry.md §2.6, §2.8), on this computer's own page: pi's own select, confirm, or input of an extension the run loads, and the approvals the server raised
 // itself (a `link_request`, a teammate's gated call, pi's project-trust question). The server sends them only to this computer's page, never to a paired device (`NO_RELAY`); a press answers it with
@@ -18,9 +18,9 @@ export function fillRunDialogs(box: HTMLElement, ws: string, dialogs: RunDialog[
 	shown.set(box, sig);
 	box.setAttribute("aria-label", m.run_dialogs_label());
 	const note = h("p", { class: "run-dialog-note", role: "status" });
-	const answer = async (d: RunDialog, reply: Record<string, unknown>, row: HTMLElement) => {
+	const answer = async (d: RunDialog, reply: { confirmed?: boolean; value?: string; cancelled?: true }, row: HTMLElement) => {
 		row.querySelectorAll("button, input").forEach((el) => el.setAttribute("disabled", ""));
-		const r = await send(`${towerRoute(ws)}/dialog`, { key: d.key, ...reply });
+		const r = await runDialogActions(d, ws, send).answer(reply);
 		note.textContent = r.ok ? m.run_dialog_answered() : String(r.body.reason ?? m.refused({ status: r.status }));
 		if (!r.ok) row.querySelectorAll("button, input").forEach((el) => el.removeAttribute("disabled"));
 	};

@@ -8,7 +8,7 @@ import { m } from "./sentences.ts";
 
 type Opts = { locale?: "en" | "zh-TW" };
 /** What an alert of a wait carries: the wait's id in the tower's memory and its text. */
-export interface WaitInfo { id: string; text: string; /** The wait as the snapshot carries it (its card and press), for the card to draw. */ entry?: BossWait }
+export interface WaitInfo { id: string; text: string; /** A headless run's `boss_wait_ask` shows this card now (docs/specs/2026-11-24-zen-f.md ZF-3): the run's turn holds on it, so it blocks. */ asked?: true; /** The wait as the snapshot carries it (its card and press), for the card to draw. */ entry?: BossWait }
 /** A wait older than this raises no alert (the boss was told long ago, and a page that opens would buzz at it every time); it stays on the card and in the memory, marked as possibly out of date. */
 export const FRESH_MS = WAIT_FRESH_MS;
 const age = (at: string, now: number) => now - Date.parse(at);

@@ -62,7 +62,7 @@ const HEADERS = {
 const REPLACED = "This address does not work here (the sb server may have restarted, or the link expired): on this computer open /boss gui; on a phone scan a new QR code.";
 const REPLACED_ZH = "這個網址在這裡無法使用（sb server 可能重新啟動過，或連結已過期）：在這台電腦請開啟 /boss gui；在手機請重新掃描新的 QR code。";
 /** `kept` says the listener runs under the `keep` secrets it was given (it got both of their ports back); otherwise its token and CSRF secret are new. `lan` is the handler of kind "lan" for the LAN listeners guihost.ts binds. */
-export interface Gui { /** The box's way in for an operate session (docs/specs/2026-11-07-link-operate.md §6.1): in process, scoped, with no listener of its own (operateseam.ts). */ operate: Operate; url: string; port: number; remotePort: number; token: string; csrf: string; kept: boolean; access: Access; lan: LanHandler; stop(): Promise<void>; /** The server's default view the pages follow now. */ view(): ServerView; /** Changes it: the pages served from now on carry it, and every open stream is told with a `view` event. False when it was that already. */ setView(next: ServerView): boolean }
+export interface Gui { /** The box's way in for an operate session (docs/specs/2026-11-07-link-operate.md §6.1): in process, scoped, with no listener of its own (operateseam.ts). */ operate: Operate; url: string; port: number; remotePort: number; token: string; csrf: string; kept: boolean; access: Access; lan: LanHandler; stop(): Promise<void>; /** The server's default view the pages follow now. */ view(): ServerView; /** Changes it: the pages served from now on carry it, and every open stream is told with a `view` event. False when it was that already. */ setView(next: ServerView): boolean; /** How many of this computer's own pages have a stream open (a paired device's are not counted): a run's dialog waits longer while one does (runkids.ts, ZF-2). */ pages(): number }
 /** What the sb server hands the GUI for Wi-Fi access: the page's panel (the `lan/*` routes), the overlay marks the writing routes look at, lan.json, and where the access reports to (events, log lines). */
 export interface LanOptions { panel: LanPanel; overlay: Overlay; file?: string; notify?(event: LanEvent): void; log?(event: string, fields: Record<string, unknown>): void }
 /** `net` is the registry behind the net reading (the allow list of session keys); without it no session can be watched. `call` reaches Herdr for input. */
@@ -161,6 +161,13 @@ export async function startGui({ auto, board, read, net, call, hub, answered = c
 	let poll: ReturnType<typeof setInterval> | undefined, beat: ReturnType<typeof setInterval> | undefined;
 	const send = (to: ServerResponse, data: string, event?: string) => to.writableEnded || to.write(`${event ? `event: ${event}\n` : ""}data: ${data}\n\n`); // a reading in flight at stop ends after the streams
 	const push = (data: string, event?: string) => clients.forEach((_, c) => send(c, data, event));
+	// Every headless run's dialogs (docs/specs/2026-11-24-zen-f.md §7.3): a `run-dialogs` event to this computer's own pages only, whatever they watch, sent when they changed. A paired device's stream never gets one (`NO_RELAY`).
+	const runSeen = new Map<ServerResponse, string>();
+	const runDialogs = () => {
+		if (!tower?.dialogs) return;
+		const json = JSON.stringify(tower.dialogs(HEAD_KEY));
+		clients.forEach((_, c) => remotes.has(c) || (runSeen.get(c) ?? "[]") === json || (runSeen.set(c, json), send(c, json, "run-dialogs")));
+	};
 	// One reading at a time; a caller that arrives meanwhile waits for the one in flight.
 	const tick = () => (inflight ??= (async () => {
 		try {
@@ -169,6 +176,7 @@ export async function startGui({ auto, board, read, net, call, hub, answered = c
 			if (moved || problem) push((last = json));
 			problem = undefined;
 			if (moved) operate.notify();
+			runDialogs();
 			await Promise.all([...clients.values()].map((w) => w?.refresh().catch(() => {})).concat(operate.refresh()));
 		} catch (error) {
 			// The stream stays up and says why the net is unreadable, once per distinct reason.
@@ -213,6 +221,7 @@ export async function startGui({ auto, board, read, net, call, hub, answered = c
 		req.on("close", () => {
 			clients.delete(res);
 			remotes.delete(res);
+			runSeen.delete(res);
 			mirrors.close(stream);
 			host?.bridge.mirrorClose(stream);
 			left?.();
@@ -351,6 +360,7 @@ export async function startGui({ auto, board, read, net, call, hub, answered = c
 	return {
 		operate: operate.api, url: `http://127.0.0.1:${bound}/${token}/`, port: bound, remotePort: boundRemote, token, csrf, kept, access, lan: lanHandler, stop: halt,
 		view: () => view,
+		pages: () => [...clients.keys()].filter((c) => !remotes.has(c)).length,
 		setView(next) {
 			if (next === view) return false;
 			view = next;

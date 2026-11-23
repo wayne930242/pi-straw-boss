@@ -1,5 +1,6 @@
 import type { ConfirmView } from "../src/link/holder.ts";
-import type { MemoryProposal, Net } from "../src/net.ts";
+import { HEAD_KEY } from "../src/headkey.ts";
+import type { MemoryProposal, Net, RunDialog } from "../src/net.ts";
 import type { Alert } from "./alerts.ts";
 import { remoteDialog } from "./linkdialogmodel.ts";
 import { alertLine, dialogState } from "./linkmodel.ts";
@@ -16,7 +17,9 @@ export type BossCard =
 	| { kind: "confirm"; confirm: ConfirmView }
 	| { kind: "dialog"; device: string; dialogId: string; digest: string; line: string }
 	| { kind: "pair"; request: PairRequest }
-	| { kind: "proposal"; ws: string; tower: string; proposal: MemoryProposal; rev: number };
+	| { kind: "proposal"; ws: string; tower: string; proposal: MemoryProposal; rev: number }
+	/** A dialog a headless run waits on (docs/specs/2026-11-24-zen-f.md §2): this computer's page alone hears of it (the server's `run-dialogs` event). */
+	| { kind: "run"; dialog: RunDialog };
 export interface CardSources {
 	/** The pair requests `lan/pending` lists; none on a paired device's page (the server refuses it Wi-Fi access: `local_only`). */
 	pairs?: PairRequest[];
@@ -24,7 +27,7 @@ export interface CardSources {
 	pairsAt?: number;
 }
 /** What a card's answer is bound to besides its key: a confirm's request and a forwarded dialog's question. A change in it is a new question, so the card is made again (Standard's rows are redrawn the same way). */
-export const cardSig = (a: Alert): string => (a.card?.kind === "confirm" ? `${a.card.confirm.digest}\u001f${a.card.confirm.args}` : a.card?.kind === "dialog" ? a.card.digest : "");
+export const cardSig = (a: Alert): string => (a.card?.kind === "confirm" ? `${a.card.confirm.digest}\u001f${a.card.confirm.args}` : a.card?.kind === "dialog" ? a.card.digest : a.card?.kind === "run" ? a.card.dialog.key : "");
 const card = (key: string, name: string, at: number, extra: Partial<Alert>): Alert => ({ key, ws: "", name, role: "none", mark: "waiting", at, ...extra });
 
 export function cardAlerts(net: Net, at: number, { pairs = [], pairsAt = at }: CardSources): Alert[] {
@@ -59,4 +62,25 @@ export function explainer(say: (line: string) => void, why: (key: string) => str
 		}
 		for (const key of told.keys()) if (!alerts.has(key)) told.delete(key);
 	};
+}
+
+/** The key of a wait's alert (waits.ts `waitAlerts`). */
+const waitKey = (ws: string, id: string) => `wait\u001f${ws}\u001f${id}`;
+/**
+ * The dialogs headless runs wait on, as Zen's cards (docs/specs/2026-11-24-zen-f.md §2, §7.5), added to `alerts`: one card per dialog, blocking, aged from when it came (`at`). A dialog a run's `boss_wait_ask` draws (`wait`) is no card of its own: it is that wait card,
+ * which is then `asked` (it blocks while the run's turn holds on it, ZF-3). `unit` is the tower's key (the head's for a head run), so the card's context is that tower's log.
+ */
+export function withRuns(alerts: Map<string, Alert>, net: Net | undefined, dialogs: RunDialog[], at: number): Map<string, Alert> {
+	if (!dialogs.length) return alerts;
+	const out = new Map(alerts);
+	for (const d of dialogs) {
+		if (d.wait) {
+			const key = [waitKey(d.wait.workspace, d.wait.id), ...(d.run === "head" ? [waitKey(HEAD_KEY, d.wait.id)] : [])].find((k) => out.has(k)), w = key ? out.get(key) : undefined;
+			if (key && w?.wait) out.set(key, { ...w, wait: { ...w.wait, asked: true } });
+			continue;
+		}
+		const head = d.run === "head", base = net?.bases.find((b) => b.id === d.workspace), unit = head ? net?.head?.key : base?.tower?.key;
+		out.set(`run\u001f${d.key}`, { key: `run\u001f${d.key}`, ...(unit ? { unit } : {}), ws: head ? HEAD_KEY : d.workspace, name: head ? "" : (d.label ?? base?.label ?? d.workspace), role: head ? "head" : "tower", mark: "waiting", at, ...(d.at !== undefined ? { since: d.at } : {}), card: { kind: "run", dialog: d } });
+	}
+	return out;
 }

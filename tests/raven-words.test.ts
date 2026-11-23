@@ -32,7 +32,7 @@ const standard = () => (usePack(undefined), useSentences(undefined, getLocale));
 /** Messages that say 塔台 and never show in Raven, with why. Nothing else may. */
 const ZEN_ONLY = "the Zen view's own head strip (gui/zenhead.ts, mounted only in Zen)";
 const NEVER: Record<string, string> = {
-	zen_head_label: ZEN_ONLY, zen_head_hint: ZEN_ONLY, zen_head_hint_click: ZEN_ONLY, zen_head_placeholder: ZEN_ONLY, zen_head_working: ZEN_ONLY, zen_head_refused: ZEN_ONLY, zen_head_off: ZEN_ONLY, zen_head_sent: ZEN_ONLY,
+	zen_head_label: ZEN_ONLY, zen_head_hint: ZEN_ONLY, zen_head_hint_click: ZEN_ONLY, zen_head_placeholder: ZEN_ONLY, zen_head_working: ZEN_ONLY, zen_head_refused: ZEN_ONLY, zen_head_off: ZEN_ONLY, zen_head_sent: ZEN_ONLY, zen_run_who: ZEN_ONLY, zen_no_tower_yet: ZEN_ONLY, zen_target_placeholder: ZEN_ONLY,
 	palette_head_talk: "Zen's command palette (gui/paletteentries.ts, opened only in Zen)", palette_head_history: "Zen's command palette", palette_head_page: "Zen's command palette",
 };
 

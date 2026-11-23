@@ -16,7 +16,7 @@ export function hasHistory(net: Net | undefined, key: string): boolean {
 
 export interface HistoryDeps {
 	key: string;
-	chat(): Promise<(root: HTMLElement, data: Data, deps: { who(): Who; link(): undefined; away(): boolean }) => Chat>;
+	chat(): Promise<(root: HTMLElement, data: Data, deps: { who(): Who; link(): undefined; away(): boolean; live?: "quiet" }) => Chat>;
 	data(key: string): Data;
 	who(): Who;
 	/** The unit is a remote base's and its box takes no input now: the log's blocks cannot be submitted. */
@@ -41,7 +41,7 @@ export function mountHistory(d: HistoryDeps) {
 		d.watch(d.key);
 		void d.chat().then((mountChat) => {
 			if (mine !== turn) return;
-			const c = (chat = mountChat(log, d.data(d.key), { who: d.who, link: () => undefined, away: d.away }));
+			const c = (chat = mountChat(log, d.data(d.key), { who: d.who, link: () => undefined, away: d.away, live: "quiet" }));
 			c.reveal();
 			queue.splice(0).forEach((e) => c.apply(e));
 			if (!seen) {

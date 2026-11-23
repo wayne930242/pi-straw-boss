@@ -1474,3 +1474,23 @@ summary.yard-chip { display: inline-block; cursor: pointer; list-style: none; } 
 .run-dialogs { margin: 0 16px 8px; display: grid; gap: 8px; } .run-dialog { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface-1); } .run-dialog[data-approval] { border-color: color-mix(in srgb, var(--gold) 60%, var(--line)); }
 .run-dialog header { display: flex; gap: 8px; align-items: baseline; } .run-dialog-tag { color: var(--gold); font: 11px var(--mono); text-transform: uppercase; } .run-dialog-text { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 16em; overflow: auto; font: 12px var(--mono); }
 .run-dialog-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } .run-dialog-input { flex: 1 1 12em; min-width: 0; } .run-dialog-note { margin: 0; color: var(--dim); font-size: 12px; } .run-dialog-note:empty { display: none; }
+/* The head page's target button and list (docs/specs/2026-11-24-zen-f.md §6): before `+`, the name and a chevron; the list is a popover over the composer (a sheet from the foot on a phone). Rows hold a label and at most one state word, never a count. */
+.target-btn { display: inline-flex; align-items: center; gap: 4px; min-width: 44px; min-height: 44px; max-width: 12em; padding: 0 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--dim); font: inherit; font-size: 12px; cursor: pointer; }
+.target-btn[hidden] { display: none; }
+.target-btn:hover { color: var(--text); }
+.target-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.target-veil { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center; padding: 16px 16px 7rem; background: color-mix(in srgb, var(--bg) 55%, transparent); }
+.target-veil[hidden] { display: none; }
+.target-veil[data-phone] { padding: 0; }
+.target-list { display: grid; gap: 2px; width: min(28rem, 92vw); max-height: 60vh; overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); box-shadow: 0 8px 24px var(--shadow); }
+.target-veil[data-phone] .target-list { width: 100%; max-height: 80vh; border-radius: 14px 14px 0 0; }
+.target-find { box-sizing: border-box; width: 100%; min-height: 36px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--sunken); color: var(--text); font: inherit; }
+.target-find[hidden] { display: none; }
+.target-rows { display: grid; margin: 0; padding: 0; list-style: none; outline: none; }
+.target-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; column-gap: 8px; min-height: 44px; padding: 0 8px; border-radius: 6px; cursor: pointer; }
+.target-row:hover, .target-row[data-active] { background: var(--surface-1); }
+.target-dot { display: block; box-sizing: border-box; width: 8px; height: 8px; border: 1px solid var(--dim); border-radius: 50%; }
+.target-row[aria-selected="true"] .target-dot { border-color: var(--accent); background: var(--accent); }
+.target-state { color: var(--dim); font-size: 12px; }
+.direct-note { margin: 2px 0 0; padding: 0 4px; color: var(--dim); font-size: 12px; } .direct-note:empty { display: none; }
+@media (forced-colors: active) { .target-dot { forced-color-adjust: none; border-color: CanvasText; } .target-row[aria-selected="true"] .target-dot { background: Highlight; } }

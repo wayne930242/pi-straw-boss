@@ -25,6 +25,8 @@ import { fillBoard } from "./board.ts";
 import { fillHeadAsks, fillHeadLog, fillHeadTitle, headMemory, remember } from "./headpage.ts";
 import { fillRunDialogs } from "./rundialogs.ts";
 import { post } from "./post.ts";
+import { type Target, targetsOf } from "./targets.ts";
+import { mountTarget, type TargetPicker } from "./targetpicker.ts";
 
 // The session route's comms: the header, the log (chat.ts, its own chunk), the bars above the composer, the composer, the question panel, and the
 // session's terminal as the other mode. A phone's Info button, in the header, opens the dossier full-screen through `fullScreen`.
@@ -47,6 +49,13 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 	/** Focus that fell to the page (the dialog that opened this route closed, its link gone) lands in the comms: the box, or the log on a touch screen. */
 	const claim = () => setTimeout(() => scene.route.view === "session" && (document.activeElement ?? document.body) === document.body && (matchMedia("(pointer: fine)").matches && composer?.ready() ? composer.box : chat?.log)?.focus({ preventScroll: true }));
 
+	let target: Target | undefined, picker: TargetPicker | undefined;
+	/** The note after a direct send: where the line went, and its tower's comms one click away (no navigation by itself). `to` is a workspace id, or the label a typed `@` named. */
+	function sentTo(note: HTMLElement, to: string) {
+		const base = scene.net?.bases.find((b) => b.id === to) ?? scene.net?.bases.find((b) => b.label === to), name = base?.label ?? to;
+		const route = base?.tower ? { view: "session" as const, ws: base.id, key: base.tower.key } : base ? { view: "workspace" as const, ws: base.id } : undefined;
+		note.replaceChildren(m.direct_sent({ name }), ...(route ? [" · ", linkTo(route, m.direct_open())] : []));
+	}
 	async function enter(key: string) {
 		const turn = ++entering, { mountChat } = await import("./chat.ts");
 		if (turn !== entering || scene.route.view !== "session") return;
@@ -59,8 +68,14 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 		};
 		const opener = (path: string, card = docFor(locate(scene.net, key)?.u.docs, scene.info?.header?.cwd, path)) => card && (() => openTile(docTile(who().name, card)));
 		chat = mountChat(view.querySelector(".chat-root")!, data(key), { who, link, docFor: opener, page: true, away: () => !can(locate(scene.net, key)?.base, "input") });
-		const send = answerPost(key, () => data(key).post);
-		[composer, asker] = [mountComposer(view.querySelector(".composer-root")!, key, send), mountAnswer(view.querySelector(".ask-root")!, { key, post: send, box: () => Boolean(locate(scene.net, key)?.base.box), show: () => setMode("term") })];
+		const raw = answerPost(key, () => data(key).post), headRoute = scene.route.view === "session" && scene.route.ws === HEAD_KEY;
+		// The head page's target (docs/specs/2026-11-24-zen-f.md §6): a button before `+` with its list; the target holds for the page, and a direct send stays here with a quiet note linking that tower's comms.
+		target = undefined;
+		picker = headRoute ? mountTarget({ rows: () => targetsOf(scene.net, [], noun("head_tower")), chosen: () => target?.ws ?? HEAD_KEY, pick: (t) => ((target = t.ws === HEAD_KEY ? undefined : t), composer?.redraw(), composer?.box.focus()) }) : undefined;
+		const note = h("p", { class: "direct-note", role: "status" });
+		const send: typeof raw = (action, body) => raw(action, body).then((r) => (headRoute && action === "input" && typeof body.to === "string" && r.ok && sentTo(note, body.to), r));
+		[composer, asker] = [mountComposer(view.querySelector(".composer-root")!, key, send, undefined, picker ? { target: { button: picker.button, to: () => target?.ws, placeholder: () => (target ? m.placeholder_direct({ name: target.label }) : undefined) } } : {}), mountAnswer(view.querySelector(".ask-root")!, { key, post: send, box: () => Boolean(locate(scene.net, key)?.base.box), show: () => setMode("term") })];
+		if (picker) ((view.querySelector(".composer-root .composer") ?? view.querySelector(".composer-root"))!.append(note), view.querySelector(".comms-in")!.append(picker.veil)); // the note at the composer's foot
 		mountQueueEdit(view, () => composer?.takeQueue() ?? Promise.resolve());
 		mountQueueFold(view);
 		view.querySelectorAll<HTMLButtonElement>(".modes button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode as "chat" | "term")));
@@ -99,7 +114,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 		get chat() { return chat; },
 		/** A session other than the one shown: the comms start over for `key`. */
 		open(key: string) {
-			[chat, composer, asker] = [undefined, undefined, undefined];
+			[chat, composer, asker, picker, target] = [undefined, undefined, undefined, undefined, undefined];
 			delete view.dataset.role; // the role of the unit before is not this one's until the next draw
 			view.replaceChildren(html(`<p class="lost">${m.opening_channel()}</p>`));
 			void enter(key);
@@ -107,7 +122,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 		/** A route that is not a session: its comms go, since entries that wait hidden with content-visibility keep a page with moving parts producing frames. */
 		close() {
 			entering++;
-			(chat = composer = asker = undefined), view.replaceChildren();
+			(chat = composer = asker = undefined), (picker = target = undefined), view.replaceChildren();
 			delete view.dataset.role;
 		},
 		reveal(at?: string) {
@@ -177,6 +192,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			const notes = view.querySelector<HTMLElement>(".tower-notices");
 			if (notes) (fillHeadActs(view.querySelector<HTMLElement>(".head-acts")!, isHead ? u?.service : undefined, isHead && headUnit?.state !== "absent"), fillConversation(view.querySelector<HTMLElement>(".tower-conv")!, hit?.base.id ?? wsOf(scene), isHead ? undefined : u?.service), fillNotices(notes, hit?.base.id ?? wsOf(scene), u?.service, u?.key, (k) => locate(scene.net, k)?.base.id, Boolean(hit?.base.box)), fillMemory(view.querySelector<HTMLElement>(".tower-memory")!, hit?.base.id ?? wsOf(scene), isHead ? headMemory(u?.service?.memory) : u?.service?.memory)); // the head's page is the conversation and its composer: its actions sit beside the composer (headacts.ts), it has no conversation line and its memory shows only when there is something to read (headpage.ts)
 			if (shown === "term" && holdOf(u?.key ?? "") !== held) setMode("term"); // the tower woke or went to stand by: the terminal or its sentence changes
+			if (picker) (picker.button.hidden = !(isHead && u?.service?.headless), picker.button.hidden && ((target = undefined), picker.close(false)), picker.sync()); // headless runs only: with them off the server refuses `to`, and there is no button
 			composer?.update(composerUnit(u, { name, mk, state, online: online() && can(hit?.base, "input"), away: !can(hit?.base, "input"), role: scene.info?.role, head: isHead }));
 			asker?.update(u?.pending, canAnswer(mk, Boolean(u?.control), online() && can(hit?.base, "input")), can(hit?.base, "input") ? undefined : m.box_answer_blocked()); // its dialog above the composer, answerable or not; an away box's says why, as Zen's and the dock's do
 		},

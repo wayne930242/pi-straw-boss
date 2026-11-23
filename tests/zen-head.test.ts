@@ -13,6 +13,7 @@ import { quietForwards } from "../gui/zenhead.ts";
 import { hotkeyOf } from "../gui/hotkeys.ts";
 import "../gui/zenrows.ts"; // the Zen chunk registers the Zen rows
 import { El, page } from "./fake-dom.ts";
+import { noun } from "../gui/nouns.ts";
 
 // The strip under Zen's circle, as the page drives it (docs/specs/2026-11-04-head-tower.md, Zen: the strip under the circle): the last lines of the head's conversation fading, the folded input that unfolds on a click or
 // Enter, what a send and a refusal do, the draft that holds the screen, the history as a companion, and the keys. The layer is the real one on the fake document; the log and the composer are stand-ins that record.
@@ -1273,4 +1274,120 @@ test("once every line has rested the strip stops redrawing: no timer re-arms and
 	hint.replaceChildren = (...k: never[]) => (writes++, was(...k));
 	await r.advance(1000);
 	assert.equal(writes, 0, "the hint keeps its text node");
+});
+
+// The target picker and the addressed companion (docs/specs/2026-11-24-zen-f.md §5): the button at the start of the unfolded input, only with headless runs; its list; a pick or an accepted `@` makes the tower the companion for the visit.
+const towers = (h: HeadUnit) => ({ ...net(h), bases: [{ id: "wK", label: "Knowledge", mark: "idle", tower: { name: "tower", mark: "idle", key: "tK", control: true, subs: [], service: service({ headless: true }) }, tabs: [], outposts: [], outside: [] }, { id: "wQ", label: "Quarry", mark: "idle", tower: null, tabs: [], outposts: [], outside: [] }] }) as Net;
+const headless = () => head({ service: service({ headless: true }) });
+
+test("ZF §5.1: the target button is drawn only on the unfolded input and only with headless runs; at rest the circle screen is unchanged", async () => {
+	const r = rig();
+	await r.start(towers(headless()));
+	const btn = () => r.by("target-btn")[0];
+	assert.equal(r.form().hidden, true, "folded: the form, and the button in it, is hidden");
+	r.unfold();
+	await r.settle();
+	assert.ok(btn() && !btn()!.hidden, "unfolded: the button is there");
+	assert.equal(btn()!.textContent?.startsWith(noun("head_tower")), true, "it names the head");
+	assert.equal(btn()!.getAttribute("aria-label"), m.target_aria({ name: noun("head_tower") }));
+	const off = rig();
+	await off.start(towers(head()));
+	off.unfold();
+	await off.settle();
+	assert.equal(off.by("target-btn")[0]?.hidden ?? true, true, "switch off: no button, as in 0.84.0");
+	off.typed("@Knowledge hello");
+	off.enter();
+	await off.settle();
+	assert.deepEqual(off.calls.posts.map((p) => p.body), [{ text: "@Knowledge hello", as: "send" }], "switch off: `@` is the head's text, no `to`");
+});
+
+test("ZF §5.2: the list opens over a veil, holds the head first then every base, no digit and no count; ↑ ↓ Enter pick, Esc (row `pick`) closes with nothing changed, a tap on the veil closes", async () => {
+	const r = rig();
+	await r.start(towers(headless()));
+	r.unfold();
+	await r.settle();
+	const veil = () => r.by("target-veil")[0]!;
+	r.by("target-btn")[0]!.click();
+	assert.equal(veil().hidden, false);
+	assert.deepEqual(r.by("target-label").map((el) => el.textContent), [noun("head_tower"), "Knowledge", "Quarry"]);
+	assert.ok(!/\d/.test(r.by("target-rows")[0]!.textContent ?? ""), "no digit in any row");
+	r.esc();
+	assert.equal(veil().hidden, true, "Esc closed the list, and only that");
+	assert.equal(r.form().hidden, false, "the input is still unfolded");
+	assert.equal(r.calls.posts.length, 0);
+	r.by("target-btn")[0]!.click();
+	veil().bubble("click");
+	assert.equal(veil().hidden, true, "a tap on the veil closes it");
+	r.by("target-btn")[0]!.click();
+	veil().bubble("keydown", { key: "ArrowDown" });
+	veil().bubble("keydown", { key: "Enter" });
+	await r.settle();
+	assert.equal(veil().hidden, true);
+	assert.equal(r.calls.composers.at(-1)?.key, "tK", "Enter on the second row picked Knowledge: its conversation is the companion");
+});
+
+test("ZF §5.3: a pick moves the draft and the focus to the tower's companion; the head row returns to the circle with the input open; Esc (row `back`) returns to the breath at rest; hiding Zen forgets the target", async () => {
+	const r = rig();
+	await r.start(towers(headless()));
+	r.unfold();
+	r.typed("where is MP-5383 stuck?");
+	r.by("target-btn")[0]!.click();
+	r.by("target-row")[1]!.click();
+	await r.settle();
+	const c = r.calls.composers.at(-1)!;
+	assert.equal(c.key, "tK");
+	assert.equal(c.box.value, "where is MP-5383 stuck?", "the draft moved with him");
+	assert.equal(page.focused, c.box, "the focus is in the tower's box");
+	assert.ok(r.root.textContent.includes(m.zen_direct({ base: "wK" })), "the header says the words go straight to the tower");
+	const own = r.by("target-btn").find((b) => b.textContent?.startsWith("Knowledge"));
+	assert.ok(own, "the companion's composer has the button, naming the tower");
+	own!.click();
+	r.by("target-row").find((x) => x.textContent?.startsWith(noun("head_tower")))!.click();
+	await r.settle();
+	assert.equal(r.by("zen-company").length, 0, "the head row returns to the circle");
+	assert.equal(r.form().hidden, false, "with the strip's input open: he chose to talk to the head");
+	r.by("target-btn")[0]!.click();
+	r.by("target-row")[1]!.click();
+	await r.settle();
+	r.esc();
+	assert.equal(r.by("zen-company").length, 1, "the first Esc lets go of the box that holds the draft (row `blur`)");
+	r.esc();
+	await r.settle();
+	assert.equal(r.by("zen-company").length, 0, "the next Esc (row `back`) went back to the breath, not out of Zen");
+	assert.equal(r.calls.leave.length, 0);
+	assert.equal(r.form().hidden, true, "the strip at rest, its input folded");
+	assert.equal(r.box().value, "", "the strip's box is empty: the draft went with him");
+	// The head row returns with the input open.
+	r.unfold();
+	r.by("target-btn")[0]!.click();
+	r.by("target-row")[2]!.click(); // Quarry: no tower yet
+	await r.settle();
+	assert.equal(r.calls.composers.at(-1)!.key, "addr:wQ", "a workspace with no tower is still a target");
+	assert.ok(r.root.textContent.includes(m.zen_no_tower_yet()));
+	r.z.hide();
+	r.z.show();
+	await r.settle();
+	assert.equal(r.by("zen-company").length, 0, "the next visit starts at the breath with the head");
+});
+
+test("ZF §5.3: a typed `@<workspace> text` posts `to` on the head's route, adds no line to the strip, and makes the tower the companion only after a 2xx; a refusal keeps the strip and the draft", async () => {
+	let status = 409;
+	const r = rig({ reply: async () => ({ ok: status < 400, status, body: status < 400 ? { accepted: true, label: "Knowledge" } : { reason: "No workspace matches" } }) });
+	await r.start(towers(headless()));
+	r.unfold();
+	r.typed("@Knowledge check the deploy");
+	r.enter();
+	await r.settle();
+	assert.deepEqual(r.calls.posts.at(-1)?.body, { text: "check the deploy", to: "Knowledge", as: "send" });
+	assert.equal(r.lines().length, 0, "no strip line for a direct send");
+	assert.equal(r.by("zen-company").length, 0, "refused: the strip stays");
+	assert.equal(r.box().value, "@Knowledge check the deploy", "the draft is back");
+	assert.deepEqual(r.calls.sound, ["low"]);
+	status = 200;
+	r.box().value = "";
+	r.typed("@Knowledge check the deploy");
+	r.enter();
+	await r.settle();
+	assert.equal(r.calls.composers.at(-1)?.key, "tK", "accepted: Knowledge is the companion, so its answer is on the screen");
+	assert.equal(r.lines().length, 0);
 });

@@ -89,7 +89,7 @@ export interface HistoryEvent { key: string; state?: string; successor?: string;
 export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; pic?(id: string, n: number): string; post?: Post }
 export interface Who extends Shelf { key: string; name: string; role: string; mark: Mark; /** The head tower (its words are named for it). */ head?: boolean; note?: string; control?: boolean; ended?: boolean; pending?: Pending; queued?: Queued[]; monitors?: Monitor[]; service?: TowerService; /** A main's kind and the plan's graph (src/net.ts `Unit.duty`, `todo.graph`). */ duty?: string; todo?: { graph?: string } }
 /** `docFor` opens the document a show_doc path names while its session lists it (doc.ts), or is undefined. */
-export interface ChatDeps { who(): Who; link(name: string): HTMLAnchorElement | undefined; docFor?(path: string): (() => void) | undefined; /** The session route's log: for the head it shows the words only (docs/specs/2026-11-06-head-page-minimal.md). Zen's companion log leaves it out and shows the head's cards as before. */ page?: boolean; /** Whether the unit is a remote base's and its box takes no input now (unreachable or ended): its blocks cannot be submitted, with box_answer_blocked shown. Read at every answer and at `box()`. Without it the unit is local. */ away?(): boolean }
+export interface ChatDeps { /** `quiet` (Zen, docs/specs/2026-11-24-zen-f.md §3): the message under way is still ash text, with no "Writing now" tag, no caret, no motion, and no live region (a region that grows every 2 s would be read again and again). */ live?: "quiet"; who(): Who; link(name: string): HTMLAnchorElement | undefined; docFor?(path: string): (() => void) | undefined; /** The session route's log: for the head it shows the words only (docs/specs/2026-11-06-head-page-minimal.md). Zen's companion log leaves it out and shows the head's cards as before. */ page?: boolean; /** Whether the unit is a remote base's and its box takes no input now (unreachable or ended): its blocks cannot be submitted, with box_answer_blocked shown. Read at every answer and at `box()`. Without it the unit is local. */ away?(): boolean }
 /** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. `log` is the scrolling log, a focus target. `docs` shows Open beside on the show_doc cards whose document is listed now. */
 export interface Chat { apply(event: HistoryEvent): void; reveal(at?: string): void; docs(): void; /** The unit's box may have come or gone (`ChatDeps.away`): the blocks drawn read it again. */ box(): void; /** The boss conversation's runs (src/server/runs.ts `LocalRunRow`): a divider opens each in the log, with how it ended once it has. */ runs(rows: ConversationRun[]): void; log: HTMLElement }
 export type ConversationRun = NonNullable<TowerService["localRuns"]>[number];
@@ -120,7 +120,8 @@ function plain(text: string) {
 	return [...out, text.slice(at)];
 }
 
-export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, page, away }: ChatDeps): Chat {
+export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, page, away, live: liveMode }: ChatDeps): Chat {
+	let swapping = false; // the entries being painted replace a quiet live text (`live: "quiet"`)
 	const model = createChat(), els = new Map<string, HTMLElement>(), opens = new Set<{ paths: string[]; button: HTMLButtonElement; shown?: boolean }>(); // a card the log dropped leaves it
 	const docs = () => opens.forEach((o) => (o.button.isConnected ? ((o.shown = true), (o.button.hidden = !o.paths.some((p) => docFor?.(p)))) : o.shown && opens.delete(o)));
 	const list = h("div", { class: "chat-list" }), top = h("div", { class: "chat-top" }), foot = h("div", { class: "chat-end" }), pill = h("button", { class: "chat-pill", type: "button", hidden: "" }), empty = h("p", { class: "chat-empty" }, m.no_transmissions());
@@ -266,7 +267,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 		if (d.front) list.prepend(...made);
 		else list.append(...made);
 		// A message that just arrived or went out comes in with a motion; older pages and a redraw do not.
-		if (loaded && !d.front && !d.rebuild) made.forEach((el) => (el.classList.add("fresh"), (el.dataset.born = String(Date.now()))));
+		if (loaded && !d.front && !d.rebuild && !swapping) made.forEach((el) => (el.classList.add("fresh"), (el.dataset.born = String(Date.now())))); // a quiet log (Zen) takes the entry that replaces the live text in place, with no fade
 		empty.remove();
 		const svc = who().service;
 		empty.textContent = svc?.state === "standing" && !svc.run ? m.tower_empty() : m.no_transmissions(); // a tower the sb server stands in for says what standing by is
@@ -344,7 +345,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 	keep.observe(scroller);
 
 	/** The run's message under way, after the last entry; "" takes it away. */
-	const live = h("article", { class: "tx live", "aria-live": "polite" }, h("small", { class: "live-tag" }, m.run_live_label()), h("p", { class: "live-text" }));
+	const live = liveMode === "quiet" ? h("article", { class: "tx in live live-quiet" }, h("span", { class: "ava", "aria-hidden": "true" }), h("div", { class: "tx-body" }, h("p", { class: "live-text" }))) : h("article", { class: "tx live", "aria-live": "polite" }, h("small", { class: "live-tag" }, m.run_live_label()), h("p", { class: "live-text" }));
 	function writing(text: string) {
 		if (!text) return void live.remove();
 		live.querySelector(".live-text")!.textContent = text;
@@ -365,6 +366,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 			place();
 		},
 		apply(e) {
+			swapping = liveMode === "quiet" && list.contains(live) && Boolean(e.items?.some((it) => it.kind === "assistant"));
 			// A headless run's message under way (src/watch.ts `live`): shown after the log's last entry until the session file has the message, which arrives as an entry and takes its place.
 			if (e.live !== undefined || e.reset || e.items?.some((it) => it.kind === "assistant")) writing(e.live !== undefined ? e.live : "");
 			if (e.reset) {

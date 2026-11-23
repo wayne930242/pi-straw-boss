@@ -126,3 +126,6 @@
 [data-view="geek"] .yard-pill { border-color: var(--line); } [data-view="geek"] .yard-pill::before { content: "[" attr(data-state) "]"; color: var(--c); font-weight: 400; }
 [data-view="geek"] .yard-pill[data-current] { box-shadow: none; outline: 1px solid var(--text); } [data-view="geek"] .yard-row[data-status="ended"] { opacity: 1; }
 [data-view="geek"] .yard-row::before { content: "[" attr(data-status) "]"; color: var(--dim); font: 12px var(--mono); }
+/* The head page's target button (the target picker spec of 2026-11-24, §6): monospace, no glyph, the chevron as `v`. */
+html[data-view="geek"] .target-btn { font-family: var(--mono); } html[data-view="geek"] .target-chev { font-size: 0; } html[data-view="geek"] .target-chev::after { content: "v"; font-size: 12px; }
+html[data-view="geek"] .target-list, html[data-view="geek"] .target-find { border-radius: 0; font-family: var(--mono); }

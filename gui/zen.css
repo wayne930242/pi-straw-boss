@@ -476,6 +476,55 @@
 [data-view="zen"] .wait-card :is(.wc-open, .wc-copy):hover { background: var(--zen-sunken); }
 [data-view="zen"] .wait-card .pair-btn:focus-visible { outline: none; border-color: var(--zen-seal); }
 
+/* ── Headless runs in Zen (docs/specs/2026-11-24-zen-f.md). The run card is Zen's card: its asker in ash sans, the question in serif paper, an approval's arguments dim monospace on the tint with no box (.zen-args), what the tower said in ash. */
+[data-view="zen"] .zen-run-who { margin: 0; color: var(--zen-ash); font: 400 0.85rem/1.5 var(--sans); letter-spacing: 0.06em; }
+[data-view="zen"] .zen-run-title { margin: 0; color: var(--zen-paper); font: 400 1.15rem/1.6 var(--serif); overflow-wrap: anywhere; }
+[data-view="zen"] .zen-run-text { margin: 0; color: var(--zen-paper); font: 400 1rem/1.6 var(--serif); white-space: pre-wrap; overflow-wrap: anywhere; }
+[data-view="zen"] .zen-decide.zen-run .zen-args { max-height: none; padding: 8px 10px; background: var(--zen-tint); border-radius: 0; }
+[data-view="zen"] .zen-run-opts { display: grid; width: 100%; }
+[data-view="zen"] .zen-run-opt { min-height: 44px; }
+[data-view="zen"] .zen-run-input { min-height: 44px; }
+/* The target button (§5.1): the name and a chevron in the small ash sans of names, sharing the input's hairline, a 1 px ash rule before the box; no fill, no pill, no frame. Hover brightens it; the keys put the seal's line under the word. */
+[data-view="zen"] .zen-head-row, [data-view="zen"] .zen-compose .cmp-row:has(> .target-btn) { display: flex; align-items: stretch; gap: 0; }
+[data-view="zen"] .zen-head-row .zen-head-box { flex: 1 1 auto; min-width: 0; }
+[data-view="zen"] .target-btn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; min-width: 44px; min-height: 44px; max-width: 12em; padding: 0 10px 0 2px; border: 1px solid transparent; border-bottom-color: var(--zen-line); border-radius: 0; background: transparent; color: var(--zen-ash); font: 400 0.85rem/1.4 var(--sans); letter-spacing: 0.04em; cursor: pointer; box-shadow: inset -1px 0 0 var(--zen-ash); transition: color 0.4s var(--zen-ease); }
+[data-view="zen"] .target-btn[hidden] { display: none; }
+[data-view="zen"] .target-btn:hover { color: var(--zen-paper); }
+[data-view="zen"] #zen .target-btn:focus-visible { outline: none; border-radius: 0; border-bottom-color: var(--zen-seal); color: var(--zen-paper); }
+[data-view="zen"] .target-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-view="zen"] .target-chev { color: var(--zen-ash); }
+/* The list (§5.2): Zen's overlay, the veil with its blur over the page and the rows floating on the ink, no panel. On a desktop it rises from the input at the foot; on a phone it is a column the width of the screen rising from the foot. It fades by opacity alone. */
+[data-view="zen"] .target-veil { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-end; justify-content: center; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(max(16px, env(safe-area-inset-bottom)) + 7rem) max(16px, env(safe-area-inset-left)); background: var(--zen-veil); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); animation: zen-fade 0.3s var(--zen-ease) both; }
+[data-view="zen"] .target-veil[hidden] { display: none; }
+[data-view="zen"] .target-veil[data-phone] { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+[data-view="zen"] .target-list { display: grid; gap: 4px; width: min(40rem, 90vw); max-height: 70vh; overflow: auto; background: transparent; border: 0; scrollbar-width: none; }
+[data-view="zen"] .target-veil[data-phone] .target-list { width: 100%; max-height: 80vh; }
+[data-view="zen"] .target-find { box-sizing: border-box; width: 100%; min-height: 44px; padding: 8px 2px; border: 1px solid transparent; border-bottom-color: var(--zen-line); border-radius: 0; background: transparent; color: var(--zen-paper); font: 400 1rem/1.6 var(--sans); }
+[data-view="zen"] .target-find[hidden] { display: none; }
+[data-view="zen"] #zen .target-find:focus-visible, [data-view="zen"] .target-find:focus-visible { outline: none; border-bottom-color: var(--zen-seal); }
+[data-view="zen"] .target-rows { display: grid; margin: 0; padding: 0; list-style: none; outline: none; }
+[data-view="zen"] #zen .target-rows:focus-visible { outline: none; } /* the keys mark the active row's dot, never a ring around the list */
+[data-view="zen"] .target-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; min-height: 44px; padding: 0 14px; border: 1px solid transparent; border-radius: 14px; color: var(--zen-paper); font: 400 1.05rem/1.5 var(--sans); letter-spacing: 0.04em; cursor: pointer; }
+[data-view="zen"] .target-row:hover, [data-view="zen"] .target-row[data-active] { background: var(--zen-glow); }
+[data-view="zen"] .target-dot { display: block; box-sizing: border-box; width: 10px; aspect-ratio: 1; border: 1px solid var(--zen-ash); border-radius: 50%; }
+[data-view="zen"] .target-row[aria-selected="true"] .target-dot { border-color: var(--zen-paper); background: var(--zen-paper); }
+[data-view="zen"] .target-rows:focus-visible .target-row[data-active] .target-dot { box-shadow: 0 0 0 3px var(--zen-seal-glow); border-color: var(--zen-seal); }
+[data-view="zen"] .target-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-view="zen"] .target-state { color: var(--zen-ash); font-size: 0.85rem; }
+/* The message under way (§3): ash serif, still. No tag, no caret, no motion; the entry takes its place. */
+[data-view="zen"] .tx.live-quiet { padding: 0; border: 0; animation: none; transition: none; }
+[data-view="zen"] .tx.live-quiet .live-text { color: var(--zen-ash); font: 400 1rem/1.7 var(--serif); animation: none; transition: none; }
+/* An addressed tower with no unit yet: the circle faint behind one ash line (§5.3). */
+[data-view="zen"] .zen-circle[data-faint] { opacity: 0.35; }
+[data-view="zen"] .zen-no-tower { margin: auto 0 0; color: var(--zen-ash); font: 400 0.95rem/1.6 var(--sans); text-align: center; }
+@media (max-width: 600px) { [data-view="zen"] .target-btn { max-width: 7em; } }
+@media (prefers-reduced-motion: reduce) { [data-view="zen"] .target-veil { animation: none; } [data-view="zen"] .target-btn { transition: none; } }
+@media (forced-colors: active) {
+	[data-view="zen"] .target-btn, [data-view="zen"] .target-find { border-bottom-color: CanvasText; color: CanvasText; }
+	[data-view="zen"] .target-dot { forced-color-adjust: none; border-color: CanvasText; }
+	[data-view="zen"] .target-row[aria-selected="true"] .target-dot { background: Highlight; border-color: Highlight; }
+	[data-view="zen"] .tx.live-quiet .live-text { color: CanvasText; }
+}
 /* Link cards (gui/zendecide.ts): Allow and Deny, Confirm and Reject, and a pair request's number. The panel is a wait panel (its buttons are the card's text buttons above), centred; the tool's arguments are dim monospace type with no box or frame; the number is the head strip's hairline field. */
 [data-view="zen"] .zen-decide > * { flex: 1 1 100%; min-width: 0; margin: 0; }
 [data-view="zen"] .zen-decide-acts { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px 8px; }

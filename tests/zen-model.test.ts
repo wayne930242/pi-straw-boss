@@ -449,7 +449,7 @@ test("Z-D18/Z-D19: a question that waits behind the card on the screen says so i
 });
 
 test("Z-D18: every kind of card has a rank, and a kind nobody ranked blocks (a question that waits is not buried)", () => {
-	const ranked: Record<BossCard["kind"], boolean> = { dialog: true, confirm: true, pair: false, proposal: false }; // a new kind in BossCard fails the type check here until it is ranked in `blocks`
+	const ranked: Record<BossCard["kind"], boolean> = { dialog: true, confirm: true, pair: false, proposal: false, run: true }; // a new kind in BossCard fails the type check here until it is ranked in `blocks`
 	for (const [kind, rank] of Object.entries(ranked)) assert.equal(blocks({ ...al("k", "waiting"), card: { kind } as never }), rank, kind);
 	assert.equal(blocks({ ...al("k", "waiting"), card: { kind: "from-the-future" } as never }), true, "unknown at run time: blocking");
 	assert.equal(blocks(WAIT()), false);
@@ -901,4 +901,42 @@ test("Z-D22 (ZCR-F001, Z-D16): Zen shown again never starts on a chained card: a
 	inside.z.accepted("b");
 	inside.at(OUTCOME_MS);
 	assert.deepEqual([keyOf(inside.z.tick())], ["c"], "a fresh answer chains as before");
+});
+
+// Headless runs (docs/specs/2026-11-24-zen-f.md §2.2, §8.2): a run's dialog is blocking, and so is a wait a run's boss_wait_ask shows now; within blocking the oldest first; a run card never takes the screen by itself, and Z-D22 chains into one.
+const RUNCARD = (key: string, since: number): Alert => al(`run\u001f${key}`, "waiting", since, { card: { kind: "run", dialog: { key, workspace: "w", method: "confirm", title: "t", at: since } } });
+const ASKED = (since: number, asked: boolean): Alert => al("wait\u001fw\u001fW3", "waiting", since, { unit: "t", role: "tower", wait: { id: "W3", text: "x", ...(asked ? { asked: true as const } : {}) } });
+
+test("ZF: a run card and an asked wait block; a wait that is not asked does not", () => {
+	assert.equal(blocks(RUNCARD("r:1", 5)), true);
+	assert.equal(blocks(ASKED(5, true)), true, "a run's turn holds on it");
+	assert.equal(blocks(ASKED(5, false)), false);
+});
+
+test("ZF: a run card queues behind the circle and behind a card on the screen, the oldest blocking first, ahead of an older card that blocks no one; Z-D22 chains into a queued run card", () => {
+	const { z, at } = rig();
+	const proposal = al("p", "waiting", 1, { card: { kind: "proposal", ws: "w", tower: "t", proposal: { id: "P1" } as never, rev: 1 } });
+	assert.equal(z.update(map(proposal, RUNCARD("r:2", 30), RUNCARD("r:1", 20))).screen.kind, "companion", "nothing takes the circle by itself");
+	assert.deepEqual(z.queued().map((a) => a.key), ["run\u001fr:1", "run\u001fr:2", "p"], "blocking first, the oldest of them first; the older proposal after");
+	const first = z.take().screen as Extract<Screen, { kind: "item" }>;
+	assert.equal(first.item.key, "run\u001fr:1");
+	z.update(map(proposal, RUNCARD("r:2", 30), RUNCARD("r:1", 20), RUNCARD("r:3", 40)));
+	assert.equal((z.tick().screen as Extract<Screen, { kind: "item" }>).item.key, "run\u001fr:1", "a new run card does not replace the one on the screen");
+	z.accepted("run\u001fr:1");
+	z.update(map(proposal, RUNCARD("r:2", 30), RUNCARD("r:3", 40)));
+	at(OUTCOME_MS);
+	const next = z.tick();
+	assert.equal(next.chained, true, "the accepted answer is followed by the next queued card (Z-D22)");
+	assert.equal((next.screen as Extract<Screen, { kind: "item" }>).item.key, "run\u001fr:2");
+});
+
+test("ZF §2.3: a run card the server stopped listing ends as `ended` or `expired` when endOf says so, with no knock; otherwise it was answered elsewhere and knocks", () => {
+	for (const [why, sound] of [["ended", undefined], ["expired", undefined], [undefined, "knock"]] as const) {
+		const z = createZen({ now: () => 1_000_000, endOf: () => why });
+		z.update(map(RUNCARD("r:1", 5)));
+		z.take();
+		const r = z.update(map());
+		assert.equal((r.screen as Extract<Screen, { kind: "item" }>).outcome, why ?? "elsewhere");
+		assert.equal(r.sound, sound);
+	}
 });

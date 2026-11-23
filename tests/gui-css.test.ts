@@ -550,3 +550,24 @@ test("a main's row on an ally card is one line at every width: Stop keeps the ri
 	assert.equal(get(".role", "flex"), "none", "and so does the kind word (`.au-mkind` is a `.role`)");
 	assert.match(css, /:where\(\.au-stop\) \{ margin-left: auto; flex: none;/, "Stop is not shrunk and sits at the right end");
 });
+
+test("ZF (docs/specs/2026-11-24-zen-f.md §8.7): Zen's target button and list have no frame, 44 px targets, the seal only under :focus-visible, an opacity fade on the list alone and none under reduced motion; the quiet live text never moves; forced colours keep the hairline and the dot", () => {
+	const block = zen.slice(zen.indexOf("/* ── Headless runs in Zen"), zen.indexOf("/* Link cards (gui/zendecide.ts)"));
+	const rule = (sel: string) => rulesOf(block).filter((r) => r.parts.some((p) => p.endsWith(sel)) && !/@media/.test(r.parts.join(" "))).map((r) => r.body).join(";");
+	assert.match(rule(".target-btn"), /border: 1px solid transparent;/, "no frame: the border is transparent, only the hairline under it");
+	assert.match(rule(".target-btn"), /background: transparent;/, "no fill");
+	for (const sel of [".target-btn", ".target-row", ".target-find"]) assert.match(rule(sel), /min-height: 44px/, `${sel}: 44 px`);
+	assert.match(rule(".target-row"), /border: 1px solid transparent;/);
+	for (const line of block.split("\n").filter((l) => /--zen-seal\b/.test(l))) assert.match(line, /:focus-visible/, `the seal only marks the keys: ${line.slice(0, 80)}`);
+	assert.match(rule(".target-veil"), /animation: zen-fade 0\.3s/, "the list fades in (opacity, zen-fade)");
+	assert.doesNotMatch(block, /transform|slide|translate/, "nothing slides");
+	assert.match(block, /@media \(prefers-reduced-motion: reduce\) \{[^\n]*\.target-veil \{ animation: none; \}/);
+	assert.match(rule(".tx.live-quiet"), /animation: none; transition: none;/);
+	assert.match(rule(".tx.live-quiet .live-text"), /animation: none; transition: none;/);
+	assert.match(block, /@media \(forced-colors: active\) \{[\s\S]*\.target-btn, \[data-view="zen"\] \.target-find \{ border-bottom-color: CanvasText;[\s\S]*\.tx\.live-quiet \.live-text \{ color: CanvasText; \}/);
+	for (const line of block.split("\n").filter((l) => /^\[data-view|^\s*\[data-view/.test(l))) assert.match(line, /^\s*\[data-view="zen"\]/, "every rule is Zen's");
+	// Standard: the head page's button and list, 44 px, Geek's chevron a `v`.
+	assert.match(css, /\.target-btn \{[^}]*min-height: 44px/);
+	assert.match(css, /\.target-row \{[^}]*min-height: 44px/);
+	assert.match(geekCss, /\.target-chev::after \{ content: "v";/);
+});

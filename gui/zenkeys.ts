@@ -1,6 +1,7 @@
 // Zen's Esc, as one table (docs/specs/2026-11-01-zen-view.md, Leaving and coming back). The layer gathers the facts and acts on the answer (zen.ts); nothing else in Zen reads the key, so the views-core
 // refactor moves this file whole.
 //
+//   pick     the target list is open (the head's input or an addressed tower's): Esc closes it, the focus back on its button, and does nothing else.
 //   menu     the corner menu is open: Esc closes it and does nothing else.
 //   history  the item's context is open on its card, or the head tower's whole conversation on the circle: Esc closes it and does nothing else.
 //   reply    the wait card's answer box is unfolded: Esc folds it (the draft stays) and does nothing else.
@@ -10,13 +11,18 @@
 //   over     the session for company ended or lost control and stays on the screen: Esc leaves it for the breath (Z-D20: nothing takes it from the boss but the boss).
 //   item     an item is on the page and can still be answered: Esc cancels its question when it is cancellable (the card's Cancel), else "Not now" (the next card).
 //   rest     the head tower's lines are clear under the circle: Esc sends them away (the maxim comes back) and does nothing else. After an empty field and an item, so it is the first Esc that nothing above took.
+//   back     an addressed tower is the companion and nothing above took the key: back to the breath, the strip at rest (he came by his own pick, so Esc goes back the way he came, not out of Zen).
 //   leave    nothing above took the key and the last one that took none was less than ESC_MS ago: back to Standard for this page.
 //   hint     nothing took the key and it is the first: the quiet line "Press Esc again for Standard" shows, and the next such Esc within ESC_MS leaves.
 // A key that repeats (held down) is no second press: it changes nothing.
 
 export const ESC_MS = 600;
-export type EscStep = "menu" | "history" | "reply" | "head" | "blur" | "close" | "over" | "item" | "rest" | "leave" | "hint" | "none";
+export type EscStep = "pick" | "back" | "menu" | "history" | "reply" | "head" | "blur" | "close" | "over" | "item" | "rest" | "leave" | "hint" | "none";
 export interface EscFacts {
+	/** The target list is open (docs/specs/2026-11-24-zen-f.md §5.2): Esc closes it with nothing changed, the focus back on its button. */
+	pick?: boolean;
+	/** An addressed tower is the companion (§5.3): with nothing to fold or let go of, Esc goes back the way he came, to the breath at rest. */
+	back?: boolean;
 	/** The corner menu is open. */
 	menu: boolean;
 	/** The item's context (its session log) is open on the card, or the head tower's history on the circle: Esc closes it before anything else. */
@@ -43,6 +49,7 @@ export interface EscFacts {
 
 export function escStep(f: EscFacts): EscStep {
 	if (f.repeat) return "none";
+	if (f.pick) return "pick";
 	if (f.menu) return "menu";
 	if (f.history) return "history";
 	if (f.reply) return "reply";
@@ -53,6 +60,7 @@ export function escStep(f: EscFacts): EscStep {
 	if (f.item) return "item";
 	if (f.field === "empty") return "blur";
 	if (f.rest) return "rest";
+	if (f.back) return "back";
 	return f.armed ? "leave" : "hint";
 }
 

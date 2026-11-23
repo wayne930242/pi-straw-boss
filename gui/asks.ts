@@ -5,6 +5,8 @@ import { m } from "./sentences.ts";
 import { type Answer, post } from "./post.ts";
 import type { NetRoute } from "./router.ts";
 import { towerRoute } from "./towermodel.ts";
+import { HEAD_KEY } from "../src/headkey.ts";
+import type { RunDialog } from "../src/net.ts";
 
 // What the boss's answers have in common, decided once for every view (docs/specs/2026-11-01-zen-view.md, Answering): how a reply to an answer reads. The routes say it in their own words: a dialog or trust answer has an `outcome`, a message to a tower
 // (the session's `input`) says `accepted: true`, and the tower memory route (a dismissed wait) answers the memory it now holds. A view reads them through `outcome` and acts on one of three: Standard closes its dialog, Zen's model knocks or plays the low bowl.
@@ -81,3 +83,12 @@ export function lanReading(r: Pick<Answer, "ok" | "status" | "body">): { answer:
 	const budget = !r.ok && r.body.error === "no_match" && Number(r.body.denied) > 0;
 	return { answer: r.ok || budget ? "" : r.body.error === "no_match" ? m.lan_no_match() : String(r.body.reason ?? m.refused({ status: r.status })), verdict: budget ? m.lan_wrong_budget() : "" };
 }
+
+/**
+ * A headless run's dialog (docs/specs/2026-11-24-zen-f.md §2.3): one send path for Standard's rows (rundialogs.ts) and Zen's run card (zenrun.ts), so the body (`key`, `confirmed`, `value`, `cancelled`) and the route are the same in every view. `ws` is the page's
+ * workspace (the head's page: `HEAD_KEY`, whose route lists every run's dialogs); without it a head run's dialog goes to the head's route and any other to its own tower's. The route's 200 reads as accepted (`taken`).
+ */
+export const runDialogActions = (d: Pick<RunDialog, "key" | "workspace" | "run">, ws = d.run === "head" ? HEAD_KEY : d.workspace, send: (path: string, body: Record<string, unknown>) => Promise<Answer> = post) => {
+	const answer = (reply: { confirmed?: boolean; value?: string; cancelled?: true }) => send(`${towerRoute(ws)}/dialog`, { key: d.key, ...reply }).then(taken);
+	return { answer, yes: () => answer({ confirmed: true }), no: () => answer({ confirmed: false }), value: (value: string) => answer({ value }), cancel: () => answer({ cancelled: true }) };
+};

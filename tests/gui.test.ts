@@ -529,3 +529,43 @@ test("the shipped app manifest stays under the token path and names only icons t
 	assert.match(fs.readFileSync(new URL("../gui/index.html", import.meta.url), "utf8"), /<link rel="apple-touch-icon" href="\.\/apple-touch-icon\.png">/);
 	assert.ok(fs.existsSync(new URL("apple-touch-icon.png", pub)));
 });
+
+test("run-dialogs (docs/specs/2026-11-24-zen-f.md §7.3): this computer's stream gets every headless run's dialogs whatever it watches, on change only; a paired device's stream never does; pages() counts this computer's streams", async () => {
+	let dialogs: unknown[] = [];
+	const tower = { dialogs: () => dialogs, liveText: () => "" } as never;
+	const gui = await (async () => { const g = await startGui({ read: async () => net("a"), dir, pollMs: 20, pingMs: 50, tower }); running.push(g); return g; })();
+	const host = "box.tail1.ts.net:8443";
+	gui.access.enable({ host, login: "me@example.com" });
+	const tailnet = { host, "tailscale-user-login": "me@example.com", "x-forwarded-for": "100.87.7.97" };
+	const cookie = await new Promise<string>((done) => request({ host: "127.0.0.1", port: gui.remotePort, path: `/${gui.token}/pair/${gui.access.pair()}`, headers: tailnet, agent: false }, (res) => (res.resume(), done(String(res.headers["set-cookie"]).split(";")[0]!))).end());
+	const far: { event: string; data: string }[] = [];
+	const remote = get({ host: "127.0.0.1", port: gui.remotePort, path: `/${gui.token}/events`, headers: { ...tailnet, cookie }, agent: false }, (res) => {
+		res.setEncoding("utf8");
+		let buffer = "";
+		res.on("data", (chunk: string) => {
+			buffer += chunk;
+			for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
+				const lines = buffer.slice(0, end).split("\n");
+				buffer = buffer.slice(end + 2);
+				far.push({ event: lines.find((l) => l.startsWith("event: "))?.slice(7) ?? "message", data: lines.find((l) => l.startsWith("data: "))?.slice(6) ?? "" });
+			}
+		});
+	});
+	remote.on("error", () => {});
+	const mine = listen(gui), watching = listen(gui, "sb-other-key");
+	await until(() => mine.events.some((e) => e.event === "hello") && watching.events.some((e) => e.event === "hello") && far.some((e) => e.event === "hello"), "three streams");
+	assert.equal(gui.pages(), 2, "the paired device's stream is not one of this computer's pages");
+	assert.equal(mine.events.filter((e) => e.event === "run-dialogs").length, 0, "nothing while no run waits");
+	dialogs = [{ key: "r:1", workspace: "wA", method: "confirm", title: "Allow?", approval: true, at: 5, run: "local", label: "Alpha" }];
+	await until(() => mine.events.some((e) => e.event === "run-dialogs") && watching.events.some((e) => e.event === "run-dialogs"), "the dialogs on both local streams");
+	await new Promise((r) => setTimeout(r, 120));
+	assert.equal(mine.events.filter((e) => e.event === "run-dialogs").length, 1, "sent once while unchanged");
+	assert.deepEqual(JSON.parse(mine.events.find((e) => e.event === "run-dialogs")!.data), dialogs);
+	dialogs = [];
+	await until(() => mine.events.filter((e) => e.event === "run-dialogs").length === 2, "the empty list when it went");
+	assert.equal(far.filter((e) => e.event === "run-dialogs").length, 0, "a paired device never hears of one");
+	mine.close();
+	watching.close();
+	remote.destroy();
+	await until(() => gui.pages() === 0, "no page left");
+});

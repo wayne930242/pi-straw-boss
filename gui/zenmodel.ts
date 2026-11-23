@@ -8,7 +8,7 @@ import { rankOf, unitsOf, waitingOf } from "./units.ts";
 // One exception, the boss's own ruling (Z-D22): once he has taken a card and answered it, the next one that was already waiting when the answer was accepted is taken straight after the outcome, with no pause and no breath (`chained`).
 export type Sound = "bowl" | "knock" | "low";
 /** `outcome`: why the card is no longer answerable. `answered` (the boss's own answer) shows for 1.2 s and then the next card that waits (Z-D22), or the pause when none does; `elsewhere` (the question ended: answered in the terminal, the unit went on), `gone` (the unit left the net or closed: nothing was answered) and `error` (the unit failed) are held: the card stays, saying so, until the boss closes it (`skip`). */
-export type Outcome = "answered" | "elsewhere" | "gone" | "error";
+export type Outcome = "answered" | "elsewhere" | "gone" | "error" | "ended" | "expired";
 export type Screen = { kind: "item"; item: Alert; outcome?: Outcome } | { kind: "pause" } | { kind: "companion" };
 export const REST_MS = 10 * 60_000, OUTCOME_MS = 1200, HOLD_MS = 30_000, PAUSE_MS = 3000;
 /** The same tool call that had no relayed dialog when the card was taken and has one now (the relay is a step behind Herdr's `blocked`, src/ask.ts): the same question, now answerable, not another one. */
@@ -22,10 +22,10 @@ const questionOf = (a: Alert) => `${a.key}|${a.pending?.answer ? `${a.pending.an
  */
 const unranked = (_kind: never): true => true;
 export function blocks(a: Alert): boolean {
-	if (a.wait) return false;
+	if (a.wait) return a.wait.asked === true; // a run's boss_wait_ask shows it now: the run's turn holds on it (docs/specs/2026-11-24-zen-f.md ZF-3)
 	const kind = a.card?.kind;
 	switch (kind) {
-		case undefined: case "dialog": case "confirm": return true;
+		case undefined: case "dialog": case "confirm": case "run": return true;
 		case "pair": case "proposal": return false;
 		default: return unranked(kind);
 	}
@@ -39,9 +39,12 @@ export function companionOf(net: Net | undefined, asked: With | undefined): With
 	return asked && ws !== undefined ? { key: asked.key, ws } : undefined;
 }
 
-/** `covered`: something the boss opened lies over the card (the terminal layer, the palette, a menu): the card behind it is not followed by another (Z-D22). */
-export interface ZenDeps { now(): number; covered?(): boolean }
-export function createZen({ now, covered }: ZenDeps) {
+/**
+ * `covered`: something the boss opened lies over the card (the terminal layer, the palette, a menu): the card behind it is not followed by another (Z-D22). `endOf`: why a run's dialog (docs/specs/2026-11-24-zen-f.md §2.3) the server stopped listing
+ * is gone when it was not answered elsewhere: its run ended (`ended`) or it timed out (`expired`); both ring nothing, as a unit that left does not.
+ */
+export interface ZenDeps { now(): number; covered?(): boolean; endOf?(item: Alert): "ended" | "expired" | undefined }
+export function createZen({ now, covered, endOf }: ZenDeps) {
 	let alerts = new Map<string, Alert>(), screen: Screen = { kind: "companion" }, until = 0, hidden = false, quiet = false, knocked = false, back = false, chain = false, left = false;
 	let lined = new Set<string>(); // the cards that waited when the boss's answer was accepted: the only ones the chain may take (a card that comes during the outcome waits for Enter)
 	const seen = new Map<string, number>(), rests = new Map<string, { until: number; q: string }>();
@@ -71,7 +74,8 @@ export function createZen({ now, covered }: ZenDeps) {
 			else if (!screen.outcome) {
 				const it = screen.item, elsewhere = cur ? !cur.closed : Boolean(it.trust || it.card); // a trust question or a card (a link confirm, a pair request, a proposal) has no unit to leave: when the server stops listing it, it was settled; a unit that left or closed is a silent end
 				const left = !it.trust && !it.card && !it.wait && (!cur || cur.closed); // ...and nothing was answered: the card says the unit left, not that it was answered elsewhere (ZNI-F007)
-				settled(cur?.mark === "error" ? "error" : left ? "gone" : "elsewhere", cur?.mark === "error" ? "low" : elsewhere ? "knock" : undefined);
+				const over = !cur && it.card?.kind === "run" ? endOf?.(it) : undefined; // a run's dialog whose run ended or that timed out: its words, and no knock
+				settled(cur?.mark === "error" ? "error" : over ?? (left ? "gone" : "elsewhere"), cur?.mark === "error" ? "low" : over ? undefined : elsewhere ? "knock" : undefined);
 			}
 		}
 		// A pause is for a boss who is there to breathe: a page that is not shown has none, so an item that waits ends it at once (the page reminds, as on any hidden page). With nothing waiting it is kept until the page is shown.
@@ -85,7 +89,7 @@ export function createZen({ now, covered }: ZenDeps) {
 		tick: out,
 		/** The accepted answer or cancel of the item with this key: the knock, the outcome for 1.2 s, then the next card that waits (Z-D22) or the pause. */
 		accepted(key: string) { if (screen.kind !== "item" || screen.item.key !== key) return out(); // a reply that comes after the boss moved on belongs to an item that is no longer on screen
-			if (screen.outcome === "elsewhere" || screen.outcome === "gone") (settled("answered", undefined), (lined = new Set(queued().map((x) => x.key))), (left = false)); // the server's snapshot came ahead of its reply: this answer settled it, and the knock already rang
+			if (screen.outcome === "elsewhere" || screen.outcome === "gone" || screen.outcome === "ended" || screen.outcome === "expired") (settled("answered", undefined), (lined = new Set(queued().map((x) => x.key))), (left = false)); // the server's snapshot came ahead of its reply: this answer settled it, and the knock already rang
 			else if (!screen.outcome) { lined = new Set(queued().map((x) => x.key)); left = false; quiet = knocked = false; settled("answered", "knock"); quiet = true; rests.set(screen.item.key, { until: now() + HOLD_MS, q: questionOf(screen.item) }); } return out(); },
 		/** An answer of the item with this key that was refused, stale, busy, or unconfirmed: the low bowl, and the card stays; the item's later exit is silent. */
 		refused(key: string) { if (screen.kind === "item" && screen.item.key === key && !screen.outcome && !quiet) { sound = "low"; quiet = true; } return out(); },

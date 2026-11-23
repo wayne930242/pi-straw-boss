@@ -53,6 +53,7 @@ export const SENTENCES: SentencePack = {
 		wait_goto: "開啟管家對話",
 		wait_sent: "已送給管家。",
 		wait_sent_head: "已送給鴉閣。",
+		placeholder_direct: "直接寫給{name}管家",
 		memory_by_run_note: "管家自己的備註",
 		memory_wait_answered_boss: "你已回覆，管家還沒結案",
 		memory_pending: "管家提議，等你確認",
