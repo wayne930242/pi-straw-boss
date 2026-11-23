@@ -7,7 +7,8 @@ import type { WatchQuery } from "./watchread.ts";
 // `since` inside the server as the retired `cli.mjs watch` did over the socket, and wakes the main that asked with one line written here: no transcript, path, or monitor command (watch-read's unit view excludes them).
 //
 // Rate: at most one message per watch a minute, the newest state only (a pending line is replaced by a newer one, and one equal to the line last sent is dropped), at most 12 messages a session an hour across its watches; the changes
-// after those come as one summary line when the hour turns. `gone` and `expired` end the watch and always go out, counted. The session decides how a line lands (a follow-up while it is busy, a turn when idle: bosswatch.ts).
+// after those come as one summary line when the hour turns. A held change is counted once, on its pending line (`heldBy`), whether a reading or the watch's minute brought it to the cap, and it counts as told only once the session took the summary; a summary
+// not taken sends the changes on their own. `gone` and `expired` end the watch and always go out, counted. The session decides how a line lands (a follow-up while it is busy, a turn when idle: bosswatch.ts).
 //
 // Lifetime: the watches are kept in `watches.json` of the server's folder with what each last told, so a restart neither loses them nor repeats a change (a server's first stamp never matches, so its first verdict is a `changed` that
 // carries the same facts). A watch ends at `gone`, `expired`, or a stop, or when its session has been off the net for 15 minutes (a revived main keeps its session id, and its watches with it).
@@ -33,7 +34,7 @@ export interface WatchesDeps {
 	log?(event: string, facts: Record<string, string | number | boolean>): void;
 }
 interface Told { state: string; facts: string; at: number }
-interface Watch extends WatchAdd { deadline: number; added: number; since?: string; told?: Told; sentAt: number; pending?: Told & { line: string }; newest?: { state: string; line: string; at: number }; away?: number; fails: number; ended: boolean; sending?: boolean; timer?: () => void; restarted?: boolean }
+interface Watch extends WatchAdd { deadline: number; added: number; since?: string; told?: Told; sentAt: number; pending?: Told & { line: string; heldBy?: Bucket }; newest?: { state: string; line: string; at: number }; away?: number; fails: number; ended: boolean; sending?: boolean; timer?: () => void; restarted?: boolean }
 interface Bucket { from: number; count: number; held: number; keys: Map<string, string>; timer?: () => void }
 
 const no = (error: string): Reply => ({ ok: false, error });
@@ -86,15 +87,15 @@ export function createWatches(d: WatchesDeps) {
 	};
 	const bucketOf = (session: string, at: number) => {
 		let b = buckets.get(session);
-		if (!b || at - b.from >= HOUR_MS) buckets.set(session, (b = { from: at, count: 0, held: 0, keys: new Map() }));
+		// An hour with changes held stays until its summary went out, which a timer late under load runs after the hour: a new bucket in its place would drop the summary.
+		if (!b || (at - b.from >= HOUR_MS && !b.timer)) buckets.set(session, (b = { from: at, count: 0, held: 0, keys: new Map() }));
 		return b;
 	};
 	/** The hour of a session turned with changes held: one line names how many and the newest state of each watch they were on. */
 	const turn = async (session: string, b: Bucket) => {
 		if (buckets.get(session) !== b) return;
 		buckets.delete(session);
-		const mine = [...watches.values()].filter((w) => w.session === session && !w.ended);
-		for (const w of mine) if (w.pending && !ENDS.has(w.pending.state)) (w.told = { state: w.pending.state, facts: w.pending.facts, at: d.now() }), (w.pending = undefined);
+		const mine = [...watches.values()].filter((w) => w.session === session && !w.ended), held = mine.flatMap((w) => (w.pending?.heldBy === b ? [[w, w.pending] as const] : []));
 		const to = mine[0];
 		if (!to || !b.held) return;
 		const text = `watch: ${b.held} more watch change${b.held > 1 ? "s" : ""} in the last hour were held (at most ${PER_HOUR} messages an hour); newest: ${[...b.keys].map(([key, state]) => `${plain(key, 60)} ${state}`).join("; ")}. boss_watch with no key lists every watch.`.slice(0, MAX_LINE);
@@ -102,15 +103,22 @@ export function createWatches(d: WatchesDeps) {
 		next.count++;
 		const sent = await d.send({ session, workspace: to.workspace }, text, { key: "*", state: "summary" }).catch(() => false);
 		if (!sent) (next.count--, d.log?.("watch-undelivered", { session: session.slice(0, 8), key: "*" }));
+		// A change still waiting for its watch's minute was not held and goes out when the minute ends; one replaced while the summary went out is the newer line's to send.
+		for (const [w, p] of held) {
+			if (w.ended || w.pending !== p) continue;
+			if (sent) (w.told = { state: p.state, facts: p.facts, at: d.now() }), (w.pending = undefined);
+			else (p.heldBy = undefined), flush(w);
+		}
 		save();
 	};
-	const flush = (w: Watch, fresh = false): void => {
+	const flush = (w: Watch): void => {
 		if (w.ended || !w.pending || w.sending || stopped) return;
 		const at = d.now(), wait = w.sentAt + RATE_MS - at;
 		if (wait > 0) return void (w.timer ??= d.timer(wait, () => ((w.timer = undefined), flush(w))));
 		const b = bucketOf(w.session, at);
 		if (!ENDS.has(w.pending.state) && b.count >= PER_HOUR) {
-			if (fresh) (b.held++, b.keys.set(w.key, w.pending.state));
+			if (w.pending.heldBy !== b) ((w.pending.heldBy = b), b.held++);
+			b.keys.set(w.key, w.pending.state);
 			b.timer ??= d.timer(b.from + HOUR_MS - at, () => void turn(w.session, b));
 			return;
 		}
@@ -143,7 +151,7 @@ export function createWatches(d: WatchesDeps) {
 		if (w.told && w.told.facts === facts && (state === "changed" || (w.restarted && w.told.state === state))) return void (w.pending = undefined);
 		w.restarted = false;
 		w.pending = { state, facts, line, at };
-		flush(w, true);
+		flush(w);
 	};
 	const owned = (w: Watch) => {
 		const o = d.owner(w.session), at = d.now();

@@ -48,6 +48,24 @@ function world(o: { file?: string; clock?: ReturnType<typeof fakeClock>; net?: N
 	};
 }
 
+const marks = ["waiting", "error", "working"] as const;
+const two = (a: Unit["mark"], b: Unit["mark"]) => netOf([unit({ mark: a }), unit({ id: "u2", key: "u2", name: "api", mark: b })]);
+/** Two watches, u1 and u2, and `n` messages of u1 `ms` apart: the hour's bucket starts at the first. Each reading comes 2 s after the clock moved, so watch-read's own reading of a long gap (of the state before) has landed first. */
+async function twoWatches(n: number, ms: number) {
+	const w = world({ net: two("working", "working") });
+	await w.add();
+	await w.add({ key: "u2" });
+	for (let i = 0; i < n; i++) (await w.pass(ms - 2000), await w.beat(two(marks[i % 3], "working")));
+	assert.equal(w.sent.length, n);
+	return w;
+}
+/** 11 messages five minutes apart, then the clock at 59 minutes: u1's minute is long over and one message is left in the hour. */
+async function nearTheEnd() {
+	const w = await twoWatches(PER_HOUR - 1, 300_000);
+	await w.pass(HOUR_MS - (PER_HOUR - 2) * 300_000 - 60_000);
+	return w;
+}
+
 test("adding a watch reads the unit once and sends nothing; a change is sent at once, a second within the minute waits and only the newest goes out", async () => {
 	const w = world();
 	const added = await w.add();
@@ -80,7 +98,6 @@ test("a state equal to the one last sent is not sent again", async () => {
 test(`at most ${PER_HOUR} messages an hour per session; the changes after them come as one summary line when the hour turns`, async () => {
 	const w = world();
 	await w.add();
-	const marks = ["waiting", "error", "working"] as const;
 	for (let i = 0; i < PER_HOUR + 2; i++) await w.beat(netOf([unit({ mark: marks[i % 3] })]), RATE_MS + 1000);
 	assert.equal(w.sent.length, PER_HOUR, "the 13th and 14th changes are held");
 	const first = w.sent.length;
@@ -89,6 +106,73 @@ test(`at most ${PER_HOUR} messages an hour per session; the changes after them c
 	assert.match(w.sent.at(-1)!.text, /2 more watch changes/);
 	assert.match(w.sent.at(-1)!.text, /boss_watch/);
 	assert.match(w.sent.at(-1)!.text, /u1 changed/, "the summary names the newest state of each watch it held");
+});
+
+// RV3-F001: a change that reaches the cap through its watch's minute (the timer, not the reading) is held like any other: counted, named in the summary, and told only once it was sent or summarized.
+test("at the cap, a change that waits out its watch's minute is held and counted: the summary names it", async () => {
+	const w = world();
+	await w.add();
+	for (let i = 0; i < PER_HOUR; i++) await w.beat(netOf([unit({ mark: marks[i % 3] })]), RATE_MS + 1000);
+	assert.equal(w.sent.length, PER_HOUR);
+	await w.beat(netOf([unit({ mark: "done" })])); // 2 s after the 12th message
+	await w.pass(RATE_MS);
+	assert.equal(w.sent.length, PER_HOUR, "held by the cap");
+	await w.pass(HOUR_MS);
+	assert.equal(w.sent.length, PER_HOUR + 1);
+	assert.match(w.sent.at(-1)!.text, /^watch: 1 more watch change in .*newest: u1 changed\./);
+});
+
+test("a watch in its minute when another takes the hour's 12th message is held and counted when the minute ends", async () => {
+	const w = await twoWatches(PER_HOUR - 2, RATE_MS + 1000);
+	await w.pass(RATE_MS - 1000);
+	await w.beat(two("done", "working")); // u1 takes the 11th
+	await w.beat(two("working", "working")); // u1 again, 2 s later: it waits for its minute
+	await w.beat(two("working", "waiting")); // u2 takes the 12th
+	assert.deepEqual([w.sent.length, w.sent.at(-1)!.key], [PER_HOUR, "u2"]);
+	await w.pass(RATE_MS);
+	assert.equal(w.sent.length, PER_HOUR, "u1 is held when its minute ends");
+	await w.pass(HOUR_MS);
+	assert.equal(w.sent.length, PER_HOUR + 1);
+	assert.match(w.sent.at(-1)!.text, /^watch: 1 more watch change in .*newest: u1 changed\./);
+});
+
+test("a change still in its watch's minute when the hour turns is not marked told: it goes out when the minute ends", async () => {
+	const w = await nearTheEnd();
+	await w.beat(two("done", "working")); // u1 takes the 12th at 59 m 2 s
+	await w.beat(two("done", "waiting")); // u2 held at once; the hour turns at 60 m
+	await w.beat(two("working", "waiting")); // u1 in its minute, free at 60 m 2 s
+	await w.pass(55_000);
+	assert.equal(w.sent.length, PER_HOUR + 1);
+	assert.match(w.sent.at(-1)!.text, /^watch: 1 more watch change in .*newest: u2 changed\./, "the summary holds u2 only");
+	await w.pass(RATE_MS);
+	assert.equal(w.sent.length, PER_HOUR + 2);
+	assert.deepEqual([w.sent.at(-1)!.key, /mark (\w+)/.exec(w.sent.at(-1)!.text)?.[1]], ["u1", "working"]);
+});
+
+test("an hour whose timer runs late keeps its held changes: a watch's minute that ends first is counted in the same summary", async () => {
+	const w = await nearTheEnd();
+	await w.beat(two("done", "working")); // u1 takes the 12th at 59 m 2 s
+	await w.beat(two("working", "working")); // u1 in its minute: its timer is set before the hour's
+	await w.beat(two("working", "waiting")); // u2 held; the hour's timer is set
+	// One move of the clock runs both timers in the order they were set: the hour's runs after u1's, as a timer late under load.
+	await w.pass(RATE_MS);
+	assert.equal(w.sent.length, PER_HOUR + 1);
+	assert.match(w.sent.at(-1)!.text, /^watch: 2 more watch changes .*newest: (u1 changed; u2 changed|u2 changed; u1 changed)\./);
+});
+
+test("held changes whose summary the session did not take go out on their own a minute later", async () => {
+	const w = world();
+	await w.add();
+	for (let i = 0; i < PER_HOUR; i++) await w.beat(netOf([unit({ mark: marks[i % 3] })]), RATE_MS + 1000);
+	await w.beat(netOf([unit({ mark: "done" })]), RATE_MS + 1000);
+	assert.equal(w.sent.length, PER_HOUR, "held");
+	w.accept(false);
+	await w.pass(HOUR_MS);
+	assert.equal(w.sent.length, PER_HOUR, "the summary was not taken");
+	w.accept(true);
+	await w.pass(RATE_MS);
+	assert.equal(w.sent.length, PER_HOUR + 1);
+	assert.deepEqual([w.sent.at(-1)!.key, /mark (\w+)/.exec(w.sent.at(-1)!.text)?.[1]], ["u1", "done"]);
 });
 
 test("a unit that leaves the net is sent as gone, and the watch ends", async () => {

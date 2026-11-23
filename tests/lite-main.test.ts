@@ -86,7 +86,7 @@ test("a main runs at most 4 workers at once: a fifth is refused, other roles pas
 	for (let i = 0; i < 3; i++) running.set(`w${i}`, { id: `w${i}`, agent: "worker" });
 	running.set("s0", { id: "s0", agent: "scout" });
 	assert.equal(await dispatch(a, { agent: "worker" }, "c4"), undefined, "the fourth");
-	assert.match((await dispatch(a, { agent: "worker" }, "c5"))?.reason ?? "", /^sb: 4 workers run for this main already/, "a fifth in the same message");
+	assert.match((await dispatch(a, { agent: "worker" }, "c5"))?.reason ?? "", /^sb: 4 workers run for this main already .*: wait for a result, then dispatch the next; a scout, a planner, or a reviewer may run now\.$/, "a fifth in the same message; the retired watchdog is not named");
 	for (const agent of ["scout", "planner", "reviewer"]) assert.equal(await dispatch(a, { agent }, `c-${agent}`), undefined, agent);
 	// The fourth's tool ran: the registry holds it and the call no longer counts twice.
 	running.set("w3", { id: "w3", agent: "worker" });
