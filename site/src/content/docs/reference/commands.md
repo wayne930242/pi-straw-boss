@@ -58,6 +58,7 @@ The full table, with every argument, is in [Tools](/pi-straw-boss/docs/reference
 | `/boss tower … status`, `parked`, `leave`, `new` | The tower's state, its parked events, end its conversation with a note, start a new conversation. |
 | `/boss tower … retry`, `deliver <id>`, `drop <id>` | Retry, deliver, or drop a parked event. |
 | `/boss tower … [--answers W3] <message>` | Write a message; `--answers W3` marks a wait for you answered once the tower took it. |
+| In a tower's viewer (`towerRuns.headless`) | A line goes to the tower. Typed alone: `/stop` ends the run's turn; `@<workspace> <text>` sends your words straight to that tower; `/yes N`, `/no N`, `/pick N <choice>` answer a run's dialog. A paste is never one of these. See [Headless runs](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/#headless-runs). |
 | `/boss head [status\|leave\|new\|close\|<message>]` | Talk to the [head tower](/pi-straw-boss/docs/guide/head-tower/). A bare `/boss head` makes its workspace and focuses its tab. |
 | `/boss head retry`, `parked`, `deliver <id>`, `drop <id>` | The head tower's notices and parked events. |
 | `/boss head --answers W3 <message>` | A message that answers a wait. |

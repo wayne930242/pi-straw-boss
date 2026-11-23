@@ -141,6 +141,10 @@ flowchart TD
 塔台只能提議長期指示或決定，要等你確認才生效。
 見[塔台記憶](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#塔台記憶)。
 
+打開 `towerRuns.headless`（0.85.0 預設關閉）後，run 是以 RPC 模式執行、由 server 直接帶起的 pi 子行程，不佔窗格。塔台的分頁這時是 viewer：顯示 run 的即時文字、收你的話，但啟動之後不會再有人往裡面打字。
+沒人工作的工作區不開分頁，主塔台轉送過去的通知會安靜地等下一個 run。
+你照樣在 main 自己的窗格裡和它對話；主塔台的 viewer 是給 zen 或偷懶模式用的，在那裡打 `@<workspace> <text>` 可以直接找到某個塔台。
+
 ## 溝通
 
 主智慧體只用 `call_tower` 向它的塔台發訊息，而且只在三種時機：

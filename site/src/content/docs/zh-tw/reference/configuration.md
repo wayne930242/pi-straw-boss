@@ -31,6 +31,8 @@ pi-straw-boss 不需要任何設定就能運作。
 | `headModel` | `towerModel` | [主塔台](/pi-straw-boss/docs/zh-tw/guide/head-tower/)執行的模型。 |
 | `towerRuns.enabled` | `true` | 塔台服務：塔台是一次因事件而醒來、結束時留下交接筆記的執行。`false` 則保留常駐的塔台。讀不到或無法解析的檔案也視為開啟，server 會在它的 log 裡說明。 |
 | `towerRuns.max` | 4 | 同時跑的 pi 執行上限。 |
+| `towerRuns.headless` | `false` | 每個塔台 run 都是 sb server 的 `pi --mode rpc` 子行程，不佔窗格；塔台的分頁是只打一次字的 viewer。關閉時就是 0.84.0 的行為。見[無介面的 run](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#無介面的-run)。 |
+| `towerRuns.pi` | 無 | 無介面 run 用的 pi CLI 檔案，用在 server `PATH` 上的 `pi` 不是要用的那個時。 |
 | `integration` | `on`（在 `STRAW_BOSS_DESK=1` 下為 `off`） | `off` 會在這台電腦上關掉[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。開啟是 `on`、`true`、`1` 或 `yes`；關閉是 `off`、`false`、`0` 或 `no`。任何其他值，以及讀不到的檔案，都會把它關掉並發出通知。 |
 | `locale` | 取自環境變數 | sb 的語言，`zh-TW` 或 `en`：替身、主塔台的名稱、塔台提示、執行寫的卡片，以及 `/boss` 指令。沒有設定時由 `LC_ALL`、`LC_MESSAGES` 或 `LANG` 決定，否則用系統語言。用 `/boss locale` 設定。見[語言](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#語言)。 |
 | `stallWatch.enabled` | `true` | [停滯監看](/pi-straw-boss/docs/zh-tw/guide/process-hygiene/#停滯監看)：pi session 看起來卡死時，sb server 會告訴該工作區的塔台，但絕不停掉那個 session。`false` 關閉。`stallWatch` 的每個鍵每分鐘讀一次，改了不必重啟。 |

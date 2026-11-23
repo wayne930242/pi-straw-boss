@@ -3885,6 +3885,24 @@ An ally run claimed at `dispatch` is quit by the watcher when its device has lef
 
 </details>
 
+### Headless runs
+
+`towerRuns.headless: true` in `config.json` (off by default in 0.85.0; off is exactly 0.84.0) makes every tower run a `pi --mode rpc` child of the sb server, with no pane and no Herdr: event runs, boss conversations, head runs and ally runs (docs/specs/2026-11-23-lite-b2-d-e-f.md §4, docs/specs/2026-11-23-f-entry.md). Talking to a main in its own pane does not change.
+
+**The start.** The server runs the `node` on its `PATH` with the real file behind `pi` (on Windows the npm shim's JS target, with no `cmd.exe`), or `towerRuns.pi` when set, in the workspace's checkout after `assertSettingsSafe`. The run's environment drops `STRAW_BOSS_*`, `HERDR_*`, `PI_SUBAGENT_*` and `PI_INTERCOM_SESSION_ID`, and adds a 32-hex `STRAW_BOSS_RUN_NONCE`. The claim carries the PID the server spawned and that nonce; any other claim is refused. stdout is RPC (split on LF only), stderr goes to `tower/<ws>/runs/<run8>.stderr` (256 KB, the last 20 runs or a day).
+
+**Only the server writes a run's stdin**, and only `abort`, `extension_ui_response` and `get_state`. The boss's words reach the model as a `straw-tower` message through the run's extension, never as pi input, so a line that starts with `/` or `!` is text. A run's `select`, `confirm` or `input` (a `link_request` approval among them) waits in the viewer for the boss's `/yes N`, `/no N` or `/pick N`; one nobody answers is cancelled after 60 seconds, so an approval falls to no.
+
+**Ends.** An exit without `tower_done` is `crashed` at once, with its events back and flagged. A run that has not polled for 30 seconds is killed: its process group, or `taskkill /pid <pid> /T /F` on Windows. A restart drains: no run starts, each live one gets up to 60 seconds to settle, then its stdin closes; events not taken stay queued, and a boss conversation resumes the same session at the boss's next word.
+
+**The service and its viewer.** A service needs no tab: the head's forward, an ally wake and a controller's open make none. A session's `ensure-tower` (a promotion, a main's call, bare `/boss tower`) on an attended device asks for a viewer: one tab, typed into once with `exec node "<cli.mjs>" prompt …` (`; exit` on Windows), and only within the minute after the call made it and before the viewer's first poll (typegate.ts `onceGate`). When the viewer ends its pane closes, and the service goes on with no tab.
+
+**The viewer** is the tower prompt with the run's live text above its input: `│` for assistant text, `▸` and `✓`/`✗` for tools, `·` for the run's state, `?` for a dialog; every line is cleaned of escapes on the server and again in the viewer, and none is read as a card. A line typed alone may be `/stop` (the server writes `abort`; the boss's next line waits for the run's idle moment) or `@<workspace> <text>`: the boss's words straight to that tower, by id or exact label, a sub workspace to its parent; the head's queue and asks see none of it. A paste is never a command or an address.
+
+**The head parks notices.** A head `tower_send` with `reply: false` and no `relay=boss` to a workspace with no service and no joined session opens nothing: it writes a quiet event to that workspace's queue (the same text replaces the last), the ask reads `parked` on the head page, and the next run there takes it. A queue of quiet events alone wakes no run; it goes with the queue's 24 hours.
+
+**Not yet, with the switch on:** the local page answers no run dialog (the viewer does), `/to` and `/runs` are not built, a head viewer that closes ends the head as its tab did, and the Windows VM and the box have not run it.
+
 ## Tools
 
 Straw Boss gives agents a set of tools (`boss_*`, `tower_*`, `call_tower`, `board_*`) and gives the boss the `/boss` slash commands. Which session may call which tool depends on its role. The tables list who each tool is available to and what it does, then every `/boss` command.

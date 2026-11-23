@@ -58,6 +58,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `/boss tower … status`、`parked`、`leave`、`new` | 塔台的狀態、被擱置的事件、讓對話帶著交接筆記結束、開新對話。 |
 | `/boss tower … retry`、`deliver <id>`、`drop <id>` | 重試、送出或丟棄一個被擱置的事件。 |
 | `/boss tower … [--answers W3] <message>` | 寫一則訊息；`--answers W3` 標記某個對你的等待在塔台收下訊息後即算已回答。 |
+| 在塔台的 viewer 裡（`towerRuns.headless`） | 一行訊息送給塔台。單獨打一行時：`/stop` 讓 run 停下這一輪；`@<workspace> <text>` 把你的話直接送到那個塔台；`/yes N`、`/no N`、`/pick N <選項>` 回答 run 的對話框。貼上的文字不算以上任何一種。見[無介面的 run](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#無介面的-run)。 |
 | `/boss head [status\|leave\|new\|close\|<message>]` | 與[主塔台](/pi-straw-boss/docs/zh-tw/guide/head-tower/)對話。單獨的 `/boss head` 會建立它的工作區並聚焦它的分頁。 |
 | `/boss head retry`、`parked`、`deliver <id>`、`drop <id>` | 主塔台的通知與被擱置的事件。 |
 | `/boss head --answers W3 <message>` | 回答某個等待的訊息。 |
