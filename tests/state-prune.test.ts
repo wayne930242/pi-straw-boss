@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, writeFileSync, utimesSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { run } from "../src/server/cli.ts";
 import { recordPath, type RoleRecord } from "../src/roles.ts";
 import { TowerWorld } from "./tower-world.ts";
 import { until } from "./server-world.ts";
 import { pruneState } from "../src/server/stateprune.ts";
+import { fileOf } from "../src/server/record.ts";
 import { ledgerPath } from "../src/revive.ts";
 import { writeBoard } from "../src/train/board.ts";
 
@@ -26,7 +27,7 @@ function role(w: TowerWorld, i: number, over: Partial<RoleRecord> = {}, age = 40
 	return { path, file, id };
 }
 
-test("startup retains a revivable dead main, a recent role and a handed-off predecessor of a live successor; drops a stale role", async () => {
+test("startup retains a revivable dead main, a recent role and a handed-off predecessor of a live successor; keeps a stale role inside the restore window", async () => {
 	const w = new TowerWorld();
 	try {
 		const stale = role(w, 1), revivable = role(w, 2, {}, 2 * 3600_000), young = role(w, 3, { at: NOW - 13 * DAY });
@@ -37,8 +38,10 @@ test("startup retains a revivable dead main, a recent role and a handed-off pred
 		writeBoard(w.stateDir, { v: 1, ...trainId, app: "web", updated: new Date(NOW - 40 * DAY).toISOString(), round: 1, writer: { session: train.id, pid: 4001, started: new Date(NOW - 40 * DAY).toISOString() }, cars: [], steps: [] });
 		w.sessions.push({ id: successor.id });
 		await w.start({ gui: false, now: () => NOW });
-		await until(() => !existsSync(stale.path), "startup prunes the stale role");
-		for (const item of [revivable, young, successor, previous, tower, train]) assert.ok(existsSync(item.path), item.path);
+		await until(() => /state-prune/.test(readFileSync(fileOf(w.slot, "log"), "utf8")), "startup prune ran");
+		// Startup falls in the tower restore window: no role goes and no sighting starts.
+		assert.ok(!existsSync(join(dirname(stale.path), ".missing-since.json")));
+		for (const item of [stale, revivable, young, successor, previous, tower, train]) assert.ok(existsSync(item.path), item.path);
 	} finally { await w.close(); }
 });
 
@@ -99,5 +102,46 @@ test("an old revive ledger without a role or lock goes, but a retained role, loc
 		const got = await pruneState({ slot: w.slot, env: w.env, now: () => NOW, panes: async () => [], workspaces: async () => [], sessions: async () => [] });
 		assert.deepEqual(got.revive, { scanned: 4, remove: 1 });
 		assert.deepEqual(paths.map(existsSync), [true, false, true, true]);
+	} finally { await w.close(); }
+});
+
+const HOUR = 3_600_000;
+const scanRoles = (w: TowerWorld, now: number, recovering = false) => pruneState({ slot: w.slot, env: w.env, now: () => now, recovering: () => recovering, panes: async () => [], workspaces: async () => [], sessions: async () => [] });
+
+test("a role whose pane is absent during the restore window is kept and gets no sighting", async () => {
+	const w = new TowerWorld();
+	try {
+		const row = role(w, 1);
+		assert.equal((await scanRoles(w, NOW, true)).roles.remove, 0);
+		assert.equal((await scanRoles(w, NOW + 2 * HOUR, true)).roles.remove, 0);
+		assert.ok(existsSync(row.path));
+		// The restore window gave no sighting: the first one after it does not remove.
+		assert.equal((await scanRoles(w, NOW + 3 * HOUR)).roles.remove, 0);
+		assert.ok(existsSync(row.path));
+	} finally { await w.close(); }
+});
+
+test("a single missed sighting keeps the role, and a sighting under an hour later still keeps it", async () => {
+	const w = new TowerWorld();
+	try {
+		const row = role(w, 1);
+		assert.deepEqual((await scanRoles(w, NOW)).roles, { scanned: 1, remove: 0, sighted: 1 });
+		assert.equal((await scanRoles(w, NOW + HOUR - 1)).roles.remove, 0);
+		assert.ok(existsSync(row.path));
+	} finally { await w.close(); }
+});
+
+test("two missed sightings an hour apart delete the role; a pane that reappears clears the first sighting", async () => {
+	const w = new TowerWorld();
+	try {
+		const row = role(w, 1), back = role(w, 2), sightings = join(dirname(row.path), ".missing-since.json");
+		await scanRoles(w, NOW);
+		await pruneState({ slot: w.slot, env: w.env, now: () => NOW + 30 * 60_000, panes: async () => [{ pane_id: "gone:2" } as never], workspaces: async () => [], sessions: async () => [] });
+		assert.deepEqual(Object.keys(JSON.parse(readFileSync(sightings, "utf8"))), [basename(row.path)]);
+		const got = await scanRoles(w, NOW + HOUR);
+		assert.equal(got.roles.remove, 1);
+		assert.ok(!existsSync(row.path));
+		assert.ok(existsSync(back.path), "the reappeared pane restarted its clock");
+		assert.deepEqual(Object.keys(JSON.parse(readFileSync(sightings, "utf8"))), [basename(back.path)]);
 	} finally { await w.close(); }
 });

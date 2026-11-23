@@ -143,6 +143,8 @@ export interface Towers extends Returns {
 	activate(): Promise<void>;
 	/** Whether the runs of the last server are loaded and the identities adopted (true when the tower runs are off: there is nothing to load). */
 	loaded(): boolean;
+	/** Whether the tower runs are being restored after a start (`recoverUntil`), or not loaded yet: Herdr may not list every pane. */
+	recovering(): boolean;
 	/** Gives a workspace its tower (a promotion, `/boss tower`, a handover from a resident tower of this build). */
 	ensure(request: { workspace: string; pane?: string; cwd?: string; pid?: number; made?: { pane: string; at: number } }): Promise<Ensured>;
 	/** The boss closed the tower: its tab goes, and the service with it. */
@@ -1298,6 +1300,7 @@ export function createTowers(o: TowersOptions): Towers {
 		allyWaiting: (identity) => runs.pokeAllies(identity),
 		activate,
 		loaded: () => !o.enabled() || loadedAll,
+		recovering: () => o.enabled() && (!loadedAll || now() < recoverUntil),
 		ensure,
 		async close(workspace) {
 			const l = services.get(workspace);

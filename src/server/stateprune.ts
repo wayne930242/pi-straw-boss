@@ -18,7 +18,9 @@ import { writerAlive } from "./traingate.ts";
 // trainboards and trains share the authoritative train end + 30d rule (train/board.ts), with live/open trains and indexed ledgers protected;
 // revive ledgers need 7d of inactivity, no role, and no lock. Head, link, stash and procs use their own lifecycle or carry durable user state.
 const DAY = 86_400_000, ROLE_AGE = 14 * DAY, MISSING_AGE = 14 * DAY, REVIVE_AGE = 7 * DAY;
-const MISSING = ".missing-since.json";
+const MISSING = ".missing-since.json", ROLE_GAP = 3_600_000;
+/** First sightings of role records whose pane was missing, keyed by record file name: a record goes only on a second sighting an hour or more later. */
+const ROLE_SEEN = MISSING;
 export const PRUNE_EVERY_MS = DAY;
 
 export interface PruneDeps {
@@ -31,13 +33,15 @@ export interface PruneDeps {
 	alive?: NonNullable<SweepDeps["alive"]>;
 	/** Rechecked after asynchronous reads: a server that lost the slot can't remove anything. */
 	skip?(): boolean;
+	/** Herdr is restoring panes after a start (towers' `recoverUntil`): a pane it does not list yet may come back, so no role record goes. */
+	recovering?(): boolean;
 }
 
 type Kind = "roles" | "trainboard" | "trains" | "tower" | "revive";
 interface Counts { scanned: number; remove: number }
 export interface PruneReport {
 	dryRun: boolean;
-	roles: Counts;
+	roles: Counts & { sighted: number };
 	trainboard: Counts & { files: number; cars: number };
 	trains: { remove: number };
 	tower: Counts & { newlyMissing: number; reset: number };
@@ -66,7 +70,7 @@ function trainRestoreNeeded(root: string, train: TrainId, now: number): boolean 
 }
 
 export async function pruneState(d: PruneDeps, dryRun = false): Promise<PruneReport> {
-	const out: PruneReport = { dryRun, roles: { scanned: 0, remove: 0 }, trainboard: { scanned: 0, remove: 0, files: 0, cars: 0 }, trains: { remove: 0 }, tower: { scanned: 0, remove: 0, newlyMissing: 0, reset: 0 }, revive: { scanned: 0, remove: 0 }, skipped: {}, problems: [] };
+	const out: PruneReport = { dryRun, roles: { scanned: 0, remove: 0, sighted: 0 }, trainboard: { scanned: 0, remove: 0, files: 0, cars: 0 }, trains: { remove: 0 }, tower: { scanned: 0, remove: 0, newlyMissing: 0, reset: 0 }, revive: { scanned: 0, remove: 0 }, skipped: {}, problems: [] };
 	const kinds: Kind[] = d.slot.primary ? ["roles", "trainboard", "trains", "tower", "revive"] : ["tower"];
 	const fail = (reason: string) => {
 		for (const kind of kinds) out.skipped[kind] = reason;
@@ -145,16 +149,32 @@ export async function pruneState(d: PruneDeps, dryRun = false): Promise<PruneRep
 			return { path, record, id, kept, stored };
 		});
 		const aliveIds = new Set([...active, ...recent.flatMap((r) => r.kept && r.id ? [r.id] : [])]);
+		const seenPath = join(folder, ROLE_SEEN), seenStat = stat(seenPath);
+		if (seenStat && !seenStat.isFile()) throw new Error("missing-pane sightings are not a regular file");
+		let seen: Record<string, number> = {};
+		if (seenStat) {
+			try { const v: unknown = JSON.parse(readFileSync(seenPath, "utf8")); if (v && typeof v === "object" && !Array.isArray(v)) seen = v as Record<string, number>; } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+		}
+		const next: Record<string, number> = {}, recovering = Boolean(d.recovering?.());
 		for (const { path, record, kept, stored } of recent) {
-			const h = record.handedOver;
+			const h = record.handedOver, name = basename(path);
 			if (kept || (h && (aliveIds.has(h.to) || (h.pane !== undefined && paneIds.has(h.pane))))) continue;
+			if (recovering) { if (name in seen) next[name] = seen[name]!; continue; }
+			const since = seen[name];
+			if (typeof since !== "number" || !Number.isSafeInteger(since) || since <= 0 || since > now) { next[name] = now; out.roles.sighted++; continue; }
+			if (now - since < ROLE_GAP) { next[name] = since; continue; }
 			attempt("roles", () => {
-				if (stat(join(reviveDir(root), `${basename(path)}.lock`))) return;
+				if (stat(join(reviveDir(root), `${name}.lock`))) { next[name] = since; return; }
 				const latest = stat(path);
-				if (!latest?.isFile() || latest.ino !== stored?.ino || latest.mtimeMs !== stored.mtimeMs) return;
+				if (!latest?.isFile() || latest.ino !== stored?.ino || latest.mtimeMs !== stored.mtimeMs) { next[name] = since; return; }
 				remove(path);
 				out.roles.remove++;
 			});
+		}
+		// Records whose pane came back (kept) or that are gone drop out of the sightings.
+		if (!dryRun && JSON.stringify(next) !== JSON.stringify(seen)) {
+			if (Object.keys(next).length) writeDurable(seenPath, next);
+			else if (seenStat) rmSync(seenPath);
 		}
 	});
 
@@ -188,7 +208,7 @@ export interface PruneStart extends PruneDeps {
 export function startPrune(o: PruneStart) {
 	let stopped = false, pending: Promise<PruneReport> | undefined;
 	const run = () => pending ??= pruneState({ ...o, skip: () => stopped || Boolean(o.skip?.()) }).then((r) => {
-		o.log("state-prune", { roles: r.roles.remove, boards: r.trainboard.remove, boardFiles: r.trainboard.files, ledgerFiles: r.trains.remove, tower: r.tower.remove, newlyMissing: r.tower.newlyMissing, revive: r.revive.remove, skipped: JSON.stringify(r.skipped), ...(r.problems.length ? { problems: line(r.problems.slice(0, 3).join("; ")).slice(0, 300) } : {}) });
+		o.log("state-prune", { roles: r.roles.remove, rolesSighted: r.roles.sighted, boards: r.trainboard.remove, boardFiles: r.trainboard.files, ledgerFiles: r.trains.remove, tower: r.tower.remove, newlyMissing: r.tower.newlyMissing, revive: r.revive.remove, skipped: JSON.stringify(r.skipped), ...(r.problems.length ? { problems: line(r.problems.slice(0, 3).join("; ")).slice(0, 300) } : {}) });
 		return r;
 	}).finally(() => { pending = undefined; });
 	const stop = (o.every ?? ((fn, ms) => { const timer = setInterval(() => void fn(), ms); timer.unref(); return () => clearInterval(timer); }))(async () => { await run(); }, PRUNE_EVERY_MS);

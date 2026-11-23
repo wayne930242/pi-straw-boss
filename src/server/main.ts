@@ -798,7 +798,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		}
 	} else log.line("dialog-forwarder", { state: "skipped", primary: slot.primary, leaving: Boolean(leaving), phase });
 	if (!leaving && phase === "starting") {
-		prune = startPrune({ slot, env, now, log: (event, facts) => log.line(event, facts), skip: maintenanceLeaving,
+		prune = startPrune({ slot, env, now, log: (event, facts) => log.line(event, facts), skip: maintenanceLeaving, recovering: () => towers?.recovering() ?? false,
 			panes: () => panes(cfg.run), workspaces: () => workspaces(cfg.run), sessions: () => client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected")), ...o.prune });
 		stops.push(prune.stop);
 		void prune.first.catch((error: Error) => recordError("state-prune", error.message));
