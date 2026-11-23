@@ -45,6 +45,7 @@ import { type AllyItem, type AllyPort, createRuns, type Runs, type RunsOptions, 
 import { type ConversationInfo, sessionsRoot } from "./bossconv.ts";
 import { addExpect, clearExpect, lastNote, listRuns, readExpects, readNotes, readTimer } from "./towerrunstore.ts";
 import { runTool, type ServerTools } from "./runtools.ts";
+import { LEDGER_KEY } from "./ledgersweep.ts";
 import { runEvents, unforwardedWait } from "./runevents.ts";
 import { allyReceipts } from "./linkreceipts.ts";
 import type { LinkWaits } from "./linkwaits.ts";
@@ -1137,6 +1138,12 @@ export function createTowers(o: TowersOptions): Towers {
 		const who = runs.runOf(request.token);
 		if (!who) throw new Error("unknown_token");
 		const name = typeof request.tool === "string" ? request.tool : "", args = (typeof request.args === "object" && request.args !== null ? request.args : {}) as Record<string, unknown>;
+		if (name === "ledger_sweep") {
+			const key = who.kind === "head" ? runs.headNotice(request.token, request.turn, LEDGER_KEY) : undefined;
+			if (!key || !o.server?.ledgerSweep || Object.keys(args).length) throw new Error("ledger_sweep requires the scheduled head notice and takes no arguments");
+			const details = await o.server.ledgerSweep(key);
+			return { text: JSON.stringify(details), details };
+		}
 		const l = need(who.workspace, who.kind === "head"), ws = who.workspace;
 		// What an ally run waits on or opens is its device's: the routes (allyroute.ts) send those sessions' answers to the device's next ally run, never to a local run, and its opened mains have a ledger of their own.
 		const peer: Peer | undefined = who.kind === "ally" && who.device && who.team ? { device: who.device, label: who.deviceLabel ?? who.device.slice(0, 6), short: who.deviceShort ?? who.device.slice(0, 6), team: who.team, teamName: who.teamName ?? who.team.slice(0, 6) } : undefined;

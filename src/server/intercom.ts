@@ -85,9 +85,11 @@ export interface LoadOptions {
 	/** Where tsx is looked for from; this module's own file by default. */
 	from?: string;
 	tsImport?: TsImport;
+	/** A dry-run may contact a broker already up but must not start one. */
+	startBroker?: boolean;
 }
 /** Checks that the server can reach pi-intercom, and returns the way to. Throws a LoaderError when it cannot; nothing is loaded yet. */
-export async function loadIntercom({ env, root, from, tsImport }: LoadOptions): Promise<IntercomModule> {
+export async function loadIntercom({ env, root, from, tsImport, startBroker = true }: LoadOptions): Promise<IntercomModule> {
 	const api = findTsx(from);
 	const { dir, version } = findIntercomDir(env, root);
 	let load = tsImport;
@@ -112,8 +114,10 @@ export async function loadIntercom({ env, root, from, tsImport }: LoadOptions): 
 		dir, version,
 		async connect() {
 			const { client, spawn, config } = await loaded();
-			const { brokerCommand, brokerArgs } = config.loadConfig();
-			await spawn.spawnBrokerIfNeeded(brokerCommand, brokerArgs);
+			if (startBroker) {
+				const { brokerCommand, brokerArgs } = config.loadConfig();
+				await spawn.spawnBrokerIfNeeded(brokerCommand, brokerArgs);
+			}
 			return new client.IntercomClient();
 		},
 	};

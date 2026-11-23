@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type CoordinatorDuty, isCoordinatorDuty } from "./duty.ts";
 import { TOWER_LABEL } from "./herdr.ts";
@@ -23,7 +23,6 @@ import { TRAIN, type TrainId, trainFromToken, trainLabel, trainToken } from "./t
 // label from Herdr (`Here.tabLabel`). A main has no such tab (its label is its own free name), so its record stands on the checks above
 // (docs/specs/2026-11-07-train-workers.md §29).
 
-const KEEP_MS = 90 * 24 * 3600_000;
 /**
  * How a session with a record ended without a close on purpose (docs/specs/2026-11-23-tower-revive.md §2): `quit` is a /quit, Ctrl-D, or another session of the same pi (/new, /resume, /fork), `signal` a SIGHUP or SIGTERM
  * pi turned into a quit. A crash, a kill -9, and a pane or tab Herdr closed leave no mark: pi never runs its shutdown then (§1, P0). The mark says nothing to `held`: a Herdr restore brings the session back whatever it says, and the next record a start writes has none.
@@ -172,7 +171,7 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 					const other = join(dir, name), record = load(other, true);
 					// A tab has one main: the others' records, a demoted main's among them, would race this one at a restore.
 					const rival = role === "main" && record?.role === "main" && record.tab === s.at.tabId && record.workspace === s.at.workspaceId;
-					if (rival || cfg.now() - statSync(other).mtimeMs > KEEP_MS) rmSync(other, { force: true });
+					if (rival) rmSync(other, { force: true });
 				} catch { /* gone already, or unreadable: left for the next write */ }
 			}
 		},

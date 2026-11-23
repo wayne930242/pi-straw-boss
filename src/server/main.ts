@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { allyLabel } from "../boardauto.ts";
-import { herdrApi, herdrCall, herdrRun, panes, socketRun } from "../herdr.ts";
+import { herdrApi, herdrCall, herdrRun, panes, socketRun, workspaces } from "../herdr.ts";
 import { inside } from "../link/routing.ts";
 import { type HeadlessDeps, headlessConfig } from "./headless.ts";
 import { createHeadlessKit, type IntercomLike } from "./kit.ts";
@@ -23,7 +23,8 @@ import { type IntercomModule, loadIntercom, LoaderError } from "./intercom.ts";
 import { DialogForwarder } from "../link/dialogs-out.ts";
 import { dispatcherLookup, unitLabel } from "./dispatcher.ts";
 import { towerOpener } from "./opentower.ts";
-import { type SweepStart, startTrainSweep } from "./trainsweep.ts";
+import { type PruneStart, startPrune } from "./stateprune.ts";
+import { createLedgerSweep, type LedgerSweepOptions } from "./ledgersweep.ts";
 import { createLinkService, type LinkService, operateGranted, type ServiceDeps } from "../link/service.ts";
 import { boxesOf, createOperateHost, type OperateHost } from "./operatehost.ts";
 import { operateOff } from "./operateoff.ts";
@@ -110,8 +111,9 @@ export interface ServerOptions {
 	herdrUp?: () => Promise<boolean>;
 	/** How often the dialog forwarder and the unit reporter look (default 15 s; a test shortens it). */
 	unitsMs?: number;
-	/** The sweep of expired trainboards (trainsweep.ts): the clock, the writer check, and the timer; tests replace them. */
-	trainboards?: Pick<SweepStart, "now" | "alive" | "every">;
+	/** Test seams for the daily cleanup and morning head event. */
+	prune?: Pick<PruneStart, "alive" | "every">;
+	ledgerSweep?: Pick<LedgerSweepOptions, "every" | "exec">;
 	watch?: HerdrWatch;
 	herdr?: HeadlessDeps;
 	/** Replaces the tower service's timers and the like, for tests. */
@@ -611,7 +613,18 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	});
 	// The tower service (behind `towerRuns.enabled`): it stands in for each workspace's tower, and finds the tabs again when a new Herdr server takes over.
 	// What `boss_server` does for a run (runtools.ts): the server answers it itself, so it can refuse an ally run's token and keep the restart limit.
+	let prune: ReturnType<typeof startPrune> | undefined;
+	const maintenanceLeaving = () => Boolean(leaving) || phase === "stopping" || phase === "restarting";
+	const ledgerSweep = slot.primary ? createLedgerSweep({ slot, env, now, skip: maintenanceLeaving,
+		log: (event, facts) => log.line(event, facts), prune: () => prune!.run(),
+		head: () => towers?.head.status()?.workspace,
+		notice: (ws, text, key) => towers?.runs.notice(ws, text, key) ?? false,
+		queued: (key) => towers?.runs.noticeState(key) !== "gone",
+		world: () => cfg.world(),
+		...o.ledgerSweep,
+	}) : undefined;
 	const serverTools: ServerTools = {
+		...(ledgerSweep ? { ledgerSweep: ledgerSweep.run } : {}),
 		status: () => ({ state: phase === "ready" ? "live" : phase, version, pid, mode, desk, uptimeMs: now() - startedAt, log: fileOf(slot, "log"), ...(own.lastError ? { lastError: own.lastError } : {}), ...(readRecord(slot)?.lastRestart ? { lastRestart: readRecord(slot)!.lastRestart } : {}) }),
 		logs: (lines) => tailLog(fileOf(slot, "log"), lines),
 		async restart(reason, by) {
@@ -783,9 +796,14 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			const back = createBackstop({ auto, now, read: () => guiHost!.dialogs().read(), answerable: () => guiHost!.dialogs().hub.answerable(), send: (key, target, answer) => guiHost!.dialogs().hub.send(key, target, answer), tell: tellVia(() => client, serverId(slot), "auto_notice"), kindOf: (key) => { const role = guiHost!.dialogs().lookup(key)?.role; return role === "train" ? "train" : role === "subagent" ? "subagent" : role === "run" || role === "ally" ? "run" : "main"; } });
 			timers.push(setInterval(() => void back.tick().catch((error: Error) => log.line("error", { code: "auto-backstop", text: phrase(error.message, 200) })), o.unitsMs ?? 5000));
 		}
-		// Expired trainboards go (trainsweep.ts, spec §10): once now, then every hour.
-		stops.push(startTrainSweep({ stateDir: slot.stateDir, env, now, log: (event, facts) => log.line(event, facts), skip: () => Boolean(leaving) || phase === "stopping" || phase === "restarting", ...o.trainboards }));
 	} else log.line("dialog-forwarder", { state: "skipped", primary: slot.primary, leaving: Boolean(leaving), phase });
+	if (!leaving && phase === "starting") {
+		prune = startPrune({ slot, env, now, log: (event, facts) => log.line(event, facts), skip: maintenanceLeaving,
+			panes: () => panes(cfg.run), workspaces: () => workspaces(cfg.run), sessions: () => client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected")), ...o.prune });
+		stops.push(prune.stop);
+		void prune.first.catch((error: Error) => recordError("state-prune", error.message));
+		if (ledgerSweep) stops.push(ledgerSweep.start());
+	}
 
 	// Ready: `restarting` goes, and the start-error of this attempt (and any before it) with it.
 	if (phase === "starting") {

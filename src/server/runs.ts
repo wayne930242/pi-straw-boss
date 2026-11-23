@@ -1783,6 +1783,12 @@ export function createRuns(o: RunsOptions) {
 			const a = of(token);
 			return Boolean(a && !a.ended && a.rec.kind === "local" && typeof id === "string" && readQueue(slot, a.rec.workspace).some((e) => e.id === id && e.kind === "boss" && e.taken?.run === a.rec.id));
 		},
+		/** A head-only server notice this run has confirmed taking, not text a peer or the model supplied. */
+		headNotice(token: unknown, id: unknown, prefix: string): string | undefined {
+			const a = of(token);
+			if (!a || a.ended || !headRun(a) || typeof id !== "string") return undefined;
+			return readQueue(slot, a.rec.workspace).find((e) => e.kind === "notice" && !e.drop && e.id === id && e.taken?.run === a.rec.id && e.messageId?.startsWith(prefix))?.messageId;
+		},
 		/** The boss messages a local run took, oldest first: the ones a memory proposal may cite (towermemory.ts). A message offered and not confirmed is not one. */
 		bossEvents(token: unknown): { id: string; text: string; press?: true }[] {
 			const a = of(token);

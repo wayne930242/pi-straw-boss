@@ -1181,7 +1181,24 @@ The ledger (`trains/<project>/<app>.json` with an `index`, and one file per trai
 <details>
 <summary>Details</summary>
 
-The cars a round removed stay on the board with their heads, so the yard shows whether their coordinators were told and the sweep removes their car files with the board. The server deletes an ended trainboard 7 days after its last update (one that `train end` ended, 7 days after the end), and a stale one only after `train clear` and the same 7 days, at start and every hour, with the merge train on.
+The cars a round removed stay on the board with their heads, so the yard can show whether their coordinators were told.
+The sb server checks its state directory at startup and every 24 hours.
+If Herdr or pi-intercom cannot be read, the server logs the skip and leaves the state alone.
+
+| State | When the server removes it |
+|---|---|
+| `roles/` | Older than 14 days, with no pane, live session, recent session file, or live successor that still needs its handoff mark. Open trains keep their records for restore. |
+| `trainboard/` and `trains/` | 30 days after the train ended, with the merge train on. Live and open trains stay, including trains that only ran `train clear`. The integrator's index and the train files it still references stay, as do car files shared by a board or yard that stays. |
+| `tower/<workspace>/` | 14 days from the first successful check that did not find the workspace. Seeing it again resets the clock. |
+| `revive/` | A ledger untouched for over 7 days, with no role record or revive lock. |
+
+`cli.mjs prune --dry-run` prints counts, including workspaces whose missing date would be recorded for the first time, without writing or deleting anything in the state directory.
+The sweep leaves head history, link state, saved stashes, and process tracking to their own retention rules.
+
+At about 06:30 local time, or on the first check after the computer wakes, the primary server sends the standing head tower one `ledger_sweep` notice for that date.
+Set `ledger.janitor` in the state directory's `config.json` to the executable path (for example `~/.local/bin/ledger-janitor`); if unset, the server logs a skip but still prunes its own state.
+The head's sweep tool runs the state prune and the configured executable with `--apply --json`, without a shell.
+The head forwards each item left over to the tower whose repository checkout matches its path; items with no unique match go on the head work board instead, without asking the boss.
 
 </details>
 

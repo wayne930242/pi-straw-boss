@@ -36,6 +36,7 @@ type Answer = { ok: boolean; error?: string; code?: string; [key: string]: unkno
 export interface ServerTools {
 	status(): unknown;
 	logs(lines: number): string[];
+	ledgerSweep?(key: string): Promise<unknown>;
 	/** Restarts the server; the one-a-minute limit is decided there, by the server. Rejects with the reason it refuses. */
 	restart(reason: string, by: string): Promise<void>;
 }

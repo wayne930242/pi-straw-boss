@@ -1,6 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+export function registerLedgerSweep(pi: ExtensionAPI, tool: (name: string, args: unknown, toolCallId?: string) => Promise<{ text: string; details?: unknown }>): void {
+	pi.registerTool({ name: "ledger_sweep", label: "ledger_sweep", description: "Run the fixed prune and configured ledger janitor for the server's scheduled ledger_sweep event only. Returns matched left items to forward as data; writes unmatched items to the head work board.", parameters: Type.Object({}), execute: async (id) => {
+		const done = await tool("ledger_sweep", {}, id);
+		return { content: [{ type: "text", text: done.text }], details: done.details };
+	} });
+}
+
 /** What the head tower's `tower_send` tells the model; `supersedes` is how a correction says which earlier broadcast it replaces (docs/specs/2026-11-07-head-log-cards.md). */
 export const HEAD_REGISTERED_DESCRIPTION = "Forward a message to the tower of one workspace (its id or exact label; a sub workspace goes to its parent). The tower is opened when the workspace has none. Quote the boss's words and decisions verbatim. The result names the ask (H12) the tower's answer will carry; the answer comes back to you as a new event. When the boss corrects or replaces an instruction you already sent, set supersedes to the ask id (H12) of any message of that earlier broadcast on every call of the new one, so the boss's page folds the old order under the new. You cannot send to every tower, to a teammate's device, or to a main.";
 

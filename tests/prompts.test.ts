@@ -205,6 +205,12 @@ test("wait cards: tower-run.md records a boss wait as a card (fields, language, 
 	for (const term of ["Record a wait for the boss as a card", "`type` (action", "choice when they pick", "secret when a session needs a secret from them", "`happened`", "`do`", "`url` or `command`", "`after`", "`options`", "`secret.name`", "never the value", "`from`", "the `[intercom from ...]` line", "or `self`", "the language your brief names (sb's locale)", "who has not followed the work", "A refusal lists what to fix. Fix every line and call again.", "The boss pressed", "chose", "declined", "A declined wait is over: tell the raiser what happens instead", "Do not send the raiser the same news yourself", "fonstar-staging", "tailscale"]) assert.ok(run.toLowerCase().includes(term.toLowerCase()), `tower-run.md names ${term}`);
 });
 
+test("the head's morning ledger sweep stays within its measured 896-word prompt budget (+21)", () => {
+	const head = readFileSync(`${PROMPT_DIR}/head-run.md`, "utf8");
+	assert.match(head, /On the server's `ledger_sweep` notice only, call `ledger_sweep` once.*never ask the boss/);
+	assert.ok(words(head) <= 896);
+});
+
 test("wait cards: head-run.md and main.md say the same in their words", () => {
 	const head = readFileSync(`${PROMPT_DIR}/head-run.md`, "utf8"), main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
 	for (const term of ["as a card", "in the language your brief names", "`from` is the tower's session id", "`restates`"]) assert.ok(head.includes(term), `head-run.md names ${term}`);
