@@ -894,10 +894,10 @@ pi 修掉 #11421 之後，這道防護就可以移除。pi 比 1.4.0 新的時�
 由塔台開啟（`boss_open_main`）的主智慧體，在它的工作完成時告訴寄件者和塔台，然後等待；塔台用 `boss_close_main` 關閉它，除非主智慧體說它在等老闆的決定。交接訊息指名兩者（`Sender:` 和 `Tower:`，附上它們的 session id），並說要用 `intercom send` 向寄件者、用 `call_tower`（`why: milestone`，不回覆）向塔台回報結果；主智慧體的 prompt 對塔台開啟的分頁會重複這一點。值守主智慧體是例外：它的交接訊息不承諾關閉，也不要求完成報告，而上面塔台的規則只適用於回報完成的主智慧體。`boss_close_main` 會拒絕值守主智慧體（session 工具與塔台 run 都一樣），帶 `duty: "standing"` 的 `boss_open_main` 則回答不會有完成報告；只有老闆能關閉值守主智慧體，不過對方裝置離開團隊或失去 `dispatch`，或收到簽署的停止時，box 仍會結束由對等端開啟的那一個。這個工具只在塔台登記，接受主智慧體的 intercom 名稱或 session id。塔台先從 Herdr 的角度檢查：
 
 - session 在塔台自己的工作區裡，而且是主智慧體（`sb_role=main`）；
-- 它的 pane 帶有 `sb_opened_by`，所以是塔台開啟的它：老闆自己開的主智慧體絕不會被塔台關閉；
+- 它的 pane 帶有 `sb_opened_by`，所以是塔台開啟的它，或它的角色紀錄說它已交接、接班者也活著（見[關閉交接過的主智慧體與死掉的智慧體窗格](#關閉交接過的主智慧體與死掉的智慧體窗格)）：老闆自己開、又沒有交接的主智慧體絕不會被塔台關閉；
 - Herdr 回報它是 `idle` 或 `done`。
 
-然後它透過 intercom 擴充頻道 `straw-boss/control`（「capable」受眾；一則訊息只給一個 session，`to`；寄件者 id 和每個 pi-intercom 身分一樣是自我申報的，所以這個頻道依賴同一位使用者的信任邊界：冒充塔台的同一位使用者的行程，可以關閉閒置的、塔台開啟的主智慧體，而那位使用者本來就能用 `herdr pane close` 做到）請主智慧體自己的擴充離開，就像 `/boss close` 那樣。它不使用可能已停止的 GUI 伺服器，而橋接的 `close` 只回答那個伺服器。只有塔台開啟的主智慧體會登記這個頻道（在它消耗 `sb_open_main` 之後），每座塔台也一樣。
+然後它透過 intercom 擴充頻道 `straw-boss/control`（「capable」受眾；一則訊息只給一個 session，`to`；寄件者 id 和每個 pi-intercom 身分一樣是自我申報的，所以這個頻道依賴同一位使用者的信任邊界：冒充塔台的同一位使用者的行程，可以關閉閒置的、塔台開啟的主智慧體，而那位使用者本來就能用 `herdr pane close` 做到）請主智慧體自己的擴充離開，就像 `/boss close` 那樣。它不使用可能已停止的 GUI 伺服器，而橋接的 `close` 只回答那個伺服器。只有塔台開啟的主智慧體會登記這個頻道（在它消耗 `sb_open_main` 之後），交接過的主智慧體與每座塔台也一樣。
 
 開啟者連同它的 pane 一起存在 session 裡，而且只有同一個 pane 裡的同一個 pi 會還原它：在那裡 `/reload`、`/resume` 或 `/fork` 之後，主智慧體會再寫一次 `sb_opened_by`，並再登記一次頻道。重新啟動的 pi（`pi --session`、`pi -c`、`/boss pop` 之後的重新啟動），以及任何其他 pane 裡的 session，都算作老闆的主智慧體，沒有塔台會關閉它，不帶開啟者的 `/new` session 也一樣。之後的認領（接回的那一次）會把它自己的開啟者，也就是沒有，存在較早的那個之上。
 
@@ -906,7 +906,7 @@ pi 修掉 #11421 之後，這道防護就可以移除。pi 比 1.4.0 新的時�
 {type: "close-main-result", to: <tower session id>, reqId, accepted, reason?, busy?}   main → tower
 ```
 
-由主智慧體決定，而且只有在下面這些全部成立時才接受：寄件者是它的工作區的塔台 token 持有者，它自己的 pane 帶有 `sb_opened_by`，而且沒有任何執行中的東西會遺失，檢查方式和收起檢查一個 session 一樣（沒有執行中的輪次、沒有排隊的訊息、沒有開著的對話框、沒有執行中的背景 monitor，來自橋接的 `stashCheck`），再加上沒有仍在執行的子智慧體（pi-herdr-agents 在它的 session 底下的活動檔案）。接受時它先回答，然後像 `/boss close` 那樣離開：pi 關閉，它的 token 被清掉，它的 pane 關閉（變空的分頁一併關閉）。拒絕時會說明原因。
+由主智慧體決定，而且只有在下面這些全部成立時才接受：寄件者是它的工作區的塔台 token 持有者，它自己的 pane 帶有 `sb_opened_by` 或它已交接（它的 `successor` 紀錄），而且沒有任何執行中的東西會遺失，檢查方式和收起檢查一個 session 一樣（沒有執行中的輪次、沒有排隊的訊息、沒有開著的對話框、沒有執行中的背景 monitor，來自橋接的 `stashCheck`），再加上沒有仍在執行的子智慧體（pi-herdr-agents 在它的 session 底下的活動檔案）。接受時它先回答，然後像 `/boss close` 那樣離開：pi 關閉，它的 token 被清掉，它的 pane 關閉（變空的分頁一併關閉）。拒絕時會說明原因。
 
 因為有東西在執行而拒絕（`busy: true`）的，會每 3 秒再問一次，最多 15 秒，因為主智慧體是從緊接著結束的那個輪次送出它的完成回報；任何其他的拒絕都是最終的。10 秒內沒有回答的主智慧體（沒有這個頻道的 pi-straw-boss）會讓工具帶著錯誤離開，而且什麼都不關。接受之後，工具最多等 30 秒，讓 session 離開 intercom，並說明它有沒有離開。
 
@@ -957,7 +957,34 @@ Straw Boss 每次啟動塔台時，都會把它當作 `--model` 傳給 pi，並�
 <details>
 <summary>細節</summary>
 
-`boss_handover {handoff, reason}` 是已加入的 main 的工具。交接檔必須存在；`reason` 是一行。它走開啟者的安全啟動：檢查 main 資料夾的設定、開一個不搶焦點、以 main 名稱為標籤的新分頁、帶一次性 `sb_open_main` 的 `STRAW_BOSS_ROLE=main`、main 自己的 `sb_opened_by` 與寫成 `sb_open_duty` 的種類、`sb_handover_from=<old id>`，並以 `--name <old name>` 啟動 pi。新 pi 成為分頁的 main 後會收到一則訊息：讀交接檔並照 session 輪替規則做，它的種類已經設好，並用 intercom 告訴舊 main 它已接手。接著舊 main 會被告知如何交出角色（`boss_duty coordinator`、`boss_rename` 成 `old <name> (handed over to <id>)`、停掉監控與迴圈、清空看板）。它的角色紀錄會標成已交接，之後它的分頁被關掉時不會發 `main_died`，也沒有塔台會救它。一次只能有一個活著的接班者：第一個接班者的窗格還在時，第二次呼叫會被拒絕；交接進行中，或 Herdr 說不出那個窗格是否還活著時也一樣。成員、火車、塔台（它沒有這個工具）、替隊友裝置開的 main（它的接班者會跑在裝置的撤銷與簽章停止之外）以及隊友的回合都會被拒絕；失敗時會關掉它建立的分頁。
+`boss_handover {handoff, reason}` 是已加入的 main 的工具。交接檔必須存在；`reason` 是一行。它走開啟者的安全啟動：檢查 main 資料夾的設定、開一個不搶焦點、以 main 名稱為標籤的新分頁、帶一次性 `sb_open_main` 的 `STRAW_BOSS_ROLE=main`、main 自己的 `sb_opened_by` 與寫成 `sb_open_duty` 的種類、`sb_handover_from=<old id>`，並以 `--name <old name>` 啟動 pi。新 pi 成為分頁的 main 後會收到一則訊息：讀交接檔並照 session 輪替規則做，它的種類已經設好，並用 intercom 告訴舊 main 它已接手。接著舊 main 會被告知如何交出角色（`boss_duty coordinator`、`boss_rename` 成 `old <name> (handed over to <id>)`、停掉監控與迴圈、清空看板），它的工作區塔台也會收到交接的通知（一則 `why: milestone` 的 `call_tower`，指名兩個 session），所以接班者活著後塔台就會關掉舊 main；舊 main 收到的結果也這樣說。它的角色紀錄會標成已交接，之後它的分頁被關掉時不會發 `main_died`，也沒有塔台會救它。一次只能有一個活著的接班者：第一個接班者的窗格還在時，第二次呼叫會被拒絕；交接進行中，或 Herdr 說不出那個窗格是否還活著時也一樣。成員、火車、塔台（它沒有這個工具）、替隊友裝置開的 main（它的接班者會跑在裝置的撤銷與簽章停止之外）以及隊友的回合都會被拒絕；失敗時會關掉它建立的分頁。
+
+</details>
+
+### 關閉交接過的主智慧體與死掉的智慧體窗格
+
+塔台用 `boss_close_main` 再關兩種窗格：用 `boss_handover` 交接過、接班者已經活著的 main，不管是誰開的；以及 pi 已經不在的智慧體窗格。兩者都不必勞動老闆。
+
+<details>
+<summary>細節</summary>
+
+**交接過的主智慧體。** `boss_close_main {main}` 讀這個 main 的角色紀錄（Herdr 為這個窗格指名的 session 檔的紀錄，否則是這個窗格最新的 main 紀錄）：有 `handedOver` 標記，塔台就能關老闆開的 main，也能關值守的 main，因為這個標記證明它已卸任。接班者必須活著：broker 列出它的 session id，而且 broker 放它的那個窗格裡有 pi 在跑；否則工具拒絕，什麼也不問。仍由舊 main 自己決定：它接受工作區塔台的關閉，是因為它自己的 `successor` 紀錄說它已交接，而遇到進行中的輪次、排隊的訊息、對話框、monitor 或子智慧體時，它照樣拒絕。交接成功時它登記控制頻道，`/reload` 之後再登記一次。老闆開的、活著又沒有交接的 main，以及沒有交接的值守 main，都和以前一樣被拒絕。
+
+**通知。** 接班者接下交接時，舊 main 會送給它的工作區裡活著的塔台一則 `call_tower`（`why: milestone`，不回覆），指名兩個 session 與接班者的分頁；它不會為此開一座塔台。milestone 會讓塔台執行的喚醒延後 30 秒，所以舊 main 有時間卸任；它還在工作時被拒絕的關閉，會在它的下一則訊息後再試。
+
+**死掉的智慧體窗格。** `boss_close_main` 不帶參數時列出塔台工作區裡死掉的智慧體窗格，`boss_close_main {pane}` 則關掉其中一個：它是分頁裡唯一的窗格時連分頁一起關，否則只關窗格。由一張表（`src/deadpane.ts`）決定，窗格符合下列任一列時塔台就拒絕：
+
+| 列 | 證據 |
+|---|---|
+| elsewhere | 窗格在另一個工作區 |
+| tower | 塔台自己的窗格或分頁、工作區塔台 session 的窗格，或標成 `sb_role` tower 或 head 的窗格（常駐窗格在兩次執行之間停在 shell） |
+| unmarked | 沒有 `sb_*` 或 `piha_*` token，Herdr 也沒有指名 pi session |
+| opening | 裡面還留著 `sb_open_main` 或 `sb_revive`：開啟、救回或交接正在啟動它的 pi |
+| reviving | 有救回持有某個 session 的鎖，而那個 session 的角色紀錄指名這個窗格 |
+| listed | broker 列出有 session 在它上面 |
+| busy | `herdr pane process-info` 列出前景除了 shell 還有別的，或說不出來 |
+
+通過每一列的窗格就是死的：它的 pi 不在了，停在空的 shell。這涵蓋 main、成員、火車，以及 pi-herdr-agents 子智慧體留下的窗格。塔台執行透過伺服器有同一個工具；盟友執行的 `pane` 與列表會被拒絕，因為死掉的窗格不是替它的裝置開的 main。
 
 </details>
 
@@ -3831,7 +3858,7 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 | `boss_promote` | 已加入且不是塔台的 session | 成為這個分頁的主智慧體；分頁已有存活的主智慧體時會被拒絕。 |
 | `boss_status` | 已加入的 session 與塔台 | 每個分頁的主智慧體、這個工作區的塔台、主塔台，以及其他塔台。 |
 | `boss_open_main` | 僅塔台 | 在塔台的工作區開一個新分頁，以新的 pi 作為它的主智慧體，交給它一個沒有任何 session 擁有的請求，每個請求一次（見[開啟主智慧體](#開啟主智慧體)）。帶 `role: "train"` 時開啟火車；在 sb server 的執行裡帶 `role: "integrator"` 時，把車廂單送給專案唯一的整合員，沒有在跑的就開一個，當成塔台自己的主智慧體。 |
-| `boss_close_main` | 僅塔台 | 要求這個塔台開啟的主智慧體（依 intercom 名稱或 session id）像 `/boss close` 那樣 quit。對老闆開啟的主智慧體、另一個工作區的主智慧體、Herdr 回報在工作中的，以及正在進行一輪、有排隊訊息、有對話框、有 monitor 或有子智慧體在跑的，以及值守主智慧體（只有老闆能關），都會被拒絕（見[關閉開啟的主智慧體](#關閉開啟的主智慧體)）。 |
+| `boss_close_main` | 僅塔台 | 要求這個工作區的主智慧體（依 intercom 名稱或 session id）像 `/boss close` 那樣 quit：這個塔台開啟的，或交接過、接班者已活著的。帶 `pane` 時關掉一個死掉的智慧體窗格（pi 不在、停在空的 shell、沒有 session），它是唯一的窗格時連分頁一起關；兩者都不帶時列出這些窗格。對老闆開啟又沒有交接的主智慧體、另一個工作區的主智慧體、Herdr 回報在工作中的，以及正在進行一輪、有排隊訊息、有對話框、有 monitor 或有子智慧體在跑的，以及沒有交接的值守主智慧體（只有老闆能關），都會被拒絕；有活著的 pi、塔台的、另一個工作區的，或正在開啟或救回的窗格也會被拒絕（見[關閉開啟的主智慧體](#關閉開啟的主智慧體)與[關閉交接過的主智慧體與死掉的智慧體窗格](#關閉交接過的主智慧體與死掉的智慧體窗格)）。 |
 | `boss_revive_main` | pi 塔台與本機塔台執行（盟友執行與總塔台沒有） | `list` 列出工作區裡有角色紀錄的 main 與火車及其狀態（`dead`、`quit`、`live`、`stale` 等）；`revive` 依 session id、8 個字元以上的 id 前綴或名稱，附一行理由救回其中一個：同一個 session 開在新分頁，回來的是它自己。成員、塔台、替隊友裝置開的 main、活著的 session、沒通過檢查的檔案、別的工作區的 session、寄件者或工作區已達上限、整合關閉或專案已有整合者時的整合者、已試過一次的死亡、最近 24 小時內救回失敗過的 session、交接過的 main，以及 24 小時內的第三次救回，都會被拒絕（見[救回死掉的主智慧體](#救回死掉的主智慧體)）。 |
 | `boss_handover` | 分頁的主智慧體（成員、火車、塔台、替隊友裝置開的 main 與隊友的回合會被拒絕） | 為 session 輪替開出自己的接班者：工作區裡的新分頁，一個用它的名稱與種類、第一個提示是 `handoff` 檔的 pi；一次只能有一個活著的接班者（見[主智慧體自己交接](#主智慧體自己交接)）。 |
 | `tower_list` | 僅塔台 | 每個工作區的塔台，沒有塔台時則是它的主智慧體或成員：`reach`、狀態、主塔台與自己的標記，以及每個分頁的主智慧體與成員的名稱（見[塔台之間的交談](#塔台之間的對話)）。 |
