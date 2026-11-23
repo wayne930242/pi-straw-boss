@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-wo
 import { decide, filterListing, readTracked, type Scope, searchRoot, type Tracked } from "./allow.ts";
 import { type LinkConfig } from "./config.ts";
 import { createLevelOf } from "./level.ts";
-import { createGate, type ForwardPort } from "./gate.ts";
+import { createGate, type ForwardPort, type UiConfirm } from "./gate.ts";
 import { type PolicyDeps } from "./policy.ts";
 import { hideOldRemote, Turns } from "./turn.ts";
 import { NO_CONFIRM } from "../autotext.ts";
@@ -71,6 +71,8 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 			return () => (forwardWaits.delete(dialogId), void ask({ op: "forget-confirm", dialogId }).catch(() => undefined));
 		},
 	};
+	/** A headless run's confirm (runmode.ts): the server raises the gate's dialog itself, bound to the call, since RPC mode has no terminal and no bridge to the hub. Unset, the terminal's confirm. */
+	let confirmVia: ((call: { toolCallId: string; tool: string; input: Record<string, unknown> }) => UiConfirm) | undefined;
 	const gate = createGate({ bus: pi.events, forward, timeoutMs: gateMs, onError: (what, error) => (log({ event: "gate-failed", what, error: error.message }), what === "forward" && tell(`Straw Link: the sender's device could not be asked to confirm (${error.message}); answer here`, "warning")) });
 	/** Calls the gate let through: their output is the boss's to see whole. */
 	const approved = new Set<string>();
@@ -117,7 +119,7 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 		const outcome = await gate.ask({
 			toolCallId: e.toolCallId, tool: e.toolName, input, senders: turns.list, tower: tower(),
 			...(level === "forward" && lowest && lowest.id !== "?" ? { forwardTo: lowest } : {}),
-			...(ctx.hasUI ? { ui: ctx.ui } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
+			...(confirmVia ? { ui: confirmVia({ toolCallId: e.toolCallId, tool: e.toolName, input }) } : ctx.hasUI ? { ui: ctx.ui } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),
 		});
 		if (!outcome.allow) return { block: true, reason: outcome.reason };
 		approved.add(e.toolCallId);
@@ -139,5 +141,5 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 
 	/** What a tool that answers a remote turn may show: the senders' teams, and the project they all bind. Undefined when the run is not remote. */
 	const scope = () => (turns.active ? { teams: [...new Set(turns.list.map((s) => s.team))], project: commonProject(), devices: [...new Set(turns.list.map((s) => s.id))] } : undefined);
-	return { turns, answerForward, scope };
+	return { turns, answerForward, scope, useConfirm: (via: typeof confirmVia) => void (confirmVia = via) };
 }

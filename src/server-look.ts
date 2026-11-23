@@ -48,7 +48,9 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		const root = packageRoot(), built = join(root, "dist", "server", "cli.mjs");
 		return existsSync(built) ? built : join(root, "src", "server", "cli.ts");
 	};
-	const asker = () => `session "${(pi.getSessionName() || s.ownName || me() || "unnamed").replace(/["\n]/g, " ")}" (${me().slice(0, 8) || "no id"})`;
+	// pi refuses getSessionName while its extensions are still loading (a headless run's trust question asks the server then: trust/runtrust.ts).
+	const sessionName = () => { try { return pi.getSessionName(); } catch { return undefined; } };
+	const asker = () => `session "${(sessionName() || s.ownName || me() || "unnamed").replace(/["\n]/g, " ")}" (${me().slice(0, 8) || "no id"})`;
 	/**
 	 * The version of the package the server would start from: read from the package.json beside `cli()` each time, because a session keeps the code it loaded (`cfg.version`) while the
 	 * package on disk may have been replaced since (a downgrade). Judging by the loaded version would upgrade, start the older package, and upgrade again at every look.

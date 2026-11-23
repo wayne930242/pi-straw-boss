@@ -45,7 +45,7 @@ export function entryReply(towers: Towers | undefined, run: HerdrRun, request: R
 		if (!key) return Promise.resolve({ ok: false, error: "run-dialog needs the dialog's key" });
 		return go(async (t) => {
 			const answered = t.runs.kids()?.answer(key, { ...(typeof request.value === "string" ? { value: request.value } : {}), ...(typeof request.confirmed === "boolean" ? { confirmed: request.confirmed } : {}), ...(request.cancelled === true ? { cancelled: true } : {}) }) ?? false;
-			if (!answered) throw new Error("That dialog is not waiting any more (it was answered, cancelled, or its run ended)");
+			if (!answered) throw new Error("That dialog is not waiting any more (it was answered, cancelled, or its run ended), or the answer is not one it takes (a select takes one of its options, an approval a yes or a no)");
 			return { answered };
 		});
 	}

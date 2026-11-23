@@ -26,7 +26,7 @@ import { WATCH_KEY } from "./autowatch.ts";
 import { HEAD_RUN_TOOLS, LOCAL_RUN_TOOLS } from "../runallow.ts";
 import { appendChapter, headResume, recapOf } from "./headchapters.ts";
 import type { RunWho } from "./rungate.ts";
-import type { Kids } from "./runkids.ts";
+import { DIALOG_MS, type Kids } from "./runkids.ts";
 import type { ChildExit } from "./runchild.ts";
 
 // The runs of the tower service (docs/specs/2026-10-26-sb-backend.md, The wake protocol, Crash and timeout, Queueing and concurrency). An event wakes a run: a new pi started in the tower tab's standing pane
@@ -390,7 +390,7 @@ export type ClaimRequest = Record<string, unknown>
 /** The sender an ally run serves, as its claim names it: the run's remote-turn hooks pin the turn to it. */
 export interface Peer { device: string; label: string; short: string; team: string; teamName: string }
 /** `live`: the part of a brief the run is given as a message and not in its system section (a head run whose claim said `liveBrief`). */
-export type ClaimReply = { ok: true; wait: true } | { ok: false; error: string } | { ok: true; token: string; kind: "local" | "ally" | "head"; level?: string; peer?: Peer; run: string; workspace: string; identity: string; label: string; brief: string; live?: string; hand?: true };
+export type ClaimReply = { ok: true; wait: true } | { ok: false; error: string } | { ok: true; token: string; kind: "local" | "ally" | "head"; level?: string; peer?: Peer; run: string; workspace: string; identity: string; label: string; brief: string; live?: string; hand?: true; headless?: true };
 
 export function createRuns(o: RunsOptions) {
 	const platform = o.platform ?? process.platform, win = platform === "win32";
@@ -402,8 +402,8 @@ export function createRuns(o: RunsOptions) {
 	const procs = o.procs ?? readProcs();
 	const newId = o.newId ?? (() => randomBytes(8).toString("hex"));
 	const services = new Map<string, Svc>(), byToken = new Map<string, Active>(), byRun = new Map<string, Active>(), blocked = new Set<Svc>();
-	/** The `forward` confirms an ally run waits for: dialog id → run id. */
-	const confirms = new Map<string, string>();
+	/** The `forward` confirms an ally run waits for: dialog id → run id, and for a headless run the call it is for (the Allow the device's yes gives, allows.ts `noteRun`). */
+	const confirms = new Map<string, string>(), confirmCalls = new Map<string, { toolCallId: string; tool: string; args: unknown }>();
 	let slots = 0, pendingTakeovers = 0, herdrLostAt: number | undefined, watcher: ReturnType<typeof setInterval> | undefined, stopped = false;
 	/** The messages handed back to the holder as taken, and when: the holder drops its inbox file under a lock, and a message it still lists for a moment is not given to another run (A6). */
 	const handedBack = new Map<string, number>();
@@ -676,7 +676,13 @@ export function createRuns(o: RunsOptions) {
 			const got = kids.start({ run: rec.id, workspace: rec.workspace, kind: headRun(active) ? "head" : rec.kind, args, cwd: await svc.ref.cwd(), onExit: (exit) => kidExit(active, exit) });
 			rec.pid = got.pid;
 			writeRun(slot, rec);
-			const claimed = await waitPastTrust(o.sleep, () => active.token || active.ended, t.claim, 200);
+			// The claim window does not count while the run's pi waits on a dialog before its claim (pi's project-trust question, runtrust.ts): the boss has its minute to answer.
+			let waited = 0;
+			while (!active.token && !active.ended && waited <= t.claim) {
+				await o.sleep(200);
+				if (!kids.dialogs().some((d) => d.run === rec.id)) waited += 200;
+			}
+			const claimed = active.token || active.ended;
 			if (!claimed) throw new Error(`pi did not claim the run within ${t.claim / 1000} s`);
 		} catch (cause) {
 			if (active.ended) return;
@@ -1274,9 +1280,21 @@ export function createRuns(o: RunsOptions) {
 		log.line("run-claim", { workspace: a.rec.workspace, run: a.rec.id, ...(hand ? { hand: true } : {}) });
 		const r = svc.ref.record();
 		const peer: Peer | undefined = ally && a.rec.device && a.rec.team ? { device: a.rec.device, label: a.rec.deviceLabel ?? a.rec.device.slice(0, 6), short: a.rec.deviceShort ?? a.rec.device.slice(0, 6), team: a.rec.team, teamName: a.rec.teamName ?? a.rec.team.slice(0, 6) } : undefined;
-		return { ok: true, token: a.token, kind: headRun(a) ? "head" : a.rec.kind, ...(a.rec.level ? { level: a.rec.level } : {}), ...(peer ? { peer } : {}), run: a.rec.id, workspace: a.rec.workspace, identity: r.id, label: r.label, brief: built.text, ...(built.live !== undefined ? { live: built.live } : {}), ...(hand ? { hand } : {}) };
+		return { ok: true, token: a.token, kind: headRun(a) ? "head" : a.rec.kind, ...(a.rec.level ? { level: a.rec.level } : {}), ...(peer ? { peer } : {}), run: a.rec.id, workspace: a.rec.workspace, identity: r.id, label: r.label, brief: built.text, ...(built.live !== undefined ? { live: built.live } : {}), ...(hand ? { hand } : {}), ...(a.headless ? { headless: true as const } : {}) };
 	};
 	const heldReply = (): ClaimReply => ({ ok: true, wait: true });
+
+	/**
+	 * pi's project-trust question in a headless run, before its claim (trust/runtrust.ts): RPC mode has no prompt of its own, so the run's extension asks here with the PID and nonce its claim will carry, and the
+	 * server shows it as the run's dialog, which only the boss answers (a viewer's typed key, this computer's page). True on his yes; the claim window does not count while it waits (`launchKid`).
+	 */
+	async function trust(req: Record<string, unknown>): Promise<{ ok: boolean; error?: string; trusted?: boolean }> {
+		const runId = phrase(req.runId, 64), a = byRun.get(runId), cwd = typeof req.cwd === "string" ? req.cwd.slice(0, 4096) : "";
+		if (!a || a.ended || !a.headless || a.token || !o.kids?.claimed(runId, req.pid, req.nonce)) return refuse("only a headless run's own pi asks this, with its PID and nonce, before its claim");
+		const trusted = await o.kids.confirm({ run: runId, workspace: a.rec.workspace, id: "trust", title: `Trust the project folder of ${a.svc.ref.record().label} for this tower run?`, message: `${cwd}\n\nIts .pi settings, extensions, skills, and prompts load only if you trust it. Yes trusts it for this run only; no leaves them unloaded.`, ms: DIALOG_MS });
+		log.line("run-trust", { run: runId, workspace: a.rec.workspace, trusted });
+		return { ok: true, trusted };
+	}
 
 	/** `--sb-run`: the pi the server started claims its run. */
 	async function claim(req: ClaimRequest): Promise<ClaimReply> {
@@ -1638,28 +1656,32 @@ export function createRuns(o: RunsOptions) {
 			return at < heldUntil(svc) && !svc.run && svc.state === "standing" && waitingOf(svc).length > 0;
 		},
 		/** An ally run asked its sender's device to confirm a call at `forward`: the answer is handed to it at its next poll. */
-		watchConfirm(token: unknown, dialogId: string) {
+		watchConfirm(token: unknown, dialogId: string, call?: { toolCallId: string; tool: string; args: unknown }) {
 			const a = of(token);
-			if (a && !a.ended) confirms.set(dialogId, a.rec.id);
+			if (a && !a.ended) (confirms.set(dialogId, a.rec.id), call && a.headless ? confirmCalls.set(dialogId, call) : confirmCalls.delete(dialogId));
 		},
 		/** The run forgets a confirm it asked for (the dialog ended another way, or the holder refused the request): false when this run did not ask for it. */
 		forgetConfirm(token: unknown, dialogId: string): boolean {
 			const a = of(token);
 			if (!a || a.ended || confirms.get(dialogId) !== a.rec.id) return false;
-			confirms.delete(dialogId);
+			(confirms.delete(dialogId), confirmCalls.delete(dialogId));
 			return true;
 		},
-		/** The sender's device answered a `forward` confirm: true when an ally run was waiting for it. */
-		confirmed(dialogId: string, allow: boolean): boolean {
-			const run = confirms.get(dialogId), a = run ? byRun.get(run) : undefined;
-			confirms.delete(dialogId);
+		/**
+		 * The sender's device answered a `forward` confirm: true when an ally run was waiting for it. A headless run has no bridge to tell the hub, so the device's yes is its Allow (`allow`, allows.ts `noteRun`) for the
+		 * call it was asked for, before the run hears it.
+		 */
+		confirmed(dialogId: string, allow: boolean, noteAllow?: (n: { run: string; toolCallId: string; tool: string; args: unknown }) => void): boolean {
+			const run = confirms.get(dialogId), a = run ? byRun.get(run) : undefined, call = confirmCalls.get(dialogId);
+			(confirms.delete(dialogId), confirmCalls.delete(dialogId));
 			if (!a || a.ended) return false;
+			if (allow && call && a.headless) noteAllow?.({ run: a.rec.id, ...call });
 			a.commands.push({ type: "confirmed", dialogId, allow });
 			return true;
 		},
 		/** Messages wait in the link inbox for the tower identity: the service of that identity starts ally runs for them. */
 		pokeAllies: (identity: string) => { for (const s of services.values()) if (s.ref.record().id === identity) pokeAlly(s); },
-		claim, paneRole, poll, taken, done, present, release: releaseRun,
+		claim, trust, paneRole, poll, taken, done, present, release: releaseRun,
 		/** Writes the tokens of the service's ally panes again (the tower's publish, with its own `sb_order` as the key). */
 		markAllies: (workspace: string, towerKey?: string | null) => { const s = services.get(workspace); return s ? markAllies(s, towerKey) : Promise.resolve(); },
 		/** The run behind a token, or undefined. */
@@ -1669,9 +1691,9 @@ export function createRuns(o: RunsOptions) {
 				// A sender that left the roster ends the run now, not at the next tick; the level is the lower of the claimed one and the device's now.
 				const standing = standingOf(a);
 				if (!standing) (a.why ??= "the sender left the team", terminate(a, "quit"));
-				return { id: a.rec.id, workspace: a.rec.workspace, kind: "ally", ...(standing ? { level: standing.level } : { gone: true as const }), ...(a.rec.device ? { device: a.rec.device } : {}), ...(a.rec.deviceLabel ? { deviceLabel: a.rec.deviceLabel } : {}), ...(a.rec.deviceShort ? { deviceShort: a.rec.deviceShort } : {}), ...(a.rec.team ? { team: a.rec.team } : {}), ...(a.rec.teamName ? { teamName: a.rec.teamName } : {}), pane: a.rec.pane, asks: itemsOf(a, true).flatMap((i) => (i.awaitsReply ? [i.awaitsReply] : [])) };
+				return { id: a.rec.id, workspace: a.rec.workspace, kind: "ally", ...(standing ? { level: standing.level } : { gone: true as const }), ...(a.rec.device ? { device: a.rec.device } : {}), ...(a.rec.deviceLabel ? { deviceLabel: a.rec.deviceLabel } : {}), ...(a.rec.deviceShort ? { deviceShort: a.rec.deviceShort } : {}), ...(a.rec.team ? { team: a.rec.team } : {}), ...(a.rec.teamName ? { teamName: a.rec.teamName } : {}), pane: a.rec.pane, ...(a.headless ? { headless: true as const } : {}), asks: itemsOf(a, true).flatMap((i) => (i.awaitsReply ? [i.awaitsReply] : [])) };
 			}
-			return a && !a.ended ? { id: a.rec.id, workspace: a.rec.workspace, kind: headRun(a) ? "head" : a.rec.kind, ...(a.rec.level ? { level: a.rec.level } : {}), ...(a.rec.device ? { device: a.rec.device } : {}), ...(a.rec.deviceLabel ? { deviceLabel: a.rec.deviceLabel } : {}), ...(a.rec.team ? { team: a.rec.team } : {}), pane: a.rec.pane, asks: itemsOf(a, true).flatMap((i) => (i.awaitsReply ? [i.awaitsReply] : [])) } : undefined;
+			return a && !a.ended ? { id: a.rec.id, workspace: a.rec.workspace, kind: headRun(a) ? "head" : a.rec.kind, ...(a.rec.level ? { level: a.rec.level } : {}), ...(a.rec.device ? { device: a.rec.device } : {}), ...(a.rec.deviceLabel ? { deviceLabel: a.rec.deviceLabel } : {}), ...(a.rec.team ? { team: a.rec.team } : {}), pane: a.rec.pane, ...(a.headless ? { headless: true as const } : {}), asks: itemsOf(a, true).flatMap((i) => (i.awaitsReply ? [i.awaitsReply] : [])) } : undefined;
 		},
 		/** The Herdr the server watched stopped (its socket closed): a pi that dies from now on died with it, and the takeover that follows ends its run. */
 		herdrLost() {
@@ -1965,6 +1987,8 @@ export function createRuns(o: RunsOptions) {
 			log.line("run-abort", { workspace, run: a.rec.id });
 			return o.kids!.abort(workspace, a.rec.id);
 		},
+		/** Whether a live run is a headless one (the server's child). */
+		isHeadless: (runId: string) => Boolean(byRun.get(runId)?.headless && !byRun.get(runId)?.ended),
 		/** Whether runs start headless now (`towerRuns.headless`). */
 		headless: () => headlessOn(),
 		/** The headless children: rings, dialogs, and their answers (runkids.ts). */

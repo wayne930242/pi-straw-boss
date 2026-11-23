@@ -8,13 +8,13 @@ export const RING_TAIL = 40;
 const LINE_MAX = 400;
 
 /** One line, with no control or escape left: CSI and OSC sequences go whole, a lone ESC or C1 byte and every other control character become a space. */
-export const plain = (text: string) => text
+export const plain = (text: string, max = LINE_MAX) => text
 	.replace(/(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]?/g, "")
 	.replace(/(?:\u001b\]|\u009d)[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)?/g, "")
 	.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
 	.replace(/\p{Cf}/gu, "")
 	.replace(/\s+$/, "")
-	.slice(0, LINE_MAX);
+	.slice(0, max);
 const short = (value: unknown, max: number) => plain(typeof value === "string" ? value : JSON.stringify(value) ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
 export interface RingLine { n: number; text: string }

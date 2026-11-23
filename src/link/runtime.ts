@@ -299,9 +299,11 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		 * An ally run (docs/specs/2026-10-26-sb-backend.md, Ally runs): its whole session is one remote turn at the level the claim fixed (the policy can only lower it), and the requests the hooks make of the holder
 		 * go to the server by `route` with the run's token.
 		 */
-		pinRun(sender: Pinned, via: (op: Record<string, unknown>) => Promise<Answer>) {
+		pinRun(sender: Pinned, via: (op: Record<string, unknown>) => Promise<Answer>, confirm?: Parameters<typeof remote.useConfirm>[0]) {
 			route = via;
 			remote.turns.pin(sender);
+			// A headless run's gate is the server's own dialog (runmode.ts); a run in a pane confirms in its terminal.
+			if (confirm) remote.useConfirm(confirm);
 		},
 		/** The sender's device answered the `forward` confirm of a dialog (the server hands it to the run at its poll). */
 		answerForward,

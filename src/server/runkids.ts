@@ -12,6 +12,8 @@ export interface KidsPort {
 	/** The node and pi CLI (runchild.ts `resolvePi`); throws with the path it looked at. */
 	pi(): PiPath;
 	env: NodeJS.ProcessEnv;
+	/** The Herdr socket of the server's slot: the run's look finds the server's folder by it (runchild.ts `runEnv`). */
+	herdr?: string;
 	/** `<state>/tower/<ws>`: the run's stderr goes under `runs/`. */
 	dir(workspace: string): string;
 	spawn?: Spawn;
@@ -19,21 +21,27 @@ export interface KidsPort {
 	killGroup?: (pid: number) => void;
 	taskkill?: (pid: number) => void;
 }
-export interface Dialog { key: string; run: string; workspace: string; method: string; title: string; message?: string; options?: string[]; at: number }
+/** A run's dialog. `approval`: one the server raised itself (pi's trust question before the claim, the approval of a `link_request` or of an ally run's gated call), which only this computer's viewer or local page answers: never a paired device (`NO_RELAY`). */
+export interface Dialog { key: string; run: string; workspace: string; method: string; title: string; message?: string; options?: string[]; at: number; approval?: true }
+type Held = Dialog & { timer: ReturnType<typeof setTimeout>; settle?: (yes: boolean) => void };
 interface Kid { child: RunChild; nonce: string; workspace: string; exit?: ChildExit }
 /** How long a server restart gives its headless runs to settle (decision F-5). */
 export const DRAIN_MS = 60_000;
 /** How long a run's dialog waits for the boss before it is cancelled. */
 export const DIALOG_MS = 60_000;
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
+/** How long an approval the server raised waits for the boss: the gate's and `link_request`'s own ten minutes. */
+export const APPROVAL_MS = 10 * 60_000;
 
 export function createKids(o: { port: KidsPort; log: Log; now: () => number; dialogMs?: number }) {
 	const follows = new Map<string, { label: string; head: string }>();
-	const kids = new Map<string, Kid>(), rings = new Map<string, Ring>(), dialogs = new Map<string, Dialog & { timer: ReturnType<typeof setTimeout> }>();
+	const kids = new Map<string, Kid>(), rings = new Map<string, Ring>(), dialogs = new Map<string, Held>();
 	const ring = (workspace: string) => rings.get(workspace) ?? (rings.set(workspace, createRing()), rings.get(workspace)!);
 	const answerTo = (d: Dialog, reply: { value?: string; confirmed?: boolean; cancelled?: true }) => {
 		const kid = kids.get(d.run), found = dialogs.get(d.key);
 		if (found) (clearTimeout(found.timer), dialogs.delete(d.key));
+		// A dialog the server raised is no pi's: its answer is the boss's yes or no, and nothing is written to the run.
+		if (found?.settle) return found.settle(reply.cancelled !== true && reply.confirmed === true);
 		try { kid?.child.write({ type: "extension_ui_response", id: d.key.slice(d.key.indexOf(":") + 1), ...reply }); } catch { /* a closed stdin: the run is ending */ }
 	};
 	const onUi = (run: string, workspace: string, rec: Record<string, unknown>) => {
@@ -60,7 +68,7 @@ export function createKids(o: { port: KidsPort; log: Log; now: () => number; dia
 			const nonce = newNonce(), dir = o.port.dir(input.workspace);
 			pruneStderr(`${dir}/runs`, o.now());
 			const child = startChild({
-				pi: o.port.pi(), args: ["--mode", "rpc", ...input.args], cwd: input.cwd, env: runEnv(o.port.env, nonce), stderr: stderrFile(dir, input.run),
+				pi: o.port.pi(), args: ["--mode", "rpc", ...input.args], cwd: input.cwd, env: runEnv(o.port.env, nonce, o.port.herdr), stderr: stderrFile(dir, input.run),
 				onRecord: (rec) => {
 					if (rec.type === "extension_ui_request") return onUi(input.run, input.workspace, rec);
 					const said = ring(input.workspace).record(rec), f = follows.get(input.workspace);
@@ -77,7 +85,7 @@ export function createKids(o: { port: KidsPort; log: Log; now: () => number; dia
 			if (f) ring(f.head).add(`↳ ${f.label} run`);
 			void child.exited.then((exit) => {
 				kid.exit = exit;
-				for (const d of [...dialogs.values()]) if (d.run === input.run) (clearTimeout(d.timer), dialogs.delete(d.key));
+				for (const d of [...dialogs.values()]) if (d.run === input.run) (clearTimeout(d.timer), dialogs.delete(d.key), d.settle?.(false));
 				o.log.line("run-exit", { run: input.run, code: exit.code ?? "none", signal: exit.signal ?? "none" });
 				const f = follows.get(input.workspace);
 				if (f) (ring(f.head).add(exit.code === 0 ? `✓ ${f.label} done` : `✗ ${f.label} crashed`), follows.delete(input.workspace));
@@ -103,12 +111,39 @@ export function createKids(o: { port: KidsPort; log: Log; now: () => number; dia
 		follow: (workspace: string, label: string, head: string) => void follows.set(workspace, { label: plain(label).slice(0, 40), head }),
 		dropRing: (workspace: string) => void rings.delete(workspace),
 		/** The dialogs waiting, of one workspace or all, oldest first. */
-		dialogs: (workspace?: string): Dialog[] => [...dialogs.values()].filter((d) => !workspace || d.workspace === workspace).map(({ timer: _t, ...d }) => d),
+		dialogs: (workspace?: string): Dialog[] => [...dialogs.values()].filter((d) => !workspace || d.workspace === workspace).map(({ timer: _t, settle: _s, ...d }) => d),
+		/**
+		 * A dialog the server raises for a run itself (`approval`): resolves true only on the boss's explicit yes, false on a no, a cancel, the run's end, `withdraw`, or `ms` passing. `id` names it within its run; a second
+		 * one with the same id replaces the first, which resolves false.
+		 */
+		confirm(input: { run: string; workspace: string; id: string; title: string; message?: string; ms?: number }): Promise<boolean> {
+			const key = `${input.run}:sb-${input.id}`, before = dialogs.get(key);
+			if (before) (clearTimeout(before.timer), dialogs.delete(key), before.settle?.(false));
+			return new Promise<boolean>((resolve) => {
+				const timer = setTimeout(() => {
+					if (dialogs.get(key)?.timer !== timer) return;
+					dialogs.delete(key);
+					o.log.line("run-dialog-cancelled", { run: input.run, method: "approval" });
+					ring(input.workspace).add(`· an approval nobody answered was refused: ${plain(input.title).slice(0, 80)}`);
+					resolve(false);
+				}, input.ms ?? APPROVAL_MS);
+				timer.unref?.();
+				dialogs.set(key, { key, run: input.run, workspace: input.workspace, method: "confirm", title: plain(input.title).slice(0, 200), ...(input.message ? { message: input.message.split("\n").map((l) => plain(l, 12_000)).join("\n") } : {}), at: o.now(), approval: true, timer, settle: resolve });
+				ring(input.workspace).add(`? ${plain(input.title).slice(0, 120)} · answer in a viewer's card view or on this computer's page`);
+			});
+		},
+		/** Ends a dialog the server raised as a no (the call that asked was aborted, or answered another way). */
+		withdraw(run: string, id: string) {
+			const d = dialogs.get(`${run}:sb-${id}`);
+			if (d?.settle) (clearTimeout(d.timer), dialogs.delete(d.key), d.settle(false));
+		},
 		/** The boss's answer to a dialog: a select's option, a confirm's yes or no, an input's text. An answer for a dialog that is not waiting is refused. */
 		answer(key: string, reply: { value?: string; confirmed?: boolean; cancelled?: boolean }): boolean {
 			const d = dialogs.get(key);
 			if (!d) return false;
-			if (d.method === "select" && reply.value !== undefined && !(d.options ?? []).includes(reply.value)) return false;
+			// A select is answered with one of its own options or cancelled: no answer without a value (REV-F004).
+			if (d.method === "select" && !reply.cancelled && (typeof reply.value !== "string" || !(d.options ?? []).includes(reply.value))) return false;
+			if (d.approval && !reply.cancelled && typeof reply.confirmed !== "boolean") return false;
 			answerTo(d, reply.cancelled ? { cancelled: true } : d.method === "confirm" ? { confirmed: reply.confirmed === true } : { value: String(reply.value ?? "").slice(0, 4000) });
 			ring(d.workspace).add(`» answered: ${d.title.slice(0, 80)}`);
 			return true;

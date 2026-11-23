@@ -198,6 +198,10 @@ export interface Towers extends Returns {
 	waitDigest(workspace: string): WaitDigest | undefined;
 	/** A tool a run calls (`run-tool`): checked against the token's kind, done as the tower identity. */
 	runTool(request: Record<string, unknown>): Promise<{ text: string; details?: unknown }>;
+	/** A headless run's approval (`run-approve`): the server's own dialog; its yes is the run's Allow for that call. */
+	runApprove(request: Record<string, unknown>): Promise<{ approved: boolean }>;
+	/** The sender's device answered an ally run's `forward` confirm; for a headless run its yes is the Allow of that call. */
+	confirmed(dialogId: string, allow: boolean): boolean;
 	/** The identities leave the broker; tokens and files stay. */
 	stop(opts?: { quitRuns?: boolean }): Promise<void>;
 }
@@ -393,7 +397,7 @@ export function createTowers(o: TowersOptions): Towers {
 		return { line, since: rows };
 	};
 	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), headModel: () => headModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), unforwarded: async (run, ws) => unforwardedWait(slot, ws, run, await o.sessions().then((x) => new Set(x.map((s) => s.id)), () => undefined), (event, facts) => log.line(event, facts)),
-		kids: createKids({ port: { on: () => readTowerRuns(slot.stateDir).headless, pi: () => resolvePi(o.env, readTowerRuns(slot.stateDir).pi), env: o.env, dir: (ws) => towerDir(slot, ws), ...o.kidsPort }, log, now }),
+		kids: createKids({ port: { on: () => readTowerRuns(slot.stateDir).headless, pi: () => resolvePi(o.env, readTowerRuns(slot.stateDir).pi), env: o.env, herdr: slot.herdr, dir: (ws) => towerDir(slot, ws), ...o.kidsPort }, log, now }),
 		allyEnded: (end) => allyReceipts({ slot, now, unattended: () => o.unattended?.() === true, answered: (run, ask) => answered.has(run, ask), label: () => o.ally?.selfLabel?.() ?? "the box", log: (event, facts) => log.line(event, facts), send: (ws, device, text, inReplyTo) => o.link ? o.link({ op: "send", device, text, reply: false, inReplyTo }, services.get(ws)?.record.id ?? "") : Promise.reject(new Error("no link holder")) })(end), ...o.runs });
 
 	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.standingWait ? { wait: o.standingWait } : {}), ...(o.runs?.platform ? { platform: o.runs.platform } : {}), ...(o.runs?.alive ? { alive: o.runs.alive } : {}), locale: () => localeOf(o.env, slot.stateDir), attended: () => !o.unattended?.(), once: () => headless() });
@@ -1217,8 +1221,9 @@ export function createTowers(o: TowersOptions): Towers {
 			server: o.server ?? { status: () => ({}), logs: () => [], restart: () => Promise.reject(new Error("The server cannot restart itself here")) },
 			expect: (to: string, name: string, text: string) => { if (peer) return route(to, phrase(name, 40), "expect"); try { addExpect(slot, ws, { to, name, at: now(), first: phrase(text, 80) }, now()); } catch (cause) { error("expects", (cause as Error).message); } },
 			who, identity: l.record.id, requests: l.requests, startedAt: o.startedAt,
-			allow: (q: { toolCallId: string; tool: string; args: unknown }) => (o.allows ? o.allows.take({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),
-			allowRequest: (q: { toolCallId: string; lines: string[] }) => (o.allows ? o.allows.takeRequest({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() }) : Promise.resolve({ ok: false as const, reason: "this server holds no Allows" })),
+			// A headless run's approvals are the server's own dialogs (`runApprove`), bound to the run and the call; a run in a pane has the hub's, relayed by the bridge on its pane.
+			allow: (q: { toolCallId: string; tool: string; args: unknown }) => (!o.allows ? Promise.resolve({ ok: false as const, reason: "this server holds no Allows" }) : who.headless ? Promise.resolve(o.allows.takeRun({ run: who.id, ...q })) : o.allows.take({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() })),
+			allowRequest: (q: { toolCallId: string; lines: string[] }) => (!o.allows ? Promise.resolve({ ok: false as const, reason: "this server holds no Allows" }) : who.headless ? Promise.resolve(o.allows.takeRunRequest({ run: who.id, ...q })) : o.allows.takeRequest({ pane: who.pane, ...q, sessions: () => l.client!.listSessions() })),
 			asks: o.asks ?? { open: () => { throw new Error("this server keeps no asks"); } },
 			forwardEvent: ev.forwardEvent, waitEvents: ev.waitEvents, allyMessages: () => runs.allyMessages(request.token), ...(o.waits ? { waits: o.waits } : {}),
 			// A reply that settles a blocked call_tower this run took, while auto mode is on, is listed for the return list with the basis it names (autotower.ts `basisOf`) or `none`.
@@ -1321,6 +1326,43 @@ export function createTowers(o: TowersOptions): Towers {
 		}
 	};
 
+	/**
+	 * `run-approve`: a headless run's approval (REV-F002), raised by the server as the run's dialog from what the server holds itself: a local run's `link_request` lines (as `request-open` answered them), or an ally
+	 * run's gated tool and arguments. Only the boss answers it (`run-dialog` from a viewer or this computer's page; a run token is refused that command and a paired device never gets it), and his yes is noted as
+	 * the one Allow for that run and call id (allows.ts `noteRun`), which the tool's own `run-tool` then uses up. `drop` withdraws one the run no longer waits for.
+	 */
+	const runApproveFor = async (request: Record<string, unknown>): Promise<{ approved: boolean }> => {
+		const who = runs.runOf(request.token), kids = runs.kids();
+		if (!who) throw new Error("unknown_token");
+		if (!who.headless || !kids) throw new Error("only a headless run asks the server for its approvals; a run in a pane shows its own");
+		const toolCallId = typeof request.toolCallId === "string" && /^[\w.:-]{1,128}$/.test(request.toolCallId) ? request.toolCallId : undefined;
+		if (!toolCallId) throw new Error("an approval is for one tool call: its id");
+		const id = `approve-${toolCallId}`;
+		if (request.drop === true) return (kids.withdraw(who.id, id), { approved: false });
+		if (kids.dialogs(who.workspace).filter((d) => d.run === who.id && d.approval).length >= 4) throw new Error("this run already waits on four approvals");
+		const l = services.get(who.workspace);
+		if (!l || l.stopped) throw new Error(`The sb server stands in for no tower of workspace ${who.workspace}`);
+		if (request.kind === "request" && who.kind === "local") {
+			const lines = l.requests.get(String(request.id));
+			if (!lines) throw new Error("This run opened no such request");
+			const body = [...lines, `Asked by session: tower run of ${l.record.label} (${who.id.slice(0, 8)})`].join("\n");
+			if (body.length > 12_000) throw new Error(`a link request whose description is ${body.length} characters long cannot be confirmed (the most is 12000); it is refused`);
+			const approved = await kids.confirm({ run: who.id, workspace: who.workspace, id, title: `Link request from the tower run of ${l.record.label}`, message: body });
+			if (approved) o.allows?.noteRun({ run: who.id, toolCallId, lines });
+			return { approved };
+		}
+		if (request.kind === "gate" && who.kind === "ally") {
+			const tool = typeof request.tool === "string" && /^[\w-]{1,64}$/.test(request.tool) ? request.tool : undefined, args = request.args;
+			if (!tool || typeof args !== "object" || args === null || Array.isArray(args)) throw new Error("a gated call's approval names its tool and its arguments");
+			const shown = JSON.stringify(args, null, 2) ?? "{}";
+			if (shown.length > 12_000) throw new Error(`a remote request whose arguments are ${shown.length} characters long cannot be confirmed (the most is 12000); it is refused`);
+			const approved = await kids.confirm({ run: who.id, workspace: who.workspace, id, title: `Remote request from ${who.deviceLabel ?? "a teammate's device"} (${who.deviceShort ?? "?"}, trust ${who.level ?? "reply"}): ${tool}`, message: shown });
+			if (approved) o.allows?.noteRun({ run: who.id, toolCallId, tool, args });
+			return { approved };
+		}
+		throw new Error("a local run asks approval for a link_request, an ally run for a gated call");
+	};
+
 	// Auto mode and the towers (§6): the waits open when it turns on are parked, and a raiser is told once under `wait_parked`. The head's memory is read under its constant key while no head service stands, as the list reads it, so its parked cards go back (as `gone`) with the rest (AR-F002).
 	const targets = (): Target[] => ((ts) => (ts.some((t) => t.head) ? ts : [...ts, { workspace: HEAD_KEY, label: headLabel(localeOf(o.env, slot.stateDir)), head: true as const }]))([...services.values()].map((l) => ({ workspace: l.record.workspace, label: l.record.label, ...(isHeadL(l) ? { head: true as const } : {}) })));
 	const tellParked = async (workspace: string, entry: Entry): Promise<void> => {
@@ -1352,6 +1394,8 @@ export function createTowers(o: TowersOptions): Towers {
 		parked: () => parkedRows(slot, now(), targets()),
 		...returner(() => ({ slot, now, log, error, targets: targets(), reach: (workspace) => services.get(workspace)?.reach, notice: (workspace, text, key) => runs.notice(workspace, text, key), head: (id) => ((h) => (h?.record.id === id ? h.record.workspace : undefined))(headLive()) })),
 		runTool: runToolFor,
+		runApprove: runApproveFor,
+		confirmed: (dialogId, allow) => runs.confirmed(dialogId, allow, (n) => o.allows?.noteRun(n)),
 		memory: (workspace, json, via) => {
 			// The head's constant key reaches head/ whether or not a head service stands (towerstore.ts `HEAD_KEY`).
 			if (workspace !== HEAD_KEY && !services.has(workspace)) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);

@@ -47,7 +47,8 @@ test("a headless run is pi in RPC mode as the server's child: no pane, no Herdr 
 	assert.deepEqual(world.herdr.commands("agent", "start"), [], "no pi started in a pane");
 	assert.deepEqual(world.herdr.commands("tab", "create"), [], "and no tab made for the service or the run");
 	assert.match(k.nonce, /^[0-9a-f]{32}$/);
-	assert.equal(Object.keys(k.env).filter((key) => /^(HERDR_|PI_SUBAGENT_|PI_INTERCOM_SESSION_ID$)/.test(key) || (key.startsWith("STRAW_BOSS_") && key !== "STRAW_BOSS_RUN_NONCE")).length, 0, "none of the server's own, Herdr's, or a subagent's names");
+	assert.equal(Object.keys(k.env).filter((key) => /^(HERDR_|PI_SUBAGENT_|PI_INTERCOM_SESSION_ID$)/.test(key) && key !== "HERDR_SOCKET_PATH" || (key.startsWith("STRAW_BOSS_") && key !== "STRAW_BOSS_RUN_NONCE")).length, 0, "none of the server's own, Herdr's pane, or a subagent's names");
+	assert.equal(k.env.HERDR_SOCKET_PATH, world.slot.herdr, "the server's own Herdr socket, so the run finds its server's folder");
 	assert.match(String((await claim(s, k, { pid: k.pid + 1 })).error), /PID or the nonce/, "a claim from another process is refused");
 	assert.match(String((await claim(s, k, { nonce: "0".repeat(32) })).error), /PID or the nonce/, "a claim without the nonce is refused");
 	const got = await claim(s, k);
@@ -132,8 +133,8 @@ test("the stdin writer takes abort, extension_ui_response and get_state only; st
 	split.push('{"a":"x\u2028y"}\r\n{"b"');
 	split.push(":1}\n");
 	assert.deepEqual(got, ['{"a":"x\u2028y"}', '{"b":1}']);
-	const env = runEnv({ PATH: "/bin", HERDR_PANE_ID: "p1", STRAW_BOSS_ROLE: "tower", PI_SUBAGENT_ID: "s", PI_INTERCOM_SESSION_ID: "i", HOME: "/h" }, "n1");
-	assert.deepEqual(env, { PATH: "/bin", HOME: "/h", STRAW_BOSS_RUN_NONCE: "n1" });
+	const env = runEnv({ PATH: "/bin", HERDR_PANE_ID: "p1", HERDR_SESSION: "x", HERDR_SOCKET_PATH: "/other.sock", STRAW_BOSS_ROLE: "tower", PI_SUBAGENT_ID: "s", PI_INTERCOM_SESSION_ID: "i", HOME: "/h" }, "n1", "/slot/herdr.sock");
+	assert.deepEqual(env, { PATH: "/bin", HOME: "/h", HERDR_SOCKET_PATH: "/slot/herdr.sock", STRAW_BOSS_RUN_NONCE: "n1" });
 	assert.equal(shimTarget("C:/npm/pi.cmd", '@IF EXIST "%dp0%\\node.exe" (\r\n  "%_prog%"  "%dp0%\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js" %*\r\n)'), "C:\\npm\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js");
 });
 

@@ -12,7 +12,8 @@ import type { AllyItem, AllyPort, Timers } from "../src/server/runs.ts";
 import type { StandingTimers } from "../src/server/standing.ts";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
-import type { ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
+import type { PiPath } from "../src/server/runchild.ts";
 
 /** A headless run's pi as the fake spawn makes it (runchild.ts): the test reads its arguments and env, writes its RPC stdout, reads what the server wrote to its stdin, and ends it. */
 export class FakeKid extends EventEmitter {
@@ -189,6 +190,9 @@ export class TowerWorld extends ServerWorld {
 	kids = new Map<string, FakeKid>();
 	kidKills: [number, "group" | "taskkill"][] = [];
 	kidPlatform: NodeJS.Platform | undefined;
+	/** Set to start real pi processes for headless runs (tests/headless-real.test.ts): the node and pi CLI on the PATH, spawned for real; their kills are the real ones. */
+	realPi: PiPath | undefined;
+	realKids: ChildProcess[] = [];
 	constructor() {
 		super();
 		this.herdr.onAgentStart = (pane, args) => {
@@ -217,7 +221,7 @@ export class TowerWorld extends ServerWorld {
 					this.linkCalls.push({ body: b, from });
 					return this.linkAnswers.get(String(b.op))?.(b) ?? { ok: false, code: "no_holder", error: "no holder in this world" };
 				},
-				kidsPort: {
+				kidsPort: this.realPi ? { pi: () => this.realPi!, spawn: (file: string, args: string[], options: object) => { const child = nodeSpawn(file, args, options); this.realKids.push(child); return child; } } : {
 					pi: () => ({ node: "/fake/node", cli: "/fake/pi/dist/cli.js" }),
 					spawn: (file: string, args: string[], options: { cwd?: string | URL; env?: NodeJS.ProcessEnv }) => {
 						const kid = new FakeKid(this.nextPi++, file, args, String(options.cwd ?? ""), options.env ?? {});

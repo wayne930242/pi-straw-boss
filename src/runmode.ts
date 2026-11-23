@@ -66,7 +66,7 @@ interface PaneAsk { asked: Promise<Found | undefined>; /** The session start tha
 const globalMarks = globalThis as Record<symbol, unknown>;
 interface Peer { device: string; label: string; short: string; team: string; teamName: string }
 /** `brief` goes into the run's system section; `live` (a head run's: headbrief.ts `buildHeadSplit`) is the part that differs from run to run, given to the model as a message so the section stays the same bytes. */
-interface Claim { token: string; kind: "local" | "ally" | "head"; level?: string; peer?: Peer; run: string; workspace: string; identity: string; label: string; brief: string; live?: string; hand?: boolean }
+interface Claim { token: string; kind: "local" | "ally" | "head"; level?: string; peer?: Peer; run: string; workspace: string; identity: string; label: string; brief: string; live?: string; hand?: boolean; /** The server's child (runchild.ts): its approvals are the server's dialogs. */ headless?: boolean }
 /** A pi without the flag in a standing pane: the server says whether to quit, wait, or take the pane as a run of the boss's own. */
 type Found = { role: "none" | "quit" | "hand"; reason?: string; claim?: Claim };
 interface Event { id: string; kind: string; text: string; from?: { id: string; name?: string }; flag?: string; door?: string; press?: boolean }
@@ -126,7 +126,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	// a run never reads the record itself. It starts nothing: a run of a server that is gone has nothing to run for.
 	const ask = deps.ask ?? (async (request: Record<string, unknown>): Promise<Answer> => {
 		if (!look) throw new Error("this session has no look at the sb server");
-		return look.ask(request, { start: "never", ...(claim?.kind === "head" && request.cmd === "run-tool" && request.tool === "ledger_sweep" ? { timeoutMs: 11 * 60_000 } : {}) });
+		// A ledger sweep, and a headless run's approval (the boss has the gate's ten minutes), take longer than the look's 30 s.
+		return look.ask(request, { start: "never", ...((claim?.kind === "head" && request.cmd === "run-tool" && request.tool === "ledger_sweep") || request.cmd === "run-approve" ? { timeoutMs: 11 * 60_000 } : {}) });
 	});
 	const sleep = (ms: number) => cfg.sleep(ms);
 
@@ -145,10 +146,29 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		if (claim?.kind !== "ally") return true;
 		const peer = claim.peer;
 		if (!peer || !link) return false;
-		link.pinRun({ id: peer.device, short: peer.short, label: peer.label, team: peer.team, floor: (["reply", "forward", "dispatch"].includes(claim!.level ?? "") ? claim!.level : "reply") as Level }, async (op) => (await call({ cmd: "link", body: op })).answer as Answer);
+		link.pinRun({ id: peer.device, short: peer.short, label: peer.label, team: peer.team, floor: (["reply", "forward", "dispatch"].includes(claim!.level ?? "") ? claim!.level : "reply") as Level }, async (op) => (await call({ cmd: "link", body: op })).answer as Answer, claim.headless ? (c) => serverConfirm(c.toolCallId, { kind: "gate", tool: c.tool, args: c.input }) : undefined);
 		return true;
 	};
 	const approval = createApproval({ bus: pi.events, onError: () => {} });
+	/**
+	 * A headless run's confirm (REV-F002): RPC mode has no terminal, and no bridge carries a dialog to the hub, so the server raises the approval itself as the run's dialog (`run-approve`), from what it holds of the
+	 * call, and notes its own Allow on the boss's yes. The run only learns the answer: nothing it sends can answer the dialog. An aborted call withdraws it.
+	 */
+	const serverConfirm = (toolCallId: string, what: Record<string, unknown>) => ({
+		async confirm(_title: string, _message: string, opts?: { signal?: AbortSignal }): Promise<boolean> {
+			const drop = () => void call({ cmd: "run-approve", toolCallId, drop: true }).catch(() => {});
+			if (opts?.signal?.aborted) return false;
+			opts?.signal?.addEventListener("abort", drop, { once: true });
+			try {
+				return (await call({ cmd: "run-approve", toolCallId, ...what })).approved === true;
+			} catch (error) {
+				tell(`Straw Boss: the approval could not be asked: ${(error as Error).message}`, "warning");
+				return false;
+			} finally {
+				opts?.signal?.removeEventListener("abort", drop);
+			}
+		},
+	});
 
 	// --- claiming --------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -351,7 +371,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 				const details = opened.details as { id: string; lines: string[]; reason: string };
 				const asker = `tower run of ${claim!.label}`;
 				const lines = [...details.lines, `Asked by session: ${asker} (${claim!.run.slice(0, 8)})`, `Reason: ${details.reason}`];
-				const verdict = await approval.approve({ hereOnly: (HERE_ONLY as readonly string[]).includes(params.action), toolCallId, lines, asker, ...(context.hasUI ? { ui: context.ui } : {}), ...(signal ? { signal } : {}) });
+				const ui = claim!.headless ? serverConfirm(toolCallId, { kind: "request", id: details.id }) : context.hasUI ? context.ui : undefined;
+				const verdict = await approval.approve({ hereOnly: (HERE_ONLY as readonly string[]).includes(params.action), toolCallId, lines, asker, ...(ui ? { ui } : {}), ...(signal ? { signal } : {}) });
 				if (!verdict.approved) {
 					await tool("link_request", { phase: "drop", id: details.id }, toolCallId).catch(() => undefined);
 					throw new Error(verdict.reason);

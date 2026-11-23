@@ -18,7 +18,8 @@ const NO_RELAY = Symbol.for("pi-straw-boss.no-relay");
 
 /** The sender's device that is asked too, at `forward`: `send` delivers the request; `listen` hears its answer (the holder checked device, digest, and once). */
 export interface ForwardPort {
-	send(req: { team: string; device: string; dialogId: string; digest: string; tool: string; args: string; tower: string }): Promise<void>;
+	/** `toolCallId`: the call it is for, so a headless run's server can take the device's yes as that call's Allow (towers.ts `confirmed`). */
+	send(req: { team: string; device: string; dialogId: string; digest: string; tool: string; args: string; tower: string; toolCallId: string }): Promise<void>;
 	listen(dialogId: string, on: (allow: boolean) => void): () => void;
 }
 export interface GateAsk {
@@ -31,9 +32,11 @@ export interface GateAsk {
 	forwardTo?: RemoteSender;
 	/** The tower's own name, for the sender's alert. */
 	tower: string;
-	ui?: { confirm(title: string, message: string, opts?: { signal?: AbortSignal; timeout?: number }): Promise<boolean> };
+	ui?: UiConfirm;
 	signal?: AbortSignal;
 }
+/** The confirm a gate or an approval asks: pi's `ctx.ui`, or a headless run's request to its server. */
+export interface UiConfirm { confirm(title: string, message: string, opts?: { signal?: AbortSignal; timeout?: number }): Promise<boolean> }
 export interface Outcome { allow: boolean; reason: string; by: string }
 export const DECLINED = "the boss declined a remote request";
 
@@ -113,7 +116,7 @@ export function createGate({ bus, forward, timeoutMs = GATE_MS, onError = () => 
 			}
 			if (forward && req.forwardTo) {
 				offs.push(forward.listen(id, (allow) => finish(allow, "forward", allow ? "allowed by the sender's device" : DECLINED)));
-				forward.send({ team: req.forwardTo.team, device: req.forwardTo.id, dialogId: id, digest, tool: req.tool, args, tower: req.tower }).catch((error: Error) => onError("forward", error));
+				forward.send({ team: req.forwardTo.team, device: req.forwardTo.id, dialogId: id, digest, tool: req.tool, args, tower: req.tower, toolCallId: req.toolCallId }).catch((error: Error) => onError("forward", error));
 			}
 		});
 	}

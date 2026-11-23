@@ -20,10 +20,14 @@ export const STDERR_KEEP = 20, STDERR_KEEP_MS = 24 * 3600_000;
 const DROPPED = [/^STRAW_BOSS_/, /^HERDR_/, /^PI_SUBAGENT_/, /^PI_INTERCOM_SESSION_ID$/];
 export const NONCE_ENV = "STRAW_BOSS_RUN_NONCE";
 
-/** The environment of a run: the server's, less the names above, plus the run's nonce. */
-export function runEnv(env: NodeJS.ProcessEnv, nonce: string): NodeJS.ProcessEnv {
+/**
+ * The environment of a run: the server's, less the names above, plus the run's nonce and the Herdr socket of the server's slot (`herdr`), so the run finds its server's folder (record.ts `slotOf`) whatever
+ * Herdr session or socket the server was started under. No pane, tab, or workspace of Herdr's goes with it.
+ */
+export function runEnv(env: NodeJS.ProcessEnv, nonce: string, herdr?: string): NodeJS.ProcessEnv {
 	const out: NodeJS.ProcessEnv = {};
 	for (const [k, v] of Object.entries(env)) if (!DROPPED.some((re) => re.test(k))) out[k] = v;
+	if (herdr) out.HERDR_SOCKET_PATH = herdr;
 	out[NONCE_ENV] = nonce;
 	return out;
 }

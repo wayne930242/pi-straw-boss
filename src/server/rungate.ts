@@ -8,7 +8,7 @@
 export type Kind = "local" | "ally" | "head";
 export interface RunInfo { id: string; workspace: string; kind: Kind }
 /** A run as the tower tools see it: its kind, and for an ally run the device it serves, its label and team, the level it was claimed at, its pane, and the ask ids its messages carry. */
-export interface RunWho extends RunInfo { level?: string; device?: string; deviceLabel?: string; deviceShort?: string; team?: string; teamName?: string; pane: string; asks?: string[]; /** An ally run whose sender is no longer a member of its team: the run is being ended, and its tools are refused. */ gone?: true }
+export interface RunWho extends RunInfo { level?: string; device?: string; deviceLabel?: string; deviceShort?: string; team?: string; teamName?: string; pane: string; /** A headless run (runkids.ts): its approvals are the server's own dialogs, not a bridge's. */ headless?: true; asks?: string[]; /** An ally run whose sender is no longer a member of its team: the run is being ended, and its tools are refused. */ gone?: true }
 export type Verdict = { ok: true } | { ok: false; error: string };
 
 /**
@@ -19,7 +19,9 @@ export const LOCAL_LINK_OPS = ["list", "board-read", "send"] as const;
 /** What an ally run may send the holder: its sender's device is asked to confirm a call at `forward`, and the ask is forgotten when the dialog ends another way (the server pins the device and the team). */
 export const ALLY_LINK_OPS = ["confirm-request", "forget-confirm"] as const;
 /** Commands that carry a run's own token as their credential (runs.ts): the token is checked there. */
-const OWN_TOKEN = new Set(["run-poll", "run-taken", "run-done", "run-boss", "run-release", "run-file", "run-tool"]);
+const OWN_TOKEN = new Set(["run-poll", "run-taken", "run-done", "run-boss", "run-release", "run-file", "run-tool", "run-approve"]);
+/** Whether a command carries the run's own token as its credential (a drained run's requests are taken during a restart: main.ts). */
+export const ownToken = (cmd: string) => OWN_TOKEN.has(cmd);
 const LOCAL_ONLY_OWN_WORKSPACE = new Set(["open-main", "close-main"]);
 const LOCAL_READS = new Set(["status"]);
 

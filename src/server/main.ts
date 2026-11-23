@@ -36,7 +36,7 @@ import { type StartWatches, startWatches, type WatchRoutes, watchReply } from ".
 import { type StartThreads, startThreads, threadReply } from "./threadsops.ts";
 import { startStall, type StartStall } from "./stallops.ts";
 import { reportWatch, startAutoWatch, type StartWatch } from "./watchops.ts";
-import { gateRun, type RunInfo } from "./rungate.ts";
+import { gateRun, ownToken, type RunInfo } from "./rungate.ts";
 import type { ServerTools } from "./runtools.ts";
 import {
 	clearStartError, type Detach, fileOf, prepareSlot, readRecord, restartingNow, type ServerRecord, serverId, type Slot, TOUCH_MS, towerId, updateRecord, writeRecord, writeStartError,
@@ -356,7 +356,12 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		await Promise.race([guiHost?.leave(phase === "stopping").catch(() => {}), sleep(GUI_LEAVE_MS)]);
 		// The tower identities leave the broker with the server's own session; their tokens and files stay for the server that comes next. The parked cards auto mode's end sent back go out first, each within its wait (AR-F004).
 		await Promise.race([towers?.returning(), sleep(NOTICE_WAIT_MS)]);
-		if (phase === "restarting") await Promise.race([towers?.runs.drain(DRAIN_MS), sleep(DRAIN_MS + 10_000)]); // headless runs drain (F-5): up to 60 s each to settle, then they end and the next word resumes
+		// Headless runs drain (F-5): up to 60 s each to settle, then they end and the next word resumes. The bound's timer is cleared when the drain ends first, so it holds no process open for 70 s.
+		if (phase === "restarting") {
+			let bound: ReturnType<typeof setTimeout> | undefined;
+			await Promise.race([towers?.runs.drain(DRAIN_MS), new Promise((done) => (bound = setTimeout(done, DRAIN_MS + 10_000)))]);
+			clearTimeout(bound);
+		}
 		// A stop on purpose waits for its runs to quit (and, off Windows, for the signal to a pi that stays): the exit does not come before it has either happened or been decided, however long the process table read takes.
 		await Promise.race([Promise.all([towers?.stop({ quitRuns: phase === "stopping" }), client?.disconnect().catch(() => {})]), sleep(LEAVE_MS + (phase === "stopping" ? runsStopMs() : 0))]);
 		const disconnected = now();
@@ -396,7 +401,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			if (!verdict.ok) return { ok: false, error: verdict.error };
 		}
 		if (request.cmd === "status") return { ok: true, ...facts(), uptimeMs: now() - startedAt, ...(own.lastError ? { lastError: own.lastError } : {}), towers: towers?.status() ?? [], head: towers?.head.status() ?? null, link: link?.status() ?? null, ...(guiHost && o.gui !== false ? { gui: guiHost.facts() } : {}) };
-		if (phase === "restarting" || (phase === "stopping" && request.cmd !== "run-poll")) return { ok: false, error: "restarting" };
+		// A restart drains its headless runs (decision F-5, runs.ts `drain`): while it does, a live run's own requests are still taken, so it can finish its turn and say it is idle; nothing new starts meanwhile.
+		const draining = phase === "restarting" && run !== undefined && towers?.runs.isHeadless(run.id) === true && ownToken(request.cmd);
+		if ((phase === "restarting" && !draining) || (phase === "stopping" && request.cmd !== "run-poll")) return { ok: false, error: "restarting" };
 		if (request.cmd === "link") {
 			// A request of a session to the link holder (service.ts): the answer is the holder's own, in `answer`; `ok` is only whether the server took the request. Only the primary server holds the link.
 			// A run's requests go out as its workspace's tower, whatever it says it is.
@@ -410,7 +417,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				if (body.op === "confirm-request") {
 					const info = towers?.runs.runOf(request.token);
 					if (!info?.device || !info.team || typeof body.dialogId !== "string") return { ok: false, error: "an ally run asks its sender to confirm with a dialog id" };
-					towers!.runs.watchConfirm(request.token, body.dialogId);
+					// A headless run names the call too: the device's yes is then that call's Allow (towers.ts `confirmed`).
+					const call = info.headless && typeof body.toolCallId === "string" && typeof body.tool === "string" && typeof body.args === "string" ? ((args) => (args === undefined ? undefined : { toolCallId: body.toolCallId as string, tool: body.tool as string, args }))((() => { try { return JSON.parse(body.args as string) as unknown; } catch { return undefined; } })()) : undefined;
+					towers!.runs.watchConfirm(request.token, body.dialogId, call);
 					confirming = body.dialogId;
 					request.body = { ...body, device: info.device, team: info.team };
 				} else if (body.op === "forget-confirm" && (typeof body.dialogId !== "string" || !towers?.runs.forgetConfirm(request.token, body.dialogId))) return { ok: false, error: "an ally run forgets only a confirm it asked for" };
@@ -506,6 +515,9 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			case "run-boss": return answer(async (t) => ({ ...t.runs.present(request) }));
 			case "run-release": return answer(async (t) => ({ ...(await t.runs.release(request)) }));
 			case "run-tool": return answer(async (t) => ({ ...(await t.runTool(request)) }));
+			case "run-approve": return answer(async (t) => ({ ...(await t.runApprove(request)) }));
+			// pi's project-trust question in a headless run before its claim: asked with the run's PID and nonce, no token yet (runs.ts `trust`).
+			case "run-trust": return answer(async (t) => ({ ...(await t.runs.trust(request)) }));
 			case "run-file": return answer(async (t) => (t.runs.setFile(request.token, request.file, request.session), {}));
 			// The boss writes to the tower (the GUI's composer, `/boss tower <prompt>`): an event ahead of the rest.
 			case "tower-event": {
@@ -741,7 +753,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			// A `unit-stop` that passed the holder's checks: the tower service decides which main and whose, and the revoker carries it out (unitstop.ts). Its presence puts `unit-stop` in this box's caps.
 			unitStop: (a) => (towers ? towers.unitStop(a) : Promise.reject(new Error("The tower service is not running"))),
 			// The tower service takes part in the holder's work (B6): an ask answered by a `tower-reply` is the main's, messages for a tower identity the server runs wake an ally run, and a `forward` answer reaches its run.
-			tower: { asks: { take: (q) => ((t) => ((wait) => (t && wait ? { ...t, wait } : t))(t ? waitsHub?.router.answered(q.ask) : undefined))(asks.take(q)) }, waits: waitsHub!.holder, waitOps: (body, from) => waitsHub!.op(body, from), served: (identity) => towers?.allyWaiting(identity), confirmed: (to, dialogId, allow) => towers?.runs.confirmed(dialogId, allow) ?? false,
+			tower: { asks: { take: (q) => ((t) => ((wait) => (t && wait ? { ...t, wait } : t))(t ? waitsHub?.router.answered(q.ask) : undefined))(asks.take(q)) }, waits: waitsHub!.holder, waitOps: (body, from) => waitsHub!.op(body, from), served: (identity) => towers?.allyWaiting(identity), confirmed: (to, dialogId, allow) => towers?.confirmed(dialogId, allow) ?? false,
 				openTower: towerOpener({ run: cfg.run, towers: () => towers, now, home: o.link?.home ?? homedir(), agentDir: env.PI_CODING_AGENT_DIR ?? join(o.link?.home ?? homedir(), ".pi", "agent"),
 					failed: (from, project, error) => void unitsOut().notify(`tower-open/${from}/${project}/${Math.floor(now() / 600_000)}`, { kind: "tower-open-failed", unit: allyLabel(project), text: `Could not open a tower for ${project}: ${error.message}` }, { device: from }) }) },
 		});

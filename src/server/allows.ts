@@ -84,7 +84,29 @@ export function createAllows(o: AllowsOptions = {}) {
 		}
 	}
 	const wait = () => o.waitMs ?? 3000;
+	// A headless run (runkids.ts) has no pane and no bridge: its approvals are dialogs the server raised itself, and the Allow is noted here when the boss says yes, bound to the run, the call id, and what was
+	// approved (the gate's tool and the digest of its arguments, or the lines of a `link_request`); a `forward` confirm the sender's device answered yes for that run's call is noted the same way. Used once.
+	const runHeld: { run: string; toolCallId: string; what: string; at: number; used: boolean }[] = [];
+	const takeRun = (run: string, toolCallId: string, what: string): TakeResult => {
+		const cutoff = now() - KEEP_MS;
+		for (let i = runHeld.length - 1; i >= 0; i--) if (runHeld[i]!.at < cutoff || runHeld[i]!.used) runHeld.splice(i, 1);
+		const mine = runHeld.filter((h) => h.run === run && h.toolCallId === toolCallId);
+		const hit = mine.find((h) => h.what === what);
+		if (!hit) return { ok: false, reason: mine.length ? "the approval was given for another call than this one" : `the server holds no approval for tool call ${toolCallId} of this run` };
+		hit.used = true;
+		return { ok: true };
+	};
+	const gateKey = (tool: string, args: unknown) => `gate:${tool}:${argsDigest(args)}`, requestKey = (lines: string[]) => `request:${argsDigest(lines)}`;
 	return {
+		/** The boss approved a headless run's call (or the sender's device did, at `forward`): one Allow for that run and call. */
+		noteRun(n: { run: string; toolCallId: string } & ({ tool: string; args: unknown } | { lines: string[] })): void {
+			runHeld.push({ run: n.run, toolCallId: n.toolCallId, what: "lines" in n ? requestKey(n.lines) : gateKey(n.tool, n.args), at: now(), used: false });
+			while (runHeld.length > MAX) runHeld.shift();
+		},
+		/** A headless run's gated call, against the Allow `noteRun` holds for it. */
+		takeRun: (q: { run: string; toolCallId: string; tool: string; args: unknown }): TakeResult => takeRun(q.run, q.toolCallId, gateKey(q.tool, q.args)),
+		/** A headless run's `link_request`, against the approval of its lines. */
+		takeRunRequest: (q: { run: string; toolCallId: string; lines: string[] }): TakeResult => takeRun(q.run, q.toolCallId, requestKey(q.lines)),
 		/** The hub saw a gate or an approval close with a yes. */
 		note(note: AllowNote): void {
 			held.push({ note, used: false });

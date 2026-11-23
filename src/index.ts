@@ -44,6 +44,7 @@ import { registerTrainGuard, registerTrainSigns, type TrainGuard } from "./train
 import { carLink, trainCarTool } from "./traincar.ts";
 import { hasIntegrationApp } from "./train/appsconfig.ts";
 import { registerTrust } from "./trust/ask.ts";
+import { registerRunTrust } from "./trust/runtrust.ts";
 import { registerThreadTools } from "./threadtools.ts";
 
 export type { Deps } from "./state.ts";
@@ -63,7 +64,8 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		// Outside Herdr there is no tab to coordinate. Every session in Herdr relays its dialogs to the GUI (bridge.ts), subagents too: they ask
 		// questions as well. A pi-herdr-agents worker never joins: its parent represents it.
 		if (env.PI_SUBAGENT_ID) registerThreadTools(pi, env); // every child, a Core-launched one with no pane too: the review thread's tools (threadtools.ts), active only in a child its dispatcher paired
-		if (!env.HERDR_PANE_ID) return;
+		// A headless tower run (server/runchild.ts) is the server's child with no pane: it is a run and nothing else, so only its run module, the look it asks the server through, and the link hooks of an ally run load.
+		if (!env.HERDR_PANE_ID) return void (env.STRAW_BOSS_RUN_NONCE && headlessRun(pi, cfg));
 		const kit = createKit(pi, cfg), { s, guiDir } = kit;
 		// Closing is this session's own: the GUI asks its bridge, /boss close asks here, and only a session that runs this extension can (not a subagent).
 		let closeSelf: ((keepPane: boolean) => string | undefined) | undefined;
@@ -109,6 +111,15 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		mainDuty.trainOn(() => Boolean(trainGuard)); // a train's todo and MonitorCreate calls, and the integrator's train todos (nothing loads with the merge train off)
 		registerBoss(kit, { runMode, host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look, paths: createBossPaths(kit, { host, server: look, closeSelf, here: host.here }) });
 	};
+}
+
+/** A headless run (docs/specs/2026-11-23-lite-b2-d-e-f.md §4.4): it claims with its nonce, relays pi's project-trust question to the boss as a dialog (runtrust.ts), and never looks at the server to start or upgrade it. */
+function headlessRun(pi: ExtensionAPI, cfg: Config): void {
+	const kit = createKit(pi, cfg), link = createLink(kit), look = cfg.server ? createServerLook(kit, cfg.server) : undefined;
+	// The trust question waits for the boss up to the dialog's minute on the server (runkids.ts DIALOG_MS), so its request may take that long.
+	registerRunTrust(pi, (request) => (look ? look.ask(request, { start: "never", timeoutMs: 75_000 }) : Promise.resolve({ ok: false, error: "no server" })), cfg.env);
+	look?.holdWhile(() => true);
+	createRunMode(kit, look, cfg.runSide, link);
 }
 
 export default createStrawBoss();

@@ -211,19 +211,26 @@ export const guiUp = (guiDir: string, env: NodeJS.ProcessEnv, read: StartRead = 
 };
 
 /** Registers the handler (before the subagent return, so every pi in Herdr has it) and marks the process's first session start. `io` is the terminal and process it answers on (tests). */
+/** pi's own reads: the saved decision for a folder or a parent (null when none; throws for a broken trust.json or a pi without the store), and `defaultProjectTrust`. */
+export function trustReaders(): Pick<AskDeps, "saved" | "defaultTrust"> {
+	const api = pi_ as unknown as Record<string, any>;
+	return {
+		saved: (cwd) => {
+			if (typeof api.ProjectTrustStore !== "function") throw new Error("pi has no ProjectTrustStore");
+			return new api.ProjectTrustStore(api.getAgentDir()).get(cwd);
+		},
+		defaultTrust: (cwd) => {
+			if (typeof api.SettingsManager?.create !== "function") return "unsupported";
+			const settings = api.SettingsManager.create(cwd, api.getAgentDir(), { projectTrusted: false });
+			return typeof settings.getDefaultProjectTrust === "function" ? settings.getDefaultProjectTrust() : "unsupported";
+		},
+	};
+}
 export function registerTrust(pi: ExtensionAPI, { cfg, guiDir }: Pick<Kit, "cfg" | "guiDir">, io: Pick<AskDeps, "stdin" | "proc" | "write"> & Partial<Pick<AskDeps, "saved" | "defaultTrust"> & { resources(cwd: string): boolean }> = { stdin: process.stdin, proc: process, write: (text) => void process.stderr.write(text) }, auto?: AskDeps["auto"]) {
 	const { env, startRead } = cfg;
 	// Older pi lacks these (hasTrustRequiringProjectResources < 0.79.2, getDefaultProjectTrust < 0.79.1, ProjectTrustStore < 0.79.0): then whatever needs a missing one is skipped (no early read below 0.79.2; nothing relayed below 0.79.1) and pi asks in the terminal.
-	const api = pi_ as unknown as Record<string, any>;
-	const saved = io.saved ?? ((cwd: string) => {
-		if (typeof api.ProjectTrustStore !== "function") throw new Error("pi has no ProjectTrustStore");
-		return new api.ProjectTrustStore(api.getAgentDir()).get(cwd);
-	});
-	const defaultTrust = io.defaultTrust ?? ((cwd: string) => {
-		if (typeof api.SettingsManager?.create !== "function") return "unsupported";
-		const settings = api.SettingsManager.create(cwd, api.getAgentDir(), { projectTrusted: false });
-		return typeof settings.getDefaultProjectTrust === "function" ? settings.getDefaultProjectTrust() : "unsupported";
-	});
+	const api = pi_ as unknown as Record<string, any>, readers = trustReaders();
+	const saved = io.saved ?? readers.saved, defaultTrust = io.defaultTrust ?? readers.defaultTrust;
 	const resources = io.resources ?? ((cwd: string) => typeof api.hasTrustRequiringProjectResources === "function" && api.hasTrustRequiringProjectResources(cwd));
 	// The early read only where pi will ask in this folder: resources that need trust, no saved decision, "ask", and a terminal (not `pi -p` or a subagent).
 	warmServerStart(guiDir, env, startRead, () => resources(process.cwd()) && asks({ stdin: io.stdin, saved, defaultTrust }, process.cwd())); // process.cwd(): pi gives no session cwd at load. The server's start time is read now, so it is under way at pi's trust question (RC3-F001)
