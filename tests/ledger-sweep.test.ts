@@ -30,13 +30,19 @@ test("the morning uses the existing head notice; only a head run that took it ma
 		const repo = join(w.stateDir, "alpha"), inRepo = join(repo, "scratch", "keep.md");
 		mkdirSync(join(repo, ".git"), { recursive: true });
 		w.herdr.workspaces[0]!.worktree = { checkout_path: repo };
+		const empty = join(w.stateDir, "leftover");
+		mkdirSync(join(empty, ".git"), { recursive: true });
+		w.herdr.workspaces[1]!.worktree = { checkout_path: empty };
+		w.herdr.addPane("wB:p1", "wB:t1", "shell");
 		writeFileSync(join(w.stateDir, "config.json"), JSON.stringify({ ledger: { janitor: join(w.stateDir, "my janitor") } }));
 		const server = await w.start({ gui: false, now: () => now, ledgerSweep: { every: (fn, ms) => { assert.equal(ms, 60_000); tick = fn; return () => {}; }, exec: async (file, args) => {
 			calls.push([file, ...args]);
-			return JSON.stringify({ actions: [], left: [{ repo: "alpha", path: inRepo, reason: "open work" }, { repo: null, path: "/fully/unmatched/session.jsonl", reason: "no live workspace" }] });
+			return JSON.stringify({ actions: [], left: [{ repo: "alpha", path: inRepo, reason: "open work" }, { repo: "leftover", path: join(empty, "session.jsonl"), reason: "no live workspace" }] });
 		} } });
 		const ask = async (cmd: string, fields: Record<string, unknown> = {}) => (await callControl(server.handle.endpoint, w.record()!.secret, { cmd, ...fields })).reply!;
-		assert.equal((await ask("ensure-tower", { workspace: "wA" })).ok, true);
+		const tower = await ask("ensure-tower", { workspace: "wA" });
+		assert.equal(tower.ok, true);
+		w.sessions.push({ id: w.expose!.identityOf("wA")! }); // the broker lists this registered tower for delivery
 		const head = await w.expose!.head.ensure();
 		tick();
 		assert.deepEqual(readQueue(w.slot, HEAD_KEY), []);
@@ -60,7 +66,15 @@ test("the morning uses the existing head notice; only a head run that took it ma
 		const result = await tool(event.id);
 		assert.equal(result.ok, true, JSON.stringify(result));
 		assert.deepEqual((result.details as { matched: unknown }).matched, [{ workspace: "wA", repo: "alpha", path: inRepo, reason: "open work" }]);
+		assert.equal((result.details as { unmatched: number }).unmatched, 1);
 		assert.equal((await tool(event.id)).ok, true, "repeated tool calls see the same result");
+		const send = (workspace: string) => ask("run-tool", { token: claim.token, tool: "tower_send", turn: event.id, args: { workspace, message: inRepo, reply: false } });
+		const delivered = await send("wA");
+		assert.equal(delivered.ok, true, JSON.stringify(delivered));
+		assert.equal(w.client("sb-head")!.sent.at(-1)?.to, w.expose!.identityOf("wA"));
+		// Even if the head names a workspace without a tower at send time, the sweep opens none.
+		assert.match(String((await send("wB")).error), /no tower of workspace wB/);
+		assert.equal(w.expose!.identityOf("wB"), undefined);
 		assert.deepEqual(calls, [[join(w.stateDir, "my janitor"), "--apply", "--json"]]);
 		assert.deepEqual(readEntries(join(w.stateDir, "board")).map((row) => row.now), ["session.jsonl: no live workspace"]);
 		tick();

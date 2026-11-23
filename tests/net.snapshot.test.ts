@@ -161,6 +161,24 @@ test("a file is recorded only for a pi pane, as a .jsonl under the sessions dire
 	assert.deepEqual(read(at("wA:p1", "/s/2026_m1.txt")), [undefined, undefined, undefined], "only .jsonl files");
 });
 
+test("overlapping reads publish in order even when the second session list is ready first", async () => {
+	const first = Promise.withResolvers<Session[]>(), second = Promise.withResolvers<Session[]>();
+	const lists = [first.promise, second.promise];
+	const herdr = async (args: string[]) => JSON.stringify({ result: args[0] === "pane" ? { panes } : { workspaces } });
+	const source = netSource({ run: herdr, sessions: () => lists.shift()!, sessionDir: "/s" });
+	const published: string[] = [];
+	const read = () => source.read().then((n) => published.push(n.bases[0]!.tabs[0]!.units[0]!.key));
+	const older = read(), newer = read();
+	const at = { ws: "wA", tab: "wA:t1", pane: "wA:p1" };
+	second.resolve([session("new", "new", at)]);
+	await new Promise<void>((done) => setImmediate(done));
+	first.resolve([session("old", "old", at)]);
+	await Promise.all([older, newer]);
+	assert.equal(published.at(-1), "new", "a watch must not be told the old snapshot after the new one");
+	assert.equal(source.lookup("new")?.live, true);
+	assert.notEqual(source.lookup("old")?.live, true);
+});
+
 test("the registry keeps a key that left the net for ten minutes, names the pane's new session as its successor, and then forgets it", async () => {
 	let live: Session[] = [session("s1", "one", { ws: "wA", tab: "wA:t1", pane: "wA:p1" }), session("tower-a", "tower", { ws: "wA", tab: "wA:t3", pane: "wA:p5" })];
 	const ps = panes.map((p) => (p.pane_id === "wA:p1" ? { ...p, agent: "pi", agent_session: { value: "/s/2026_s1.jsonl" } } : p));

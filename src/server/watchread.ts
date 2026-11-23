@@ -194,7 +194,11 @@ export function createWatchRead(d: WatchReadDeps) {
 	};
 
 	/** The route's own reading, while the GUI host gives none. */
-	const readNow = () => (reading ??= d.net.read().then((next) => void (next !== net && take(next)), () => {}).finally(() => (reading = undefined)));
+	const readNow = () => {
+		const before = net;
+		// onRead may already have delivered this result, or a later GUI reading, while the poll was in flight.
+		return reading ??= d.net.read().then((next) => void (net === before && next !== net && take(next)), () => {}).finally(() => (reading = undefined));
+	};
 	const beat = () => {
 		poll = undefined;
 		if (!holds.size) return;
