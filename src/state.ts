@@ -38,7 +38,7 @@ export type Scope = "tab" | "workspace" | "towers" | "all";
  * `run` is the CLI for every command; left out, Herdr's listings, `pane current`, and `report-metadata` go over the socket instead (`socketRun`) and `world` is one `session.snapshot`. `world` is the dashboard's and the GUI's reading of panes and workspaces.
  * `integrationMs` is how long after its start a session checks that Herdr's pi integration is in place (integration.ts); `joinRetryMs` is the waits between a session's asks when its start could not place it or join the net (the last one repeats; session.ts); `adoptMs` is how often a session looks after the sb server; `ask` is how it reaches the server's GUI (host.ts; the control socket by default, through the look); `startRead` is where the recorded server's start time is read from (handover.ts; the process's own cache by default).
  */
-export interface Deps { run?: HerdrRun; world?: HerdrWorld; api?: HerdrApi; call?: HerdrCall; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; couple?: boolean; events?: HerdrEvents; detectMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void; adoptMs?: number; restoreMs?: number; integrationMs?: number; joinRetryMs?: number[]; link?: LinkDeps; server?: ServerLookDeps | null; ask?: Ask; startRead?: StartRead; runSide?: RunSideDeps; face?: FaceSeams }
+export interface Deps { run?: HerdrRun; world?: HerdrWorld; api?: HerdrApi; call?: HerdrCall; copy?: (text: string) => Promise<void>; env?: NodeJS.ProcessEnv; sleep?: Sleep; promptDir?: string; openUrl?: (url: string) => Promise<void>; watch?: HerdrWatch; stateDir?: string; autoTower?: boolean; nudgeMs?: number; version?: string; guardMs?: number; couple?: boolean; events?: HerdrEvents; detectMs?: number; now?: () => number; later?: (pid: number, args: string[]) => void; adoptMs?: number; restoreMs?: number; integrationMs?: number; joinRetryMs?: number[]; link?: LinkDeps; server?: ServerLookDeps | null; ask?: Ask; startRead?: StartRead; runSide?: RunSideDeps; face?: FaceSeams; /** The session's working folder, where its project's apps.json is read (`process.cwd()`). */ cwd?: () => string }
 /** The dependencies with their defaults filled in; `server` (how a session looks after the sb server, server-look.ts) is null in a session that does not: a test world. */
 export type Config = Required<Omit<Deps, "stateDir" | "link" | "server" | "ask" | "startRead" | "runSide" | "face">> & Pick<Deps, "stateDir" | "link" | "server" | "ask" | "startRead" | "runSide" | "face">;
 
@@ -53,6 +53,8 @@ export interface State {
 	trainSettled: boolean;
 	/** The local signs of a train (trainguard.ts `signsOfTrain`) taken once at the start and held here: the guard reads this copy, so a record moved away mid-window changes nothing. */
 	trainSign: boolean;
+	/** The conditional tools, decided at each session start and nowhere else (docs/specs/2026-11-23-lite-main.md §4): a tool list that changes mid-session rewrites the cached prompt. */
+	toolSet: { link: boolean; cars: boolean; carApp: boolean } | undefined;
 	holdsTower: boolean;
 	/** Why this session cannot join: it sits in a sub workspace, or Herdr could not say whether it does. */
 	barred: string | undefined;
@@ -119,7 +121,7 @@ export function createKit(pi: ExtensionAPI, cfg: Config): Kit {
 		c: undefined as unknown as Channel,
 		// SAFETY: as `c` above.
 		at: undefined as unknown as Place,
-		mainId: undefined, pinned: undefined, info: {}, ownName: "", openedBy: undefined, restoredOpener: undefined, kids: new Set(),
+		mainId: undefined, pinned: undefined, toolSet: undefined, info: {}, ownName: "", openedBy: undefined, restoredOpener: undefined, kids: new Set(),
 		ui: undefined, hasUI: false, saved: {}, duty: undefined, branch: () => [], file: undefined, restored: false, queue: Promise.resolve(), dashboard: undefined, viewer: undefined, quit: undefined, closing: undefined, remoteOrigin: undefined, boardId: undefined, autoOn: () => false,
 	};
 	const me = () => env.PI_INTERCOM_SESSION_ID ?? "";

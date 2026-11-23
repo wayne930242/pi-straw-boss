@@ -9,6 +9,7 @@ import { startOf } from "./startof.ts";
 import type { Kit } from "./state.ts";
 import { snapshotOfBranch } from "./todo.ts";
 import { parseSlip, slipLines } from "./train/accept.ts";
+import { hasIntegrationApp } from "./train/appsconfig.ts";
 import { CAR_STATES, type CarState, type CarView, coordinatorWord, forwardsOf, noticeText, type TerminalState, validateStateFields } from "./train/cars.ts";
 import { isName, isObject, type Json } from "./train/spec.ts";
 import { type Manifest, rowsOfSnapshot, slipBlocks, type TrainGuard } from "./trainguard.ts";
@@ -232,7 +233,9 @@ export function trainCarTool(kit: Kit, guard: () => TrainGuard | undefined, link
 	const { pi, s, cfg } = kit, { client } = link;
 	let registered = false;
 	return () => {
-		if (s.isTower || registered || !link.enabled()) return;
+		// A train always has its cars; any other session only in a project whose apps.json names an app with `integration` (docs/specs/2026-11-23-lite-main.md §4). Both read at the session start (`s.toolSet`): the tool list stays put.
+		const set = s.toolSet;
+		if (s.isTower || registered || !(set ? set.cars : link.enabled()) || !(s.isTrain || (set ? set.carApp : hasIntegrationApp(cfg.cwd())))) return;
 		registered = true;
 		link.keepRegistering();
 		// The wait for the notices of the cars this session returned: a look soon after each return, then every 15 s while one is still awaited (also after a /reload, which finds the waits of the module before it).

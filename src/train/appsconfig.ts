@@ -95,6 +95,14 @@ export function projectAppsDir(dir: string): string | undefined {
 	return appsFile(main).exists ? main : undefined;
 }
 
+/** Whether the project at `dir` (its apps.json as `projectAppsDir`, else the nearest above it, finds it) names an app with an `integration` object: the sessions there may need `train_car`. A file that cannot be read names none. */
+export function hasIntegrationApp(dir: string): boolean {
+	const at = projectAppsDir(dir) ?? enclosingAppsDir(dir);
+	if (at === undefined) return false;
+	const read = readApps(at);
+	return read.ok && read.apps.some((app) => isObject(app.integration));
+}
+
 /**
  * The nearest folder above `dir` whose apps.json is there (0.80.17, A6): `train check` run in an app's folder that is a repository of its own (a submodule of the project) finds no apps.json at that repository's root nor in its main
  * checkout, and the project's is above it. Undefined when no folder up to the file system's root has one.

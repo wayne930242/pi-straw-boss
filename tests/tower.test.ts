@@ -211,7 +211,7 @@ test("the tower registers its tab channel as not owner-eligible, writes both tok
 	await tower.start();
 	assert.deepEqual(world.broker.registrations.map((r) => [r.id, r.namespace.split("/").slice(0, 2).join("/"), r.ownerEligible]), [["tower-wA", "straw-boss/tab", false], ["tower-wA", "straw-boss/control", false]], "its tab channel, and the control channel a main it opened answers on");
 	assert.deepEqual([tower.tokens, world.herdr.workspace("wA").tokens], [{ sb_role: "tower" }, { tower: "tower-wA" }]);
-	assert.deepEqual([...tower.tools.keys()].sort(), ["board_read", "boss_broadcast", "boss_close_main", "boss_open_main", "boss_revive_main", "boss_status", "call_tower", "link_request", "tower_list", "tower_send"]);
+	assert.deepEqual([...tower.tools.keys()].sort(), ["board_read", "boss_broadcast", "boss_close_main", "boss_open_main", "boss_revive_main", "boss_status", "call_tower", "tower_list", "tower_send"]); // no link_request: no Straw Link is set up here (docs/specs/2026-11-23-lite-main.md §4)
 	assert.deepEqual(tower.entries, [{ customType: "straw-boss", data: { tower: true, workspaceId: "wA" } }]);
 	assert.match((await tower.run())["straw-boss"]!, /^You are the tower of Herdr workspace Alpha;/);
 

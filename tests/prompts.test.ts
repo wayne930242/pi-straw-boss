@@ -24,7 +24,8 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 2026-11-06 (seam bindings, docs/specs/2026-11-06-seam-bindings.md): with the train on, main.md carries the `## Seam bindings` block for the `integrating` and `deploying` skills (then pi-anchorloop's by name, since 2026-11-12 whichever declare the merge-train contract), 500 to 680 (off it stays 481);
 // tower.md 380 to 390 for "the integrator answers the coordinator itself" (off it stays 371). A role that has its own on-budget is listed in ON_BUDGETS.
 // 2026-11-07 (wait cards, docs/specs/2026-11-07-wait-cards.md, Prompts; shortened in the GUI review, GR-F012): tower.md +31 for "the boss is not an agent: write a wait for them in plain full sentences" (off 371 to 402, on 393 to 424); main.md +20 for the `wait_card` message and `secret_drop` (off 481 to 501, on 695 to 715). Budgets = measured.
-const BUDGETS: Record<string, number> = { "main.md": 501, "tower.md": 468, "member.md": 140, "member-no-main.md": 150 };
+// 2026-11-23 (lite main, docs/specs/2026-11-23-lite-main.md §1; measured): dispatch.md (77 words, until then a steer for a coordinator with a graph) folded into main.md once, with a todo before a worker and the cap of 4: main.md off 501 to 541.
+const BUDGETS: Record<string, number> = { "main.md": 541, "tower.md": 468, "member.md": 140, "member-no-main.md": 150 };
 // Its review fixes (SB-F001, F003, F005: the Approval line quotes words already given and asks only when they are missing, the tower reports nothing back on a forwarded slip): main.md 680 to 700, tower.md 390 to 395, integrator.md 320 to 340 (SB-F002 and F006: the deploy gate before `Merge`, a subagent briefed for one step).
 // Train workers (docs/specs/2026-11-07-train-workers.md §13.1, task 8): tower.md on 424 to 471 (forward with `forward`, open a train with `role: "train"`, a car notice's `blocked`; off stays 402); main.md on 715 to 720 (Batch owner, Handoff route, Record and Approval say who schedules, who departs, who notifies, and where the boss's nod is quoted); integrator.md 340 to 380 and train.md ~450 have their own budgets below.
 // Fix round of task 8 (prompts-review.md, TP-F001 to F018): budgets = measured: main.md on 720 to 725, tower.md on 471 to 469 (the resident tower forwards nothing), planning.md on 670 to 681 (the check command), integrator.md 380 to 412 (todo lifecycle, legacy trains), train.md 450 to 511 (holds, load and lock, the Record file, the metadata.sb keys).
@@ -33,7 +34,8 @@ const BUDGETS: Record<string, number> = { "main.md": 501, "tower.md": 468, "memb
 // 0.81.6 (review HUR-F002, boss 2026-11-21: shared is a heads-up): measured: tower.md on 469 to 480 and off 402 to 417 (answer a shared call only on a clash); HUR2-F001 on 480 to 487 (the resident tower answers the integrator's train: block).
 // 2026-11-23 (the tower's revive, docs/specs/2026-11-23-tower-revive.md §4): measured: tower.md on 487 to 508 and off 417 to 438 (a dead main whose work is not done comes back with boss_revive_main, and no new main opens for its sender).
 // 2026-11-23 (the tower closes agent panes, docs/specs/2026-11-23-tower-close-panes.md §5): measured: tower.md on 508 to 538 and off 438 to 468 (close a main that handed over once its successor is live, whoever opened it; list and close dead agent panes).
-const ON_BUDGETS: Record<string, number> = { "main.md": 743, "tower.md": 538 };
+// 2026-11-23 (lite main, as for BUDGETS above; measured): main.md on 743 to 786.
+const ON_BUDGETS: Record<string, number> = { "main.md": 786, "tower.md": 538 };
 // 2026-11-08 (todo #125 task 5, TP-F004): `{{cli}}` is the command that runs cli.mjs.
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir", "state", "cli", "duty"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
@@ -68,7 +70,7 @@ test("the worker and apps-config prompts moved: apps-config ships unchanged and 
 	assert.match(readFileSync(`${PROMPT_DIR}/apps-config.md`, "utf8"), /^# Apps configuration/);
 });
 
-// The main reads planning.md before its first dispatch, as it reads apps-config.md when it splits work: a reference file, not system prompt.
+// The main reads planning.md for the plan and its anchors, as it reads apps-config.md when it splits work: a reference file, not system prompt.
 // The boss confirms decisions, not the plan (2026-10-21): an unclear or architecture-contradicting requirement, and merge or deploy authorizations.
 test("the main plans from planning.md: graph, todos with owners and blockedBy, shared anchors, and no confirmation of the plan", () => {
 	const main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
@@ -80,7 +82,8 @@ test("the main plans from planning.md: graph, todos with owners and blockedBy, s
 	assert.doesNotMatch(plan, /Start only on their confirmation/);
 	// 2026-11-02 audit (a coordinator offered the boss a page-local design that the app's rules forbade, and a single-loop task opened no anchor loop): +45 words, 20 cut, budget 650 to 670.
 	for (const term of ["Its plan is one todo whose `metadata.anchor` names its check", "read the owning app's instructions", "quote the rule that settles the design in the brief"]) assert.ok(plan.includes(term), `planning.md names ${term}`);
-	for (const off of [false, true]) assert.ok(words(strip(plan, off)) <= (off ? 670 : 699), `planning.md has ${words(strip(plan, off))} words with integration ${off ? "off" : "on"} (budget ${off ? 670 : 699})`);
+	// 2026-11-23 (lite main): the graph is no longer a gate and the cap is main.md's: 670/699 to the measured 502/626.
+	for (const off of [false, true]) assert.ok(words(strip(plan, off)) <= (off ? 502 : 626), `planning.md has ${words(strip(plan, off))} words with integration ${off ? "off" : "on"} (budget ${off ? 502 : 626})`);
 });
 
 // D18 and D19 (docs/specs/2026-10-26-sb-backend.md, Decisions): coordination goes through the tower, and a main calls it at three points only. main.md goes from 332 to about 425 words for that rule; the "who owns it" clause of `blocked` takes it to about 445.
@@ -159,11 +162,9 @@ test("merge train: the integrator prompt carries no legacy own-merge exemption, 
 
 // 2026-11-02: a main carried a side task itself under the single-loop rule "carry bounded work in the session" and stalled its own chain.
 test("the main dispatches work independent of its chain to a subagent in parallel", () => {
-	// Dispatch rules follow the plan (docs/specs/2026-11-09-agent-kinds.md §2a): the line moved from main.md to the two graph addenda.
-	for (const file of ["graph-fan-out.md", "graph-orchestrator-worker.md"]) {
-		const text = readFileSync(`${PROMPT_DIR}/${file}`, "utf8");
-		for (const term of ["Dispatch work independent of your chain to a subagent in parallel", "binds a single loop, not you"]) assert.ok(text.includes(term), `${file} names ${term}`);
-	}
+	// 0.80.x moved the line to the two graph addenda (docs/specs/2026-11-09-agent-kinds.md §2a); 0.83.0 folds the dispatch rules back into main.md once (docs/specs/2026-11-23-lite-main.md §1).
+	const main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
+	for (const term of ["work independent of your chain goes to subagents in parallel", "at most 4 workers at once", "a todo before its worker starts", "split work by owning app", "parallel writers get worktrees", "Dependent tasks wait"]) assert.ok(main.includes(term), `main.md names ${term}`);
 });
 
 // docs/specs/2026-11-06-seam-bindings.md: the `integrating` and `deploying` skills of the merge-train contract leave six seams open (references/seams.md) and read one `## Seam bindings` block from the session's instructions.

@@ -45,11 +45,11 @@ Each solid arrow is a tool from [Tools](#tools). The dotted ones are not tools: 
 
 | Kind | Role names | What it is for | Dispatch by a coordinator |
 |---|---|---|---|
-| `worker` | `worker` | does a task: edits, runs, builds | refused with `sb: plan first` until its todos name a graph |
-| `scout` | `scout` | investigates and reports | passes without a plan |
-| `planner` | `planner` | writes a plan or a design | passes without a plan |
-| `reviewer` | `reviewer`, `visual-tester`, `adversarial-reviewer` | reviews a change or checks the UI | passes without a plan |
-| `watchdog` | `watchdog` | watches one unit of the net and reports only to its dispatcher ([The watchdog](#the-watchdog)) | passes without a plan |
+| `worker` | `worker` | does a task: edits, runs, builds | at most 4 of one main at once: a fifth is refused |
+| `scout` | `scout` | investigates and reports | not counted in the cap |
+| `planner` | `planner` | writes a plan or a design | not counted in the cap |
+| `reviewer` | `reviewer`, `visual-tester`, `adversarial-reviewer` | reviews a change or checks the UI | not counted in the cap |
+| `watchdog` | `watchdog` | watches one unit of the net and reports only to its dispatcher ([The watchdog](#the-watchdog)) | not counted in the cap |
 
 **Kinds of tower run** (what wakes a tower; the rules are in [Local runs](#local-runs), [The boss conversation](#the-boss-conversation), and [Ally runs](#ally-runs))
 
@@ -104,9 +104,9 @@ The numbered rules below are the whole behavior.
 2. A member becomes its tab's **main agent** by promotion. The agent calls `boss_promote` when its work grows (several steps, dispatching workers, more than one app); the member prompt says so. A member that calls pi-herdr-agents' `subagent` or `subagent_resume` tool without promoting is promoted automatically, before the subagent starts or resumes. A join that failed at start and retries after the session's pane moved to another tab registers on the tab it is in now, so it never becomes a second main there.
 3. A tab has one main. An agent never takes over an existing one: while the tab's main is live, `boss_promote` is refused with a message and the automatic promotion is skipped. The member may still dispatch its own subagents, but its prompt tells it to first message the main through intercom with what it will do and which resources it will use.
 4. A main never demotes. When its session ends, the tab has no main until a member promotes (the members' prompt then offers promotion). `/boss` is the user's manual takeover: it makes this session the tab's main even when another is.
-5. A main has a **kind**: `coordinator` (the default: it plans and dispatches), `integrator` (a project's merge trains), or `standing` (one system or machine, no end). The kind is the prompt the main runs: `main.md`, plus `integrator.md` or `duty-standing.md`, and `dispatch.md`. A coordinator gets `dispatch.md` and its graph's addendum (`graph-fan-out.md`, `graph-orchestrator-worker.md`) only once its own todos name a graph in `metadata.graph` (`single-loop`, `fan-out/fan-in`, `orchestrator-worker`; read by `planGraph`, the newest open one wins); an integrator and a standing main always carry `dispatch.md`.
+5. A main has a **kind**: `coordinator` (the default: it plans and dispatches), `integrator` (a project's merge trains), or `standing` (one system or machine, no end). The kind is the prompt the main runs: `main.md`, plus `integrator.md` or `duty-standing.md`. Every kind carries `main.md`'s dispatch rules: split work by owning app, a todo before each worker, `blockedBy` for dependent tasks, worktrees for parallel writers, at most 4 workers at once. A plan's graph in `metadata.graph` (`single-loop`, `fan-out/fan-in`, `orchestrator-worker`; read by `planGraph`, the newest open one wins) only labels the page; no prompt follows it (0.83.0, [lite-main spec](specs/2026-11-23-lite-main.md)).
 
-   A coordinator that dispatches a `worker` (or an unknown role, or a bare spawn) with no such plan is refused with `sb: plan first: …`; scouts, planners, reviewers, watchdogs, and `subagent_resume` pass, and a `todo` call earlier in the same assistant message that names a graph counts. The main changes its kind with `boss_duty` (a reason, one line; a switch re-reads its context once; it writes a `straw-boss` entry `{ duty, dutyFrom, dutyWhy, dutyAt }`, notes the tower's digest, and shows on the page).
+   No plan gates a dispatch. A `subagent` call for a `worker` is refused with `sb: 4 workers run for this main already …` while 4 workers of this session run or start in the same message (pi-herdr-agents' registry of the children it waits on, plus the calls admitted since the turn began); scouts, planners, reviewers, watchdogs, other roles, and `subagent_resume` are not counted. The main changes its kind with `boss_duty` (a reason, one line; the new kind's prompt reaches it as a steer, and the section stays; it writes a `straw-boss` entry `{ duty, dutyFrom, dutyWhy, dutyAt }`, notes the tower's digest, and shows on the page).
    On a local turn, `boss_duty` with `standing` and `boss_rename` by a standing main warn if another live standing main in the same workspace has the same session name (folded as the link-wait router folds it: case, and runs of whitespace), because a link wait that names that session as its owner matches both and so goes to every standing main instead of to one.
 
    A main that has declared none and is named `integ <project>` (at start, or at any rename: `boss_rename`, `/name`, another extension), or holds `train` todos, is migrated to `integrator` once, with the entry `migrated: name` or `migrated: train todos`. A declared kind is never migrated. Each `/reload`, `/new`, `/resume`, and `/fork` reads the integration switch again, and with integration off an integrator runs as a coordinator and publishes `coordinator`. The page shows the kind word (協調者, 整合員, 值守 / coordinator, integrator, on watch) the same in every theme, with the plan's graph after it (單一迴圈, 分支匯流, 多工編排 / single loop, fan-out, orchestrated), and a switch is an event on the timeline.
@@ -125,7 +125,7 @@ The numbered rules below are the whole behavior.
 
 | Role | Who | Gets |
 |---|---|---|
-| main agent | the member that promotes first in a tab, or the `/boss` taker-over | a short prompt: split work by app, plan before the first dispatch, brief workers, check results, ask the boss before merging or deploying |
+| main agent | the member that promotes first in a tab, or the `/boss` taker-over | a short prompt: split work by app, a todo before each worker, at most 4 workers, brief workers, check results, ask the boss before merging or deploying |
 | member | every other joined session | a short prompt: with a main in the tab, tell it before dispatching subagents; without one, promote when the work grows |
 | tower | one per workspace, in its own tab labelled with the Nerd Font radio tower glyph (U+F043B) | a prompt for coordinating agents and repairing coordination friction, and for opening a main when no session owns a request; it never asks the user |
 
@@ -134,10 +134,10 @@ Turns without a role start without the section; while labels are pending, a know
 If labels are still missing 10 seconds after the first turn that waited for them, the next turn with a role pins the section anyway, marking missing labels as `none yet`.
 Changing this text can force a provider to read the whole conversation again without the cache.
 The section keeps its first tab and workspace labels; `boss_status` shows the current labels, the tower, and each tab's main.
-Only an explicit kind change through `boss_duty` can rewrite the section within that session.
+Nothing rewrites the section within that session, not even a kind change through `boss_duty` (it did until 0.82.x).
 
-A coordinator gets its graph's dispatch rules and addendum as a steer even if the graph is already open on the first turn.
-Setting, changing, or clearing the graph sends another steer, as does a role change or an automatic kind migration.
+A plan's graph is in no prompt, and setting, changing, or clearing it sends nothing.
+A role change, a kind change (`boss_duty`), or an automatic kind migration sends the whole new role prompt as a steer.
 A queued steer counts as told when pi delivers it; if pi drops it, the next run sends the update again.
 A steer pi stores while idle counts as told when sent.
 If queued updates arrive out of order, Straw Boss sends the full current instructions.
@@ -148,7 +148,7 @@ After compaction or a `/tree` move, Straw Boss resends the full current instruct
 It steers them into a retried turn, stores them without starting a turn if the current turn ends at compaction, or sends them at the next run's start if no run is active.
 None of these paths rewrites the system section.
 
-Before its first dispatch a main reads `prompts/planning.md`, as it reads `prompts/apps-config.md` when it splits work, so the planning rules stay out of every run's system prompt. It chooses a coordination graph: single-loop (one task, carried by itself or one subagent) needs no plan. For fan-out/fan-in and orchestrator-worker it writes the plan as pi `todo` items: one per task, its `owner` the subagent (or `self`), `blockedBy` for the tasks it depends on (which leaves the rest parallel, up to a cap of 4), and in its description and metadata the anchor that checks it. Tasks that share one anchor share one checkpoint todo instead of each branch checking the same thing.
+The dispatch rules are in `main.md` itself; a main reads `prompts/planning.md` for the plan and its anchors, as it reads `prompts/apps-config.md` when it splits work, so the planning detail stays out of every run's system prompt. It names a coordination graph for the page: single-loop (one task, carried by itself or one subagent) needs no plan. For fan-out/fan-in and orchestrator-worker it writes the plan as pi `todo` items: one per task, its `owner` the subagent (or `self`), `blockedBy` for the tasks it depends on (which leaves the rest parallel, at most 4 workers at once), and in its description and metadata the anchor that checks it. Tasks that share one anchor share one checkpoint todo instead of each branch checking the same thing.
 
 The anchors are testing, pseudo-human, human, and adversarial-review, each the lightest check that can fail before the change. The main dispatches without asking the boss to confirm the plan; it asks the boss only for decisions the plan cannot settle, before the task they block: a requirement that is unclear or contradicts the architecture, and an authorization such as a merge to a shared branch or a deploy. The browser view shows the todos as the plan's progress.
 
@@ -1013,7 +1013,7 @@ sequenceDiagram
     S-->>C: car notice
 ```
 
-A car has four states, set with `train_car` by the integrator and the train:
+A car has four states, set with `train_car` by the integrator and the train (the tool is in a train, and in a session whose project's apps.json names an app with `integration`, with integration on; both decided at the session start, so the tool list stays put for the session):
 
 ```mermaid
 stateDiagram-v2
@@ -3869,9 +3869,9 @@ Straw Boss gives agents a set of tools (`boss_*`, `tower_*`, `call_tower`, `boar
 | `tower_done` | tower runs only | End the run with a handoff note for the next one: one item per line, 1 to 1,200 characters. `wakeAfter` (5 to 240 minutes) asks for a follow-up run, local runs only. The run stays open while the boss is in it ([The boss in a run](#the-boss-in-a-run)). |
 | `board_read` | towers, mains | The work board: each main's one line of current work and checklist on this computer and, with Straw Link, on teammates' computers, as JSON (see [The work board](#the-work-board)). |
 | `board_set` | joined sessions that are not towers (only a tab's main may write) | Override the main's own board entry (it fills itself from the todo list and the name): `now` and up to 8 checklist items, or `auto: true` to hand it back; the answer says where it goes. |
-| `link_request` | every session on an attended computer, and a local tower run | Ask for a Straw Link action (create, invite, invite-unattended, join, trust, leave, remove, role, rotate) with a reason. The boss approves each one in a dialog showing the action, every argument, the reason, and this session; nothing runs unasked. Refused on an unattended device and in a remote turn. |
+| `link_request` | every session on an attended computer where Straw Link is set up (decided at the session start), and a local tower run | Ask for a Straw Link action (create, invite, invite-unattended, join, trust, leave, remove, role, rotate) with a reason. The boss approves each one in a dialog showing the action, every argument, the reason, and this session; nothing runs unasked. Refused on an unattended device and in a remote turn. |
 | `call_tower` | joined sessions and towers | Send a message to this workspace's tower, or another workspace's by id or exact label, under a header. Opens the tower tab when none runs. `why` (required in pi: `milestone`, `shared`, or `blocked`) is written into the header. `reply` (default true) says whether the tower is expected to answer. |
-| `boss_duty` | a tab's main (members, trains, towers, and subagents get a refusal or no tool) | Sets the main's kind: `coordinator`, `integrator` (left out while integration is off), or `standing`, with a one-line reason (at most 200 characters). Refused for the same kind, for a switch away from `integrator` while `train` todos are pending or in progress, and in a Straw Link remote turn. Writes the kind entry, rebriefs (one steer), publishes `sb_duty`, and notes the tower's digest. |
+| `boss_duty` | a tab's main (members, trains, towers, and subagents get a refusal or no tool) | Sets the main's kind: `coordinator`, `integrator` (left out while integration is off), or `standing`, with a one-line reason (at most 200 characters). Refused for the same kind, for a switch away from `integrator` while `train` todos are pending or in progress, and in a Straw Link remote turn. Writes the kind entry, rebriefs (one steer of the whole new role prompt; the system section stays), publishes `sb_duty`, and notes the tower's digest. |
 | `boss_rename` | joined sessions, not towers | Sets the session's name (`pi.setSessionName`) to a short phrase for its current work, trimmed, at most 40 characters (16 fit a tab label). The net and the GUI show the session by its name, and a main agent labels its Herdr tab with it (cut at 16 characters as pi-auto-tab-name cuts it, so that extension, when loaded, takes the label as its own and keeps it through compactions as a chosen name). The main renames the tab itself because pi-auto-tab-name leaves alone a tab someone else labelled, such as a tab the boss named or a tower opened with a label; a member leaves its main's tab alone. A main agent's prompt has it call this when its work turns to another task. A tower has no such tool: the net recognises it by its name. A name that is the label of a tower's or a train's tab (the tower glyph, the head glyph, `train <MMDDx>`) is refused: that label is what proves the role after a restore. |
 | `boss_broadcast` | joined sessions and towers | One message to every other session in a scope, under a header naming every recipient. `tab`, `workspace` and `towers` reach only sessions that joined the net (nearly every pi in Herdr, not sub workspace sessions; `towers` reaches a workspace without a tower through its mains, else its members); `all` reaches every pi session on the machine, joined or not (for notices such as going to sleep). Default `workspace`. Towers use `tower_send` for other towers. |
 | `boss_server` | every joined session with a screen in Herdr | `status` of the sb server (also with it down), `logs`, or `restart` with a reason (see [The sb server](#the-sb-server)). Not in a remote turn. |

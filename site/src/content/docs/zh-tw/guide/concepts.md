@@ -82,8 +82,8 @@ Straw Boss 從子智慧體啟動時用的 pi-herdr-agents 角色名稱，讀出�
 
 其他角色名稱仍是一般的子智慧體。
 
-協調者可以隨時派出偵察、規劃、審查與監控者。
-其他任何派出（工作者、未列出的角色）在它的 todo 寫出計畫圖之前，都會被 `sb: plan first` 拒絕；計畫圖是 `single-loop`、`fan-out/fan-in` 或 `orchestrator-worker`。
+主智慧體不必先寫計畫就能派出任何一種；它的提示要它在每個工作者出發前先開一個 todo。
+同一個主智慧體最多同時跑 4 個工作者：第 5 個會被 `sb: 4 workers run for this main already` 拒絕，等有結果回來再派。偵察、規劃、審查與監控者不算在內。
 
 ### 用監控者盯著一件事
 

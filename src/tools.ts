@@ -129,7 +129,8 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 				});
 			// A call nested in another tool's (codemode) is written to the session file only when its parent ends, so the key pad's file check would never see it open.
 			pi.on("tool_call", (e) => (e.toolName === "link_request" && (e as { parentToolCallId?: string }).parentToolCallId ? { block: true, reason: "link_request is called directly, not from another tool" } : undefined));
-			pi.registerTool({
+			// Only where Straw Link is set up and the computer is attended (docs/specs/2026-11-23-lite-main.md §4): elsewhere every call is refused. Decided at the session start (`s.toolSet`): the next start sees a new team.
+			if (s.toolSet?.link ?? (link?.inUse() && link.attended())) pi.registerTool({ // a tower run passes no link and registers its own (runmode.ts)
 				name: "link_request", label: "link_request",
 				description: LINK_REQUEST_DESCRIPTION,
 				parameters: linkRequestParameters(),
@@ -193,7 +194,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		// A main's kind (docs/specs/2026-11-09-agent-kinds.md §3). `integrator` is left out while integration is off.
 		addDuty() {
 			const kinds = COORDINATOR_DUTIES.filter((d) => d !== "integrator" || mainDuty.integrationOn());
-			tool("boss_duty", `Your kind; your role prompt's addendum follows it, and the next run re-reads its whole context once. coordinator (the default): plans and dispatches; your todos' graph shows its shape. ${kinds.includes("integrator") ? "integrator: a project's merge trains. " : ""}standing: one system or machine, no end. reason: one line, why now.`,
+			tool("boss_duty", `Your kind; your role prompt's addendum follows it, as a message (your system prompt stays as it is). coordinator (the default): plans and dispatches; your todos' graph shows its shape. ${kinds.includes("integrator") ? "integrator: a project's merge trains. " : ""}standing: one system or machine, no end. reason: one line, why now.`,
 				Type.Object({ duty: Type.Union(kinds.map((d) => Type.Literal(d))), reason: Type.String({ description: "One line, at most 200 characters: why now." }) }),
 				async ({ duty, reason }) => {
 					const why = reason.replace(/\s+/g, " ").trim();

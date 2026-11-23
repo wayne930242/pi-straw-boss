@@ -175,10 +175,12 @@ test("the GUI's requests are taken only from the session that hosts the GUI", as
 	assert.equal((await c.link.gui("trust", { device: bob.id, level: "dispatch" })).ok, true);
 });
 
-test("an unattended computer refuses link_request outright, before any dialog", async () => {
+// Since 0.83.0 an unattended computer does not register the tool at all (docs/specs/2026-11-23-lite-main.md §4); the holder's own refusal stays behind it.
+test("an unattended computer refuses link_request outright, before any dialog: no session there has the tool", async () => {
 	const unattended = { path: "/etc/straw-link/policy.json", uid: 1000, stat: () => ({ uid: 0, symlink: false }), writable: () => false, read: () => JSON.stringify({ unattended: true }) };
-	const { pending, ask } = await rig({ policy: unattended });
-	await assert.rejects(ask({ action: "invite", args: { team: "project-a" }, reason: "x" }), /refused on an unattended device/);
+	const { c, pending, ask } = await rig({ policy: unattended });
+	assert.equal(c.tower.tools.has("link_request"), false);
+	await assert.rejects(ask({ action: "invite", args: { team: "project-a" }, reason: "x" }), /has no tool link_request/);
 	assert.equal(pending.length, 0);
 	assert.equal(relay.invites.size, 0);
 });

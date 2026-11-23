@@ -40,6 +40,7 @@ import { mainWaitAsk } from "./waitask.ts";
 import { createTower } from "./tower.ts";
 import { registerTrainGuard, registerTrainSigns, type TrainGuard } from "./trainguard.ts";
 import { carLink, trainCarTool } from "./traincar.ts";
+import { hasIntegrationApp } from "./train/appsconfig.ts";
 import { registerTrust } from "./trust/ask.ts";
 import { registerWatchdog } from "./watchdog.ts";
 
@@ -52,10 +53,10 @@ const INTEGRATION_MS = 20_000;
 const JOIN_RETRY_MS = [1_000, 2_000, 5_000, 15_000];
 
 // The composition root: the concerns live in their own modules (state.ts says what they share), and this wires them for one pi session.
-export function createStrawBoss({ run: given, world: reading, api = herdrApi(), call = herdrCall(), copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), openUrl = openBrowser, watch = herdrWatch(), stateDir, autoTower = true, nudgeMs = NUDGE_MS, version = VERSION, guardMs = GUARD_MS, couple = true, events = herdrEvents(), detectMs = DETECT_MS, now = Date.now, later = afterExit, adoptMs = ADOPT_MS, restoreMs = RESTORE_WAIT_MS, integrationMs = INTEGRATION_MS, joinRetryMs = JOIN_RETRY_MS, link, server = given ? null : {}, ask, startRead, runSide, face }: Deps = {}) {
+export function createStrawBoss({ run: given, world: reading, api = herdrApi(), call = herdrCall(), copy = copyText, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), promptDir = fileURLToPath(new URL("../prompts", import.meta.url)), openUrl = openBrowser, watch = herdrWatch(), stateDir, autoTower = true, nudgeMs = NUDGE_MS, version = VERSION, guardMs = GUARD_MS, couple = true, events = herdrEvents(), detectMs = DETECT_MS, now = Date.now, later = afterExit, adoptMs = ADOPT_MS, restoreMs = RESTORE_WAIT_MS, integrationMs = INTEGRATION_MS, joinRetryMs = JOIN_RETRY_MS, link, server = given ? null : {}, ask, startRead, runSide, face, cwd = () => process.cwd() }: Deps = {}) {
 	// A run that is not injected is the real CLI, with its listings over the socket; an injected one answers everything itself, listings included.
 	const run = given ?? socketRun(herdrRun, call), world = reading ?? (given ? worldOf(given) : herdrWorld(call));
-	const cfg: Config = { run, world, api, call, copy, env, sleep, promptDir, openUrl, watch, stateDir, autoTower, nudgeMs, version, guardMs, couple, events, detectMs, now, later, adoptMs, restoreMs, integrationMs, joinRetryMs, link, server, ask, startRead, runSide, face };
+	const cfg: Config = { run, world, api, call, copy, env, sleep, promptDir, openUrl, watch, stateDir, autoTower, nudgeMs, version, guardMs, couple, events, detectMs, now, later, adoptMs, restoreMs, integrationMs, joinRetryMs, link, server, ask, startRead, runSide, face, cwd };
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. Every session in Herdr relays its dialogs to the GUI (bridge.ts), subagents too: they ask
 		// questions as well. A pi-herdr-agents worker never joins: its parent represents it.
@@ -84,12 +85,13 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		auto.running(() => runMode.active());
 		runKind = () => runMode.kind;
 		mainDuty.promptsOff(() => briefing.off());
-		mainDuty.onWrite(({ from, to, why, source }) => (kit.s.isMain && roles.remember("main"), source === "boss_duty" && (from ?? "coordinator") !== to && briefing.kindDeclared(), briefing.rebrief(), void presence.publish(), void digest.note(kit.s.at.workspaceId, `${kit.s.ownName || pi.getSessionName() || kit.me().slice(0, 8)} kind ${from ?? "none"}→${to}: ${why}`).catch(() => {})));
+		mainDuty.onWrite(({ from, to, why }) => (kit.s.isMain && roles.remember("main"), briefing.rebrief(), void presence.publish(), void digest.note(kit.s.at.workspaceId, `${kit.s.ownName || pi.getSessionName() || kit.me().slice(0, 8)} kind ${from ?? "none"}→${to}: ${why}`).catch(() => {})));
 		look?.holdWhile(() => runMode.mode === "run" || Boolean(pi.getFlag("sb-run")));
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower, roles });
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.
 		// The cars' way to the sb server (traincar.ts): the integrator's and the trains' `train_car` tool, added at the join, and the guard's source for notices.
 		const cars = carLink(kit);
+		pi.on("session_start", () => void (kit.s.toolSet = { link: link.inUse() && link.attended(), cars: cars.enabled(), carApp: hasIntegrationApp(cfg.cwd()) }));
 		let trainGuard: TrainGuard | undefined;
 		const addTrainCar = trainCarTool(kit, () => trainGuard, cars, (text) => reach.callTower(text, undefined, false, "blocked"));
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote(), tools.addDuty(), tools.addHandover(), addTrainCar()), onMain: link.look, control: () => control });

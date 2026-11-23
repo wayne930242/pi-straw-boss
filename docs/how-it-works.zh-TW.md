@@ -45,11 +45,11 @@ flowchart TD
 
 | 種類 | 角色名稱 | 用途 | 協調者派出它時 |
 |---|---|---|---|
-| `worker`（工作者） | `worker` | 做一件任務：修改、執行、建置 | 在待辦指名某個圖之前，會被 `sb: plan first` 拒絕 |
-| `scout`（偵察） | `scout` | 調查並回報 | 不需要計畫就放行 |
-| `planner`（規劃） | `planner` | 寫計畫或設計 | 不需要計畫就放行 |
-| `reviewer`（審查） | `reviewer`、`visual-tester`、`adversarial-reviewer` | 審查變更或檢查 UI | 不需要計畫就放行 |
-| `watchdog`（監控者） | `watchdog` | 監看網裡的一個單位，只向派出它的 session 回報（[監控者](#監控者)） | 不需要計畫就放行 |
+| `worker`（工作者） | `worker` | 做一件任務：修改、執行、建置 | 同一個主智慧體最多同時 4 個：第 5 個被拒絕 |
+| `scout`（偵察） | `scout` | 調查並回報 | 不算在上限內 |
+| `planner`（規劃） | `planner` | 寫計畫或設計 | 不算在上限內 |
+| `reviewer`（審查） | `reviewer`、`visual-tester`、`adversarial-reviewer` | 審查變更或檢查 UI | 不算在上限內 |
+| `watchdog`（監控者） | `watchdog` | 監看網裡的一個單位，只向派出它的 session 回報（[監控者](#監控者)） | 不算在上限內 |
 
 **塔台 run的種類**（喚醒塔台的東西；規則在[本機 run](#本機 run)、[老闆對話](#老闆對話)與[隊友 run](#隊友-run)）
 
@@ -104,9 +104,9 @@ stateDiagram-v2
 2. 成員透過升任成為所在分頁的**主智慧體**。工作變大時（步驟變多、要派工作者、涉及不只一個 app），智慧體會呼叫 `boss_promote`；成員的 prompt 會這樣告訴它。成員如果沒有升任就呼叫 pi-herdr-agents 的 `subagent` 或 `subagent_resume` 工具，會在子智慧體啟動或恢復之前自動升任。啟動時加入失敗、等到 session 的 pane 搬到另一個分頁後才重試的，會登記在它現在所在的分頁，所以那裡不會冒出第二個主智慧體。
 3. 一個分頁只有一個主智慧體。智慧體絕不會接手既有的主智慧體：分頁的主智慧體還活著時，`boss_promote` 會被拒絕並附上訊息，自動升任也會跳過。成員仍然可以派自己的子智慧體，但它的 prompt 要它先透過 intercom 通知主智慧體：它要做什麼、會用到哪些資源。
 4. 主智慧體不會降級。它的 session 結束後，分頁就沒有主智慧體，直到有成員升任為止（這時成員的 prompt 會提議升任）。`/boss` 是使用者手動接手：即使已經有別的主智慧體，它也會讓這個 session 成為分頁的主智慧體。
-5. 主智慧體有一種**類型**：`coordinator`（預設：規劃並派工）、`integrator`（專案的合併火車）、`standing`（負責一個系統或一台機器，沒有結束的時候）。類型就是這個主智慧體執行的 prompt：`main.md`，加上 `integrator.md` 或 `duty-standing.md`，再加 `dispatch.md`。協調者要等到自己的 todo 在 `metadata.graph` 裡指名某個圖（`single-loop`、`fan-out/fan-in`、`orchestrator-worker`；由 `planGraph` 讀取，取最新的未完成者），才會拿到 `dispatch.md` 和該圖的附錄（`graph-fan-out.md`、`graph-orchestrator-worker.md`）；整合員和 standing 主智慧體永遠帶著 `dispatch.md`。
+5. 主智慧體有一種**類型**：`coordinator`（預設：規劃並派工）、`integrator`（專案的合併火車）、`standing`（負責一個系統或一台機器，沒有結束的時候）。類型就是這個主智慧體執行的 prompt：`main.md`，加上 `integrator.md` 或 `duty-standing.md`。每種類型都帶著 `main.md` 裡的派工規則：按負責的 app 拆分工作、每個工作者出發前先開 todo、相依的任務用 `blockedBy`、平行寫入的工作者各用一個 worktree、最多同時 4 個工作者。計畫在 `metadata.graph` 裡的協調圖（`single-loop`、`fan-out/fan-in`、`orchestrator-worker`；由 `planGraph` 讀取，取最新的未完成者）只是頁面上的標示，沒有 prompt 會隨它改變（0.83.0，[lite-main 規格](specs/2026-11-23-lite-main.md)）。
 
-   協調者沒有這樣的計畫就派 `worker`（或未知的角色，或單純的 spawn），會被拒絕並回 `sb: plan first: …`；scout、planner、reviewer、watchdog 和 `subagent_resume` 可以通過，同一則 assistant 訊息裡更早的 `todo` 呼叫如果指名了某個圖，也算數。主智慧體用 `boss_duty` 改變類型（附一行理由；切換時它的 context 會重讀一次；它會寫下一筆 `straw-boss` 條目 `{ duty, dutyFrom, dutyWhy, dutyAt }`，記進塔台的摘要，並顯示在頁面上）。
+   派工不再需要計畫。同一個 session 已有 4 個工作者在跑，或在同一則訊息裡正要出發時（依 pi-herdr-agents 登記的、還在等結果的子智慧體，加上這一輪已放行的呼叫），再呼叫 `subagent` 派 `worker` 會被拒絕並回 `sb: 4 workers run for this main already …`；scout、planner、reviewer、watchdog、其他角色和 `subagent_resume` 不算在內。主智慧體用 `boss_duty` 改變類型（附一行理由；新類型的 prompt 以 steer 送達，段落保持不變；它會寫下一筆 `straw-boss` 條目 `{ duty, dutyFrom, dutyWhy, dutyAt }`，記進塔台的摘要，並顯示在頁面上）。
    在本機輪次裡，呼叫 `boss_duty` 宣告 `standing`，或由值守主智慧體呼叫 `boss_rename` 時，如果同一個工作區已有同名且仍在運作的值守主智慧體（比對方式與等待事項路由相同：不計大小寫，連續空白視為一個），工具會警告：指名這個 session 為負責人的 Straw Link 等待事項會同時符合兩位，因此不會只送給其中一位，而會送給每一位值守主智慧體。
 
    尚未宣告類型、且名稱是 `integ <project>`（在啟動時，或任何一次改名時：`boss_rename`、`/name`、其他擴充），或持有 `train` todo 的主智慧體，會遷移為 `integrator` 一次，條目為 `migrated: name` 或 `migrated: train todos`。已宣告的類型絕不遷移。每次 `/reload`、`/new`、`/resume`、`/fork` 都會重讀整合開關；整合關閉時，整合員會以協調者的身分執行並發布 `coordinator`。頁面在每種主題下都以同一個詞顯示類型（協調者、整合員、值守 / coordinator, integrator, on watch），後面接計畫的圖（單一迴圈、分支匯流、多工編排 / single loop, fan-out, orchestrated），切換則是時間軸上的一個事件。
@@ -125,7 +125,7 @@ stateDiagram-v2
 
 | 角色 | 對象 | 得到什麼 |
 |---|---|---|
-| 主智慧體 | 在分頁裡最先升任的成員，或 `/boss` 的接手者 | 一段簡短的 prompt：按 app 拆分工作、第一次派工前先規劃、交代工作者、檢查結果、合併或部署前先問老闆 |
+| 主智慧體 | 在分頁裡最先升任的成員，或 `/boss` 的接手者 | 一段簡短的 prompt：按 app 拆分工作、每個工作者出發前先開 todo、最多 4 個工作者、交代工作者、檢查結果、合併或部署前先問老闆 |
 | 成員 | 其他每個已加入的 session | 一段簡短的 prompt：分頁裡有主智慧體時，派子智慧體前先告訴它；沒有時，工作變大就升任 |
 | 塔台 | 每個工作區一座，在自己的分頁裡，分頁標籤是 Nerd Font 的無線電塔字符（U+F043B） | 一段 prompt：協調智慧體、修復協調上的摩擦，以及在沒有 session 擁有某個請求時開啟主智慧體；它從不詢問使用者 |
 
@@ -134,10 +134,10 @@ stateDiagram-v2
 從第一輪開始等標籤算起，若 10 秒後仍有標籤未到，下一輪只要有角色就會固定段落，缺的標籤標為 `none yet`。
 改動這段文字，可能讓模型供應商無法沿用快取，得把整段對話重讀一遍。
 這個段落保留當時的分頁和工作區標籤；要查目前的標籤、塔台或各分頁的主智慧體，用 `boss_status`。
-同一個 session 裡，只有透過 `boss_duty` 主動切換類型，才會改寫這個段落。
+同一個 session 裡，沒有任何事會改寫這個段落，連透過 `boss_duty` 切換類型也不會（0.82.x 以前會）。
 
-協調者從 steer 收到派工規則和協調圖的附錄，即使第一輪就已經有協調圖也是如此。
-設定、更換或清除協調圖時，Straw Boss 會再送一則 steer；角色改變或類型自動遷移時也是如此。
+協調圖不在任何 prompt 裡；設定、更換或清除協調圖都不會送出任何東西。
+角色改變、類型改變（`boss_duty`）或類型自動遷移時，Straw Boss 會用 steer 送出完整的新角色 prompt。
 排進佇列的 steer 要等 pi 送達才算說過；若 pi 把它丟掉，下一次執行會再送。
 pi 閒置時會直接存入 steer，這種情況在送出時就算說過。
 如果佇列裡的更新沒有按順序送達，Straw Boss 會送出目前完整的指示。
@@ -148,7 +148,7 @@ pi 閒置時會直接存入 steer，這種情況在送出時就算說過。
 pi 重試當前輪次時用 steer；若當前輪次隨壓縮結束，就存成訊息，不另開一輪；若沒有執行中的輪次，則在下次執行開始時送出。
 這些情況都不會改寫 system prompt 的段落。
 
-主智慧體在第一次派工之前會讀 `prompts/planning.md`，拆分工作時則讀 `prompts/apps-config.md`，這樣規劃規則就不會佔著每次執行的 system prompt。它會選一種協調圖：single-loop（一項任務，自己做或交給一個子智慧體）不需要計畫。fan-out/fan-in 和 orchestrator-worker 則把計畫寫成 pi 的 `todo` 項目：每項任務一個，`owner` 是子智慧體（或 `self`），它依賴的任務放進 `blockedBy`（其餘的就保持平行，上限 4 個），並在描述和 metadata 裡寫上檢查它的錨點。共用同一個錨點的任務共用一個檢查點 todo，而不是每個分支各檢查同一件事。
+派工規則就寫在 `main.md` 裡；主智慧體為了計畫和錨點讀 `prompts/planning.md`，拆分工作時則讀 `prompts/apps-config.md`，這樣規劃的細節就不會佔著每次執行的 system prompt。它會替頁面指名一種協調圖：single-loop（一項任務，自己做或交給一個子智慧體）不需要計畫。fan-out/fan-in 和 orchestrator-worker 則把計畫寫成 pi 的 `todo` 項目：每項任務一個，`owner` 是子智慧體（或 `self`），它依賴的任務放進 `blockedBy`（其餘的就保持平行，最多同時 4 個工作者），並在描述和 metadata 裡寫上檢查它的錨點。共用同一個錨點的任務共用一個檢查點 todo，而不是每個分支各檢查同一件事。
 
 錨點有測試、擬人、真人和對抗式審查，每一種都是在變更之前就可能失敗的最輕量檢查。主智慧體派工時不請老闆確認計畫；它只在計畫解決不了的決定、且在被它們擋住的任務之前問老闆：不清楚或與架構矛盾的需求，以及像是合併到共用分支或部署這類的授權。瀏覽器檢視會把這些 todo 顯示成計畫的進度。
 
@@ -1013,7 +1013,7 @@ sequenceDiagram
     S-->>C: 車廂通知
 ```
 
-車廂有四種狀態，由整合員與火車用 `train_car` 設定：
+車廂有四種狀態，由整合員與火車用 `train_car` 設定（火車一定有這個工具；其他 session 要在整合開啟、且專案的 apps.json 有帶 `integration` 的 app 時才有；兩者都在 session 啟動時決定，所以整個 session 的工具清單不變）：
 
 ```mermaid
 stateDiagram-v2
@@ -3869,9 +3869,9 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 | `tower_done` | 僅塔台 run | 以一份給下一次執行的交接筆記結束這次執行：每行一項，1 到 1,200 個字元。`wakeAfter`（5 到 240 分鐘）要求一次後續執行，只限本機 run。老闆在執行裡時，執行不會結束（[執行中的老闆](#執行中的老闆)）。 |
 | `board_read` | 塔台、主智慧體 | 工作看板：這台電腦上，以及透過 Straw Link 在隊友電腦上，每個主智慧體的一行目前工作與檢查清單，以 JSON 形式（見[工作看板](#工作看板)）。 |
 | `board_set` | 已加入且不是塔台的 session（只有分頁的主智慧體可以寫） | 覆寫主智慧體自己的看板項目（它會依 todo 清單與名稱自己填）：`now` 與最多 8 個檢查清單項目，或 `auto: true` 交還給它；回答會說明它去了哪裡。 |
-| `link_request` | 受管電腦上的每個 session，以及本機塔台 run | 以一個理由請求一個 Straw Link 動作（create、invite、invite-unattended、join、trust、leave、remove、role、rotate）。老闆在一個顯示動作、每個引數、理由與這個 session 的對話框裡核准每一個；沒有任何東西會未經詢問就執行。在無人值守裝置上與遠端輪次裡會被拒絕。 |
+| `link_request` | 設好 Straw Link 的受管電腦上的每個 session（session 啟動時決定），以及本機塔台 run | 以一個理由請求一個 Straw Link 動作（create、invite、invite-unattended、join、trust、leave、remove、role、rotate）。老闆在一個顯示動作、每個引數、理由與這個 session 的對話框裡核准每一個；沒有任何東西會未經詢問就執行。在無人值守裝置上與遠端輪次裡會被拒絕。 |
 | `call_tower` | 已加入的 session 與塔台 | 在標頭之下送一則訊息給這個工作區的塔台，或依 id 或完整標籤送給另一個工作區的。沒有塔台在跑時會開啟塔台分頁。`why`（在 pi 裡必填：`milestone`、`shared` 或 `blocked`）寫進標頭。`reply`（預設 true）說明是否期望塔台回答。 |
-| `boss_duty` | 分頁的主智慧體（成員、火車、塔台與子智慧體會被拒絕或沒有這個工具） | 設定主智慧體的種類：`coordinator`、`integrator`（整合關閉時省略）或 `standing`，附一行理由（至多 200 字元）。對同一個種類、對在 `train` todo 還待處理或進行中時從 `integrator` 切換出去，以及在 Straw Link 遠端輪次裡，都會被拒絕。寫入種類項目、重新 brief（一次 steer）、發佈 `sb_duty`，並記到塔台的摘要裡。 |
+| `boss_duty` | 分頁的主智慧體（成員、火車、塔台與子智慧體會被拒絕或沒有這個工具） | 設定主智慧體的種類：`coordinator`、`integrator`（整合關閉時省略）或 `standing`，附一行理由（至多 200 字元）。對同一個種類、對在 `train` todo 還待處理或進行中時從 `integrator` 切換出去，以及在 Straw Link 遠端輪次裡，都會被拒絕。寫入種類項目、重新 brief（一次 steer，帶完整的新角色 prompt；system 段落不變）、發佈 `sb_duty`，並記到塔台的摘要裡。 |
 | `boss_rename` | 已加入的 session，不含塔台 | 把 session 的名稱（`pi.setSessionName`）設成描述它目前工作的短語，去除空白，至多 40 字元（分頁標籤放得下 16 個）。網與 GUI 依名稱顯示 session，而主智慧體用它來標示它的 Herdr 分頁（和 pi-auto-tab-name 一樣截成 16 字元，所以那個擴充在載入時，會把標籤當成自己的，並在壓縮之間把它當成選定的名稱保留）。主智慧體自己重新命名分頁，是因為 pi-auto-tab-name 不動別人標示過的分頁，例如老闆命名的分頁，或塔台帶著標籤開啟的分頁；成員不動它的主智慧體的分頁。主智慧體的 prompt 讓它在工作轉向另一個任務時呼叫這個。塔台沒有這樣的工具：網依它的名稱認出它。名稱若是塔台或列車分頁的標籤（塔台圖示、主塔台圖示、`train <MMDDx>`）會被拒絕：還原之後，證明角色的就是這個標籤。 |
 | `boss_broadcast` | 已加入的 session 與塔台 | 在標頭（指名每個收件者）之下，送一則訊息給某個範圍內的每個其他 session。`tab`、`workspace` 與 `towers` 只觸及加入網的 session（Herdr 裡幾乎每個 pi，不含子工作區的 session；`towers` 透過主智慧體觸及沒有塔台的工作區，否則透過它的成員）；`all` 觸及這台機器上每個 pi session，不論有沒有加入（用於像是要去睡覺之類的通知）。預設 `workspace`。塔台對其他塔台用 `tower_send`。 |
 | `boss_server` | Herdr 裡每個有畫面且已加入的 session | sb server 的 `status`（它關著時也可以）、`logs`，或附理由的 `restart`（見 [sb server](#sb-server)）。遠端輪次裡不可用。 |

@@ -1,6 +1,6 @@
-import { type CoordinatorDuty, type Graph, isCoordinatorDuty } from "./duty.ts";
+import { type CoordinatorDuty, isCoordinatorDuty } from "./duty.ts";
 import { ENTRY, type Kit } from "./state.ts";
-import { planGraph, todosOfBranch } from "./todo.ts";
+import { todosOfBranch } from "./todo.ts";
 import { integrationOff } from "./trainswitch.ts";
 
 // A main's kind (docs/specs/2026-11-09-agent-kinds.md §2): one function, `now()`, feeds the prompt, the label, the gate, and the yard. The kind is declared (`boss_duty`) or migrated from the signs of an
@@ -12,8 +12,6 @@ export const INTEG_NAME = /^integ \S+$/;
 export interface MainDuty {
 	/** What this main runs as: its declared kind, `coordinator` when none; `integrator` only while the guard and the loaded prompts both have integration on. */
 	now(): CoordinatorDuty;
-	/** The graph of the plan in this session's own todos (D10); the card and the prompt read the same function. */
-	graph(): Graph | undefined;
 	/** Whether integration is on for both reads (the train guard's and the prompts'). */
 	integrationOn(): boolean;
 	/** Writes a kind entry (all four fields), sets `s.duty`, and returns what it was. */
@@ -40,7 +38,6 @@ export function createMainDuty(kit: Kit): MainDuty {
 		promptsOff: (read) => void (off = read),
 		trainOn: (read) => void (guarded = read),
 		now: () => (s.duty === "integrator" && !integrationOn() ? "coordinator" : (s.duty ?? "coordinator")),
-		graph: () => planGraph(todosOfBranch(s.branch()) ?? []),
 		write(duty, why, source) {
 			const from = isCoordinatorDuty(s.duty) ? s.duty : undefined;
 			pi.appendEntry(ENTRY, { duty, dutyFrom: from ?? null, dutyWhy: why, dutyAt: cfg.now() });

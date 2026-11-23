@@ -293,6 +293,8 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 		},
 		/** Whether this computer is attended (no unattended policy file). */
 		attended,
+		/** Whether Straw Link is set up here: an unattended policy, a team in config.json or a team file, or the link enabled. */
+		inUse,
 		/**
 		 * An ally run (docs/specs/2026-10-26-sb-backend.md, Ally runs): its whole session is one remote turn at the level the claim fixed (the policy can only lower it), and the requests the hooks make of the holder
 		 * go to the server by `route` with the run's token.

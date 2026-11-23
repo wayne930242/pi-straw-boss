@@ -19,13 +19,13 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | --- | --- | --- |
 | `boss_promote` | 已加入的 session | 成為這個分頁的主智慧體；分頁已有存活的主智慧體時會被拒絕。 |
 | `boss_status` | 已加入的 session 與塔台 | 每個分頁的主智慧體與它的種類、這個工作區的塔台、主塔台與其他塔台。 |
-| `boss_duty` | 分頁的主智慧體 | 附理由設定它的種類：`coordinator`、`integrator` 或 `standing`。種類就是它執行的 prompt，並顯示在頁面上。 |
+| `boss_duty` | 分頁的主智慧體 | 附理由設定它的種類：`coordinator`、`integrator` 或 `standing`。這個種類的 prompt 以訊息送給主智慧體，它的 system prompt 保持不變；種類也會顯示在頁面上。 |
 | `boss_rename` | 已加入的 session | 用一句短語為 session 命名它目前的工作；主智慧體的分頁以它為標籤。角色標籤（塔台的圖示、`train <MMDDx>`）會被拒絕。 |
 | `call_tower` | 已加入的 session 與塔台 | 在標頭之下發訊息給這個工作區的塔台，或另一個工作區的塔台。`why` 是 `milestone`、`shared` 或 `blocked`；通知用 `reply: false`。`blocked` 附 `waitsOn {device, owner?, what}` 表示在等隊友的裝置（`milestone` 附 `cancel: true` 撤回）；`linkWait {id, state}` 認領、回覆或婉拒隊友對本機的等待，以老闆代理人的身分核准隊友要給它老闆的卡片（`done`），或交回那位老闆（`escalated`，搭配 `blocked`）；`standing {device, what?}` 把訊息改送那台裝置的值守主智慧體，不經塔台：`blocked` 是提問（回覆會回來），`milestone` 是通知。見[裝置之間的等待](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#裝置之間的等待)。 |
 | `boss_broadcast` | 已加入的 session 與塔台 | 發訊息給一個分頁、一個工作區、所有塔台或所有 session，標頭會列出每位收件者。 |
 | `board_set` | 分頁的主智慧體 | 覆寫它自己的工作看板項目（一行與最多 8 個清單項目）；`auto: true` 交還給自動填入，`clear: true` 刪除它。 |
 | `boss_server` | 已加入的 session | sb server 的 `status`（server 沒在跑時也可用）、它的 `logs`（最多 200 行），或附理由 `restart`。老闆停掉 server 或有火車在跑時會被拒絕，每分鐘最多一次，且在遠端 turn 中絕不可用。 |
-| `link_request` | 有人看管的電腦上的每個 session，以及本機塔台 run | 附理由請求一個 Straw Link 動作（create、invite、join、trust、leave、remove、role、rotate）。它絕不會未經詢問就執行：老闆要在對話框裡核准。 |
+| `link_request` | 設好 Straw Link、有人看管的電腦上的每個 session，以及本機塔台 run | 附理由請求一個 Straw Link 動作（create、invite、join、trust、leave、remove、role、rotate）。它絕不會未經詢問就執行：老闆要在對話框裡核准。 |
 | `boss_open_main` | 塔台 | 為沒有 session 負責的請求，開一個帶新主智慧體的分頁。`role: "train"` 開一列火車；`role: "integrator"` 把車廂單送給專案唯一的整合員，沒有在跑的就開一個。`duty: "standing"` 開一個值守種類的主智慧體（預設為協調者）。見[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。 |
 | `boss_close_main` | 塔台 | 等它裡面沒有東西在跑，關掉這座塔台開的主智慧體，或交接過、接班者已活著的主智慧體；沒有交接的值守主智慧體與老闆開的主智慧體不會被關，只有老闆能關。帶 `pane` 時關掉死掉的智慧體窗格（pi 不在、停在空的 shell）；不帶參數時列出這些窗格。 |
 | `boss_revive_main` | 塔台（pi 塔台與本機塔台執行） | `list` 列出工作區裡死掉與已退出的主智慧體；`revive` 附理由把其中一個救回成它自己（同一個 session、新分頁，帶著它的角色、種類、名稱、看板、待辦與等待）。成員、塔台、隊友裝置開的主智慧體與活著的 session 會被拒絕。 |
@@ -39,7 +39,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `tower_done` | 塔台 run | 附一份交接筆記（一項一行，最多 1,200 字元）結束這次 run，留給下一次 run；`wakeAfter`（5 到 240 分鐘，僅限本機 run）要求稍後再跑一次。事件仍在等這次 run，或主智慧體對裝置的等待既未轉送也未回覆時，會被拒絕。 |
 | `ally_escalate` | 盟友 run | 把寄件者訊息裡的一項（在等這裡的某人、點名的本機主智慧體、沒有本機主智慧體負責的工作、一起事故）交給等待路由器，由它通知主智慧體或放上老闆的清單。任何層級都可用；每次 run 最多 5 項。 |
 | `boss_auto` | 主塔台 | 依老闆自己的話（server 自己讀），在它回答的那個 turn 裡直接開始或結束[自動模式](/pi-straw-boss/docs/zh-tw/guide/auto-mode/)，不需確認。 |
-| `train_car` | 整合員與火車 | 設定車廂的狀態（`received`、`returned`、`dropped`、`landed`）；sb server 會通知該車廂的協調者。它的 `car` 是車廂的第一張票；車廂單的 `car:`（或 `app:`）指名 app；同一張票在兩節車廂上時，用 `app` 或 `head`（40 個十六進位字元）指定其中一節。火車設定自己車廂的 `returned`、`dropped`、`landed`；整合員在收件時設定 `received` 或 `returned`，而它收下的車廂，等那列火車已不在了，也可以由它設定 `returned`、`dropped` 或 `landed`。 |
+| `train_car` | 整合員與火車（火車一定有；其他 session 要在專案的 apps.json 有帶 `integration` 的 app 時才有） | 設定車廂的狀態（`received`、`returned`、`dropped`、`landed`）；sb server 會通知該車廂的協調者。它的 `car` 是車廂的第一張票；車廂單的 `car:`（或 `app:`）指名 app；同一張票在兩節車廂上時，用 `app` 或 `head`（40 個十六進位字元）指定其中一節。火車設定自己車廂的 `returned`、`dropped`、`landed`；整合員在收件時設定 `received` 或 `returned`，而它收下的車廂，等那列火車已不在了，也可以由它設定 `returned`、`dropped` 或 `landed`。 |
 | `watch_read` | `watchdog` 子智慧體 | 等網裡的一個單位發生變化。回覆是 `changed`、`stalled`、`load`、`idle`、`waiting`、`offline`、`unchanged`、`expired` 或 `gone`，並附上單位的狀態。隊友裝置的 `link:<short>` 鍵讀它最新的狀態。見[用監控者盯著一件事](/pi-straw-boss/docs/zh-tw/guide/concepts/#用監控者盯著一件事)。 |
 | `watch_report` | `watchdog` 子智慧體 | 把一項發現送給派出它的 session，別人都收不到：每 30 秒最多一則，不能連續兩次送同樣的內容。 |
 

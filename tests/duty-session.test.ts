@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { type Agent, settle, World } from "./fakes.ts";
 
-// docs/specs/2026-11-09-agent-kinds.md, phase 1: a main's kind (§2, §3), the prompt it runs (§2a, §9), the dispatch gate (§2a), and what it publishes.
+// docs/specs/2026-11-09-agent-kinds.md, phase 1: a main's kind (§2, §3), the prompt it runs (§9), and what it publishes. The dispatch gate of §2a is gone (docs/specs/2026-11-23-lite-main.md §1).
 
 let world: World;
 afterEach(() => world.stopAll());
@@ -25,6 +25,7 @@ test("a main with no entry is a coordinator: main.md alone, kind in its first li
 	const t = await text(a);
 	assert.match(t, /of kind coordinator/);
 	assert.doesNotMatch(t, /## Dispatch|## Graph|## Kind: standing|# Integrator/);
+	assert.match(t, /- Dispatch: split work by owning app/);
 	assert.equal(token(), "coordinator");
 });
 
@@ -38,8 +39,8 @@ test("boss_duty: standing writes all four fields, sets the kind, publishes, rebr
 	assert.deepEqual(Object.keys(duties(a)[0]!).sort(), ["duty", "dutyAt", "dutyFrom", "dutyWhy"]);
 	assert.equal(token(), "standing");
 	assert.equal(steers(a).length, 1);
-	assert.match(steers(a)[0]!, /Your kind is now standing[\s\S]*## Kind: standing[\s\S]*## Dispatch/);
-	assert.match(await text(a), /of kind standing[\s\S]*## Kind: standing[\s\S]*## Dispatch/);
+	assert.match(steers(a)[0]!, /Your kind is now standing[\s\S]*## Kind: standing/);
+	assert.match(await text(a), /of kind coordinator/, "the section keeps its first bytes (docs/specs/2026-11-23-lite-main.md §2)");
 	assert.match(((await a.tool("boss_duty", { duty: "standing", reason: "again" })).content[0] as { text: string }).text, /already standing/);
 	assert.equal(duties(a).length, 1, "nothing is written for the same kind");
 	await assert.rejects(a.tool("boss_duty", { duty: "coordinator", reason: "" }), /reason is required/);
@@ -159,106 +160,22 @@ test("a switch away from the integrator with a pending train todo is refused", a
 	await assert.rejects(a.tool("boss_duty", { duty: "coordinator", reason: "done" }), /1 of your trains are forming or departing/);
 });
 
-test("dispatch follows the plan: a coordinator with no graph may not dispatch a worker; scouts, planners, reviewers, a resume pass", async () => {
-	world = new World();
-	const a = await main("Docs");
-	await text(a);
-	assert.match((await call(a, { agent: "worker", task: "x" }))?.reason ?? "", /^sb: plan first: a worker needs a plan whose todos name a graph/);
-	assert.match((await call(a, { task: "x" }))?.reason ?? "", /plan first/, "a bare spawn");
-	assert.match((await call(a, { agent: "mystery" }))?.reason ?? "", /plan first/, "an unknown role");
-	for (const agent of ["scout", "planner", "reviewer", "visual-tester", "adversarial-reviewer"]) assert.equal(await call(a, { agent }), undefined, agent);
-	assert.equal(await call(a, { agent: "worker" }, "subagent_resume"), undefined);
+test("every kind carries main.md's dispatch rules and no graph addendum; a graph steers nothing, and no kind is asked for a plan (docs/specs/2026-11-23-lite-main.md §1)", async () => {
+	for (const name of ["Docs", "integ FE2"]) {
+		world = new World();
+		const i = await main(name);
+		let t = await text(i);
+		assert.match(t, /- Dispatch: split work by owning app/, name);
+		i.entries.push(snap({ id: 1, graph: "fan-out" }));
+		await i.toolResult("todo");
+		assert.equal(steers(i).length, 0, name);
+		t = await text(i);
+		assert.doesNotMatch(t, /## Graph:|## Dispatch/, name);
+		for (const agent of ["worker", "watchdog", "scout"]) assert.equal(await call(i, { agent }), undefined, `${name}: ${agent}`);
+	}
 });
 
-test("dispatch: a watchdog needs no plan: a coordinator with no graph, and a standing main, dispatch one with no refusal and no steer (AK7-F004)", async () => {
-	world = new World();
-	const a = await main("Docs");
-	await text(a);
-	const before = steers(a).length;
-	assert.equal(await call(a, { agent: "watchdog", task: "watch wA:p3" }), undefined, "a coordinator with no graph");
-	await settle();
-	assert.equal(steers(a).length, before, "no steer");
-	assert.match((await call(a, { agent: "worker", task: "x" }))?.reason ?? "", /a scout, a planner, a reviewer, or a watchdog may run now\./, "the refusal names the watchdog among what may run");
-	world = new World();
-	const s = await main("Docs");
-	await s.tool("boss_duty", { duty: "standing", reason: "w" });
-	await settle();
-	const held = steers(s).length;
-	assert.equal(await call(s, { agent: "watchdog", task: "watch wA:p3" }), undefined, "a standing main");
-	await settle();
-	assert.equal(steers(s).length, held, "no steer");
-	assert.match(await text(s), /- Watch with `MonitorCreate` or a `watchdog` subagent, not by checking in your own turns\./, "the standing addendum names the watchdog");
-});
-
-test("dispatch: integrators and standing mains are never gated; a graph lets a coordinator's worker through", async () => {
-	world = new World();
-	const i = await main("integ FE2");
-	await text(i);
-	assert.equal(await call(i, { agent: "worker" }), undefined);
-	world = new World();
-	const s = await main("Docs");
-	await s.tool("boss_duty", { duty: "standing", reason: "w" });
-	assert.equal(await call(s, { agent: "worker" }), undefined);
-	world = new World();
-	const c = await main("Docs", [snap({ id: 1, graph: "orchestrator-worker" })]);
-	await text(c);
-	assert.equal(await call(c, { agent: "worker" }), undefined);
-});
-
-test("dispatch: a todo call with a graph earlier in the same assistant message counts; one after it, or without a known graph, does not", async () => {
-	world = new World();
-	const a = await main("Docs");
-	await text(a);
-	const msg = (...calls: { id: string; name: string; arguments: unknown }[]) => ((a.transcript.length = 0), a.transcript.push({ type: "message", message: { role: "assistant", content: calls.map((c) => ({ type: "toolCall", ...c })) } }));
-	const worker = { id: "w", name: "subagent", arguments: { agent: "worker" } };
-	const run = () => (a.fireResult("tool_call", { toolName: "subagent", toolCallId: "w", input: { agent: "worker" } })) as Promise<{ block?: boolean } | undefined>;
-	msg({ id: "t", name: "todo", arguments: { action: "create", subject: "p", metadata: { graph: "fan-out" } } }, worker);
-	assert.equal(await run(), undefined);
-	msg({ id: "t", name: "todo", arguments: { action: "create", tasks: [{ subject: "p", metadata: { graph: "orchestrator-worker" } }] } }, worker);
-	assert.equal(await run(), undefined);
-	msg({ id: "t", name: "todo", arguments: { action: "update", id: 1, metadata: { graph: "single-loop" } } }, worker);
-	assert.equal(await run(), undefined);
-	msg(worker, { id: "t", name: "todo", arguments: { action: "create", subject: "p", metadata: { graph: "fan-out" } } });
-	assert.equal((await run())?.block, true, "a todo after the subagent call does not count");
-	msg({ id: "t", name: "todo", arguments: { action: "create", subject: "p", metadata: { graph: "chain" } } }, worker);
-	assert.equal((await run())?.block, true, "no known graph");
-});
-
-test("graph addenda follow the plan and steer once per change; a coordinator's dispatch section appears with the first graph and goes with the last", async () => {
-	world = new World();
-	const a = await main("Docs");
-	await text(a);
-	// pi delivers a steer at its next poll, after the todo's turn; the next change waits for that delivery (briefing.ts `flight`).
-	const todo = async (...tasks: Parameters<typeof snap>) => {
-		a.entries.splice(0, a.entries.length, ...a.entries.filter((e) => e.customType !== "rpiv-todo-state"), snap(...tasks));
-		await a.toolResult("todo");
-		await a.deliver();
-	};
-	await todo({ id: 1, graph: "fan-out" });
-	assert.equal(steers(a).length, 1);
-	assert.match(steers(a)[0]!, /^<straw-boss>\nYour plan's graph is now fan-out\/fan-in\. Add to your instructions:[\s\S]*## Dispatch[\s\S]*## Graph: fan-out\/fan-in/);
-	assert.doesNotMatch(steers(a)[0]!, /You are the main agent/);
-	await todo({ id: 1, graph: "fan-out" });
-	assert.equal(steers(a).length, 1, "a call that changes nothing sends no steer");
-	await todo({ id: 1, graph: "single-loop" });
-	assert.match(steers(a)[1]!, /Your plan's graph is now single-loop\. Drop your "## Graph:" section\./);
-	await todo({ id: 1, graph: "single-loop", status: "completed" });
-	assert.match(steers(a)[2]!, /Your plan has no open graph: drop your "## Dispatch" and "## Graph:" sections\./);
-});
-
-test("an integrator and a standing main always carry dispatch.md and never a graph addendum; a graph steers them nothing", async () => {
-	world = new World();
-	const i = await main("integ FE2");
-	let t = await text(i);
-	assert.match(t, /## Dispatch/);
-	i.entries.push(snap({ id: 1, graph: "fan-out" }));
-	await i.toolResult("todo");
-	assert.equal(steers(i).length, 0);
-	t = await text(i);
-	assert.doesNotMatch(t, /## Graph:/);
-});
-
-test("AKP1-F002: a main named `integ FE2` that the subagent call itself promotes is migrated before the gate and never asked for a plan; any other promoted main is gated", async () => {
+test("AKP1-F002: a main named `integ FE2` that the subagent call itself promotes is migrated at that call; a promoted main of any name dispatches its worker", async () => {
 	world = new World();
 	const a = world.agent({ id: "ledger", name: "integ FE2", pane: "wA:p1", tab: "wA:t1" });
 	await a.start();
@@ -269,15 +186,7 @@ test("AKP1-F002: a main named `integ FE2` that the subagent call itself promotes
 	world = new World();
 	const b = world.agent({ id: "plain", name: "Docs", pane: "wA:p1", tab: "wA:t1" });
 	await b.start();
-	assert.match((await call(b, { agent: "worker" }))?.reason ?? "", /plan first/, "a member promoted by the same call is blocked as the main it now is");
-});
-
-test("the plan-first refusal names both ways out: a plan, or boss_duty for a main whose job is trains or a watch", async () => {
-	world = new World();
-	const a = await main("Docs");
-	const reason = (await call(a, { agent: "worker" }))?.reason ?? "";
-	assert.match(reason, /Write the plan's todos/);
-	assert.match(reason, /boss_duty with integrator or standing/);
+	assert.equal(await call(b, { agent: "worker" }), undefined, "no plan gates a worker");
 });
 
 test("AKP1-F004 (AK3-F003): a guard that was off at load keeps an integrator a coordinator even when the prompts load with integration on", async () => {
@@ -330,5 +239,5 @@ test("the addenda repeat no sentence of boss_duty's description", async () => {
 	const { readFileSync } = await import("node:fs");
 	const { PROMPT_DIR } = await import("./fakes.ts");
 	const mine = new Set(norm(description));
-	for (const name of ["duty-standing", "dispatch", "graph-fan-out", "graph-orchestrator-worker"]) assert.deepEqual(norm(readFileSync(`${PROMPT_DIR}/${name}.md`, "utf8")).filter((x) => mine.has(x)), [], name);
+	for (const name of ["duty-standing"]) assert.deepEqual(norm(readFileSync(`${PROMPT_DIR}/${name}.md`, "utf8")).filter((x) => mine.has(x)), [], name);
 });

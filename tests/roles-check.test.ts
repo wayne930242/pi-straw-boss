@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -67,6 +67,9 @@ test("sb's tools registered outside a child, less those in a child, equal PARENT
 	assert.deepEqual([...child.tools.keys()].sort(), ["watch_read", "watch_report"], "a child registers the two watch tools (§10) and no other sb tool");
 	assert.deepEqual([...child.tools.values()].map((t) => (t as { defaultActive?: boolean }).defaultActive), [false, false], "inactive unless --tools names them");
 	const seen = new Set<string>();
+	// `link_request` is registered only where Straw Link is set up (docs/specs/2026-11-23-lite-main.md §4): this world enables it.
+	mkdirSync(join(world.stateDir, "link"), { recursive: true });
+	writeFileSync(join(world.stateDir, "link", "enabled"), JSON.stringify({ v: 1, at: 1 }));
 	world.herdr.addTab("wA:t7", "🗼 tower", "wA:p7");
 	const tower = world.agent({ id: "tower-1", pane: "wA:p7", tab: "wA:t7", env: { STRAW_BOSS_ROLE: "tower" } });
 	await tower.start();
@@ -85,6 +88,6 @@ test("sb's tools registered outside a child, less those in a child, equal PARENT
 		await run.stop("quit");
 	}
 	// `train_car` is added at the join only where an sb server is reachable (traincar.ts, `enabled`), which a fake world has not: recorded through its own registrar.
-	trainCarTool({ pi: { on: () => {}, registerTool: (tool: { name: string }) => seen.add(tool.name) }, s: { isTower: false }, cfg: { now: Date.now }, me: () => "main-1" } as never, () => undefined, { client: {}, enabled: () => true, keepRegistering: () => {} } as never, async () => {})();
+	trainCarTool({ pi: { on: () => {}, registerTool: (tool: { name: string }) => seen.add(tool.name) }, s: { isTower: false, isTrain: true }, cfg: { now: Date.now }, me: () => "main-1" } as never, () => undefined, { client: {}, enabled: () => true, keepRegistering: () => {} } as never, async () => {})();
 	assert.deepEqual([...seen].sort(), [...PARENT_ONLY].sort());
 });

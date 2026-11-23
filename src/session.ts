@@ -9,10 +9,10 @@ import { isHead, isSub, type Place, panes, place, report, tabs, TOWER_LABEL, wai
 import type { createHost } from "./host.ts";
 import type { IntegrationWatch } from "./integration.ts";
 import { CONNECT_MS, type Membership } from "./membership.ts";
-import { type CoordinatorDuty, dutyOfAgent, isCoordinatorDuty } from "./duty.ts";
+import { type CoordinatorDuty, isCoordinatorDuty } from "./duty.ts";
 import type { MainDuty } from "./mainduty.ts";
-import { plannedInMessage } from "./planmsg.ts";
 import { orphans } from "./orphan.ts";
+import { createWorkerCap } from "./workercap.ts";
 import { inherited, RESULT } from "./inherit.ts";
 import { keyOf, REVIVE_TOKEN } from "./revive.ts";
 import { armSignals, signalSeen } from "./signalseen.ts";
@@ -325,7 +325,9 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 
 	// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
-	pi.on("tool_call", async (event, ctx) => {
+	const cap = createWorkerCap();
+	pi.on("turn_end", () => cap.settle());
+	pi.on("tool_call", async (event) => {
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || runMode.active()) return;
 		// Two pis on one session file corrupt it: a run whose session a live pane runs (its own pane, a restore, or another launcher's resume) is not resumed (docs/specs/2026-11-23-tower-revive.md §6).
 		if (event.toolName === "subagent_resume") {
@@ -343,17 +345,14 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		} catch (error) {
 			tell(`Straw Boss: ${(error as Error).message}`, "warning");
 		}
-		mainDuty.migrate(pi.getSessionName()); // the promotion above may have just made this an `integ <project>` main whose migration had not run: it is never asked for a plan
-		// A coordinator's worker waits for a plan that names a graph (§2a); scouts, planners, reviewers and watchdogs, a resume, an integrator, and a standing main never wait.
-		if (event.toolName !== "subagent" || role() !== "main" || mainDuty.now() !== "coordinator" || mainDuty.graph() || plannedInMessage(ctx.sessionManager.getBranch(), event.toolCallId, (event as { parentToolCallId?: string }).parentToolCallId)) return;
-		const agent = (event.input as { agent?: unknown } | undefined)?.agent;
-		if (typeof agent === "string" && ["scout", "planner", "reviewer", "watchdog"].includes(dutyOfAgent(agent) ?? "") ) return;
-		return { block: true, reason: `sb: plan first: a worker needs a plan whose todos name a graph (${briefing.dir()}/planning.md). Write the plan's todos, then dispatch; a scout, a planner, a reviewer, or a watchdog may run now. If your job is a project's merge trains or minding one system, call boss_duty with integrator or standing instead.` };
+		mainDuty.migrate(pi.getSessionName()); // the promotion above may have just made this an `integ <project>` main whose migration had not run
+		// No plan gates a worker (docs/specs/2026-11-23-lite-main.md §1); the cap does (§3): at most 4 workers of this session run at once.
+		if (event.toolName === "subagent") return cap.admit(event.toolCallId, (event.input as { agent?: unknown } | undefined)?.agent);
 	});
 
 	// A launched subagent is marked within seconds, once its pane shows its session file, instead of at the next 4 minute refresh.
 	pi.on("tool_result", (event) => {
-		if (event.toolName === "todo" && !event.isError) briefing.rebrief(); // a todo call can name or end a plan's graph (§2a)
+		if (event.toolName === "subagent") cap.ran(event.toolCallId); // the registry holds a launched worker now
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || s.isTower || s.barred || !role()) return;
 		for (const ms of KID_MARK_MS) setTimeout(() => void presence.publish(), ms).unref();
 		const { name, agent } = event.input as { name?: unknown; agent?: unknown };
