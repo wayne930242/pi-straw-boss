@@ -56,6 +56,8 @@ export function entryReply(towers: Towers | undefined, run: HerdrRun, request: R
 		const target = await resolveTo(run, to);
 		await t.ensure({ workspace: target.workspace });
 		const queued = t.runs.boss(target.workspace, body, "the boss", { present: true, ...(request.door === "pane" ? { door: "pane" as const } : {}) }).id;
+		const head = t.head.status()?.workspace;
+		if (head) t.runs.kids()?.follow(target.workspace, target.label, head);
 		return { queued, workspace: target.workspace, label: target.label };
 	});
 }
@@ -65,6 +67,8 @@ export function withLines<T extends object>(towers: Towers, workspace: string, c
 	const kids = towers.runs.headless() ? towers.runs.kids() : undefined;
 	if (!kids || (reply as { ok?: unknown }).ok !== true) return reply;
 	const got = kids.ring(workspace).since(typeof cursor === "number" && Number.isInteger(cursor) ? cursor : undefined);
-	const dialogs = kids.dialogs(workspace).map((d) => ({ key: d.key, method: d.method, title: d.title, ...(d.message ? { message: d.message } : {}), ...(d.options ? { options: d.options } : {}) }));
+	// The head's viewer lists every run's dialogs (its own first); a workspace's viewer its own (docs/specs/2026-11-23-f-entry.md §2.6).
+	const head = towers.head.status()?.workspace === workspace;
+	const dialogs = kids.dialogs(head ? undefined : workspace).sort((a, b) => Number(b.workspace === workspace) - Number(a.workspace === workspace)).map((d) => ({ key: d.key, method: d.method, title: d.title, ...(d.message ? { message: d.message } : {}), ...(d.options ? { options: d.options } : {}) }));
 	return { ...reply, lines: got.lines, cursor: got.cursor, ...(dialogs.length ? { dialogs } : {}) };
 }

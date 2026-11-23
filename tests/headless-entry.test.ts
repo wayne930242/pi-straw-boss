@@ -166,3 +166,21 @@ test("the head parks a notice to a workspace nobody is in: no service, no tab, n
 	assert.match(second.text, /^\[parked notice from the head \(no one was here when it came\) · ask H\d\]\ndirty worktree left$/);
 	assert.equal(world.kids.size, 2);
 });
+
+test("what the boss addressed from the head's viewer comes back there: the run's start, each finished message as one line, its end; and every run's dialog is listed in the head's viewer, its own first", async () => {
+	const s = await started();
+	const head = await world.expose!.head.ensure();
+	assert.equal((await ask(s, { cmd: "head-event", to: "Alpha", text: "MP-5383?", door: "pane" })).ok, true);
+	const k = await kid();
+	await claim(s, k);
+	k.say({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "MP-5383 waits on\nthe review" } });
+	k.say({ type: "message_end" });
+	k.say({ type: "extension_ui_request", id: "d9", method: "confirm", title: "Allow?" });
+	let polled: Reply = { ok: false };
+	await until(async () => ((polled = await ask(s, { cmd: "prompt-poll", workspace: head.workspace, pid: 4343 })), Array.isArray(polled.dialogs)), "the head's poll to list the dialog");
+	assert.deepEqual(polled.lines, ["↳ Alpha run", "[Alpha] MP-5383 waits on the review"]);
+	assert.equal((polled.dialogs as { key: string }[])[0]!.key, `${k.run}:d9`);
+	k.exit(0);
+	await until(async () => ((polled = await ask(s, { cmd: "prompt-poll", workspace: head.workspace, pid: 4343, cursor: polled.cursor })), (polled.lines as string[]).length > 0), "the end line");
+	assert.deepEqual(polled.lines, ["✓ Alpha done"]);
+});

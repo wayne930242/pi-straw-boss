@@ -28,6 +28,7 @@ export const DIALOG_MS = 60_000;
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 
 export function createKids(o: { port: KidsPort; log: Log; now: () => number; dialogMs?: number }) {
+	const follows = new Map<string, { label: string; head: string }>();
 	const kids = new Map<string, Kid>(), rings = new Map<string, Ring>(), dialogs = new Map<string, Dialog & { timer: ReturnType<typeof setTimeout> }>();
 	const ring = (workspace: string) => rings.get(workspace) ?? (rings.set(workspace, createRing()), rings.get(workspace)!);
 	const answerTo = (d: Dialog, reply: { value?: string; confirmed?: boolean; cancelled?: true }) => {
@@ -60,17 +61,26 @@ export function createKids(o: { port: KidsPort; log: Log; now: () => number; dia
 			pruneStderr(`${dir}/runs`, o.now());
 			const child = startChild({
 				pi: o.port.pi(), args: ["--mode", "rpc", ...input.args], cwd: input.cwd, env: runEnv(o.port.env, nonce), stderr: stderrFile(dir, input.run),
-				onRecord: (rec) => (rec.type === "extension_ui_request" ? onUi(input.run, input.workspace, rec) : ring(input.workspace).record(rec)),
+				onRecord: (rec) => {
+					if (rec.type === "extension_ui_request") return onUi(input.run, input.workspace, rec);
+					const said = ring(input.workspace).record(rec), f = follows.get(input.workspace);
+					// A tower the boss addressed from the head's viewer: each finished message of its run is one line there (docs/specs/2026-11-23-f-entry.md §2.6).
+					if (said && f) ring(f.head).add(`[${f.label}] ${said.slice(0, 160)}`);
+				},
 				onBad: () => o.log.line("rpc-bad-record", { run: input.run }),
 				...(o.port.spawn ? { spawn: o.port.spawn } : {}), ...(o.port.platform ? { platform: o.port.platform } : {}), ...(o.port.killGroup ? { killGroup: o.port.killGroup } : {}), ...(o.port.taskkill ? { taskkill: o.port.taskkill } : {}),
 			});
 			const kid: Kid = { child, nonce, workspace: input.workspace };
 			kids.set(input.run, kid);
 			o.log.line("run-spawn", { run: input.run, kind: input.kind, pid: child.pid, workspace: input.workspace });
+			const f = follows.get(input.workspace);
+			if (f) ring(f.head).add(`↳ ${f.label} run`);
 			void child.exited.then((exit) => {
 				kid.exit = exit;
 				for (const d of [...dialogs.values()]) if (d.run === input.run) (clearTimeout(d.timer), dialogs.delete(d.key));
 				o.log.line("run-exit", { run: input.run, code: exit.code ?? "none", signal: exit.signal ?? "none" });
+				const f = follows.get(input.workspace);
+				if (f) (ring(f.head).add(exit.code === 0 ? `✓ ${f.label} done` : `✗ ${f.label} crashed`), follows.delete(input.workspace));
 				input.onExit(exit);
 			});
 			return { pid: child.pid, nonce };
@@ -89,6 +99,8 @@ export function createKids(o: { port: KidsPort; log: Log; now: () => number; dia
 			return false;
 		},
 		ring: (workspace: string) => ring(workspace),
+		/** The boss addressed this tower from the head's viewer: its runs' finished messages show there too, as one line each, until the tower's next run starts on its own. */
+		follow: (workspace: string, label: string, head: string) => void follows.set(workspace, { label: plain(label).slice(0, 40), head }),
 		dropRing: (workspace: string) => void rings.delete(workspace),
 		/** The dialogs waiting, of one workspace or all, oldest first. */
 		dialogs: (workspace?: string): Dialog[] => [...dialogs.values()].filter((d) => !workspace || d.workspace === workspace).map(({ timer: _t, ...d }) => d),

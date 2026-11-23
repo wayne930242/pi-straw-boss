@@ -21,15 +21,15 @@ export interface RingLine { n: number; text: string }
 export interface Ring {
 	/** Adds a line the server wrote (its prefix included), cleaned. */
 	add(text: string): void;
-	/** Takes one RPC record of a run: text deltas fold per message, tool calls and results are one line each. */
-	record(rec: Record<string, unknown>): void;
+	/** Takes one RPC record of a run: text deltas fold per message, tool calls and results are one line each. Returns the whole text of an assistant message that just ended, cleaned. */
+	record(rec: Record<string, unknown>): string | undefined;
 	/** The lines after `cursor` (the last RING_TAIL when the cursor is unknown or fell off the ring), and the new cursor. */
 	since(cursor?: number): { lines: string[]; cursor: number };
 	readonly size: number;
 }
 export function createRing(max = RING_MAX): Ring {
 	const lines: RingLine[] = [];
-	let n = 0, partial = "";
+	let n = 0, partial = "", message = "";
 	const add = (text: string) => {
 		lines.push({ n: ++n, text: plain(text) });
 		if (lines.length > max) lines.splice(0, lines.length - max);
@@ -50,12 +50,18 @@ export function createRing(max = RING_MAX): Ring {
 			const type = rec.type;
 			if (type === "message_update") {
 				const ev = rec.assistantMessageEvent as { type?: unknown; delta?: unknown } | undefined;
-				if (ev?.type === "text_delta" && typeof ev.delta === "string") (partial += ev.delta, flushText(false));
-			} else if (type === "message_end") flushText(true);
+				if (ev?.type === "text_delta" && typeof ev.delta === "string") (partial += ev.delta, (message += ev.delta), flushText(false));
+			} else if (type === "message_end") {
+				flushText(true);
+				const whole = plain(message.replace(/\s+/g, " ")).trim();
+				message = "";
+				return whole || undefined;
+			}
 			else if (type === "tool_execution_start") add(`▸ ${short(rec.toolName, 40)} ${short(rec.args, 80)}`);
 			else if (type === "tool_execution_end") add(`${rec.isError ? "✗" : "✓"} ${short(rec.toolName, 40)}`);
 			else if (type === "agent_start") add("· working");
 			else if (type === "agent_settled") (flushText(true), add("· idle"));
+			return undefined;
 		},
 		since(cursor) {
 			const first = lines[0]?.n ?? n + 1;
