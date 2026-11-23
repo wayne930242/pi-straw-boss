@@ -1323,8 +1323,8 @@
 	"target_list": "話要送到哪裡",
 	"zen_direct": "直接對話 · {base}",
 	"zen_no_tower_yet": "這裡還沒有塔台；第一句話會叫醒它",
-	"zen_target_placeholder": "寫給{name}塔台",
+	"zen_target_placeholder": "寫給 {name} 塔台",
 	"direct_sent": "已送到{name}",
 	"direct_open": "開啟對話",
-	"placeholder_direct": "直接寫給{name}塔台"
+	"placeholder_direct": "直接寫給 {name} 塔台"
 }

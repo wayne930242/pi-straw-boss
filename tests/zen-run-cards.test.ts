@@ -35,7 +35,7 @@ function rig(o: { remote?: boolean; start?: { key: string; ws: string } } = {}) 
 		composer: ((root: El, key: string) => { const box = new El("textarea"); root.replaceChildren(box); calls.composers.push({ key, box }); return { box, update() {} }; }) as never,
 		chat: async () => () => ({ apply() {}, reveal() {}, box() {} }) as unknown as Chat,
 	};
-	const items: Item[] = [{ id: "x", kind: "assistant", text: "The box has to join the team first." } as Item];
+	const items: Item[] = [{ id: "x", kind: "assistant", text: "The box has to join the team first.\n\n```suggest\n- Continue\n```" } as Item];
 	const deps = {
 		data: () => ({ older: async () => ({ items: [] }), latest: async () => ({ items: [] }), entry: async () => undefined }),
 		recent: async () => items, post: () => async () => ({ ok: true, status: 200, body: { accepted: true } }),
@@ -103,6 +103,7 @@ test("Enter takes the run card: the bowl, who asks and what, the focus on Allow;
 	await r.settle();
 	assert.deepEqual(r.calls.sound, ["bowl"]);
 	const text = r.root.textContent;
+	assert.doesNotMatch(text, /```/);
 	for (const words of [m.zen_run_approval_title({ name: "Harbor" }), m.zen_run_who({ name: "Harbor" }), "Invite merlin-box to waydosoft", "team     waydosoft", "The box has to join the team first."]) assert.ok(text.includes(words), words);
 	const allow = r.button(m.zen_run_allow())!;
 	assert.equal(page.focused, allow, "Allow has the focus (ZF-8)");
