@@ -130,7 +130,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Operate batch review (todo #121, BR-F006; measured) 567 to 571 (+4): net.ts `RemoteBox.units`, the per-unit state and scope of a base two sessions of one box show (with its two comment lines). Cap = measured.
 	// Train yards (todo #125 task 5, measured) 571 to 584 (+13): net.ts `Net.yards` and `Net.load` (with their comment lines), the `trainyard` seam of `netSource`, and `joinOf`, which names the trains and mains of the net for the reader (server/trainyard.ts).
 	// The work board view (todo #135, measured) 584 to 586 (+2): net.ts `Net.board` and the `board` seam of `netSource`, gui.ts the `board` option (Clear's route).
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 588, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// 0.83.1 (RV4-F001, measured) 588 to 595 (+7): net.ts runs `netSource.read()` in request order through a queue, so a late reading never overwrites a newer one.
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 595, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID
