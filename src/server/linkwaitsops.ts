@@ -55,7 +55,7 @@ export function startLinkWaits(o: StartWaits): WaitsHub {
 		send: async (ws, req) => {
 			const link = o.link(), identity = o.towers()?.identityOf(ws);
 			if (!link || !identity) return { ok: false, error: "no tower or link holder runs for this workspace" };
-			return link.request({ op: "send", device: req.device, text: req.text, reply: false, ...(req.wait ? { wait: req.wait } : {}), ...(req.inReplyTo ? { inReplyTo: req.inReplyTo } : {}) }, identity);
+			return link.request({ op: "send", device: req.device, text: req.text, reply: false, ...(req.wait ? { wait: req.wait } : {}), ...(req.inReplyTo ? { inReplyTo: req.inReplyTo } : {}) }, identity, true);
 		},
 		caps: (team, device) => o.link()?.holder?.capsFor(team, device) ?? [],
 		deviceId: () => o.link()?.holder?.deviceId,
@@ -132,7 +132,7 @@ export function startLinkWaits(o: StartWaits): WaitsHub {
 						if (no) return { ok: false, error: no };
 						if (!identity || !link || !o.asks?.open) return { ok: false, error: "The sb server runs no tower for your workspace or no link holder, so nothing was sent" };
 						const asks = { open: o.asks.open.bind(o.asks) };
-						return { ok: true, ...(await sendStanding({ now: o.now, ws, identity, link: (b) => link.request(b, identity), asks, waits: router, log: o.log }, target, kind, String(body.message ?? ""), String(body.what ?? ""), { id: from, name: nameOf(me) || from })) };
+						return { ok: true, ...(await sendStanding({ now: o.now, ws, identity, link: (b) => link.request(b, identity, true), asks, waits: router, log: o.log }, target, kind, String(body.message ?? ""), String(body.what ?? ""), { id: from, name: nameOf(me) || from })) };
 					}
 					default: return { ok: false, error: "unknown request" };
 				}

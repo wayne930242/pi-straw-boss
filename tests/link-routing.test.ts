@@ -49,7 +49,7 @@ test("towerFor takes only a tower whose pane's cwd is inside the project: never 
 	assert.equal(towerFor(view, project), undefined, "none of these is a tower of the project");
 	const withTower = net({ w1: [["p1", "main", project, "s-main"]], w2: [["p4", "tower", project, "s-tower"]] });
 	const pick = towerFor(withTower, project)!;
-	assert.deepEqual([pick.session.id, pick.pane.pane_id, pick.workspace.workspace_id], ["s-tower", "p4", "w2"]);
+	assert.deepEqual([pick.session.id, pick.pane!.pane_id, pick.workspace.workspace_id], ["s-tower", "p4", "w2"]);
 });
 
 test("with several towers in the project, the one whose cwd is closest to the project root wins, then the first in Herdr's workspace order", () => {

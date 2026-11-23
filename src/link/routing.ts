@@ -6,7 +6,23 @@ import { shortId } from "./device.ts";
 // Where a Straw Link message goes, and who a `device` argument means (docs/specs/2026-10-25-straw-link.md, Addressing and delivery).
 
 /** One reading of Herdr and pi-intercom: the live sessions, every pane, the workspaces in Herdr's order, and their tabs. */
-export interface NetView { sessions: Session[]; panes: Pane[]; workspaces: Workspace[]; tabs: HerdrTab[] }
+/**
+ * A tower identity the sb server registered itself with no pane (`towerRuns.headless`, a service with no viewer tab): its workspace and checkout, from the server's own service record, never from
+ * what a session reports. Given only by the server's tower service while headless runs are on.
+ */
+export interface ServedTower { id: string; workspace: string; cwd: string }
+export interface NetView { sessions: Session[]; panes: Pane[]; workspaces: Workspace[]; tabs: HerdrTab[]; served?: ServedTower[] }
+
+/**
+ * The folder of the tower `session` is: its pane's cwd when a Herdr pane marked `sb_role=tower` holds it, else, for a request the server made as one of its own runs (`served`), the checkout of the
+ * tower identity the server registered under that id with no pane. A session that only says it is such a tower gets nothing.
+ */
+export function towerAt(view: NetView, session: string, served = false): { cwd: string; workspace?: string } | undefined {
+	const pane = view.panes.find((p) => view.sessions.find((x) => x.id === session)?.herdrLocation?.paneId === p.pane_id);
+	if (pane) return pane.tokens?.sb_role === "tower" && pane.cwd ? { cwd: pane.cwd, workspace: pane.workspace_id } : undefined;
+	const t = served ? view.served?.find((x) => x.id === session) : undefined;
+	return t ? { cwd: t.cwd, workspace: t.workspace } : undefined;
+}
 
 const real = (path: string): string | undefined => {
 	try {
@@ -52,7 +68,8 @@ export function projectProblem(project: string, { home, agentDir }: { home: stri
 	return undefined;
 }
 
-export interface TowerPick { session: Session; pane: Pane; workspace: Workspace }
+/** `pane` is absent for a tower the server runs with no tab (`NetView.served`). */
+export interface TowerPick { session: Session; pane?: Pane; workspace: Workspace }
 /**
  * The tower a delivery for `project` goes to: a live tower session whose pane's cwd is inside the project. With several, the one whose cwd is
  * closest to the project root, then the first in Herdr's workspace order. Mains and members never receive link deliveries. `toWorkspace`, when
@@ -73,10 +90,19 @@ export function towersFor(view: NetView, project: string, toWorkspace?: string):
 		const depthIn = depth(pane.cwd, project);
 		if (!workspace || isSub(workspace) || !session || depthIn === undefined) return [];
 		if (toWorkspace && (byId ? workspace.workspace_id !== toWorkspace : workspace.label !== toWorkspace)) return [];
-		return [{ session, pane, workspace, depthIn, order: view.workspaces.indexOf(workspace) }];
+		return [{ session, pane: pane as Pane | undefined, workspace, depthIn, order: view.workspaces.indexOf(workspace) }];
 	});
+	// A tower the server runs with no tab: its session is the server's registered identity, its folder the checkout of its service record.
+	for (const t of view.served ?? []) {
+		const workspace = view.workspaces.find((w) => w.workspace_id === t.workspace);
+		const session = view.sessions.find((x) => x.id === t.id);
+		const depthIn = depth(t.cwd, project);
+		if (!workspace || isSub(workspace) || !session || depthIn === undefined || picks.some((p) => p.session.id === t.id)) continue;
+		if (toWorkspace && (byId ? workspace.workspace_id !== toWorkspace : workspace.label !== toWorkspace)) continue;
+		picks.push({ session, pane: undefined, workspace, depthIn, order: view.workspaces.indexOf(workspace) });
+	}
 	picks.sort((a, b) => a.depthIn - b.depthIn || a.order - b.order);
-	return picks.map((p) => ({ session: p.session, pane: p.pane, workspace: p.workspace }));
+	return picks.map((p) => ({ session: p.session, ...(p.pane ? { pane: p.pane } : {}), workspace: p.workspace }));
 }
 
 /**

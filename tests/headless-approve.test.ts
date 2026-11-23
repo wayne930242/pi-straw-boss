@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { LinkHolder } from "../src/link/holder.ts";
+import type { NetView } from "../src/link/routing.ts";
+import { LinkStore } from "../src/link/store.ts";
 import { callControl } from "../src/server/socket.ts";
+import { FakeRelay } from "./link/fake-relay.ts";
+import { until as untilLink } from "./link/fakes.ts";
+import { alice, bob, clientFor, config, netOf, rosterOf, TEAM_HEX, writeDevice, writeTeam } from "./link/holder-world.ts";
+import { TEAM } from "./link/scenario.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
 import { type Running, until } from "./server-world.ts";
 import { type FakeKid, TowerWorld } from "./tower-world.ts";
@@ -92,16 +102,58 @@ test("a headless ally run's gated call: the boss's yes to the server's approval,
 	assert.deepEqual(world.allows.takeRun({ run, toolCallId: "g1", tool: "boss_close_main", args: { main: "other" } }), { ok: false, reason: "the approval was given for another call than this one" });
 	assert.deepEqual(world.allows.takeRun({ run, toolCallId: "g1", tool: "boss_close_main", args }), { ok: true });
 	assert.equal(world.allows.takeRun({ run, toolCallId: "g1", tool: "boss_close_main", args }).ok, false, "used once");
-	// At `forward` the sender's device is asked too: its yes, through the holder, is the Allow of the call the run named.
-	world.linkAnswers.set("confirm-request", () => ({ ok: true }));
-	const sent = await ask(s, { cmd: "link", token, body: { op: "confirm-request", dialogId: "dlg-1", digest: "x", tool: "boss_close_main", args: JSON.stringify(args, null, 2), tower: "Alpha", toolCallId: "g2" } });
-	assert.equal(sent.ok, true, JSON.stringify(sent));
-	assert.equal(world.expose!.confirmed("dlg-1", true), true);
-	assert.deepEqual(world.allows.takeRun({ run, toolCallId: "g2", tool: "boss_close_main", args }), { ok: true });
-	await ask(s, { cmd: "link", token, body: { op: "confirm-request", dialogId: "dlg-2", digest: "x", tool: "boss_close_main", args: JSON.stringify(args), tower: "Alpha", toolCallId: "g3" } });
-	assert.equal(world.expose!.confirmed("dlg-2", false), true);
-	assert.equal(world.allows.takeRun({ run, toolCallId: "g3", tool: "boss_close_main", args }).ok, false, "a device's no gives nothing");
 	assert.match(String((await ask(s, { cmd: "run-approve", token, toolCallId: "g4", kind: "request", id: "r1" })).error), /an ally run for a gated call/, "an ally run approves no link_request");
+});
+
+test("a tabless headless tower's forward confirm goes through the real holder to the sender's device, and that device's yes is the Allow of the call the run named (REV2-F001)", async () => {
+	// Red on fb807eea: the holder looked for the tower's Herdr pane, which a headless service with no viewer tab has none of, and refused the request.
+	const root = mkdtempSync(join(tmpdir(), "psb-headless-forward-")), project = join(root, "project"), relay = new FakeRelay();
+	mkdirSync(join(project, "alpha"), { recursive: true });
+	world.herdr.workspaces[0]!.worktree = { checkout_path: join(project, "alpha") };
+	relay.addTeam(TEAM, [alice.id, bob.id], rosterOf(["bob"]));
+	const holders: LinkHolder[] = [], got: [string, string, boolean][] = [];
+	const holder = (keys: typeof alice, name: string, net: () => Promise<NetView>, confirmed?: (tower: string, id: string, allow: boolean) => void) => {
+		const store = new LinkStore(join(root, name), { alive: () => true });
+		store.ensure();
+		writeDevice(store, keys, `${name}-mac`);
+		writeTeam(store, rosterOf(["bob"]), keys);
+		const h = new LinkHolder({ store, isHolder: () => true, config: config(project), net, relay: clientFor(relay), offer: () => {}, notify: () => {}, ...(confirmed ? { confirmed } : {}), backoff: () => 5, drainMs: 20, presenceMs: 60_000, postWaitMs: 2000 });
+		holders.push(h);
+		return h;
+	};
+	try {
+		world.serverAllows = false;
+		const s = await started();
+		// The box's holder reads the server's own served towers, as service.ts does; no pane holds sb-tower-wa.
+		const a = holder(alice, "a", async () => ({ ...netOf([]), sessions: [{ id: "sb-tower-wa" }], workspaces: [{ workspace_id: "wA", label: "Alpha" }], served: world.expose!.servedTowers() }), (tower, id, allow) => void (got.push([tower, id, allow]), world.expose!.confirmed(id, allow)));
+		const b = holder(bob, "b", async () => netOf([]));
+		await Promise.all([a.start(), b.start()]);
+		world.linkAnswers.set("confirm-request", (body, from, served) => a.requestConfirm({ fromSession: from, served, team: TEAM_HEX, device: bob.id, dialogId: String(body.dialogId), digest: String(body.digest), tool: String(body.tool), args: String(body.args), tower: String(body.tower) }));
+		world.ally.add("m1", "a".repeat(26), "please close it");
+		world.expose?.allyWaiting("sb-tower-wa");
+		const k = await kid();
+		const token = await claim(s, k);
+		const args = { main: "docs-main" };
+		const sent = await ask(s, { cmd: "link", token, body: { op: "confirm-request", dialogId: "dlg-1", digest: "x", tool: "boss_close_main", args: JSON.stringify(args, null, 2), tower: "Alpha", toolCallId: "g2" } });
+		assert.deepEqual(sent.answer, { ok: true }, JSON.stringify(sent));
+		await untilLink(() => b.confirmRequests().length === 1, 3000, "the confirm on the sender's device");
+		assert.deepEqual(await b.answerConfirm("dlg-1", true), { ok: true });
+		await untilLink(() => got.length === 1, 3000, "the device's yes back on the box");
+		assert.deepEqual(got, [["sb-tower-wa", "dlg-1", true]]);
+		assert.deepEqual(world.allows.takeRun({ run: k.run, toolCallId: "g2", tool: "boss_close_main", args }), { ok: true });
+		// A no gives nothing.
+		await ask(s, { cmd: "link", token, body: { op: "confirm-request", dialogId: "dlg-2", digest: "x", tool: "boss_close_main", args: JSON.stringify(args), tower: "Alpha", toolCallId: "g3" } });
+		await untilLink(() => b.confirmRequests().length === 1, 3000, "the second confirm");
+		await b.answerConfirm("dlg-2", false);
+		await untilLink(() => got.length === 2, 3000, "the no");
+		assert.equal(world.allows.takeRun({ run: k.run, toolCallId: "g3", tool: "boss_close_main", args }).ok, false, "a device's no gives nothing");
+		// A session that names the tower over the control socket is not the server's run: refused.
+		const forged = await ask(s, { cmd: "link", from: "sb-tower-wa", body: { op: "confirm-request", team: TEAM_HEX, device: bob.id, dialogId: "dlg-3", digest: "x", tool: "t", args: "{}", tower: "Alpha" } });
+		assert.match(String((forged.answer as Reply).error), /Only the tower/);
+	} finally {
+		for (const h of holders) await h.stop();
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 test("a restart drains a headless run through the control socket: its own poll and tower_done are taken, a session's request is refused, and no new run starts", async () => {

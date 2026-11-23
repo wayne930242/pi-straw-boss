@@ -12,7 +12,7 @@ import { WAIT_STATES, type WaitWire } from "./kinds.ts";
 import { createLevelOf } from "./level.ts";
 import { createOperateNotes, type Policy, type PolicyDeps, POLICY_PATH, policyStamp, readEffectiveConfig, readPolicy, unattendedNow } from "./policy.ts";
 import { RelayClient } from "./relay.ts";
-import type { NetView } from "./routing.ts";
+import type { NetView, ServedTower } from "./routing.ts";
 import { type HolderRecord, LinkStore } from "./store.ts";
 import { chunks, NAMESPACE, Reassembler } from "./wire.ts";
 
@@ -83,6 +83,8 @@ export interface ServiceOptions {
 		waitOps?: (body: Record<string, unknown>, from: string) => Promise<unknown>;
 		/** An answer to a `forward` confirm for a tower identity the server runs (an ally run waits for it): true when the server took it, so it is not published on the channel. */
 		confirmed?: (tower: string, dialogId: string, allow: boolean) => boolean;
+		/** The tower identities the server runs with no pane (`towerRuns.headless` only; towers.ts `servedTowers`): the holder's net lists them (routing.ts `NetView.served`). */
+		servedTowers?: () => ServedTower[];
 	};
 }
 
@@ -178,10 +180,11 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 	/** One reading of Herdr and pi-intercom for the holder (deliveries, sends, presence). */
 	const net = async (withTabs = false): Promise<NetView> => {
 		const [sessions, world] = await Promise.all([channel!.listSessions(), cfg.world()]);
-		if (!withTabs) return { sessions, panes: world.panes, workspaces: world.workspaces, tabs: [] };
+		const served = tower?.servedTowers?.() ?? [], extra = served.length ? { served } : {};
+		if (!withTabs) return { sessions, panes: world.panes, workspaces: world.workspaces, tabs: [], ...extra };
 		const bound = world.workspaces.filter((w) => world.panes.some((p) => p.workspace_id === w.workspace_id && p.tokens?.sb_role === "tower"));
 		const tabs = (await Promise.all(bound.map((w) => cfg.world(w.workspace_id).then((x) => x.tabs).catch(() => [])))).flat();
-		return { sessions, panes: world.panes, workspaces: world.workspaces, tabs };
+		return { sessions, panes: world.panes, workspaces: world.workspaces, tabs, ...extra };
 	};
 	/** Tells a tower a message waits in the inbox for it. A resident tower takes it from the inbox when idle and answers `taken`. */
 	const offer = (tower: Session, id: string) => void publish({ version: 1, type: "offer", to: tower.id, id });
@@ -250,7 +253,7 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 		}
 	};
 	/** What the holder does for a request; the holder itself checks that the sender is the tower of a bound workspace. */
-	const handle = async (body: unknown, from: string): Promise<unknown> => {
+	const handle = async (body: unknown, from: string, served = false): Promise<unknown> => {
 		const op = (typeof body === "object" && body !== null ? body : {}) as { op?: unknown; device?: unknown; workspace?: unknown; text?: unknown; reply?: unknown; allow?: unknown; team?: unknown; dialogId?: unknown; digest?: unknown; tool?: unknown; args?: unknown; tower?: unknown; id?: unknown };
 		if (!holder?.active || !election?.isHolder()) return { ok: false, code: "no_holder", error: refusal() ?? (inUse() ? "The link holder is not running in the sb server yet; ask again in a moment" : NOT_SET_UP) };
 		const only = Array.isArray((body as { teams?: unknown }).teams) ? ((body as { teams: unknown[] }).teams.filter((t) => typeof t === "string") as string[]) : undefined;
@@ -259,12 +262,12 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 		if (op.op === "send" && typeof op.device === "string" && typeof op.text === "string") {
 			const r = body as { awaitsReply?: unknown; inReplyTo?: unknown; wait?: unknown };
 			const wait = waitOf(r.wait);
-			return holder.send({ fromSession: from, device: op.device, text: op.text, reply: op.reply === true, ...(typeof op.workspace === "string" && op.workspace ? { workspace: op.workspace } : {}), ...(typeof r.awaitsReply === "string" ? { awaitsReply: r.awaitsReply } : {}), ...(typeof r.inReplyTo === "string" ? { inReplyTo: r.inReplyTo } : {}), ...(wait ? { wait } : {}) });
+			return holder.send({ fromSession: from, ...(served ? { served } : {}), device: op.device, text: op.text, reply: op.reply === true, ...(typeof op.workspace === "string" && op.workspace ? { workspace: op.workspace } : {}), ...(typeof r.awaitsReply === "string" ? { awaitsReply: r.awaitsReply } : {}), ...(typeof r.inReplyTo === "string" ? { inReplyTo: r.inReplyTo } : {}), ...(wait ? { wait } : {}) });
 		}
 		if (typeof op.op === "string" && WAIT_OPS.includes(op.op)) return tower?.waitOps ? tower.waitOps(body as Record<string, unknown>, from) : { ok: false, error: "This server keeps no link waits" };
 		if (op.op === "taken" && typeof op.id === "string") return (await holder.taken(op.id, from), { ok: true });
 		if (op.op === "confirm-request" && [op.team, op.device, op.dialogId, op.digest, op.tool, op.args, op.tower].every((v) => typeof v === "string")) {
-			return holder.requestConfirm({ fromSession: from, team: op.team as string, device: op.device as string, dialogId: op.dialogId as string, digest: op.digest as string, tool: op.tool as string, args: op.args as string, tower: op.tower as string });
+			return holder.requestConfirm({ fromSession: from, ...(served ? { served } : {}), team: op.team as string, device: op.device as string, dialogId: op.dialogId as string, digest: op.digest as string, tool: op.tool as string, args: op.args as string, tower: op.tower as string });
 		}
 		if (op.op === "confirms") return { ok: true, confirms: holder.confirmRequests() };
 		if (op.op === "gui") return gui(holder, (body as { name?: unknown }).name, (body as { args?: unknown }).args, from);
@@ -313,8 +316,11 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 			default: return { ok: false, error: "unknown request" };
 		}
 	};
-	/** A request from a session (the control socket) or from the server itself; a failure is an answer, never a rejection. */
-	const request = (body: unknown, from: string): Promise<Answer> => handle(body, from).then((answer) => answer as Answer, (error: Error): SendResult => ({ ok: false, error: error.message }));
+	/**
+	 * A request from a session (the control socket) or from the server itself; a failure is an answer, never a rejection. `served`: the server makes it as one of its own runs (main.ts), whose tower
+	 * identity it registered itself; only the server's own code passes it.
+	 */
+	const request = (body: unknown, from: string, served = false): Promise<Answer> => handle(body, from, served).then((answer) => answer as Answer, (error: Error): SendResult => ({ ok: false, error: error.message }));
 
 	const onEvent = (event: ChannelEvent) => {
 		const p = event.payload as Record<string, unknown> | undefined, from = event.fromSessionId;

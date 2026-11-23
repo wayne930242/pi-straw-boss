@@ -121,8 +121,8 @@ export interface TowersOptions {
 	unattended?: () => boolean;
 	/** The timers of the standing pane (standing.ts), for tests, and `standingWait`: */
 	standing?: Partial<StandingTimers>; standingWait?: /* the clock of a run's wait for the prompt's exit (tests) */ { now: () => number; sleep: (ms: number) => Promise<void> };
-	/** A request to the link holder as a tower identity (main.ts; absent in a world without one). */
-	link?: (body: unknown, from: string) => Promise<unknown>;
+	/** A request to the link holder as a tower identity (main.ts; absent in a world without one). `served`: the server's own request as that identity, as the link service's `request` takes it. */
+	link?: (body: unknown, from: string, served?: boolean) => Promise<unknown>;
 	/** The server's own part of `boss_server` for a run. */
 	server?: ServerTools;
 	/** The link holder's messages for the tower identities, as an ally run takes them (B6; absent in a world without a holder). */
@@ -203,6 +203,8 @@ export interface Towers extends Returns {
 	runApprove(request: Record<string, unknown>): Promise<{ approved: boolean }>;
 	/** The sender's device answered an ally run's `forward` confirm; for a headless run its yes is the Allow of that call. */
 	confirmed(dialogId: string, allow: boolean): boolean;
+	/** While `towerRuns.headless` is on, the workspace tower identities this service registered with no pane, with their workspace and checkout (Straw Link's `NetView.served`); else none. */
+	servedTowers(): { id: string; workspace: string; cwd: string }[];
 	/** The identities leave the broker; tokens and files stay. */
 	stop(opts?: { quitRuns?: boolean }): Promise<void>;
 }
@@ -399,7 +401,7 @@ export function createTowers(o: TowersOptions): Towers {
 	};
 	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), headModel: () => headModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), unforwarded: async (run, ws) => unforwardedWait(slot, ws, run, await o.sessions().then((x) => new Set(x.map((s) => s.id)), () => undefined), (event, facts) => log.line(event, facts)),
 		kids: createKids({ port: { on: () => readTowerRuns(slot.stateDir).headless, pi: () => resolvePi(o.env, readTowerRuns(slot.stateDir).pi), env: o.env, herdr: slot.herdr, dir: (ws) => towerDir(slot, ws), ...o.kidsPort }, log, now }),
-		allyEnded: (end) => allyReceipts({ slot, now, unattended: () => o.unattended?.() === true, answered: (run, ask) => answered.has(run, ask), label: () => o.ally?.selfLabel?.() ?? "the box", log: (event, facts) => log.line(event, facts), send: (ws, device, text, inReplyTo) => o.link ? o.link({ op: "send", device, text, reply: false, inReplyTo }, services.get(ws)?.record.id ?? "") : Promise.reject(new Error("no link holder")) })(end), ...o.runs });
+		allyEnded: (end) => allyReceipts({ slot, now, unattended: () => o.unattended?.() === true, answered: (run, ask) => answered.has(run, ask), label: () => o.ally?.selfLabel?.() ?? "the box", log: (event, facts) => log.line(event, facts), send: (ws, device, text, inReplyTo) => o.link ? o.link({ op: "send", device, text, reply: false, inReplyTo }, services.get(ws)?.record.id ?? "", true) : Promise.reject(new Error("no link holder")) })(end), ...o.runs });
 
 	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.standingWait ? { wait: o.standingWait } : {}), ...(o.runs?.platform ? { platform: o.runs.platform } : {}), ...(o.runs?.alive ? { alive: o.runs.alive } : {}), locale: () => localeOf(o.env, slot.stateDir), attended: () => !o.unattended?.(), once: () => headless() });
 	/** `towerRuns.headless`: runs are the server's children, a service may have no tab, and a viewer pane is typed into once (docs/specs/2026-11-23-lite-b2-d-e-f.md §4). */
@@ -1218,7 +1220,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const ev = runEvents({ slot, ws, who, label: l.record.label, read: () => l.reach!.read() }), { mainOf } = ev;
 		const host = {
 			reach: l.reach!, open: peer ? async (request: Parameters<NonNullable<Live["open"]>>[0]) => { const opened = await l.openAlly!(request); const net = await l.reach!.read().catch(() => undefined), live = net && new Set(net.sessions.map((x) => x.id)), panes = net && new Set(net.ps.map((p) => p.pane_id)); route(opened.main, "opened main", "opened", ((u) => (u.length === 1 ? u[0] : undefined))((who.asks ?? []).filter((a) => !answered.has(who.id, a))), live, panes, opened.pane); return opened; } : l.open!, closeMain: (l.control ? async (query: string) => forgetClosed(ws, await l.control!.closeMain(query)) : undefined) as unknown as Control["closeMain"], now, boardDir: join(slot.stateDir, "board"), label: l.record.label, ...(l.control && !peer ? { closePane: (pane: string) => l.control!.closePane(pane), deadPanes: () => l.control!.deadPanes() } : {}), stateDir: slot.stateDir, // a local run's dead panes (deadpane.ts); an ally run is refused them (runtools.ts)
-			link: async (body: Record<string, unknown>) => ((await o.link?.(body, l.record.id)) ?? { ok: false, code: "no_holder", error: "The link holder is not running in the sb server" }) as { ok: boolean; error?: string },
+			link: async (body: Record<string, unknown>) => ((await o.link?.(body, l.record.id, true)) ?? { ok: false, code: "no_holder", error: "The link holder is not running in the sb server" }) as { ok: boolean; error?: string },
 			server: o.server ?? { status: () => ({}), logs: () => [], restart: () => Promise.reject(new Error("The server cannot restart itself here")) },
 			expect: (to: string, name: string, text: string) => { if (peer) return route(to, phrase(name, 40), "expect"); try { addExpect(slot, ws, { to, name, at: now(), first: phrase(text, 80) }, now()); } catch (cause) { error("expects", (cause as Error).message); } },
 			who, identity: l.record.id, requests: l.requests, startedAt: o.startedAt,
@@ -1366,6 +1368,7 @@ export function createTowers(o: TowersOptions): Towers {
 		...returner(() => ({ slot, now, log, error, targets: targets(), reach: (workspace) => services.get(workspace)?.reach, notice: (workspace, text, key) => runs.notice(workspace, text, key), head: (id) => ((h) => (h?.record.id === id ? h.record.workspace : undefined))(headLive()) })),
 		runTool: runToolFor,
 		runApprove: runApproveFor,
+		servedTowers: () => !readTowerRuns(slot.stateDir).headless ? [] : [...services.values()].flatMap((l) => (l.stopped || isHeadL(l) || l.record.pane || !l.record.cwd ? [] : [{ id: l.record.id, workspace: l.record.workspace, cwd: l.record.cwd }])),
 		confirmed: (dialogId, allow) => runs.confirmed(dialogId, allow, (n) => o.allows?.noteRun(n)),
 		memory: (workspace, json, via) => {
 			// The head's constant key reaches head/ whether or not a head service stands (towerstore.ts `HEAD_KEY`).

@@ -32,7 +32,7 @@ export interface OpenedWaitDeps {
 	/** The workspace's tower identity, as which the wait goes over Straw Link. */
 	identity: string;
 	log(event: string, facts: Record<string, string>): void;
-	link?: (body: unknown, from: string) => Promise<unknown>;
+	link?: (body: unknown, from: string, served?: boolean) => Promise<unknown>;
 	asks?: Pick<Asks, "open">;
 	waits?: Pick<LinkWaits, "sent" | "newId" | "handleOf">;
 	/** A line the code writes to the raiser (`link_wait_state`, about the opener), with the wait's `L<n>` once it has one. */
@@ -48,7 +48,7 @@ export async function forwardOpenedWait(d: OpenedWaitDeps, route: Route, from: {
 	if (!d.link || !d.waits) return no("no-router", "this computer's sb server runs no link holder or wait router.");
 	const ask = randomBytes(16).toString("hex"), owner = waitOwner(raised.owner), what = waitWhat(raised.what) || "(no summary)";
 	const wait = { id: d.waits.newId(), state: "open" as const, owner, what, handle: d.waits.handleOf(from.id) };
-	const sent = (await d.link({ op: "send", device: route.device, text: bodyOf(text), reply: true, awaitsReply: ask, wait }, d.identity).catch((e: Error) => ({ ok: false, error: e.message }))) as Sent;
+	const sent = (await d.link({ op: "send", device: route.device, text: bodyOf(text), reply: true, awaitsReply: ask, wait }, d.identity, true).catch((e: Error) => ({ ok: false, error: e.message }))) as Sent;
 	if (!sent.ok) return no("send-failed", `the message to ${opener} was not sent (${String(sent.error ?? "no reason").slice(0, 300)}).`);
 	const x = sent.details ?? {}, asked = x.asked === true && !!x.team && !!x.device && !!x.id;
 	if (asked) d.asks?.open({ ask, envelope: x.id!, device: x.device!, team: x.team!, for: from.id, forName: from.name, workspace: d.ws, tower: d.identity, at: d.now(), expires: d.now() + ASK_KEEP_MS });

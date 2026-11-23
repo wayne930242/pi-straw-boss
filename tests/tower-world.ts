@@ -181,7 +181,7 @@ export class TowerWorld extends ServerWorld {
 	serverAllows = false;
 	/** The requests the tower service sent the link holder (the tools of a run), and the answer for each op. */
 	linkCalls: { body: Record<string, unknown>; from: string }[] = [];
-	linkAnswers = new Map<string, (body: Record<string, unknown>) => Record<string, unknown>>();
+	linkAnswers = new Map<string, (body: Record<string, unknown>, from: string, served: boolean) => Record<string, unknown> | Promise<Record<string, unknown>>>();
 	setFlag(enabled: boolean | undefined, max?: number, headless?: boolean) {
 		mkdirSync(this.stateDir, { recursive: true });
 		writeFileSync(join(this.stateDir, "config.json"), JSON.stringify(enabled === undefined ? {} : { towerRuns: { enabled, ...(max ? { max } : {}), ...(headless ? { headless } : {}) } }));
@@ -216,10 +216,10 @@ export class TowerWorld extends ServerWorld {
 			herdr: { run: this.herdr.runFor("none"), events: this.herdr.events, api: this.herdr.api, watch: (cb: () => void, lost?: () => void) => (this.takeovers.push(cb), lost && this.losts.push(lost), () => {}) },
 			towers: {
 				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.refreshMs ? { refreshMs: this.refreshMs } : {}), ...(this.revokeMs ? { revokeMs: this.revokeMs } : {}), standing: { ...FAST_STANDING, ...this.standingTimers }, ...(this.standingWait ? { standingWait: this.standingWait } : {}), ...(this.serverAllows ? {} : { allows: this.allows }), ...(this.unattended ? { unattended: this.unattended } : {}), expose: (t: Towers) => void (this.expose = t),
-				link: async (body, from) => {
+				link: async (body, from, served) => {
 					const b = body as Record<string, unknown>;
 					this.linkCalls.push({ body: b, from });
-					return this.linkAnswers.get(String(b.op))?.(b) ?? { ok: false, code: "no_holder", error: "no holder in this world" };
+					return this.linkAnswers.get(String(b.op))?.(b, from, served === true) ?? { ok: false, code: "no_holder", error: "no holder in this world" };
 				},
 				kidsPort: this.realPi ? { pi: () => this.realPi!, spawn: (file: string, args: string[], options: object) => { const child = nodeSpawn(file, args, options); this.realKids.push(child); return child; } } : {
 					pi: () => ({ node: "/fake/node", cli: "/fake/pi/dist/cli.js" }),

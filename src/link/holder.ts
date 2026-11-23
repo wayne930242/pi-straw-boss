@@ -16,7 +16,7 @@ import { Outbox, type QueuedEnvelope } from "./outbox.ts";
 import { Requests } from "./request.ts";
 import type { RelayClient } from "./relay.ts";
 import { decodeEntry, encodeEntry, replayEncoded, type Role, type RosterEntry, type RosterState } from "./roster.ts";
-import { inside, nearestTeams, oneTeamEach, resolveDevice, towersFor, type MemberRef, type NetView } from "./routing.ts";
+import { inside, nearestTeams, oneTeamEach, resolveDevice, towerAt, towersFor, type MemberRef, type NetView } from "./routing.ts";
 import type { Backoff, Sleep } from "./retry.ts";
 import type { Disposition, EnvelopeEvent, LiveEvent, RelayEvent, RosterEvent } from "./sse.ts";
 import { TeamFileError, type InboxItem, type LinkStore, type TeamFile, type ThreadRow } from "./store.ts";
@@ -139,14 +139,16 @@ export const STOP_MAX_AGE_MS = 15 * 60_000;
 /** What `requestUnitStop` answers: `sent` when the relay holds the request, `queued` when it does not yet (it is sent again until it does), or why it was not sent. */
 export type UnitStopResult = { ok: true; status: "sent" | "queued"; stopId: string; id: string } | { ok: false; error: string };
 
-export interface ConfirmRequestInput { fromSession: string; team: string; device: string; dialogId: string; digest: string; tool: string; args: string; tower: string }
+/** `served`: the server made the request as one of its own runs (main.ts), so a tower identity it runs with no pane may be the sender (routing.ts `towerAt`); nothing a session sends sets it. */
+export interface ConfirmRequestInput { fromSession: string; served?: boolean; team: string; device: string; dialogId: string; digest: string; tool: string; args: string; tower: string }
 /** A confirm-request another device sent, waiting for this device's boss. */
 export interface ConfirmView { dialogId: string; team: string; from: string; fromLabel: string; fromShort: string; digest: string; tool: string; args: string; tower: string; at: number }
 const CONFIRM_MAX_MS = 10 * 60_000;
 const CONFIRM_MAX = 20;
 /** `awaitsReply`: an ask id (32 hex) a local tower made for a main; `inReplyTo`: the ask id of the message this one answers (an ally run's reply). Each is written to the wire only against the peer's `caps` (Replies for a main). */
 /** `wait`: a link wait or its state (docs/specs/2026-11-21-box-mac-waits.md §2.3), written as the sixth field to a peer whose `caps` list `tower.wait`; to any other an open wait goes as text whose first line is `[waits on you: <what>]`, and a state is not sent. */
-export interface SendRequest { fromSession: string; device: string; workspace?: string; text: string; reply: boolean; awaitsReply?: string; inReplyTo?: string; wait?: WaitWire }
+/** `served`: as in `ConfirmRequestInput`. */
+export interface SendRequest { fromSession: string; served?: boolean; device: string; workspace?: string; text: string; reply: boolean; awaitsReply?: string; inReplyTo?: string; wait?: WaitWire }
 export type SendResult = { ok: true; text: string; details: Record<string, unknown> } | { ok: false; error: string };
 /** What the GUI shows as a notice. `data` is plain text and numbers: the page puts them in text nodes. */
 export type AlertKind = "join-request" | "confirm" | "dialog" | "fork" | "mismatch" | "unreachable" | "inbox" | "held" | "served" | "notice";
@@ -1125,11 +1127,11 @@ export class LinkHolder {
 		const bytes = Buffer.byteLength(req.text, "utf8");
 		if (bytes > LIMITS.towerText) return { ok: false, error: `The message is ${bytes} bytes; a message over Straw Link may hold at most ${LIMITS.towerText}` };
 		const net = await this.o.net();
-		const pane = net.panes.find((p) => net.sessions.find((x) => x.id === req.fromSession)?.herdrLocation?.paneId === p.pane_id);
-		if (!pane || pane.tokens?.sb_role !== "tower" || !pane.cwd) return { ok: false, error: "Only the tower of a workspace bound to a team can send over Straw Link" };
+		const at = towerAt(net, req.fromSession, req.served === true), cwd = at?.cwd, pane = at && { workspace_id: at.workspace };
+		if (!cwd || !pane) return { ok: false, error: "Only the tower of a workspace bound to a team can send over Straw Link" };
 		const config = this.o.config();
-		const teams = nearestTeams(pane.cwd, [...this.runs.values()].filter((run) => !run.dead && config.teams.has(run.team)).map((run) => ({ run, project: config.teams.get(run.team)!.project }))).map((x) => x.run);
-		if (teams.length === 0) return { ok: false, error: `This tower's folder (${pane.cwd}) is not inside the project of any team this device belongs to` };
+		const teams = nearestTeams(cwd, [...this.runs.values()].filter((run) => !run.dead && config.teams.has(run.team)).map((run) => ({ run, project: config.teams.get(run.team)!.project }))).map((x) => x.run);
+		if (teams.length === 0) return { ok: false, error: `This tower's folder (${cwd}) is not inside the project of any team this device belongs to` };
 		const members: MemberRef[] = oneTeamEach(teams.flatMap((run) => {
 			try {
 				return [...this.loadTeam(run.team).state.members].map(([id, m]) => ({ team: run.team, id, ...(m.label !== undefined ? { label: m.label } : {}) }));
@@ -1292,8 +1294,8 @@ export class LinkHolder {
 		if (!run || run.dead) return { ok: false, error: "That team is not running on this device" };
 		const policy = this.o.config().teams.get(req.team);
 		const net = await this.o.net();
-		const pane = net.panes.find((p) => net.sessions.find((x) => x.id === req.fromSession)?.herdrLocation?.paneId === p.pane_id);
-		if (!policy || !pane || pane.tokens?.sb_role !== "tower" || !pane.cwd || !inside(pane.cwd, policy.project)) return { ok: false, error: "Only the tower of a workspace bound to the team can ask a device to confirm" };
+		const cwd = towerAt(net, req.fromSession, req.served === true)?.cwd;
+		if (!policy || !cwd || !inside(cwd, policy.project)) return { ok: false, error: "Only the tower of a workspace bound to the team can ask a device to confirm" };
 		if (!this.loadTeam(run.team).state.members.has(req.device)) return { ok: false, error: "That device is not in the team" };
 		// Written down before the request goes out: an answer can come back before submit returns.
 		const now = this.now();
