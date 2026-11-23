@@ -34,13 +34,20 @@ sequenceDiagram
 
 ## 它能做什麼
 
-它的工具只有塔台的查詢與轉送工具，沒有別的：它讀工作看板與塔台清單，用 `tower_send` 寫給塔台，保存自己的記憶，並能看到 sb server。
+它讀工作看板與塔台清單，用 `tower_send` 寫給塔台，保存自己的記憶，也能查詢 sb server。
 它沒有 shell、不做任何編輯，也不自己開主智慧體。
-它只聽你的話，以及對它自己轉送的回答；廣播或主智慧體的訊息不會喚醒它。
+你的訊息、塔台對轉送事項的回覆，以及伺服器排程的通知都能喚醒它；廣播或主智慧體的訊息不會。
 它可以依你自己的話開始或結束[自動模式](/pi-straw-boss/docs/zh-tw/guide/auto-mode/)。
 
 對話會跨多次 run 延續。
 太長的對話會開一個新章節，帶著上一份交接筆記；**開新對話**或 `/boss head new` 可以手動開新的一章。
 它的模型是[設定](/pi-straw-boss/docs/zh-tw/reference/configuration/)裡的 `headModel`，沒有就用 `towerModel`。
+
+## 每日清理
+
+如果有使用 `ledger-janitor`，請在 sb server 的 `config.json` 把 `ledger.janitor` 設成執行檔路徑，例如 `~/.local/bin/ledger-janitor`。
+本機時間約 06:30，或電腦喚醒後的第一次檢查，主塔台會執行當天的清理。
+它把剩下的項目交給對應工作區的塔台，找不到對應工作區的就留在主塔台工作看板。
+它不會請你處理這份清單。
 
 規則見[主塔台](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#主塔台)。

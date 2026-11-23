@@ -24,7 +24,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `call_tower` | 已加入的 session 與塔台 | 在標頭之下發訊息給這個工作區的塔台，或另一個工作區的塔台。`why` 是 `milestone`、`shared` 或 `blocked`；通知用 `reply: false`。`blocked` 附 `waitsOn {device, owner?, what}` 表示在等隊友的裝置（`milestone` 附 `cancel: true` 撤回）；`linkWait {id, state}` 認領、回覆或婉拒隊友對本機的等待，以老闆代理人的身分核准隊友要給它老闆的卡片（`done`），或交回那位老闆（`escalated`，搭配 `blocked`）；`standing {device, what?}` 把訊息改送那台裝置的值守主智慧體，不經塔台：`blocked` 是提問（回覆會回來），`milestone` 是通知。見[裝置之間的等待](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#裝置之間的等待)。 |
 | `boss_broadcast` | 已加入的 session 與塔台 | 發訊息給一個分頁、一個工作區、所有塔台或所有 session，標頭會列出每位收件者。 |
 | `board_set` | 分頁的主智慧體 | 覆寫它自己的工作看板項目（一行與最多 8 個清單項目）；`auto: true` 交還給自動填入，`clear: true` 刪除它。 |
-| `ledger_sweep` | 只限收到排程通知的總塔台 | 執行伺服器清理和設定好的 ledger janitor，回傳總塔台該轉交的項目。不接受參數。 |
+| `ledger_sweep` | 只限收到排程通知的主塔台 | 執行伺服器清理和設定好的 ledger janitor，回傳主塔台該轉交的項目。不接受參數。 |
 | `boss_server` | 已加入的 session | sb server 的 `status`（server 沒在跑時也可用）、它的 `logs`（最多 200 行），或附理由 `restart`。老闆停掉 server 或有火車在跑時會被拒絕，每分鐘最多一次，且在遠端 turn 中絕不可用。 |
 | `link_request` | 有人看管的電腦上的每個 session，以及本機塔台 run | 附理由請求一個 Straw Link 動作（create、invite、join、trust、leave、remove、role、rotate）。它絕不會未經詢問就執行：老闆要在對話框裡核准。 |
 | `boss_open_main` | 塔台 | 為沒有 session 負責的請求，開一個帶新主智慧體的分頁。`role: "train"` 開一列火車；`role: "integrator"` 把車廂單送給專案唯一的整合員，沒有在跑的就開一個。`duty: "standing"` 開一個值守種類的主智慧體（預設為協調者）。見[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。 |

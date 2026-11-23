@@ -34,13 +34,20 @@ sequenceDiagram
 
 ## What it may do
 
-Its tools are the tower's lookup and forwarding tools and nothing else: it reads the work board and the tower list, writes to towers with `tower_send`, keeps its memory, and can see the sb server.
+It reads the work board and the tower list, writes to towers with `tower_send`, keeps its memory, and can see the sb server.
 It has no shell, makes no edits, and opens no mains itself.
-It listens only to you and to answers to its own forwards; a broadcast or a main's message wakes nothing.
+Your messages, answers to its forwards, and scheduled server notices can wake it; a broadcast or a main's message cannot.
 It can start or end [auto mode](/pi-straw-boss/docs/guide/auto-mode/) on your own words.
 
 The conversation continues across runs.
 A long one starts a new chapter that carries the last handoff note; **New conversation** or `/boss head new` starts one by hand.
 Its model is `headModel` in the [configuration](/pi-straw-boss/docs/reference/configuration/), else `towerModel`.
+
+## Morning ledger sweep
+
+If you use `ledger-janitor`, set `ledger.janitor` in the sb server's `config.json` to its executable path, such as `~/.local/bin/ledger-janitor`.
+At about 06:30 local time, or the first check after wake, the head runs the sweep once for that date.
+It forwards findings to the matching workspace towers and leaves unmatched items on the head work board.
+It does not ask you to handle the list.
 
 See [The head tower](/pi-straw-boss/docs/reference/how-it-works/how-it-works/#the-head-tower) for the rules.
