@@ -91,7 +91,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.
 		// The cars' way to the sb server (traincar.ts): the integrator's and the trains' `train_car` tool, added at the join, and the guard's source for notices.
 		const cars = carLink(kit);
-		pi.on("session_start", () => void (kit.s.toolSet = { link: link.inUse() && link.attended(), cars: cars.enabled(), carApp: hasIntegrationApp(cfg.cwd()) }));
+		pi.on("session_start", () => void (kit.s.toolSet ??= { link: link.inUse() && link.attended(), cars: cars.enabled(), carApp: hasIntegrationApp(cfg.cwd()) }));
 		let trainGuard: TrainGuard | undefined;
 		const addTrainCar = trainCarTool(kit, () => trainGuard, cars, (text) => reach.callTower(text, undefined, false, "blocked"));
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), tools.addPromote(), tools.addDuty(), tools.addHandover(), addTrainCar()), onMain: link.look, control: () => control });
