@@ -47,6 +47,8 @@ test("ZF-4 (docs/specs/2026-11-24-zen-f.md §3): with live quiet the message und
 	assert.ok(live.classes.has("live-quiet"));
 	assert.equal(live.querySelector(".live-tag"), null, "no Writing now tag");
 	assert.equal(live.getAttribute("aria-live"), null, "no live region: a region that grows every 2 s would be read again and again");
+	chat.apply({ key, live: "" });
+	assert.equal(root.querySelector(".live"), null);
 	chat.apply({ key, items: [said("a2", "Looking at the ledger. Done.")] });
 	await whenDrawn();
 	assert.equal(root.querySelector(".live"), null);

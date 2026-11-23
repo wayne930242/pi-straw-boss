@@ -9,7 +9,7 @@ import type { MenuDeps } from "./zenmenu.ts";
 export interface Acts {
 	standard(): void;
 	settings?(): void;
-	companion?: { name: string; session(): void; terminal(): void; /** Back to the breathing circle (Z-D16). */ rest(): void };
+	companion?: { name: string; session(): void; terminal?(): void; /** Back to the breathing circle (Z-D16). */ rest(): void };
 	cycle?: { prev(): void; next(): void };
 	/** The head tower, on the circle screen: talk to it, read the whole conversation, or open its page in Standard. */
 	head?: { talk(): void; history(): void; page(): void };
@@ -21,7 +21,7 @@ export function entriesOf(a: Acts, p: Prefs): Entry[] {
 	const out: Entry[] = [], add = (id: string, label: string, run: () => void, o: Partial<Entry> = {}) => void out.push({ id, label, run, ...o });
 	const here = (on: boolean) => (on ? { hint: m.pal_current() } : {});
 	const onoff = (on: boolean) => (on ? m.state_on() : m.state_off());
-	if (a.companion) (add("session", m.pal_session({ name: a.companion.name }), a.companion.session), add("terminal", m.pal_terminal({ name: a.companion.name }), a.companion.terminal), add("rest", m.zen_rest(), a.companion.rest));
+	if (a.companion) (add("session", m.pal_session({ name: a.companion.name }), a.companion.session), a.companion.terminal && add("terminal", m.pal_terminal({ name: a.companion.name }), a.companion.terminal), add("rest", m.zen_rest(), a.companion.rest));
 	if (a.cycle) (add("prev", m.pal_prev(), a.cycle.prev), add("next", m.pal_next(), a.cycle.next));
 	if (a.head) (add("head-talk", m.palette_head_talk(), a.head.talk), add("head-history", m.palette_head_history(), a.head.history), add("head-page", m.palette_head_page(), a.head.page));
 	if (a.settings) add("settings", m.pal_settings(), a.settings);

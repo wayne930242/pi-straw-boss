@@ -121,7 +121,7 @@ function plain(text: string) {
 }
 
 export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, page, away, live: liveMode }: ChatDeps): Chat {
-	let swapping = false; // the entries being painted replace a quiet live text (`live: "quiet"`)
+	let pendingQuiet = false; // the live text may clear before its assistant entry arrives
 	const model = createChat(), els = new Map<string, HTMLElement>(), opens = new Set<{ paths: string[]; button: HTMLButtonElement; shown?: boolean }>(); // a card the log dropped leaves it
 	const docs = () => opens.forEach((o) => (o.button.isConnected ? ((o.shown = true), (o.button.hidden = !o.paths.some((p) => docFor?.(p)))) : o.shown && opens.delete(o)));
 	const list = h("div", { class: "chat-list" }), top = h("div", { class: "chat-top" }), foot = h("div", { class: "chat-end" }), pill = h("button", { class: "chat-pill", type: "button", hidden: "" }), empty = h("p", { class: "chat-empty" }, m.no_transmissions());
@@ -254,7 +254,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 			default: return h("article", { class: "tx note" }, it.text ?? "", " ", stamp(it));
 		}
 	}
-	function paint(d: Delta) {
+	function paint(d: Delta, quietId?: string) {
 		if (d.rebuild) {
 			els.clear();
 			list.replaceChildren();
@@ -267,7 +267,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 		if (d.front) list.prepend(...made);
 		else list.append(...made);
 		// A message that just arrived or went out comes in with a motion; older pages and a redraw do not.
-		if (loaded && !d.front && !d.rebuild && !swapping) made.forEach((el) => (el.classList.add("fresh"), (el.dataset.born = String(Date.now())))); // a quiet log (Zen) takes the entry that replaces the live text in place, with no fade
+		if (loaded && !d.front && !d.rebuild) made.forEach((el, i) => d.added[i]!.id !== quietId && (el.classList.add("fresh"), (el.dataset.born = String(Date.now())))); // a quiet log (Zen) takes the entry that replaces the live text in place, with no fade
 		empty.remove();
 		const svc = who().service;
 		empty.textContent = svc?.state === "standing" && !svc.run ? m.tower_empty() : m.no_transmissions(); // a tower the sb server stands in for says what standing by is
@@ -366,7 +366,9 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 			place();
 		},
 		apply(e) {
-			swapping = liveMode === "quiet" && list.contains(live) && Boolean(e.items?.some((it) => it.kind === "assistant"));
+			const replacement = pendingQuiet && !e.reset ? e.items?.find((it) => it.kind === "assistant") : undefined;
+			if (e.reset || replacement) pendingQuiet = false;
+			if (liveMode === "quiet" && e.live) pendingQuiet = true;
 			// A headless run's message under way (src/watch.ts `live`): shown after the log's last entry until the session file has the message, which arrives as an entry and takes its place.
 			if (e.live !== undefined || e.reset || e.items?.some((it) => it.kind === "assistant")) writing(e.live !== undefined ? e.live : "");
 			if (e.reset) {
@@ -375,7 +377,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 				settle();
 			} else if (e.items?.length) {
 				const d = model.append(e.items);
-				paint(d);
+				paint(d, replacement?.id);
 				touch(d);
 				if (follow.arrived(d.added.length, selecting()) && !model.detached && !touching()) toBottom();
 				else button();

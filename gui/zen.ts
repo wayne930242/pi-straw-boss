@@ -433,19 +433,20 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 	const tap = () => shown.kind === "pause" && !term.isOpen() && apply(model.tap());
 	root.addEventListener("pointerdown", (e) => (tap(), head.tapAway(e.target)));
 	mountGestures(stage, { on: () => (!net?.head || term.isOpen() ? undefined : histOpen ? "history" : onCircle() ? "circle" : undefined), open: openHistory, close: closeHistory }); // the head's history opens by a wheel gesture up or a swipe up, and closes by a gesture down past the log's end
+	const companionRoute = (c: Company) => c.bare ? { view: "workspace" as const, ws: c.ws } : { view: "session" as const, ws: c.ws, key: c.key };
 	/** Leaving: the item's dialog opens over Standard, the companion's session opens, a pause just returns to the page. */
 	function leave() {
 		const item = shown.kind === "item" ? (alerts.get(shown.item.key) ?? shown.item) : undefined;
 		// Standard has no dialog for a card: a proposal is answered among its tower's notices, the others at the Link button, the Wi-Fi notice or the Link notices on the page itself.
 		if (item?.card) return deps.leave(item.card.kind === "proposal" ? { route: { view: "session", ws: item.card.ws, key: item.card.tower } } : {});
-		deps.leave(item ? { item } : shown.kind === "companion" && company ? { route: { view: "session", ws: company.ws, key: company.key } } : {});
+		deps.leave(item ? { item } : shown.kind === "companion" && company ? { route: companionRoute(company) } : {});
 	}
 	/** What the palette lists now: the page's actions that make sense for what is on the screen, then the corner menu's preferences. */
 	function paletteEntries() {
 		const c = shown.kind === "companion" ? company : undefined, n = deps.companions?.().length ?? 0;
 		return entriesOf({
 			standard: () => deps.leave({}), settings: deps.settings,
-			companion: c && !histOpen ? { name: c.name.textContent ?? c.key, session: () => deps.leave({ route: { view: "session", ws: c.ws, key: c.key } }), terminal: () => openTerm(c.key), rest } : undefined,
+			companion: c && !histOpen ? { name: c.name.textContent ?? c.key, session: () => deps.leave({ route: companionRoute(c) }), ...(c.bare ? {} : { terminal: () => openTerm(c.key) }), rest } : undefined,
 			head: net?.head && shown.kind === "companion" && !company ? { talk: () => void head.unfold(), history: () => void openHistory(), page: () => deps.leave({ route: { view: "head" } }) } : undefined,
 			cycle: shown.kind === "companion" && n > 0 ? { prev: () => void cycle(-1), next: () => void cycle(1) } : undefined,
 		}, { ...deps.menu, music: music?.switch });

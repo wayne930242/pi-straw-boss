@@ -1364,6 +1364,14 @@ test("ZF §5.3: a pick moves the draft and the focus to the tower's companion; t
 	await r.settle();
 	assert.equal(r.calls.composers.at(-1)!.key, "addr:wQ", "a workspace with no tower is still a target");
 	assert.ok(r.root.textContent.includes(m.zen_no_tower_yet()));
+	r.z.leave();
+	const dest = { route: { view: "workspace", ws: "wQ" } };
+	assert.deepEqual(r.calls.leave.at(-1), dest);
+	r.z.palette();
+	const rows = r.by("palette-item");
+	assert.ok(!rows.some((row) => /terminal/i.test(row.textContent)));
+	rows[0]!.click();
+	assert.deepEqual(r.calls.leave.slice(-2), [dest, dest]);
 	r.z.hide();
 	r.z.show();
 	await r.settle();
