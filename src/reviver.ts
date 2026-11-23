@@ -145,7 +145,7 @@ export interface Successor { tab: string; pane: string; main: string; name: stri
 /** The successor's first prompt: the handoff file to read, and who handed over. Facts only; the session-rotation rule says the rest. */
 export const successorPrompt = (r: SuccessorRequest) => [
 	`Straw Boss: main ${r.from.name} (session ${r.from.id}) opened this tab for you with boss_handover and handed its work over to you; its reason: ${r.reason}.`,
-	`Read the handoff file ${r.handoff} now and follow it as your session-rotation rule describes: resume the loop's book id it names, recreate the monitors and loops it lists, drop completed todos, and keep its replies owed.`,
+	`Read the handoff file ${r.handoff} now and follow it as your session-rotation rule describes: take up the handoff todo and file it names, recreate the monitors and loops it lists, drop completed todos, and keep its replies owed.`,
 	`Your kind is already ${r.duty ?? "coordinator"} and your name is the old main's. Then tell ${r.from.name} by intercom (send, to "${r.from.id}") that you took over; it gives up its role after that.`,
 ].join("\n");
 

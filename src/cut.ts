@@ -20,8 +20,8 @@ export interface Cut {
 /** What claude-bridge records when the Claude Code process behind it dies of the hangup a restart sends (a terminate is no proof of one: someone may have killed the process). */
 const RESTART = /\bprocess (?:terminated by signal SIGHUP|exited with code 129)\b/i;
 const NAME = /^[\w.:-]{1,64}$/, TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z$/, MORE = 10;
-/** The custom messages that start a turn in a child (an intercom message, a nested launcher's result, a monitor's wake, a second-thought or document-review notice, a robot-hand follow-up); they are followed by an assistant message in real sessions. Others, such as a tower notice, are left out: missing one is a false negative (no nudge), never a wrong send. */
-const WAKES = new Set(["intercom_message", "subagent_result", "subagent_ping", "pi-loop-monitor", "anchorloop-second-thought", "aaaav-second-thought", "doc-review", "robot-hand-follow-up", "robot-hand-herdr"]);
+/** The custom messages that start a turn in a child (an intercom message, a nested launcher's result, a monitor's wake, an aaaav second-thought or a document-review notice, a robot-hand follow-up; pi-anchorloop 3.0.0 sends no second-thought); they are followed by an assistant message in real sessions. Others, such as a tower notice, are left out: missing one is a false negative (no nudge), never a wrong send. */
+const WAKES = new Set(["intercom_message", "subagent_result", "subagent_ping", "pi-loop-monitor", "aaaav-second-thought", "doc-review", "robot-hand-follow-up", "robot-hand-herdr"]);
 const QUESTIONS = new Set(["ask_user_question", "caller_ping"]);
 const CHUNK = 64 * 1024, LIMIT = 16 * 1024 * 1024;
 type Block = { type?: unknown; id?: unknown; name?: unknown; arguments?: unknown };

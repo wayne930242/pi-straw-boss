@@ -814,8 +814,6 @@ test("RC-F006: a custom message that starts a turn (intercom, monitor wake) and 
 	assert.deepEqual(cutOf(kidFile), { kind: "prompt", tools: [], at: "2026-11-04T15:30:00.000Z" });
 	writeFileSync(kidFile, [header, asked, done(1), custom("pi-loop-monitor", false)].join("\n") + "\n");
 	assert.equal(cutOf(kidFile)?.kind, "prompt", "a monitor's wake is hidden and starts a turn");
-	writeFileSync(kidFile, [header, asked, done(1), custom("anchorloop-second-thought", true)].join("\n") + "\n");
-	assert.equal(cutOf(kidFile)?.kind, "prompt", "RR-F002: a second-thought notice starts a turn");
 	for (const type of ["doc-review", "robot-hand-follow-up"]) {
 		writeFileSync(kidFile, [header, asked, done(1), custom(type, true)].join("\n") + "\n");
 		assert.equal(cutOf(kidFile)?.kind, "prompt", type);

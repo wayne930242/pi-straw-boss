@@ -1336,7 +1336,7 @@ A **managed-worktree** run (it has a manifest under `artifacts/<session id>/work
 
 #### A child cut off mid-turn is told to go on
 
-A restart or a reboot can land in the middle of a child's turn, and the restored pi then waits at its prompt with nothing to do: its interrupted tool call has no result and nobody continues the turn. Before a run is handed to the launcher, `cut.ts` reads the end of the child's session file (the last chunk of it, which grows until it holds the last assistant message; a large file is not read whole). Only `message` entries and the custom messages that start a turn (an intercom message, a nested launcher's result, a monitor's wake, a second-thought or document-review notice, a robot-hand follow-up) count, so a custom entry, a model change, or any other notice says nothing.
+A restart or a reboot can land in the middle of a child's turn, and the restored pi then waits at its prompt with nothing to do: its interrupted tool call has no result and nobody continues the turn. Before a run is handed to the launcher, `cut.ts` reads the end of the child's session file (the last chunk of it, which grows until it holds the last assistant message; a large file is not read whole). Only `message` entries and the custom messages that start a turn (an intercom message, a nested launcher's result, a monitor's wake, an aaaav second-thought or a document-review notice, a robot-hand follow-up) count, so a custom entry, a model change, or any other notice says nothing.
 
 <details>
 <summary>Details</summary>
