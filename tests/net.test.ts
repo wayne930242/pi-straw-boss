@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { afterEach, test } from "node:test";
 import { buildNet } from "../src/net.ts";
-import { PROMPT_DIR, settle, until, World } from "./fakes.ts";
+import { PROMPT_DIR, settle, until, World, towersOf } from "./fakes.ts";
 
 let world = new World();
 afterEach(async () => {
@@ -12,13 +12,13 @@ afterEach(async () => {
 const prompt = (name: string) => readFileSync(`${PROMPT_DIR}/${name}.md`, "utf8").trim();
 const hex = (id: string) => `straw-boss/tab/${Buffer.from(id).toString("hex")}`;
 
-test("outside Herdr nothing registers; a pi-herdr-agents worker runs only the dialog bridge, the trust relay, auto mode's guard (a worker in a new folder asks for trust too), and the watchdog's side, whose two tools are inactive and whose handlers do nothing in a worker (watchdog.ts); neither injects anything", async () => {
+test("outside Herdr nothing registers; a pi-herdr-agents worker runs only the dialog bridge, the trust relay, auto mode's guard (a worker in a new folder asks for trust too), and no tool (0.83.0: the watchdog's tools are retired); neither injects anything", async () => {
 	const outside = world.agent({ id: "out", pane: "none", outsideHerdr: true });
 	const worker = world.agent({ id: "worker", pane: "wA:p9", tab: "wA:t1", env: { PI_SUBAGENT_ID: "run-1" } });
 	for (const agent of [outside, worker]) {
 		await agent.start();
-		assert.deepEqual(agent.registered, agent === worker ? ["session_start", "tool_call", "before_agent_start", "input", "message_start", "turn_end", "session_tree", "session_compact", "agent_settled", "tool_execution_start", "tool_execution_end", "session_shutdown", "tool_result", "project_trust", "agent_end"] : [], `${agent.id} registered handlers`);
-		assert.deepEqual([...agent.tools.values()].map((t) => [t.name, (t as { defaultActive?: boolean }).defaultActive]), agent === worker ? [["watch_read", false], ["watch_report", false]] : []);
+		assert.deepEqual(agent.registered, agent === worker ? ["input", "message_start", "turn_end", "session_tree", "session_compact", "agent_settled", "session_start", "tool_execution_start", "tool_execution_end", "session_shutdown", "tool_result", "tool_call", "project_trust", "agent_end"] : [], `${agent.id} registered handlers`);
+		assert.deepEqual([...agent.tools.values()].map((t) => [t.name, (t as { defaultActive?: boolean }).defaultActive]), []);
 		assert.equal(agent.commands.size, 0);
 		assert.deepEqual(await agent.run(), {});
 	}
@@ -34,7 +34,7 @@ test("a session joins the net as a member at start: channel, tokens, net tools a
 	await a.start();
 	// `boss_wait_ask` (2026-11-16, tests/wait-ask.test.ts) is registered with the net tools; a member that calls it is refused.
 	// `board_read` (0.81.3, box-mac-waits §14) is a net tool too; a member that calls it is refused (tests/board.test.ts).
-	assert.deepEqual([...a.tools.keys()].sort(), ["board_read", "board_set", "boss_broadcast", "boss_duty", "boss_handover", "boss_promote", "boss_rename", "boss_status", "boss_wait_ask", "call_tower"]); // no link_request: no Straw Link is set up here (docs/specs/2026-11-23-lite-main.md §4)
+	assert.deepEqual([...a.tools.keys()].sort(), ["board_read", "board_set", "boss_broadcast", "boss_duty", "boss_handover", "boss_promote", "boss_rename", "boss_wait_ask", "boss_watch", "call_tower"]); // no link_request: no Straw Link is set up here (docs/specs/2026-11-23-lite-main.md §4)
 	assert.deepEqual(world.broker.registrations.map((r) => [r.id, r.namespace, r.ownerEligible]), [["a", hex("wA:t1"), true]]);
 	assert.deepEqual(a.tokens, { sb_role: "member" });
 	assert.deepEqual(a.entries, [], "joining writes no session entry");
@@ -76,7 +76,7 @@ test("boss_promote makes the first caller the main agent; a second caller is ref
 	assert.equal(state()?.main, "a");
 	assert.match((await a.run())["straw-boss"]!, /^You are the main agent of Herdr tab work, of kind coordinator:/);
 	// The section names no other session (tests/section-stable.test.ts): boss_status and boss_promote's refusal have the main's name.
-	assert.match((await b.run())["straw-boss"]!, /^Straw Boss: you are a member of tab work of workspace Alpha, and the tab has a main agent \(`boss_status` names it\)\. Before you dispatch a subagent, tell the main agent through intercom/);
+	assert.match((await b.run())["straw-boss"]!, /^Straw Boss: you are a member of tab work of workspace Alpha, and the tab has a main agent \(`board_read` section towers names it\)\. Before you dispatch a subagent, tell the main agent through intercom/);
 	await assert.rejects(b.tool("boss_promote"), /already has a main agent/);
 });
 
@@ -128,7 +128,7 @@ test("/boss from a member forces a claim even when the tab has a main; the two s
 	assert.equal((await a.run())["straw-boss"], firstA);
 	assert.match(b.sent.find((m) => m.customType === "straw-boss")!.content, /You are the main agent/);
 	assert.match(a.sent.find((m) => m.customType === "straw-boss")!.content, /you are a member of tab work of workspace Alpha, and the tab has a main agent/);
-	assert.equal(((await a.tool("boss_status")).details as { tabs: { main: string }[] }).tabs[0]!.main, "b", "boss_status names the new main");
+	assert.equal(((await towersOf(a)).details as { tabs: { main: string }[] }).tabs[0]!.main, "b", "boss_status names the new main");
 	assert.deepEqual(a.notices.map((n) => n.text), ["This session is now the main agent of work", "This session is no longer the main agent of work"]);
 	assert.ok(b.notices.some((n) => n.text === "This session is now the main agent of work"));
 });

@@ -1,10 +1,10 @@
 // What a main agent is for (docs/specs/2026-11-09-agent-kinds.md §1): its duty, the kind of work it is given, and the graph of the plan it runs. No pi imports: the server and the page load this file.
 
 export const COORDINATOR_DUTIES = ["coordinator", "integrator", "standing"] as const;
-export const WORKER_DUTIES = ["worker", "scout", "planner", "reviewer", "watchdog"] as const; // "train" stays the Role
+export const WORKER_DUTIES = ["worker", "scout", "planner", "reviewer"] as const; // "train" stays the Role; `watchdog` was retired in 0.83.0 (boss_watch)
 export type Duty = (typeof COORDINATOR_DUTIES)[number] | (typeof WORKER_DUTIES)[number];
 export type CoordinatorDuty = (typeof COORDINATOR_DUTIES)[number];
-const AGENT_DUTY: Record<string, Duty> = { worker: "worker", scout: "scout", planner: "planner", reviewer: "reviewer", "visual-tester": "reviewer", "adversarial-reviewer": "reviewer", watchdog: "watchdog" };
+const AGENT_DUTY: Record<string, Duty> = { worker: "worker", scout: "scout", planner: "planner", reviewer: "reviewer", "visual-tester": "reviewer", "adversarial-reviewer": "reviewer" };
 export const GRAPHS = ["single-loop", "fan-out/fan-in", "orchestrator-worker"] as const; // planning.md §1; a graph is not a duty (D10)
 export type Graph = (typeof GRAPHS)[number];
 export const isCoordinatorDuty = (v: unknown): v is CoordinatorDuty => typeof v === "string" && (COORDINATOR_DUTIES as readonly string[]).includes(v);

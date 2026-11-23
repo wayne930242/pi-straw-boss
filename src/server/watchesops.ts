@@ -1,0 +1,69 @@
+import { join } from "node:path";
+import type { LinkHolder } from "../link/holder.ts";
+import { readWaits } from "./linkwaits.ts";
+import type { Slot } from "./record.ts";
+import { listServices } from "./towerstore.ts";
+import type { Reply, Request } from "./socket.ts";
+import { createWatchRead, type WatchNet, type WatchQuery, type WatchReadDeps } from "./watchread.ts";
+import { createWatches, type Watches, type WatchesDeps } from "./watches.ts";
+
+// The server's side of `boss_watch` (docs/specs/2026-11-23-lite-b2-d-e-f.md §3.3): the control-socket commands `watch-add`, `watch-stop` and `watch-list` (watches.ts), their requests checked, and the watch-read holds they run on
+// (watchread.ts). Kept out of main.ts, which carries a line budget. `watch-read` is still answered for one release (0.83.0), for a watchdog child of an older build; `watch-report` is retired.
+
+export const REPORT_RETIRED = "watch-report is retired in pi-straw-boss 0.83.0 with the watchdog: the main watches with boss_watch, and the sb server wakes it";
+export interface WatchRoutes { read: { read(q: WatchQuery): Promise<Reply> }; watches: Pick<Watches, "add" | "stop" | "list"> }
+const no = (error: string): Promise<Reply> => Promise.resolve({ ok: false, error });
+const number = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const text = (v: unknown, max: number) => (typeof v === "string" && v.length > 0 && v.length <= max ? v : undefined);
+
+/** The watch commands. Undefined for a command that is not one of them; `enabled` is whether tower runs are on, whose tower identity sends the lines. */
+export function watchReply(routes: WatchRoutes | undefined, request: Request, enabled: () => boolean): Promise<Reply> | undefined {
+	if (!["watch-read", "watch-report", "watch-add", "watch-stop", "watch-list"].includes(request.cmd)) return undefined;
+	if (request.cmd === "watch-report") return no(REPORT_RETIRED);
+	if (!routes) return no("the server is still starting");
+	if (request.cmd === "watch-read") {
+		const { key, since, deadline, quietMs, loadMax, idleMs } = request;
+		if (typeof key !== "string" || key.length < 1 || key.length > 200) return no("key is 1 to 200 characters");
+		if (deadline !== undefined && !(number(deadline) && deadline > 0)) return no("deadline is a time in epoch ms");
+		if (quietMs !== undefined && !(number(quietMs) && quietMs >= 60_000)) return no("quietMs is at least 60000");
+		if (loadMax !== undefined && !(number(loadMax) && loadMax > 0)) return no("loadMax is a number over 0");
+		if (idleMs !== undefined && !(number(idleMs) && idleMs >= 60_000)) return no("idleMs is at least 60000");
+		return routes.read.read({ key, ...(typeof since === "string" ? { since } : {}), ...(deadline !== undefined ? { deadline } : {}), ...(quietMs !== undefined ? { quietMs } : {}), ...(loadMax !== undefined ? { loadMax } : {}), ...(idleMs !== undefined ? { idleMs } : {}) });
+	}
+	const session = text(request.session, 128);
+	if (!session) return no(`${request.cmd} needs session`);
+	if (request.cmd === "watch-list") return Promise.resolve(routes.watches.list(session));
+	const key = text(request.key, 200);
+	if (!key) return no("key is 1 to 200 characters");
+	if (request.cmd === "watch-stop") return Promise.resolve(routes.watches.stop(session, key));
+	if (!enabled()) return no("tower runs are off on this computer (towerRuns.enabled is false): boss_watch needs the workspace's tower identity of the sb server, which sends the wakes");
+	const workspace = text(request.workspace, 200), ms = (v: unknown) => (number(v) ? v : undefined);
+	if (!workspace) return no("watch-add needs workspace");
+	const [quietMs, idleMs, untilMs] = [ms(request.quietMs), ms(request.idleMs), ms(request.untilMs)];
+	return routes.watches.add({ session, workspace, key, ...(quietMs !== undefined ? { quietMs } : {}), ...(idleMs !== undefined ? { idleMs } : {}), ...(untilMs !== undefined ? { untilMs } : {}) });
+}
+
+export interface StartWatches {
+	net: WatchNet;
+	now(): number;
+	/** The line to a session, as its workspace's tower identity (towers.ts `watchSend`). */
+	send: WatchesDeps["send"];
+	log(event: string, facts: Record<string, number | string | boolean>): void;
+	stops: (() => void)[];
+	/** `watches.json` goes in this server's own folder; the `link:` keys and `waiting` read the waits' ledgers of its state folder and the Link holder (linkwatch.ts). */
+	slot: Slot;
+	holder?(): Pick<LinkHolder, "unitsSeen"> | undefined;
+	/** The seams of a test: the hold's length, the read interval, the timer. */
+	over?: Partial<Pick<WatchReadDeps, "holdMs" | "readMs" | "timer">>;
+}
+/** The watch routes of this server: the holds on the GUI host's readings, and the watches over them, which come back from `watches.json`. Both stop with the server. */
+export function startWatches(o: StartWatches): WatchRoutes {
+	const slot = o.slot, link = { units: () => o.holder?.()?.unitsSeen() ?? [], waits: () => listServices(slot).flatMap((r) => readWaits(slot, r.workspace).entries) };
+	const read = createWatchRead({ net: o.net, now: o.now, link, ...o.over });
+	const timer = o.over?.timer ?? ((ms: number, fn: () => void) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); });
+	const owner = (session: string) => ((f) => (f ? { live: f.live, workspace: f.base } : undefined))(o.net.lookup(session));
+	const watches = createWatches({ read: (q) => read.read(q), now: o.now, timer, send: o.send, owner, file: join(slot.dir, "watches.json"), log: o.log });
+	watches.start();
+	o.stops.push(() => (watches.stopAll(), read.stop()));
+	return { read, watches };
+}

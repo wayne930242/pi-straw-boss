@@ -5,15 +5,15 @@ import type { MainStatus } from "../src/link/kinds.ts";
 import type { Net, Unit } from "../src/net.ts";
 import type { LinkWait } from "../src/server/linkwaits.ts";
 import { parseLinkKey } from "../src/server/linkwatch.ts";
+import { durationMs } from "../src/bosswatch.ts";
 import type { Reply } from "../src/server/socket.ts";
-import { runWatch } from "../src/server/watchcli.ts";
-import { watchdogReply } from "../src/server/watchdogops.ts";
+import { watchReply } from "../src/server/watchesops.ts";
 import { createWatchRead, type WatchNet } from "../src/server/watchread.ts";
 import { STANDING_HINT, registerStandingHint, startsWatch } from "../src/standinghint.ts";
 import { fakeClock } from "./fake-clock.ts";
 
 // Item D of docs/specs/2026-11-21-box-mac-waits.md (§5, §9 anchors 8 and 9): `link:` keys read a teammate device from the Link holder's latest `unit-status`, and the verdicts `offline`, `waiting`, and `idle` join the route, in the order
-// gone, expired, offline, waiting, changed, load, idle, stalled. The CLI `watch` prints one line per verdict that is not `unchanged`; a coordinator that starts a watch gets the standing hint once. Every wait is on a clock the test moves.
+// gone, expired, offline, waiting, changed, load, idle, stalled. A coordinator that starts a `boss_watch` gets the standing hint once. Every wait is on a clock the test moves.
 
 const DEV = "a".repeat(26), T0 = 1_700_000_000_000, H = "0123456789abcdef";
 const settle = async () => { for (let i = 0; i < 5; i++) await new Promise<void>((r) => setImmediate(r)); };
@@ -106,32 +106,22 @@ test("`idleMs` gives `idle` once per idle spell, for a device key and for a main
 	const changed = await w.follow({ key: "u1", since: waiting!.since, idleMs: 60_000 }, 4000);
 	assert.equal(changed?.state, "changed");
 	assert.equal((await w.follow({ key: "u1", since: changed!.since, idleMs: 60_000 }, 120_000))?.state, "idle");
-	assert.equal(watchdogReply({ read: w.watch, report: { report: async () => ({ ok: true }) } }, { cmd: "watch-read", key, idleMs: 1000 }) instanceof Promise, true);
-	assert.match(String((await watchdogReply({ read: w.watch, report: { report: async () => ({ ok: true }) } }, { cmd: "watch-read", key, idleMs: 1000 }))?.error), /idleMs is at least 60000/);
+	const routes = { read: w.watch, watches: {} as never };
+	assert.equal(watchReply(routes, { cmd: "watch-read", key, idleMs: 1000 }, () => true) instanceof Promise, true);
+	assert.match(String((await watchReply(routes, { cmd: "watch-read", key, idleMs: 1000 }, () => true))?.error), /idleMs is at least 60000/);
 });
 
-test("cli watch prints one JSON line per verdict, none for unchanged, chains since, says once that the server is gone, and ends on gone", async () => {
-	const lines: string[] = [], asked: Record<string, unknown>[] = [];
-	const replies: (Reply | undefined)[] = [{ ok: true, state: "changed", since: "s1", now: 1 }, { ok: true, state: "unchanged", since: "s2", now: 2 }, undefined, undefined, { ok: true, state: "idle", since: "s3", now: 3 }, { ok: true, state: "gone", since: "s4", now: 4 }];
-	const code = await runWatch(undefined, { key: "link:aaaaaa", idle: "20m" }, { out: (t) => void lines.push(t), err: () => {}, sleep: async () => {}, call: async (q) => (asked.push(q), replies.shift()) });
-	assert.equal(code, 0);
-	assert.deepEqual(lines.map((l) => JSON.parse(l)), [{ key: "link:aaaaaa", state: "changed", now: 1 }, { server: "unreachable" }, { key: "link:aaaaaa", state: "idle", now: 3 }, { key: "link:aaaaaa", state: "gone", now: 4 }]);
-	assert.deepEqual(asked.map((q) => q.since ?? null), [null, "s1", "s2", "s2", "s2", "s3"]);
-	assert.equal(asked[0]!.idleMs, 20 * 60_000);
-	assert.equal(await runWatch(undefined, { key: "u1", idle: "30s" }, { out: () => {}, err: () => {}, call: async () => undefined }), 2, "an idle under a minute is a usage error");
-	assert.equal(await runWatch(undefined, { key: "zz" }, { out: () => {}, err: () => {}, call: async () => ({ ok: false, error: "unknown key zz" }) }), 1);
-});
-
-test("a coordinator that dispatches a watchdog or runs the CLI's watch under a monitor gets the standing hint once; a standing main never does", () => {
-	assert.equal(startsWatch("subagent", { agent: "watchdog" }), true);
-	assert.equal(startsWatch("subagent", { agent: "worker" }), false);
-	assert.equal(startsWatch("MonitorCreate", { command: "node '/x/dist/server/cli.mjs' watch link:aaaaaa --idle 20m" }), true);
-	assert.equal(startsWatch("MonitorCreate", { command: "npm test" }), false);
+test("a coordinator that starts a boss_watch gets the standing hint once; a standing main never does; a list, a stop, a retired watchdog or CLI watch is no start", () => {
+	assert.equal(startsWatch("boss_watch", { key: "link:aaaaaa", idle: "20m" }), true);
+	assert.equal(startsWatch("boss_watch", {}), false);
+	assert.equal(startsWatch("boss_watch", { key: "u1", stop: true }), false);
+	assert.equal(startsWatch("subagent", { agent: "watchdog" }), false);
+	assert.equal(startsWatch("MonitorCreate", { command: "node '/x/dist/server/cli.mjs' watch link:aaaaaa --idle 20m" }), false);
 	for (const [kind, expect] of [["coordinator", [true, false]], ["standing", [false, false]]] as const) {
 		const handlers: ((e: unknown) => unknown)[] = [];
 		const pi = { on: (name: string, fn: (e: unknown) => unknown) => void (name === "tool_result" && handlers.push(fn)) } as never;
 		registerStandingHint(pi, () => kind);
-		const result = () => handlers[0]!({ toolName: "subagent", input: { agent: "watchdog" }, isError: false, content: [{ type: "text", text: "started" }] }) as { content: { text: string }[] } | undefined;
+		const result = () => handlers[0]!({ toolName: "boss_watch", input: { key: "u1" }, isError: false, content: [{ type: "text", text: "started" }] }) as { content: { text: string }[] } | undefined;
 		assert.deepEqual([result(), result()].map((r) => r?.content.at(-1)?.text === STANDING_HINT), expect, kind);
 	}
 });
@@ -151,9 +141,9 @@ test("BMWR-F007: a box in two teams is one device: its link keys read the rows a
 	assert.equal(readLinkKey({ short: "aaaa" }, { units: () => [a, { ...b, device: "a".repeat(25) + "b" }], waits: () => [] }, T0), undefined, "two devices under one short id stay unknown");
 });
 
-test("BMWR-F012: a malformed --idle or --quiet is a usage error, not dropped", async () => {
-	const call = async () => ({ ok: false, error: "unknown key u1" });
-	for (const flags of [{ idle: "20min" }, { quiet: "soon" }, { idle: true }] as Record<string, string | true>[]) assert.equal(await runWatch(undefined, { key: "u1", ...flags }, { out: () => {}, err: () => {}, call }), 2, JSON.stringify(flags));
+test("BMWR-F012: a malformed quiet or idle is refused, not dropped (boss_watch reads them as the retired CLI did)", () => {
+	for (const text of ["20min", "soon", ""]) assert.equal(durationMs(text), undefined, text);
+	assert.deepEqual(["90s", "20m", "2h", "60000"].map(durationMs), [90_000, 1_200_000, 7_200_000, 60_000]);
 });
 
 test("BMWR-F010: a remote turn whose senders are of several teams gets no waits, as it gets no remote boards", async () => {

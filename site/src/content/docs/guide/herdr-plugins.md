@@ -37,7 +37,7 @@ On Windows the action is `wayne930242.straw-boss.net-windows`.
 `herdr plugin unlink wayne930242.straw-boss` removes the plugin.
 
 pi-straw-boss writes the sort key (`sb_order`), a role label (`sb_mark`), and, on subagents, a tree branch (`sb_indent`) and the subagent's name (`sb_name`), which your own sidebar rows can use too.
-`sb_mark` is one glyph per [kind](/pi-straw-boss/docs/guide/concepts/#kinds), so the sidebar tells them apart; the integrator's is a code-fork and the watchdog's a dog.
+`sb_mark` is one glyph per [kind](/pi-straw-boss/docs/guide/concepts/#kinds), so the sidebar tells them apart; the integrator's is a code-fork and the standing main's a lighthouse.
 See [Sidebar net view](/pi-straw-boss/docs/reference/how-it-works/sidebar-net-view/) for the tokens and a rows snippet.
 
 ## Leftover worktree panes

@@ -28,7 +28,7 @@ const GLYPH: Record<Exclude<Mark, "working">, string> = { waiting: "?", idle: "â
 const TONE: Record<Mark, Tone> = { working: "accent", waiting: "warning", idle: "dim", done: "success", error: "error", unknown: "muted", commanding: "title" };
 // A row's role mark goes before its name, the same glyph as Herdr's sidebar shows (src/herdr.ts); a tab or sub workspace has none. A row with a kind (`Row.duty`) shows its kind's glyph in place of its role's; the kind column keeps the role's word.
 const ROLE: Record<string, [Tone, string]> = { main: ["main", MARK.main], member: ["member", MARK.member], train: ["member", MARK.train], subagent: ["dim", ARROW], tower: ["tower", TOWER_LABEL], "head tower": ["tower", TOWER_LABEL] };
-const DUTY_TONE: Record<Duty, Tone> = { coordinator: "main", integrator: "main", standing: "main", worker: "dim", scout: "dim", planner: "dim", reviewer: "dim", watchdog: "dim" };
+const DUTY_TONE: Record<Duty, Tone> = { coordinator: "main", integrator: "main", standing: "main", worker: "dim", scout: "dim", planner: "dim", reviewer: "dim" };
 const MAX_ROWS = 18;
 const MAX_WIDTH = 76;
 

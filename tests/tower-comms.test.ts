@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { header } from "../src/header.ts";
 import { ENTRY } from "../src/state.ts";
-import { type Agent, PROMPT_DIR, until, World } from "./fakes.ts";
+import { type Agent, PROMPT_DIR, until, World, towersOf } from "./fakes.ts";
 import { readFileSync } from "node:fs";
 
 let world = new World();
@@ -123,7 +123,7 @@ test("boss_status and tower_list show each main's kind (docs/specs/2026-11-09-ag
 	const by = (id: string) => list.towers.find((t) => t.workspace.id === id)!;
 	assert.deepEqual(by("wA").tabs.map((t) => [t.main, t.kind]), [["api-main", "standing"], ["docs-writer", "coordinator"]]);
 	assert.deepEqual(by("wC").tabs.map((t) => [t.main, t.kind]), [["kb-main", "coordinator"]]);
-	const status = (await a1.tool("boss_status")).details as { tabs: { main: string | null; kind?: string | null }[] };
+	const status = (await towersOf(a1)).details as { tabs: { main: string | null; kind?: string | null }[] };
 	assert.deepEqual(status.tabs.map((t) => [t.main, t.kind]).sort(), [["a1", "standing"], ["a2", "coordinator"]]);
 	await c1.stop();
 	const towerless = (await towerB.tool("tower_list")).details as typeof list;

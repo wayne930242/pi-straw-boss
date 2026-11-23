@@ -353,13 +353,13 @@ test("TB-F006, F008, F009: the prompts give the code's form, the todo order, abs
 });
 
 // Box ↔ Mac waits (docs/specs/2026-11-21-box-mac-waits.md §6, §9 anchor 10): one clause each, inside the budgets above.
-test("box-mac waits: main.md blocks with waitsOn and names standing, tower-run.md forwards waitsOn and binds by default, ally-run.md escalates, duty-standing.md watches with the CLI", () => {
+test("box-mac waits: main.md blocks with waitsOn and names standing, tower-run.md forwards waitsOn and binds by default, ally-run.md escalates, duty-standing.md watches with boss_watch", () => {
 	const main = read("main.md"), run = read("tower-run.md"), ally = read("ally-run.md"), standing = read("duty-standing.md"), tower = read("tower.md");
 	assert.ok(main.includes("`waitsOn` names a teammate device") && main.includes("watching, not finishing tasks, is `standing`"), "main.md");
 	assert.ok(run.includes("A device's answer never enters a tower run") && run.includes("leaving `reply` out binds the one main") && run.includes("Use `reply: false` only for a pure notice") && run.includes("pass the first line's `[event id: <id>]` value to `tower_send` as `waitsOn.event`"), "tower-run.md");
 	assert.ok(!run.includes("A teammate's device never answers you"), "the old rule is gone");
 	assert.ok(ally.includes("call `ally_escalate` once per item") && ally.includes("\"Mains here\""), "ally-run.md");
-	assert.ok(standing.includes("{{cli}} watch <key> --idle 20m"), "duty-standing.md");
+	assert.ok(standing.includes("Watch with `boss_watch` (`quiet`, `idle`, `until`), not by checking in your own turns") && !/watchdog|\{\{cli\}\} watch/.test(standing), "duty-standing.md");
 	assert.ok(tower.includes("A `waits-on=` blocked needs a tower run"), "tower.md");
 });
 

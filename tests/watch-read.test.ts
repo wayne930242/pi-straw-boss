@@ -6,7 +6,7 @@ import { afterEach, test } from "node:test";
 import type { Monitor } from "../src/monitors.ts";
 import type { Found, Net, Unit } from "../src/net.ts";
 import { callControl, listenControl, newSecret, type Reply, type Request } from "../src/server/socket.ts";
-import { watchdogReply } from "../src/server/watchdogops.ts";
+import { watchReply } from "../src/server/watchesops.ts";
 import { createWatchRead, HOLD_MS, type WatchNet } from "../src/server/watchread.ts";
 import type { Yards } from "../src/train/yardview.ts";
 import { World } from "./fakes.ts";
@@ -286,10 +286,11 @@ test("D4: with no reading from the GUI host (the GUI is stopped) the route reads
 });
 
 test("the request's fields are checked: a key of 1 to 200 characters, quietMs of at least 60000, a deadline and a loadMax that are numbers; another command is not this route's", async () => {
-	const w = world(netOf([unit()])), dog = { read: w.watch, report: { report: async () => ({ ok: true }) } };
-	const ask = (more: Record<string, unknown>) => watchdogReply(dog, { cmd: "watch-read", ...more } as Request)!;
-	assert.equal(watchdogReply(dog, { cmd: "procs-list" }), undefined);
-	assert.deepEqual(await watchdogReply(undefined, { cmd: "watch-read", key: "u1" }), { ok: false, error: "the server is still starting" });
+	const w = world(netOf([unit()])), dog = { read: w.watch, watches: {} as never };
+	const ask = (more: Record<string, unknown>) => watchReply(dog, { cmd: "watch-read", ...more } as Request, () => true)!;
+	assert.equal(watchReply(dog, { cmd: "procs-list" }, () => true), undefined);
+	assert.deepEqual(await watchReply(undefined, { cmd: "watch-read", key: "u1" }, () => true), { ok: false, error: "the server is still starting" });
+	assert.match(String((await watchReply(dog, { cmd: "watch-report", text: "x" }, () => true))?.error), /watch-report is retired in pi-straw-boss 0\.83\.0/);
 	assert.deepEqual(await ask({}), { ok: false, error: "key is 1 to 200 characters" });
 	assert.deepEqual(await ask({ key: "k".repeat(201) }), { ok: false, error: "key is 1 to 200 characters" });
 	assert.deepEqual(await ask({ key: "u1", quietMs: 59_999 }), { ok: false, error: "quietMs is at least 60000" });
@@ -310,7 +311,7 @@ test("over the real control socket a hold shorter than the idle close is answere
 		const listeners = new Set<(net: Net) => void>(), quiet = netOf([unit()]);
 		const watch = createWatchRead({ net: { onRead: (cb) => (listeners.add(cb), () => void listeners.delete(cb)), last: () => quiet, lookup: (key) => (key === "u1" ? { key, base: "w1", name: "coord", role: "main", live: true } : undefined), read: async () => quiet }, now: Date.now, holdMs });
 		const secret = newSecret(), endpoint = join(scratch, `${holdMs}-${idleMs}.sock`);
-		const control = await listenControl({ endpoint, secret, hello: () => ({}), idleMs, handle: (request) => watchdogReply({ read: watch, report: { report: async () => ({ ok: true }) } }, request) ?? { ok: false, error: "unknown" } });
+		const control = await listenControl({ endpoint, secret, hello: () => ({}), idleMs, handle: (request) => watchReply({ read: watch, watches: {} as never }, request, () => true) ?? { ok: false, error: "unknown" } });
 		closers.push(async () => (watch.stop(), control.close()));
 		return (more: Record<string, unknown>) => callControl(endpoint, secret, { cmd: "watch-read", key: "u1", ...more }, 30_000).then((r) => r.reply as Answer);
 	};
@@ -329,7 +330,7 @@ test("over the real control socket a hold shorter than the idle close is answere
 let hostWorld: World | undefined, hosted: Hosted | undefined;
 afterEach(async () => { await hosted?.stop(); await hostWorld?.stopAll(); hosted = hostWorld = undefined; });
 
-test("the running server answers `watch-read` and `watch-report` on its control socket, with the GUI running and after it was stopped", async () => {
+test("the running server answers `watch-read`, the watches' `watch-list` and `watch-add`, and the retired `watch-report` on its control socket, with the GUI running and after it was stopped", async () => {
 	hostWorld = new World();
 	hostWorld.herdr.addTab("wA:t1", "work");
 	hosted = await startHosted(hostWorld, { pid: process.pid });
@@ -343,7 +344,10 @@ test("the running server answers `watch-read` and `watch-report` on its control 
 	assert.equal(typeof (seen.unit as { mark?: unknown }).mark, "string");
 	assert.equal(((await hosted.ask("watch-read", { key: "B", since: seen.since, deadline: Date.now() - 1 })) as Answer).state, "expired", "the stamp is this server's: no `changed`");
 	assert.deepEqual(await hosted.ask("watch-read", { key: "nope", quietMs: 1 }), { ok: false, error: "quietMs is at least 60000" });
-	assert.deepEqual(await hosted.ask("watch-report", { session: "/etc/passwd", child: "c1", activityFile: "/etc/hosts", text: "x" }), { ok: false, error: "outside the sessions folder" });
+	assert.match(String((await hosted.ask("watch-report", { session: "/etc/passwd", child: "c1", activityFile: "/etc/hosts", text: "x" })).error), /watch-report is retired in pi-straw-boss 0\.83\.0/);
+	// boss_watch's routes (watchesops.ts): a session's list, and an add refused while tower runs are off (this world's config), whose identity sends the lines.
+	assert.deepEqual(await hosted.ask("watch-list", { session: "A" }), { ok: true, watches: [] });
+	assert.match(String((await hosted.ask("watch-add", { session: "A", workspace: "wA", key: "B" })).error), /tower runs are off/);
 	assert.equal((await hosted.ask("gui-stop")).ok, true);
 	assert.deepEqual(await hosted.ask("watch-read", { key: "nope" }), { ok: false, error: "unknown key nope" });
 	assert.equal(((await hosted.ask("watch-read", { key: "B", since: seen.since, deadline: Date.now() - 1 })) as Answer).state, "expired", "the stopped GUI's source still reads");

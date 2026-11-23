@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { World } from "./fakes.ts";
+import { World, towersOf } from "./fakes.ts";
 
 let world = new World();
 afterEach(async () => {
@@ -95,7 +95,7 @@ test("the first workspace that is not a sub workspace is not the head tower: the
 	const towerA = world.tower("tower-wA", "wA:t7", "wA:p7");
 	const towerB = world.tower("tower-wB", "wB:t7", "wB:p7");
 	await Promise.all([towerA.start(), towerB.start()]);
-	const status = JSON.parse((await towerB.tool("boss_status")).content.map((c) => (c as { text: string }).text).join(""));
+	const status = JSON.parse((await towersOf(towerB)).content.map((c) => (c as { text: string }).text).join(""));
 	assert.equal(status.head, null);
 	assert.deepEqual([status.towers[0].id, status.towers[0].head], ["tower-wA", undefined]);
 	assert.match((await towerB.run())["straw-boss"]!, /The head tower \(none yet\) is the boss's own/);
@@ -103,7 +103,7 @@ test("the first workspace that is not a sub workspace is not the head tower: the
 	world.herdr.workspaces.unshift({ workspace_id: "wH", label: "Head tower", tokens: { sb_head: "sb-head" } });
 	world.herdr.addTab("wH:t1", "crown", "wH:p1");
 	await world.agent({ id: "sb-head", name: "head tower", pane: "wH:p1" }).start();
-	const after = JSON.parse((await towerB.tool("boss_status")).content.map((c) => (c as { text: string }).text).join(""));
+	const after = JSON.parse((await towersOf(towerB)).content.map((c) => (c as { text: string }).text).join(""));
 	assert.equal(after.head.id, "sb-head");
 	assert.deepEqual(after.towers.map((t: { id: string }) => t.id), ["tower-wA"]);
 });

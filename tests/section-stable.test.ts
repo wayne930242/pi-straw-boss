@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { cpSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { type Agent, PROMPT_DIR, settle, World } from "./fakes.ts";
+import { type Agent, PROMPT_DIR, settle, World, towersOf } from "./fakes.ts";
 
 // A session's `straw-boss` system section holds nothing of another session: no name of a tower or a main, no state. Such a value rewrote the section whenever that session renamed, left, or came back, and a
 // rewritten section reads the whole context uncached (measured 2026-11-13 to 11-16: 27 strict cache misses, 4.1M tokens, on coordinator mains whose tower line flipped between the tower's name and "none yet").
@@ -228,7 +228,7 @@ test("a main's section is the same bytes with no tower, with its workspace's tow
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
 	await tower.start();
 	await nudge();
-	assert.equal(((await a.tool("boss_status")).details as { tower: { id: string } }).tower.id, "tower-wA", "the session knows the tower: boss_status names it");
+	assert.equal(((await towersOf(a)).details as { tower: { id: string } }).tower.id, "tower-wA", "the session knows the tower: boss_status names it");
 	const live = await section(a);
 	await tower.stop();
 	await nudge();
@@ -264,8 +264,8 @@ test("a member's section names neither its tab's main nor the tower: it is the s
 	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
 	await b.start();
 	const before = await section(b);
-	assert.match(before, /^Straw Boss: you are a member of tab work of workspace Alpha, and the tab has a main agent \(`boss_status` names it\)\./);
-	const status = (await b.tool("boss_status")).details as { tabs: { main: string }[] };
+	assert.match(before, /^Straw Boss: you are a member of tab work of workspace Alpha, and the tab has a main agent \(`board_read` section towers names it\)\./);
+	const status = (await towersOf(b)).details as { tabs: { main: string }[] };
 	assert.equal(status.tabs[0]!.main, "a", "the live name is boss_status's");
 	a.name = "ledger rounding"; // a `/name`: the session's name moves and its tab's label stays
 	await nudge();
@@ -304,7 +304,7 @@ test("a session keeps the same section across its own tab rename, graph changes,
 	const check = async (event: string) => { if (await section(a) !== first) changed.push(event); };
 	await a.tool("boss_rename", { name: "ledger rounding" });
 	await nudge();
-	const status = (await a.tool("boss_status")).details as { tabs: { label: string }[] };
+	const status = (await towersOf(a)).details as { tabs: { label: string }[] };
 	assert.equal(status.tabs[0]?.label, "ledger rounding", "boss_status still names the live tab");
 	await check("own rename");
 	await a.tool("boss_rename", { name: "work" });

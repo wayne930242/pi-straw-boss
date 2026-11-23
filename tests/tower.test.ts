@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, mock, test } from "node:test";
 import { TOWER_LABEL, towerModel } from "../src/herdr.ts";
-import { bare, settle, until, World } from "./fakes.ts";
+import { bare, settle, until, World, towersOf } from "./fakes.ts";
 
 let world = new World();
 afterEach(async () => {
@@ -211,7 +211,7 @@ test("the tower registers its tab channel as not owner-eligible, writes both tok
 	await tower.start();
 	assert.deepEqual(world.broker.registrations.map((r) => [r.id, r.namespace.split("/").slice(0, 2).join("/"), r.ownerEligible]), [["tower-wA", "straw-boss/tab", false], ["tower-wA", "straw-boss/control", false]], "its tab channel, and the control channel a main it opened answers on");
 	assert.deepEqual([tower.tokens, world.herdr.workspace("wA").tokens], [{ sb_role: "tower" }, { tower: "tower-wA" }]);
-	assert.deepEqual([...tower.tools.keys()].sort(), ["board_read", "boss_broadcast", "boss_close_main", "boss_open_main", "boss_revive_main", "boss_status", "call_tower", "tower_list", "tower_send"]); // no link_request: no Straw Link is set up here (docs/specs/2026-11-23-lite-main.md §4)
+	assert.deepEqual([...tower.tools.keys()].sort(), ["board_read", "boss_broadcast", "boss_close_main", "boss_open_main", "boss_revive_main", "call_tower", "tower_list", "tower_send"]); // no link_request: no Straw Link is set up here (docs/specs/2026-11-23-lite-main.md §4)
 	assert.deepEqual(tower.entries, [{ customType: "straw-boss", data: { tower: true, workspaceId: "wA" } }]);
 	assert.match((await tower.run())["straw-boss"]!, /^You are the tower of Herdr workspace Alpha;/);
 
@@ -267,19 +267,19 @@ test("session_shutdown stops the refresh timer and clears this session's tokens,
 	assert.deepEqual(world.herdr.calls, [], "no refresh after shutdown");
 });
 
-test("boss_status names the main agent of each tab and this workspace's tower; the head is null until the head tower exists, and no workspace tower is it", async () => {
+test("board_read's section towers (boss_status before 0.83.0) names the main agent of each tab and this workspace's tower; the head is null until the head tower exists, and no workspace tower is it", async () => {
 	const towerA = world.tower("tower-wA", "wA:t7", "wA:p7");
 	const towerB = world.tower("tower-wB", "wB:t7", "wB:p7");
 	await Promise.all([towerA.start(), towerB.start()]);
 	const a = await main("a", "wA:p1", "wA:t1");
 	const b = await main("b", "wA:p2", "wA:t1");
-	const status = (await a.tool("boss_status")).details as Record<string, any>;
+	const status = (await towersOf(a)).details as Record<string, any>;
 	assert.deepEqual(status.me, { id: "a", role: "main" });
 	assert.deepEqual(status.tabs, [{ id: "wA:t1", label: "work", main: "a", kind: "coordinator", sessions: 2 }]);
 	assert.equal(status.head, null);
 	assert.deepEqual([status.tower.id, status.tower.head, status.towers.map((t: any) => [t.id, t.head])], ["tower-wA", undefined, [["tower-wB", undefined]]]);
-	assert.equal(((await b.tool("boss_status")).details as any).me.role, "member");
-	const fromB = (await towerB.tool("boss_status")).details as Record<string, any>;
+	assert.equal(((await towersOf(b)).details as any).me.role, "member");
+	const fromB = (await towersOf(towerB)).details as Record<string, any>;
 	assert.deepEqual([fromB.me.role, fromB.tower.head, fromB.towers.map((t: any) => [t.id, t.head])], ["tower", undefined, [["tower-wA", undefined]]]);
 });
 

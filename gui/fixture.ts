@@ -42,7 +42,7 @@ const demo = (): Net => ({
 			{ id: "w2:t1", label: "checkout", units: [{ todo: { done: 3, total: 4, now: "Writing the checkout e2e test" }, duty: "integrator", ...unit("b1", "checkout-main", "main", "working", "thinking", [{ ...unit("b1/e2e", "e2e-runner", "subagent", "working", "thinking"), duty: "reviewer" }]) }, unit("b2", "checkout-member", "member", "working", "tool:read")] },
 		] },
 		{ id: "w3", label: "Orchard Data", mark: "idle", tower: { name: "tower · Orchard Data", mark: "done", key: "t3", control: true, subs: [] }, outposts: [], outside: [], tabs: [
-			{ id: "w3:t1", label: "etl", units: [{ ...unit("c1", "etl-main", "main", "idle", undefined, [{ ...unit("c1/watch", "queue-watch", "subagent", "idle"), duty: "watchdog" }]), duty: "coordinator" }] },
+			{ id: "w3:t1", label: "etl", units: [{ ...unit("c1", "etl-main", "main", "idle", undefined, [{ ...unit("c1/watch", "queue-scout", "subagent", "idle"), duty: "scout" }]), duty: "coordinator" }] },
 		] },
 		{ id: "w4", label: "Quarry Tools", mark: "idle", tower: null, outposts: [], outside: [], tabs: [{ id: "w4:t1", label: "quarry", units: [unit("d1", "quarry-scout", "member", "idle")] }] },
 	],

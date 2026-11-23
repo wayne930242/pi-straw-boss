@@ -120,7 +120,7 @@ async function holderPaths(): Promise<Path[]> {
 
 interface Path { name: string; out: () => Promise<string>; local?: () => Promise<string>; localRaw?: string[]; forbid?: (RegExp | string)[]; require?: string[] }
 
-/** Computer A, whose tower is in a remote turn from bob: board_read, tower_list and boss_status as the senders may read them; and the same tools in a local turn. */
+/** Computer A, whose tower is in a remote turn from bob: board_read (with its towers section, boss_status before 0.83.0) and tower_list as the senders may read them; and the same tools in a local turn. */
 async function remoteTurnPaths(): Promise<Path[]> {
 	const a = computer(root, relay, "a", { gateMs: 60 });
 	computers.push(a);
@@ -150,7 +150,7 @@ async function remoteTurnPaths(): Promise<Path[]> {
 			await a.tower.fire("agent_settled", { aborted: false });
 		}
 	};
-	return ["board_read", "tower_list", "boss_status"].map((name) => ({ name: `remote turn ${name}`, out: () => remote(name), local: call(name) }));
+	return ["board_read", "tower_list"].map((name) => ({ name: `remote turn ${name}`, out: () => remote(name), local: call(name) }));
 }
 
 const IN_PROJECT = ["InProjectTabZ", "InProjectSessionZ"];

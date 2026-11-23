@@ -69,7 +69,7 @@ export function ownerId(pid: number, subagentId?: string): string {
 	return `${head || "pi"}${tail}`;
 }
 
-/** One request to the live sb server of this account over its control socket; undefined when none runs, it is not trusted, or it does not answer within `timeoutMs` (a watchdog's hold takes longer, watchdog.ts). */
+/** One request to the live sb server of this account over its control socket; undefined when none runs, it is not trusted, or it does not answer within `timeoutMs`. */
 export async function callServer(env: NodeJS.ProcessEnv, request: Record<string, unknown>, timeoutMs = 5000): Promise<Reply | undefined> {
 	try {
 		const ctx = makeCtx({ env, slot: slotOf(stateDirOf(env), env), version: "0.0.0", cli: "cli.mjs", by: "process hygiene" });

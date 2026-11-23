@@ -7,32 +7,32 @@ import type { Link } from "./runtime.ts";
 // wait the other end must route (§2.1); `linkWait` answers a wait a teammate device has on this workspace (§2.4). The router in the sb server acts first, so a refusal sends nothing. Kept out of tools.ts, which carries a line budget.
 
 type Tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) => void;
-export const CALL_TOWER_DESCRIPTION = "Send a message to the tower of your workspace, or of another workspace by id or exact label. Opens the tower tab when none is running. why: milestone (something landed; reply false unless you need an answer), shared (a heads-up before you change something outside your tab, reply false: go ahead, the tower answers only on a clash), or blocked (you wait on someone outside your tab). Routine progress goes on your work board, not here. The message goes out under a header the code writes (your name, role, and workspace, the recipient, whether you expect a reply, and why). A tower replies through intercom unless you say reply is false.";
+export const CALL_TOWER_DESCRIPTION = "Send one message to your workspace's tower, or another by workspace, at three points only: why milestone (something landed; reply false unless needed), shared (a heads-up before you change something outside your tab; reply false; go ahead, the tower answers only on a clash), blocked (you wait on someone outside your tab, or on a decision your authorizations do not cover). Opens the tower when none runs; the code writes the header; it answers through intercom unless reply is false. Progress goes on your board, not here.";
 
 export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["callTower"], link: Pick<Link, "waitOp">): void {
 	// A main says why it calls (required); a tower's call is a blocked one, so it may leave it out and the header says unspecified.
-	const whyType = Type.Union([Type.Literal("milestone"), Type.Literal("shared"), Type.Literal("blocked")], { description: "Why you call: milestone, shared, or blocked. The tower reads it in the header." });
+	const whyType = Type.Union([Type.Literal("milestone"), Type.Literal("shared"), Type.Literal("blocked")], { description: "milestone, shared, or blocked." });
 	const whyField = towerCall ? Type.Optional(whyType) : whyType;
 	tool("call_tower", CALL_TOWER_DESCRIPTION,
 		Type.Object({
-			message: Type.String({ description: "What the tower needs to know or do, stated briefly with details by reference. A block the tower forwards or acts on (a car slip, a train: manifest) goes whole and verbatim. With linkWait done or declined: your answer to the teammate device, which leaves this computer as written." }),
+			message: Type.String({ description: "Briefly, details by reference. A block the tower forwards (a car slip, a train: manifest) goes whole and verbatim. With linkWait done or declined: your answer to the device, sent as written." }),
 			why: whyField,
-			workspace: Type.Optional(Type.String({ description: "Another workspace's id or exact label. Omit for your own." })),
-			reply: Type.Optional(Type.Boolean({ description: "Whether you wait for the tower's answer. Default true; false for a milestone or a notice." })),
+			workspace: Type.Optional(Type.String({ description: "Another workspace's id or exact label." })),
+			reply: Type.Optional(Type.Boolean({ description: "Default true." })),
 			waitsOn: Type.Optional(Type.Object({
-				device: Type.String({ description: "The teammate device that has to act: its label, short id, or id (tower_list shows them)." }),
-				owner: Type.Optional(Type.String({ description: "Who there owns the step, at most 40 characters: a main's name as that device's board or tab shows it, or a board entry id b:<16 hex>." })),
-				what: Type.Optional(Type.String({ description: "One line, at most 200 bytes: the step you wait on (a merge, a review, a credential, a login)." })),
-				cancel: Type.Optional(Type.Boolean({ description: "true (with why milestone): withdraw your open wait to that device; it is told." })),
-			}, { description: "With why blocked: your task ends at a step only another device can take. The tower forwards it as a wait that device must route to its owner or its boss. Not for a milestone report." })),
+				device: Type.String({ description: "Label, short id, or id." }),
+				owner: Type.Optional(Type.String({ description: "Who there owns the step: a main's name or board id b:<16 hex>; at most 40 characters." })),
+				what: Type.Optional(Type.String({ description: "The step you wait on, one line of at most 200 bytes." })),
+				cancel: Type.Optional(Type.Boolean({ description: "With why milestone: withdraw your open wait." })),
+			}, { description: "With why blocked: your task ends at a step only that teammate device can take; the tower forwards it as a wait." })),
 			linkWait: Type.Optional(Type.Object({
-				id: Type.String({ description: "The wait's id on this computer (L3), from board_read section waits." }),
-				state: Type.Union([Type.Literal("taken"), Type.Literal("done"), Type.Literal("declined"), Type.Literal("escalated")], { description: "taken: you own it now (no card goes to the boss); done or declined: message goes to the device and the wait closes. escalated (an approval, with why blocked): you leave that device's card to its boss, message is why." }),
-			}, { description: "Answer a teammate device's wait on this workspace (you were told with kind=link_wait); as the boss's delegate, an approval." })),
+				id: Type.String({ description: "L<n> from board_read, section waits." }),
+				state: Type.Union([Type.Literal("taken"), Type.Literal("done"), Type.Literal("declined"), Type.Literal("escalated")], { description: "taken: you own it; done/declined: message goes to the device and it closes; escalated (with why blocked): you leave it to the boss." }),
+			}, { description: "Answer a teammate device's wait on this workspace (kind=link_wait)." })),
 			standing: Type.Optional(Type.Object({
-				device: Type.String({ description: "The teammate device: its label, short id, or id (tower_list shows them)." }),
-				what: Type.Optional(Type.String({ description: "One line, at most 200 bytes: what you ask or tell. Left out, the message's first line." })),
-			}, { description: "Instead of your tower: message goes to that device's standing main, as a question with why blocked (its answer comes to you) or a notice with why milestone (nothing comes back). An ally run opened you: only that device." })),
+				device: Type.String({ description: "Label, short id, or id." }),
+				what: Type.Optional(Type.String({ description: "One line of at most 200 bytes; default the message's first line." })),
+			}, { description: "Instead of your tower: that device's standing main, a question (why blocked) or a notice (why milestone)." })),
 		}),
 		async ({ message, why, workspace, reply, waitsOn, linkWait, standing }) => {
 			if ([waitsOn, linkWait, standing].filter(Boolean).length > 1) throw new Error("waitsOn, linkWait, and standing do not go together");

@@ -82,10 +82,10 @@ test("the token draws the unit's kind icon", () => {
 test("the drawer's row draws the unit's kind icon", async () => {
 	const { mountDrawer } = await import("../gui/drawer.ts");
 	const drawer = mountDrawer();
-	drawer.net(netOf([u("m", "main", { duty: "integrator", subs: [u("s", "subagent", { duty: "watchdog" })] })]));
+	drawer.net(netOf([u("m", "main", { duty: "integrator", subs: [u("s", "subagent", { duty: "scout" })] })]));
 	for (const on of page.on["sb-drawer"] ?? []) on({ target: document });
 	const all = page.body.find((x) => x.tag === "use").map((x) => x.dataset.icon);
-	assert.ok(all.includes("integrator") && all.includes("watchdog"), String(all));
+	assert.ok(all.includes("integrator") && all.includes("scout"), String(all));
 });
 
 test("the dossier draws the unit's kind icon", async () => {

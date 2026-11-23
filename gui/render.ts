@@ -28,7 +28,7 @@ const ROLE: Record<string, NounKey> = { ally: "role_ally", run: "role_run", main
 const NOTE: Record<string, () => string> = { thinking: m.note_thinking, "watching a monitor": m.note_monitoring, idle: m.mark_idle, "waiting on a question": m.mark_waiting, finished: m.mark_done };
 /** A role as the page names it; one it does not know shows as it is. */
 export const roleName = (role: string) => (Object.hasOwn(ROLE, role) ? noun(ROLE[role]!) : role);
-const KIND: Record<string, () => string> = { coordinator: m.kind_coordinator, integrator: m.kind_integrator, standing: m.kind_standing, worker: m.kind_worker, scout: m.kind_scout, planner: m.kind_planner, reviewer: m.kind_reviewer, watchdog: m.kind_watchdog };
+const KIND: Record<string, () => string> = { coordinator: m.kind_coordinator, integrator: m.kind_integrator, standing: m.kind_standing, worker: m.kind_worker, scout: m.kind_scout, planner: m.kind_planner, reviewer: m.kind_reviewer };
 const GRAPH: Record<string, () => string> = { "single-loop": m.graph_single, "fan-out/fan-in": m.graph_fan, "orchestrator-worker": m.graph_orch };
 /** A unit's kind word, the same in every theme (docs/specs/2026-11-09-agent-kinds.md §11), or its role's name when it has no kind; a main's plan graph follows it (`協調者 · 分支匯流`). */
 export const roleWord = (role: string, duty?: string, graph?: string): string => {

@@ -130,7 +130,7 @@ export function matchBoss(line: string, direction: "on" | "off"): string | undef
 
 /** The time of day a state began, for the boss's eyes (`23:10`). */
 export const clock = (iso: string | undefined): string => { const d = iso ? new Date(iso) : undefined; return d && !Number.isNaN(d.getTime()) ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : "?"; };
-/** The summary of the last return list (`auto-report.json`, written by the server when auto mode ends): what a waking boss, or the head, reads in `boss_status`. */
+/** The summary of the last return list (`auto-report.json`, written by the server when auto mode ends): what a waking boss, or the head, reads in `board_read` (section towers). */
 export interface ReportSummary { since: string; until: string; off: string; parked: number; towers: number; cancels: number; decided: number; stillWaiting: number }
 export const REPORT_FILE = "auto-report.json";
 export function reportSummary(dir: string): ReportSummary | undefined {
@@ -142,7 +142,7 @@ export function reportSummary(dir: string): ReportSummary | undefined {
 		return undefined;
 	}
 }
-/** `boss_status` and `/boss auto` read it from the files: the state, and a staged request that is still alive. */
+/** `board_read` (section towers), `/boss status` and `/boss auto` read it from the files: the state, and a staged request that is still alive. */
 export function autoSummary(dir: string, now = Date.now()): { on: boolean; since?: string; by?: string; pending?: { said: string; expiresInS: number }; report?: ReportSummary } {
 	const seen = readAuto(dir), own = readOwn(dir);
 	const state = seen.kind === "ok" && isOwn(seen.state, own) ? seen.state : undefined, pending = own?.pending && own.pending.expires > now ? own.pending : undefined;

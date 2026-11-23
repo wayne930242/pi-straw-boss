@@ -23,8 +23,8 @@ import { sendStanding } from "./standingsend.ts";
 
 // The tower tools a run calls (docs/specs/2026-10-26-sb-backend.md, Tower tools in a run). In a run each tool is a thin client of the server: the run's extension sends `run-tool { token, tool, args }`,
 // and the server does the work as the workspace's tower identity (its reach, its opener, its control channel, the link holder), so the header of everything a run sends names the identity and replies
-// come back to the server, not to a pi that has exited. The server also enforces the run's kind here, in addition to the hooks in the run: an ally run gets `boss_status` and nothing else.
-// An ally run (B6) is a peer's message at a trust level: it gets `boss_status`, `tower_list` and `board_read` scoped to its sender's team, `tower_send` to its sender, and, past the gate, `tower_reply`, `boss_open_main`
+// come back to the server, not to a pi that has exited. The server also enforces the run's kind here, in addition to the hooks in the run: an ally run gets the free reads and nothing else.
+// An ally run (B6) is a peer's message at a trust level: it gets `tower_list` and `board_read` (with its towers section; `boss_status` is answered one release for an older build) scoped to its sender's team, `tower_send` to its sender, and, past the gate, `tower_reply`, `boss_open_main`
 // and `boss_close_main`. At `reply` and `forward` the server takes a gated call only against the Allow the dialog hub saw the gate close with (allows.ts), tied to the run's pane, the call id, and the
 // arguments' digest, and only once; at `dispatch` the gate is off, as in a remote turn. `boss_server`, `call_tower`, and `link_request` are refused by the run's kind at every level.
 // A project's integrator has one door, for either kind of run (`openIntegrator` below): a car slip the run took as a `call_tower` (why=shared), which the server finds itself and forwards as it came.
@@ -254,7 +254,7 @@ async function allyTool(host: ToolHost, name: string, args: Record<string, unkno
 		if (!taken.ok) throw new Error(`${name} was not allowed: ${taken.reason}`);
 	}
 	switch (name) {
-		case "boss_status": return json(await host.reach.status({ project: host.project }));
+		case "boss_status": return json(await host.reach.status({ project: host.project })); // folded into board_read in 0.83.0; answered one release for a run of an older build
 		case "tower_list": return scopedList(host);
 		case "board_read": return scopedBoards(host, args);
 		case "tower_send": return towerSendDevice(host, args, who.device!, true);
@@ -284,7 +284,7 @@ async function scopedBoards(host: ToolHost, args: Record<string, unknown>): Prom
 			return answer.boards as AllyBoard[];
 		},
 	};
-	return json(await readBoard({ dir: host.boardDir, now: host.now(), net: await host.reach.read(), link, scope, ...(device !== undefined ? { device } : {}), waits: waitsOf(host, [team]) }));
+	return json({ ...(await readBoard({ dir: host.boardDir, now: host.now(), net: await host.reach.read(), link, scope, ...(device !== undefined ? { device } : {}), waits: waitsOf(host, [team]) })), towers: await host.reach.status({ project: host.project }) });
 }
 /** The `waits` section of a run's `board_read`: its workspace's link waits, or for an ally run its sender's team's. */
 const waitsOf = (host: ToolHost, teams?: string[]) => () => host.link({ op: "waits-read", ...(teams ? { teams } : {}) }).then((a) => (a.ok ? (a.waits as unknown[]) : undefined), () => undefined);
@@ -457,7 +457,7 @@ async function standingSend(host: ToolHost, args: Record<string, unknown>, force
 async function localTool(host: ToolHost, name: string, args: Record<string, unknown>, extra: CallExtra, ally = false): Promise<ToolResult> {
 	const { reach } = host;
 	switch (name) {
-		case "boss_status":
+		case "boss_status": // folded into board_read in 0.83.0; answered one release for a run of an older build
 			return json(await reach.status());
 		case "tower_list": {
 			const local = await reach.towerList();
@@ -479,7 +479,7 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 					return answer.boards as AllyBoard[];
 				},
 			};
-			return json(await readBoard({ dir: host.boardDir, now: host.now(), net: await reach.read(), link, scope, ...(device !== undefined ? { device } : {}), waits: waitsOf(host) }));
+			return json({ ...(await readBoard({ dir: host.boardDir, now: host.now(), net: await reach.read(), link, scope, ...(device !== undefined ? { device } : {}), waits: waitsOf(host) })), towers: await reach.status() });
 		}
 		case "call_tower": {
 			const done = await reach.callTower(str(args, "message"), opt(args, "workspace"), args.reply !== false, opt(args, "why"));

@@ -31,7 +31,7 @@ import { operateWire, type OperateWire } from "./operatewire.ts";
 import { createLog, tailLog } from "./log.ts";
 import { type Cars, carsReply, startCars } from "./carops.ts";
 import { procsReply, startProcs, type StartProcs } from "./procsops.ts";
-import { type StartWatchdog, startWatchdog, type Watchdog, watchdogReply } from "./watchdogops.ts";
+import { type StartWatches, startWatches, type WatchRoutes, watchReply } from "./watchesops.ts";
 import { startStall, type StartStall } from "./stallops.ts";
 import { reportWatch, startAutoWatch, type StartWatch } from "./watchops.ts";
 import { gateRun, type RunInfo } from "./rungate.ts";
@@ -122,7 +122,7 @@ export interface ServerOptions {
 	stall?: StartStall["over"];
 	/** The auto watch's seams (watchops.ts), for tests: without them a test run has no watch. */
 	autoWatch?: StartWatch["over"];
-	/** The watchdog routes' seams (watchdogops.ts), for tests: the hold's length, the read interval, the timer. */ watchdog?: StartWatchdog["over"]; /** The wait router's sweep (linkwaitsops.ts), for tests: its interval, or false for none. */ waits?: number | false;
+	/** The watch routes' seams (watchesops.ts), for tests: the hold's length, the read interval, the timer. */ watches?: StartWatches["over"]; /** The wait router's sweep (linkwaitsops.ts), for tests: its interval, or false for none. */ waits?: number | false;
 	touchMs?: number;
 	brokerMs?: number;
 	herdrGoneMs?: number;
@@ -191,7 +191,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	const follower = slot.primary ? undefined : createAutoFollower({ dir: slot.stateDir, primary: { ...slot, primary: true, dir: slot.stateDir }, log: (event, facts) => log.line(event, facts), returnParked: () => towers?.returnParked(), tellHead: (text) => { const workspace = towers?.head.status()?.workspace; if (workspace) towers!.runs.notice(workspace, text, `auto:${now()}`); } });
 	// An unattended device has no boss at it (autoops.ts): the link holder says which this computer is.
 	const unattended = () => Boolean(link?.holder) && !link!.attended();
-	let dog: Watchdog | undefined, cars: Cars | undefined, waitsHub: WaitsHub | undefined; // the watchdog routes (watchdogops.ts), assigned with the GUI host; the book of cars and the notice sender (carops.ts), and the wait router (linkwaitsops.ts), assigned before the first request is taken
+	let dog: WatchRoutes | undefined, cars: Cars | undefined, waitsHub: WaitsHub | undefined; // the watch routes (watchesops.ts), assigned with the GUI host; the book of cars and the notice sender (carops.ts), and the wait router (linkwaitsops.ts), assigned before the first request is taken
 	// The Allows the dialog hub gave (a gate or an approval closed with a yes) and the asks the towers made for their mains: both are held for the tower service (B6).
 	const allows = createAllows({ now }), asks = createAsks(slot, now);
 
@@ -439,7 +439,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		}
 		const followed = follower?.reply(request); if (followed) return followed;
 		const autoAnswer = autoReply(auto, request, unattended); if (autoAnswer) return autoAnswer;
-		const owners = procsReply(procs, request) ?? watchdogReply(dog, request); if (owners) return owners;
+		const owners = procsReply(procs, request) ?? watchReply(dog, request, () => towerRuns().enabled); if (owners) return owners;
 		const carsAnswer = carsReply(cars, request); if (carsAnswer) return carsAnswer;
 		const tower = towerCommand(request);
 		if (tower) return tower;
@@ -632,7 +632,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		if (read.problem !== toldConfig) (toldConfig = read.problem ?? "", read.problem && recordError("config", read.problem));
 		return read;
 	};
-	dog = startWatchdog({ net: guiHost.watchNet(), env, now, slot, holder: () => link?.holder, client: () => (client?.isConnected() ? client : undefined), log: (event, facts) => log.line(event, facts), stops, ...(o.watchdog ? { over: o.watchdog } : {}) });
+	dog = startWatches({ net: guiHost.watchNet(), now, slot, holder: () => link?.holder, send: async (to, text, facts) => Boolean(await towers?.watchSend(to.workspace, to.session, text, facts).catch(() => false)), log: (event, facts) => log.line(event, facts), stops, ...(o.watches ? { over: o.watches } : {}) });
 	cars = startCars({ slot, run: cfg.run, now, startedAt, client: () => (client?.isConnected() ? client : undefined), startOf, log: (event, facts) => log.line(event, facts), stops });
 	waitsHub = startLinkWaits({ slot, env, now, log: (event, facts) => log.line(event, facts), run: cfg.run, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, link: () => link, stops, asks, autoOn: () => auto?.view().on === true, ...(o.waits !== undefined ? { tickMs: o.waits } : {}) });
 	towers = createTowers({

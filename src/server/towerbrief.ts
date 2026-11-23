@@ -7,6 +7,7 @@ import type { HerdrRun } from "../herdr.ts";
 import type { LedgerRow } from "../opener.ts";
 import { inside } from "../link/routing.ts";
 import type { Locale } from "../towerprompt/messages.ts";
+import { toolWord } from "./toolwords.ts";
 
 // The brief of a local run (docs/specs/2026-10-26-sb-backend.md, The brief): short plain text in the run's role section, built by the server and never by a model, with a hard cap of 8,000
 // characters. Each section has its own cap, and a section that was cut says how much it left out. The events are not part of it: they arrive as messages.
@@ -170,8 +171,8 @@ export const waitLanguage = (locale: Locale): string => `Write a wait for the bo
 export const withWaitLanguage = (lines: readonly string[], locale: Locale): string[] => lines.map((l) => (l.startsWith("- tower_memory") ? `${l} ${waitLanguage(locale)}` : l));
 /** The tools of a local run, one line each (the fixed text of the brief's section 6). */
 export const LOCAL_TOOLS = [
-	"- tower_list: every workspace's tower and what it works on; board_read: what each main works on now.",
-	"- boss_status and call_tower route inside your workspace; tower_send writes to another tower or, with device, a teammate's tower; tower_reply answers one local session by id or name.",
+	`- tower_list: every workspace's tower and what it works on; ${toolWord("board_read")}: what each main works on now.`,
+	"- call_tower routes inside your workspace; tower_send writes to another tower or, with device, a teammate's tower; tower_reply answers one local session by id or name.",
 	"- boss_open_main opens a main for a request no session owns; boss_close_main closes one you opened, after its done report.",
 	"- boss_server: the sb server's status, its log, and its restart.",
 	"- tower_memory keeps what outlives runs: you propose the boss's standing instructions and decisions (the boss confirms them) and keep your waits (add, resolve, drop); read lists it all.",
@@ -219,7 +220,7 @@ export function buildAllyBrief(i: AllyBriefInput): string {
 /** The tools of an ally run at a level, one line each (the fixed text of its brief). */
 export function allyTools(level: string): string[] {
 	const base = [
-		"- boss_status; tower_list and board_read, which show only your sender's team; read, grep, find, and ls inside the project's tracked files.",
+		`- tower_list and ${toolWord("board_read")}, which show only your sender's team; read, grep, find, and ls inside the project's tracked files.`,
 		"- tower_send {device, message, inReplyTo?} writes to your sender only; answer an ask by its id with inReplyTo.",
 		"- ally_escalate {what, owner?, kind?}: an item that waits on someone here, names a main here, says no main here owns it, or reports an incident here goes to that main, else the standing main here, else the boss's list (a message that expects no answer is a notice, with no card); free, once per item.",
 	];

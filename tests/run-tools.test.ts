@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { withoutOldWords } from "../src/server/toolwords.ts";
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -74,7 +75,7 @@ test("a run's pi is given the tower tools and read-only files and nothing else: 
 	const r = await rig(srv, { tools: LOCAL_RUN_TOOLS });
 	await until(() => srv.requests.some((q) => q.cmd === "run-file"), "the run to be set up");
 	const active = r.session.getActiveToolNames().sort();
-	const registered = ["boss_status", "call_tower", "boss_server", "tower_list", "board_read", "tower_send", "boss_open_main", "boss_close_main", "boss_revive_main", "tower_memory", "tower_reply", "tower_done", "link_request", "boss_wait_ask"];
+	const registered = ["call_tower", "boss_server", "tower_list", "board_read", "tower_send", "boss_open_main", "boss_close_main", "boss_revive_main", "tower_memory", "tower_reply", "tower_done", "link_request", "boss_wait_ask"];
 	for (const n of [...registered, ...RUN_FILE_TOOLS]) assert.ok(active.includes(n), `${n} is active`);
 	assert.deepEqual(active, [...registered, ...RUN_FILE_TOOLS].sort(), "and nothing else is");
 	const all = r.session.getAllTools().map((t) => t.name);
@@ -82,12 +83,13 @@ test("a run's pi is given the tower tools and read-only files and nothing else: 
 });
 
 test("the allowlist names exactly the tools the run registers, and every tool the tower prompt and the brief name", () => {
-	assert.deepEqual([...RUN_TOWER_TOOLS].sort(), ["board_read", "boss_close_main", "boss_open_main", "boss_revive_main", "boss_server", "boss_status", "boss_wait_ask", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send"]);
+	assert.deepEqual([...RUN_TOWER_TOOLS].sort(), ["board_read", "boss_close_main", "boss_open_main", "boss_revive_main", "boss_server", "boss_wait_ask", "call_tower", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send"]);
 	assert.deepEqual([...RUN_FILE_TOOLS], ["read", "grep", "find", "ls"]);
 	const named = (text: string) => [...new Set(text.match(/\b(?:tower_[a-z]+|boss_[a-z_]+|board_read|call_tower|link_request)\b/g) ?? [])];
 	// A quoted request the run passes to a main it opens ("... call `boss_duty` ...") names that main's tool, not the run's.
 	const prompt = readFileSync(new URL("../prompts/tower-run.md", import.meta.url), "utf8").replace(/\("[^"]*"\)/g, "");
-	const mentioned = [...named(prompt), ...named(LOCAL_TOOLS.join("\n"))];
+	// toolWord's "(was boss_status)" (0.83.0, one release) names the folded tool as history, not as one to call.
+	const mentioned = [...named(prompt), ...named(withoutOldWords(LOCAL_TOOLS.join("\n")))];
 	assert.ok(mentioned.length >= 10, "the prompt and the brief name the tower tools");
 	for (const n of mentioned) assert.ok(toolAllowed(n), `${n} (named by the tower run prompt or its brief) is on the allowlist`);
 	for (const n of ["bash", "write", "edit", "subagent", "intercom", "powershell", "codemode", "tool_search", "ask_user", "robot_hand"]) assert.ok(!toolAllowed(n), `${n} is not`);
@@ -175,12 +177,12 @@ test("a run still has every tower tool, with the allowlist given to pi and witho
 	for (const tools of [LOCAL_RUN_TOOLS, undefined]) {
 		const srv = server();
 		const { out } = await run([
-			["boss_status", {}], ["tower_list", {}], ["board_read", {}], ["tower_send", { message: "hello", workspace: "Beta" }], ["tower_reply", { to: "main-1", message: "ok" }],
+			["tower_list", {}], ["board_read", {}], ["tower_send", { message: "hello", workspace: "Beta" }], ["tower_reply", { to: "main-1", message: "ok" }],
 			["boss_open_main", { request: "do it", sender: "main-1" }], ["boss_close_main", { main: "main-1" }], ["tower_memory", { op: "read" }], ["boss_server", { action: "status" }], ["call_tower", { message: "hi" }],
 		], tools ? { tools } : {}, srv);
-		assert.equal(out.length, 10);
+		assert.equal(out.length, 9);
 		for (const o of out) assert.doesNotMatch(o, NOT_IN_RUN, `${tools ? "with" : "without"} the allowlist: ${o}`);
-		assert.deepEqual(srv.requests.filter((q) => q.cmd === "run-tool").map((q) => q.tool), ["boss_status", "tower_list", "board_read", "tower_send", "tower_reply", "boss_open_main", "boss_close_main", "tower_memory", "boss_server", "call_tower"]);
+		assert.deepEqual(srv.requests.filter((q) => q.cmd === "run-tool").map((q) => q.tool), ["tower_list", "board_read", "tower_send", "tower_reply", "boss_open_main", "boss_close_main", "tower_memory", "boss_server", "call_tower"]);
 		sessions.splice(0).forEach((s) => s.dispose());
 	}
 });

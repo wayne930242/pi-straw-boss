@@ -71,7 +71,7 @@ test("an ally run registers the ally tools only, reads its events as the server 
 	r.faux.setResponses([((context: { messages: unknown[]; systemPrompt?: string }) => (seen.push(JSON.stringify(context.messages) + (context.systemPrompt ?? "")), fauxAssistantMessage("ok"))) as never]);
 	await until(() => seen.length === 1, "the turn");
 	const names = r.session.getAllTools().map((t) => t.name);
-	for (const n of ["boss_status", "tower_list", "board_read", "tower_send", "tower_reply", "tower_done", "boss_open_main", "boss_close_main"]) assert.ok(names.includes(n), `${n} is registered`);
+	for (const n of ["tower_list", "board_read", "tower_send", "tower_reply", "tower_done", "boss_open_main", "boss_close_main"]) assert.ok(names.includes(n), `${n} is registered`);
 	for (const n of ["call_tower", "boss_server", "link_request", "boss_broadcast", "board_set", "boss_rename", "boss_promote"]) assert.ok(!names.includes(n), `${n} is not`);
 	assert.match(seen[0]!, /You are an ally run: a pi session the sb server started/, "the ally role prompt");
 	assert.match(seen[0]!, /BRIEF-MARK/);

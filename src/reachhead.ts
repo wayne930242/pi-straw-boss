@@ -14,7 +14,7 @@ interface Seams {
 
 /** The head tower's identity: the value of its workspace's `sb_head` token. A workspace or pane that merely says `head` makes no session the head. */
 export const headIdOf = (all: Workspace[]) => headTowerOf(all)?.tokens?.sb_head;
-/** The head tower as `tower_list` and `boss_status` show it: its identity and what it is doing; null until its workspace exists. */
+/** The head tower as `tower_list` and `board_read` (section towers) show it: its identity and what it is doing; null until its workspace exists. */
 export const headInfo = (sessions: Session[], ps: Pane[], all: Workspace[]) => {
 	const id = headIdOf(all), x = sessions.find((y) => y.id === id);
 	return id ? { id, state: x ? sessionMark(x, ps.find((p) => p.pane_id === x.herdrLocation?.paneId)) : "unknown" } : null;

@@ -1370,7 +1370,6 @@
 	"kind_scout": "scout",
 	"kind_planner": "planner",
 	"kind_reviewer": "reviewer",
-	"kind_watchdog": "watchdog",
 	"graph_single": "single loop",
 	"graph_fan": "fan-out",
 	"graph_orch": "orchestrated",

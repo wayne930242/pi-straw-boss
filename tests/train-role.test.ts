@@ -14,7 +14,7 @@ import { MARK } from "../src/herdr.ts";
 import { gatherMains, buildBrief } from "../src/server/towerbrief.ts";
 import { survey } from "../src/stash.ts";
 import { isSessionRole, ownsBoard, TRAIN_EVENT } from "../src/trainrole.ts";
-import { until, World } from "./fakes.ts";
+import { until, World, towersOf } from "./fakes.ts";
 import { trainBase } from "./train-base-fixture.ts";
 
 // The readers of `sb_role` and what each does with the value `train` (docs/specs/2026-11-07-train-workers.md §3.3, table; task 3). One test per row, from one table: a row that is not taught fails
@@ -188,7 +188,7 @@ const READERS: Record<string, () => Promise<void>> = {
 		assert.ok(row, JSON.stringify(board));
 		assert.equal(row!.role, "train");
 		assert.equal(row!.now, "assembling 1106m");
-		const status = json(await tower.tool("boss_status"));
+		const status = json(await towersOf(tower));
 		const tab = (status.tabs as Record<string, any>[]).find((t) => t.id === pane.tab_id)!;
 		assert.equal(tab.main, null, "a train is not the tab's main");
 		assert.equal(tab.train, train.id);

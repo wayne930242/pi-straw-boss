@@ -78,31 +78,27 @@ The roles come from pi-herdr-agents and its role packs; what a role does is in i
 | `scout` | `scout` | Investigates and reports | Binoculars |
 | `planner` | `planner` | Plans and designs | Pencil and ruler |
 | `reviewer` | `reviewer`, `visual-tester`, `adversarial-reviewer` | Reviews a change or checks a screen | Magnifier |
-| `watchdog` | `watchdog` | Watches something over time and reports | Hound |
 
 Any other role name stays a plain subagent.
 
 A main dispatches any of them without a plan; its prompt asks for a todo before each worker.
-At most 4 workers of one main run at once: a fifth is refused with `sb: 4 workers run for this main already` until a result comes back. Scouts, planners, reviewers, and watchdogs are not counted.
+At most 4 workers of one main run at once: a fifth is refused with `sb: 4 workers run for this main already` until a result comes back. Scouts, planners, and reviewers are not counted.
 
-### Watching with a watchdog
+### Watching with boss_watch
 
-A `watchdog` watches one unit of the net for the session that dispatched it: a main with its monitors and todos, a train, or another subagent.
-It can only read and report, and its report reaches its dispatcher and nobody else, as a message marked `kind=watch_report`.
+A main or a train asks the sb server to watch one unit of the net with `boss_watch`: a main with its monitors and todos, a train, another subagent, or a teammate device's `link:` key.
+The server wakes the main with one line when the unit changes state, stalls, idles, or ends; no subagent watches, and the main checks nothing in its own turns.
 
-Dispatch it like any subagent, and say in the task:
+- `key`: the unit's session id or its key in the net;
+- `quiet` and `idle` (`30m`, `2h`; at least `1m`): when a stall or an idle spell matters;
+- `until`: how long the watch lasts (default `6h`, at most `48h`); `stop: true` ends it, and no key lists your watches.
 
-- which unit to watch, by its session id or its key in the net;
-- how long without activity counts as stalled (`quietMs`, at least one minute), when a stall matters;
-- the time limit as an absolute time (`deadline`), and for a train's gates the load limit (`loadMax`).
+Each watch sends at most one message a minute, the newest state only, and a session gets at most 12 an hour; while the main works, the message waits for the end of its turn.
+The watches live in the sb server, so they survive a `/reload` and a server restart.
+`boss_watch` needs tower runs on (`towerRuns.enabled`), because the workspace's tower identity sends the lines.
 
-It reports a stall, a load over the limit, and a unit or a monitor that turns to waiting, error, or stale.
-It ends when the unit's work ends, when the time limit passes, or when its dispatcher is gone.
-A standing main dispatches one in place of checking in its own turns.
-
-A watchdog needs an sb server of 0.80.0 or newer; a main's `/reload` upgrades an older one.
-Which model it runs on is set per machine, in pi-herdr-agents' configuration (`models.agents.watchdog`). A small model fits, because the server computes the verdicts.
-The rules are in [The watchdog](/pi-straw-boss/docs/reference/how-it-works/the-role-pack/#the-watchdog).
+0.83.0 retired the `watchdog` subagent and `cli.mjs watch`.
+The rules are in [Watches](/pi-straw-boss/docs/reference/how-it-works/the-role-pack/#watches).
 
 ## How a tower runs
 

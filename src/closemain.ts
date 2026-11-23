@@ -13,6 +13,8 @@ import { TRAIN } from "./trainrole.ts";
 // (bridge.ts) answers only that server.
 //   {type: "close-main", to: <main session id>, reqId, interrupt?: true}       tower → main
 //   {type: "close-main-result", to: <tower session id>, reqId, accepted, reason?}   main → tower
+//   {type: "watch", to: <main session id>, reqId, key, state, text}   tower identity → main: a `boss_watch` line of the sb server (bosswatch.ts judges the sender)
+//   {type: "watch-result", to: <tower session id>, reqId, accepted}   main → tower
 
 export const CONTROL = "straw-boss/control";
 const ASK_MS = 10_000, RETRY_MS = 15_000, RETRY_STEP_MS = 3000, QUIT_MS = 30_000;
@@ -71,6 +73,7 @@ export function createCloseMain({ pi, cfg, s, me, guiDir }: Kit, { closeSelf, ch
 	const { run, sleep } = cfg;
 	let channel: { publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void } | undefined;
 	const answers = new Map<string, Answer>();
+	let onWatch: ((from: string, payload: Record<string, unknown>) => Promise<boolean>) | undefined;
 	const send = (payload: Record<string, unknown>) => channel?.publish({ version: 1, ...payload }, { audience: "capable" });
 
 	/** Why this main will not close for `from`; none when it will. `busy`: something running would be lost, which may pass; the rest is a no. */
@@ -105,7 +108,8 @@ export function createCloseMain({ pi, cfg, s, me, guiDir }: Kit, { closeSelf, ch
 		const p = event.payload, from = event.fromSessionId;
 		if (event.type !== "message" || p?.version !== 1 || !from || typeof p.reqId !== "string" || p.reqId.length > 64) return;
 		if (p.type === "close-main" && p.to === me()) void answer(from, p.reqId, p.interrupt === true);
-		if (p.type === "close-main-result" && p.to === me() && typeof p.accepted === "boolean") answers.set(p.reqId, { from, accepted: p.accepted, ...(typeof p.reason === "string" ? { reason: p.reason.slice(0, 300) } : {}), ...(p.busy === true ? { busy: true } : {}) });
+		if (p.type === "watch" && p.to === me()) void (onWatch?.(from, p) ?? Promise.resolve(false)).catch(() => false).then((accepted) => send({ type: "watch-result", to: from, reqId: p.reqId, accepted }));
+		if ((p.type === "close-main-result" || p.type === "watch-result") && p.to === me() && typeof p.accepted === "boolean") answers.set(p.reqId, { from, accepted: p.accepted, ...(typeof p.reason === "string" ? { reason: p.reason.slice(0, 300) } : {}), ...(p.busy === true ? { busy: true } : {}) });
 	};
 
 	/** The ask: the answer of the session asked, or none within ASK_MS (an older pi-straw-boss never registered the channel). */
@@ -148,6 +152,17 @@ export function createCloseMain({ pi, cfg, s, me, guiDir }: Kit, { closeSelf, ch
 			const gone = await waitFor(sleep, async () => !(await s.c.listSessions().catch(() => [main])).some((x) => x.id === main.id), QUIT_MS, 500);
 			return { text: gone ? `${name} quit and its pane closed.` : `${name} accepted and is shutting down; its pane closes once pi has exited.`, main: main.id, name, closed: Boolean(gone) };
 		}) as CloseMain,
+		/** The main's side of a watch line (bosswatch.ts): the handler that judges the sender and hands the line to pi. */
+		onWatch: (handler: NonNullable<typeof onWatch>) => void (onWatch = handler),
+		/** The tower identity's side: a watch line to a main, and whether it took it within ASK_MS. */
+		async notify(to: string, payload: { text: string; key: string; state: string }): Promise<boolean> {
+			if (!channel) return false;
+			const reqId = randomUUID().slice(0, 12);
+			send({ type: "watch", to, reqId, ...payload });
+			const got = await waitFor(sleep, () => (answers.get(reqId)?.from === to ? answers.get(reqId) : undefined), ASK_MS, 100);
+			answers.delete(reqId);
+			return got?.accepted === true;
+		},
 		/** The tower's side: the dead agent panes of this workspace (deadpane.ts), and the close of one. */
 		deadPanes: () => dead.list(),
 		closePane: (pane: string) => dead.close(pane),

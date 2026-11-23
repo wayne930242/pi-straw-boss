@@ -69,6 +69,12 @@ function hiwPlan(enText, text) {
 		}
 	});
 	pages.forEach((p, n) => (p.end = n + 1 < pages.length ? pages[n + 1].start : lines.length));
+	// A heading renamed keeps its old slug as a line `<a id="old"></a>` under it (0.83.0: `the-watchdog` under Watches); the line is copied into the page, so the old slug lands there.
+	for (const p of pages)
+		for (let i = p.start; i < p.end; i++) {
+			const m = /^<a id="([a-z0-9-]+)"><\/a>$/.exec(lines[i].trim());
+			if (m && !anchors.has(m[1])) anchors.set(m[1], { page: p.slug, hash: m[1] });
+		}
 	const intro = { start: own[0]?.level === 1 ? own[0].i + 1 : 0, end: pages[0]?.start ?? lines.length, title: plain(own[0]?.text ?? "How it works") };
 	return { lines, pages, anchors, intro };
 }

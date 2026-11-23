@@ -36,6 +36,11 @@ export const PROMPT_DIR = fileURLToPath(new URL("../prompts", import.meta.url));
 const NAMESPACE = /^[a-z0-9][a-z0-9._/-]{0,63}$/;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** What `boss_status` answered before 0.83.0: `board_read`'s section towers (docs/specs/2026-11-23-lite-b2-d-e-f.md §1.5), in the shape of a tool result. */
+export async function towersOf(agent: { tool(name: string, params?: Record<string, unknown>): Promise<{ details?: unknown }> }): Promise<{ details: unknown; content: { type: "text"; text: string }[] }> {
+	const towers = ((await agent.tool("board_read")).details as { towers: unknown }).towers;
+	return { details: towers, content: [{ type: "text", text: JSON.stringify(towers, null, 2) }] };
+}
 export async function until(check: () => unknown, what: string, ms = 3000): Promise<void> {
 	for (const end = Date.now() + ms; Date.now() < end; await sleep(2)) if (await check()) return;
 	throw new Error(`Timed out waiting for ${what}`);

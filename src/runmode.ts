@@ -75,11 +75,11 @@ type Command = { type: "steer"; text: string } | { type: "quit" } | { type: "con
 const NO_SUBAGENTS = "A tower run dispatches no subagents: one would outlive the run. Open a main for the work with boss_open_main, or route it to the main that owns it.";
 const BLOCKED = "In a tower run, answer a local session with tower_reply (or tower_send to a tower): intercom would carry this run's own short-lived id, and the answer would reach a pi that has already exited.";
 /** The tower tools a local run registers (the same descriptions and schemas as a resident tower's, tools.ts), each now a client of the server. */
-const REGISTERED = new Set(["boss_status", "call_tower", "boss_server", "tower_list", "board_read", "tower_send", "boss_open_main", "boss_close_main", "boss_revive_main"]);
+const REGISTERED = new Set(["call_tower", "boss_server", "tower_list", "board_read", "tower_send", "boss_open_main", "boss_close_main", "boss_revive_main"]);
 /** What the head tower's run registers through the tower tools' own definitions (docs/specs/2026-11-04-head-tower.md, Tools and limits); its `tower_send` and `tower_memory` are its own below. */
 const HEAD_REGISTERED = new Set(["tower_list", "board_read", "boss_server"]);
 /** What an ally run registers: no `call_tower`, `boss_server`, or `link_request`; the server refuses them by the run's kind as well. */
-const ALLY_REGISTERED = new Set(["boss_status", "tower_list", "board_read", "tower_send", "boss_open_main", "boss_close_main"]);
+const ALLY_REGISTERED = new Set(["tower_list", "board_read", "tower_send", "boss_open_main", "boss_close_main"]);
 /** pi-intercom's custom message: an ally run's context drops it, as a backstop to the blocked tool. */
 const INTERCOM_MESSAGE = "intercom_message";
 const text = (v: unknown) => (typeof v === "string" ? v : "");

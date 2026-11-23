@@ -1188,7 +1188,6 @@
 	"kind_scout": "偵察",
 	"kind_planner": "規劃",
 	"kind_reviewer": "審查",
-	"kind_watchdog": "監控者",
 	"graph_single": "單一迴圈",
 	"graph_fan": "分支匯流",
 	"graph_orch": "多工編排",

@@ -41,7 +41,7 @@ export async function readBoard(o: BoardReadInput): Promise<Record<string, unkno
 		// In a remote turn: only entries of mains inside the project the senders' teams bind. An ended entry has no directory to prove it, so it stays out.
 		// And as the allies get them: an auto-filled entry as the main's name and done count only.
 		if (scope) rows = rows.filter((r) => scope.project !== undefined && r.cwd !== undefined && inside(r.cwd, scope.project)).map((r) => (r.now === undefined ? r : { ...r, ...forAllies({ now: r.now, items: r.items, src: r.src ?? "set", count: r.count, who: r.who }) }));
-		// The kind is the one boss_status and tower_list show: the main's `sb_duty` (`netMembers`), null for a train, an ended entry, and a main that publishes none.
+		// The kind is the one board_read's section towers and tower_list show: the main's `sb_duty` (`netMembers`), null for a train, an ended entry, and a main that publishes none.
 		const kinds = new Map(mains.map((m) => [m.session, m.duty]));
 		out.local = rows.map((r) => ({ ...(r.role ? { role: r.role } : {}), workspace: r.workspace, tab: r.tab, main: r.main, kind: kinds.get(r.session) ?? null, state: r.state, ...(r.now ? { now: r.now } : {}), items: r.items, ...(r.updatedSecondsAgo !== undefined ? { updatedSecondsAgo: r.updatedSecondsAgo } : {}), ...(r.stale ? { stale: true } : {}) }));
 	}

@@ -133,9 +133,9 @@ async function town() {
 test("board_set is the main's: a member, a tower, and a subagent cannot write, and the file is the main's own session id", async () => {
 	const { tower, main, member, kid } = await town();
 	assert.ok(!tower.tools.has("board_set") && !kid.tools.has("board_set") && !kid.tools.has("board_read"), "a tower and a subagent have no board_set");
-	// 0.81.3 (box-mac-waits §14): board_read is a net tool, so a main reads the board (a link_wait wake sends it to section waits); a member has the tool and is refused.
+	// 0.81.3 (box-mac-waits §14): board_read is a net tool, so a main reads the board (a link_wait wake sends it to section waits); a member has the tool and gets section towers alone (0.83.0: boss_status folded in).
 	assert.ok(member.tools.has("board_set") && main.tools.has("board_set") && main.tools.has("board_read") && member.tools.has("board_read"), "mains and members have board_set and board_read");
-	await assert.rejects(member.tool("board_read", {}), /Only a tab's main agent or a tower reads the work board/);
+	assert.deepEqual(Object.keys((await member.tool("board_read", {})).details as object), ["towers"]);
 	await assert.rejects(member.tool("board_set", { now: "I help" }), /Only the main agent of a tab writes/);
 	await assert.rejects(main.tool("board_set", { now: "x".repeat(121) }), /at most 120/);
 	const answer = textOf(await main.tool("board_set", { now: "MP-1 export: CSV writer", items: [{ t: "schema", done: true }, { t: "writer", done: false }] }));

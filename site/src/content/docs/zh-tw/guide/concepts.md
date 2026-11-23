@@ -78,31 +78,27 @@ Straw Boss 從子智慧體啟動時用的 pi-herdr-agents 角色名稱，讀出�
 | `scout`（偵察） | `scout` | 調查並回報 | 望遠鏡 |
 | `planner`（規劃） | `planner` | 規劃與設計 | 鉛筆加尺 |
 | `reviewer`（審查） | `reviewer`、`visual-tester`、`adversarial-reviewer` | 審查變更，或檢查畫面 | 放大鏡 |
-| `watchdog`（監控者） | `watchdog` | 長時間盯著某件事並回報 | 獵犬 |
 
 其他角色名稱仍是一般的子智慧體。
 
 主智慧體不必先寫計畫就能派出任何一種；它的提示要它在每個工作者出發前先開一個 todo。
-同一個主智慧體最多同時跑 4 個工作者：第 5 個會被 `sb: 4 workers run for this main already` 拒絕，等有結果回來再派。偵察、規劃、審查與監控者不算在內。
+同一個主智慧體最多同時跑 4 個工作者：第 5 個會被 `sb: 4 workers run for this main already` 拒絕，等有結果回來再派。偵察、規劃與審查不算在內。
 
-### 用監控者盯著一件事
+### 用 boss_watch 盯著一件事
 
-`watchdog`（監控者）替派出它的 session 監看網裡的一個單位：帶著 monitor 和 todo 的主智慧體、一列火車，或另一個子智慧體。
-它只能讀取和回報。回報只送給派出它的 session，別人收不到，訊息上標著 `kind=watch_report`。
+主智慧體或火車用 `boss_watch` 請 sb server 盯著網裡的一個單位：帶著 monitor 和 todo 的主智慧體、一列火車、另一個子智慧體，或隊友裝置的 `link:` 鍵。
+單位改變狀態、停滯、閒置或結束時，server 用一行字叫醒主智慧體；不再派子智慧體盯，主智慧體也不在自己的輪次裡查看。
 
-派出它的方式和其他子智慧體一樣，任務裡要寫：
+- `key`：單位的 session id 或它在網裡的鍵；
+- `quiet` 與 `idle`（`30m`、`2h`；至少 `1m`）：在意停滯或閒置時才需要；
+- `until`：盯多久（預設 `6h`，最多 `48h`）；`stop: true` 結束盯守，不給鍵就列出你的盯守。
 
-- 監看哪個單位，用它的 session id 或它在網裡的鍵；
-- 多久沒有動靜算停滯（`quietMs`，至少一分鐘），在意停滯時才需要；
-- 時限，寫成絕對時間（`deadline`）；監看火車的 gate 時，再加上負載上限（`loadMax`）。
+每個盯守每分鐘最多送一則，只送最新的狀態，每個 session 每小時最多 12 則；主智慧體在工作時，訊息等這一輪結束再送。
+盯守存在 sb server 裡，所以 `/reload` 和 server 重啟之後都還在。
+`boss_watch` 需要開啟塔台執行（`towerRuns.enabled`），因為送出那一行的是工作區的塔台身分。
 
-它會回報停滯、負載超過上限，以及單位或 monitor 變成等待、錯誤或過期。
-單位的工作結束、時限已過，或派出它的 session 不在了，它就結束。
-值守的主智慧體可以派出監控者，省去在自己的輪次裡反覆查看。
-
-監控者需要 0.80.0 以上的 sb server；較舊的 server 在主智慧體 `/reload` 時升級。
-它跑哪個模型由每台機器各自設定，寫在 pi-herdr-agents 的設定裡（`models.agents.watchdog`）。判定由 server 計算，小模型就夠用。
-規則見[監控者](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-role-pack/#監控者)。
+0.83.0 讓 `watchdog` 子智慧體與 `cli.mjs watch` 退休。
+規則見[盯守](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-role-pack/#盯守)。
 
 ## 塔台怎麼運作
 

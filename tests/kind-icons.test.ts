@@ -30,7 +30,7 @@ const html = readFileSync(new URL("../gui/index.html", import.meta.url), "utf8")
 const symbol = (id: string) => new RegExp(`<symbol id="${id}"[^>]*>([\\s\\S]*?)</symbol>`).exec(html)?.[1];
 
 test("unitIcon: a unit's kind names its icon, a train keeps the locomotive, and a unit with no kind (or one that is no kind) keeps its position's icon", () => {
-	for (const duty of DUTIES) assert.equal(unitIcon(duty === "worker" || duty === "scout" || duty === "planner" || duty === "reviewer" || duty === "watchdog" ? "subagent" : "main", duty), duty);
+	for (const duty of DUTIES) assert.equal(unitIcon(duty === "worker" || duty === "scout" || duty === "planner" || duty === "reviewer" ? "subagent" : "main", duty), duty);
 	assert.equal(unitIcon("train", undefined), "train");
 	assert.equal(unitIcon("main", undefined), "main");
 	assert.equal(unitIcon("member", undefined), "member");
@@ -85,7 +85,7 @@ test("the sidebar marks: one Nerd Font glyph per kind, each one code point, all 
 	const taken = [TOWER_LABEL, HEAD_LABEL, MARK.member, MARK.main];
 	for (const mark of Object.values(KIND_MARK)) assert.ok(!taken.includes(mark), "not the tower's, the head's, or a member's glyph");
 	// glyphnames.json 3.5.1: md-ship_wheel, md-lighthouse, md-wrench, md-binoculars, md-pencil_ruler, md-magnify, md-dog; fa-code_fork, fa-train.
-	assert.deepEqual(KIND_MARK, { coordinator: "\u{f0833}", integrator: "\uf126", standing: "\u{f09ff}", train: "\uf238", worker: "\u{f05b7}", scout: "\u{f00a5}", planner: "\u{f1353}", reviewer: "\u{f0349}", watchdog: "\u{f0a43}" });
+	assert.deepEqual(KIND_MARK, { coordinator: "\u{f0833}", integrator: "\uf126", standing: "\u{f09ff}", train: "\uf238", worker: "\u{f05b7}", scout: "\u{f00a5}", planner: "\u{f1353}", reviewer: "\u{f0349}" });
 	assert.equal(MARK.main, "\uf005", "a main with no known kind keeps the star");
 });
 
@@ -106,12 +106,12 @@ function launch(parent: string, kids: { id: string; name: string; agent?: string
 const kidFile = (id: string) => join(scratch, "sessions", `2026-10-18T00-00-01-000Z_${id}-1a2b3c4d-5e6f7a8b-9c0d.jsonl`);
 const kidPane = (paneId: string, id: string, label: string) => pane(paneId, "wA:t1", { agent_status: "working", label, agent_session: { value: kidFile(id) } });
 
-test("a launched subagent's kind is the agent role its launch script names: a reviewer's visual tester counts as a reviewer, an unknown role or none has no kind", () => {
+test("a launched subagent's kind is the agent role its launch script names: a reviewer's visual tester counts as a reviewer, an unknown role, the retired watchdog (0.83.0), or none has no kind", () => {
 	const file = launch("kp", [{ id: "k1", name: "aa", agent: "scout" }, { id: "k2", name: "bb", agent: "visual-tester" }, { id: "k3", name: "cc", agent: "nope" }, { id: "k4", name: "dd" }, { id: "k5", name: "ee", agent: "constructor" }, { id: "k6", name: "ff", agent: "watchdog" }]);
 	const parent = pane("wA:p0", "wA:t1", { agent_session: { value: file } });
 	const ps = [parent, ...["k1", "k2", "k3", "k4", "k5", "k6"].map((id, i) => kidPane(`wA:p${i + 1}`, id, ["aa", "bb", "cc", "dd", "ee", "ff"][i]!))];
 	const rows = subagents(parent, ps, Date.now());
-	assert.deepEqual(Object.fromEntries(rows.map((r) => [r.text, r.duty])), { aa: "scout", bb: "reviewer", cc: undefined, dd: undefined, ee: undefined, ff: "watchdog" });
+	assert.deepEqual(Object.fromEntries(rows.map((r) => [r.text, r.duty])), { aa: "scout", bb: "reviewer", cc: undefined, dd: undefined, ee: undefined, ff: undefined });
 });
 
 test("a subagent's sidebar mark is its kind's glyph alone; one with no kind keeps [sub] and its launcher's name; a main's own mark is its kind's", async () => {

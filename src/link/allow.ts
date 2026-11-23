@@ -31,7 +31,7 @@ const NAMES = [/^\.env/i, /\.pem$/i, /\.key$/i, /^id_/i, /\.p12$/i];
 const HOME_DIRS = [".pi", ".ssh", ".aws", ".config", ".gnupg"];
 /** The tools that look at paths and are allowed inside the project, and the ones allowed whatever their arguments (`tower_done` ends an ally run of the sb server and does nothing else; `ally_escalate` opens a link wait and writes no peer text into a session). */
 const SEARCH = new Set(["grep", "find", "ls"]);
-const FREE = new Set(["tower_list", "board_read", "boss_status", "todo", "tower_done", "ally_escalate"]);
+const FREE = new Set(["tower_list", "board_read", "todo", "tower_done", "ally_escalate"]);
 /** Argument names that hold a path in pi's tools and in the tools of the extensions around it. */
 const PATH_KEYS = ["path", "file_path", "filePath", "file", "directory", "dir", "cwd", "paths", "files"];
 

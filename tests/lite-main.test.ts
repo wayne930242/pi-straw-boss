@@ -87,7 +87,7 @@ test("a main runs at most 4 workers at once: a fifth is refused, other roles pas
 	running.set("s0", { id: "s0", agent: "scout" });
 	assert.equal(await dispatch(a, { agent: "worker" }, "c4"), undefined, "the fourth");
 	assert.match((await dispatch(a, { agent: "worker" }, "c5"))?.reason ?? "", /^sb: 4 workers run for this main already/, "a fifth in the same message");
-	for (const agent of ["scout", "planner", "reviewer", "watchdog"]) assert.equal(await dispatch(a, { agent }, `c-${agent}`), undefined, agent);
+	for (const agent of ["scout", "planner", "reviewer"]) assert.equal(await dispatch(a, { agent }, `c-${agent}`), undefined, agent);
 	// The fourth's tool ran: the registry holds it and the call no longer counts twice.
 	running.set("w3", { id: "w3", agent: "worker" });
 	await a.fire("tool_result", { toolName: "subagent", toolCallId: "c4", input: { agent: "worker" }, content: [], isError: false });
@@ -105,7 +105,7 @@ const project = (integration: boolean) => {
 	writeFileSync(join(dir, ".straw-boss", "apps.json"), JSON.stringify({ apps: [{ name: "web", path: ".", ...(integration ? { integration: { base: "develop", skill: "x" } } : {}) }] }));
 	return dir;
 };
-const SB = ["board_read", "board_set", "boss_broadcast", "boss_duty", "boss_handover", "boss_promote", "boss_rename", "boss_server", "boss_status", "boss_wait_ask", "call_tower", "link_request", "train_car"];
+const SB = ["board_read", "board_set", "boss_broadcast", "boss_duty", "boss_handover", "boss_promote", "boss_rename", "boss_server", "boss_wait_ask", "boss_watch", "call_tower", "link_request", "train_car"];
 async function toolsOf(o: { integrationOff: boolean; integrationApp: boolean; link: boolean }): Promise<string[]> {
 	world = new World();
 	sw ??= new ServerWorld(); // one for the four setups: its close waits out a start in flight (5 s)

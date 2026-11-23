@@ -200,7 +200,7 @@ export function createLinkWaits(d: WaitsDeps) {
 	});
 	const peer = (w: LinkWait) => ({ label: restrictLabel(w.label), short: w.short });
 
-	/** The live mains of a workspace: each with the board id a teammate sees it under, and whether it is of kind standing (`sb_duty`, as `tower_list` and `boss_status` read it). */
+	/** The live mains of a workspace: each with the board id a teammate sees it under, and whether it is of kind standing (`sb_duty`, as `tower_list` and `board_read` read it). */
 	const mainsOf = async (ws: string): Promise<(Who & { board?: string; standing: boolean })[]> => {
 		const net = await d.net(), box = d.deviceId();
 		return net.sessions.flatMap((s) => {

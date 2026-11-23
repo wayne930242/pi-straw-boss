@@ -13,16 +13,17 @@ import { until, World } from "./fakes.ts";
 const parentOnly = { ...Object.fromEntries(PARENT_ONLY.map((n) => [n, "sb, outside a child"])), ...HOST_PARENT_ONLY };
 
 test("rolesCheck passes names that are present or child-only, and fails a missing one and a parent-only one with the reason", () => {
-	const ok = rolesCheck([{ name: "scout", tools: ["read", "caller_ping", "watch_read"] }, { name: "worker" }], ["read", "bash"], CHILD_ONLY, parentOnly);
+	const ok = rolesCheck([{ name: "scout", tools: ["read", "caller_ping"] }, { name: "worker" }], ["read", "bash"], CHILD_ONLY, parentOnly);
 	assert.equal(ok.ok, true, ok.lines.join("\n"));
 	assert.ok(ok.lines.some((l) => /worker: every tool/.test(l)));
 	assert.ok(ok.lines.some((l) => /caller_ping \(pi-herdr-agents/.test(l)));
-	const bad = rolesCheck([{ name: "x", tools: ["read", "nope", "boss_status", "worktree_list"] }], ["read", "boss_status", "worktree_list"], CHILD_ONLY, parentOnly);
+	const bad = rolesCheck([{ name: "x", tools: ["read", "nope", "board_read", "worktree_list", "watch_read"] }], ["read", "board_read", "worktree_list"], CHILD_ONLY, parentOnly);
 	assert.equal(bad.ok, false);
 	assert.deepEqual(bad.failures, [
 		{ role: "x", tool: "nope", reason: "no such tool in this session" },
-		{ role: "x", tool: "boss_status", reason: "parent-only: sb, outside a child" },
+		{ role: "x", tool: "board_read", reason: "parent-only: sb, outside a child" },
 		{ role: "x", tool: "worktree_list", reason: `parent-only: ${HOST_PARENT_ONLY.worktree_list}` },
+		{ role: "x", tool: "watch_read", reason: "no such tool in this session" }, // retired with the watchdog in 0.83.0
 	]);
 });
 
@@ -36,7 +37,7 @@ test("runRolesCheck refuses a session started with --tools or --exclude-tools, a
 	}
 	const own = runRolesCheck("", { argv: ["node", "pi"], tools: () => ["read", "grep", "find", "ls", "bash", "write", "edit", "mcp", "subagent", "ask_user_question", "show_doc"] }); // 0.80.4: no computer-use tools (basic df66439 retired the package), so a role that names one again fails here (rev-vt0804-F001)
 	assert.equal(own.ok, true, own.text);
-	assert.deepEqual(readRoles().map((r) => r.name).sort(), ["adversarial-reviewer", "planner", "reviewer", "scout", "visual-tester", "watchdog", "worker"]);
+	assert.deepEqual(readRoles().map((r) => r.name).sort(), ["adversarial-reviewer", "planner", "reviewer", "scout", "visual-tester", "worker"], "6 roles: the watchdog was retired in 0.83.0");
 	const dir = mkdtempSync(join(tmpdir(), "roles-"));
 	writeFileSync(join(dir, "solo.md"), "---\nname: solo\ndescription: d\ntools: read, boss_rename\n---\nbody\n");
 	const other = runRolesCheck(dir, { argv: ["node", "pi"], tools: () => ["read", "boss_rename"] });
@@ -64,8 +65,7 @@ test("/boss roles-check runs in the session: it starts no process and answers wi
 test("sb's tools registered outside a child, less those in a child, equal PARENT_ONLY", async () => {
 	const child = world.agent({ id: "c", pane: "wA:p9", tab: "wA:t1", env: { PI_SUBAGENT_ID: "run-1" } });
 	await child.start();
-	assert.deepEqual([...child.tools.keys()].sort(), ["watch_read", "watch_report"], "a child registers the two watch tools (§10) and no other sb tool");
-	assert.deepEqual([...child.tools.values()].map((t) => (t as { defaultActive?: boolean }).defaultActive), [false, false], "inactive unless --tools names them");
+	assert.deepEqual([...child.tools.keys()], [], "a child registers no sb tool (0.83.0: the watch tools went with the watchdog)");
 	const seen = new Set<string>();
 	// `link_request` is registered only where Straw Link is set up (docs/specs/2026-11-23-lite-main.md §4): this world enables it.
 	mkdirSync(join(world.stateDir, "link"), { recursive: true });
@@ -77,7 +77,7 @@ test("sb's tools registered outside a child, less those in a child, equal PARENT
 	await main.start();
 	await main.promote();
 	for (const agent of [tower, main]) for (const name of agent.tools.keys()) seen.add(name);
-	assert.ok(!seen.has("watch_read") && !seen.has("watch_report"), "a top-level pane never has the watch tools (AK8-F006)");
+	assert.ok(!seen.has("watch_read") && !seen.has("watch_report"), "the retired watch tools are nowhere");
 	// The tower runs register theirs (runmode.ts, runhead.ts): a local run and a head run (an ally run registers a subset of a local run's, runmode.ts ALLY_REGISTERED).
 	for (const kind of ["local", "head"] as const) {
 		const run = world.agent({ id: `run-${kind}`, pane: "wA:p3", tab: "wA:t1", deps: { stateDir: world.stateDir, runSide: { ask: async (request: { cmd?: string }) => request.cmd === "claim" ? { ok: true, token: "T", kind, run: "R", workspace: "wA", identity: "sb-tower-wa", label: "Alpha", brief: "B" } : { ok: true, waits: [], auto: false }, pollMs: 20, claimWaitMs: 300 } } });

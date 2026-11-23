@@ -18,7 +18,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | 工具 | 誰有 | 做什麼 |
 | --- | --- | --- |
 | `boss_promote` | 已加入的 session | 成為這個分頁的主智慧體；分頁已有存活的主智慧體時會被拒絕。 |
-| `boss_status` | 已加入的 session 與塔台 | 每個分頁的主智慧體與它的種類、這個工作區的塔台、主塔台與其他塔台。 |
+| `boss_watch` | 分頁的主智慧體與火車（塔台執行開啟時） | 請 sb server 盯著網裡的一個單位（`key`、`quiet`、`idle`、`until`、`stop`；不給鍵就列出你的盯守），每有變化就用一行字叫醒你：每個盯守每分鐘最多一則、只送最新狀態、每小時 12 則，你在工作時等這一輪結束再送。見[用 boss_watch 盯著一件事](/pi-straw-boss/docs/zh-tw/guide/concepts/#用-boss_watch-盯著一件事)。 |
 | `boss_duty` | 分頁的主智慧體 | 附理由設定它的種類：`coordinator`、`integrator` 或 `standing`。這個種類的 prompt 以訊息送給主智慧體，它的 system prompt 保持不變；種類也會顯示在頁面上。 |
 | `boss_rename` | 已加入的 session | 用一句短語為 session 命名它目前的工作；主智慧體的分頁以它為標籤。角色標籤（塔台的圖示、`train <MMDDx>`）會被拒絕。 |
 | `call_tower` | 已加入的 session 與塔台 | 在標頭之下發訊息給這個工作區的塔台，或另一個工作區的塔台。`why` 是 `milestone`、`shared` 或 `blocked`；通知用 `reply: false`。`blocked` 附 `waitsOn {device, owner?, what}` 表示在等隊友的裝置（`milestone` 附 `cancel: true` 撤回）；`linkWait {id, state}` 認領、回覆或婉拒隊友對本機的等待，以老闆代理人的身分核准隊友要給它老闆的卡片（`done`），或交回那位老闆（`escalated`，搭配 `blocked`）；`standing {device, what?}` 把訊息改送那台裝置的值守主智慧體，不經塔台：`blocked` 是提問（回覆會回來），`milestone` 是通知。見[裝置之間的等待](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#裝置之間的等待)。 |
@@ -32,7 +32,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `boss_handover` | 分頁的主智慧體 | 為 session 輪替開出自己的接班者：用它的名稱與種類的新分頁，第一個提示是 `handoff` 檔；一次一個。工作區的塔台會收到通知，接班者活著後就關掉舊的主智慧體。替隊友裝置開的主智慧體會被拒絕。 |
 | `tower_list` | 塔台 | 每個工作區的塔台、發給它的訊息會送到誰、它的狀態，以及它的分頁在做什麼（每個分頁的主智慧體及其種類）。 |
 | `tower_send` | 塔台 | 發訊息給另一座塔台（用工作區 id 或標籤）或全部；附 `device` 則發給隊友電腦上的塔台：不給 `reply` 時綁定這次 run 裡唯一等回覆的主智慧體，`reply: false` 是通知，`waitsOn: {event}` 轉送主智慧體對那台裝置的等待，`standing: "question"` 或 `"notice"`（在 run 裡）改送那台裝置的值守主智慧體；隊友 run 只能送通知。 |
-| `board_read` | 塔台、主智慧體 | 工作看板：每位主智慧體在做什麼、做到哪裡，包括這裡與隊友的電腦，以及本機與隊友裝置之間未結的等待（`waits`）。 |
+| `board_read` | 塔台、主智慧體；成員只拿到 `towers` | 工作看板：每位主智慧體在做什麼、做到哪裡，包括這裡與隊友的電腦，本機與隊友裝置之間未結的等待（`waits`），以及 `towers`：每個分頁的主智慧體與它的種類、這個工作區的塔台、主塔台與其他塔台（0.83.0 之前是 `boss_status`）。 |
 | `tower_memory` | 本機塔台 run | 保存 run 結束後還要留著的內容：引用自老闆自己訊息的長期指示或決定，以及塔台的等待事項，包括對老闆的等待（以卡片呈現）。裝置指定了老闆的代理人時（config.json 的 `link.delegate`，無人看守裝置則是政策檔的 `delegate`），卡片會先交給代理人，除非標了 `bossOnly`、是秘密卡，或由列車或整合員發起。 |
 | `boss_wait_ask` | 主智慧體、本機塔台 run、主塔台 | 讓 sb 在終端機裡把開著的等待卡片一張接一張拿給你看：`ids`（1 到 4 個 `W<n>`），或不指名，代表它範圍內每一張開著的卡片（主智慧體是它提出的，塔台 run 是它那座塔台的，主塔台是任何一張）。sb 照 `/boss wait` 的畫法畫每一張卡片；智慧體不寫字也不選，只有你的按鍵能按。自動模式開著、無人值守的裝置、沒有畫面時都被拒絕；在塔台 run 裡，只有你在這個 run 裡最後說的話來自它的 pane 才會畫。 |
 | `tower_reply` | 塔台 run，不含主塔台的 | 用 intercom 名稱或 session id 回答一個本機 session（主智慧體或成員），掛在塔台的標頭之下。`forward` 把車廂單的事件 id 轉給整合員。 |
@@ -40,8 +40,6 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `ally_escalate` | 盟友 run | 把寄件者訊息裡的一項（在等這裡的某人、點名的本機主智慧體、沒有本機主智慧體負責的工作、一起事故）交給等待路由器，由它通知主智慧體或放上老闆的清單。任何層級都可用；每次 run 最多 5 項。 |
 | `boss_auto` | 主塔台 | 依老闆自己的話（server 自己讀），在它回答的那個 turn 裡直接開始或結束[自動模式](/pi-straw-boss/docs/zh-tw/guide/auto-mode/)，不需確認。 |
 | `train_car` | 整合員與火車（火車一定有；其他 session 要在專案的 apps.json 有帶 `integration` 的 app 時才有） | 設定車廂的狀態（`received`、`returned`、`dropped`、`landed`）；sb server 會通知該車廂的協調者。它的 `car` 是車廂的第一張票；車廂單的 `car:`（或 `app:`）指名 app；同一張票在兩節車廂上時，用 `app` 或 `head`（40 個十六進位字元）指定其中一節。火車設定自己車廂的 `returned`、`dropped`、`landed`；整合員在收件時設定 `received` 或 `returned`，而它收下的車廂，等那列火車已不在了，也可以由它設定 `returned`、`dropped` 或 `landed`。 |
-| `watch_read` | `watchdog` 子智慧體 | 等網裡的一個單位發生變化。回覆是 `changed`、`stalled`、`load`、`idle`、`waiting`、`offline`、`unchanged`、`expired` 或 `gone`，並附上單位的狀態。隊友裝置的 `link:<short>` 鍵讀它最新的狀態。見[用監控者盯著一件事](/pi-straw-boss/docs/zh-tw/guide/concepts/#用監控者盯著一件事)。 |
-| `watch_report` | `watchdog` 子智慧體 | 把一項發現送給派出它的 session，別人都收不到：每 30 秒最多一則，不能連續兩次送同樣的內容。 |
 
 完整的表格與每個參數，見[工具](/pi-straw-boss/docs/zh-tw/reference/how-it-works/tools/)。
 
@@ -115,7 +113,7 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 
 | 指令 | 做什麼 |
 | --- | --- |
-| `/boss roles-check [資料夾]` | 把每個角色 `tools:` 列的名稱，和這個 session 的工具、以及只有子智慧體才有的名稱（`caller_ping`、`subagent_done`、`watch_read`、`watch_report`）比對。這個 session 沒有的名稱，或只有上層才有的名稱（sb 自己的工具、pi-herdr-agents 的 worktree 工具），都算失敗。不給資料夾時讀 sb 自己的 `roles/`；發版前請指名 checkout 裡的 `roles/`。它不啟動任何東西；以 `--tools` 或 `--exclude-tools` 啟動的 session 會拒絕執行。 |
+| `/boss roles-check [資料夾]` | 把每個角色 `tools:` 列的名稱，和這個 session 的工具、以及只有子智慧體才有的名稱（`caller_ping`、`subagent_done`）比對。這個 session 沒有的名稱，或只有上層才有的名稱（sb 自己的工具、pi-herdr-agents 的 worktree 工具），都算失敗。不給資料夾時讀 sb 自己的 `roles/`；發版前請指名 checkout 裡的 `roles/`。它不啟動任何東西；以 `--tools` 或 `--exclude-tools` 啟動的 session 會拒絕執行。 |
 
 見[角色包](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-role-pack/)。
 

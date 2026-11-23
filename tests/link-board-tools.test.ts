@@ -90,12 +90,12 @@ test("an auto-filled entry reaches the ally's tower as its name and done count o
 	assert.deepEqual(local.map((r) => [r.main, r.items!.length]).sort(), [["auto /etc/secret", 3], ["set main", 2]]);
 });
 
-test("a computer without a team has no remote key in board_read; a main reads the board too (0.81.3), and a member is refused", async () => {
+test("a computer without a team has no remote key in board_read; a main reads the board too (0.81.3), and a member gets section towers alone (0.83.0)", async () => {
 	const c = computer(root, relay, "a", { gateMs: 60 });
 	computers.push(c);
 	await c.tower.start();
 	const result = await read(c.tower);
-	assert.deepEqual(Object.keys(result).sort(), ["local", "note"].sort().concat(Object.hasOwn(result, "remote") ? ["remote"] : []).sort());
+	assert.deepEqual(Object.keys(result).sort(), ["local", "note", "towers"].concat(Object.hasOwn(result, "remote") ? ["remote"] : []).sort());
 	const main = c.world.agent({ id: "m", name: "m", pane: "wA:p1", tab: "wA:t1", deps: c.deps });
 	await main.start();
 	await main.promote();
@@ -103,7 +103,7 @@ test("a computer without a team has no remote key in board_read; a main reads th
 	assert.ok(Array.isArray((await read(main, { scope: "local" })).local));
 	const member = c.world.agent({ id: "mem", name: "mem", pane: "wA:p2", tab: "wA:t1", deps: c.deps });
 	await member.start();
-	await assert.rejects(member.tool("board_read", {}), /Only a tab's main agent or a tower reads the work board/);
+	assert.deepEqual(Object.keys((await member.tool("board_read", {})).details as object), ["towers"]);
 });
 
 test("in a remote turn board_read and tower_list show only what the senders already receive: the project their team binds and their teams' boards", async () => {

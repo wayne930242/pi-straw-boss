@@ -102,8 +102,9 @@ test("grep, find, ls: every path argument has to resolve inside the project (sym
 	assert.equal(decide("ls", { path: "src" }, [sender], { ...scope, cwd: root }).kind, "gate", "a relative path resolves against the tool's cwd, which is outside the project here");
 });
 
-test("tower_list, boss_status, and todo are allowed whatever their arguments; tower_send only back to the sender", () => {
-	for (const tool of ["tower_list", "boss_status", "todo"]) assert.equal(verdict(tool, {}), "allow");
+test("tower_list and todo are allowed whatever their arguments (boss_status is folded into board_read in 0.83.0 and gated like any unknown name); tower_send only back to the sender", () => {
+	for (const tool of ["tower_list", "todo"]) assert.equal(verdict(tool, {}), "allow");
+	assert.equal(verdict("boss_status", {}), "gate");
 	assert.equal(verdict("tower_send", { message: "hi", device: sender.short }), "allow");
 	assert.equal(verdict("tower_send", { message: "hi", device: sender.id }), "allow");
 	assert.equal(verdict("tower_send", { message: "hi", device: sender.label }), "allow");
