@@ -204,7 +204,11 @@ test("a towerRuns section without enabled, and no config file at all, mean the s
 		writeFileSync(join(dir, "config.json"), "{ not json");
 		assert.equal(towerRunsEnabled(dir), true, "an unreadable config.json");
 		writeFileSync(join(dir, "config.json"), JSON.stringify({ towerRuns: { max: 2 } }));
-		assert.deepEqual(readTowerRuns(dir), { enabled: true, max: 2 });
+		assert.deepEqual(readTowerRuns(dir), { enabled: true, max: 2, headless: false }, "headless runs are off unless asked for (0.85.0)");
+		writeFileSync(join(dir, "config.json"), JSON.stringify({ towerRuns: { headless: true, pi: "/opt/pi/dist/cli.js" } }));
+		assert.deepEqual(readTowerRuns(dir), { enabled: true, max: 4, headless: true, pi: "/opt/pi/dist/cli.js" });
+		writeFileSync(join(dir, "config.json"), JSON.stringify({ towerRuns: { headless: "yes" } }));
+		assert.equal(readTowerRuns(dir).headless, false, "only the boolean true turns headless runs on");
 		writeFileSync(join(dir, "config.json"), JSON.stringify({ towerRuns: { enabled: false } }));
 		assert.equal(towerRunsEnabled(dir), false);
 		writeFileSync(join(dir, "config.json"), JSON.stringify({ towerRuns: { enabled: "no" } }));

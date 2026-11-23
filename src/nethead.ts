@@ -11,7 +11,7 @@ import type { Queued, Ref, TowerService, TowerView } from "./net.ts";
  * else `waiting` while it is open, else `silent`; `answers` counts them and `last` is the first line of the newest. `sent` is the whole message (docs/specs/2026-11-07-head-log-cards.md), `boss` the boss's own words of the instruction it
  * relays (on the first row of a broadcast only), `supersedes` the group (else the id) of the earlier ask it corrects.
  */
-export interface HeadAskRow { id: string; group: string; workspace: string; label: string; since: number; at: number; first: string; state: "waiting" | "answered" | "handled" | "received" | "silent"; answers: number; last?: string; sent?: string; boss?: string; supersedes?: string; missed?: true }
+export interface HeadAskRow { id: string; group: string; workspace: string; label: string; since: number; at: number; first: string; state: "waiting" | "answered" | "handled" | "received" | "silent" | "parked"; answers: number; last?: string; sent?: string; boss?: string; supersedes?: string; missed?: true }
 /** One chapter of the head's conversation (server/headchapters.ts): its pi session file and why it began. */
 export interface HeadChapter { n: number; file: string; from: string; to?: string; why: string }
 /** What the net needs of the server to show the head: its key (the identity), its asks and chapters, the time of its newest assistant text in a conversation file, and that text's first line. */

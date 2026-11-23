@@ -89,7 +89,7 @@ export function headSeam(slot: Slot, now: () => number): HeadSeam {
 				whole.add(g);
 			}
 			return all.filter((a) => kept.has(groups.get(a.id)!)).map((a) => {
-				const group = groups.get(a.id)!, replaced = a.supersedes ? groups.get(a.supersedes) ?? a.supersedes : undefined, state: HeadAskRow["state"] = a.answers.length ? "answered" : a.acted !== undefined ? "handled" : a.read !== undefined ? "received" : open.has(a.id) ? "waiting" : "silent";
+				const group = groups.get(a.id)!, replaced = a.supersedes ? groups.get(a.supersedes) ?? a.supersedes : undefined, state: HeadAskRow["state"] = a.answers.length ? "answered" : a.acted !== undefined ? "handled" : a.read !== undefined ? "received" : a.parked !== undefined && open.has(a.id) ? "parked" : open.has(a.id) ? "waiting" : "silent";
 				const texts = whole.has(group), lead = byGroup.get(group)![0]!;
 				return { id: a.id, group, workspace: a.workspace, label: a.label, since: a.at, at: a.last, first: a.first, state, answers: a.answers.length, ...(a.answers.at(-1) ? { last: a.answers.at(-1)!.first } : {}), ...(texts && a.sent && (a === lead || a.sent !== lead.sent) ? { sent: a.sent } : {}), ...(texts && a.boss ? { boss: a.boss } : {}), ...(replaced && replaced !== group ? { supersedes: replaced } : {}), ...(state === "handled" && a.missed !== undefined ? { missed: true as const } : {}) };
 			});

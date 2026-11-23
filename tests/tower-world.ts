@@ -10,6 +10,34 @@ import { createAllows } from "../src/server/allows.ts";
 import type { Proc } from "../src/server/lineage.ts";
 import type { AllyItem, AllyPort, Timers } from "../src/server/runs.ts";
 import type { StandingTimers } from "../src/server/standing.ts";
+import { EventEmitter } from "node:events";
+import { PassThrough, Writable } from "node:stream";
+import type { ChildProcess } from "node:child_process";
+
+/** A headless run's pi as the fake spawn makes it (runchild.ts): the test reads its arguments and env, writes its RPC stdout, reads what the server wrote to its stdin, and ends it. */
+export class FakeKid extends EventEmitter {
+	stdout = new PassThrough();
+	stderr = new PassThrough();
+	written: Record<string, unknown>[] = [];
+	stdinEnded = false;
+	exited = false;
+	stdin = new Writable({ write: (chunk, _enc, done) => { for (const l of String(chunk).split("\n").filter(Boolean)) this.written.push(JSON.parse(l)); done(); }, final: (done) => { this.stdinEnded = true; done(); } });
+	pid: number; file: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv;
+	constructor(pid: number, file: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
+		super();
+		this.pid = pid; this.file = file; this.args = args; this.cwd = cwd; this.env = env;
+	}
+	get run() { return this.args[this.args.indexOf("--sb-run") + 1]!; }
+	get nonce() { return this.env.STRAW_BOSS_RUN_NONCE!; }
+	/** One RPC record on stdout. */
+	say(record: Record<string, unknown>) { this.stdout.write(`${JSON.stringify(record)}\n`); }
+	exit(code: number | null = 0, signal: NodeJS.Signals | null = null) {
+		if (this.exited) return;
+		this.exited = true;
+		this.stdout.end();
+		this.emit("exit", code, signal);
+	}
+}
 
 /** The link holder as the tower service sees it (AllyPort): messages that wait for the tower identity, who has left the roster, and what the server told it was taken. */
 export class FakeAlly implements AllyPort {
@@ -153,10 +181,14 @@ export class TowerWorld extends ServerWorld {
 	/** The requests the tower service sent the link holder (the tools of a run), and the answer for each op. */
 	linkCalls: { body: Record<string, unknown>; from: string }[] = [];
 	linkAnswers = new Map<string, (body: Record<string, unknown>) => Record<string, unknown>>();
-	setFlag(enabled: boolean | undefined, max?: number) {
+	setFlag(enabled: boolean | undefined, max?: number, headless?: boolean) {
 		mkdirSync(this.stateDir, { recursive: true });
-		writeFileSync(join(this.stateDir, "config.json"), JSON.stringify(enabled === undefined ? {} : { towerRuns: { enabled, ...(max ? { max } : {}) } }));
+		writeFileSync(join(this.stateDir, "config.json"), JSON.stringify(enabled === undefined ? {} : { towerRuns: { enabled, ...(max ? { max } : {}), ...(headless ? { headless } : {}) } }));
 	}
+	/** The headless runs' children (towerRuns.headless): run id → the fake pi; and the kills the server asked for (`group` or `taskkill`). */
+	kids = new Map<string, FakeKid>();
+	kidKills: [number, "group" | "taskkill"][] = [];
+	kidPlatform: NodeJS.Platform | undefined;
 	constructor() {
 		super();
 		this.herdr.onAgentStart = (pane, args) => {
@@ -184,6 +216,17 @@ export class TowerWorld extends ServerWorld {
 					const b = body as Record<string, unknown>;
 					this.linkCalls.push({ body: b, from });
 					return this.linkAnswers.get(String(b.op))?.(b) ?? { ok: false, code: "no_holder", error: "no holder in this world" };
+				},
+				kidsPort: {
+					pi: () => ({ node: "/fake/node", cli: "/fake/pi/dist/cli.js" }),
+					spawn: (file: string, args: string[], options: { cwd?: string | URL; env?: NodeJS.ProcessEnv }) => {
+						const kid = new FakeKid(this.nextPi++, file, args, String(options.cwd ?? ""), options.env ?? {});
+						this.kids.set(kid.run, kid);
+						return kid as unknown as ChildProcess;
+					},
+					killGroup: (pid: number) => { this.kidKills.push([pid, "group"]); [...this.kids.values()].find((k) => k.pid === pid)?.exit(null, "SIGKILL"); },
+					taskkill: (pid: number) => { this.kidKills.push([pid, "taskkill"]); [...this.kids.values()].find((k) => k.pid === pid)?.exit(1, null); },
+					...(this.kidPlatform ? { platform: this.kidPlatform } : {}),
 				},
 				runs: {
 					timers: { ...FAST_RUNS, ...this.runTimers }, ...(this.runClock ? { now: this.runClock.now } : {}), alive: (pid) => (this.aliveCalls++, this.aliveHook?.(pid), this.live.has(pid)), procs: async (runId) => (this.procReads++, await this.procGate?.(runId), this.procTable), startOf: (pid) => (this.startCalls++, `T-${pid}`), kill: (pid, signal) => void this.kills.push([pid, signal]),

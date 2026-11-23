@@ -1163,6 +1163,7 @@
 	"head_replaced_by": "corrected by the next",
 	"head_replaced_fold": "Replaced orders ({count})",
 	"head_ask_silent": "no answer",
+	"head_ask_parked": "parked",
 	"head_ask_no_tower": "no tower",
 	"head_older": "Older ({count})",
 	"head_log_title": "Orders sent ({count})",

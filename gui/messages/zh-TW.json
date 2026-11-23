@@ -981,6 +981,7 @@
 	"head_replaced_by": "已被下一則更正",
 	"head_replaced_fold": "被取代的舊指令（{count}）",
 	"head_ask_silent": "沒回應",
+	"head_ask_parked": "暫放",
 	"head_ask_no_tower": "沒有塔台",
 	"head_older": "更早（{count}）",
 	"head_log_title": "送出的指令（{count}）",

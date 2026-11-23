@@ -53,6 +53,7 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 	// to answer, refuses, or sits in a folder that is not the boss's refuses the mode (heremark.ts: any other refusal refuses the screen).
 	const here: Here = createHereMark({ ask: (request) => ask(request, TELL_MS).then((reply) => ({ ok: reply.ok === true, ...reply }), (cause: Error) => ({ ok: false, error: cause instanceof Absent ? "no server" : cause.message })), pane, every });
 	let head = false; // the last poll said this prompt stands in for the head tower
+	let cursor: number | undefined; // the last transcript line this viewer printed (headless runs)
 	const pick: PickSource = {
 		waits: async () => {
 			const reply = await sure({ cmd: "boss-waits", own: workspace });
@@ -75,14 +76,15 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 		async poll(answering = false): Promise<Polled> {
 			let reply;
 			try {
-				reply = await ask({ cmd: "prompt-poll", workspace, pid, ...(answering ? { answering: true } : {}) }, POLL_MS);
+				reply = await ask({ cmd: "prompt-poll", workspace, pid, ...(answering ? { answering: true } : {}), ...(cursor !== undefined ? { cursor } : {}) }, POLL_MS);
 			} catch (cause) {
 				return { kind: "wait", why: (cause as Error).message };
 			}
 			if (reply.ok === true && typeof reply.label === "string" && typeof reply.state === "string" && typeof reply.queued === "number" && typeof reply.leave === "boolean") {
 				head = reply.head === true;
+				if (typeof reply.cursor === "number") cursor = reply.cursor;
 				// SAFETY: a state word this build does not know is shown as the server sent it (prompt.ts cleans it of control characters), not made into one it does.
-				return { kind: "state", answer: { label: reply.label, state: reply.state as ServiceState, queued: reply.queued, leave: reply.leave, ...(reply.head === true ? { head: true as const } : {}), ...(Array.isArray(reply.waits) ? { waits: reply.waits as never[] } : {}), ...(typeof reply.auto === "boolean" ? { auto: reply.auto } : {}), ...(reply.holding === true ? { holding: true as const } : {}), ...(reply.unattended === true ? { unattended: true as const } : {}) } };
+				return { kind: "state", answer: { label: reply.label, state: reply.state as ServiceState, queued: reply.queued, leave: reply.leave, ...(reply.head === true ? { head: true as const } : {}), ...(Array.isArray(reply.waits) ? { waits: reply.waits as never[] } : {}), ...(typeof reply.auto === "boolean" ? { auto: reply.auto } : {}), ...(reply.holding === true ? { holding: true as const } : {}), ...(reply.unattended === true ? { unattended: true as const } : {}), ...(Array.isArray(reply.lines) ? { lines: reply.lines.map(String) } : {}), ...(Array.isArray(reply.dialogs) ? { dialogs: reply.dialogs as never[] } : {}) } };
 			}
 			const error = String(reply.error ?? "no usable answer");
 			return reply.gone === true ? { kind: "gone", error } : { kind: "wait", why: error };
@@ -105,6 +107,9 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 			}
 			if (reply.ok !== true) throw new Error(String(reply.error ?? "the sb server gave no reason"));
 		},
+		abort: async () => (await sure({ cmd: "run-abort", workspace })).aborted === true,
+		direct: async (to, text) => ({ label: String((await sure({ cmd: "head-event", to, text, door: "pane" })).label ?? to) }),
+		answer: async (key, reply) => void (await sure({ cmd: "run-dialog", key, ...reply })),
 		leave: () => tell("prompt-leave"),
 		gone: () => tell("prompt-gone"),
 	};

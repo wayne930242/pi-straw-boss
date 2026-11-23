@@ -5,6 +5,10 @@ import type { Log } from "./log.ts";
 import type { ServiceStatus } from "./runs.ts";
 import { giveBackGate, handGate, holdGate, idleShell, nameOf, refusedGate, SHELLS, settleGate, typeGate } from "./typegate.ts";
 
+/** Headless runs: how long after a viewer call made its pane the one typing may still happen (Herdr's lost Enter), and the command as typed there, so the viewer takes the shell's place (`exec`) and no shell is left behind it. */
+export const ONCE_MS = 60_000;
+export const execOf = (command: string, platform: NodeJS.Platform = process.platform) => (platform === "win32" ? `${command}; exit` : `exec ${command}`);
+
 export { idleShell };
 
 // The standing pane between runs (docs/how-it-works.md, The standing pane; docs/specs/2026-10-26-sb-backend.md, The tower service). A tower's standing pane is no bare shell: the server types the tower prompt's
@@ -89,6 +93,8 @@ export interface StandingOptions {
 	locale?: () => Locale;
 	/** Whether a person is at this device: an unattended one keeps the stand-in idle whatever waits (nobody there answers it). Attended when unset. */
 	attended?: () => boolean;
+	/** `towerRuns.headless`: the pane is typed into once, by `onceGate`, and with `exec` (typegate.ts). */
+	once?: () => boolean;
 }
 /** What a prompt's poll is answered. `holding`: events wait, and the wake is held while the boss answers wait cards at the prompt (runs.ts `answering`; towers.ts adds it). */
 export type PromptReply = { ok: true; label: string; state: ServiceStatus["state"]; queued: number; leave: boolean; head?: true; holding?: true } | { ok: false; error: string; gone?: true };
@@ -122,6 +128,9 @@ interface Mine {
 	noStart: boolean;
 	/** The server said, once, that the prompt is gone from a pane it cannot type into (Windows, a pane that is not fresh). */
 	lost: boolean;
+	/** Headless runs: when a viewer call made this pane (the one typing's window starts), and whether a viewer polled from it since. */
+	made?: number;
+	polled?: boolean;
 	/** The last stand-in reported, and how often Herdr did not keep it in a row. */
 	reported?: { message: string; state: Standin["state"]; at: number };
 	misses: number;
@@ -276,6 +285,7 @@ export function createStanding(o: StandingOptions) {
 			command: () => Boolean((command = o.command(target.workspace) ?? "")),
 			settle: () => settle(m),
 			fresh: () => m.fresh,
+			...(o.once?.() ? { once: () => ({ made: m.made, polled: m.polled === true, now: now(), windowMs: ONCE_MS }) } : {}),
 			read: async () => {
 				const [info, again] = await Promise.all([processInfo(paneId), world().then((w) => w.panes.find((p) => p.pane_id === paneId), () => undefined)]);
 				seat = again;
@@ -329,7 +339,7 @@ export function createStanding(o: StandingOptions) {
 		typed.set(pane.pane_id, { at, ...(seat?.terminal_id ? { terminal: seat.terminal_id } : {}) });
 		for (const [id, record] of typed) if (at - record.at > TYPED_KEEP_MS) typed.delete(id);
 		try {
-			await run(["pane", "run", pane.pane_id, command]);
+			await run(["pane", "run", pane.pane_id, o.once?.() ? execOf(command, o.platform) : command]);
 			m.freshUntil = undefined;
 			m.failures = 0;
 			log.line("prompt-typed", { workspace: target.workspace, pane: pane.pane_id });
@@ -381,7 +391,7 @@ export function createStanding(o: StandingOptions) {
 		attach(target: StandingTarget, fresh = false) {
 			const m = mines.get(target.workspace);
 			if (m) m.target = target;
-			else mines.set(target.workspace, { target, leaving: false, misses: 0, parked: false, typings: 0, fresh, noStart: false, lost: false, failures: 0, giveUp: false, busyClear: 0 });
+			else mines.set(target.workspace, { target, leaving: false, misses: 0, parked: false, typings: 0, fresh, noStart: false, lost: false, failures: 0, giveUp: false, busyClear: 0, ...(fresh ? { made: now() } : {}) });
 		},
 		/** The service is gone: the stand-in is taken away, and the prompt, which polls a tower that is no more, leaves by itself. */
 		async detach(workspace: string) {
@@ -396,6 +406,7 @@ export function createStanding(o: StandingOptions) {
 			const m = mines.get(workspace);
 			if (!m) return { ok: false, error: `The sb server stands in for no tower of workspace ${workspace}`, gone: true };
 			m.seen = { pid, at: now() };
+			m.polled = true;
 			// A prompt that polls is the current one: the pid of an earlier prompt that left is no longer the one to wait for.
 			if (m.leaver !== undefined && m.leaver !== pid) m.leaver = undefined;
 			m.typings = 0;

@@ -69,7 +69,7 @@ export interface AskTower { workspace: string; label: string; state: HeadAskRow[
  * anything last happened. `supersedes` is the earlier ask or group the head named as the one this corrects; `replaces` the groups of the chain folded under this card, newest first, and `replacedBy` the group that folded this one.
  */
 export interface AskGroup { id: string; first: string; sent: string; boss?: string; towers: AskTower[]; handled: number; since: number; active: number; supersedes?: string; replaces: AskGroup[]; replacedBy?: string }
-const DAY = 86_400_000, RANK = { answered: 4, handled: 3, received: 2, waiting: 1, silent: 0 } as const;
+const DAY = 86_400_000, RANK = { answered: 4, handled: 3, received: 2, waiting: 1, parked: 1, silent: 0 } as const;
 /** A tower that answered, or acted on the message and answered someone else, has handled it (an answer is a handling). */
 const handled = (state: HeadAskRow["state"]) => state === "answered" || state === "handled";
 const num = (id: string) => Number(id.slice(1));
@@ -134,7 +134,7 @@ export function sentLine(g: { sent?: string; boss?: string; first: string }): st
 	}
 	return text.split("\n").map((l) => l.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim()).find(Boolean) ?? g.first;
 }
-const STATE: Record<HeadAskRow["state"], (o?: Opts) => string> = { waiting: (o) => m.head_ask_waiting({}, o), answered: (o) => m.head_ask_answered({}, o), handled: (o) => m.head_ask_handled({}, o), received: (o) => m.head_ask_received({}, o), silent: (o) => m.head_ask_silent({}, o) };
+const STATE: Record<HeadAskRow["state"], (o?: Opts) => string> = { waiting: (o) => m.head_ask_waiting({}, o), answered: (o) => m.head_ask_answered({}, o), handled: (o) => m.head_ask_handled({}, o), received: (o) => m.head_ask_received({}, o), silent: (o) => m.head_ask_silent({}, o), parked: (o) => m.head_ask_parked({}, o) };
 /** Whether nothing can come of this row: the net has no tower of the workspace and it never handled it, so waiting is a word it cannot keep. */
 export const gone = (t: AskTower) => !t.route && !handled(t.state);
 /** A tower's state word; for a workspace the net has no tower of and that never handled it, that there is none (muted, no wait). */

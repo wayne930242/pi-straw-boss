@@ -156,7 +156,7 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	async function claimRun(runId: string): Promise<Claim> {
 		const end = cfg.now() + claimWaitMs, started = startOf(process.pid);
 		for (;;) {
-			const answer = await ask({ cmd: "claim", runId, pane: env.HERDR_PANE_ID ?? "", pid: process.pid, liveBrief: true, ...(started ? { started } : {}) }); // `liveBrief`: this build takes a brief in two texts; an older server ignores the word and answers one
+			const answer = await ask({ cmd: "claim", runId, pane: env.HERDR_PANE_ID ?? "", pid: process.pid, liveBrief: true, ...(started ? { started } : {}), ...(env.STRAW_BOSS_RUN_NONCE ? { nonce: env.STRAW_BOSS_RUN_NONCE } : {}) }); // `liveBrief`: this build takes a brief in two texts; an older server ignores the word and answers one
 			if (!answer.ok) throw new Error(String(answer.error ?? "the claim was refused"));
 			if (!answer.wait) {
 				// SAFETY: a claim answered `ok` and not `wait` carries the Claim fields (runs.ts, ClaimReply).

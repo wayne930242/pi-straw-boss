@@ -56,6 +56,8 @@ import { createBackstop } from "./autoback.ts";
 import { headSeam } from "./headnet.ts";
 import { towerPanel } from "./towerpanel.ts";
 import { runsStopMs } from "./runs.ts";
+import { entryReply, withLines } from "./entrycmds.ts";
+import { DRAIN_MS } from "./runkids.ts";
 import { askRefused, doorOf, NOTICE_WAIT_MS } from "./waitpress.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import { packageRoot, VERSION } from "./version.ts";
@@ -354,6 +356,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		await Promise.race([guiHost?.leave(phase === "stopping").catch(() => {}), sleep(GUI_LEAVE_MS)]);
 		// The tower identities leave the broker with the server's own session; their tokens and files stay for the server that comes next. The parked cards auto mode's end sent back go out first, each within its wait (AR-F004).
 		await Promise.race([towers?.returning(), sleep(NOTICE_WAIT_MS)]);
+		if (phase === "restarting") await Promise.race([towers?.runs.drain(DRAIN_MS), sleep(DRAIN_MS + 10_000)]); // headless runs drain (F-5): up to 60 s each to settle, then they end and the next word resumes
 		// A stop on purpose waits for its runs to quit (and, off Windows, for the signal to a pi that stays): the exit does not come before it has either happened or been decided, however long the process table read takes.
 		await Promise.race([Promise.all([towers?.stop({ quitRuns: phase === "stopping" }), client?.disconnect().catch(() => {})]), sleep(LEAVE_MS + (phase === "stopping" ? runsStopMs() : 0))]);
 		const disconnected = now();
@@ -444,7 +447,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		const autoAnswer = autoReply(auto, request, unattended); if (autoAnswer) return autoAnswer;
 		const owners = procsReply(procs, request) ?? watchReply(dog, request, () => towerRuns().enabled) ?? threadReply(threads?.threads, request, threads?.sessionsDir ?? ""); if (owners) return owners;
 		const carsAnswer = carsReply(cars, request); if (carsAnswer) return carsAnswer;
-		const tower = towerCommand(request);
+		const tower = entryReply(towers, cfg.run, request) ?? towerCommand(request);
 		if (tower) return tower;
 		return { ok: false, error: `unknown command ${String(request.cmd)}` };
 	};
@@ -470,7 +473,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 			case "ensure-tower": {
 				const claim = typeof request.made === "object" && request.made !== null ? (request.made as Record<string, unknown>) : undefined;
 				const made = text(claim?.pane) && typeof claim?.at === "number" && Number.isFinite(claim.at) ? { pane: text(claim.pane)!, at: claim.at } : undefined;
-				return workspace ? answer(async (t) => ({ ...(await t.ensure({ workspace, ...(text(request.pane) ? { pane: text(request.pane)! } : {}), ...(text(request.cwd, 4096) ? { cwd: text(request.cwd, 4096)! } : {}), ...(Number.isInteger(request.pid) && (request.pid as number) > 0 ? { pid: request.pid as number } : {}), ...(made ? { made } : {}) })) })) : Promise.resolve({ ok: false, error: "ensure-tower needs a workspace" });
+				return workspace ? answer(async (t) => ({ ...(await t.ensure({ workspace, ...(text(request.pane) ? { pane: text(request.pane)! } : {}), ...(text(request.cwd, 4096) ? { cwd: text(request.cwd, 4096)! } : {}), ...(Number.isInteger(request.pid) && (request.pid as number) > 0 ? { pid: request.pid as number } : {}), ...(made ? { made } : {}), view: request.view === true || (request.view !== false && !unattended()) })) })) : Promise.resolve({ ok: false, error: "ensure-tower needs a workspace" });
 			}
 			// The boss's `/boss head …` (headcmds.ts): a run token never gets here (rungate.ts).
 			case "head-open": case "head-event": case "head-leave": case "head-new": case "head-close": case "head-retry": case "head-deliver": case "head-drop": {
@@ -522,7 +525,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				if (!towers || !towers.loaded()) return Promise.resolve({ ok: false, error: "the server is still starting" });
 				if (!workspace || typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return Promise.resolve({ ok: false, error: `${request.cmd} needs a workspace and the prompt's pid` });
 				// `answering`: the boss is at the prompt's wait cards, so the tower's wake is held (runs.ts). An unattended device has no boss at it: its prompt is told, and shows no card on its own.
-				return towers.prompt(request.cmd, workspace, pid, request.answering === true && !unattended()).then((reply) => (unattended() && "label" in reply ? { ...reply, unattended: true } : reply));
+				return towers.prompt(request.cmd, workspace, pid, request.answering === true && !unattended()).then((reply) => withLines(towers!, workspace, request.cursor, unattended() && "label" in reply ? { ...reply, unattended: true } : reply));
 			}
 			// The boss's memory (towermemory.ts `memoryRequest`): `/boss memory` in a pi session is the GUI panel's request on the same function. A run's token never gets here (rungate.ts refuses it).
 			// `via: "ask"` is the press of a dialog sb drew for an agent's `boss_wait_ask` (waitask.ts); the GUI's door is its own route's, never a client's word (`doorOf`).

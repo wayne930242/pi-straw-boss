@@ -62,6 +62,8 @@ export interface QueuedEvent {
 	door?: "pane";
 	/** Who sent a boss event over the control socket, as the request reported it (auto mode records it; docs/specs/2026-11-09-auto-mode.md, §2). */
 	requester?: Requester;
+	/** A parked notice (headless runs, docs/specs/2026-11-23-f-entry.md §2.5): it wakes no run, and the next run there, woken by any other event, takes it. */
+	quiet?: true;
 	/** The event is stale (the auto watch's notice of a period that ended): the run that holds it may finish it, but it goes when that run ends, whatever the outcome, and no other run is offered it (AW-D21). */
 	drop?: true;
 }
@@ -245,6 +247,22 @@ export function appendEvent(slot: Slot, service: ServiceRecord, event: Omit<Queu
 	}
 	service.seq = seq + 1;
 	writeDurable(join(towerDir(slot, service.workspace), SERVICE), service);
+	return written;
+}
+/**
+ * Parks a quiet event for a workspace that may have no service (headless runs): it is written to the queue folder only, never to `service.json`, so no service is made. One with the same `messageId` that waits
+ * already is replaced (a daily sweep does not stack copies). It goes with the queue's 24 hours like any other.
+ */
+export function appendQuiet(slot: Slot, workspace: string, event: Omit<QueuedEvent, "seq" | "id" | "quiet"> & { messageId: string }): QueuedEvent {
+	const dir = queueDir(slot, workspace);
+	ensureDir(towerDir(slot, workspace));
+	ensureDir(dir);
+	for (const old of readQueue(slot, workspace)) if (old.quiet && !old.taken && old.messageId === event.messageId) removeEvent(slot, workspace, old);
+	const state = look(dir), seq = state.top + 1;
+	const written: QueuedEvent = { id: createHash("sha256").update(`quiet\n${event.messageId}\n${seq}`).digest("hex").slice(0, 16), seq, ...event, quiet: true };
+	writeDurable(join(dir, nameOf(written)), written);
+	state.top = seq;
+	state.count++;
 	return written;
 }
 /** Removes queued events older than KEEP_MS (their files' mtime) from every workspace folder, `queue/parked/` included (a folder inside `queue/` is never removed as a file). Returns how many went. */

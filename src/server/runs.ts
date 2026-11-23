@@ -26,6 +26,8 @@ import { WATCH_KEY } from "./autowatch.ts";
 import { HEAD_RUN_TOOLS, LOCAL_RUN_TOOLS } from "../runallow.ts";
 import { appendChapter, headResume, recapOf } from "./headchapters.ts";
 import type { RunWho } from "./rungate.ts";
+import type { Kids } from "./runkids.ts";
+import type { ChildExit } from "./runchild.ts";
 
 // The runs of the tower service (docs/specs/2026-10-26-sb-backend.md, The wake protocol, Crash and timeout, Queueing and concurrency). An event wakes a run: a new pi started in the tower tab's standing pane
 // with `--sb-run <run id>`. The run claims itself over the control socket (a run token, kept in memory only), gets the brief, takes its events one at a time when it is idle, and ends with `tower_done`
@@ -284,6 +286,8 @@ interface Active {
 	/** The brief version the run has (`briefVersion`), and a refresh under way. */
 	briefV?: string;
 	refreshing?: boolean;
+	/** A headless run: the server's child, claimed by PID and nonce, with no pane (runkids.ts). */
+	headless?: true;
 }
 interface Svc {
 	ref: ServiceRef;
@@ -374,6 +378,8 @@ export interface RunsOptions {
 	ally?: AllyPort;
 	/** Where pi keeps its session files, for the boss conversation's pointer (bossconv.ts); defaults to the agent folder's `sessions`. */
 	sessions?: string;
+	/** The headless children (runkids.ts): while `towerRuns.headless` is on, a run is pi in RPC mode as the server's child, with no pane (docs/specs/2026-11-23-lite-b2-d-e-f.md §4). */
+	kids?: Kids;
 }
 
 const phrase = (value: unknown, max: number) => (typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max) : "");
@@ -414,6 +420,8 @@ export function createRuns(o: RunsOptions) {
 	/** Whether a run of that id is held and has not ended. */
 	const liveRun = (id: string) => Boolean(byRun.get(id) && !byRun.get(id)!.ended);
 	const headRun = (a: Active) => a.rec.kind === "local" && isHeadSvc(a.svc);
+	/** Runs start headless now (`towerRuns.headless`); a run keeps the way it started. */
+	const headlessOn = () => Boolean(o.kids?.on());
 
 	// --- events -----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -448,7 +456,8 @@ export function createRuns(o: RunsOptions) {
 		if (stopped || svc.run || svc.state === "held" || !o.enabled()) return;
 		if (svc.refusedAt !== undefined && now() - svc.refusedAt < t.refuse) return;
 		const waiting = waitingOf(svc);
-		if (!waiting.length) return;
+		// A queue that holds only parked notices wakes nothing: the next run woken by any other event takes them.
+		if (!waiting.some((e) => !e.quiet)) return;
 		const holds = holdable(svc), at = now(), first = Math.min(...waiting.filter(holds).map((e) => Date.parse(e.at)).filter(Number.isFinite), at);
 		const held = heldUntil(svc), due = Math.max(waiting.some((e) => !holds(e)) ? at + t.wake : Math.max(at + t.wake, first + t.hold), held);
 		// A wake that is due no later is kept, unless the boss's answering now holds it past its time.
@@ -463,7 +472,7 @@ export function createRuns(o: RunsOptions) {
 		for (const svc of [...blocked]) (blocked.delete(svc), poke(svc));
 	};
 	const begin = async (svc: Svc) => {
-		if (stopped || svc.run || svc.state !== "standing" || !o.enabled() || !waitingOf(svc).length) return;
+		if (stopped || svc.run || svc.state !== "standing" || !o.enabled() || !waitingOf(svc).some((e) => !e.quiet)) return;
 		if (!svc.ref.live()) return; // the identity registers first: runs reply under it. The service pokes again when it is live.
 		if (slots >= o.max()) return void blocked.add(svc);
 		slots++;
@@ -493,7 +502,7 @@ export function createRuns(o: RunsOptions) {
 		svc.notices = svc.notices.filter((n) => n.id !== "settings");
 		// The seat is proven on a listing read now, not on the flag the last Herdr left: a new Herdr that answers before the server's connections are acknowledged again may hold the pane's id for the boss's own shell (F10).
 		// A refused wake is made again when the seat is proven (the look pokes) or at the service's next refresh.
-		if (!(await svc.ref.proven())) {
+		if (!headlessOn() && !(await svc.ref.proven())) {
 			if (active.ended) return;
 			slots--;
 			svc.run = undefined;
@@ -572,6 +581,7 @@ export function createRuns(o: RunsOptions) {
 	/** Starts pi in the run's pane, finds its process, and waits for its claim; a start that fails ends the run as crashed. */
 	const launch = async (active: Active, name: string, extra: string[] = []) => {
 		const { rec, svc } = active, id = rec.id;
+		if (active.headless || headlessOn()) return launchKid(active, [...runArgs(active, name), ...extra]);
 		for (let attempt = 1; ; attempt++) {
 			let started = false;
 			try {
@@ -585,7 +595,7 @@ export function createRuns(o: RunsOptions) {
 					return void (await finish(active, "herdr-restart", "the standing pane is no longer proven to be the tower's"));
 				}
 				// A local run (the boss conversation included, whose resumed session may still have had a shell) names its tools: the tower tools and read-only files, no shell or edit (runallow.ts). An ally run keeps its sender's gate.
-				await start(o.run, o.sleep, rec.agent, rec.pane, ["--name", name, "--sb-run", id, ...extra, ...(rec.kind === "local" ? ["--tools", (isHeadSvc(svc) ? HEAD_RUN_TOOLS : LOCAL_RUN_TOOLS).join(",")] : []), ...((isHeadSvc(svc) && o.headModel ? o.headModel() : o.model()) ? ["--model", (isHeadSvc(svc) && o.headModel ? o.headModel() : o.model())!] : [])], () => (rec.kind === "ally" ? allyPaneHeld(active) : svc.ref.proven()));
+				await start(o.run, o.sleep, rec.agent, rec.pane, [...runArgs(active, name), ...extra], () => (rec.kind === "ally" ? allyPaneHeld(active) : svc.ref.proven()));
 				started = true;
 				const found = await procOf(rec.pane, id);
 				if (!found) throw new Error("pi's process was not found in the pane");
@@ -652,6 +662,36 @@ export function createRuns(o: RunsOptions) {
 		}
 	};
 
+	/** What a run's pi is started with: its name, the run id, a local run's tools (the tower tools and read-only files, no shell or edit; runallow.ts; an ally run keeps its sender's gate), and the model. */
+	const runArgs = (active: Active, name: string) => {
+		const head = isHeadSvc(active.svc), model = head && o.headModel ? o.headModel() : o.model();
+		return ["--name", name, "--sb-run", active.rec.id, ...(active.rec.kind === "local" ? ["--tools", (head ? HEAD_RUN_TOOLS : LOCAL_RUN_TOOLS).join(",")] : []), ...(model ? ["--model", model] : [])];
+	};
+	/** Starts a headless run's pi as the server's child (runkids.ts) and waits for its claim; a start that fails ends the run as crashed. Nothing here touches a pane. */
+	const launchKid = async (active: Active, args: string[]) => {
+		const { rec, svc } = active, kids = o.kids!;
+		active.headless = true;
+		rec.headless = true;
+		try {
+			const got = kids.start({ run: rec.id, workspace: rec.workspace, kind: headRun(active) ? "head" : rec.kind, args, cwd: await svc.ref.cwd(), onExit: (exit) => kidExit(active, exit) });
+			rec.pid = got.pid;
+			writeRun(slot, rec);
+			const claimed = await waitPastTrust(o.sleep, () => active.token || active.ended, t.claim, 200);
+			if (!claimed) throw new Error(`pi did not claim the run within ${t.claim / 1000} s`);
+		} catch (cause) {
+			if (active.ended) return;
+			error("run-start", `${rec.id}: ${(cause as Error).message}`);
+			noticeOf(svc, { id: rec.kind === "ally" ? `start-${rec.id}` : "start", level: "warning", kind: "start", text: `A run could not start: ${(cause as Error).message}` });
+			kids.kill(rec.id);
+			await finish(active, "crashed", (cause as Error).message);
+		}
+	};
+	/** A headless run's pi exited: the watch sees it at once instead of at its next tick. */
+	const kidExit = (active: Active, exit: ChildExit) => {
+		if (!active.ended && (exit.code !== 0 || exit.signal)) active.why ??= `pi exited with ${exit.signal ?? `code ${exit.code}`}`;
+		void tick().catch((cause: Error) => error("run-watch", cause.message));
+	};
+
 	// --- ally runs --------------------------------------------------------------------------------------------------------------------------------------------------
 
 	/** A message a teammate's device sent waits for an ally run: one run per device, started in a pane split off the tower's tab, with the messages that wait when it starts (5 at most, oldest first). */
@@ -713,8 +753,8 @@ export function createRuns(o: RunsOptions) {
 		if (active.ended) return;
 		svc.refusedAt = undefined;
 		svc.notices = svc.notices.filter((n) => n.id !== "settings");
-		// The ally pane is split off the standing pane: not while the seat is unproven (the tab may be a stranger's).
-		if (!(await svc.ref.proven())) {
+		// The ally pane is split off the standing pane: not while the seat is unproven (the tab may be a stranger's). A headless ally run has no pane.
+		if (!headlessOn() && !(await svc.ref.proven())) {
 			if (active.ended) return;
 			slots--;
 			svc.allies.delete(device);
@@ -733,7 +773,7 @@ export function createRuns(o: RunsOptions) {
 			log.line("ally-gone", { workspace: svc.ref.workspace, device, run: id, n: items.length });
 			return;
 		}
-		try {
+		if (!headlessOn()) try {
 			const lead = svc.ref.record().pane, dir = await svc.ref.cwd();
 			const made = await result(o.run, ["pane", "split", lead, "--direction", "right", "--cwd", dir, "--no-focus"]);
 			rec.pane = made.pane.pane_id as string;
@@ -925,6 +965,12 @@ export function createRuns(o: RunsOptions) {
 	}
 	const escalate = async (a: Active) => {
 		const pane = a.rec.pane;
+		// A headless run: its stdin closes (pi shuts down once it settles), then after `signal` its process group is killed. No keys, no pane.
+		if (a.headless) {
+			if (a.escalated === undefined) return void ((a.escalated = now()), o.kids!.close(a.rec.id));
+			if (!a.signalled && now() - a.escalated >= t.signal) (a.signalled = true, o.kids!.kill(a.rec.id));
+			return;
+		}
 		if (a.escalated === undefined) {
 			a.escalated = now();
 			log.line("run-quit-keys", { run: a.rec.id });
@@ -941,6 +987,7 @@ export function createRuns(o: RunsOptions) {
 		}
 	};
 	const gone = (a: Active) => {
+		if (a.headless) return a.ended === true || o.kids!.gone(a.rec.id);
 		const pid = a.rec.pid;
 		if (pid === undefined) return false;
 		if (!alive(pid)) return true;
@@ -957,6 +1004,7 @@ export function createRuns(o: RunsOptions) {
 	 * after its panes' processes do (a clean stop), and a verdict at the first sight would be taken before it says so. A Herdr that was lost and does not come back has `lost` to do so; then the pi's death is a crash as before (A3).
 	 */
 	const diedWithHerdr = (a: Active) => {
+		if (a.headless) return false; // the server's child is no process of Herdr's
 		if (pendingTakeovers > 0 || (herdrLostAt !== undefined && now() - herdrLostAt < t.lost)) return true;
 		if (a.goneSeen) return false;
 		return (a.goneSeen = true);
@@ -975,6 +1023,7 @@ export function createRuns(o: RunsOptions) {
 		try { writeRun(slot, a.rec); pruneRuns(slot, ws); } catch (cause) { error("run-record", (cause as Error).message); }
 		if (a.token) byToken.delete(a.token);
 		byRun.delete(a.rec.id);
+		if (a.headless) (o.kids!.kill(a.rec.id), o.kids!.forget(a.rec.id));
 		for (const [dialogId, run] of confirms) if (run === a.rec.id) confirms.delete(dialogId);
 		slots = Math.max(0, slots - 1);
 		if (svc.run === a) svc.run = undefined;
@@ -1006,7 +1055,7 @@ export function createRuns(o: RunsOptions) {
 		if (!ally) {
 			svc.lastRun = { endedAt: a.rec.endedAt, outcome };
 			svc.state = svc.state === "held" ? "held" : "standing";
-			svc.ref.freed(runEndGate(Boolean(a.unstarted)));
+			if (!a.headless) svc.ref.freed(runEndGate(Boolean(a.unstarted)));
 		}
 		log.line("run-end", { workspace: ws, run: a.rec.id, kind: a.rec.kind, outcome, ...(detail ? { detail: phrase(detail, 120) } : {}) });
 		if (failed && ally) {
@@ -1021,7 +1070,7 @@ export function createRuns(o: RunsOptions) {
 			svc.crashes = [...svc.crashes.filter((x) => x > cutoff), now()];
 			if (svc.crashes.length >= LOOP_MAX) {
 				svc.state = "held";
-				const tail = await o.run(["pane", "read", a.rec.pane, "--lines", "20"]).then((x) => x.trim().split("\n").slice(-20).join("\n"), () => "");
+				const tail = a.headless ? "" : await o.run(["pane", "read", a.rec.pane, "--lines", "20"]).then((x) => x.trim().split("\n").slice(-20).join("\n"), () => "");
 				noticeOf(svc, { id: "loop", level: "error", kind: "loop", text: `${LOOP_MAX} runs crashed or timed out in ${Math.round(t.loop / 60_000)} minutes, so the tower stops waking. The queue is kept; Retry, or a message from the boss, wakes it again.`, ...(tail ? { detail: tail } : {}) });
 				log.line("run-loop", { workspace: ws });
 			}
@@ -1145,6 +1194,8 @@ export function createRuns(o: RunsOptions) {
 				if (now() - a.lastPoll > t.lost) {
 					log.line("run-lost", { run: a.rec.id });
 					terminate(a, "crashed");
+					// A headless pi that stopped polling hangs: it is killed now (its group, or taskkill /T /F on Windows), and its exit ends the run.
+					if (a.headless) (a.escalated = a.terminating, (a.signalled = true), o.kids!.kill(a.rec.id));
 					continue;
 				}
 				// The boss is in the run (docs/how-it-works.md, The boss in a run): the cap and the idle wrap-up wait for them. Their silence for `bossAway` while the run is idle, or `bossMax` in all, ends it.
@@ -1230,7 +1281,16 @@ export function createRuns(o: RunsOptions) {
 	/** `--sb-run`: the pi the server started claims its run. */
 	async function claim(req: ClaimRequest): Promise<ClaimReply> {
 		const runId = phrase(req.runId, 64), pane = phrase(req.pane, 64), pid = req.pid, started = typeof req.started === "string" ? req.started : undefined;
-		if (!runId || !pane || typeof pid !== "number" || !Number.isInteger(pid)) return refuse("a claim needs the run id, the pane, and the PID");
+		if (!runId || typeof pid !== "number" || !Number.isInteger(pid)) return refuse("a claim needs the run id, the pane, and the PID");
+		const kid = byRun.get(runId);
+		// A headless run claims with the PID the server spawned and the nonce it was given; no pane, and no Herdr takeover holds it.
+		if (kid?.headless) {
+			if (kid.ended) return refuse("this run is not one the server has live (it ended, or it never started)");
+			if (!o.kids!.claimed(runId, pid, req.nonce)) return refuse("the PID or the nonce are not the ones the server started this run with");
+			if (kid.token) return refuse("this run was claimed already");
+			return kid.svc.ref.live() ? issue(kid, req) : heldReply();
+		}
+		if (!pane) return refuse("a claim needs the run id, the pane, and the PID");
 		// Until every Herdr takeover the server has seen is processed, a claim is held: a pi that Herdr's integration resumed meets a run that is already ended.
 		if (pendingTakeovers > 0) return heldReply();
 		const a = byRun.get(runId);
@@ -1326,6 +1386,8 @@ export function createRuns(o: RunsOptions) {
 		const fresh = await refreshed(a);
 		if (fresh) return { ok: true as const, brief: fresh.text, ...(fresh.live !== undefined ? { live: fresh.live } : {}) };
 		if (req.idle !== true) return (a.idleSince = undefined, { ok: true as const });
+		// A draining server (a restart) offers nothing more: what is not taken waits for the next server.
+		if (stopped) return (a.idleSince ??= now(), { ok: true as const });
 		// An event offered and not yet taken is offered again (the run did not confirm it); then the next one waiting.
 		const again = [...a.offered.values()][0], next = again ?? (a.rec.kind === "ally" ? allyEvents(a).find((e) => !a.offered.has(e.id)) : waitingOf(a.svc, new Set(a.offered.keys()))[0]);
 		if (!next) return (a.idleSince ??= now(), { ok: true as const });
@@ -1496,6 +1558,11 @@ export function createRuns(o: RunsOptions) {
 		services.set(ref.workspace, svc);
 		const ws = ref.workspace, live = new Set<string>();
 		for (const rec of listRuns(slot, ws).filter((r) => !r.outcome)) {
+			// A headless run was the last server's child: it drained or died with it, and nothing reconnects (its claim is refused). Its events follow the crash flag rule below.
+			if (rec.headless) {
+				try { writeRun(slot, { ...rec, outcome: "quit", endedAt: iso(now()), detail: "the sb server that started it went away" }); } catch (cause) { error("run-record", (cause as Error).message); }
+				continue;
+			}
 			// A run of a server that went away: it has `lost` to reconnect with its run id; until then it is the service's run.
 			// A conversation of the last server is still the boss's: its time counts from its start (the boss's presence is memory only, and their next word tells it again).
 			const a: Active = { rec, svc, commands: [], lastPoll: now(), started: Date.parse(rec.startedAt) || now(), digestKeys: [], offered: new Map(), polled: true, recovering: now(), ...(rec.left ? { left: true, pending: "quit" as Outcome } : {}), ...(rec.conversation ? { boss: now(), bossSince: Date.parse(rec.startedAt) || now(), turns: ((p) => (p?.run === rec.id ? p.turns : rec.turns ?? rec.conversation!.turns))(readPointer(slot, ws)), ...(rec.fresh ? { fresh: true } : {}), ...(rec.deferred && rec.file && readPointer(slot, ws)?.run !== rec.id ? { pendingFile: rec.file } : {}) } : {}) };
@@ -1860,13 +1927,14 @@ export function createRuns(o: RunsOptions) {
 				if (!gone(a)) {
 					// Windows: a pi that stays is not ended by force (it breaks the pane for the next pi). A run that has handed in its note is recorded done and its pi leaves by itself; any other is left unfinished, as a restart leaves it: its pi
 					// reclaims it from the next server, or ends itself when the server stays away.
-					if (win && a.closing === undefined) {
+					if (a.headless) o.kids!.kill(a.rec.id);
+					else if (win && a.closing === undefined) {
 						log.line("run-left", { run: a.rec.id });
 						a.rec.left = true;
 						writeRun(slot, a.rec);
 						continue;
 					}
-					if (!win) await reap(a);
+					else if (!win) await reap(a);
 				}
 				// A run cut off mid-turn may have handled what it took: the events come back flagged, as after a Herdr restart (B5R3-F002).
 				// A run that already handed in its tower_done handled what it took: the events are removed.
@@ -1874,6 +1942,32 @@ export function createRuns(o: RunsOptions) {
 				else await finish(a, "quit", "the sb server stopped", true);
 			}
 		},
+		/**
+		 * A server restart with headless runs (decision F-5): no run starts from now on; each live one gets up to `ms` to reach an idle moment, then its stdin closes, and one that has not gone after `stopGrace`
+		 * more is killed. Events not taken stay queued and taken ones follow the crash flag rule; a boss conversation resumes the same session file at the boss's next word. A pane run is left as before (it reclaims).
+		 */
+		async drain(ms: number) {
+			stopped = true;
+			const live = [...byRun.values()].filter((a) => !a.ended && a.headless);
+			for (const a of live) if (a.rec.conversation) o.kids!.ring(a.rec.workspace).add("· the sb server restarts; your next word resumes this session");
+			for (let waited = 0; waited < ms && live.some((a) => !gone(a) && a.idleSince === undefined && a.closing === undefined); waited += 200) await o.sleep(200);
+			// A run cut off mid-turn may have handled what it took: those events come back flagged (`left` keeps them), as after a stop.
+			for (const a of live) (a.pending ??= a.closing !== undefined ? "done" : "quit", (a.why ??= "the sb server restarted"), (a.left = a.closing === undefined || undefined), o.kids!.close(a.rec.id));
+			for (let waited = 0; waited < Math.max(t.stopGrace, 8000) && live.some((a) => !gone(a)); waited += 200) await o.sleep(200);
+			for (const a of live) await finish(a, a.closing !== undefined ? "done" : "quit", "the sb server restarted", a.closing === undefined);
+			return live.length;
+		},
+		/** The boss's `/stop` (or Esc on an empty line) at a viewer: the live local run of the workspace ends its turn. Only a headless run takes it; false when none is live. */
+		abort(workspace: string): boolean {
+			const a = services.get(workspace)?.run;
+			if (!a || a.ended || !a.headless || !a.token) return false;
+			log.line("run-abort", { workspace, run: a.rec.id });
+			return o.kids!.abort(workspace, a.rec.id);
+		},
+		/** Whether runs start headless now (`towerRuns.headless`). */
+		headless: () => headlessOn(),
+		/** The headless children: rings, dialogs, and their answers (runkids.ts). */
+		kids: () => o.kids,
 		/** The notes of a service, for the brief. */
 		notes: (workspace: string) => readNotes(slot, workspace),
 		running: () => slots,

@@ -21,6 +21,9 @@ export interface PollAnswer {
 	holding?: true;
 	/** The device is unattended (no boss at it): the cards are shown as a block, and the card view takes the keys only when `/wait` asks for it. */
 	unattended?: true;
+	/** Headless runs: the transcript lines since the last poll (the server's ring, prefixes its own), and the dialogs its runs wait on (entry.ts). */
+	lines?: string[];
+	dialogs?: { key: string; method: string; title: string; message?: string; options?: string[] }[];
 }
 /** The answer of one poll: the state; the server stands in for no tower here any more (the prompt ends for good); or no usable answer yet (the server is down, restarting, or still loading). */
 export type Polled = { kind: "state"; answer: PollAnswer } | { kind: "gone"; error?: string } | { kind: "wait"; why: string };
@@ -50,4 +53,8 @@ export interface PromptSource {
 	leave(): Promise<void>;
 	/** The prompt is ending on its own, because a run starts or the boss woke the tower: the server need not wait for it. Best effort. */
 	gone(): Promise<void>;
+	/** Headless runs (entry.ts): `/stop` aborts the live turn (false when none runs); `@<workspace>` posts the boss's words straight to that tower; a dialog's answer. Each rejects with the server's own words. */
+	abort?(): Promise<boolean>;
+	direct?(to: string, text: string): Promise<{ label: string }>;
+	answer?(key: string, reply: { value?: string; confirmed?: boolean; cancelled?: true }): Promise<void>;
 }

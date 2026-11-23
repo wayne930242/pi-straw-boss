@@ -143,7 +143,9 @@ export type NoReason =
 	/** Windows: the pane is not known to be a fresh shell, and the foreground list cannot tell an idle shell from a running program there. */
 	| "unproven"
 	/** The foreground is not a shell at its idle prompt: a build, an editor, a program of the boss's. */
-	| "not-idle";
+	| "not-idle"
+	/** Headless runs (`towerRuns.headless`): the pane is not the one a viewer call made within the last minute, or its viewer polled already (`onceGate`). */
+	| "once";
 export type TypeVerdict = { type: true } | { type: false; reason: NoReason };
 
 /**
@@ -182,7 +184,13 @@ export interface TypeFacts {
 	fresh(): boolean;
 	/** Herdr's process info of the pane. */
 	read(): Promise<ProcessInfo | undefined>;
+	/** Headless runs only: what `onceGate` asks. Absent: the pane path's rules alone. */
+	once?(): OnceFacts;
 }
+/** What the one typing of a viewer pane rests on (docs/specs/2026-11-23-lite-b2-d-e-f.md §4.4): when the call that made the pane made it, and whether its viewer polled since. */
+export interface OnceFacts { made?: number; polled: boolean; now: number; windowMs: number }
+/** Headless runs: the server types only into the pane a viewer call made, within `windowMs` of making it, and only until the viewer's first poll proves it runs. Never again after that, at any look, Retry, or run end. */
+export const onceGate = (f: OnceFacts): boolean => f.made !== undefined && !f.polled && f.now - f.made >= 0 && f.now - f.made < f.windowMs;
 
 /** May the look type the command into this pane now. The first rule that says no is the answer; `type: true` only when none does. */
 export async function typeGate(f: TypeFacts): Promise<TypeVerdict> {
@@ -193,6 +201,7 @@ export async function typeGate(f: TypeFacts): Promise<TypeVerdict> {
 	if (f.run) return no("run");
 	if (f.agent === "other") return no("agent");
 	if (f.prompt()) return no("prompt");
+	if (f.once && !onceGate(f.once())) return no("once");
 	await f.gone();
 	if (!f.seated()) return no("unseated");
 	if (f.prompt()) return no("prompt");

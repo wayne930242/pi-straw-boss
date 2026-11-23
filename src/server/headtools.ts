@@ -17,6 +17,9 @@ export interface HeadPort {
 	relay(turn: string | undefined): string | undefined;
 	/** The boss's own words of the boss event `turn` names, for the card of the ask (docs/specs/2026-11-07-head-log-cards.md); read from the queue by the server, never said by the model. */
 	boss(turn: string | undefined): string | undefined;
+	/** Headless runs (docs/specs/2026-11-23-f-entry.md §2.5, FE-1): whether a notice to this workspace is parked rather than delivered (no service, nobody joined there), and the parking itself. Absent: never parked. */
+	parkable?(workspace: string): Promise<boolean>;
+	park?(d: { workspace: string; label: string; message: string; ask: string }): void;
 	/** `boss_auto`: switches auto mode on or off only on the boss's own matching words in this turn, which the server reads itself (automode.ts `bossAuto`); throws when it refuses. */
 	auto(on: boolean): ToolResult;
 }
@@ -69,8 +72,15 @@ async function forward(host: HeadHost, args: Record<string, unknown>, extra: Cal
 	if (isHead(asked)) throw new Error("That is the head tower's own workspace: it has no tower to forward to");
 	if (!target) throw new Error(`${asked.label} is a sub workspace with no open parent workspace, so it has no tower; ask the boss to open the parent workspace first`);
 	if (supersedes) host.head.checkSupersedes(supersedes);
+	const relay = host.head.relay(extra.turn);
+	// A notice (no reply, not the boss's words) to a workspace nobody works in opens nothing: no service, no tab, no run. It waits there quietly for the next run, at most a day.
+	if (args.reply === false && !relay && (await host.head.parkable?.(target.workspace_id))) {
+		const parked = host.head.openAsk({ workspace: target.workspace_id, label: target.label, first: message, ...(supersedes ? { supersedes } : {}) });
+		host.head.park!({ workspace: target.workspace_id, label: target.label, message, ask: parked.id });
+		return { text: `parked at ${target.label} as ask ${parked.id}: nobody works there now, so no tower was opened; the next run there takes it (it is kept for 24 hours). Do not forward it again.`, details: { ask: parked.id, workspace: target.workspace_id, parked: true } };
+	}
 	const ensured = await host.head.ensureTower(target.workspace_id);
-	const relay = host.head.relay(extra.turn), boss = relay ? host.head.boss(extra.turn) : undefined, ask = host.head.openAsk({ workspace: target.workspace_id, label: target.label, first: message, ...(relay ? { relay } : {}), ...(boss ? { boss } : {}), ...(supersedes ? { supersedes } : {}) });
+	const boss = relay ? host.head.boss(extra.turn) : undefined, ask = host.head.openAsk({ workspace: target.workspace_id, label: target.label, first: message, ...(relay ? { relay } : {}), ...(boss ? { boss } : {}), ...(supersedes ? { supersedes } : {}) });
 	try {
 		const sent = await host.reach.forward(ensured.id, message, { ask: ask.id, ...(relay ? { relay } : {}) }, args.reply !== false);
 		if (sent.status !== "sent") throw new Error(`The tower of ${target.label} did not take the message: ${sent.status} ${sent.code ?? ""} ${sent.detail ?? ""}`.trim());

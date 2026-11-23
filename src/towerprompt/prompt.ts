@@ -5,6 +5,7 @@ import { CLEAR, draw, type Look, lookOf, PLAIN } from "./look.ts";
 import { type Locale, textsFor } from "./messages.ts";
 import { createPick } from "./pick.ts";
 import { waitBlock } from "./waitblock.ts";
+import { dialogLines, entryLine, shown as shownLine } from "./entry.ts";
 import type { PollAnswer, PromptSource } from "./source.ts";
 
 // The screen of the tower prompt (docs/how-it-works.md, The standing pane): a title, the tower's state on one line, key rows as the hint, and a line to write at the styled prompt (`tower> ` in ASCII; look.ts draws them). It polls its source for the state and for the order to
@@ -92,7 +93,7 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 	const clock = o.clock ?? REAL_CLOCK, text = textsFor(o.locale), pollMs = o.pollMs ?? POLL_MS, wakingMs = Math.min(pollMs, o.wakingPollMs ?? WAKING_POLL_MS), source = o.source;
 	const terminal = (o.output as Partial<NodeJS.WriteStream>).isTTY === true;
 	const look = o.look ?? (o.env ? lookOf(o.env, terminal) : PLAIN), d = draw({ ...look, color: look.color && terminal, clear: look.clear && terminal });
-	let begun = false;
+	let begun = false, shownDialogs = "", lastAnswer: PollAnswer | undefined;
 	// The rows of the card view (cardview.ts) as drawn last, while they stand right above the message line: a line said meanwhile goes above them, and a row that changes is drawn over them. An Enter (its echo is a line of its own) ends that.
 	let region: string[] = [];
 	// What the input's last read was, seen before readline had it: one typed key and no part of a paste (`lone`), and the message line as it was before that key.
@@ -255,6 +256,12 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		if (wokeAt !== undefined && ((polled.answer.state === "standing" && polled.answer.queued === 0 && clock.now() - wokeAt > WAKING_GRACE_MS) || polled.answer.state === "held" || clock.now() - wokeAt > WAKING_MAX_MS)) wokeAt = undefined;
 		const label = clean(polled.answer.label), now = lineOf(polled.answer);
 		begin();
+		// Headless runs: the live transcript above the input line, and a run's dialogs when they change (entry.ts).
+		lastAnswer = polled.answer;
+		for (const l of polled.answer.lines ?? []) say(shownLine(l));
+		const dl = dialogLines(polled.answer, o.locale, shownDialogs);
+		shownDialogs = dl.key;
+		dl.lines.forEach((l, i) => say(i === 0 ? d.note("ask", l) : l));
 		// The title when the label is new (the first look, or a tower renamed), the state line when it changed.
 		if (label !== shownLabel) {
 			shownLabel = label;
@@ -315,6 +322,15 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		// as Ctrl+D does, and any other is refused with what the prompt takes. `//` at the start, or a space before the `/`, keeps the line a message (posted as typed; the space is trimmed with the rest of the message's
 		// edges). A paste of several lines is one message whatever its first line is, and its `/` lines are never obeyed (a log that starts with a path, a file list with `/quit` in it).
 		const word = commandOf(lines);
+		if (!pasted && lines.length === 1) {
+			let said: string | undefined;
+			try {
+				said = await entryLine(lines[0]!, { source, answer: lastAnswer, locale: o.locale });
+			} catch (cause) {
+				return void say(d.note("bad", text.refused(clean((cause as Error).message, 400))));
+			}
+			if (said !== undefined) return void say(d.note("info", said));
+		}
 		if (word !== undefined) {
 			if (word === "/new") return void (await startOver());
 			if (word === "/quit") return leave();

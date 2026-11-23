@@ -42,6 +42,8 @@ export interface HeadAsk {
 	relay?: string;
 	/** The id of the first ask of the broadcast this one belongs to (docs/specs/2026-11-06-head-page-minimal.md); a file from before it has none, and `groupsOf` derives it. */
 	group?: string;
+	/** Headless runs: the forward was a notice to a workspace nobody was in, so it was parked in that workspace's queue as a quiet event and no run was woken (docs/specs/2026-11-23-f-entry.md §2.5). */
+	parked?: number;
 	/** The head's cap closed it before its time. */
 	closed?: true;
 	answers: HeadAnswer[];
@@ -173,6 +175,13 @@ export function noteToolCall(slot: Slot, now: number, workspace: string, event: 
 	} catch { /* the ask is a convenience of the page */ }
 }
 /** Closes an ask: the forward it was opened for was not delivered. */
+/** Marks an ask parked (see `parked`). */
+export function parkAsk(slot: Slot, now: number, id: string): void {
+	const file = load(slot), ask = file.asks.find((a) => a.id === id);
+	if (!ask) return;
+	ask.parked = now;
+	save(slot, file);
+}
 export function closeAsk(slot: Slot, id: string): void {
 	const file = load(slot), ask = file.asks.find((a) => a.id === id);
 	if (!ask) return;

@@ -761,7 +761,7 @@ test("B5R4-N1: a stop after tower_done does not bring the handled event back", a
 });
 
 test("a config.json that cannot be parsed keeps the service on, is told once as an error (log and the status's lastError), and a missing file is no error (RV6-F009)", async () => {
-	assert.deepEqual(readTowerRuns(join(world.stateDir, "nowhere")), { enabled: true, max: 4 }, "no file: the default, with nothing to tell");
+	assert.deepEqual(readTowerRuns(join(world.stateDir, "nowhere")), { enabled: true, max: 4, headless: false }, "no file: the default, with nothing to tell (headless runs off)");
 	writeFileSync(join(world.stateDir, "config.json"), '{ "towerRuns": { "enabled": false, ');
 	const parsed = readTowerRuns(world.stateDir);
 	assert.equal(parsed.enabled, true);

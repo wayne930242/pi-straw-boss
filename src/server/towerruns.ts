@@ -8,6 +8,10 @@ import { join } from "node:path";
 export interface TowerRuns {
 	enabled: boolean;
 	max: number;
+	/** F (docs/specs/2026-11-23-lite-b2-d-e-f.md §4): runs are pi in RPC mode as the server's children, with no pane. Off unless `headless` is `true`; off is 0.84.0's behavior. */
+	headless: boolean;
+	/** pi's CLI file for headless runs, when the `pi` on the PATH is not the one (runchild.ts `resolvePi`). */
+	pi?: string;
 	/** Set when the file exists but cannot be read or parsed: the service stays on, and the server tells the boss (the default would otherwise override an `enabled: false` without a word). */
 	problem?: string;
 }
@@ -21,8 +25,8 @@ export function readTowerRuns(stateDir: string): TowerRuns {
 	} catch (cause) {
 		if ((cause as NodeJS.ErrnoException).code !== "ENOENT") problem = `${join(stateDir, "config.json")} cannot be read (${(cause as Error).message.slice(0, 120)}), so towerRuns.enabled and max are the defaults: the tower service is on`;
 	}
-	const found = typeof section === "object" && section !== null ? (section as { enabled?: unknown; max?: unknown }) : {};
+	const found = typeof section === "object" && section !== null ? (section as { enabled?: unknown; max?: unknown; headless?: unknown; pi?: unknown }) : {};
 	const max = typeof found.max === "number" && Number.isInteger(found.max) && found.max > 0 ? found.max : DEFAULT_MAX;
-	return { enabled: found.enabled !== false, max, ...(problem ? { problem } : {}) };
+	return { enabled: found.enabled !== false, max, headless: found.headless === true, ...(typeof found.pi === "string" && found.pi ? { pi: found.pi } : {}), ...(problem ? { problem } : {}) };
 }
 export const towerRunsEnabled = (stateDir: string) => readTowerRuns(stateDir).enabled;

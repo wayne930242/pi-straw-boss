@@ -19,7 +19,7 @@ import type { IntercomModule } from "./intercom.ts";
 import type { Log } from "./log.ts";
 import { secretDir, type Slot, towerId, towerName } from "./record.ts";
 import { createHead, HEAD_ORDER, HEAD_TOKEN, type HeadEnsured } from "./head.ts";
-import { asked, checkSupersedes, closeAsk, isAct, noteToolCall, openAsk, openAsks } from "./headasks.ts";
+import { asked, checkSupersedes, closeAsk, isAct, noteToolCall, openAsk, openAsks, parkAsk } from "./headasks.ts";
 import { headBrief, headIntake, relayOnlyFromHead, stateWord } from "./headside.ts";
 import type { Requester } from "../autostate.ts";
 import type { AutoMode } from "./automode.ts";
@@ -31,6 +31,8 @@ import type { Allows } from "./allows.ts";
 import type { Asks } from "./asks.ts";
 import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, localTools } from "./towerbrief.ts";
 import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
+import { createKids, type KidsPort } from "./runkids.ts";
+import { resolvePi } from "./runchild.ts";
 import { digestOf, headLabel, openCards, type WaitDigest, type WaitList, waitList, waitRows } from "./waitlist.ts";
 import { claimGate, proofGate, seatGate, type SeatVerdict } from "./typegate.ts";
 import { forwardOpenedWait, raisedWait } from "./allywait.ts";
@@ -56,7 +58,7 @@ import { openSeen, type Seen } from "./towerseen.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import type { CarBook } from "./carbook.ts";
 import { noteTrains } from "./trainnote.ts";
-import { appendEvent, bindDir, deleteService, HEAD_KEY, headDir, listServices, purgeAll, purgeQueues, putLedger, queueLength, readHeadService, readQueue, readLedger, readService, type ServiceRecord, towerDir, unbindDir, writeService } from "./towerstore.ts";
+import { appendEvent, appendQuiet, bindDir, deleteService, HEAD_KEY, headDir, listServices, purgeAll, purgeQueues, putLedger, queueLength, readHeadService, readQueue, readLedger, readService, type ServiceRecord, towerDir, unbindDir, writeService } from "./towerstore.ts";
 
 // The tower service without runs (docs/specs/2026-10-26-sb-backend.md, The tower service; build step B4), behind `towerRuns.enabled`. The server stands in for a workspace's tower:
 // it makes the tower tab with a standing pane that sits at its shell prompt, registers the tower identity (`sb-tower-<workspace>`, with a cwd of its own) with pi-intercom, writes
@@ -110,6 +112,8 @@ export interface TowersOptions {
 	retryMs?: number[];
 	/** Replaces the runs' seams (timers, starting pi, the settings check, liveness), for tests. */
 	runs?: Partial<RunsOptions>;
+	/** Replaces the headless children's seams (the spawn, pi's path, the kill), for tests. */
+	kidsPort?: Partial<KidsPort>;
 	/** The line typed into a standing pane's shell to start the tower prompt (main.ts builds it from the CLI beside the server); without it the server types nothing and reports no stand-in. */
 	promptCommand?: (workspace: string) => string | undefined;
 	/** Whether this device has no boss at it (main.ts): its stand-ins stay idle whatever cards wait. */
@@ -146,7 +150,8 @@ export interface Towers extends Returns {
 	/** Whether the tower runs are being restored after a start (`recoverUntil`), or not loaded yet: Herdr may not list every pane. */
 	recovering(): boolean;
 	/** Gives a workspace its tower (a promotion, `/boss tower`, a handover from a resident tower of this build). */
-	ensure(request: { workspace: string; pane?: string; cwd?: string; pid?: number; made?: { pane: string; at: number } }): Promise<Ensured>;
+	/** `view`: headless runs only (towerRuns.headless): a viewer tab is made when none runs; without it the service has no tab (docs/specs/2026-11-23-f-entry.md §2.2). */
+	ensure(request: { workspace: string; pane?: string; cwd?: string; pid?: number; made?: { pane: string; at: number }; view?: boolean }): Promise<Ensured>;
 	/** The boss closed the tower: its tab goes, and the service with it. */
 	close(workspace: string): Promise<{ workspace: string; id: string }>;
 	/** The opener, with the persisted ledger, for the workspace's tower. */
@@ -388,9 +393,14 @@ export function createTowers(o: TowersOptions): Towers {
 		return { line, since: rows };
 	};
 	const runs: Runs = createRuns({ slot, run, sleep, now, log, sessions: sessionsRoot(o.env), enabled: o.enabled, max: () => readTowerRuns(slot.stateDir).max, trustDir: trustDir(slot.stateDir), model: () => towerModel(slot.stateDir), headModel: () => headModel(slot.stateDir), ...(allyPort ? { ally: allyPort } : {}), unforwarded: async (run, ws) => unforwardedWait(slot, ws, run, await o.sessions().then((x) => new Set(x.map((s) => s.id)), () => undefined), (event, facts) => log.line(event, facts)),
+		kids: createKids({ port: { on: () => readTowerRuns(slot.stateDir).headless, pi: () => resolvePi(o.env, readTowerRuns(slot.stateDir).pi), env: o.env, dir: (ws) => towerDir(slot, ws), ...o.kidsPort }, log, now }),
 		allyEnded: (end) => allyReceipts({ slot, now, unattended: () => o.unattended?.() === true, answered: (run, ask) => answered.has(run, ask), label: () => o.ally?.selfLabel?.() ?? "the box", log: (event, facts) => log.line(event, facts), send: (ws, device, text, inReplyTo) => o.link ? o.link({ op: "send", device, text, reply: false, inReplyTo }, services.get(ws)?.record.id ?? "") : Promise.reject(new Error("no link holder")) })(end), ...o.runs });
 
-	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.standingWait ? { wait: o.standingWait } : {}), ...(o.runs?.platform ? { platform: o.runs.platform } : {}), ...(o.runs?.alive ? { alive: o.runs.alive } : {}), locale: () => localeOf(o.env, slot.stateDir), attended: () => !o.unattended?.() });
+	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.standingWait ? { wait: o.standingWait } : {}), ...(o.runs?.platform ? { platform: o.runs.platform } : {}), ...(o.runs?.alive ? { alive: o.runs.alive } : {}), locale: () => localeOf(o.env, slot.stateDir), attended: () => !o.unattended?.(), once: () => headless() });
+	/** `towerRuns.headless`: runs are the server's children, a service may have no tab, and a viewer pane is typed into once (docs/specs/2026-11-23-lite-b2-d-e-f.md §4). */
+	const headless = () => readTowerRuns(slot.stateDir).headless;
+	/** A service with no tab (headless runs): its record names no pane. */
+	const tabless = (l: Live) => l.record.pane === "";
 	const place = (l: Live): Place => ({ paneId: l.record.pane, tabId: l.record.tab, workspaceId: l.record.workspace });
 	const dirOf = (workspace: string) => join(towerDir(slot, workspace));
 	const error = (code: string, text: string) => log.line("error", { code, text: phrase(text, 300) });
@@ -532,7 +542,7 @@ export function createTowers(o: TowersOptions): Towers {
 		let wrote = true;
 		await Promise.all([
 			report(run, "workspace", l.record.workspace, isHeadL(l) ? { [HEAD_TOKEN]: l.record.id } : { tower: l.record.id, sb_tower_quit: null }),
-			report(run, "pane", l.record.pane, { sb_role: isHeadL(l) ? "head" : "tower", ...own }),
+			...(tabless(l) ? [] : [report(run, "pane", l.record.pane, { sb_role: isHeadL(l) ? "head" : "tower", ...own })]),
 		]).catch((cause: Error) => {
 			wrote = false;
 			// The pane (or its workspace) is gone: the pane a handover replaced, a workspace closed while no server ran. The reconcile loses the service, or finds its tab again within the recovery window; a report to what is not there is no error.
@@ -628,6 +638,7 @@ export function createTowers(o: TowersOptions): Towers {
 	/** `holds`, for a listing read now: a run's start and the marks use it; a listing that fails proves nothing. */
 	const proven = async (l: Live): Promise<boolean> => {
 		if (!l.seated || l.stopped) return false;
+		if (tabless(l)) return (await workspaces(run).catch(() => [])).some((w) => w.workspace_id === l.record.workspace);
 		const record = l.record, epoch = l.epoch;
 		try {
 			const pane = (await panes(run, record.workspace)).find((p) => p.pane_id === record.pane);
@@ -740,11 +751,21 @@ export function createTowers(o: TowersOptions): Towers {
 		if (!all.length && recovering) return;
 		for (const l of [...services.values()]) {
 			if (l.stopped) continue;
+			// A service with no tab stands while its workspace does.
+			if (tabless(l)) {
+				if (!recovering && !all.some((w) => w.workspace_id === l.record.workspace)) await lose(l, "its workspace is gone");
+				continue;
+			}
 			let found: Pane | undefined;
 			try {
 				found = all.some((w) => w.workspace_id === l.record.workspace) ? await locate(l, recovering) : undefined;
 			} catch {
 				continue; // a pane or tab list that failed is unknown, not a tab that is gone
+			}
+			// Headless runs: a viewer that ended closed its pane (`exec`), and the service goes on with no tab (f_close=view); only a gone workspace ends it.
+			if (!found && headless() && !isHeadL(l) && !recovering && all.some((w) => w.workspace_id === l.record.workspace)) {
+				await untab(l);
+				continue;
 			}
 			if (!found) {
 				// A service not seated on this Herdr is lost as a stranger's workspace unless it still carries the label of the one the service made: the id may name the boss's own workspace of a lost session (RVSEAT6-F006).
@@ -780,6 +801,14 @@ export function createTowers(o: TowersOptions): Towers {
 			if (l.client) await release(l).then(() => services.set(l.record.workspace, adopt(l.record)));
 			else if (l.state === "live") await publish(l);
 		}
+	};
+	/** Headless runs: the service's viewer pane is gone, and the service goes on with no tab. The identity registers again with no pane, as after a move (`tower-found`). */
+	const untab = async (l: Live) => {
+		if (l.stopped || services.get(l.record.workspace) !== l) return;
+		l.record = { ...l.record, pane: "", tab: "" };
+		writeService(slot, l.record);
+		log.line("tower-untabbed", { workspace: l.record.workspace });
+		if (l.client) await release(l).then(() => services.set(l.record.workspace, adopt(l.record, false, true)));
 	};
 	const look = () => (looking = looking.then(reconcile).catch((cause: Error) => error("reconcile", cause.message)));
 
@@ -986,9 +1015,11 @@ export function createTowers(o: TowersOptions): Towers {
 		return { base, bare: base && here[0]!.tokens?.sb_role === "tower" && !here[0]!.agent, terminal: base ? here[0]!.terminal_id : undefined };
 	};
 
-	const openFor = async (target: Workspace, hint: string | undefined, cwd: string | undefined, handedBy?: number, claim?: { pane: string; at: number }): Promise<Ensured> => {
+	const openFor = async (target: Workspace, hint: string | undefined, cwd: string | undefined, handedBy?: number, claim?: { pane: string; at: number }, view = false): Promise<Ensured> => {
 		const ws = target.workspace_id;
 		let existing = services.get(ws);
+		// Headless runs (docs/specs/2026-11-23-f-entry.md §2.2): the service needs no tab. A tab is made only when a viewer is asked for, and only where none stands; nothing else here types into or marks a pane.
+		if (headless() && !hint && !claim) return openHeadless(target, existing && !existing.stopped ? existing : undefined, cwd, view);
 		// A base the caller made a moment ago is new to the server: a service still registered for its id belongs to a workspace that was lost (Herdr was killed with its session unsaved and numbered the new one alike), and it is
 		// dropped now instead of at the next refresh, so the new tower gets its tokens at once, whatever that service did in the pane meanwhile (it may have proven the base by its glyph, started its prompt there, and shows its
 		// stand-in). The pane is a fresh shell only if nothing was typed into it since (`claimGate`).
@@ -1061,7 +1092,33 @@ export function createTowers(o: TowersOptions): Towers {
 		return answer(l, true);
 	};
 
-	const ensure: Towers["ensure"] = async ({ workspace, pane, cwd, pid, made }) => {
+	/** The headless `ensure`: a service with no tab, and a viewer tab on `view` when the service has none. The tab this call makes is typed into once (standing.ts, typegate.ts `onceGate`). */
+	const openHeadless = async (target: Workspace, existing: Live | undefined, cwd: string | undefined, view: boolean): Promise<Ensured> => {
+		const ws = target.workspace_id;
+		if (existing && (!view || !tabless(existing))) {
+			if (existing.state !== "waiting") await Promise.race([existing.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
+			return answer(existing, false);
+		}
+		const draft: ServiceRecord = existing?.record ?? { workspace: ws, label: target.label, id: towerId(slot, ws), name: towerName(slot, target.label), pane: "", tab: "", created: new Date(now()).toISOString(), seq: 0 };
+		let record: ServiceRecord = { ...draft, ...(existing ? {} : { ...(target.worktree?.checkout_path ?? cwd ? { cwd: target.worktree?.checkout_path ?? cwd } : {}) }) };
+		if (view) {
+			const tab = await createTab(run, ws, record.cwd ?? slot.stateDir, [], TOWER_LABEL);
+			await report(run, "pane", tab.paneId, { sb_role: "tower" }).catch(() => {});
+			record = { ...record, pane: tab.paneId, tab: tab.tabId };
+		}
+		writeService(slot, record);
+		if (existing) {
+			existing.record = record;
+			await release(existing);
+			services.delete(ws);
+		}
+		const l = adopt(record, view, true);
+		log.line(existing ? "tower-viewer" : "tower-opened", { workspace: ws, id: record.id, ...(view ? { pane: record.pane, tab: record.tab } : { tab: "none" }) });
+		await Promise.race([l.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
+		return answer(l, !existing);
+	};
+
+	const ensure: Towers["ensure"] = async ({ workspace, pane, cwd, pid, made, view }) => {
 		if (!o.enabled()) throw new Error("towerRuns.enabled is off in config.json, so the sb server stands in for no tower");
 		if (stopped) throw new Error("the sb server is stopping");
 		await activate();
@@ -1072,7 +1129,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const target = isSub(asked) ? parentOf(all, asked) : asked;
 		if (!target) throw new Error(`${asked.label} is a sub workspace with no open parent workspace, so it has no tower; open the parent workspace first`);
 		if (isHead(target) || headLive()?.record.workspace === target.workspace_id) throw new Error(`${target.label} is the head tower's workspace: it has no workspace tower, the head tower is its own`);
-		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid, target === asked ? made : undefined).finally(() => opening.delete(target.workspace_id));
+		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid, target === asked ? made : undefined, view).finally(() => opening.delete(target.workspace_id));
 		opening.set(target.workspace_id, pending);
 		return pending;
 	};
@@ -1228,6 +1285,12 @@ export function createTowers(o: TowersOptions): Towers {
 						return { id: got.id, opened: got.opened };
 					},
 					openAsk: (d) => openAsk(slot, now(), d), closeAsk: (id) => closeAsk(slot, id), checkSupersedes: (id) => checkSupersedes(slot, id),
+					parkable: async (ws) => headless() && !(services.get(ws) && !services.get(ws)!.stopped) && !(await panes(run, ws)).some((p) => isSessionRole(p.tokens?.sb_role)),
+					park: (d) => {
+						appendQuiet(slot, d.workspace, { kind: "notice", from: { id: headLive()?.record.id ?? "head", name: "the head tower" }, text: `[parked notice from the head (no one was here when it came) · ask ${d.ask}]\n${d.message}`, at: new Date(now()).toISOString(), messageId: `quiet:${createHash("sha256").update(d.message).digest("hex").slice(0, 16)}` });
+						parkAsk(slot, now(), d.ask);
+						log.line("head-parked", { workspace: d.workspace, ask: d.ask });
+					},
 					relay: (turn) => (typeof request.token === "string" && turn !== undefined && runs.bossTaken(request.token, turn) ? `boss:${turn}` : undefined),
 					boss: (turn) => (typeof request.token === "string" && turn !== undefined ? runs.bossEvents(request.token).find((e) => e.id === turn)?.text : undefined),
 					// The boss's own words in this turn (§2): the event the run's extension reports as the turn's starter, if this run took it as a boss event, or the line the boss typed at the head pane; the model supplies neither.
