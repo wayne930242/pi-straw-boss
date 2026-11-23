@@ -151,7 +151,7 @@ export interface Towers extends Returns {
 	recovering(): boolean;
 	/** Gives a workspace its tower (a promotion, `/boss tower`, a handover from a resident tower of this build). */
 	/** `view`: headless runs only (towerRuns.headless): a viewer tab is made when none runs; without it the service has no tab (docs/specs/2026-11-23-f-entry.md §2.2). */
-	ensure(request: { workspace: string; pane?: string; cwd?: string; pid?: number; made?: { pane: string; at: number }; view?: boolean }): Promise<Ensured>;
+	ensure(request: { workspace: string; pane?: string; cwd?: string; pid?: number; made?: { pane: string; at: number }; view?: boolean | "attended" }): Promise<Ensured>;
 	/** The boss closed the tower: its tab goes, and the service with it. */
 	close(workspace: string): Promise<{ workspace: string; id: string }>;
 	/** The opener, with the persisted ledger, for the workspace's tower. */
@@ -1110,6 +1110,7 @@ export function createTowers(o: TowersOptions): Towers {
 		if (existing) {
 			existing.record = record;
 			await release(existing);
+			await standing.detach(ws);
 			services.delete(ws);
 		}
 		const l = adopt(record, view, true);
@@ -1129,7 +1130,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const target = isSub(asked) ? parentOf(all, asked) : asked;
 		if (!target) throw new Error(`${asked.label} is a sub workspace with no open parent workspace, so it has no tower; open the parent workspace first`);
 		if (isHead(target) || headLive()?.record.workspace === target.workspace_id) throw new Error(`${target.label} is the head tower's workspace: it has no workspace tower, the head tower is its own`);
-		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid, target === asked ? made : undefined, view).finally(() => opening.delete(target.workspace_id));
+		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid, target === asked ? made : undefined, view === "attended" ? !o.unattended?.() : view === true).finally(() => opening.delete(target.workspace_id));
 		opening.set(target.workspace_id, pending);
 		return pending;
 	};

@@ -664,7 +664,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 2026-11-23: measured after merging boss_watch with state prune and the morning ledger sweep.
 	// D, review threads (2026-11-23, docs/specs/2026-11-23-lite-b2-d-e-f.md §2; measured): main.ts 826 to 828 (the import of threadsops.ts and the threads started beside the watches; their seam and dispatch ride on lines that were there). The routes are threadsops.ts, threads.ts and childtie.ts (new, no figure); netdata.ts 264 to 267 (`launchScripts` back, for the child tie).
 	// 0.83.1 (sweep routing, measured): towers.ts 1392 to 1397 (+5): in a head turn opened by the ledger notice, `ensureTower` names a live tower and never opens one; ledgersweep.ts 150 to 151 (the `hasLiveTower` seam).
-	for (const [name, max] of [["record.ts", 485], ["log.ts", 135], ["version.ts", 34], ["acl.ts", 427], ["socket.ts", 278], ["client.ts", 829], ["intercom.ts", 124], ["main.ts", 828], ["cli.ts", 509], ["winprep.ts", 509], ["breakaway.ts", 252], ["testguard.ts", 115], ["towers.ts", 1397], ["towerstore.ts", 306], ["towerruns.ts", 28], ["towerclient.ts", 80], ["desk.ts", 125], ["procs.ts", 488], ["procsops.ts", 84], ["procscli.ts", 32], ["stateprune.ts", 216], ["trainsweep.ts", 119], ["ledgersweep.ts", 151]] as const) assert.ok(count(`src/server/${name}`) <= max, `src/server/${name} has ${count(`src/server/${name}`)} lines`);
+	// F, headless tower runs (0.85.0, 2026-11-23; measured): towerRuns.headless (runchild.ts, runkids.ts, runring.ts, entrycmds.ts and towerprompt/entry.ts are new; the pane path stays behind the switch for one release): main.ts to 831, towers.ts to 1461, towerstore.ts to 324, towerruns.ts to 32 (the switch, the headless start beside the pane start, the tabless service and its viewer, the drain, the entry commands' dispatch).
+	for (const [name, max] of [["record.ts", 485], ["log.ts", 135], ["version.ts", 34], ["acl.ts", 427], ["socket.ts", 278], ["client.ts", 829], ["intercom.ts", 124], ["main.ts", 831], ["cli.ts", 509], ["winprep.ts", 509], ["breakaway.ts", 252], ["testguard.ts", 115], ["towers.ts", 1461], ["towerstore.ts", 324], ["towerruns.ts", 32], ["towerclient.ts", 80], ["desk.ts", 125], ["procs.ts", 488], ["procsops.ts", 84], ["procscli.ts", 32], ["stateprune.ts", 216], ["trainsweep.ts", 119], ["ledgersweep.ts", 151]] as const) assert.ok(count(`src/server/${name}`) <= max, `src/server/${name} has ${count(`src/server/${name}`)} lines`);
 	// The page: the files the spec budgets one by one, then this round's own figures (no figure in the spec): the focus views, the overlay
 	// layer (alert spotting and the stack model in the map's chunk, the layer's DOM and tiles in a chunk of their own), the dev-only demo, and everything else.
 	// 0.18.1 raised mirror.ts to 154 for embed, a terminal shown inside the session view instead of a tile.
@@ -1526,7 +1527,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Box ↔ Mac waits, item D (2026-11-21; measured after the fresh `npm run gui:build` of `npm test`, node 24): chat chunks 496,202 / 186,381 to 496,399 / 186,510 (+197 / +129: `link_main_waiting` in both languages, the sentence table's row). Cap = measured.
 	// Run event IDs (0.81.5; fresh GUI build, node 24): 496,461 / 186,537 (+62 / +27) for parsing the queue-id suffix alongside old event markers. Caps = measured.
 	// E, boss_watch (0.83.0; measured after a fresh `npm run gui:build`, node 24): chat chunks unchanged at 496,461 bytes, gzip 186,537 to 186,545 (+8: the watchdog kind's word and icon left the page, outside these chunks; the chunks' hashed names moved). Cap = measured.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 496_461 && total(chunks, gz) <= 186_545, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// F, headless tower runs (0.85.0, 2026-11-23; measured after a fresh `npm run gui:build`, node 24.22.1): gzipped 186,545 to 186,619 (+74: the head ask's `parked` state and its words in two languages). Raw cap stands. Cap = measured.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 496_461 && total(chunks, gz) <= 186_619, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -1762,4 +1764,16 @@ test("each theme's folder stays within its byte cap", () => {
 test("Zen's own modules do not import the trains model statically: a computer with no trains carries none of its words (TPG-F001, spec §26)", () => {
 	for (const name of readdirSync(join(root, "gui")).filter((n) => /^zen.*\.ts$/.test(n))) assert.doesNotMatch(readFileSync(join(root, "gui", name), "utf8"), /^import\s[^;]*from\s+["']\.\/trains\.ts["']/m, `gui/${name} imports trains.ts at start`);
 	assert.match(readFileSync(join(root, "gui/zenpage.ts"), "utf8"), /import\(["']\.\/trains\.ts["']\)/, "zenpage loads it once a snapshot carries yards");
+});
+
+test("headless runs type into no pane (docs/specs/2026-11-23-lite-b2-d-e-f.md §4.8 test 5, as far as the switch release allows): only standing.ts types (`pane run`), and the headless modules import nothing of Herdr", () => {
+	const server = readdirSync(join(root, "src/server")).filter((n) => n.endsWith(".ts"));
+	const typers = server.filter((n) => /\["pane", "run"/.test(readFileSync(join(root, "src/server", n), "utf8")));
+	assert.deepEqual(typers, ["standing.ts"]);
+	for (const file of ["src/server/runchild.ts", "src/server/runkids.ts", "src/server/runring.ts", "src/server/entrycmds.ts", "src/towerprompt/entry.ts"]) {
+		const text = readFileSync(join(root, file), "utf8");
+		assert.doesNotMatch(text, /startPi|"agent", "start"|send-keys|send-text/, `${file} starts or types into no pane`);
+	}
+	// The pane path (runs.ts `launch` with herdr.ts `startPi`) stays behind `towerRuns.headless` off for this release; the release that deletes it makes this test the full §4.8 rule.
+	assert.match(readFileSync(join(root, "src/server/runs.ts"), "utf8"), /if \(active\.headless \|\| headlessOn\(\)\) return launchKid\(/);
 });

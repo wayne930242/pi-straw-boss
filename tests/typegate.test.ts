@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { claimGate, giveBackGate, handGate, holdGate, idleShell, type NoReason, proofGate, refusedGate, retryGate, runEndGate, seatGate, settleGate, tableGate, type TypeFacts, typeGate } from "../src/server/typegate.ts";
+import { claimGate, giveBackGate, handGate, holdGate, idleShell, type NoReason, onceGate, proofGate, refusedGate, retryGate, runEndGate, seatGate, settleGate, tableGate, type TypeFacts, typeGate } from "../src/server/typegate.ts";
 import { HEAD_LABEL, TOWER_LABEL } from "../src/herdr.ts";
 
 // The gate (src/server/typegate.ts) is the one place that says whether the server may type the tower prompt's command into a standing pane. Each rule is pinned alone here: a case in which only that rule says no
@@ -314,3 +314,21 @@ test("tableGate: unreadable, program, prompt (below the shell, no program), empt
 	assert.equal(tableGate([]), "empty");
 });
 
+
+test("onceGate (headless runs, docs/specs/2026-11-23-lite-b2-d-e-f.md §4.4): only the pane a viewer call made, within the minute, before its viewer's first poll; typeGate asks it right after the prompt check", async () => {
+	const at = 1_000_000, w = 60_000;
+	const rows: [Parameters<typeof onceGate>[0], boolean, string][] = [
+		[{ made: at, polled: false, now: at + 1, windowMs: w }, true, "made by the call, not polled, inside the minute"],
+		[{ made: at, polled: true, now: at + 1, windowMs: w }, false, "its viewer polled"],
+		[{ made: at, polled: false, now: at + w, windowMs: w }, false, "the minute is over"],
+		[{ made: undefined, polled: false, now: at, windowMs: w }, false, "a pane no viewer call made (a restored glyph tab, an old standing pane)"],
+		[{ made: at + 5, polled: false, now: at, windowMs: w }, false, "a clock that went back"],
+	];
+	for (const [f, want, why] of rows) assert.equal(onceGate(f), want, why);
+	const calls: string[] = [];
+	const denied = facts({ once: () => (calls.push("once"), { made: undefined, polled: false, now: at, windowMs: w }), gone: async () => void calls.push("gone") });
+	assert.deepEqual(await typeGate(denied.f), { type: false, reason: "once" });
+	assert.deepEqual(calls, ["once"], "nothing after it is asked, not even the stand-in's release");
+	assert.deepEqual(await typeGate(facts({ prompt: () => true, once: () => ({ made: undefined, polled: true, now: at, windowMs: w }) }).f), { type: false, reason: "prompt" }, "a polling viewer keeps its stand-in");
+	assert.deepEqual(await typeGate(facts({ once: () => ({ made: at, polled: false, now: at + 10, windowMs: w }) }).f), { type: true });
+});

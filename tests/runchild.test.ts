@@ -136,3 +136,25 @@ test("the stdin writer takes abort, extension_ui_response and get_state only; st
 	assert.deepEqual(env, { PATH: "/bin", HOME: "/h", STRAW_BOSS_RUN_NONCE: "n1" });
 	assert.equal(shimTarget("C:/npm/pi.cmd", '@IF EXIST "%dp0%\\node.exe" (\r\n  "%_prog%"  "%dp0%\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js" %*\r\n)'), "C:\\npm\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js");
 });
+
+test("an ally run is headless too: no pane split, its sender's gate (no --tools); a boss event for the workspace is never delivered into it, and waits for a local run", async () => {
+	const s = await setup();
+	world.ally.add("m1", "a".repeat(26), "hello from afar");
+	world.expose?.allyWaiting("sb-tower-wa");
+	const k = await kid();
+	assert.deepEqual(world.herdr.commands("pane", "split"), [], "no pane split off a tab");
+	assert.ok(!k.args.includes("--tools"), "an ally run keeps its sender's gate");
+	const got = await claim(s, k);
+	assert.equal(got.ok, true, JSON.stringify(got));
+	assert.equal(got.kind, "ally");
+	const token = String(got.token);
+	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "boss words", present: true })).ok, true);
+	const offered: string[] = [];
+	for (let event = (await poll(s, token)).event as { id: string; kind: string } | undefined; event; event = (await poll(s, token)).event as typeof event) {
+		offered.push(event.kind);
+		await ask(s, { cmd: "run-taken", token, id: event.id });
+	}
+	assert.deepEqual(offered, ["link"], "the ally run gets its device's message only");
+	const local = await kid(2);
+	assert.ok(local.args.includes("--tools"), "the boss's words woke a local run");
+});
