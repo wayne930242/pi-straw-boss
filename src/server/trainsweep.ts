@@ -1,97 +1,119 @@
-import { lstatSync, rmSync, unlinkSync } from "node:fs";
+import { lstatSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type Board, carsDir, expired, readTrainboards, readYard, trainboardDir, type Writer, yardPath } from "../train/board.ts";
+import { type Board, carsDir, expired, KEEP_MS, readJsonFile, readTrainboards, readYard, trainboardDir, type Writer, yardPath } from "../train/board.ts";
 import { carFileName } from "../train/cars.ts";
+import { shortCode } from "../train/spec.ts";
 import { carsFolderOk } from "../trainboard.ts";
-import { integrationOff } from "../trainswitch.ts";
 import { writerAlive } from "./traingate.ts";
-
-// Spec §10: a trainboard outlives its session on purpose, and the server deletes it at last: an ended one 7 days after its last update, a stale one only after `train clear` and the same 7 days (`expired` in train/board.ts decides;
-// a live one is never deleted). With the board go the car files its cars name (`<app>-<head12>.json` and its notice file), unless another board or a yard still carries the car. Nothing is guessed: a board that does not read is kept,
-// and in a project where a board or the yard does not read, no car file is deleted, because what it carries is unknown.
 
 export interface SweepDeps {
 	stateDir: string;
 	now?: () => number;
-	/** Whether a board's writer is still running (see `writerAlive`). */
-	alive?: (writer: Writer) => boolean;
+	alive?: (writer: Writer, board: Board) => boolean;
+	dryRun?: boolean;
 }
-export interface Sweep { removed: { project: string; code: string; cars: number }[]; problems: string[] }
+export interface Sweep {
+	removed: { project: string; code: string; cars: number }[];
+	boards: number;
+	files: number;
+	ledgerFiles: number;
+	problems: string[];
+}
 
-/** The heads a board carries: its cars, and the cars its round left out (their files are its too, TB-F004). */
-const headsOf = (board: Board): string[] => [...board.cars.map((c) => c.head), ...(board.removed ?? []).flatMap((r) => (r.head ? [r.head] : []))];
+const headsOf = (board: Board): string[] => [...board.cars.map((c) => c.head), ...(board.removed ?? []).flatMap((r) => r.head ? [r.head] : [])];
+const isDir = (path: string) => lstatSync(path, { throwIfNoEntry: false })?.isDirectory() === true;
+const countFiles = (folder: string): number => readdirSync(folder, { withFileTypes: true }).reduce((n, e) => n + (e.isDirectory() ? countFiles(join(folder, e.name)) : 1), 0);
 
-const isFolder = (path: string) => { try { return lstatSync(path).isDirectory(); } catch { return false; } };
+// These indexes are written by integrators, not a schema we own. Protect a canonical or legacy short code wherever it appears (including explicit path references or map keys).
+// Refuse to infer absence from an unreadable index. Do not interpret free-form stage names as proof that a train ended.
+function indexReferences(value: unknown, project: string, code: string) {
+	const words = new Set([code, shortCode(code)]), parts = [value];
+	let ledger = false, board = false;
+	while (parts.length) {
+		const part = parts.pop();
+		if (typeof part === "string") {
+			ledger ||= part.toLowerCase().split(/[^a-z0-9-]+/).some((word) => words.has(word));
+			board ||= `/${part.replaceAll("\\", "/")}/`.includes(`/trainboard/${project}/${code}/`);
+		} else if (part && typeof part === "object") for (const [key, item] of Object.entries(part)) parts.push(key, item);
+	}
+	return { ledger, board };
+}
 
-/** Deletes the expired trainboards under the state folder and their car files. Never throws for a file; what could not be removed is in `problems`. */
+/** Ended train folders and unreferenced per-train ledgers go together. A kept board or yard protects its shared car and notice files. */
 export function sweepTrainboards(d: SweepDeps): Sweep {
-	const now = (d.now ?? Date.now)(), alive = d.alive ?? ((w: Writer) => writerAlive(w));
-	const out: Sweep = { removed: [], problems: [] };
-	const { trains, unlisted } = readTrainboards(d.stateDir, { max: Number.MAX_SAFE_INTEGER });
+	const { stateDir } = d, now = (d.now ?? Date.now)(), alive = d.alive ?? ((writer: Writer) => writerAlive(writer));
+	const out: Sweep = { removed: [], boards: 0, files: 0, ledgerFiles: 0, problems: [] };
+	const root = trainboardDir(stateDir), rootStat = lstatSync(root, { throwIfNoEntry: false });
+	if (!rootStat) return out;
+	if (!rootStat.isDirectory()) throw new Error("trainboard is not a directory");
+	const { trains, unlisted } = readTrainboards(stateDir, { max: Number.MAX_SAFE_INTEGER });
+	out.boards = trains.length;
 	out.problems.push(...unlisted);
-	const gone = trains.flatMap((t) => (t.ok && expired(t.board, { now, alive: alive(t.board.writer), ...(t.end ? { end: t.end } : {}) }) ? [t] : []));
-	if (!gone.length) return out;
-	// What the boards and yards that stay carry, by project: a car file of one of these is kept; a project with one that does not read is not cleaned of car files at all.
-	const goneSet = new Set(gone);
-	const carried = new Set<string>(), unsure = new Set<string>();
+	if (unlisted.length) return out;
+	const carried = new Set<string>(), unsure = new Set<string>(), gone = new Set<typeof trains[number]>();
+	const yards = new Map<string, ReturnType<typeof readYard>>();
+	const indexes = new Map<string, ReturnType<typeof readJsonFile>>();
+	const carKey = (project: string, app: string, head: string) => `${project}/${carFileName(app, head)}`;
 	for (const t of trains) {
-		if (!t.ok) unsure.add(t.project);
-		else if (!goneSet.has(t)) for (const head of headsOf(t.board)) carried.add(`${t.project}\n${t.board.app}\n${head}`);
+		if (!t.ok) { unsure.add(t.project); continue; }
+		if (t.endProblem) out.problems.push(`${t.project}/${t.code}: ${t.endProblem}`);
+		if (t.endProblem || !expired(t.board, { now, alive: alive(t.board.writer, t.board), ...(t.end ? { end: t.end } : {}) })) continue;
+		try {
+			const yard = yards.get(t.project) ?? readYard(yardPath(stateDir, t.project));
+			yards.set(t.project, yard);
+			if (!yard.ok && yard.reason !== "cannot read: ENOENT") { unsure.add(t.project); continue; }
+			if (yard.ok && yard.yard.trains.some((row) => row.code === t.code && row.app === t.board.app)) continue;
+			if (yard.ok) for (const row of yard.yard.trains) for (const car of row.cars) carried.add(carKey(t.project, row.app, car.head));
+			const folder = dirname(t.file);
+			if (!isDir(dirname(folder)) || !isDir(folder)) continue;
+			const ledgerRoot = join(stateDir, "trains"), project = join(ledgerRoot, t.project);
+			const ledgerDir = join(project, t.board.app), ledger = join(ledgerDir, `${t.code}.json`);
+			// Never walk a symlink in an ancestor. A present but unreadable ledger path leaves both parts for a later pass.
+			for (const dir of [ledgerRoot, project, ledgerDir]) {
+				const stat = lstatSync(dir, { throwIfNoEntry: false });
+				if (!stat) break;
+				if (!stat.isDirectory()) throw new Error("train ledger path is not a directory");
+			}
+			const st = lstatSync(ledger, { throwIfNoEntry: false });
+			const file = join(project, `${t.board.app}.json`);
+			const index = indexes.get(file) ?? readJsonFile(file, 8 * 1024 * 1024);
+			indexes.set(file, index);
+			if (!index.ok && index.reason !== "cannot read: ENOENT") throw new Error(`train index: ${index.reason}`);
+			if (index.ok && (!index.value || typeof index.value !== "object" || Array.isArray(index.value))) throw new Error("train index is not an object");
+			const referenced = index.ok ? indexReferences(index.value, t.project, t.code) : undefined;
+			if (referenced?.board) continue;
+			const dropLedger = st?.isFile() && !referenced?.ledger;
+			if (dropLedger && st && now - st.mtimeMs < KEEP_MS) continue; // an integrator may still be writing a new ledger against an old board
+			const files = countFiles(folder);
+			if (dropLedger) {
+				if (!d.dryRun) rmSync(ledger);
+				out.ledgerFiles++;
+			}
+			if (!d.dryRun) rmSync(folder, { recursive: true });
+			out.files += files;
+			gone.add(t);
+		} catch (error) { out.problems.push(`${t.project}/${t.code}: ${(error as Error).message}`); }
 	}
-	for (const project of new Set(gone.map((t) => t.project))) {
-		const yard = readYard(yardPath(d.stateDir, project));
-		if (yard.ok) for (const t of yard.yard.trains) for (const c of t.cars) carried.add(`${project}\n${t.app}\n${c.head}`);
-		else if (yard.reason !== "cannot read: ENOENT") unsure.add(project);
-	}
+	for (const t of trains) if (t.ok && !gone.has(t)) for (const head of headsOf(t.board)) carried.add(carKey(t.project, t.board.app, head));
+	const handled = new Set<string>();
 	for (const t of gone) {
 		if (!t.ok) continue;
-		const folder = dirname(t.file);
-		if (dirname(dirname(folder)) !== trainboardDir(d.stateDir) || !isFolder(folder)) continue; // a link in its place is not followed
-		try {
-			rmSync(folder, { recursive: true, force: true });
-		} catch (error) {
-			out.problems.push(`train ${t.project}/${t.code} was not removed: ${(error as Error).message}`);
-			continue;
-		}
 		let cars = 0;
-		if (!unsure.has(t.project) && carsFolderOk(d.stateDir, t.project)) {
-			for (const head of new Set(headsOf(t.board))) {
-				if (carried.has(`${t.project}\n${t.board.app}\n${head}`)) continue;
-				try {
-					const name = carFileName(t.board.app, head), file = join(carsDir(d.stateDir, t.project), name);
-					for (const path of [file.replace(/\.json$/, ".notice.json"), file]) {
-						try { unlinkSync(path); if (path === file) cars++; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-					}
-				} catch (error) { out.problems.push(`car file of ${head.slice(0, 12)} in ${t.project} was not removed: ${(error as Error).message}`); }
-			}
+		if (!unsure.has(t.project) && carsFolderOk(stateDir, t.project)) for (const head of headsOf(t.board)) {
+			const key = carKey(t.project, t.board.app, head);
+			if (carried.has(key) || handled.has(key)) continue;
+			handled.add(key);
+			try {
+				const car = join(carsDir(stateDir, t.project), carFileName(t.board.app, head));
+				for (const path of [car.replace(/\.json$/, ".notice.json"), car]) {
+					if (!lstatSync(path, { throwIfNoEntry: false })?.isFile()) continue;
+					if (!d.dryRun) rmSync(path);
+					out.files++;
+					if (path === car) cars++;
+				}
+			} catch (error) { out.problems.push(`car of ${t.project}/${t.code}: ${(error as Error).message}`); }
 		}
 		out.removed.push({ project: t.project, code: t.code, cars });
 	}
 	return out;
-}
-
-export interface SweepStart extends SweepDeps {
-	env: NodeJS.ProcessEnv;
-	log: (event: string, facts: Record<string, string | number>) => void;
-	/** True while the server is stopping or restarting. */
-	skip: () => boolean;
-	/** Calls `fn` every `ms` until the returned function is called (an hour; tests give their own). */
-	every?: (fn: () => void, ms: number) => () => void;
-}
-export const SWEEP_MS = 60 * 60_000;
-
-/** Sweeps once now and then every hour, and returns the stop. Nothing is read or deleted with the merge train off; a sweep that fails is logged, not thrown. */
-export function startTrainSweep(o: SweepStart): () => void {
-	const line = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").slice(0, 300);
-	const sweep = () => {
-		if (o.skip() || integrationOff(o.env, o.stateDir)) return;
-		try {
-			const swept = sweepTrainboards({ stateDir: o.stateDir, ...(o.now ? { now: o.now } : {}), ...(o.alive ? { alive: o.alive } : {}) });
-			if (swept.removed.length || swept.problems.length) o.log("train-sweep", { removed: swept.removed.length, cars: swept.removed.reduce((n, r) => n + r.cars, 0), ...(swept.problems.length ? { problems: line(swept.problems.slice(0, 3).join("; ")) } : {}) });
-		} catch (error) {
-			o.log("error", { code: "train-sweep", text: line((error as Error).message) });
-		}
-	};
-	sweep();
-	return (o.every ?? ((fn, ms) => ((timer) => (timer.unref(), () => clearInterval(timer)))(setInterval(fn, ms))))(sweep, SWEEP_MS);
 }

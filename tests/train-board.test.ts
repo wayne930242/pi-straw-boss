@@ -265,19 +265,18 @@ test("a train is ended when its land step completed, stale when its writer is go
 	assert.equal(boardState(b({ steps: [{ id: 1, kind: "land", name: "land", status: "completed", round: 1, outcome: "void", why: "superseded" }] }), { now: T0, alive: true }), "live", "a voided land is not an end");
 });
 
-test("an ended train is deleted 7 days after its last update; a stale one only after a clear and the same 7 days; a live one never", () => {
+test("only an ended train with no live writer is deleted, 30 days after its last update", () => {
 	const upd = new Date(T0).toISOString();
 	const landed = board({ updated: upd, steps: [{ id: 1, kind: "land", name: "land", status: "completed", round: 1, outcome: "passed" }] });
-	assert.equal(expired(landed, { now: T0 + 7 * DAY - 1, alive: false }), false);
-	assert.equal(expired(landed, { now: T0 + 7 * DAY, alive: false }), true);
+	assert.equal(expired(landed, { now: T0 + 30 * DAY - 1, alive: false }), false);
+	assert.equal(expired(landed, { now: T0 + 30 * DAY, alive: false }), true);
 	const stale = board({ updated: upd });
-	assert.equal(expired(stale, { now: T0 + 30 * DAY, alive: false }), false, "a stale board holds until cleared");
+	assert.equal(expired(stale, { now: T0 + 30 * DAY, alive: false }), false, "a stale board is still open");
 	const clear = { lane: "web", reason: "read back", by: "boss", at: new Date(T0 + 1 * DAY).toISOString() };
-	assert.equal(expired({ ...stale, clears: [clear] }, { now: T0 + 7 * DAY, alive: false }), false, "7 days after the last update, but the clear is newer");
-	assert.equal(expired({ ...stale, clears: [clear], updated: new Date(T0 + 1 * DAY).toISOString() }, { now: T0 + 8 * DAY, alive: false }), true);
 	assert.equal(expired(stale, { now: T0 + 30 * DAY, alive: true }), false);
 	assert.equal(expired({ ...stale, clears: [clear] }, { now: T0 + 30 * DAY, alive: true }), false, "a live writer's board is never deleted, cleared or not");
-	assert.equal(expired({ ...stale, clears: [clear] }, { now: T0 + 30 * DAY, alive: false }), true);
+	assert.equal(expired({ ...stale, clears: [clear] }, { now: T0 + 30 * DAY, alive: false }), false, "cleared is not ended");
+	assert.equal(expired(landed, { now: T0 + 40 * DAY, alive: true }), false, "keep an ended board while the writer is live");
 });
 
 test("facts: a read board becomes the facts waits reads, and an unreadable one holds everything", () => {

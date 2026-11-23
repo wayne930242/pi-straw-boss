@@ -117,7 +117,7 @@ test("a record that cannot be read, or one a session of another file left, prove
 	assert.equal(main.tokens.sb_role, "member");
 });
 
-test("a record untouched for 90 days is swept when another is written", async () => {
+test("writing a new role in another tab does not age out a record the server still needs to check", async () => {
 	await net();
 	const roles = join(world.stateDir, "roles"), [old] = readdirSync(roles);
 	const when = new Date(Date.now() - 91 * 24 * 3600_000);
@@ -125,7 +125,7 @@ test("a record untouched for 90 days is swept when another is written", async ()
 	world.herdr.addTab("wA:t3", "more", "wA:p3");
 	const next = await pi({ id: "main-9", pane: "wA:p3", tab: "wA:t3" }, "/s/another.jsonl");
 	await next.promote();
-	assert.ok(!readdirSync(roles).includes(old!), "the old record is gone");
+	assert.ok(readdirSync(roles).includes(old!), "age alone is not enough to prune a role");
 	assert.ok(readdirSync(roles).length >= 2, "the others stay");
 });
 

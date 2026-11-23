@@ -199,7 +199,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 	 * One request to the live server over its control socket, for the GUI commands (host.ts). `start` says what an absent server gets: the boss's own command starts it (and clears a stop
 	 * on purpose), an automatic ask starts it only when the rules allow, and `never` leaves it down (`error: "no server"`). The server's own refusals come back as its reply.
 	 */
-	async function ask(request: Record<string, unknown>, { start }: { start: "boss" | "auto" | "never" }): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> {
+	async function ask(request: Record<string, unknown>, { start, timeoutMs = 30_000 }: { start: "boss" | "auto" | "never"; timeoutMs?: number }): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> {
 		const ctx = ctxFor();
 		let seen = await probe(ctx);
 		if (!seen.live && !seen.denied && start !== "never") {
@@ -216,7 +216,7 @@ export function createServerLook({ pi, cfg, s, guiDir, me, tell }: Kit, deps: Se
 		if (!seen.live && seen.runs && seen.record) return { ok: false, error: heldText(ctx, seen) };
 		if (!seen.live || !seen.record) return { ok: false, error: "no server" };
 		try {
-			return (await callControl(seen.record.socket, seen.record.secret, { ...request, cmd: String(request.cmd) }, 30_000)).reply ?? { ok: false, error: "the sb server gave no answer" };
+			return (await callControl(seen.record.socket, seen.record.secret, { ...request, cmd: String(request.cmd) }, timeoutMs)).reply ?? { ok: false, error: "the sb server gave no answer" };
 		} catch (error) {
 			return { ok: false, error: (error as Error).message };
 		}

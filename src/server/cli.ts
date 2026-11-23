@@ -2,7 +2,9 @@ import { existsSync, realpathSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { stateDirOf } from "./paths.ts";
-import { herdrRun, type HerdrRun, workspaces } from "../herdr.ts";
+import { herdrCall, herdrRun, type HerdrRun, panes, type Session, socketRun, workspaces } from "../herdr.ts";
+import { loadIntercom } from "./intercom.ts";
+import { pruneState } from "./stateprune.ts";
 import { answers as pageAnswers } from "../handover.ts";
 import { newer } from "../semver.ts";
 import {
@@ -19,7 +21,7 @@ import { callControl, ControlError } from "./socket.ts";
 import { logSize, readFrom, tailLog } from "./log.ts";
 import { clearStartError, clearStopped, fileOf, readRecord, readStartError, type ServerRecord, slotOf, type StartError } from "./record.ts";
 import type { ServerHandle, ServerOptions } from "./main.ts";
-import { VERSION } from "./version.ts";
+import { packageRoot, VERSION } from "./version.ts";
 import { localeOf } from "../towerprompt/messages.ts";
 import { runPrompt } from "../towerprompt/prompt.ts";
 import { serverSource } from "../towerprompt/serversource.ts";
@@ -35,6 +37,7 @@ const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS]
        cli.mjs stop | status
        cli.mjs restart [--reason TEXT] [--by TEXT] [--downgrade] [--force]   (refused while a train runs; --force, with --reason, restarts anyway)
        cli.mjs logs [--lines N] [--follow]
+       cli.mjs prune --dry-run   (count stale server state without changing it)
        cli.mjs procs [list]
        cli.mjs procs reap (--owner ID | --checkout PATH)   (kill what an ended worker left; refused while a live worker works in the checkout)
        cli.mjs train gate --spec FILE   (the wrapper of a train's run step; its monitor runs it)
@@ -49,7 +52,7 @@ export class UsageError extends Error {}
 export const WATCH_RETIRED = "`watch` is retired in 0.83.0: a main or a train watches with the boss_watch tool (key, quiet, idle, until), and the sb server wakes it with one message per change. Stop this monitor.";
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout", "dir", "label", "reason"], switch: ["exact", "force"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] },
+	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] }, prune: { value: [], switch: ["dry-run"] },
 };
 // `train` has a word of its own, and each word its flags.
 const TRAIN: Record<string, { value: string[]; switch: string[] }> = {
@@ -89,6 +92,7 @@ export function parseArgs(argv: string[]): Args {
 	if (command === "procs" && (flags.sub === "reap" ? (flags.owner === undefined) === (flags.checkout === undefined) : flags.owner !== undefined || flags.checkout !== undefined)) throw new UsageError(`procs reap needs --owner or --checkout, one of them; list takes neither\n${USAGE}`);
 	if (flags.timeout !== undefined && !(Number(flags.timeout) > 0)) throw new UsageError("--timeout is a number of seconds");
 	if (flags.force === true && (typeof flags.reason !== "string" || !flags.reason.trim())) throw new UsageError("--force needs --reason: why the restart cannot wait for the train");
+	if (command === "prune" && flags["dry-run"] !== true) throw new UsageError("prune requires --dry-run; only the running server prunes state");
 	if (flags.lines !== undefined && !(Number.isInteger(Number(flags.lines)) && Number(flags.lines) > 0)) throw new UsageError("--lines is a positive whole number");
 	return { command, flags };
 }
@@ -117,6 +121,7 @@ export interface CliDeps {
 	herdrListens?: (ctx: Ctx, ms?: number) => Promise<boolean>;
 	/** Herdr's CLI, which the desk steps ask (the integration, the home base). */
 	herdrCli?: HerdrRun;
+	pruneSessions?: () => Promise<Session[]>;
 	/** Whether the GUI's page answers 200, which `up` waits for. */
 	pageAnswers?: (gui: { port: number; token: string }) => Promise<boolean>;
 }
@@ -177,6 +182,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 
 	try {
 		switch (command) {
+			case "prune": return await prune();
 			case "status": return await status();
 			case "logs": return await logs();
 			case "stop": return await stopCommand();
@@ -207,6 +213,21 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 		const ended = new AbortController();
 		(deps.signals ?? ((leave) => (["SIGTERM", "SIGINT", "SIGHUP"] as const).forEach((signal) => process.once(signal, leave))))(() => ended.abort());
 		return await runPrompt({ workspace, source: serverSource(ctx, workspace), input: deps.stdin ?? process.stdin, output: deps.stdout ?? process.stdout, locale: localeOf(env, slot.stateDir), env, signal: ended.signal });
+	}
+
+	async function prune() {
+		const run = deps.herdrCli ?? socketRun(herdrRun, herdrCall(slot.herdr), undefined);
+		const sessions = deps.pruneSessions ?? (async () => {
+			const client = await (await loadIntercom({ env, root: packageRoot(), startBroker: false })).connect();
+			client.on("error", () => {});
+			try {
+				const now = Date.now();
+				await client.connect({ name: "sb prune (dry run)", cwd: process.cwd(), model: "straw-boss-cli", pid: process.pid, startedAt: now, lastActivity: now });
+				return await client.listSessions();
+			} finally { await client.disconnect(); }
+		});
+		json(await pruneState({ slot, env, now: ctx.now, panes: () => panes(run), workspaces: () => workspaces(run), sessions }, true));
+		return 0;
 	}
 
 	async function status() {

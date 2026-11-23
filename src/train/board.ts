@@ -11,7 +11,7 @@ export const MAX_BOARD_BYTES = 64 * 1024;
 export const MAX_TRAINS = 64;
 export const MAX_STEPS = 256, MAX_CARS = 32, MAX_CLEARS = 64;
 export const STALE_MS = 10 * 60_000;
-export const KEEP_MS = 7 * 24 * 60 * 60_000;
+export const KEEP_MS = 30 * 24 * 60 * 60_000;
 
 export interface Writer { session: string; pane?: string; pid: number; started: string }
 export interface CarRow { tickets: string[]; branch: string; head: string; coordinator: string; departs: string; accept: string; arrived?: string; /** The kinds the car's checked evidence shows; set by the code that checked it, never by a model (TB-F003). */ accepted?: string[]; /** The evidence could not be checked, so nothing is claimed of the car's acceptance. */ unverified?: true }
@@ -476,13 +476,9 @@ export function boardState(board: Board, { now, alive, end }: Life): "ended" | "
 	return !alive && now - Date.parse(board.updated) >= STALE_MS ? "stale" : "live";
 }
 
-/** Whether the server deletes a board: an ended one 7 days after its last update (one `train end` ended, 7 days after that end), a stale one only after a clear and the same 7 days since the later of its update and its last clear; a live one never. */
+/** An open train stays even after `train clear`, which releases holds but does not end the train. An ended train with a live writer stays too. */
 export function expired(board: Board, life: Life): boolean {
-	const state = boardState(board, life);
-	if (state === "live") return false;
-	if (state === "ended") return life.now >= Date.parse(endOf(board, life.end)?.at ?? board.updated) + KEEP_MS;
-	const clears = (board.clears ?? []).map((c) => Date.parse(c.at));
-	return clears.length > 0 && life.now >= Math.max(Date.parse(board.updated), ...clears) + KEEP_MS;
+	return !life.alive && boardState(board, life) === "ended" && life.now >= Date.parse(endOf(board, life.end)?.at ?? board.updated) + KEEP_MS;
 }
 
 /** A read board as the facts waits.ts reads; one that did not read holds everything of its project. */

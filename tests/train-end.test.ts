@@ -32,7 +32,7 @@ const end = (over: Record<string, unknown> = {}) => ({ v: 1 as const, outcome: "
 /** The top-level keys a board may have in 0.80.16 (6eb292b9 `validateBoard`): an older reader refuses any other, and a refused board holds every lane and target of its project. */
 const OLD_BOARD_KEYS = ["v", "project", "app", "code", "writer", "updated", "round", "cars", "steps", "clears", "removed"];
 
-test("A1: an end validates (landed needs a 40-hex commit, none has none), makes the train ended, holds nothing, and expires 7 days after the end", () => {
+test("A1: an end validates (landed needs a 40-hex commit, none has none), makes the train ended, holds nothing, and expires 30 days after the end", () => {
 	assert.deepEqual(validateEnd(end()), []);
 	assert.deepEqual(validateEnd(end({ outcome: "none", commit: undefined })), []);
 	const refused = (value: unknown, pattern: RegExp) => assert.ok(validateEnd(value).some((r) => pattern.test(r)), `${pattern}: ${JSON.stringify(validateEnd(value))}`);
@@ -53,8 +53,8 @@ test("A1: an end validates (landed needs a 40-hex commit, none has none), makes 
 	assert.deepEqual(holding(facts), { lanes: [], targets: [], all: false });
 	assert.deepEqual(holding(factsOf({ project: PROJECT, code: CODE, file: "", ok: true, board: stale }, { now: NOW, alive: () => false })).lanes, ["web"], "the stale one held its lane");
 	const at = Date.parse(end().at);
-	assert.equal(expired(stale, { now: at + 7 * DAY - 1, alive: false, end: end() }), false, "7 days after the end, not after the older update");
-	assert.equal(expired(stale, { now: at + 7 * DAY, alive: false, end: end() }), true);
+	assert.equal(expired(stale, { now: at + 30 * DAY - 1, alive: false, end: end() }), false, "30 days after the end, not after the older update");
+	assert.equal(expired(stale, { now: at + 30 * DAY, alive: false, end: end() }), true);
 	// A session that came back and wrote its board after the end has resumed: the end no longer counts.
 	const resumed = board(CODE, { updated: "2026-11-07T08:05:00.000Z" });
 	assert.equal(endOf(resumed, end()), undefined);

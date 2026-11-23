@@ -198,6 +198,18 @@ test("todo #155: with `group: false` a program cut off at its deadline is ended 
 	}
 });
 
+test("aborting a deadline-bound program stops its process group", { skip: process.platform === "win32" }, async () => {
+	const fake = standIn({ herdr: `"$1/holder" "$1" &\necho $$ > "$1/pid"\n${LINGER}`, holder: `echo $$ > "$1/held"\n${LINGER}` });
+	const controller = new AbortController();
+	try {
+		const done = new Promise<Cut | null>((resolve) => execFileExe(fake.bin, [fake.dir], { deadline: 30_000, grace: 300, signal: controller.signal }, resolve));
+		await until(() => fake.has("pid") && fake.has("held"), "the program and its child to start");
+		controller.abort();
+		assert.equal((await done)?.code, "ABORT_ERR");
+		await until(() => gone(fake.pid("pid")) && gone(fake.pid("held")), "the process group to stop", 15_000);
+	} finally { controller.abort(); fake.close(); }
+});
+
 test("R0752-F002: a program that writes more than `maxBuffer` is cut off and ended, and the error is marked as execFile marks an overflow (its code, not killed, no signal), not as a timeout", { skip: process.platform === "win32" }, async () => {
 	const dl = await deadlineFor(10_000), fake = standIn({ herdr: `echo $$ > "$1/pid"\nwhile :; do echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; done` });
 	try {
