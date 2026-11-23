@@ -9,7 +9,8 @@ import type { Digest } from "./digest.ts";
 import { COORDINATOR_DUTIES, isCoordinatorDuty } from "./duty.ts";
 import { INTEG_NAME, type MainDuty } from "./mainduty.ts";
 import type { Membership } from "./membership.ts";
-import { type CloseMain, refuseStanding } from "./closemain.ts";
+import { type CloseMain, type Control, handedNotice, refuseStanding } from "./closemain.ts";
+import { deadList } from "./deadpane.ts";
 import type { Link } from "./link/runtime.ts";
 import { callTowerTool } from "./link/waitcall.ts";
 import { INTEGRATOR } from "./integrator.ts";
@@ -50,8 +51,14 @@ export const reviveParameters = () => Type.Object({
 	reason: Type.Optional(Type.String({ description: "With revive: one line, why you revive it (the main reads it in its handoff)." })),
 });
 
+/** `boss_close_main` (docs/specs/2026-11-23-tower-close-panes.md): its description and parameters, the same for a tower session and a tower run (runmode.ts proxies the latter to the server). */
+export const CLOSE_DESCRIPTION = "Close a main, or a dead agent pane, of your workspace. main: ask the main to quit as /boss close would, so its pane and tab close: a main you opened with boss_open_main (after its done report, unless it waits for a boss decision), or a main that handed over with boss_handover once its successor is live, whoever opened it. Refused while it has a running turn, a queued message, an open dialog, a monitor, or a subagent; try again later. A main the boss opened that has not handed over, and a standing main that has not, are refused: only the boss closes them. pane: close an agent pane whose pi is gone (a bare shell, no session), and its tab when it is the tab's only pane; never a live pi, a tower's pane, or one being opened or revived. Neither: list the dead agent panes.";
+export const closeParameters = () => Type.Object({
+	main: Type.Optional(Type.String({ description: "The main's intercom name or session id." })),
+	pane: Type.Optional(Type.String({ description: "A dead agent pane's Herdr id (as the list shows it, e.g. w1:p3)." })),
+});
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, promote, digest, closeMain, link, server, towerCall, boardFill, waitAsk }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill; /** Registers `boss_wait_ask` for a joined session (waitask.ts `mainWaitAsk`); a tower run registers its own (runmode.ts). */ waitAsk?: () => void }) {
+export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, openTower, promote, digest, closeMain, closePane, deadPanes, listen, link, server, towerCall, boardFill, waitAsk }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read" | "openTower"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; /** A tower's close of a dead agent pane and its list (closemain.ts, deadpane.ts). */ closePane: Control["closePane"]; deadPanes: Control["deadPanes"]; /** Registers the control channel: a main that handed over answers its tower's close (closemain.ts). */ listen: () => void; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill; /** Registers `boss_wait_ask` for a joined session (waitask.ts `mainWaitAsk`); a tower run registers its own (runmode.ts). */ waitAsk?: () => void }) {
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
@@ -239,8 +246,12 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 						s.saved.successor = { pane: next.pane, tab: next.tab, at: cfg.now(), main: next.main };
 						pi.appendEntry(ENTRY, { successor: s.saved.successor });
 						// RVR-F004: the successor took the handoff, so this main's record says so: a later Herdr close of this tab raises no main_died, and no tower revives it.
-						if (s.file) try { markHandedOver(guiDir, s.file, { at: s.saved.successor.at, to: next.main }); } catch { /* the entry above keeps it for the next record this session writes */ }
-						return { text: `Opened your successor in tab ${next.tab} (session ${next.main}) and handed it ${path}. When it tells you it took over, give up your role as your rule says: boss_duty coordinator (if you are standing or integrator), boss_rename to "old ${name} (handed over to ${next.main.slice(0, 8)})", stop your monitors and loops, clear your board, and wait to be closed.`, details: next };
+						if (s.file) try { markHandedOver(guiDir, s.file, { at: s.saved.successor.at, to: next.main, tab: next.tab, pane: next.pane }); } catch { /* the entry above keeps it for the next record this session writes */ }
+						// The workspace's tower closes this main once its successor is live (docs/specs/2026-11-23-tower-close-panes.md §4): it listens for that ask now, and the tower hears of the handover as a milestone, so it need not poll.
+						try { listen(); } catch { /* no pi-intercom channel: the tower's ask goes unanswered and says so; the handover itself stands */ }
+						const told = await openTower(undefined, false).then((tower) => post(tower.id, handedNotice(name, me(), next), "call_tower", "tower", false, undefined, "milestone")).then((r) => r.status === "sent", () => false);
+						const closer = told ? "your workspace's tower was told and closes this session once your successor is live" : "no tower of this workspace took the notice, so the boss closes this session";
+						return { text: `Opened your successor in tab ${next.tab} (session ${next.main}) and handed it ${path}. When it tells you it took over, give up your role as your rule says: boss_duty coordinator (if you are standing or integrator), boss_rename to "old ${name} (handed over to ${next.main.slice(0, 8)})", stop your monitors and loops, clear your board, and wait to be closed: ${closer}.`, details: { ...next, towerTold: told } };
 					} finally {
 						handing = false;
 					}
@@ -329,10 +340,15 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 					if (forMain !== undefined || inReplyTo !== undefined) throw new Error("for and inReplyTo work in a tower run of the sb server (the run tools ask the server)");
 					return device === undefined ? towerSend(message, workspace, reply ?? false) : link.send({ device, text: message, reply: reply ?? false, ...(workspace !== undefined ? { workspace } : {}) });
 				});
-			tool("boss_close_main", "Close a main you opened with boss_open_main: ask it to quit as /boss close would, so its pane and tab close. Only mains opened by a tower in your workspace, never one the boss opened. Refused while it has a running turn, a queued message, an open dialog, a monitor, or a subagent; try again later. Close an opened coordinator main after its done report, unless it waits for a boss decision. A standing main is refused: only the boss closes it.",
-				Type.Object({ main: Type.String({ description: "The opened main's intercom name or session id." }) }),
-				async ({ main }) => {
-					const closed = (refuseStanding(await read(), main), await closeMain(main));
+			tool("boss_close_main", CLOSE_DESCRIPTION, closeParameters(),
+				async ({ main, pane }) => {
+					if (main !== undefined && pane !== undefined) throw new Error("Give main or pane, not both");
+					if (pane !== undefined) {
+						const closed = await closePane(pane);
+						return { text: closed.text, details: closed };
+					}
+					if (main === undefined) return deadList(await deadPanes());
+					const closed = (refuseStanding(await read(), main, guiDir), await closeMain(main));
 					return { text: closed.text, details: closed };
 				});
 		},

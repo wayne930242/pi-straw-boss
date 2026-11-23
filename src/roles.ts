@@ -30,8 +30,8 @@ const KEEP_MS = 90 * 24 * 3600_000;
  */
 export interface Ended { at: number; reason: "quit" | "new" | "resume" | "fork" | "signal" }
 export interface RoleRecord { role: "tower" | "main" | "train"; pane: string; tab: string; workspace: string; terminal?: string; file?: string; openedBy?: string; /** A train's project and code (docs/specs/2026-11-07-train-workers.md §3.3). */ train?: TrainId; /** A main's kind, for a restore before its first message, when pi has written no entry yet (docs/specs/2026-11-09-agent-kinds.md §6). */ duty?: CoordinatorDuty; at: number; ended?: Ended; /** A main that opened its successor with boss_handover, once that successor took the handoff (RVR-F004): never raised as dead or revived, however it ends. */ handedOver?: HandedOver }
-/** The successor a main handed its work to: when, and its session id. */
-export interface HandedOver { at: number; to: string }
+/** The successor a main handed its work to: when, its session id, and the tab and pane it was opened in (the tower's refusal names the tab). */
+export interface HandedOver { at: number; to: string; tab?: string; pane?: string }
 /** Where a session runs now: the pane, tab, and workspace of the record must all be these. `tabLabel` is the label Herdr lists for the tab now, the proof of a tower's or a train's tab; left out, neither role is given back. */
 export interface Here { paneId?: string; tabId?: string; workspaceId?: string; terminalId?: string; tabLabel?: string }
 
@@ -53,7 +53,7 @@ export function loadRecord(record: string, problem?: (why: string) => void): Rol
 		const r = JSON.parse(raw) as Partial<RoleRecord>;
 		if (r.duty !== undefined && !isCoordinatorDuty(r.duty)) delete r.duty; // a kind that is none says nothing; the role still stands
 		if (r.ended !== undefined && !(typeof r.ended === "object" && r.ended !== null && typeof r.ended.at === "number" && ENDED.has(r.ended.reason))) delete r.ended; // a mark that cannot be read says the session did not end cleanly
-		if (r.handedOver !== undefined && !(typeof r.handedOver === "object" && r.handedOver !== null && typeof r.handedOver.at === "number" && typeof r.handedOver.to === "string")) delete r.handedOver;
+		if (r.handedOver !== undefined && !(typeof r.handedOver === "object" && r.handedOver !== null && typeof r.handedOver.at === "number" && typeof r.handedOver.to === "string" && [r.handedOver.tab, r.handedOver.pane].every((v) => v === undefined || typeof v === "string"))) delete r.handedOver;
 		if (r.role === TRAIN && !(r.train && trainFromToken(trainToken(r.train as TrainId)))) return undefined; // a train record names its project and code, or proves nothing
 		return (r.role === "tower" || r.role === "main" || r.role === TRAIN) && typeof r.pane === "string" && typeof r.tab === "string" && typeof r.workspace === "string" && (r.terminal === undefined || typeof r.terminal === "string") && (r.file === undefined || typeof r.file === "string") && (r.openedBy === undefined || typeof r.openedBy === "string") ? (r as RoleRecord) : undefined;
 	} catch {
@@ -155,7 +155,7 @@ export function createRoles({ cfg, s, guiDir, tell }: Kit) {
 				try {
 					mkdirSync(dir, { recursive: true, mode: 0o700 });
 					const file = path(s.file), temp = `${file}.${process.pid}.tmp`, at = cfg.now();
-					writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, ...(s.at.terminalId ? { terminal: s.at.terminalId } : {}), file: s.file, ...(openedBy ? { openedBy } : {}), ...(role === TRAIN && s.train ? { train: s.train } : {}), ...(role === "main" && isCoordinatorDuty(s.duty) ? { duty: s.duty } : {}), ...(role === "main" && s.saved.successor?.main ? { handedOver: { at: s.saved.successor.at, to: s.saved.successor.main } } : {}), at } satisfies RoleRecord), { mode: 0o600 });
+					writeFileSync(temp, JSON.stringify({ role, pane: s.at.paneId, tab: s.at.tabId, workspace: s.at.workspaceId, ...(s.at.terminalId ? { terminal: s.at.terminalId } : {}), file: s.file, ...(openedBy ? { openedBy } : {}), ...(role === TRAIN && s.train ? { train: s.train } : {}), ...(role === "main" && isCoordinatorDuty(s.duty) ? { duty: s.duty } : {}), ...(role === "main" && s.saved.successor?.main ? { handedOver: { at: s.saved.successor.at, to: s.saved.successor.main, tab: s.saved.successor.tab, pane: s.saved.successor.pane } } : {}), at } satisfies RoleRecord), { mode: 0o600 });
 					renameSync(temp, file);
 				} catch (error) {
 					return void tell(`Straw Boss: could not record this session's role, so a Herdr restore will not bring it back: ${(error as Error).message}`, "warning");

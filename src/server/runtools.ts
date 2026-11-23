@@ -1,5 +1,6 @@
 import { readBoard } from "../boardread.ts";
 import { type Control, refuseStanding } from "../closemain.ts";
+import { deadList } from "../deadpane.ts";
 import { ForwardAsBefore, INTEGRATOR } from "../integrator.ts";
 import type { Opened, OpenRequest, PeerSender, Revived, ReviveRequest } from "../opener.ts";
 import { type DeadRow, ReviveRefused, revivedText, rowLine } from "../revive.ts";
@@ -42,6 +43,11 @@ export interface ToolHost {
 	reach: Reach;
 	open(request: OpenRequest): Promise<Opened>;
 	closeMain: Control["closeMain"];
+	/** The workspace tower's close of a dead agent pane and its list (deadpane.ts): a local run's only. */
+	closePane?: Control["closePane"];
+	deadPanes?: Control["deadPanes"];
+	/** The state folder: a standing main whose role record says it handed over is not refused (closemain.ts `refuseStanding`). */
+	stateDir?: string;
 	/** A request to the link holder as this tower's identity. */
 	link(body: Record<string, unknown>): Promise<Answer>;
 	/** The work board's folder. */
@@ -238,7 +244,8 @@ async function allyTool(host: ToolHost, name: string, args: Record<string, unkno
 		if (await host.isTower(to)) throw new Error("An ally run may not write to a tower identity of this computer: it would carry a peer's text into a local run");
 		await refuseTarget(host, to);
 	}
-	// rev-0803d-F002: a standing main is refused before the gate, so no one confirms a close the code refuses.
+	// rev-0803d-F002: a standing main is refused before the gate, so no one confirms a close the code refuses. A dead pane is no main opened for the device, and its list is the local tower's.
+	if (name === "boss_close_main" && (args.pane !== undefined || args.main === undefined)) throw new Error("An ally run closes only a main opened for its own device: dead panes are the local tower's");
 	if (name === "boss_close_main") refuseStanding(await host.reach.read(), await refuseClose(host, str(args, "main", 300)));
 	// The sender's own device is the one write the allowlist lets through; everything else outside the free reads needs the Allow of the gate.
 	if (gated && name !== "tower_send") {
@@ -526,9 +533,19 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 		case "boss_revive_main":
 			return reviveTool(host, args);
 		case "boss_close_main": {
+			if (!ally && args.main !== undefined && args.pane !== undefined) throw new Error("Give main or pane, not both");
+			if (!ally && args.pane !== undefined) {
+				if (!host.closePane) throw new Error("This tower cannot close panes here");
+				const closed = await host.closePane(str(args, "pane", 100));
+				return { text: closed.text, details: closed };
+			}
+			if (!ally && args.main === undefined) {
+				if (!host.deadPanes) throw new Error("This tower cannot list dead panes here");
+				return deadList(await host.deadPanes());
+			}
 			// An ally run closes the session its own check resolved, not the name again: the name may have been reused since.
 			const main = str(args, "main", 300), target = ally ? await refuseClose(host, main) : main;
-			refuseStanding(await host.reach.read(), target);
+			refuseStanding(await host.reach.read(), target, ally ? undefined : host.stateDir);
 			const closed = await host.closeMain(target);
 			return { text: closed.text, details: closed };
 		}

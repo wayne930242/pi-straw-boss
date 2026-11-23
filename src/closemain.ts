@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { createDeadPanes } from "./deadpane.ts";
 import { subagents } from "./netdata.ts";
-import { panes, waitFor, workspaces } from "./herdr.ts";
+import { type Pane, panes, type Session, waitFor, workspaces } from "./herdr.ts";
+import { type HandedOver, readRecords } from "./roles.ts";
 import { type Kit, REGISTER } from "./state.ts";
 import { TRAIN } from "./trainrole.ts";
 
-// A tower closes the mains it opened (boss_open_main). It asks the main's own extension to quit as /boss close does, and the main decides: it checks that the
-// request is from the tower of its workspace, that a tower opened it (its pane's `sb_opened_by` token), and that nothing running would be lost, as a stash
-// checks. The ask goes over one intercom extension channel that towers and the mains a tower opened register, `straw-boss/control`, with the "capable" audience;
+// A tower closes the mains it opened (boss_open_main), and a main that handed over to a live successor (boss_handover), whoever opened it (docs/specs/2026-11-23-tower-close-panes.md). It asks the main's own extension to quit as /boss close does, and the main decides: it checks that the
+// request is from the tower of its workspace, that a tower opened it (its pane's `sb_opened_by` token) or it handed over (its `successor` entry), and that nothing running would be lost, as a stash
+// checks. The ask goes over one intercom extension channel that towers, the mains a tower opened, and the mains that handed over register, `straw-boss/control`, with the "capable" audience;
 // the sender id is the one the session reports to the broker (self-reported, a same-user trust boundary), and a request is for one session (`to`). It does not go through the GUI server, which may be stopped, and a bridge's close
 // (bridge.ts) answers only that server.
 //   {type: "close-main", to: <main session id>, reqId, interrupt?: true}       tower → main
@@ -18,11 +20,31 @@ type Event = { type: string; fromSessionId?: string; payload?: Record<string, un
 interface Answer { from: string; accepted: boolean; reason?: string; busy?: boolean }
 /** The word a tower's `boss_close_main` answers for a main of kind standing: it has no end and no done report, so only the boss closes it. Checked in the tools, not in `closeMain`: revoke.ts and a signed stop end a peer's main through it. */
 export const STANDING_CLOSE = "is a standing main: it has no end and sends no done report, so only the boss closes it";
-export function refuseStanding(net: { sessions: { id: string; name?: string; herdrLocation?: { paneId?: string } }[]; ps: { pane_id: string; tokens?: Record<string, unknown> }[] }, query: string) {
+/** `stateDir`: where the role records are; a standing main whose record says it handed over has stepped down, so it is not refused. Left out (an ally run's check: a main opened for a device never hands over), none is read. */
+export function refuseStanding(net: { sessions: { id: string; name?: string; herdrLocation?: { paneId?: string } }[]; ps: Pick<Pane, "pane_id" | "tokens" | "workspace_id" | "agent_session">[] }, query: string, stateDir?: string) {
 	const named = net.sessions.filter((x) => x.id === query || x.name === query);
 	if (named.length !== 1) return;
-	if (net.ps.find((p) => p.pane_id === named[0]!.herdrLocation?.paneId)?.tokens?.sb_duty === "standing") throw new Error(`${named[0]!.name ?? named[0]!.id} ${STANDING_CLOSE}`);
+	const pane = net.ps.find((p) => p.pane_id === named[0]!.herdrLocation?.paneId);
+	if (pane?.tokens?.sb_duty === "standing" && !(stateDir && handedOverOf(stateDir, pane))) throw new Error(`${named[0]!.name ?? named[0]!.id} ${STANDING_CLOSE}`);
 }
+/**
+ * The handover mark (roles.ts `handedOver`) of the main a pane runs: from the role record of the session file Herdr names for the pane, else the newest main record of that pane and workspace. The main confirms it
+ * itself when asked (its own `successor` entry), so a record alone closes nothing.
+ */
+export function handedOverOf(stateDir: string, pane: Pick<Pane, "pane_id" | "workspace_id" | "agent_session">): HandedOver | undefined {
+	const file = pane.agent_session?.value;
+	const mains = readRecords(stateDir).map((r) => r.record).filter((r) => r.role === "main" && r.pane === pane.pane_id && r.workspace === pane.workspace_id && (!file || r.file === file));
+	return mains.sort((a, b) => b.at - a.at)[0]?.handedOver;
+}
+/** The successor's pane when it is live: the broker lists its session, and pi runs in the pane the broker places it in. */
+export const liveSuccessor = (h: HandedOver, sessions: Session[], ps: Pane[]): Pane | undefined => {
+	const at = sessions.find((x) => x.id === h.to)?.herdrLocation?.paneId;
+	return at ? ps.find((p) => p.pane_id === at && p.agent === "pi") : undefined;
+};
+/** What a main that handed over tells its workspace's tower (§4): code-written, as a milestone that expects no reply. */
+export const handedNotice = (name: string, id: string, next: { tab: string; main: string }) =>
+	`Straw Boss: main ${name} (session ${id}) handed over to its successor in tab ${next.tab} (session ${next.main}), which took the handoff. ${name} steps down now; once it is idle and its successor is live, close it with boss_close_main with main "${id}".`;
+
 interface Closed { text: string; main: string; name: string; closed: boolean }
 /** `interrupt` (a stop's mode, docs/specs/2026-11-07-link-remote-stop.md, section 5): a main that is working aborts its turn and answers busy, so the next ask finds it idle; the tower skips its own idle pre-check for it. */
 export type CloseMain = (query: string, opts?: { interrupt?: boolean }) => Promise<Closed>;
@@ -30,7 +52,7 @@ export type CloseMain = (query: string, opts?: { interrupt?: boolean }) => Promi
 export interface Turn { running(): boolean; blockers(): string | undefined; abort(): void }
 
 /** `closeSelf` quits this session as /boss close does; `check` says why it cannot be stashed now (the bridge's check: a turn, a queue, a dialog, a monitor); `turn` lets an `interrupt` abort a turn (a tower service has none and never receives one). */
-export function createCloseMain({ pi, cfg, s, me }: Kit, { closeSelf, check, turn }: { closeSelf(keepPane: boolean): string | undefined; check(): string | undefined; turn?: Turn }) {
+export function createCloseMain({ pi, cfg, s, me, guiDir }: Kit, { closeSelf, check, turn }: { closeSelf(keepPane: boolean): string | undefined; check(): string | undefined; turn?: Turn }) {
 	const { run, sleep } = cfg;
 	let channel: { publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void } | undefined;
 	const answers = new Map<string, Answer>();
@@ -43,7 +65,8 @@ export function createCloseMain({ pi, cfg, s, me }: Kit, { closeSelf, check, tur
 		if (!s.joined) return no("this session has not joined the net");
 		const [all, workspace] = await Promise.all([panes(run), workspaces(run).then((list) => list.find((w) => w.workspace_id === s.at.workspaceId))]);
 		const mine = all.find((p) => p.pane_id === s.at.paneId);
-		if (!mine?.tokens?.sb_opened_by) return no("no tower opened this main, so only the boss closes it");
+		// A main that handed over (its own `successor` entry, written once the successor took the handoff) has stepped down: its workspace's tower may close it, whoever opened it.
+		if (!mine?.tokens?.sb_opened_by && !s.saved.successor?.main) return no("no tower opened this main, so only the boss closes it");
 		if (!workspace?.tokens?.tower || workspace.tokens.tower !== from) return no("the request is not from the tower of this workspace");
 		const running = subagents(mine, all, cfg.now()).filter((row) => !row.ended).length;
 		const subs = running && `${running} subagent${running > 1 ? "s are" : " is"} running`;
@@ -79,8 +102,9 @@ export function createCloseMain({ pi, cfg, s, me }: Kit, { closeSelf, check, tur
 		return got;
 	};
 
+	const dead = createDeadPanes({ run, sessions: () => s.c.listSessions(), here: () => ({ workspace: s.at.workspaceId, pane: s.at.paneId }), stateDir: guiDir, now: cfg.now });
 	return {
-		/** Every tower, and every main a tower opened, hears and answers asks; registering twice is a no-op. */
+		/** Every tower, every main a tower opened, and every main that handed over hears and answers asks; registering twice is a no-op. */
 		register() {
 			if (channel) return;
 			pi.events.emit(REGISTER, { namespace: CONTROL, ownerEligible: false, onReady: (c: NonNullable<typeof channel>) => (channel = c), onEvent });
@@ -96,7 +120,10 @@ export function createCloseMain({ pi, cfg, s, me }: Kit, { closeSelf, check, tur
 			const main = found[0]!, name = main.name ?? main.id, pane = all.find((p) => p.pane_id === main.herdrLocation?.paneId);
 			if (pane?.workspace_id !== s.at.workspaceId) throw new Error(`${name} is not in this workspace; a tower closes only the mains it opened here`);
 			if (pane.tokens?.sb_role !== "main" && pane.tokens?.sb_role !== TRAIN) throw new Error(`${name} is not a main agent`);
-			if (!pane.tokens.sb_opened_by) throw new Error(`${name} was not opened by a tower (the boss opened it), so only the boss closes it`);
+			const handed = pane.tokens.sb_role === "main" ? handedOverOf(guiDir, pane) : undefined;
+			if (!pane.tokens.sb_opened_by && !handed) throw new Error(`${name} was not opened by a tower (the boss opened it), so only the boss closes it`);
+			// A main that handed over is closed once its successor is live: until then the old main is the one session that holds the work.
+			if (handed && !liveSuccessor(handed, sessions, all)) throw new Error(`${name} handed over to session ${handed.to.slice(0, 8)}${handed.tab ? ` (tab ${handed.tab})` : ""}, which is not live (no pi runs it, or the broker does not list it); the old main stays open until its successor is live, or the boss closes it`);
 			if (!interrupt && !["idle", "done"].includes(pane.agent_status ?? "")) throw new Error(`${name} is ${pane.agent_status ?? "in an unknown state"}; try again when it is idle`);
 			// A main reports its outcome in the turn that ends right after, so a refusal for something running is asked again for a while; any other refusal is final.
 			let got = await ask(main.id, interrupt);
@@ -106,6 +133,9 @@ export function createCloseMain({ pi, cfg, s, me }: Kit, { closeSelf, check, tur
 			const gone = await waitFor(sleep, async () => !(await s.c.listSessions().catch(() => [main])).some((x) => x.id === main.id), QUIT_MS, 500);
 			return { text: gone ? `${name} quit and its pane closed.` : `${name} accepted and is shutting down; its pane closes once pi has exited.`, main: main.id, name, closed: Boolean(gone) };
 		}) as CloseMain,
+		/** The tower's side: the dead agent panes of this workspace (deadpane.ts), and the close of one. */
+		deadPanes: () => dead.list(),
+		closePane: (pane: string) => dead.close(pane),
 	};
 }
 export type Control = ReturnType<typeof createCloseMain>;

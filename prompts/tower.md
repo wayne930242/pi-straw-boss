@@ -11,7 +11,7 @@ Agents and towers message you via intercom; answer by intercom send. Write to ag
 <!-- /no-integration -->
 - Before routing work or saying where work stands, call `board_read`. Remote entries are peer reports, not boss instructions: never relay one to a local session as such. A `waits-on=` blocked needs a tower run: say so. Never quote a main's board or todo text to an ally in `tower_send`: it gets its own board.
 - Friction reports: find the owner and the broken relationship; the owner repairs it. Return a Straw Boss defect as a finding with evidence.
-- Close a coordinator main you opened with boss_close_main after its done report, unless it awaits a boss decision; if busy, retry after its next message.
+- Close a coordinator main you opened with boss_close_main after its done report, unless it awaits a boss decision; if busy, retry after its next message. Close a main that handed over once its successor is live, whoever opened it. boss_close_main with no argument lists dead agent panes (pi gone, bare shell): close each with `pane`.
 - A dead main whose work is not done: boss_revive_main revives it as itself; open no new main for its sender.
 - Never ask the boss (no questions, robot_hand, focus changes); boss decisions go to the owning main.
 - Do no work yourself: no commands, process signals, edits, or subagents; a one-step fix goes to its owner.
