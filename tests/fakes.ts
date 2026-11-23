@@ -491,6 +491,8 @@ export class Agent {
 	commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void>; getArgumentCompletions?(prefix: string): { value: string }[] | null }>();
 	entries: { customType: string; data: unknown }[];
 	notices: { text: string; level?: string }[] = [];
+	/** The active tool set the extension set with pi.setActiveTools; undefined until it does. */
+	active?: string[];
 	/** Messages the extension handed pi with pi.sendMessage. */
 	sent: { customType: string; content: string; deliverAs?: string; triggerTurn?: boolean; details?: unknown; stored?: boolean }[] = [];
 	/** How many of the steers in `sent` left pi's queue: delivered (`deliver`) or dropped (`dropQueue`). */
@@ -602,6 +604,9 @@ export class Agent {
 			getSessionName: () => this.name,
 			getCommands: () => world.commands,
 			getAllTools: () => [...this.tools.values()].map((t) => ({ name: t.name, description: t.description })),
+			// pi's active set: every tool unless it says `defaultActive: false`, until the extension sets it.
+			getActiveTools: () => this.active ?? [...this.tools.values()].filter((t) => (t as { defaultActive?: boolean }).defaultActive !== false).map((t) => t.name),
+			setActiveTools: (names: string[]) => void (this.active = names.filter((name) => this.tools.has(name))),
 			sendMessage: (message: { customType: string; content: string }, options?: { deliverAs?: string; triggerTurn?: boolean }) => void this.sent.push({ ...message, deliverAs: options?.deliverAs, triggerTurn: options?.triggerTurn, ...(this.idle && !options?.triggerTurn ? { stored: true } : {}) }), // an idle pi stores a message that triggers no turn at once (`_appendCustomMessage`): no queue, no `message_end`
 		} as unknown as ExtensionAPI;
 		// pi-intercom's side of the extension API.

@@ -2464,7 +2464,7 @@ pi 不等待就發出這兩個事件，並逐一走過各擴充套件，所以�
 
 sb 隨附它的智慧體所用的 pi-herdr-agents 角色：`roles/` 裡的 `worker`、`scout`、`planner`、`reviewer`、`visual-tester`、`adversarial-reviewer`（0.83.0 讓 `watchdog` 退休：[盯守](#盯守)）。第五個擴充入口 `src/rolepack.ts` 在每個 pi（子智慧體也一樣）把這個資料夾登記到 pi-herdr-agents 的探索事件（`pi-herdr-subagents:roles:discover:v1`，API 版本 1），並在 `session_shutdown` 時撤掉。pi-herdr-roles 帶著同樣的名稱，兩者會衝突，pi-herdr-agents 會停用這些角色：請解除安裝它。全域（`~/.pi/agent/agents/`）或專案裡的同名角色，仍然優先於角色包。
 
-每個角色的 `tools:` 列會成為子智慧體的工具允許清單。`worker` 與 `adversarial-reviewer` 沒有這一列，可用所有工具。`/boss roles-check [folder]` 把列出的每個名稱，和它所在 session 的工具、以及只有子智慧體才有的名稱比對：pi-herdr-agents 的 `caller_ping` 與 `subagent_done`。session 沒有的名稱算失敗，只有上層才有的名稱也算失敗：sb 自己的工具（`src/tools.ts` 的 `PARENT_ONLY`，全都在子智慧體之外登記）以及 pi-herdr-agents 的 `worktree_list` 與 `worktree_remove`。它預設讀 sb 自己的 `roles/`，不啟動任何程序；以 `--tools` 或 `--exclude-tools` 啟動、工具清單被縮小的 session 會拒絕執行。
+每個角色的 `tools:` 列會成為子智慧體的工具允許清單。`worker` 與 `adversarial-reviewer` 沒有這一列，可用所有工具。`/boss roles-check [folder]` 把列出的每個名稱，和它所在 session 的工具、以及只有子智慧體才有的名稱比對：pi-herdr-agents 的 `caller_ping` 與 `subagent_done`，以及 sb 的 `thread_post` 與 `thread_wait`（[審查串](#審查串)）。session 沒有的名稱算失敗，只有上層才有的名稱也算失敗：sb 自己的工具（`src/tools.ts` 的 `PARENT_ONLY`，全都在子智慧體之外登記）以及 pi-herdr-agents 的 `worktree_list` 與 `worktree_remove`。它預設讀 sb 自己的 `roles/`，不啟動任何程序；以 `--tools` 或 `--exclude-tools` 啟動、工具清單被縮小的 session 會拒絕執行。
 
 ### 盯守
 
@@ -2505,6 +2505,29 @@ sb 隨附它的智慧體所用的 pi-herdr-agents 角色：`roles/` 裡的 `work
 **常駐提示**。用 `boss_watch` 開始盯守的 `coordinator` 主智慧體，每個 session 會在那次呼叫的結果上收到一行：它的工作看來是常駐的盯守，`boss_duty standing` 會把它設成這個種類。sb 自己從不切換種類。
 
 server 還會再回答 `watch-read` 一個版本（舊版的監控者子智慧體會呼叫它），對 `watch-report` 則回答 `watch-report is retired in pi-straw-boss 0.83.0 …`。
+
+</details>
+
+### 審查串
+
+要審查的變更在審查串上進行（0.84.0，[規格](specs/2026-11-23-lite-b2-d-e-f.md) §2）：主智慧體在派工前用 `boss_pair` 把一個 worker 和一個 reviewer 配成一對，兩份任務說明都由它寫；兩個子智慧體透過 sb server 在 `T<n>` 串上互相貼文，主智慧體只在串關閉時被它們的兩份結果叫醒。過去 r 輪修正要花主智慧體 2r+3 個回合，每個發現都由它轉述；現在只要一到兩個。
+
+<details>
+<summary>Details</summary>
+
+**`boss_pair({ worker, reviewer, rounds? })`**。名稱就是主智慧體接著交給 `subagent` 的名稱；`rounds` 是這個串允許幾輪修正，1 到 3（預設 3）。server 開出 `T<n>`，每個主智慧體各自編號，主智慧體派出兩個子智慧體，各自的任務裡都有一行 `Thread: T<n>`；兩個可以並行，誰先都行。成員與塔台、隊友的輪次、已是同一個主智慧體某個未關閉串成員的名稱，以及每個主智慧體超過 8 個未關閉的串，都會被拒絕。這個工具在加入時和網的工具一起註冊，所以主智慧體從 session 開始就有它。
+
+**成員資格**。子智慧體證明是哪個主智慧體派它出來的方式，和 0.80.0 的監控者相同（`src/server/childtie.ts`）：它的 `PI_SUBAGENT_SESSION`、`PI_SUBAGENT_ID` 與 `PI_SUBAGENT_ACTIVITY_FILE` 必須對得上那個主智慧體 artifacts 資料夾裡的一個啟動或接續腳本，而腳本的名稱（pi-herdr-agents 對交給 `subagent` 的 `name` 做的 `safeName`）必須是這個串的 worker 或 reviewer。同一個主智慧體的其他子智慧體、別的主智慧體的子智慧體，以及執行已結束的子智慧體都會被拒絕。控制 socket 不帶對方的身分憑證，所以同一個使用者的程序仍能對這一個串貼出假訊息。
+
+**子智慧體的工具**。sb 在每個子智慧體裡註冊 `thread_post` 與 `thread_wait`，不論在不在 Herdr 裡，預設不啟用。子智慧體第一次執行、第一次呼叫模型之前，會問 server 自己是不是成員（`thread-member`）：成員的啟用工具集會加入這兩個工具，其他子智慧體則會把它們拿掉，即使 `roles/reviewer.md` 的 `tools:` 列寫了它們。這個答案在整個 session 都有效，所以第一次呼叫之後工具清單不會再變。`thread_post({ thread, to, tag, text, refs? })` 貼文；server 寫上編號 `#n`、時間，以及 `from`，也就是連結證明的那個成員。`thread_wait({ thread, since? })` 會立刻回傳 `since`（預設是上一次等待結束的地方）之後點名呼叫者的貼文，或回傳 `closed: { by, tag, at }`；否則 server 最多扣住 45 秒，子智慧體再問一次，最長 50 分鐘。每次重新輪詢都會動到活動檔，所以 pi-herdr-agents 的卡住提醒保持安靜；中止或有訊息抵達會結束它，server 沒回應就再問（`src/holdpoll.ts`，也就是監控者的 `watch_read` 跑的那個迴圈）。等待中的子智慧體不花 token。
+
+**server 守的規則**。只有 worker 貼 `review`（附上分支、head commit 與 worktree 路徑）；只有 reviewer 貼 `fix` 與 `done`。每個 `fix` 是一輪修正；超過 `rounds` 的 `fix` 會被拒絕，server 以「N repair rounds used」把串關成 `blocked`。`done`（reviewer 的核准）或 `blocked`（任一成員）會關閉這個串，之後的貼文一律拒絕。2 小時沒有貼文、配對後滿 24 小時，或某個成員的執行在沒有關閉的情況下結束（它的活動檔寫著 done 或已消失），都會以一則來自 `sb` 的貼文把串關成 `blocked` 並寫明原因。`main` 只能和 `done` 或 `blocked` 一起被點名；點名只是路由，成員的等待只回傳點名它的貼文，不含它自己的。文字是 1 到 4,000 個純文字字元，每個串最多 200 則貼文。
+
+**主智慧體的喚醒**。串關閉時，兩個成員的 `thread_wait` 都回傳 `closed`；各自寫下最終報告，以 `#n` 引用貼文，然後結束，pi-herdr-agents 就像對任何子智慧體一樣送出兩份結果。server 自己不送主智慧體任何東西，所以復活的主智慧體（同一個 session id）仍擁有它的串，並透過[孤立的子智慧體](#孤立的子智慧體)拾取結果；交接也不改變什麼：接手者讀舊主智慧體的串，不會多出新的喚醒路徑。需要決定的子智慧體先貼 `blocked`，讓對方停止等待，再呼叫 `caller_ping`。
+
+**閱讀**。`board_read` 在 `threads` 區段列出主智慧體的串（未關閉的在前，最多 10 個），`board_read({ thread: "T<n>" })` 給出一個串的貼文，最新的在最後、16 KB 以內，裝在一個每行都以 `| ` 開頭的框裡，所以子智慧體的文字不會被當成 sb 的；`<owner8>/T<n>` 讀這台電腦上另一個主智慧體的串（接手者讀前任的）。隊友的輪次不能讀。
+
+**儲存**。server 資料夾裡的 `threads/<owner8>/T<n>.jsonl` 存放貼文（只附加，權限 600），`T<n>.json` 存放擁有者、成員、輪數與成員的活動檔。輪數、最後一則貼文與關閉都從貼文讀回，所以 server 重啟後每個串都還在；已關閉的串在關閉 7 天後刪除檔案。
 
 </details>
 
@@ -3873,6 +3896,7 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 |---|---|---|
 | `boss_promote` | 已加入且不是塔台的 session | 成為這個分頁的主智慧體；分頁已有存活的主智慧體時會被拒絕。 |
 | `boss_watch` | 分頁的主智慧體與火車（成員、塔台、隊友的輪次，以及塔台執行關閉時都不行） | 請 sb server 盯著網裡的一個單位（`key`、`quiet`、`idle`、`until`、`stop`；不給鍵就列出盯守），每有變化就用一行字叫醒你：每個盯守每分鐘最多一則、只送最新狀態、每小時 12 則，你在工作時等這一輪結束再送（見[盯守](#盯守)）。 |
+| `boss_pair` | 分頁的主智慧體與火車（成員、塔台與隊友的輪次都不行） | 派工前把一個 worker 和一個 reviewer 配到審查串 `T<n>` 上（`worker`、`reviewer`、`rounds` 1 到 3，預設 3）；兩者在串上對話，主智慧體只在串關閉時被兩份結果叫醒（見[審查串](#審查串)）。 |
 | `boss_open_main` | 僅塔台 | 在塔台的工作區開一個新分頁，以新的 pi 作為它的主智慧體，交給它一個沒有任何 session 擁有的請求，每個請求一次（見[開啟主智慧體](#開啟主智慧體)）。帶 `role: "train"` 時開啟火車；在 sb server 的執行裡帶 `role: "integrator"` 時，把車廂單送給專案唯一的整合員，沒有在跑的就開一個，當成塔台自己的主智慧體。 |
 | `boss_close_main` | 僅塔台 | 要求這個工作區的主智慧體（依 intercom 名稱或 session id）像 `/boss close` 那樣 quit：這個塔台開啟的，或交接過、接班者已活著的。帶 `pane` 時關掉一個死掉的智慧體窗格（pi 不在、停在空的 shell、沒有 session），它是唯一的窗格時連分頁一起關；兩者都不帶時列出這些窗格。對老闆開啟又沒有交接的主智慧體、另一個工作區的主智慧體、Herdr 回報在工作中的，以及正在進行一輪、有排隊訊息、有對話框、有 monitor 或有子智慧體在跑的，以及沒有交接的值守主智慧體（只有老闆能關），都會被拒絕；有活著的 pi、塔台的、另一個工作區的，或正在開啟或救回的窗格也會被拒絕（見[關閉開啟的主智慧體](#關閉開啟的主智慧體)與[關閉交接過的主智慧體與死掉的智慧體窗格](#關閉交接過的主智慧體與死掉的智慧體窗格)）。 |
 | `boss_revive_main` | pi 塔台與本機塔台執行（盟友執行與總塔台沒有） | `list` 列出工作區裡有角色紀錄的 main 與火車及其狀態（`dead`、`quit`、`live`、`stale` 等）；`revive` 依 session id、8 個字元以上的 id 前綴或名稱，附一行理由救回其中一個：同一個 session 開在新分頁，回來的是它自己。成員、塔台、替隊友裝置開的 main、活著的 session、沒通過檢查的檔案、別的工作區的 session、寄件者或工作區已達上限、整合關閉或專案已有整合者時的整合者、已試過一次的死亡、最近 24 小時內救回失敗過的 session、交接過的 main，以及 24 小時內的第三次救回，都會被拒絕（見[救回死掉的主智慧體](#救回死掉的主智慧體)）。 |
@@ -3882,7 +3906,7 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 
 | `tower_reply` | 僅塔台 run（不含主塔台） | 以塔台的標頭，用 intercom 名稱或 session id 回答一個本機 session（主智慧體或成員）。`reply` 說明是否等待答案；`basis` 在自動模式下指出對 blocked 的 `call_tower` 的回答依據什麼；`forward` 是車廂單的路徑（[合併火車](#合併火車)）。 |
 | `tower_done` | 僅塔台 run | 以一份給下一次執行的交接筆記結束這次執行：每行一項，1 到 1,200 個字元。`wakeAfter`（5 到 240 分鐘）要求一次後續執行，只限本機 run。老闆在執行裡時，執行不會結束（[執行中的老闆](#執行中的老闆)）。 |
-| `board_read` | 塔台、主智慧體；成員只拿到 `towers` 區段 | 工作看板：這台電腦上，以及透過 Straw Link 在隊友電腦上，每個主智慧體的一行目前工作與檢查清單、未結的 link 等待，以及 `towers` 區段（每個分頁的主智慧體與種類、這個工作區的塔台、主塔台、其他塔台；0.83.0 之前是 `boss_status`），以 JSON 形式（見[工作看板](#工作看板)）。 |
+| `board_read` | 塔台、主智慧體；成員只拿到 `towers` 區段 | 工作看板：這台電腦上，以及透過 Straw Link 在隊友電腦上，每個主智慧體的一行目前工作與檢查清單、未結的 link 等待，以及 `towers` 區段（每個分頁的主智慧體與種類、這個工作區的塔台、主塔台、其他塔台；0.83.0 之前是 `boss_status`），以及主智慧體的審查串；`thread` 讀一個串的貼文，以 JSON 形式（見[工作看板](#工作看板)）。 |
 | `board_set` | 已加入且不是塔台的 session（只有分頁的主智慧體可以寫） | 覆寫主智慧體自己的看板項目（它會依 todo 清單與名稱自己填）：`now` 與最多 8 個檢查清單項目，或 `auto: true` 交還給它；回答會說明它去了哪裡。 |
 | `link_request` | 設好 Straw Link 的受管電腦上的每個 session（session 啟動時決定），以及本機塔台 run | 以一個理由請求一個 Straw Link 動作（create、invite、invite-unattended、join、trust、leave、remove、role、rotate）。老闆在一個顯示動作、每個引數、理由與這個 session 的對話框裡核准每一個；沒有任何東西會未經詢問就執行。在無人值守裝置上與遠端輪次裡會被拒絕。 |
 | `call_tower` | 已加入的 session 與塔台 | 在標頭之下送一則訊息給這個工作區的塔台，或依 id 或完整標籤送給另一個工作區的。沒有塔台在跑時會開啟塔台分頁。`why`（在 pi 裡必填：`milestone`、`shared` 或 `blocked`）寫進標頭。`reply`（預設 true）說明是否期望塔台回答。 |
@@ -3890,6 +3914,7 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 | `boss_rename` | 已加入的 session，不含塔台 | 把 session 的名稱（`pi.setSessionName`）設成描述它目前工作的短語，去除空白，至多 40 字元（分頁標籤放得下 16 個）。網與 GUI 依名稱顯示 session，而主智慧體用它來標示它的 Herdr 分頁（和 pi-auto-tab-name 一樣截成 16 字元，所以那個擴充在載入時，會把標籤當成自己的，並在壓縮之間把它當成選定的名稱保留）。主智慧體自己重新命名分頁，是因為 pi-auto-tab-name 不動別人標示過的分頁，例如老闆命名的分頁，或塔台帶著標籤開啟的分頁；成員不動它的主智慧體的分頁。主智慧體的 prompt 讓它在工作轉向另一個任務時呼叫這個。塔台沒有這樣的工具：網依它的名稱認出它。名稱若是塔台或列車分頁的標籤（塔台圖示、主塔台圖示、`train <MMDDx>`）會被拒絕：還原之後，證明角色的就是這個標籤。 |
 | `boss_broadcast` | 已加入的 session 與塔台 | 在標頭（指名每個收件者）之下，送一則訊息給某個範圍內的每個其他 session。`tab`、`workspace` 與 `towers` 只觸及加入網的 session（Herdr 裡幾乎每個 pi，不含子工作區的 session；`towers` 透過主智慧體觸及沒有塔台的工作區，否則透過它的成員）；`all` 觸及這台機器上每個 pi session，不論有沒有加入（用於像是要去睡覺之類的通知）。預設 `workspace`。塔台對其他塔台用 `tower_send`。 |
 | `boss_server` | Herdr 裡每個有畫面且已加入的 session | sb server 的 `status`（它關著時也可以）、`logs`，或附理由的 `restart`（見 [sb server](#sb-server)）。遠端輪次裡不可用。 |
+| `thread_post`、`thread_wait` | 主智慧體配成對的子智慧體（從第一次執行起啟用；其他子智慧體會拿掉） | 在審查串上貼文（`to`、`tag` 為 review、fix、done、blocked 或 note、`text`、`refs`），以及等待點名你的貼文或串的關閉（見[審查串](#審查串)）。 |
 | `tower_memory` | 僅本機塔台 run | 保存比執行活得更久的東西：長期指示或決定，須是執行取走的某則老闆訊息的逐字引用（server 會檢查），撤銷一條用同樣的證明，以及塔台自己的等待事項（add、resolve、drop；給老闆的等待事項是一張有欄位的卡片，見[塔台記憶](#塔台記憶)）。隊友 run 會被拒絕。見[塔台記憶](#塔台記憶)。 |
 
 | 指令 | 效果 |

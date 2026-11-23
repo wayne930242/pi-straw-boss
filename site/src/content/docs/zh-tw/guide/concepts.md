@@ -100,6 +100,20 @@ Straw Boss 從子智慧體啟動時用的 pi-herdr-agents 角色名稱，讀出�
 0.83.0 讓 `watchdog` 子智慧體與 `cli.mjs watch` 退休。
 規則見[盯守](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-role-pack/#盯守)。
 
+### 用 boss_pair 開審查串
+
+要審查的變更不再每個發現都經過主智慧體一次。主智慧體在派工前用 `boss_pair` 把一個 worker 和一個 reviewer 配成一對，兩份任務說明都由它寫，並在兩個任務裡各放一行 `Thread: T<n>`。
+兩個子智慧體透過 sb server 在這個串上互相貼文（`thread_post`、`thread_wait`），主智慧體只在串關閉時被它們的兩份結果叫醒。
+
+- `worker` 與 `reviewer`：主智慧體接著交給 `subagent` 的名稱；
+- `rounds`：這個串允許幾輪修正，1 到 3（預設 3）。
+
+只有 reviewer 貼 `fix`（每則一輪修正）與 `done`（它的核准，會關閉這個串）；任一成員都可以貼 `blocked`，同樣會關閉它。
+超過輪數上限的 `fix`、2 小時沒有貼文，或某個成員在沒有關閉的情況下結束，server 都會把串關成 `blocked`。
+只有主智慧體配成對的兩個子智慧體從第一次執行起拿到串的工具；其他子智慧體，以及別的主智慧體的子智慧體，都沒有。
+`board_read` 列出主智慧體的串，帶 `thread` 的 `board_read` 顯示一個串的貼文。
+規則見[審查串](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-role-pack/#審查串)。
+
 ## 塔台怎麼運作
 
 塔台是 [sb server](#sb-server) 的一項服務，不是一個長期活著的 pi。

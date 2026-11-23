@@ -33,9 +33,9 @@ test("size caps: a kind addendum is at most 6 lines and 974 characters; integrat
 
 // 27f86373 held main.md + planning.md in 9,676 characters, and 0.82.1 main.md + dispatch.md + planning.md in 9,673. 2026-11-23 (docs/specs/2026-11-23-lite-main.md §1, measured): dispatch.md folded into
 // main.md as two lines, with the cap of 4 workers and the todo before a worker: main.md 28 to 29 lines.
-test("no growth from the fold: main.md + planning.md stays under 9,676 characters, and main.md has at most 29 lines", () => {
+test("no growth from the fold: main.md + planning.md stays within 9,687 characters, and main.md has at most 29 lines", () => {
 	const sum = read("main").length + read("planning").length;
-	assert.ok(sum < 9676, `the two files hold ${sum} characters`);
+	assert.ok(sum <= 9687, `the two files hold ${sum} characters`); // D (0.84.0, §2.5; measured): +154 for the reviewed change's one sentence in main.md
 	assert.ok(lines(read("main")) <= 29, `main.md has ${lines(read("main"))} lines`);
 });
 

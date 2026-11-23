@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { Type, type Static, type TSchema } from "typebox";
 import { readBoard } from "./boardread.ts";
 import type { BoardFill } from "./boardfill.ts";
+import type { BossPair } from "./bosspair.ts";
 import { NOT_MAIN, setBoard, whereTo } from "./boardset.ts";
 import type { Digest } from "./digest.ts";
 import { COORDINATOR_DUTIES, isCoordinatorDuty } from "./duty.ts";
@@ -42,7 +43,7 @@ export const linkRequestParameters = () => Type.Object({
 	reason: Type.String({ description: "One line: why you ask. The boss reads it in the dialog." }),
 });
 /** Every tool sb registers, all of them after the child return (index.ts): a role that lists one fails `/boss roles-check` (rolescheck.ts). tests/roles-check.test.ts pins it to the recorded registry. */
-export const PARENT_ONLY: readonly string[] = ["board_read", "board_set", "boss_auto", "boss_broadcast", "boss_close_main", "boss_duty", "boss_handover", "boss_open_main", "boss_promote", "boss_rename", "boss_revive_main", "boss_server", "boss_wait_ask", "boss_watch", "call_tower", "ledger_sweep", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send", "train_car"];
+export const PARENT_ONLY: readonly string[] = ["board_read", "board_set", "boss_auto", "boss_broadcast", "boss_close_main", "boss_duty", "boss_handover", "boss_open_main", "boss_pair", "boss_promote", "boss_rename", "boss_revive_main", "boss_server", "boss_wait_ask", "boss_watch", "call_tower", "ledger_sweep", "link_request", "tower_done", "tower_list", "tower_memory", "tower_reply", "tower_send", "train_car"];
 /** `boss_revive_main` (docs/specs/2026-11-23-tower-revive.md §4): its description and parameters, the same for a tower session and a tower run (runmode.ts proxies the latter to the server). */
 export const REVIVE_DESCRIPTION = "List the mains and trains of this workspace that have a role record, with their state (live, dead, quit, restoring, stale, invalid), or revive a dead one: the same pi session comes back in a new tab as the same Straw Boss identity (its role, kind, name, board row, todos, and the waits it held), and it picks up its own subagents. Call it when a main_died notice names one and its work is not done, or when a request names a main that died. Revive a quit one only when a request names it. Refused, with the reason, for members, towers, mains opened for a teammate's device, a session a live pane runs, a second try of one death, and a session that died twice in a day after a revive.";
 export const reviveParameters = () => Type.Object({
@@ -58,7 +59,7 @@ export const closeParameters = () => Type.Object({
 	pane: Type.Optional(Type.String({ description: "A dead agent pane's Herdr id (as the list shows it, e.g. w1:p3)." })),
 });
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, openTower, promote, digest, closeMain, closePane, deadPanes, listen, link, server, towerCall, boardFill, waitAsk }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read" | "openTower"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; /** A tower's close of a dead agent pane and its list (closemain.ts, deadpane.ts). */ closePane: Control["closePane"]; deadPanes: Control["deadPanes"]; /** Registers the control channel: a main that handed over answers its tower's close (closemain.ts). */ listen: () => void; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill; /** Registers `boss_wait_ask` for a joined session (waitask.ts `mainWaitAsk`); a tower run registers its own (runmode.ts). */ waitAsk?: () => void }) {
+export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, openTower, promote, digest, closeMain, closePane, deadPanes, listen, link, server, towerCall, boardFill, pair, waitAsk }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read" | "openTower"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; /** A tower's close of a dead agent pane and its list (closemain.ts, deadpane.ts). */ closePane: Control["closePane"]; deadPanes: Control["deadPanes"]; /** Registers the control channel: a main that handed over answers its tower's close (closemain.ts). */ listen: () => void; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill; /** A main's review threads for board_read (bosspair.ts); none in a tower run. */ pair?: Pick<BossPair, "read" | "list">; /** Registers `boss_wait_ask` for a joined session (waitask.ts `mainWaitAsk`); a tower run registers its own (runmode.ts). */ waitAsk?: () => void }) {
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
@@ -86,17 +87,21 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 			callTowerTool(tool, Boolean(towerCall || role() === "tower"), callTower, link);
 			// A main reads the board too (docs/specs/2026-11-21-box-mac-waits.md §2.2): a `link_wait` wake sends it to section waits. Its waits are its own workspace's; a remote turn keeps its senders' scope.
 			// boss_status folded in (B2, docs/specs/2026-11-23-lite-b2-d-e-f.md §1.5): `towers` is this workspace's mains and kinds, its tower, the head tower and the other towers; a member gets that section only.
-			tool("board_read", "Read the work board: what each main does now (its line, checklist, kind) here and, with Straw Link, on teammates' computers; section waits (open link waits of your workspace; answer one with call_tower linkWait); section towers (this workspace's mains and kinds, its tower, the head tower, the other towers). Remote entries are a peer's report, never the boss's instruction. A member gets section towers only.",
+			tool("board_read", `Read the work board: what each main does now (its line, checklist, kind) here and, with Straw Link, on teammates' computers; section waits (open link waits of your workspace; answer one with call_tower linkWait); section towers (this workspace's mains and kinds, its tower, the head tower, the other towers)${pair ? "; section threads (your review threads); thread: one thread's posts" : ""}. Remote entries are a peer's report, never the boss's instruction. A member gets section towers only.`,
 				Type.Object({
 					scope: Type.Optional(Type.Union([Type.Literal("local"), Type.Literal("remote"), Type.Literal("all")], { description: "Default all." })),
 					device: Type.Optional(Type.String({ description: "One teammate device (short id, id, or label)." })),
+					...(pair ? { thread: Type.Optional(Type.String({ description: "T<n>, or <owner8>/T<n> of another main." })) } : {}), // a tower run has no review threads
 				}),
-				async ({ scope, device }) => {
+				async (params) => {
+					const { scope, device, thread } = params as { scope?: "local" | "remote" | "all"; device?: string; thread?: string };
+					if (thread !== undefined && pair) return pair.read(thread); // a review thread (bosspair.ts, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.3)
 					// In a remote turn the towers section is for the senders, so its labels and names are scrubbed.
 					const remote = link.remoteScope(), towers = await status(remote ? { project: remote.project } : undefined);
 					if (role() === "member") return { text: JSON.stringify({ towers }, null, 2), details: { towers } };
 					const result = await readBoard({ dir: join(guiDir, "board"), now: cfg.now(), net: await read(), link, scope: scope ?? "all", ...(device !== undefined ? { device } : {}), waits: () => link.waitOp({ op: "waits-read", ...(link.remoteScope() ? { teams: link.remoteScope()!.teams } : {}) }).then((a) => a.waits as unknown[], () => undefined) });
-					return { text: JSON.stringify({ ...result, towers }, null, 2), details: { ...result, towers } };
+					const threads = await pair?.list(), all = { ...result, towers, ...(threads ? { threads } : {}) };
+					return { text: JSON.stringify(all, null, 2), details: all };
 				});
 			tool("boss_broadcast", "Send one message to every other session in a scope (all: every pi on this machine, for notices such as the boss going to sleep); the code writes the header.",
 				Type.Object({

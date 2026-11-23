@@ -28,6 +28,10 @@ Ending the turn ends the run, and only your final message is delivered.
 Keep the turn open until every build, test, monitor, and reviewer you started has returned its result: workers that ended early lost their reviewer's verdict and left running processes behind.
 Before the final message, stop what you started as the user instructions' process rule describes.
 
+## Review thread
+
+When your task names `Thread: T<n>`, your reviewer is paired with you there. When your anchor passes, `thread_post` tag `review` to the reviewer with the branch, head commit, and worktree path; `thread_wait` for its answer; repair each `fix` and post `review` again. When the thread closes, write your final message citing posts as `#n`, and end. Post `blocked` before any `caller_ping`, so your reviewer stops waiting.
+
 ## Final message
 
 Write it by the `agent-terse` skill: the main agent reads it, not the user.

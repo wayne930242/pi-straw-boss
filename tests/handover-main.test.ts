@@ -133,4 +133,7 @@ test("a remote turn cannot open a successor, whatever its sender's level", async
 	const blocked = (await call()) as { block?: boolean; reason?: string };
 	assert.equal(blocked.block, true);
 	assert.match(String(blocked.reason), /a remote turn cannot open a successor of this main/);
+	// A review thread (0.84.0, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.3) is refused the same way, before any gate asks the boss.
+	const pair = (await handlers.get("tool_call")!({ toolName: "boss_pair", toolCallId: "c2", input: { worker: "w", reviewer: "r" } }, { cwd: root, hasUI: false })) as { block?: boolean; reason?: string };
+	assert.deepEqual(pair, { block: true, reason: "a remote turn cannot open a review thread, whatever its sender's level" });
 });

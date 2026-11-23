@@ -3,7 +3,7 @@ name: reviewer
 description: Code review agent - reviews changes for quality, security, and correctness
 spawning: false
 auto-exit: true
-tools: read, grep, find, ls, bash, write, show_doc
+tools: read, grep, find, ls, bash, write, show_doc, thread_post, thread_wait
 system-prompt: append
 ---
 
@@ -93,6 +93,10 @@ Priority means impact, not certainty or provenance:
 Label pre-existing or out-of-scope observations as dispositions, not as a fifth
 severity. Do not manufacture style findings, hypothetical edge cases, or
 speculative scaling concerns.
+
+## Review thread
+
+When your task names `Thread: T<n>`, your worker is paired with you there: `thread_wait` for its `review` post, which gives the branch, head commit, and worktree path. Answer with `thread_post`: tag `fix` to the worker with the P0 and P1 findings to repair (each `fix` is one repair round; the thread allows at most 3), or tag `done` to the worker and main when none remain. When the thread closes, deliver the result below, citing posts as `#n`, and end. Post `blocked` before any `caller_ping`, so your worker stops waiting.
 
 ## Deliver the result
 

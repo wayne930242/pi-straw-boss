@@ -100,6 +100,20 @@ The watches live in the sb server, so they survive a `/reload` and a server rest
 0.83.0 retired the `watchdog` subagent and `cli.mjs watch`.
 The rules are in [Watches](/pi-straw-boss/docs/reference/how-it-works/the-role-pack/#watches).
 
+### Review threads with boss_pair
+
+A reviewed change no longer goes through the main once per finding. The main pairs a worker and a reviewer with `boss_pair` before it dispatches them, writes both briefs, and puts the line `Thread: T<n>` in each task.
+The two children post to each other on that thread (`thread_post`, `thread_wait`) through the sb server, and the main is woken only by their two results when the thread closes.
+
+- `worker` and `reviewer`: the names the main then gives `subagent`;
+- `rounds`: how many repair rounds the thread allows, 1 to 3 (default 3).
+
+Only the reviewer posts `fix` (one repair round each) and `done` (its approval, which closes the thread); either member may post `blocked`, which closes it too.
+A `fix` past the round cap, 2 hours without a post, or a member that ended without a close makes the server close the thread `blocked`.
+Only the main's two paired children get the thread tools, from their first run; any other child, and a child of another main, has none.
+`board_read` lists the main's threads, and `board_read` with `thread` shows one thread's posts.
+The rules are in [Review threads](/pi-straw-boss/docs/reference/how-it-works/the-role-pack/#review-threads).
+
 ## How a tower runs
 
 A tower is a service of the [sb server](#the-sb-server), not a long-lived pi.

@@ -65,7 +65,8 @@ test("/boss roles-check runs in the session: it starts no process and answers wi
 test("sb's tools registered outside a child, less those in a child, equal PARENT_ONLY", async () => {
 	const child = world.agent({ id: "c", pane: "wA:p9", tab: "wA:t1", env: { PI_SUBAGENT_ID: "run-1" } });
 	await child.start();
-	assert.deepEqual([...child.tools.keys()], [], "a child registers no sb tool (0.83.0: the watch tools went with the watchdog)");
+	assert.deepEqual([...child.tools.keys()], ["thread_post", "thread_wait"], "a child registers the review thread's two tools (0.84.0; 0.83.0's watch tools went with the watchdog)");
+	for (const name of child.tools.keys()) assert.ok(CHILD_ONLY[name], `${name} is a child's only`);
 	const seen = new Set<string>();
 	// `link_request` is registered only where Straw Link is set up (docs/specs/2026-11-23-lite-main.md §4): this world enables it.
 	mkdirSync(join(world.stateDir, "link"), { recursive: true });

@@ -79,7 +79,7 @@ test("each role carries the tools: line of §9's table (worker and adversarial-r
 	assert.equal(toolsOf("adversarial-reviewer"), undefined);
 	assert.deepEqual(toolsOf("scout"), ["read", "grep", "find", "ls", "bash", "mcp"]);
 	assert.deepEqual(toolsOf("planner"), ["read", "grep", "find", "ls", "bash", "write", "edit", "subagent", "ask_user_question", "show_doc", "mcp"]);
-	assert.deepEqual(toolsOf("reviewer"), ["read", "grep", "find", "ls", "bash", "write", "show_doc"]);
+	assert.deepEqual(toolsOf("reviewer"), ["read", "grep", "find", "ls", "bash", "write", "show_doc", "thread_post", "thread_wait"]); // 0.84.0: the review thread's tools, active only when its main paired it (threadtools.ts)
 	assert.deepEqual(toolsOf("visual-tester"), ["read", "write", "bash", "show_doc", "ask_user_question"]);
 });
 
@@ -103,7 +103,8 @@ test("each role names its brief fields and its way to the user (§9)", () => {
 });
 
 // D7: concise role prompts. A sentence said twice in a file says nothing the first did not; each file stays at or under the length it had at the pack's first release (0.79.0; the watchdog's at its own, phase 3; RP3-F003's caller_ping line was dropped by RD3-F001: caller_ping ends a non-persistent child).
-const PINNED: Record<string, number> = { "adversarial-reviewer": 154, planner: 88, reviewer: 132, scout: 80, "visual-tester": 54, worker: 38 };
+// D, review threads (0.84.0, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.5; measured): reviewer 132 to 136 and worker 38 to 42, each a `## Review thread` section of one paragraph.
+const PINNED: Record<string, number> = { "adversarial-reviewer": 154, planner: 88, reviewer: 136, scout: 80, "visual-tester": 54, worker: 42 };
 test("the D7 role checks: no repeated sentence within a file, and each file at or under its pinned length", () => {
 	for (const role of ROLES) {
 		const lines = text(role).trimEnd().split("\n").length;

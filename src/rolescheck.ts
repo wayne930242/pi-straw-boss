@@ -11,6 +11,8 @@ import { PARENT_ONLY } from "./tools.ts";
 export const CHILD_ONLY: Record<string, string> = {
 	caller_ping: "pi-herdr-agents' child extension (launch.ts:762)",
 	subagent_done: "pi-herdr-agents' child extension, for a role that does not auto-exit (launch-command.ts:67)",
+	thread_post: "sb, in a child only; active when its main paired it (threadtools.ts)",
+	thread_wait: "sb, in a child only; active when its main paired it (threadtools.ts)",
 };
 /** pi-herdr-agents' worktree tools: registered with `parentSession` only (pi-extension/subagents/index.ts:383, :512). */
 export const HOST_PARENT_ONLY: Record<string, string> = {

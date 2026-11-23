@@ -12,13 +12,13 @@ afterEach(async () => {
 const prompt = (name: string) => readFileSync(`${PROMPT_DIR}/${name}.md`, "utf8").trim();
 const hex = (id: string) => `straw-boss/tab/${Buffer.from(id).toString("hex")}`;
 
-test("outside Herdr nothing registers; a pi-herdr-agents worker runs only the dialog bridge, the trust relay, auto mode's guard (a worker in a new folder asks for trust too), and no tool (0.83.0: the watchdog's tools are retired); neither injects anything", async () => {
+test("outside Herdr nothing registers; a pi-herdr-agents worker runs only the dialog bridge, the trust relay, auto mode's guard (a worker in a new folder asks for trust too), and the review thread's two tools, inactive (0.84.0; a child its main did not pair keeps them out); neither injects anything", async () => {
 	const outside = world.agent({ id: "out", pane: "none", outsideHerdr: true });
 	const worker = world.agent({ id: "worker", pane: "wA:p9", tab: "wA:t1", env: { PI_SUBAGENT_ID: "run-1" } });
 	for (const agent of [outside, worker]) {
 		await agent.start();
-		assert.deepEqual(agent.registered, agent === worker ? ["input", "message_start", "turn_end", "session_tree", "session_compact", "agent_settled", "session_start", "tool_execution_start", "tool_execution_end", "session_shutdown", "tool_result", "tool_call", "project_trust", "agent_end"] : [], `${agent.id} registered handlers`);
-		assert.deepEqual([...agent.tools.values()].map((t) => [t.name, (t as { defaultActive?: boolean }).defaultActive]), []);
+		assert.deepEqual(agent.registered, agent === worker ? ["session_start", "before_agent_start", "input", "message_start", "turn_end", "session_tree", "session_compact", "agent_settled", "tool_execution_start", "tool_execution_end", "session_shutdown", "tool_result", "tool_call", "project_trust", "agent_end"] : [], `${agent.id} registered handlers`);
+		assert.deepEqual([...agent.tools.values()].map((t) => [t.name, (t as { defaultActive?: boolean }).defaultActive]), agent === worker ? [["thread_post", false], ["thread_wait", false]] : []);
 		assert.equal(agent.commands.size, 0);
 		assert.deepEqual(await agent.run(), {});
 	}
@@ -34,7 +34,7 @@ test("a session joins the net as a member at start: channel, tokens, net tools a
 	await a.start();
 	// `boss_wait_ask` (2026-11-16, tests/wait-ask.test.ts) is registered with the net tools; a member that calls it is refused.
 	// `board_read` (0.81.3, box-mac-waits §14) is a net tool too; a member that calls it is refused (tests/board.test.ts).
-	assert.deepEqual([...a.tools.keys()].sort(), ["board_read", "board_set", "boss_broadcast", "boss_duty", "boss_handover", "boss_promote", "boss_rename", "boss_wait_ask", "boss_watch", "call_tower"]); // no link_request: no Straw Link is set up here (docs/specs/2026-11-23-lite-main.md §4)
+	assert.deepEqual([...a.tools.keys()].sort(), ["board_read", "board_set", "boss_broadcast", "boss_duty", "boss_handover", "boss_pair", "boss_promote", "boss_rename", "boss_wait_ask", "boss_watch", "call_tower"]); // no link_request: no Straw Link is set up here (docs/specs/2026-11-23-lite-main.md §4)
 	assert.deepEqual(world.broker.registrations.map((r) => [r.id, r.namespace, r.ownerEligible]), [["a", hex("wA:t1"), true]]);
 	assert.deepEqual(a.tokens, { sb_role: "member" });
 	assert.deepEqual(a.entries, [], "joining writes no session entry");

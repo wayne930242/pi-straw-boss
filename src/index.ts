@@ -11,6 +11,7 @@ import { registerChildKind } from "./childkind.ts";
 import { createBoardFill } from "./boardfill.ts";
 import { createBriefing } from "./briefing.ts";
 import { createBossWatch } from "./bosswatch.ts";
+import { createBossPair } from "./bosspair.ts";
 import { createCloseMain } from "./closemain.ts";
 import { createDigest } from "./digest.ts";
 import { afterExit, createClosing } from "./closing.ts";
@@ -43,6 +44,7 @@ import { registerTrainGuard, registerTrainSigns, type TrainGuard } from "./train
 import { carLink, trainCarTool } from "./traincar.ts";
 import { hasIntegrationApp } from "./train/appsconfig.ts";
 import { registerTrust } from "./trust/ask.ts";
+import { registerThreadTools } from "./threadtools.ts";
 
 export type { Deps } from "./state.ts";
 
@@ -60,6 +62,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 	return function strawBoss(pi: ExtensionAPI): void {
 		// Outside Herdr there is no tab to coordinate. Every session in Herdr relays its dialogs to the GUI (bridge.ts), subagents too: they ask
 		// questions as well. A pi-herdr-agents worker never joins: its parent represents it.
+		if (env.PI_SUBAGENT_ID) registerThreadTools(pi, env); // every child, a Core-launched one with no pane too: the review thread's tools (threadtools.ts), active only in a child its dispatcher paired
 		if (!env.HERDR_PANE_ID) return;
 		const kit = createKit(pi, cfg), { s, guiDir } = kit;
 		// Closing is this session's own: the GUI asks its bridge, /boss close asks here, and only a session that runs this extension can (not a subagent).
@@ -93,9 +96,10 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		pi.on("session_start", () => void (kit.s.toolSet ??= { link: link.inUse() && link.attended(), cars: cars.enabled(), carApp: hasIntegrationApp(cfg.cwd()) }));
 		let trainGuard: TrainGuard | undefined;
 		const addTrainCar = trainCarTool(kit, () => trainGuard, cars, (text) => reach.callTower(text, undefined, false, "blocked"));
-		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), s.isTower || watch.addTool(), tools.addPromote(), tools.addDuty(), tools.addHandover(), addTrainCar()), onMain: link.look, control: () => control });
+		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), s.isTower || (watch.addTool(), pair.addTool()), tools.addPromote(), tools.addDuty(), tools.addHandover(), addTrainCar()), onMain: link.look, control: () => control });
 		// `look` (above) starts and upgrades the sb server (src/server/) and is the way to it; a session that is no part of that has none.
-		const tools = createTools(kit, { ...reach, mainDuty, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), closePane: (pane) => control.closePane(pane), deadPanes: () => control.deadPanes(), listen: () => control.register(), link, server: look, boardFill: createBoardFill(kit), waitAsk: () => mainWaitAsk(kit, { ask: cfg.ask ?? look?.ask, here: (fn) => host.here(fn), auto }) });
+		const pair = createBossPair(kit, { ask: cfg.ask ?? look?.ask, remote: () => Boolean(link.remoteScope()) }); // boss_pair and board_read's review threads (bosspair.ts)
+		const tools = createTools(kit, { ...reach, mainDuty, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), closePane: (pane) => control.closePane(pane), deadPanes: () => control.deadPanes(), listen: () => control.register(), link, server: look, boardFill: createBoardFill(kit), pair, waitAsk: () => mainWaitAsk(kit, { ask: cfg.ask ?? look?.ask, here: (fn) => host.here(fn), auto }) });
 		const host = createHost(kit, { connected: membership.connected, ask: cfg.ask ?? look?.ask });
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck, turn: bridge.turn });
