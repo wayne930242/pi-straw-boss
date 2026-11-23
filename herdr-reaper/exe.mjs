@@ -101,6 +101,7 @@ function execFileByDeadline(file, args, options, done) {
 		if (settled) return;
 		settled = true;
 		clearTimeout(timer);
+		options.signal?.removeEventListener("abort", abort);
 		for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy();
 		done(error, stdout, stderr);
 	};
@@ -120,7 +121,10 @@ function execFileByDeadline(file, args, options, done) {
 		// The leader gone and nothing left in its group: there is nothing to kill at the grace.
 		child.once("exit", () => (alone || child.pid === undefined || !signalGroup(child.pid, 0)) && clearTimeout(hard));
 	};
+	const abort = () => cutOff("Command aborted", "ABORT_ERR", false);
 	const timer = setTimeout(() => (ended ? byStatus(ended) : cutOff(`Command timed out after ${options.deadline} ms`, null, true)), options.deadline);
+	options.signal?.addEventListener("abort", abort, { once: true });
+	if (options.signal?.aborted) abort();
 	child.stdout?.setEncoding("utf8").on("data", (chunk) => (stdout += chunk).length > limit && cutOff("stdout maxBuffer length exceeded", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", false));
 	child.stderr?.setEncoding("utf8").on("data", (chunk) => (stderr += chunk).length > limit && cutOff("stderr maxBuffer length exceeded", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", false));
 	child.on("error", settle); // the program could not be started; after the call has ended, a signal that could not be sent
