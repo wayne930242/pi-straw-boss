@@ -1682,12 +1682,13 @@ export function createRuns(o: RunsOptions) {
 			pendingTakeovers++;
 			for (const a of [...byRun.values()]) {
 				// An old ally pane is never marked restored: its run ends with the restart, and a pi Herdr resumed there is answered "none" (no run of its own, no keys from the server); the boss closes the pane.
-				if (a.rec.kind !== "ally") restored.set(a.rec.pane, now() + t.restored);
+				if (a.rec.kind !== "ally" && !a.headless) restored.set(a.rec.pane, now() + t.restored);
 			}
 		},
 		async takeoverEnd() {
 			const runs = [...byRun.values()];
-			for (const a of runs) await finish(a, "herdr-restart");
+			// A headless run is the server's child, not Herdr's: it goes on (docs/specs/2026-11-23-lite-b2-d-e-f.md §4.4, A Herdr restart).
+			for (const a of runs) if (!a.headless) await finish(a, "herdr-restart");
 			pendingTakeovers = Math.max(0, pendingTakeovers - 1);
 			if (!pendingTakeovers) herdrLostAt = undefined;
 		},

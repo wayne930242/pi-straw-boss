@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { delimiter, dirname, join, win32 } from "node:path";
 import { inTestRun, refuse } from "./testguard.ts";
+import { searchPath } from "../exe.mjs";
+import { system32Path } from "../winpath.ts";
 
 // A headless tower run (docs/specs/2026-11-23-lite-b2-d-e-f.md §4, behind `towerRuns.headless`): pi started as the server's own child in RPC mode, with no pane and no Herdr. The server is the only writer of
 // the child's stdin, and it writes only the three commands below: the boss's words reach the model as a `straw-tower` message through the run's extension, never as pi input, so a line that starts with `/` or `!`
@@ -50,7 +52,8 @@ export interface PiPath { node: string; cli: string }
  */
 export function resolvePi(env: NodeJS.ProcessEnv, configured: string | undefined, platform: NodeJS.Platform = process.platform): PiPath {
 	const path = env.PATH ?? env.Path ?? "";
-	const node = which("node", path, platform, env.PATHEXT) ?? process.execPath;
+	let node: string;
+	try { node = searchPath("node", { env, platform }); } catch { node = process.execPath; }
 	if (configured) return { node, cli: configured };
 	const pi = which("pi", path, platform, env.PATHEXT);
 	if (!pi) throw new Error(`pi is not on the PATH the sb server has (${path.slice(0, 200)}); set towerRuns.pi in config.json to pi's dist/cli.js`);
@@ -152,7 +155,7 @@ export function startChild(o: StartChild): RunChild {
 	} else child.stderr?.resume();
 	child.stdin?.on("error", () => {});
 	const killGroup = o.killGroup ?? ((p: number) => { try { process.kill(-p, "SIGKILL"); } catch { try { process.kill(p, "SIGKILL"); } catch { /* gone */ } } });
-	const taskkill = o.taskkill ?? ((p: number) => void execFile("taskkill", ["/pid", String(p), "/T", "/F"], { windowsHide: true }, () => {}));
+	const taskkill = o.taskkill ?? ((p: number) => { const file = system32Path("taskkill.exe"); execFile(file, ["/pid", String(p), "/T", "/F"], { windowsHide: true }, () => {}); });
 	return {
 		pid,
 		write: (cmd) => {

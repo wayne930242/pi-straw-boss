@@ -132,9 +132,10 @@ test("no source file starts a program by a bare name: every child_process call i
 	// A name that stands for the program, in the files that start one themselves, each read for where the value comes from (todo #155: hygiene.ts passed a `file` that was the bare word "git"). A file not
 	// listed passes no name: it starts programs through exe.mjs. closing.ts: `resolveExe`. hidden.ts, winprep.ts: `system32Path`. acl.ts, breakaway.ts, lineage.ts, startof.ts: `powershellPath`.
 	// client.ts: the spec's `ctx.node`. traingate.ts: the literal "/bin/sh". trust/settings.ts: `process.execPath`.
+	// server/runchild.ts (headless tower runs, 0.85.0): `o.pi.node`, from exe.mjs `searchPath("node")` (`resolvePi`), else `process.execPath`; taskkill is `system32Path`.
 	const passes: Record<string, RegExp> = {
 		"src/closing.ts": /^cmd$/, "src/hidden.ts": /^file$/, "src/server/acl.ts": /^file$/, "src/server/breakaway.ts": /^file$/, "src/server/client.ts": /^(spec: SpawnSpec|spec\.command)$/,
-		"src/server/lineage.ts": /^file$/, "src/server/traingate.ts": /^file$/, "src/server/winprep.ts": /^file$/, "src/startof.ts": /^file$/, "src/trust/settings.ts": /^node$/,
+		"src/server/lineage.ts": /^file$/, "src/server/traingate.ts": /^file$/, "src/server/winprep.ts": /^file$/, "src/startof.ts": /^file$/, "src/trust/settings.ts": /^node$/, "src/server/runchild.ts": /^(o\.pi\.node|file)$/,
 	};
 	const offenders: string[] = [];
 	for (const file of files) {

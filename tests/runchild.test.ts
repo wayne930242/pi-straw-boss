@@ -158,3 +158,16 @@ test("an ally run is headless too: no pane split, its sender's gate (no --tools)
 	const local = await kid(2);
 	assert.ok(local.args.includes("--tools"), "the boss's words woke a local run");
 });
+
+test("a Herdr restart leaves a headless run going: it is no process of Herdr's, so nothing ends it and its claim is not held", async () => {
+	const s = await setup();
+	tower().incoming(from, msg("m1", "one"));
+	const k = await kid();
+	const token = String((await claim(s, k)).token);
+	world.losts.forEach((lost) => lost());
+	world.takeovers.forEach((take) => take());
+	await new Promise((r) => setTimeout(r, 300));
+	assert.equal(readRun(world.slot, "wA", k.run)!.outcome, undefined, "still running");
+	assert.equal((await poll(s, token)).ok, true);
+	assert.equal(k.stdinEnded, false);
+});
