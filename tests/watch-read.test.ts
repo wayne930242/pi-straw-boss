@@ -76,6 +76,18 @@ test("a stamp that is absent, not one of this server's, or from another server i
 	assert.equal(held.reply(), undefined, "this server's own stamp of the same facts holds");
 });
 
+test("a late poll result does not roll back a reading already pushed to the watch", async () => {
+	const w = world(netOf([unit()]));
+	try {
+		const initial = await w.ask(), held = w.hold({ since: initial.since });
+		await settle();
+		// The 10s timer requests the old reading; before its promise returns, the GUI pushes idle.
+		await w.beat(netOf([unit({ mark: "idle" })]), 10_000);
+		assert.equal(held.reply()?.unit?.mark, "idle");
+		assert.equal((await w.ask()).unit?.mark, "idle");
+	} finally { w.watch.stop(); }
+});
+
 test("a monitor that prints a line a second, a note, ticks, and load readings under the limit do not wake a hold; its own 45 s timer answers `unchanged` with the last reading", async () => {
 	const reading = (i: number) => netOf([unit({ note: `step ${i}`, ticks: [{ at: i, mark: "working" }], monitors: [monitor({ lines: i, last: `line ${i}`, at: 1_700_000_000_000 + i * 1000, load: { max: 30, now: i % 20 } })] })]);
 	const w = world(reading(0));

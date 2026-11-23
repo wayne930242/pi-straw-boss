@@ -239,8 +239,8 @@ export function createGuiHost(o: GuiHostOptions) {
 		return false;
 	};
 	const boardDir = join(slot.stateDir, "board");
-	/** The net source of this server: a GUI that starts gets a new one, and the watchdog's own reading (`watchNet`) makes one when no GUI has started. */
-	const newNet = () => (current = netSource({ ...(o.auto ? { auto: () => o.auto!.snap(), autoable: () => o.auto!.available() } : {}), ...(o.tower ? { services: (workspace: string) => o.tower!.view(workspace) } : {}), ...(o.head ? { head: o.head } : {}), run: cfg.run, world: cfg.world, sessions, stashed: () => stashedList(slot.stateDir), trust, hub: theHub(), board: boardSeam({ dir: boardDir, now: () => cfg.now() }), trainyard: trainyardSeam({ env: cfg.env, stateDir: slot.stateDir, ...(o.trainCars ? { book: o.trainCars } : {}), ...o.trainyard }) }));
+	/** One source (and read queue) for the GUI and watchdog, even if the watchdog reads before the GUI starts. */
+	const sharedNet = () => (current ??= netSource({ ...(o.auto ? { auto: () => o.auto!.snap(), autoable: () => o.auto!.available() } : {}), ...(o.tower ? { services: (workspace: string) => o.tower!.view(workspace) } : {}), ...(o.head ? { head: o.head } : {}), run: cfg.run, world: cfg.world, sessions, stashed: () => stashedList(slot.stateDir), trust, hub: theHub(), board: boardSeam({ dir: boardDir, now: () => cfg.now() }), trainyard: trainyardSeam({ env: cfg.env, stateDir: slot.stateDir, ...(o.trainCars ? { book: o.trainCars } : {}), ...o.trainyard }) }));
 	// The watchdog routes' view of the readings (watchread.ts): the listeners outlive a GUI that stops and starts, and one that throws is not the page's problem.
 	const watchers = new Set<(net: Net) => void>();
 	let lastNet: Net | undefined;
@@ -251,7 +251,7 @@ export function createGuiHost(o: GuiHostOptions) {
 	};
 	const begin = async (prefer: ReturnType<typeof recorded>, wait: number): Promise<Gui> => {
 		theHub();
-		const net = newNet();
+		const net = sharedNet();
 		// `running` is read by the page's remote buttons, which only come once the server is up.
 		let running!: Gui;
 		// Wi-Fi access belongs to the primary slot (one port, one CA, one name per computer): a secondary server builds the host too, to refuse its requests in words, and never writes lan.json.
@@ -393,7 +393,7 @@ export function createGuiHost(o: GuiHostOptions) {
 		/** The hub and a net reading that binds its dialogs, for the forwarder an unattended device runs. */
 		dialogs: () => ({ hub: theHub(), read: async () => void (await (forwardNet ??= netSource({ ...(o.tower ? { services: (workspace: string) => o.tower!.view(workspace) } : {}), run: cfg.run, world: cfg.world, sessions, hub: theHub() })).read()), /** The unit the hub files dialogs under `key` (known after a `read`): its pane for the dispatcher, its name and role for the label a controller is told. */ lookup: (key: string) => forwardNet?.lookup(key) }),
 		/** The readings of the net for the watchdog routes (watchread.ts): every reading a GUI makes, the last one, the registry of the last reading, and a reading made now, which a stopped GUI's source (or a new one) gives. */
-		watchNet: () => ({ onRead: (cb: (net: Net) => void) => (watchers.add(cb), () => void watchers.delete(cb)), last: () => lastNet, lookup: (key: string): Found | undefined => current?.lookup(key), read: async (): Promise<Net> => told(await (current ?? newNet()).read()) }),
+		watchNet: () => ({ onRead: (cb: (net: Net) => void) => (watchers.add(cb), () => void watchers.delete(cb)), last: () => lastNet, lookup: (key: string): Found | undefined => current?.lookup(key), read: async (): Promise<Net> => told(await sharedNet().read()) }),
 		/** The operate bridge's way in while a GUI runs (src/server/operatebox.ts): the GUI's in-process operate entry, and the registry's units and keys as the last net reading knows them. */
 		operate: (): { api: Gui["operate"]; refs(): Ref[]; lookup(key: string): Found | undefined } | undefined => (gui && current ? { api: gui.operate, refs: () => current!.refs(), lookup: (key) => current!.lookup(key) } : undefined),
 		/** At the server's start: the GUI on the recorded ports unless it was stopped on purpose (which only the boss's own command undoes). */

@@ -1221,7 +1221,12 @@ export function createTowers(o: TowersOptions): Towers {
 		try {
 			if (who.kind === "head") {
 				const head = headHost(host, {
-					ensureTower: async (workspace) => { const got = await ensure({ workspace }); return { id: got.id, opened: got.opened }; },
+					ensureTower: async (workspace) => {
+						// The target may have left since the ledger sweep matched it. Never reopen it for a sweep notice.
+						if (runs.headNotice(request.token, request.turn, LEDGER_KEY)) return { id: need(workspace).record.id, opened: false };
+						const got = await ensure({ workspace });
+						return { id: got.id, opened: got.opened };
+					},
 					openAsk: (d) => openAsk(slot, now(), d), closeAsk: (id) => closeAsk(slot, id), checkSupersedes: (id) => checkSupersedes(slot, id),
 					relay: (turn) => (typeof request.token === "string" && turn !== undefined && runs.bossTaken(request.token, turn) ? `boss:${turn}` : undefined),
 					boss: (turn) => (typeof request.token === "string" && turn !== undefined ? runs.bossEvents(request.token).find((e) => e.id === turn)?.text : undefined),

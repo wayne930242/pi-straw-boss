@@ -1197,7 +1197,7 @@ The sweep leaves head history, link state, saved stashes, and process tracking t
 At about 06:30 local time, or on the first check after the computer wakes, the primary server sends the standing head tower one `ledger_sweep` notice for that date.
 Set `ledger.janitor` in the state directory's `config.json` to the executable path (for example `~/.local/bin/ledger-janitor`); if unset, the server logs a skip but still prunes its own state.
 The head's sweep tool runs the state prune and the configured executable with `--apply --json`, without a shell.
-The head forwards each item left over to the tower whose repository checkout matches its path; items with no unique match go on the head work board instead, without asking the boss.
+The head forwards a leftover item only if its path matches the repository checkout of exactly one workspace with a live tower; otherwise it goes on the head work board. The sweep never opens a tower or asks the boss.
 
 </details>
 

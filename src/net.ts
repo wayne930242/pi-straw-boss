@@ -194,21 +194,28 @@ export function netSource(env: { auto?: () => AutoSnap | undefined; autoable?: (
 	const gone = new Map<string, { ref: Ref; at: number }>(), sessions = async () => (live = await env.sessions()), dismissed = new Set<string>(), ended = new Set<string>();
 	const lately = trackActivity();
 	const drop = (u: { subs: Unit[] }) => (u.subs.forEach((c) => c.ended && ended.add(c.key)), (u.subs = u.subs.filter((c) => !(c.ended && dismissed.has(c.key))))); // finished subagents the page dismissed
+	async function read(): Promise<Net> {
+		const next = new Map<string, Ref>(), at = Date.now(), net = await collectNet({ ...env, sessions, refs: next });
+		await withPending(net, (key) => next.get(key)?.file, env.hub?.relayed(live, next)); // what waiting units wait on, and the dialogs bridges relay; a subagent watching a monitor is not finished, so this comes before the finished are counted
+		ended.clear();
+		net.bases.forEach((b) => [...(b.tower ? [b.tower] : []), ...b.tabs.flatMap((t) => t.units), ...b.outside].forEach(drop));
+		for (const key of dismissed) if (!next.has(key)) dismissed.delete(key); // gone from the net: nothing left to hide
+		for (const [key, ref] of refs) if (!next.has(key)) gone.set(key, { ref, at });
+		for (const [key, old] of gone) if (next.has(key) || at - old.at > RECENT_MS) gone.delete(key);
+		refs = next;
+		const stashed = env.stashed?.() ?? [], seen = lately(net); // after the dialogs and the finished: the marks the page shows
+		const stashing = stashed.length ? { ...seen, stashed } : seen, board = env.board?.rows(stashing, live.map((x) => x.id)), boarded = board ? { ...stashing, board } : stashing, snap = env.auto?.(), able = env.autoable?.() ? { ...boarded, autoable: true as const } : boarded, shown: Net = snap && (snap.on || snap.pending) ? { ...able, auto: snap } : able, yards = env.trainyard?.yards(joinOf(shown));
+		if (!yards) return shown;
+		const load = env.trainyard!.load();
+		return { ...shown, yards, ...(load ? { load } : {}) };
+	}
+	// A reading also binds dialogs, updates activity and replaces the live registry. Run these steps in request order.
+	let queue: Promise<void> = Promise.resolve();
 	return {
-		async read(): Promise<Net> {
-			const next = new Map<string, Ref>(), at = Date.now(), net = await collectNet({ ...env, sessions, refs: next });
-			await withPending(net, (key) => next.get(key)?.file, env.hub?.relayed(live, next)); // what waiting units wait on, and the dialogs bridges relay; a subagent watching a monitor is not finished, so this comes before the finished are counted
-			ended.clear();
-			net.bases.forEach((b) => [...(b.tower ? [b.tower] : []), ...b.tabs.flatMap((t) => t.units), ...b.outside].forEach(drop));
-			for (const key of dismissed) if (!next.has(key)) dismissed.delete(key); // gone from the net: nothing left to hide
-			for (const [key, ref] of refs) if (!next.has(key)) gone.set(key, { ref, at });
-			for (const [key, old] of gone) if (next.has(key) || at - old.at > RECENT_MS) gone.delete(key);
-			refs = next;
-			const stashed = env.stashed?.() ?? [], seen = lately(net); // after the dialogs and the finished: the marks the page shows
-			const stashing = stashed.length ? { ...seen, stashed } : seen, board = env.board?.rows(stashing, live.map((x) => x.id)), boarded = board ? { ...stashing, board } : stashing, snap = env.auto?.(), able = env.autoable?.() ? { ...boarded, autoable: true as const } : boarded, shown: Net = snap && (snap.on || snap.pending) ? { ...able, auto: snap } : able, yards = env.trainyard?.yards(joinOf(shown));
-			if (!yards) return shown;
-			const load = env.trainyard!.load();
-			return { ...shown, yards, ...(load ? { load } : {}) };
+		read() {
+			const result = queue.then(read);
+			queue = result.then(() => {}, () => {}); // the caller gets the error; later reads still run
+			return result;
 		},
 		lookup(key: string): Found | undefined {
 			const live = refs.get(key), old = gone.get(key)?.ref;

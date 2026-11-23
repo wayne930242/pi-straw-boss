@@ -621,7 +621,7 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		head: () => towers?.head.status()?.workspace,
 		notice: (ws, text, key) => towers?.runs.notice(ws, text, key) ?? false,
 		queued: (key) => towers?.runs.noticeState(key) !== "gone",
-		world: () => cfg.world(),
+		world: () => cfg.world(), hasLiveTower: (ws) => Boolean(towers?.identityOf(ws)),
 		...o.ledgerSweep,
 	}) : undefined;
 	const serverTools: ServerTools = {
