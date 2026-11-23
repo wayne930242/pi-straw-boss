@@ -9,7 +9,7 @@ import type { Digest } from "./digest.ts";
 import { COORDINATOR_DUTIES, isCoordinatorDuty } from "./duty.ts";
 import { INTEG_NAME, type MainDuty } from "./mainduty.ts";
 import type { Membership } from "./membership.ts";
-import { type CloseMain, type Control, handedNotice, refuseStanding } from "./closemain.ts";
+import { type CloseMain, type Control, handedNotice, refuseStanding, remoteCloseTarget } from "./closemain.ts";
 import { deadList } from "./deadpane.ts";
 import type { Link } from "./link/runtime.ts";
 import { callTowerTool } from "./link/waitcall.ts";
@@ -343,12 +343,12 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 			tool("boss_close_main", CLOSE_DESCRIPTION, closeParameters(),
 				async ({ main, pane }) => {
 					if (main !== undefined && pane !== undefined) throw new Error("Give main or pane, not both");
-					if (pane !== undefined) {
-						const closed = await closePane(pane);
-						return { text: closed.text, details: closed };
-					}
+					// CLR-F002: a teammate's turn gets an ally run's scope (server/runtools.ts): a main opened for its senders' device, no dead pane, no list.
+					const remote = link.remoteScope(), devices = remote || s.remoteOrigin ? (remote?.devices ?? (s.remoteOrigin ? [s.remoteOrigin.replace(/^remote:/, "")] : [])) : undefined, net = devices && (await read());
+					if (devices) main = remoteCloseTarget(net!, { ...(main !== undefined ? { main } : {}), ...(pane !== undefined ? { pane } : {}) }, devices);
+					if (pane !== undefined) return closePane(pane).then((closed) => ({ text: closed.text, details: closed }));
 					if (main === undefined) return deadList(await deadPanes());
-					const closed = (refuseStanding(await read(), main, guiDir), await closeMain(main));
+					const closed = (refuseStanding(net || (await read()), main, devices ? undefined : guiDir), await closeMain(main));
 					return { text: closed.text, details: closed };
 				});
 		},

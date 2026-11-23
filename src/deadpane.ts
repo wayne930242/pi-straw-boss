@@ -15,7 +15,9 @@ import { readRecords } from "./roles.ts";
 // | opening   | the one-time claim (`sb_open_main`) or a revive's key waits in it: an open, a revive, or a handover is starting its pi                | no    |
 // | reviving  | a revive holds the lock of a session whose role record names this pane                                                                | no    |
 // | listed    | the broker lists a session at it: its pi lives                                                                                        | no    |
+// | agent     | Herdr reports an agent in it (`agent`): a pi that has not joined the broker, or lost it, still runs                                  | no    |
 // | busy      | process-info lists anything but the shell in the foreground (a pi, a dev server), or cannot tell                                       | no    |
+// | windows   | the platform is win32: process-info there names the shell alone even while a program runs under it (typegate.ts), so nothing is proven  | no    |
 // | dead      | none of the above                                                                                                                     | yes   |
 
 /** How long a revive lock holds (revive.ts `takeLock` takes over an older one). */
@@ -43,6 +45,7 @@ export function refusal(f: PaneFacts): string | undefined {
 	if (p.tokens?.sb_open_main !== undefined || p.tokens?.[REVIVE_TOKEN] !== undefined) return `${id} is being opened right now (an open, a revive, or a handover is starting its pi)`;
 	if (f.reviving) return `${id} is being revived right now (a tower holds the revive lock of its session)`;
 	if (f.listed) return `${id} is not dead: a live session (${f.listed.name ?? f.listed.id}) is at it`;
+	if (p.agent) return `${id} runs ${p.agent}, so it is not dead`;
 	return undefined;
 }
 /** Why the foreground is no bare shell; undefined when the shell alone is there (`process-info` proof, as a revive's D3 takes it). */
@@ -66,10 +69,16 @@ export const deadList = (rows: DeadPane[]) => ({
 });
 export interface ClosedPane { text: string; pane: string; tab?: string }
 /** `here`: the tower's workspace and own pane, read at each call (a session learns them at its start). */
-export interface DeadPaneEnv { run: HerdrRun; sessions(): Promise<Session[]>; here(): { workspace: string; pane: string }; stateDir: string; now(): number }
+export interface DeadPaneEnv { run: HerdrRun; sessions(): Promise<Session[]>; here(): { workspace: string; pane: string }; stateDir: string; now(): number; /** `process.platform` unless a test gives one. */ platform?: NodeJS.Platform }
+/** The refusal on Windows, before anything is read: no row of the table can prove a bare shell there. */
+export const WINDOWS_REFUSAL = "Dead agent panes are listed and closed on macOS and Linux only: on Windows Herdr's process-info names the shell alone even while a program runs under it, so no pane is proven dead; the boss closes it";
 
 export function createDeadPanes(env: DeadPaneEnv) {
 	const { run } = env;
+	const platform = env.platform ?? process.platform;
+	const onWindows = () => {
+		if (platform === "win32") throw new Error(WINDOWS_REFUSAL);
+	};
 	const reviving = (p: Pane) => readRecords(env.stateDir).some(({ record }) => {
 		if (record.pane !== p.pane_id || record.workspace !== p.workspace_id) return false;
 		try { return env.now() - statSync(`${ledgerPath(env.stateDir, record.file)}.lock`).mtimeMs < LOCK_MS; } catch { return false; }
@@ -90,6 +99,7 @@ export function createDeadPanes(env: DeadPaneEnv) {
 	return {
 		/** The dead agent panes of this workspace: each passed every row of the table. */
 		async list(): Promise<DeadPane[]> {
+			onWindows();
 			const { all, facts, workspace } = await look();
 			const rows: DeadPane[] = [];
 			for (const p of all.filter((x) => x.workspace_id === workspace && marked(x))) {
@@ -100,6 +110,7 @@ export function createDeadPanes(env: DeadPaneEnv) {
 		},
 		/** Closes one dead agent pane, its tab with it when it is the tab's only pane; refused with the table's reason otherwise. */
 		async close(query: string): Promise<ClosedPane> {
+			onWindows();
 			const { all, facts } = await look();
 			const f = facts(query), refused = await why(f);
 			if (refused) throw new Error(refused);

@@ -288,7 +288,7 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			return answer.boards as AllyBoard[];
 		},
 		/** The teams of the senders of the current remote turn and the one project they all bind, or undefined outside a remote turn (spec, Reading: `board_read`, in a remote turn). */
-		remoteScope(): { teams: string[]; project: string | undefined } | undefined {
+		remoteScope(): { teams: string[]; project: string | undefined; /** The senders' device ids (an ally run's pinned scope leaves them out). */ devices?: string[] } | undefined {
 			return remote.scope();
 		},
 		/** Whether this computer is attended (no unattended policy file). */

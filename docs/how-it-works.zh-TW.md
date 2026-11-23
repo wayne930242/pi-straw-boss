@@ -982,9 +982,10 @@ Straw Boss 每次啟動塔台時，都會把它當作 `--model` 傳給 pi，並�
 | opening | 裡面還留著 `sb_open_main` 或 `sb_revive`：開啟、救回或交接正在啟動它的 pi |
 | reviving | 有救回持有某個 session 的鎖，而那個 session 的角色紀錄指名這個窗格 |
 | listed | broker 列出有 session 在它上面 |
+| agent | Herdr 回報裡面有智慧體：還沒加入 broker、或與它斷線的 pi |
 | busy | `herdr pane process-info` 列出前景除了 shell 還有別的，或說不出來 |
 
-通過每一列的窗格就是死的：它的 pi 不在了，停在空的 shell。這涵蓋 main、成員、火車，以及 pi-herdr-agents 子智慧體留下的窗格。塔台執行透過伺服器有同一個工具；盟友執行的 `pane` 與列表會被拒絕，因為死掉的窗格不是替它的裝置開的 main。
+通過每一列的窗格就是死的：它的 pi 不在了，停在空的 shell。這涵蓋 main、成員、火車，以及 pi-herdr-agents 子智慧體留下的窗格。這只在 macOS 與 Linux 上運作：Windows 的 process-info 即使 shell 底下有程式在跑也只列出 shell，所以在那裡列表與關閉都會被拒絕。塔台執行透過伺服器有同一個工具；盟友執行，以及 pi 塔台裡隊友的回合，其 `pane` 與列表會被拒絕，因為死掉的窗格不是替它的裝置開的 main，也只能關掉替那個裝置開的 main。
 
 </details>
 

@@ -27,6 +27,21 @@ export function refuseStanding(net: { sessions: { id: string; name?: string; her
 	const pane = net.ps.find((p) => p.pane_id === named[0]!.herdrLocation?.paneId);
 	if (pane?.tokens?.sb_duty === "standing" && !(stateDir && handedOverOf(stateDir, pane))) throw new Error(`${named[0]!.name ?? named[0]!.id} ${STANDING_CLOSE}`);
 }
+/** A remote turn's refusal of a dead pane or the list of them (link/hooks.ts, tools.ts), as an ally run's (server/runtools.ts). */
+export const REMOTE_CLOSE = "a remote turn closes only a main opened for its own device: dead panes and their list are the local tower's";
+/**
+ * A remote turn of a pi tower closes only a main opened for the device of every sender of the turn (its pane's `sb_opened_by` is `link:<device>`), as an ally run does (server/runtools.ts `refuseClose`): not a dead
+ * pane, not the list, not a main the boss or a local tower opened, though it handed over. Returns the main's session id.
+ */
+export function remoteCloseTarget(net: { sessions: { id: string; name?: string; herdrLocation?: { paneId?: string } }[]; ps: Pick<Pane, "pane_id" | "tokens">[] }, args: { main?: string; pane?: string }, devices: string[]): string {
+	if (args.pane !== undefined || args.main === undefined) throw new Error(REMOTE_CLOSE);
+	const named = net.sessions.filter((x) => x.id === args.main || x.name === args.main), no = new Error(`${args.main} was not opened for the device of this remote turn; ${REMOTE_CLOSE}`);
+	if (named.length !== 1 || !devices.length) throw no;
+	const token = net.ps.find((p) => p.pane_id === named[0]!.herdrLocation?.paneId)?.tokens?.sb_opened_by;
+	const device = typeof token === "string" && token.startsWith("link:") ? token.replace(/^(link:)+/, "") : undefined;
+	if (!device || devices.some((d) => d !== device)) throw no;
+	return named[0]!.id;
+}
 /**
  * The handover mark (roles.ts `handedOver`) of the main a pane runs: from the role record of the session file Herdr names for the pane, else the newest main record of that pane and workspace. The main confirms it
  * itself when asked (its own `successor` entry), so a record alone closes nothing.

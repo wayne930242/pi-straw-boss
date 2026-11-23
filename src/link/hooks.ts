@@ -6,6 +6,7 @@ import { createGate, type ForwardPort } from "./gate.ts";
 import { type PolicyDeps } from "./policy.ts";
 import { hideOldRemote, Turns } from "./turn.ts";
 import { NO_CONFIRM } from "../autotext.ts";
+import { REMOTE_CLOSE } from "../closemain.ts";
 
 // The hooks that make a run a remote turn and hold it to its level (docs/specs/2026-10-25-straw-link.md, Remote turns): the run classification, the
 // `tool_call` allowlist and gate, the `tool_result` filter, and the `context` marker for later turns. They sit apart from the runtime so they run
@@ -103,6 +104,8 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 		// A peer could otherwise restart this computer's server: no level, dispatch included, may.
 		if (e.toolName === "boss_server") return { block: true, reason: "a remote turn cannot see or restart this computer's sb server, whatever its sender's level" };
 		if (e.toolName === "boss_handover") return { block: true, reason: "a remote turn cannot open a successor of this main, whatever its sender's level" };
+		// As an ally run (server/runtools.ts): dead panes and their list are the local tower's, whatever the sender's level; a main is checked by the tool against its `sb_opened_by` (tools.ts).
+		if (e.toolName === "boss_close_main" && (input.pane !== undefined || input.main === undefined)) return { block: true, reason: REMOTE_CLOSE };
 		if (level === "dispatch") return;
 		const scope = scopeFor((ctx as { cwd?: string }).cwd ?? process.cwd());
 		const verdict = scope ? decide(e.toolName, input, turns.list, scope) : ({ kind: "gate" } as const);
@@ -134,6 +137,6 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 	});
 
 	/** What a tool that answers a remote turn may show: the senders' teams, and the project they all bind. Undefined when the run is not remote. */
-	const scope = () => (turns.active ? { teams: [...new Set(turns.list.map((s) => s.team))], project: commonProject() } : undefined);
+	const scope = () => (turns.active ? { teams: [...new Set(turns.list.map((s) => s.team))], project: commonProject(), devices: [...new Set(turns.list.map((s) => s.id))] } : undefined);
 	return { turns, answerForward, scope };
 }

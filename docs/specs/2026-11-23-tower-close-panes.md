@@ -18,7 +18,7 @@ Status: implemented on `feat/tower-close-panes` (base `main` 3cda0f59, 0.82.0), 
 |---|---|---|
 | C1 | One tool or two | One: `boss_close_main` takes `main` (as before), or `pane`, or neither (the list). It is registered in the same places, a tower run reaches it through the same `run-tool` request, and its gate rules stay as they are. |
 | C2 | When is a successor live | The broker lists the session id the handover mark names, and Herdr shows pi (`agent: "pi"`) in the pane the broker places it in. The mark itself is written only after the successor took the handoff, so a successor that died later is not live, and the old main stays open. |
-| C3 | When does the tower hear of a handover | At the take: the old main sends the notice right after `markHandedOver`. A `why: milestone` with no reply holds a run's wake for 30 s (runs.ts `holdable`), which leaves the old main time to step down; the prompt says to retry after its next message when it is still working. |
+| C3 | When does the tower hear of a handover | At the take: the old main sends the notice right after `markHandedOver`. A `why: milestone` with no reply holds a run's wake for 30 s (runs.ts `holdable`), which leaves the old main time to step down; when it is still working the run ends with `wakeAfter: 5` and closes it then, since the old main sends nothing more after it steps down (CLR-F003). |
 | C4 | Which panes carry an agent's marks | A token whose key starts with `sb_` or `piha_` (pi-herdr-agents' delegated marker), or a pi session Herdr's integration named (`agent_session`). Seen live on 2026-11-23: a main pane whose pi had exited kept `sb_role=main` and `sb_main_tab`, and a different one ran a dev server, so the marks alone prove nothing and the foreground decides. |
 
 ## 1. A main that handed over
@@ -57,11 +57,14 @@ The main's own check (`judge`) accepts a sender that is its workspace's tower wh
 | opening | `sb_open_main` or `sb_revive` in its tokens: an open, a revive, or a handover is starting its pi (each writes the one-time claim before `startPi`, and the claim clears it) | `<id> is being opened right now` |
 | reviving | a revive lock younger than 5 min (revive.ts `takeLock`) for a session whose role record names this pane | `<id> is being revived right now` |
 | listed | the broker lists a session at the pane | `<id> is not dead: a live session (<name>) is at it` |
+| agent | Herdr reports `agent` in the pane: a pi that has not joined the broker, or lost it (CLR-F001) | `<id> runs <agent>, so it is not dead` |
 | busy | `herdr pane process-info` lists anything but the shell (`shell_pid`) in the foreground, or gives no shell pid | `<id> is not at a bare shell: <names> runs in it` |
 
 `boss_close_main {pane}` re-reads everything and closes the pane that passes: `herdr tab close <tab>` when it is the tab's only pane, else `herdr pane close <pane>`. `boss_close_main {}` lists the panes that pass, with their tab, whether they are alone in it, and what their tokens say they were. The process-info step is the D3 proof of the revive, applied to any agent pane.
 
-A tower run gets `closePane` and `deadPanes` on its tool host (towers.ts) from the workspace's control; an ally run is refused `pane` and the list before the gate (runtools.ts).
+macOS and Linux only (CLR-F001): on Windows Herdr's process-info names the shell alone even while a program runs under it (typegate.ts), so `list` and `close` refuse before anything is read (`DeadPaneEnv.platform`, `process.platform` by default).
+
+A tower run gets `closePane` and `deadPanes` on its tool host (towers.ts) from the workspace's control; an ally run is refused `pane` and the list before the gate (runtools.ts). A teammate's turn in a pi tower (`s.remoteOrigin` or `link.remoteScope()`) gets the same scope (CLR-F002): link/hooks.ts refuses `pane` and the list before the gate at every level, and tools.ts closes only a main whose pane's `sb_opened_by` is `link:<device>` of every sender (closemain.ts `remoteCloseTarget`).
 
 ## 4. The notice
 
@@ -74,7 +77,7 @@ The `boss_handover` result ends with "your workspace's tower was told and closes
 ## 5. Prompts and budgets
 
 - `tower.md`: close a main that handed over once its successor is live, whoever opened it; `boss_close_main` with no argument lists dead agent panes, close each with `pane`. Measured: on 508 to 538, off 438 to 468 words (`tests/prompts.test.ts`, dated 2026-11-23).
-- `tower-run.md`: the same, with the milestone that names the handover, "if it is still working, close it after its next message", and the dead panes closed once any `main_died` for them is settled. It has no word budget.
+- `tower-run.md`: the same, with the milestone that names the handover, "if it is still working, end the run with `wakeAfter: 5` and close it then" (CLR-F003; the resident tower.md has no wake of its own and keeps its line), and the dead panes closed once any `main_died` for them is settled. It has no word budget.
 - The run brief's tools block (`towerbrief.ts`) is unchanged: it is capped at 900 characters (`tests/wait-cards.test.ts`) and stands at 897 in zh-TW, so the tool's description and `tower-run.md` carry the new closes.
 - Source budgets (`tests/imports.test.ts`, measured): `tools.ts` 341 to 357, `closemain.ts` 111 to 141, `session.ts` 398 to 399; `deadpane.ts` is new with 116.
 

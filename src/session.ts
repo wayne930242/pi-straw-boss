@@ -241,7 +241,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			}
 			const claimed = await claimOpened();
 			if (!claimed && event.reason !== "startup" && s.saved.openedBy && s.saved.openedPane === s.at.paneId) s.openedBy = s.saved.openedBy; // only the same pi in the tower's pane (/reload, /fork): `pi --session` anywhere is the boss's main
-			if (s.saved.successor?.main) control.register(); // a main that handed over: its workspace's tower closes it once its successor is live (closemain.ts), also after a reload
+			if (event.reason !== "startup" && s.saved.successor?.main) control.register(); // a main that handed over: its workspace's tower closes it once its successor is live (closemain.ts), also after a reload; `pi --session` anywhere is the boss's main again, as for openedBy (CLR-F004)
 			if (s.openedBy) {
 				control.register(); // the tower that opened this main may ask it to close (closemain.ts), also after a reload
 				if (s.isMain) roles.remember("main"); // the guard may have crowned it during the join, before the opener was known: the record names it for a Herdr restore (roles.ts)

@@ -982,9 +982,10 @@ The tower closes two more kinds of pane with `boss_close_main`: a main that hand
 | opening | `sb_open_main` or `sb_revive` waits in it: an open, a revive, or a handover is starting its pi |
 | reviving | a revive holds the lock of a session whose role record names the pane |
 | listed | the broker lists a session at it |
+| agent | Herdr reports an agent in it: a pi that has not joined the broker, or lost it |
 | busy | `herdr pane process-info` lists anything but the shell in the foreground, or cannot say |
 
-A pane that passes every row is dead: its pi is gone and it sits at a bare shell. This covers mains, members, trains, and the panes pi-herdr-agents subagents left behind. A tower run has the same tool through the server; an ally run is refused `pane` and the list, since a dead pane is no main opened for its device.
+A pane that passes every row is dead: its pi is gone and it sits at a bare shell. This covers mains, members, trains, and the panes pi-herdr-agents subagents left behind. It works on macOS and Linux only: on Windows process-info names the shell alone even while a program runs under it, so the list and the close are refused there. A tower run has the same tool through the server; an ally run, and a teammate's turn in a pi tower, are refused `pane` and the list, since a dead pane is no main opened for its device, and close only a main opened for that device.
 
 </details>
 

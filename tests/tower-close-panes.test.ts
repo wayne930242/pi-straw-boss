@@ -3,10 +3,16 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CONTROL, remoteCloseTarget } from "../src/closemain.ts";
+import { createDeadPanes } from "../src/deadpane.ts";
+import { createRemoteTurns } from "../src/link/hooks.ts";
+import { MESSAGE_TYPE } from "../src/link/turn.ts";
 import { ledgerPath } from "../src/revive.ts";
 import { recordPath } from "../src/roles.ts";
 import { runTool, type ToolHost } from "../src/server/runtools.ts";
 import { type Agent, until, World } from "./fakes.ts";
+import { bob, TEAM_HEX } from "./link/holder-world.ts";
 
 // The tower closes agent panes (docs/specs/2026-11-23-tower-close-panes.md): a main that handed over once its successor is live, whoever opened it, and a dead agent pane of its workspace (sb or pi marks, no pi,
 // no broker session, a bare shell). The refusals of a live main the boss opened and of a standing main stay.
@@ -187,4 +193,67 @@ test("a tower run's boss_close_main takes pane and lists dead panes through the 
 	assert.deepEqual(calls, ["pane wA:p40", "list"]);
 	await assert.rejects(runTool(host, "ally", "boss_close_main", { pane: "wA:p40" }, { toolCallId: "c1" }), /An ally run closes only a main opened for its own device/);
 	assert.deepEqual(calls, ["pane wA:p40", "list"], "the ally run reached nothing");
+});
+
+// --- fix round (close-review.md) ----------------------------------------------------------------------------------------------------------------------------
+
+test("CLR-F001: a pane Herdr reports an agent in is not dead, though no broker session is at it and its foreground is the shell", async () => {
+	const { towerA } = await town();
+	deadPane("wA:t47", "wA:p47", { sb_role: "main" });
+	world.herdr.pane("wA:p47").agent = "pi"; // a pi that has not joined the broker, or lost it
+	await assert.rejects(towerA.tool("boss_close_main", { pane: "wA:p47" }), /wA:p47 runs pi, so it is not dead/);
+	assert.doesNotMatch(textOf(await towerA.tool("boss_close_main", {})), /wA:p47/);
+	assert.equal(world.herdr.commands("pane", "close").length + world.herdr.commands("tab", "close").length, 0);
+});
+
+test("CLR-F001: on Windows no dead pane is listed or closed, before Herdr is asked anything: process-info there cannot prove a bare shell", async () => {
+	const asked: string[][] = [];
+	const dead = createDeadPanes({ run: async (args) => (asked.push(args), "{}"), sessions: async () => [], here: () => ({ workspace: "wA", pane: "wA:p7" }), stateDir: mkdtempSync(join(tmpdir(), "psb-close-w-")), now: Date.now, platform: "win32" });
+	await assert.rejects(dead.list(), /macOS and Linux only/);
+	await assert.rejects(dead.close("wA:p40"), /macOS and Linux only/);
+	assert.deepEqual(asked, []);
+});
+
+test("CLR-F002: a remote turn of a pi tower closes only a main opened for its senders' device: no dead pane, no list, no main the boss opened though it handed over", () => {
+	const net = {
+		sessions: [{ id: "peer-1", name: "peer work", herdrLocation: { paneId: "wA:p5" } }, { id: "main-1", name: "box watch", herdrLocation: { paneId: "wA:p1" } }],
+		ps: [{ pane_id: "wA:p5", tokens: { sb_opened_by: "link:DEVICE01" } }, { pane_id: "wA:p1", tokens: {} as Record<string, string> }],
+	};
+	assert.throws(() => remoteCloseTarget(net, { pane: "wA:p40" }, ["DEVICE01"]), /dead panes and their list are the local tower's/);
+	assert.throws(() => remoteCloseTarget(net, {}, ["DEVICE01"]), /dead panes and their list are the local tower's/);
+	assert.throws(() => remoteCloseTarget(net, { main: "main-1" }, ["DEVICE01"]), /main-1 was not opened for the device of this remote turn/);
+	assert.throws(() => remoteCloseTarget(net, { main: "peer work" }, ["DEVICE02"]), /was not opened for the device/);
+	assert.throws(() => remoteCloseTarget(net, { main: "peer work" }, ["DEVICE01", "DEVICE02"]), /was not opened for the device/, "every sender's device must be the one it was opened for");
+	assert.throws(() => remoteCloseTarget(net, { main: "peer work" }, []), /was not opened for the device/);
+	assert.equal(remoteCloseTarget(net, { main: "peer work" }, ["DEVICE01"]), "peer-1");
+});
+
+test("CLR-F002: the remote-turn hook refuses a dead pane and the list before any gate, whatever the sender's level", async () => {
+	const handlers = new Map<string, (e: unknown, ctx: unknown) => unknown>();
+	const root = mkdtempSync(join(tmpdir(), "psb-close-remote-"));
+	const pi = { events: { on: () => () => {}, emit: () => {} }, on: (t: string, h: (e: unknown, ctx: unknown) => unknown) => void handlers.set(t, h) } as unknown as ExtensionAPI;
+	const turns = createRemoteTurns({
+		pi, now: Date.now, config: () => ({ teams: new Map([[TEAM_HEX, { project: root, share: "status" as const, name: "t" }]]), trust: new Map([[bob.id, "dispatch" as const]]), problems: [] }),
+		policy: { read: () => { throw Object.assign(new Error("none"), { code: "ENOENT" }); } }, home: root, agentDir: root, linkDir: root, gateMs: 40,
+		setOrigin: () => {}, tower: () => "tower", log: () => {}, tell: () => {}, ask: async () => ({ ok: false, error: "none" }),
+	});
+	const call = (input: Record<string, unknown>) => handlers.get("tool_call")!({ toolName: "boss_close_main", toolCallId: "c", input }, { cwd: root, hasUI: false }) as Promise<{ block?: boolean; reason?: string } | undefined>;
+	assert.equal(await call({}), undefined, "a local turn is let through");
+	handlers.get("message_start")!({ message: { role: "custom", customType: MESSAGE_TYPE, details: { id: bob.id.padStart(32, "0"), team: TEAM_HEX, from: bob.id, label: "bob", short: bob.id.slice(0, 6) } } }, {});
+	for (const input of [{}, { pane: "wA:p40" }]) assert.match(String((await call(input))?.reason), /dead panes and their list are the local tower's/);
+	assert.equal(await call({ main: "peer work" }), undefined, "a main goes on to the tool's own check (dispatch: no gate)");
+	assert.deepEqual(turns.scope()?.devices, [bob.id], "the tool learns the senders' devices");
+});
+
+test("CLR-F004: a handed-over main started anew with `pi --session` registers no control channel; a /reload of it does", async () => {
+	const { m, handoff } = await town();
+	await handOver(m, handoff);
+	await m.stop("reload");
+	for (const reason of ["startup", "reload"] as const) {
+		const again = world.agent({ id: `main-1-${reason}`, name: "box watch", pane: "wA:p1", tab: "wA:t1", entries: m.entries });
+		await again.fire("session_start", { reason });
+		await world.quiet();
+		assert.equal(world.broker.registrations.some((r) => r.id === again.id && r.namespace === CONTROL), reason === "reload", reason);
+		await again.stop("reload");
+	}
 });
