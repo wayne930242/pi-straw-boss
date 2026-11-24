@@ -16,7 +16,7 @@ A branch's list (`snapshotOfBranch` and `snapshotScan` in `src/todo.ts`, and `to
 2. else rpiv-todo's newest `rpiv-todo-state` entry;
 3. else the `details` of the newest `todo` tool result.
 
-Every reader of the list goes through these: the card's summary (`bridge.ts`), the board's auto-fill (`boardfill.ts`), capacity (`capfill.ts`, `workercap.ts`), the main's duty (`mainduty.ts`), the tools (`tools.ts`), and the train's guard, car, and manifest (`trainguard.ts`, `traincar.ts`). A snapshot is the whole list: a reader replaces its copy, never merges tasks by id (ids are per branch and restart at a `clear`). The bridge also reads the branch again on `todo:changed` (v 1), so a change made through another tool reaches the card at once.
+Every reader of the list goes through these: the card's summary (`bridge.ts`), the board's auto-fill (`boardfill.ts`), capacity (`capfill.ts`, `workercap.ts`), the main's duty (`mainduty.ts`), the tools (`tools.ts`), and the train's guard, car, and manifest (`trainguard.ts`, `traincar.ts`). A snapshot is the whole list: a reader replaces its copy, never merges tasks by id (ids are per branch and restart at a `clear`). No reader keeps live state from `todo:changed`: each reads the branch again where it did before (the bridge at every tool's end, turn end, tree move, and compaction), and the ledger writes the entry before its call ends.
 
 `todosOf` keeps `metadata.points` as before and reads the ledger's top-level `points` when `metadata.points` is missing or invalid; when both are set, `metadata.points` wins.
 
