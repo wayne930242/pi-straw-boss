@@ -1,4 +1,4 @@
-# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ f0a918dd -->
+# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ 05e42a00 -->
 
 [README](../README.zh-TW.md) 背後的完整行為。使用說明在各篇指南；這份參考則逐節寫出程式實際怎麼做，所以請在下面找到需要的那一節，其餘可以略過。
 
@@ -761,7 +761,7 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 **停機接口。** 撞到模型額度而停下的主智慧體自己寫不了看板，所以由它 session 裡的擴充代為標記：pi-agent-basic 在 pi 的行程內事件匯流排發出 `straw-boss:pause`，`{ v: 1, state: "paused" | "resumed", reason: "quota", until?: <epoch ms>, detail?: <at most 120 characters> }`（`detail` 至多 120 字元）；sb 不 import basic 的任何東西，收到後把該主智慧體標成停機，直到收到 `resumed` 或該 session 開始新的一輪。`/reload` 保留這個標記，停機中的主智慧體永遠不算停滯。
 
-排定日後才做的 todo 可以設定 `metadata.until`（ISO 日期或日期時間；只寫日期時，從 UTC 午夜起算）。到期前，這項 todo 仍未完成，但不算可接工作，也不會讓主智慧體被標成停滯。主智慧體有執行中的 monitor、啟用的 loop，或自己設的 `boss_watch`，也不會收到停滯通知。同一段停滯只通知一次，server 重啟後也不重發。
+排定日後才做的 todo 可以設定 `metadata.until`（ISO 日期或日期時間；只寫日期時，從 UTC 午夜起算）。如果是在等人回覆，沒有預定日期，就把對方的名字填在 `metadata.waitsOn`，收到回覆後清除。名字只留在本機。等待期間，這項 todo 仍未完成，但不算可接工作，也不會讓主智慧體被標成停滯。主智慧體有執行中的 monitor、啟用的 loop，或自己設的 `boss_watch`，也不會收到停滯通知。同一段停滯只通知一次，server 重啟後也不重發。
 
 **旗標。** `under`：設了預算、點數加上最小的可接 todo 放得進預算，而且負載低於每核 0.7，持續 10 分鐘。`stale`：在無人值守的裝置上，手上有未完成 todo、什麼都沒在跑（沒有執行中的子智慧體或列車、點數用量為 0：指揮著工作的主智慧體永遠不 stale），而且 session 檔與看板條目都 30 分鐘沒動的主智慧體，不論它的狀態；其他裝置沿用上面的 2 小時規則。讀得到裝置列的地方，以它的停滯標記取代看板自己的。`quota`：停機中。`device-silent` 由接收端判斷：最後一張看板有未完成工作、而且已離線，或看板帶產能卻超過 30 分鐘沒更新的隊友裝置。
 
