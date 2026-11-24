@@ -24,9 +24,9 @@ export function readBudget(stateDir: string): number | undefined {
 	}
 }
 
-/** The live mains and trains of one reading, with the running subagents of each main's pane, when its session file last moved, and when its board entry was written. */
+/** The live mains and trains of one reading, with every running subagent of each main's pane (no dashboard limit), when its session file last moved, and when its board entry was written. */
 export function mainFacts(sessions: Session[], ps: Awaited<ReturnType<typeof herdrPanes>>, boardDir: string, now: number, mtime: (file: string) => number | undefined): MainFacts[] {
-	const kids = subagentsOfAll(ps, now), entries = new Map(readEntries(boardDir).map((e) => [e.session, e.updated]));
+	const kids = subagentsOfAll(ps, now, Infinity), entries = new Map(readEntries(boardDir).map((e) => [e.session, e.updated]));
 	return netMembers(sessions, ps).filter((m) => m.role === "main" || m.role === "train").map((m): MainFacts => {
 		const pane = ps.find((p) => p.pane_id === m.s.herdrLocation?.paneId), subs = m.role === "main" ? kids(pane).filter((r) => !r.ended) : [], mark = sessionMark(m.s, pane), file = pane?.agent_session?.value;
 		const moved = file ? mtime(file) : undefined, written = entries.get(m.s.id);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -31,6 +31,21 @@ test("mainFacts: the live mains and trains with their duty, session file time an
 	const pane = (id: string, role: string, more: Partial<Pane> = {}): Pane => ({ pane_id: id, tab_id: "t", workspace_id: "wA", agent: "pi", agent_status: "idle", tokens: { sb_role: role }, ...more });
 	const facts = mainFacts([s("m1", "p1"), s("st", "p2"), s("tr", "p3"), s("tw", "p4"), s("mb", "p5")], [pane("p1", "main", { agent_session: { value: "/s/m1.jsonl" } as never }), pane("p2", "main", { tokens: { sb_role: "main", sb_duty: "standing" } }), pane("p3", "train"), pane("p4", "tower"), pane("p5", "member")], board, 5000, (file) => (file === "/s/m1.jsonl" ? 4000 : undefined));
 	assert.deepEqual(facts.map((f) => [f.session, f.role, f.duty, f.fileMtime, f.entryUpdated, f.workers]), [["m1", "main", undefined, 4000, 1000, []], ["st", "main", "standing", undefined, undefined, []], ["tr", "train", undefined, undefined, undefined, []]]);
+});
+
+test("mainFacts: every running subagent of a main is a worker, not only the first 8 a dashboard shows", () => {
+	const d = tmp(), sessions = join(d, "sessions"), parent = "2026-11-24T00-00-00-000Z_main-many", artifacts = join(sessions, "artifacts", "main-many");
+	mkdirSync(join(artifacts, "subagent-activity"), { recursive: true });
+	mkdirSync(join(artifacts, "subagent-scripts"), { recursive: true });
+	for (let i = 0; i < 10; i++) {
+		writeFileSync(join(artifacts, "subagent-activity", `kid-${i}.json`), JSON.stringify({ phase: "active" }));
+		writeFileSync(join(artifacts, "subagent-scripts", `w${i}-kid-${i}.sh`), "#!/bin/bash\n");
+	}
+	const s: Session = { id: "m1", name: "m1", status: "idle", herdrLocation: { status: "current", paneId: "p1", workspace: { id: "wA", label: "Alpha" }, tab: { id: "t1", label: "t" } } } as Session;
+	const p: Pane = { pane_id: "p1", tab_id: "t1", workspace_id: "wA", agent: "pi", agent_status: "working", tokens: { sb_role: "main" }, agent_session: { value: join(sessions, `${parent}.jsonl`) } as never };
+	const kids = Array.from({ length: 10 }, (_, i): Pane => ({ pane_id: `k${i}`, tab_id: "t2", workspace_id: "wA", agent: "pi", agent_status: "working", agent_session: { value: join(sessions, `2026-11-24T00-00-00-000Z_kid-${i}.jsonl`) } as never }));
+	const [facts] = mainFacts([s], [p, ...kids], join(d, "board"), Date.now(), () => undefined);
+	assert.equal(facts!.workers.length, 10);
 });
 
 test("an event goes to the tower of the main's workspace and to the standing main; an ally device's to the head tower", async () => {
