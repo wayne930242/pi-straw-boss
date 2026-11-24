@@ -93,7 +93,12 @@ export interface WorkspaceState { label: string; tower: string; tabs: TabState[]
 export interface Presence { label: string; headSeq: number; headHash: Buffer; workspaces: WorkspaceState[] }
 /** One main's work board entry as it crosses the wire: `id` is the first 8 bytes of sha256(device id ‖ session id), hex, so no local session id leaves the computer. */
 export interface BoardWireEntry { id: string; workspace: string; tab: string; name: string; now: string; updated: number; items: { t: string; done: boolean }[] }
-export interface Board { entries: BoardWireEntry[] }
+/**
+ * A device's capacity row as it crosses the wire (docs/specs/2026-11-24-capacity.md): numbers and times only. Points, the budget, the smallest ready todo and the load are in hundredths; `paused` names the mains by
+ * the entry ids the board already carries. Sent as the board's second field only when every teammate's `caps` list `board.capacity` (an older build refuses a board of two fields).
+ */
+export interface WireCap { at: number; points: number; budget?: number; load1: number; cores: number; ready: number; minReady?: number; open: number; paused: { id: string; until?: number }[] }
+export interface Board { entries: BoardWireEntry[]; capacity?: WireCap }
 export interface ConfirmRequest { dialogId: string; digest: string; tool: string; args: string; tower: string }
 export interface ConfirmAnswer { dialogId: string; digest: string; allow: boolean; answerId: string }
 export interface DialogOpen { dialogId: string; digest: string; owner: string; dialog: string }
@@ -186,6 +191,18 @@ export function operateBody(m: OperateMessage): Buffer {
 	}
 }
 
+const maybe = (n: number | undefined) => list(n === undefined ? [] : [int(n)]);
+const readMaybe = (f: Buffer) => { const [n] = readList(f); return n ? readInt(n) : undefined; };
+function encodeCap(c: WireCap): Buffer {
+	return enc(int(c.at), int(c.points), maybe(c.budget), int(c.load1), int(c.cores), int(c.ready), maybe(c.minReady), int(c.open), list(c.paused.slice(0, LIMITS.boardEntries).map((p) => enc(str(short(p.id)), maybe(p.until)))));
+}
+function decodeCap(b: Buffer): WireCap {
+	const [at, points, budget, load1, cores, ready, minReady, open, paused] = dec(b, 9) as Buffer[];
+	const opt = (key: string, n: number | undefined) => (n === undefined ? {} : { [key]: n });
+	return { at: readInt(at!), points: readInt(points!), ...opt("budget", readMaybe(budget!)), load1: readInt(load1!), cores: readInt(cores!), ready: readInt(ready!), ...opt("minReady", readMaybe(minReady!)), open: readInt(open!),
+		paused: readList(paused!).slice(0, LIMITS.boardEntries).map((p) => { const [id, until] = dec(p, 2) as [Buffer, Buffer]; return { id: s(id), ...opt("until", readMaybe(until)) }; }) };
+}
+
 // `toWorkspace` is empty when absent: a workspace label is never empty.
 const encoders: { [K in Kind]: (p: Plaintexts[K]) => Buffer } = {
 	tower: (p) => {
@@ -201,7 +218,7 @@ const encoders: { [K in Kind]: (p: Plaintexts[K]) => Buffer } = {
 	board: (p) => enc(list(p.entries.slice(0, LIMITS.boardEntries).map((e) => enc(
 		str(short(e.id)), str(cutChars(e.workspace, LIMITS.boardLabel)), str(cutChars(e.tab, LIMITS.boardLabel)), str(cutChars(e.name, LIMITS.boardLabel)), str(cutChars(e.now, LIMITS.boardNow)), int(e.updated),
 		list(e.items.slice(0, LIMITS.boardItems).map((i) => enc(str(cutChars(i.t, LIMITS.boardItem)), bool(i.done)))),
-	)))),
+	))), ...(p.capacity ? [encodeCap(p.capacity)] : [])),
 	"confirm-request": (p) => enc(str(short(p.dialogId)), str(short(p.digest)), str(short(p.tool)), str(cutChars(p.args, LIMITS.toolArguments)), str(short(p.tower))),
 	"confirm-answer": (p) => enc(str(short(p.dialogId)), str(short(p.digest)), bool(p.allow), str(short(p.answerId))),
 	"dialog-open": (p) => enc(str(short(p.dialogId)), str(short(p.digest)), str(short(p.owner)), str(cutBytes(p.dialog, LIMITS.dialog))),
@@ -262,8 +279,10 @@ const decoders: { [K in Kind]: (b: Buffer) => Plaintexts[K] } = {
 		};
 	},
 	board: (b) => {
-		const [entries] = dec(b, 1) as [Buffer];
-		return { entries: readList(entries).slice(0, LIMITS.boardEntries).map((e) => {
+		const fields = dec(b);
+		if (fields.length !== 1 && fields.length !== 2) throw new CanonError(`a board has 1 or 2 fields, got ${fields.length}`);
+		const [entries, cap] = fields as [Buffer, Buffer | undefined];
+		return { ...(cap ? { capacity: decodeCap(cap) } : {}), entries: readList(entries).slice(0, LIMITS.boardEntries).map((e) => {
 			const [id, workspace, tab, name, now, updated, items] = dec(e, 7) as [Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer];
 			return {
 				id: s(id), workspace: cutChars(readStr(workspace), LIMITS.boardLabel), tab: cutChars(readStr(tab), LIMITS.boardLabel), name: cutChars(readStr(name), LIMITS.boardLabel), now: cutChars(readStr(now), LIMITS.boardNow), updated: readInt(updated),

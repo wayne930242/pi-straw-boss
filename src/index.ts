@@ -9,6 +9,7 @@ import { serverAsk } from "./autoask.ts";
 import { registerBoss } from "./boss.ts";
 import { registerChildKind } from "./childkind.ts";
 import { createBoardFill } from "./boardfill.ts";
+import { createCapFill } from "./capfill.ts";
 import { createBriefing } from "./briefing.ts";
 import { createBossWatch } from "./bosswatch.ts";
 import { createBossPair } from "./bosspair.ts";
@@ -101,6 +102,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), s.isTower || (watch.addTool(), pair.addTool()), tools.addPromote(), tools.addDuty(), tools.addHandover(), addTrainCar()), onMain: link.look, control: () => control });
 		// `look` (above) starts and upgrades the sb server (src/server/) and is the way to it; a session that is no part of that has none.
 		const pair = createBossPair(kit, { ask: cfg.ask ?? look?.ask, remote: () => Boolean(link.remoteScope()) }); // boss_pair and board_read's review threads (bosspair.ts)
+		createCapFill(kit); // a main's capacity facts for the board (capfill.ts)
 		const tools = createTools(kit, { ...reach, mainDuty, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), closePane: (pane) => control.closePane(pane), deadPanes: () => control.deadPanes(), listen: () => control.register(), link, server: look, boardFill: createBoardFill(kit), pair, waitAsk: () => mainWaitAsk(kit, { ask: cfg.ask ?? look?.ask, here: (fn) => host.here(fn), auto }) });
 		const host = createHost(kit, { connected: membership.connected, ask: cfg.ask ?? look?.ask });
 		closeSelf = createClosing(kit);

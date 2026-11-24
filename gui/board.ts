@@ -1,4 +1,4 @@
-import type { BoardViewRow } from "../src/boardview.ts";
+import type { BoardViewRow, CapView } from "../src/boardview.ts";
 import type { Net } from "../src/net.ts";
 import { h } from "./dom.ts";
 import { m } from "./sentences.ts"; import { noun } from "./nouns.ts";
@@ -42,6 +42,16 @@ export function boardGroups(rows: BoardViewRow[]): { label: string; ended: boole
 export function ageText(ms: number, o?: Opts): string {
 	const n = Math.max(0, Math.floor(ms / 1000));
 	return m.board_ago({ age: n < 60 ? m.age_s({ n: String(n) }, o) : n < 3600 ? m.age_m({ n: String(Math.floor(n / 60)) }, o) : n < 86_400 ? m.age_h({ n: String(Math.floor(n / 3600)) }, o) : m.age_d({ n: String(Math.floor(n / 86_400)) }, o) }, o);
+}
+/** The device's capacity for the fold (docs/specs/2026-11-24-capacity.md): `6 / 20 pts · load 0.24 / 32 cores · 5 ready · capacity idle 12 min · 1 paused`. */
+export function capText(c: CapView, o?: Opts): string {
+	return [c.budget !== undefined ? m.board_cap_budget({ points: String(c.points), budget: String(c.budget) }, o) : m.board_cap_points({ points: String(c.points) }, o), m.board_cap_load({ load: String(c.load1), cores: String(c.cores) }, o), m.board_cap_ready({ count: c.ready }, o),
+		...(c.underMinutes !== undefined ? [m.board_cap_under({ minutes: String(c.underMinutes) }, o)] : []), ...(c.paused ? [m.board_cap_paused({ count: c.paused }, o)] : [])].join(m.board_cap_sep({}, o));
+}
+/** A row's capacity: its points and ready todos, and its pause with the local time it resumes. */
+export function rowCapText(r: BoardViewRow, o?: Opts): string {
+	const hm = (at: number) => new Date(at).toTimeString().slice(0, 5);
+	return [...(r.points !== undefined ? [m.board_cap_points({ points: String(r.points) }, o)] : []), ...(r.ready ? [m.board_cap_ready({ count: r.ready }, o)] : []), ...(r.paused ? [r.pausedUntil !== undefined ? m.board_paused({ time: hm(r.pausedUntil) }, o) : m.board_paused_bare({}, o)] : [])].join(m.board_cap_sep({}, o));
 }
 const stateWord = (r: BoardViewRow) => (!live(r) ? (r.open ? m.board_open_word() : m.board_ended_word()) : r.stale ? m.board_idle_word() : (LABEL[r.state as Mark] ?? LABEL.unknown)());
 
@@ -97,6 +107,7 @@ function rowOf(box: HTMLElement, net: Net | undefined, r: BoardViewRow, now: num
 			route ? h("a", { class: "board-name", href: route, "data-route": route }, name) : h("b", { class: "board-name" }, name),
 			...(r.role === "train" ? [h("span", { class: "board-tag" }, noun("role_train"))] : []),
 			h("span", { class: "board-state" }, stateWord(r)),
+			...(rowCapText(r) ? [h("span", { class: "board-cap", ...(r.paused ? { "data-paused": "" } : {}) }, rowCapText(r))] : []),
 			...(r.updated !== undefined ? [h("span", { class: "board-age", "data-updated": String(r.updated) }, ageText(now - r.updated))] : [])),
 		r.now === undefined ? h("p", { class: "board-none" }, m.board_no_line()) : h("p", { class: "board-now" }, r.now),
 		...(items ? [items] : []),
@@ -114,7 +125,7 @@ export function fillBoard(box: HTMLElement, net: Net | undefined, force = false,
 	if (!rows.length) return void delete box.dataset.sig;
 	const counts = boardCounts(rows), set = (sel: string, text: string) => { const el = box.querySelector(sel); if (el && el.textContent !== text) el.textContent = text; };
 	set("summary b", m.board_title());
-	set("summary span", counts.text);
+	set("summary span", net?.capacity ? `${counts.text}${m.board_cap_sep()}${capText(net.capacity)}` : counts.text);
 	const sig = JSON.stringify([rows, [...asked].filter(([, until]) => until > now).map(([s]) => s), [...sending], [...clearing], net?.bases.map((b) => b.id)]);
 	if (force || box.dataset.sig !== sig) {
 		box.dataset.sig = sig;

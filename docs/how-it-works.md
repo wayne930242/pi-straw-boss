@@ -742,6 +742,29 @@ The button is disabled while its request is on its way. The writer's auto-fill c
 
 </details>
 
+#### Device capacity
+
+Each main's points in use and ready work, and the device's load and budget, are on the board, so a tower or a standing main can see idle capacity, a stalled main, and a main stopped on its model quota (`src/capacity.ts`, `src/capfill.ts`, `server/capwatch.ts`, `server/capops.ts`; the design is `docs/specs/2026-11-24-capacity.md`). sb adds the points up; it does not decide what a task is worth.
+
+<details>
+<summary>Details</summary>
+
+**Points.** A todo carries its points in `metadata.points` (0 to 10; the box rule is 2 for backend, 1 for frontend, 0.5 for work that compiles nothing). A main's points in use are the points of its in-progress todos whose `owner` is a subagent of it that runs now (1 when the todo names none), plus 1 for each running subagent no such todo names; the main itself counts nothing, and a live train no todo names counts 1. Its ready work is its pending todos whose `blockedBy` are all done and whose owner does not run; the smallest of them is what a free slot must fit.
+
+**The files.** A main's own session writes `<state dir>/capacity/<session>.json` from its todo list (read as the auto-fill reads it) and its pause, whenever either moves, and deletes it at its quit (not at a `/reload`). Once a minute the primary sb server, with no model, joins the files with the subagents it sees running and writes the device row `capacity/_device.json`: the points, `capacity.budget` from `config.json` (unset: the numbers show and nothing is flagged under capacity), the 1-minute load average and the core count, the ready count and the smallest ready points, the open todos, whether the device is unattended, and each main's numbers, pause and stale mark. A row over 5 minutes old is no reading.
+
+**Where it shows.** `board_read` puts each main's `points`, `ready` and `paused` (`quota · resumes 16:02`) on its `local` row and the device's numbers in section `capacity` (in a remote turn it names only the paused mains its rows show); `/boss board` prints the device line (`capacity 6 / 20 pts · load 0.24 / 32 cores · ready 5 · under 42 min · 1 paused`) under its head and the numbers on each row; the head page's board fold and rows carry the same. Allies get it with the board (below).
+
+**The pause seam.** A main stopped on its model quota cannot write the board itself, so the extension in its session marks it: pi-agent-basic emits `straw-boss:pause` on pi's in-process event bus, `{ v: 1, state: "paused" | "resumed", reason: "quota", until?: <epoch ms>, detail?: <at most 120 characters> }`, and sb, which imports nothing of basic, marks the main paused until `resumed` comes or the session starts a new turn. A `/reload` keeps the mark, and a paused main is never stale.
+
+**Flags.** `under`: a budget is set, the points plus the smallest ready todo fit in it, and the load is under 0.7 per core, for 10 minutes. `stale`: on an unattended device, a main with open todos whose session file and board entry have both not moved for 30 minutes, whatever its state; elsewhere the 2-hour rule above. Where the device row is read, its stale mark replaces the board's own. `quota`: paused. `device-silent`, judged on the receiving side: an ally device whose last board had open work and that went offline, or whose board, when it carries capacity, is over 30 minutes old.
+
+**Events.** Entering a flag is one notice (`capacity <flag> · main "<name>" · <numbers>`) to the tower that hears of the main's workspace (as the stall watch finds it; the head tower for an ally device) and one `kind=capacity_notice` message to this device's standing main, if there is one; under capacity is told for each main whose smallest ready todo fits, and stale only for a main with open todos. The same flag of the same main or device is told at most once per 30 minutes (`capacity/_sent.json`, which outlives a restart), and nothing is said when a flag clears except a quota that resumed. A notice nobody took is tried again the next minute.
+
+**On the wire.** The `board` message carries the device row as a second field only when every teammate on the roster lists `board.capacity` in its fresh `caps` (an older build refuses a board of two fields, so it gets the one-field board): numbers in hundredths and times, and the paused mains by the entry ids the board already carries, of the entries that team gets. Such a board goes at least every 10 minutes, so a teammate can tell a silent device from a quiet one; the hash that decides a send leaves out the reading's time and the load. An ally's row in `board_read` carries it as `capacity`.
+
+</details>
+
 ### Auto mode
 
 For when the boss is away and nothing may wait for them (`src/auto.ts`, `autostate.ts`, `autotext.ts`, `autoscope.ts`, `bossauto.ts`, `declined.ts`, `server/automode.ts`, `autoops.ts`, `autoback.ts`, `autotower.ts`, `autoreturn.ts`, `gui/auto.ts`; the design is `docs/specs/2026-11-09-auto-mode.md`, amended by `docs/specs/2026-11-21-auto-return.md`). It covers this computer and every Herdr slot on it; Straw Link teammates are not told, and an unattended device has none.

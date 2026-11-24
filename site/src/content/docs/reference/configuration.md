@@ -18,6 +18,7 @@ The settings file is `<agentDir>/straw-boss/config.json`, where `<agentDir>` is 
   "integration": "on",
   "locale": "zh-TW",
   "stallWatch": { "cpuMinutes": 5, "silentMinutes": 30 },
+  "capacity": { "budget": 20 },
   "link": {
     "relay": "https://relay.example",
     "trust": { "<device id>": "forward" }
@@ -41,6 +42,7 @@ The settings file is `<agentDir>/straw-boss/config.json`, where `<agentDir>` is 
 | `stallWatch.silentMinutes` | 30 | Minutes in a row a pane may say working with its session file not written and no tool call open. A session that answers and opens a tool call has recovered. `0` turns this signal off. |
 | `stallWatch.missingMinutes` | 3 | Minutes in a row a live pi may be absent from pi-intercom's list; also the grace after a server restart. `0` turns this signal off. |
 | `stallWatch.remindMinutes` | 60 | How long after an incident was told the first reminder comes; each later one waits twice as long, up to 8 hours. A reminder waits while the signals are gone. `0` sends no reminder. |
+| `capacity.budget` | none | This device's capacity in points (over 0, at most 1000), for [device capacity](/pi-straw-boss/docs/reference/how-it-works/how-it-works/#device-capacity) on the work board: the sb server compares the points its mains' running work uses (a todo's `metadata.points`) and their smallest ready todo with it, and tells the tower when room stays free for 10 minutes. Unset, the numbers still show and nothing is flagged as idle capacity. Read once a minute. |
 | `link.relay` | none | The relay a new [Straw Link](/pi-straw-boss/docs/guide/straw-link/) team uses by default. |
 | `link.trust` | `reply` for every device | How far this computer trusts each teammate's device: `reply`, `forward`, or `dispatch`. |
 

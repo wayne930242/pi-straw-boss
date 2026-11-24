@@ -15,7 +15,7 @@ import type { TodoSum } from "./todo.ts";
 import { type CoordinatorDuty, type Duty, isCoordinatorDuty } from "./duty.ts";
 import { type TrainId, trainFromToken } from "./trainrole.ts";
 import type { NetLoad, YardJoin, Yards } from "./train/yardview.ts";
-import type { BoardSeam, BoardViewRow } from "./boardview.ts";
+import type { BoardSeam, BoardViewRow, CapView } from "./boardview.ts";
 import type { TrustAsk } from "./trust/types.ts";
 
 // The whole straw net as one JSON-able snapshot for the browser view: every workspace as a base with its tower, tabs, agents,
@@ -95,7 +95,7 @@ export interface Base { id: string; label: string; mark: Mark; /** Only on a bas
  */
 /** Auto mode as the boss own page shows it (docs/specs/2026-11-09-auto-mode.md, section 7): present only while it is on or the head request waits for the boss confirm (`pending`: the id the confirm names, what the boss said, when it lapses). Like `board` it never reaches the link, a remote turn, or the operate slice. */
 export interface AutoSnap { on: boolean; since?: string; pending?: { id: string; said: string; expires: number } }
-export interface Net { bases: Base[]; /** The head tower (nethead.ts); present when the server runs the tower service. */ head?: HeadUnit; stashed?: Stashed[]; trust?: TrustAsk[]; events?: NetEvent[]; link?: LinkSummary; yards?: Yards; load?: NetLoad; board?: BoardViewRow[]; auto?: AutoSnap; /** This server can switch auto mode (the primary slot's, attended): the page shows the chip only then. */ autoable?: true }
+export interface Net { bases: Base[]; /** The head tower (nethead.ts); present when the server runs the tower service. */ head?: HeadUnit; stashed?: Stashed[]; trust?: TrustAsk[]; events?: NetEvent[]; link?: LinkSummary; yards?: Yards; load?: NetLoad; board?: BoardViewRow[]; /** The device capacity row with the board (boardview.ts `capView`). */ capacity?: CapView; auto?: AutoSnap; /** This server can switch auto mode (the primary slot's, attended): the page shows the chip only then. */ autoable?: true }
 /** What the server may read for a key: the registry entry is the allow list, and paths never come from the browser. */
 export interface Ref { key: string; base: string; name: string; role: string; file?: string; pane?: string; /** The head tower's chapters, oldest first (the last is `file`): the history chains through them (watch.ts). */ chapters?: HeadChapter[] }
 export interface Found extends Ref { live: boolean; successor?: string }
@@ -214,7 +214,7 @@ export function netSource(env: { auto?: () => AutoSnap | undefined; autoable?: (
 		for (const [key, old] of gone) if (next.has(key) || at - old.at > RECENT_MS) gone.delete(key);
 		refs = next;
 		const stashed = env.stashed?.() ?? [], seen = lately(net); // after the dialogs and the finished: the marks the page shows
-		const stashing = stashed.length ? { ...seen, stashed } : seen, board = env.board?.rows(stashing, live.map((x) => x.id)), boarded = board ? { ...stashing, board } : stashing, snap = env.auto?.(), able = env.autoable?.() ? { ...boarded, autoable: true as const } : boarded, shown: Net = snap && (snap.on || snap.pending) ? { ...able, auto: snap } : able, yards = env.trainyard?.yards(joinOf(shown));
+		const stashing = stashed.length ? { ...seen, stashed } : seen, board = env.board?.rows(stashing, live.map((x) => x.id)), cap = board && env.board?.capacity?.(), boarded = board ? { ...stashing, board, ...(cap ? { capacity: cap } : {}) } : stashing, snap = env.auto?.(), able = env.autoable?.() ? { ...boarded, autoable: true as const } : boarded, shown: Net = snap && (snap.on || snap.pending) ? { ...able, auto: snap } : able, yards = env.trainyard?.yards(joinOf(shown));
 		if (!yards) return shown;
 		const load = env.trainyard!.load();
 		return { ...shown, yards, ...(load ? { load } : {}) };

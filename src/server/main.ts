@@ -35,6 +35,7 @@ import { procsReply, startProcs, type StartProcs } from "./procsops.ts";
 import { type StartWatches, startWatches, type WatchRoutes, watchReply } from "./watchesops.ts";
 import { type StartThreads, startThreads, threadReply } from "./threadsops.ts";
 import { startStall, type StartStall } from "./stallops.ts";
+import { startCap } from "./capops.ts";
 import { reportWatch, startAutoWatch, type StartWatch } from "./watchops.ts";
 import { gateRun, ownToken, type RunInfo } from "./rungate.ts";
 import type { ServerTools } from "./runtools.ts";
@@ -688,6 +689,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	}, () => (log.line("herdr-lost", { at: Date.now() }), towers?.runs.herdrLost())));
 	// The stall watch (stallwatch.ts): a pi that froze is told to its workspace's tower from the registry's tick; it signals nothing.
 	const stall = startStall({ dir: slot.dir, stateDir: slot.stateDir, pid, platform, now, log: (event, facts) => log.line(event, facts), run: cfg.run, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, ...(o.stall ? { over: o.stall } : {}) });
+	// The capacity watch (capops.ts, docs/specs/2026-11-24-capacity.md): the device row once a minute and its flags told to the towers and the standing main; the primary server's, as the link holder is.
+	if (slot.primary) ((stop) => stop && stops.push(stop))(startCap({ stateDir: slot.stateDir, now, log: (event, facts) => log.line(event, facts), run: cfg.run, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, unattended, allies: () => link?.holder?.allySeen() ?? [], tellSession: tellVia(() => client, serverId(slot), "capacity_notice") }));
 	// The auto watch (autowatch.ts): while auto mode is on, the head tower is woken about every 15 minutes with what the server's own state shows of each workspace; the primary server's, as auto mode is.
 	if (auto) ((stop) => stop && stops.push(stop))(startAutoWatch({ auto, slot, env, now, log: (event, facts) => log.line(event, facts), run: cfg.run, world: cfg.world, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, stalls: () => stall?.list() ?? [], book: () => cars?.book, ...(o.autoWatch ? { over: o.autoWatch } : {}) }));
 	procs = startProcs({ dir: slot.dir, stateDir: slot.stateDir, env, pid, platform, now, log: (event, facts) => log.line(event, facts), run: cfg.run, events: cfg.events, ...(stall ? { watch: (table) => stall.sample(table) } : {}), ...(o.procs ? { over: o.procs } : {}), stops, timers, leaving: () => Boolean(leaving) || phase === "stopping" || phase === "restarting" });

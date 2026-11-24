@@ -1,6 +1,7 @@
 import { statSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { type BoardItem, clean, type Count, type Entry, joinLocal, type LiveMain, readEntries, type Src } from "./board.ts";
+import { capDir, capLine, type DeviceCap, readDevice, rowCap, underFor } from "./capacity.ts";
 import { isCoordinatorDuty } from "./duty.ts";
 import type { Net } from "./net.ts";
 
@@ -31,7 +32,12 @@ export interface BoardViewRow {
 	clearable?: true;
 	/** An ended row whose session is still open: it is not a main now (a takeover made it a member, or Herdr missed its pane for a reading). Clear tells it (B5: unless the agent is closed). */
 	open?: true;
+	/** Capacity (docs/specs/2026-11-24-capacity.md): the main's points in use and ready todos, and its pause (`quota · resumes 16:02`), from the sb server's device row; `stale` is then the server's mark. */
+	points?: number; ready?: number; paused?: string; pausedUntil?: number;
 }
+/** The device row as the page shows it: numbers only. */
+export interface CapView { points: number; budget?: number; load1: number; cores: number; ready: number; underMinutes?: number; paused: number }
+export const capView = (d: DeviceCap, now: number): CapView => ({ points: d.points, ...(d.budget !== undefined ? { budget: d.budget } : {}), load1: d.load1, cores: d.cores, ready: d.ready, ...(underFor(d, now) !== undefined ? { underMinutes: Math.floor(underFor(d, now)! / 60_000) } : {}), paused: d.mains.filter((r) => r.paused).length });
 
 /** The ended rows shown are the newest this many (a folder that kept a hundred dead lines shows the latest); live mains are all shown. */
 export const MAX_ENDED = 100;
@@ -50,15 +56,15 @@ export function openSessions(net: Pick<Net, "bases">): Set<string> {
 	return keys;
 }
 
-/** The rows: every live main in net order (the entry it wrote, if any), then the ended entries, newest first. `open`: the sessions that are open; an ended row among them is marked `open`. */
-export function boardRows(entries: Entry[], mains: LiveMain[], now: number, open: ReadonlySet<string> = new Set()): BoardViewRow[] {
+/** The rows: every live main in net order (the entry it wrote, if any), then the ended entries, newest first. `open`: the sessions that are open; an ended row among them is marked `open`. `dev`: the device row, whose numbers and stale mark the live rows take (Clear keeps the board's own rule). */
+export function boardRows(entries: Entry[], mains: LiveMain[], now: number, open: ReadonlySet<string> = new Set(), dev?: DeviceCap): BoardViewRow[] {
 	const written = new Map(entries.map((e) => [e.session, e.updated])), all = joinLocal(entries, mains, now, { keepEnded: true });
 	const live = all.filter((r) => r.state !== "ended"), ended = all.filter((r) => r.state === "ended").sort((a, b) => (written.get(b.session) ?? 0) - (written.get(a.session) ?? 0)).slice(0, MAX_ENDED);
 	return [...live, ...ended].map((r): BoardViewRow => {
-		const updated = r.now === undefined ? undefined : written.get(r.session);
+		const updated = r.now === undefined ? undefined : written.get(r.session), { stale, ...cap } = rowCap(dev, r.session, now), until = dev?.mains.find((x) => x.session === r.session)?.paused?.until;
 		return {
 			session: r.session, workspace: r.workspace, tab: r.tab, main: r.main || r.who || "", ...(r.role ? { role: r.role } : {}), state: r.state, ...(r.now !== undefined ? { now: r.now } : {}), items: r.items,
-			...(r.src ? { src: r.src } : {}), ...(r.count ? { count: r.count } : {}), ...(updated !== undefined ? { updated } : {}), ...(r.stale ? { stale: true as const } : {}), ...(r.state === "ended" || r.stale ? { clearable: true as const } : {}), ...(r.state === "ended" && open.has(r.session) ? { open: true as const } : {}),
+			...(r.src ? { src: r.src } : {}), ...(r.count ? { count: r.count } : {}), ...(updated !== undefined ? { updated } : {}), ...((stale ?? r.stale) ? { stale: true as const } : {}), ...(r.state === "ended" || r.stale ? { clearable: true as const } : {}), ...(r.state === "ended" && open.has(r.session) ? { open: true as const } : {}), ...cap, ...(until !== undefined ? { pausedUntil: until } : {}),
 		};
 	});
 }
@@ -90,11 +96,16 @@ export function boardSeam(o: { dir: string; now(): number; entries?: (dir: strin
 			try {
 				const open = openSessions(net);
 				for (const id of live) open.add(id);
-				const rows = boardRows(entries(o.dir), mainsOfNet(net), o.now(), open);
+				const rows = boardRows(entries(o.dir), mainsOfNet(net), o.now(), open, readDevice(capDir(o.dir), o.now()));
 				return rows.length ? rows : undefined;
 			} catch {
 				return undefined;
 			}
+		},
+		/** The device row (capacity.ts) for the board's fold; none without a fresh one. */
+		capacity(): CapView | undefined {
+			const d = readDevice(capDir(o.dir), o.now());
+			return d && capView(d, o.now());
 		},
 	};
 }
@@ -113,14 +124,14 @@ export function doneCount(r: Pick<BoardViewRow, "items" | "count">): { done: num
 }
 
 /** `/boss board`: the rows as text, one line each: `workspace › tab · main · state · now · n/m · age`, with `stale` marked (an ended row says so as its state). */
-export function boardText(rows: BoardViewRow[], now: number): string {
+export function boardText(rows: BoardViewRow[], now: number, dev?: DeviceCap): string {
 	if (!rows.length) return "The work board is empty: no main has joined and no line is left.";
 	const stale = rows.filter((r) => r.stale).length, ended = rows.filter((r) => r.state === "ended").length, bare = rows.filter((r) => r.now === undefined && r.state !== "ended").length;
 	const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`, notes = [stale && `${stale} idle over 2 h`, ended && `${ended} ended`, bare && `${plural(bare, "main")} wrote none`].filter(Boolean);
 	const head = `Work board: ${plural(rows.length - bare, "line")}${notes.length ? ` (${notes.join(", ")})` : ""}`;
 	const lines = rows.map((r) => {
 		const count = doneCount(r);
-		return [[r.workspace, r.tab].filter(Boolean).join(" › "), r.main || r.session.slice(0, 8), ...(r.role ? ["train"] : []), r.open ? "not a main" : r.state, r.now ?? "no line", ...(count ? [`${count.done}/${count.total}`] : []), ...(r.updated !== undefined ? [agoText(now - r.updated)] : []), ...(r.stale ? ["stale"] : [])].filter(Boolean).join(" · ");
+		return [[r.workspace, r.tab].filter(Boolean).join(" › "), r.main || r.session.slice(0, 8), ...(r.role ? ["train"] : []), r.open ? "not a main" : r.state, r.now ?? "no line", ...(count ? [`${count.done}/${count.total}`] : []), ...(r.updated !== undefined ? [agoText(now - r.updated)] : []), ...(r.points !== undefined ? [`${r.points} pts`] : []), ...(r.ready ? [`${r.ready} ready`] : []), ...(r.paused ? [r.paused] : []), ...(r.stale ? ["stale"] : [])].filter(Boolean).join(" · ");
 	});
-	return [head, ...lines].join("\n");
+	return [head, ...(dev ? [capLine(dev, now)] : []), ...lines].join("\n");
 }

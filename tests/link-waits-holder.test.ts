@@ -115,7 +115,7 @@ test("a holder with a wait router lists tower.wait; a wait to it goes as the six
 
 test("a wait to a build that takes none goes as text whose first line says so, for its ally run; a state of a wait is not sent to it at all", async () => {
 	const { a, b } = await pair({ waits: { a: true } });
-	await until(() => capsOf(b, alice.id).includes("tower.wait") && capsOf(a, bob.id).length === 5, 3000, "both caps");
+	await until(() => capsOf(b, alice.id).includes("tower.wait") && capsOf(a, bob.id).length === 6, 3000, "both caps");
 	const plain = await sendTo(a, "please merge !13", { wait: WAIT });
 	assert.equal(plain.ok, true, textOf(plain));
 	assert.equal((details(plain) as { waited?: boolean }).waited, false, "the tool says it went plain");

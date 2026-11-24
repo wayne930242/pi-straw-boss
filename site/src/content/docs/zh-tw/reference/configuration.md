@@ -18,6 +18,7 @@ pi-straw-boss 不需要任何設定就能運作。
   "integration": "on",
   "locale": "zh-TW",
   "stallWatch": { "cpuMinutes": 5, "silentMinutes": 30 },
+  "capacity": { "budget": 20 },
   "link": {
     "relay": "https://relay.example",
     "trust": { "<device id>": "forward" }
@@ -41,6 +42,7 @@ pi-straw-boss 不需要任何設定就能運作。
 | `stallWatch.silentMinutes` | 30 | pane 顯示工作中，但 session 檔沒有寫入、也沒有進行中的工具呼叫，最多容許連續幾分鐘。session 有了回應並開始工具呼叫，就算恢復。`0` 關閉這個訊號。 |
 | `stallWatch.missingMinutes` | 3 | 還活著的 pi 最多可以連續幾分鐘不在 pi-intercom 的清單裡；server 重啟後的寬限也是這個數字。`0` 關閉這個訊號。 |
 | `stallWatch.remindMinutes` | 60 | 事件通報後多久發第一次提醒；之後每次等待加倍，最長 8 小時。訊號消失期間不發提醒。`0` 不提醒。 |
+| `capacity.budget` | 無 | 這台裝置的產能點數（大於 0，至多 1000），供工作看板上的[裝置產能](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#裝置產能)使用：sb server 拿主智慧體執行中工作所用的點數（todo 的 `metadata.points`）和最小的可接 todo 跟它比，空位持續 10 分鐘就通知塔台。沒設時照樣顯示數字，只是不標產能閒置。每分鐘讀一次。 |
 | `link.relay` | 無 | 新的 [Straw Link](/pi-straw-boss/docs/zh-tw/guide/straw-link/) 團隊預設使用的 relay。 |
 | `link.trust` | 每個裝置都是 `reply` | 這台電腦對每位隊友裝置的信任程度：`reply`、`forward` 或 `dispatch`。 |
 

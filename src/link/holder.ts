@@ -2,6 +2,8 @@ import { Buffer } from "node:buffer";
 import { basename } from "node:path";
 import { allyLabel } from "../boardauto.ts";
 import { cleanText, clean, BOARD, forAllies, purge, readEntries, wireId, type Entry } from "../board.ts";
+import { capDir, readDevice } from "../capacity.ts";
+import type { AllySeen } from "../server/capwatch.ts";
 import { MAX_BODY_BYTES } from "./wire.ts";
 import { restrictLabel, restrictOwner } from "./text.ts";
 import { createHash, randomBytes } from "node:crypto";
@@ -10,7 +12,7 @@ import { type Level, LEVELS, type LinkConfig, type Share } from "./config.ts";
 import { shortId, type DeviceKeys } from "./device.ts";
 import { buildEnvelope, openEnvelope, parseEnvelope, recordTaken, type Header, type ReceiveState } from "./envelope.ts";
 import { PayloadTooLargeError, ProtocolError, RelayError, UnauthorizedError } from "./errors.ts";
-import { askIdOk, type Board, type BoardWireEntry, type Caps, type ConfirmAnswer, type ConfirmRequest, type DialogAnswer, type DialogClose, type DialogOpen, encodePlaintext, handleOk, KINDS, kindOk, LIMITS, type MainStatus, type Notice, type OperateMessage, operateDirectionOk, type Presence, type TowerMessage, type TowerReply, type UnitStatus, type UnitStop, type WaitWire, type WorkspaceState } from "./kinds.ts";
+import { askIdOk, type Board, type BoardWireEntry, type WireCap, type Caps, type ConfirmAnswer, type ConfirmRequest, type DialogAnswer, type DialogClose, type DialogOpen, encodePlaintext, handleOk, KINDS, kindOk, LIMITS, type MainStatus, type Notice, type OperateMessage, operateDirectionOk, type Presence, type TowerMessage, type TowerReply, type UnitStatus, type UnitStop, type WaitWire, type WorkspaceState } from "./kinds.ts";
 import { type AdminRun, type InviteView, type JoinRequestView, type JoinView, type Prefill, TeamAdmin, type TeamView } from "./admin.ts";
 import { Outbox, type QueuedEnvelope } from "./outbox.ts";
 import { Requests } from "./request.ts";
@@ -228,13 +230,17 @@ export interface AllyDevice { id: string; short: string; label: string; online: 
 export interface AllyTeam { team: string; name: string; devices: AllyDevice[] }
 /** An ally's board as a tower reads it: text from the sender, cut and cleaned again; the device's label is the roster's. */
 export interface AllyBoardEntry { id: string; workspace: string; tab: string; main: string; now: string; items: { t: string; done: boolean }[]; updatedSecondsAgo?: number }
-export interface AllyBoard { origin: "remote"; team: string; teamId: string; device: { id: string; short: string; label: string }; online: boolean; boardSecondsAgo: number; entries: AllyBoardEntry[] }
+/** An ally's capacity row as a tower reads it (docs/specs/2026-11-24-capacity.md): points and load in plain numbers, the paused mains by their entry ids with when they resume. */
+export interface AllyCapacity { points: number; budget?: number; load1: number; cores: number; ready: number; minReady?: number; open: number; paused: { id: string; until?: string }[] }
+export interface AllyBoard { origin: "remote"; team: string; teamId: string; device: { id: string; short: string; label: string }; online: boolean; boardSecondsAgo: number; entries: AllyBoardEntry[]; capacity?: AllyCapacity }
 /** A board from a device that has been offline longer than this, or is older than 7 days, is not shown (spec, Holding allies' boards). */
 const BOARD_OFFLINE_MS = 2 * 3600_000, BOARD_MAX_AGE_MS = 7 * 24 * 3600_000;
 /** The board is sent at most this often per team, and once an hour unchanged; a relay without the kind is left alone for an hour. */
 const BOARD_MIN_MS = 15_000, BOARD_REFRESH_MS = 3600_000, BOARD_OFF_MS = 3600_000;
+/** A board that carries a capacity row is sent at least this often, so a teammate can tell a silent device (over 30 minutes) from a quiet one. */
+const CAP_REFRESH_MS = 10 * 60_000;
 /** What this build takes (docs/specs/2026-10-26-sb-backend.md, Replies for a main). A `caps` older than 2 hours counts as none. */
-export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval"] as const;
+export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval", "board.capacity"] as const;
 export const CAPS_STALE_MS = 2 * 3600_000;
 /** A live frame is worth nothing late: its post gives up after this, so a stalled relay does not hold the serial chain of sends (spec §11.1, task 5). */
 const LIVE_POST_MS = 5000;
@@ -1720,13 +1726,15 @@ export class LinkHolder {
 		if (policy.share !== "status" && sent.wasEmpty) return;
 		const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch);
 		if (!key) return;
-		const hash = createHash("sha256").update(JSON.stringify(wanted)).digest("hex");
+		const capacity = policy.share === "status" ? this.capacityFor(run, state, new Set(wanted.map((e) => e.id)), net, device) : undefined;
+		// The hash leaves out the reading's time and the load, which move at every reading: a board goes when its entries or its counts change, and every 10 minutes while it carries capacity.
+		const hash = createHash("sha256").update(JSON.stringify([wanted, capacity && { ...capacity, at: 0, load1: 0 }])).digest("hex");
 		const changed = hash !== sent.hash || state.epoch !== sent.epoch;
-		if (!(changed ? now - sent.at >= (this.o.boardMinMs ?? BOARD_MIN_MS) : now - sent.at >= BOARD_REFRESH_MS)) return;
+		if (!(changed ? now - sent.at >= (this.o.boardMinMs ?? BOARD_MIN_MS) : now - sent.at >= (capacity ? CAP_REFRESH_MS : BOARD_REFRESH_MS))) return;
 		// `ts` rises by at least 1 per board, so a receiver's per-sender guard never drops a board for an equal clock reading.
 		const ts = Math.max(now, sent.ts + 1);
 		sent.at = now; // a failed post is tried again after the spacing, not on every tick
-		const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq: 0, ts, kind: "board", to: [], plaintext: encodePlaintext("board", { entries: wanted }) });
+		const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq: 0, ts, kind: "board", to: [], plaintext: encodePlaintext("board", { entries: wanted, ...(capacity ? { capacity } : {}) }) });
 		try {
 			await run.client.postEnvelope(run.teamId, envelope);
 		} catch (error) {
@@ -1739,6 +1747,41 @@ export class LinkHolder {
 			throw error;
 		}
 		Object.assign(sent, { hash, ts, epoch: state.epoch, wasEmpty: wanted.length === 0 });
+	}
+
+	/**
+	 * This device's capacity row for a team (the sb server's `_device.json`, under 5 minutes old): numbers in hundredths, the paused mains named only by the ids of entries the team gets. None while a teammate on the roster has
+	 * no fresh `caps` listing `board.capacity` (an older build refuses a board of two fields), or with no reading.
+	 */
+	private capacityFor(run: TeamRun, state: RosterState, ids: ReadonlySet<string>, net: NetView, device: string): WireCap | undefined {
+		if (!this.o.boardDir || ![...state.members.keys()].every((id) => id === device || this.capsOf(run, id).includes("board.capacity"))) return undefined;
+		const d = readDevice(capDir(this.o.boardDir), this.now());
+		if (!d) return undefined;
+		const live = new Set(net.sessions.map((x) => x.id)), h = (n: number) => Math.max(0, Math.round(n * 100));
+		const paused = d.mains.filter((r) => r.paused && live.has(r.session) && ids.has(wireId(device, r.session))).map((r) => ({ id: wireId(device, r.session), ...(r.paused!.until !== undefined ? { until: Math.max(0, Math.round(r.paused!.until)) } : {}) }));
+		return { at: Math.round(d.at), points: h(d.points), ...(d.budget !== undefined ? { budget: h(d.budget) } : {}), load1: h(d.load1), cores: Math.max(0, Math.round(d.cores)), ready: Math.max(0, Math.round(d.ready)), ...(d.minReady !== undefined ? { minReady: h(d.minReady) } : {}), open: Math.max(0, Math.round(d.open)), paused };
+	}
+
+	/**
+	 * Every ally device whose board this holder holds, however old (up to 7 days), for the capacity watch's device-silent flag: its board's age, whether it is online, and whether that board had open work (its capacity
+	 * row's points, ready or open todos, or a paused main; without one, an item not done or an auto line's count short of its total). Kept on the receiving side: the sender may be the one that went silent.
+	 */
+	allySeen(): AllySeen[] {
+		const now = this.now(), self = this.device?.keys.id, out: AllySeen[] = [];
+		for (const run of this.runs.values()) {
+			if (run.dead) continue;
+			let roster: RosterState;
+			try { roster = this.loadTeam(run.team).state; } catch { continue; }
+			for (const [id, seen] of run.boards) {
+				if (id === self || !roster.members.has(id) || now - seen.ts > BOARD_MAX_AGE_MS) continue;
+				const c = seen.board.capacity, presence = run.presences.get(id);
+				const open = c ? c.points > 0 || c.ready > 0 || c.open > 0 || c.paused.length > 0 : seen.board.entries.some((e) => e.items.some((i) => !i.done) || ((m) => Boolean(m && Number(m[1]) < Number(m[2])))(/\((\d+)\/(\d+)\)$/.exec(e.now)));
+				// A board without capacity comes once an hour unchanged, so its age says nothing under an hour: only going offline counts for it.
+				const age = now - seen.at, online = presence !== undefined && now - presence.at <= PRESENCE_ONLINE_MS;
+				out.push({ key: `${run.team}:${id}`, label: restrictLabel(roster.members.get(id)?.label ?? shortId(id)), short: shortId(id), online, boardAgeMs: age, timed: c !== undefined, open });
+			}
+		}
+		return out;
 	}
 
 	/** The boards of the allies of `only` teams (all when omitted), or of one device (an id, short id, or label as `tower_send` takes it). Text is cut and cleaned again; labels are the roster's. */
@@ -1777,6 +1820,7 @@ export class LinkHolder {
 						id: clean(e.id, 16), workspace: clean(e.workspace, BOARD.label), tab: clean(e.tab, BOARD.label), main: clean(e.name, BOARD.label), ...cleanText(e),
 						...(e.updated > 0 ? { updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)) } : {}),
 					})),
+					...((c) => (c ? { capacity: { points: c.points / 100, ...(c.budget !== undefined ? { budget: c.budget / 100 } : {}), load1: c.load1 / 100, cores: c.cores, ready: c.ready, ...(c.minReady !== undefined ? { minReady: c.minReady / 100 } : {}), open: c.open, paused: c.paused.map((p) => ({ id: clean(p.id, 16), ...(p.until !== undefined ? { until: new Date(Math.min(p.until, 8.64e15)).toISOString() } : {}) })) } } : {}))(seen.board.capacity),
 				});
 			}
 		}

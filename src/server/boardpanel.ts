@@ -54,7 +54,7 @@ export function createBoardPanel(d: BoardPanelDeps) {
 export type BoardPanel = ReturnType<typeof createBoardPanel>;
 
 /** The server's way to tell a live session: one intercom message under a `board_clear` header, from the server's own session id; `delivered` only when the session's connection took it, `queued` when the broker holds it, `false` while it is not connected, when the send fails, or when the broker says nothing of how. */
-export const tellVia = (client: () => Pick<IntercomLike, "isConnected" | "send"> | undefined, serverId: string, kind: "board_clear" | "auto_notice" = "board_clear") => async (to: string, text: string): Promise<Told> => {
+export const tellVia = (client: () => Pick<IntercomLike, "isConnected" | "send"> | undefined, serverId: string, kind: "board_clear" | "auto_notice" | "capacity_notice" = "board_clear") => async (to: string, text: string): Promise<Told> => {
 	const c = client();
 	if (!c?.isConnected()) return false;
 	const message = stamp({ from: { name: "straw boss", id: serverId, role: "session" }, kind, scope: "session", to: [{ name: to, id: to, role: "session" }], reply: false }, text);

@@ -742,6 +742,29 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 </details>
 
+#### 裝置產能
+
+每個主智慧體用了多少點數、手上有哪些可接的工作，以及裝置的負載和預算，都寫在看板上，讓塔台或值守主智慧體看得到閒置的產能、停滯的主智慧體，以及撞到模型額度而停下的主智慧體（`src/capacity.ts`、`src/capfill.ts`、`server/capwatch.ts`、`server/capops.ts`；設計是 `docs/specs/2026-11-24-capacity.md`）。sb 只加總點數，不判斷一件工作值多少點。
+
+<details>
+<summary>細節</summary>
+
+**點數。** todo 的點數寫在 `metadata.points`（0 到 10；盒子的規則是後端 2、前端 1、不編譯的工作 0.5）。主智慧體使用中的點數，是它進行中、`owner` 為它此刻執行中 subagent 的 todo 點數總和（沒寫點數的算 1），再加上沒有任何這種 todo 指名的每個執行中 subagent 各 1 點；主智慧體本身不計點，沒有 todo 指名的運作中火車算 1 點。它可接的工作是 `blockedBy` 全部完成、owner 也沒在執行的 pending todo；其中最小的那張，是一個空位至少要容得下的點數。
+
+**檔案。** 主智慧體自己的 session 依它的 todo 清單（讀法和自動填入相同）與停機狀態寫 `<state dir>/capacity/<session>.json`，兩者任一變動就重寫，結束時刪除（`/reload` 不刪）。主要的 sb server 每分鐘一次、不經模型，把這些檔案和它看到正在執行的 subagent 合併，寫出裝置列 `capacity/_device.json`：點數、`config.json` 的 `capacity.budget`（沒設：照樣顯示數字，只是不標產能閒置）、1 分鐘負載平均與核心數、可接數與最小的可接點數、未完成的 todo 數、裝置是否無人值守，以及每個主智慧體的數字、停機與停滯標記。超過 5 分鐘的列不算讀數。
+
+**在哪裡看得到。** `board_read` 在每個主智慧體的 `local` 列放上它的 `points`、`ready` 與 `paused`（`quota · resumes 16:02`），並在 `capacity` 區段放裝置的數字（遠端輪次只列它的列看得到的停機主智慧體）；`/boss board` 在標題下印出裝置那一行（`capacity 6 / 20 pts · load 0.24 / 32 cores · ready 5 · under 42 min · 1 paused`），並在每一列附上數字；主塔台頁面的看板摺疊行與各列也一樣。隊友隨看板一起拿到它（見下文）。
+
+**停機接口。** 撞到模型額度而停下的主智慧體自己寫不了看板，所以由它 session 裡的擴充代為標記：pi-agent-basic 在 pi 的行程內事件匯流排發出 `straw-boss:pause`，`{ v: 1, state: "paused" | "resumed", reason: "quota", until?: <epoch ms>, detail?: <at most 120 characters> }`（`detail` 至多 120 字元）；sb 不 import basic 的任何東西，收到後把該主智慧體標成停機，直到收到 `resumed` 或該 session 開始新的一輪。`/reload` 保留這個標記，停機中的主智慧體永遠不算停滯。
+
+**旗標。** `under`：設了預算、點數加上最小的可接 todo 放得進預算，而且負載低於每核 0.7，持續 10 分鐘。`stale`：在無人值守的裝置上，手上有未完成 todo、session 檔與看板條目都 30 分鐘沒動的主智慧體，不論它的狀態；其他裝置沿用上面的 2 小時規則。讀得到裝置列的地方，以它的停滯標記取代看板自己的。`quota`：停機中。`device-silent` 由接收端判斷：最後一張看板有未完成工作、而且已離線，或看板帶產能卻超過 30 分鐘沒更新的隊友裝置。
+
+**事件。** 進入一個旗標時，發一則通知（`capacity <flag> · main "<name>" · <numbers>`）給負責該主智慧體工作區的塔台（找法同停滯監看；隊友裝置的則給主塔台），並發一則 `kind=capacity_notice` 訊息給這台裝置的值守主智慧體（若有）；產能閒置會對每個最小可接 todo 放得進的主智慧體各發一則，停滯只對手上有未完成 todo 的主智慧體發。同一個主智慧體或裝置的同一個旗標，30 分鐘內最多一則（`capacity/_sent.json`，重啟後仍在），旗標解除時不發任何東西，只有額度恢復例外。沒人接的通知下一分鐘再試。
+
+**在線路上。** 只有名冊上每個隊友最新的 `caps` 都列出 `board.capacity` 時，`board` 訊息才把裝置列當第二個欄位帶上（舊版會拒收兩個欄位的看板，所以它拿到的是只有一個欄位的看板）：以百分之一為單位的數字和時間，以及用看板本來就帶的條目 id 指出的停機主智慧體，限於該團隊拿得到的條目。這種看板至少每 10 分鐘送一次，讓隊友分得出沉默的裝置和安靜的裝置；決定要不要送的雜湊不計讀數時間與負載。隊友那一列在 `board_read` 裡以 `capacity` 帶著它。
+
+</details>
+
 ### 自動模式
 
 給老闆不在、而且沒有任何事可以等他的時候用（`src/auto.ts`、`autostate.ts`、`autotext.ts`、`autoscope.ts`、`bossauto.ts`、`declined.ts`、`server/automode.ts`、`autoops.ts`、`autoback.ts`、`autotower.ts`、`autoreturn.ts`、`gui/auto.ts`；設計見 `docs/specs/2026-11-09-auto-mode.md`，後由 `docs/specs/2026-11-21-auto-return.md` 修訂）。它涵蓋這台電腦和它上面的每個 Herdr slot；Straw Link 的隊友不會被告知，無人值守裝置也沒有它。
