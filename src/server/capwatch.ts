@@ -10,7 +10,8 @@ const MIN = 60_000;
 export interface AllySeen { key: string; label: string; short: string; online: boolean; boardAgeMs: number; timed: boolean; open: boolean }
 export type CapKind = "under" | "stale" | "quota" | "resumed" | "silent";
 /** One event: `subject` is the main's session (none for an ally device), `workspace` its workspace, `standing` this device's standing main other than the subject, when there is one. */
-export interface CapEvent { kind: CapKind; key: string; text: string; subject?: string; workspace?: string; standing?: string }
+/** `tag` is part of the flag's identity: a quota's resume time, so a new pause to another time is a new flag, told inside the 30 minutes. */
+export interface CapEvent { kind: CapKind; key: string; text: string; subject?: string; workspace?: string; standing?: string; tag?: string }
 export interface CapDeps {
 	/** The capacity folder (`<state dir>/capacity`). */
 	dir: string;
@@ -42,8 +43,9 @@ export function capText(kind: CapKind, d: DeviceCap, now: number, row?: MainRow,
 export function createCapWatch(d: CapDeps) {
 	let underSince: number | undefined, active = new Set<string>(), last: Map<string, MainRow> = new Map(), sent = readSent(d.dir);
 	/** Told, or held by the throttle: true. False when nobody took it, so the next look tries again. */
+	const markOf = (e: CapEvent) => `${e.kind}:${e.key}${e.tag !== undefined ? `@${e.tag}` : ""}`;
 	const send = async (e: CapEvent, now: number): Promise<boolean> => {
-		const mark = `${e.kind}:${e.key}`;
+		const mark = markOf(e);
 		if (now - (sent[mark] ?? -Infinity) < THROTTLE_MS) return d.log("capacity-held", { kind: e.kind, key: e.key }), true;
 		const told = await d.tell(e).catch(() => false);
 		d.log(told ? "capacity-told" : "capacity-untold", { kind: e.kind, key: e.key });
@@ -65,16 +67,16 @@ export function createCapWatch(d: CapDeps) {
 			const flagged: CapEvent[] = [
 				...(underFor(dev, now) !== undefined ? dev.mains.filter((r) => r.minReady !== undefined && dev.points + r.minReady <= dev.budget!).map((r) => of("under", r)) : []),
 				...dev.mains.filter((r) => r.stale && r.open > 0).map((r) => of("stale", r)),
-				...dev.mains.filter((r) => r.paused).map((r) => of("quota", r)),
+				...dev.mains.filter((r) => r.paused).map((r) => ({ ...of("quota", r), tag: String(r.paused!.until ?? "") })),
 				...d.allies().filter((a) => a.open && (!a.online || (a.timed && a.boardAgeMs > SILENT_MS))).map((a): CapEvent => ({ kind: "silent", key: a.key, text: capText("silent", dev, now, undefined, a), ...(standing() ? { standing: standing()! } : {}) })),
 			];
 			const next = new Set<string>();
-			for (const e of flagged) if (active.has(`${e.kind}:${e.key}`) || (await send(e, now))) next.add(`${e.kind}:${e.key}`);
+			for (const e of flagged) if (active.has(markOf(e)) || (await send(e, now))) next.add(markOf(e));
 			// A quota that cleared while its main still runs is told once: the main is back at work.
 			const rows = new Map(dev.mains.map((r) => [r.session, r]));
 			for (const mark of active) {
-				const [kind, session] = [mark.slice(0, mark.indexOf(":")), mark.slice(mark.indexOf(":") + 1)], row = rows.get(session);
-				if (kind === "quota" && !flagged.some((e) => `${e.kind}:${e.key}` === mark) && row && last.has(session)) await send(of("resumed", row), now);
+				const kind = mark.slice(0, mark.indexOf(":")), session = mark.slice(mark.indexOf(":") + 1).split("@")[0]!, row = rows.get(session);
+				if (kind === "quota" && !flagged.some((e) => e.kind === "quota" && e.key === session) && row && last.has(session)) await send(of("resumed", row), now);
 			}
 			active = next;
 			last = rows;

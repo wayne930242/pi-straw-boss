@@ -69,7 +69,7 @@ test("no budget: the numbers are written, under is never flagged", async () => {
 	assert.equal(d.ready, 1);
 });
 
-test("quota: told when it is entered, its resume told once, and the next pause within 30 minutes held", async () => {
+test("quota: told when it is entered, its resume told once, the next pause to the same resume time within 30 minutes held, one to another time told", async () => {
 	const { w, make } = world();
 	const watch = make(), until = w.clock.now() + 3 * 3600_000;
 	w.cap("s-a", { open: 2, pause: { reason: "quota", at: w.clock.now(), until, detail: "weekly limit" } });
@@ -80,9 +80,17 @@ test("quota: told when it is entered, its resume told once, and the next pause w
 	await run(watch, w.clock, 2);
 	assert.deepEqual(w.told.map((e) => e.kind), ["quota", "resumed"]);
 	assert.equal(w.told[1]!.text, 'capacity quota resumed · main "api"');
-	w.cap("s-a", { open: 2, pause: { reason: "quota", at: w.clock.now() } });
+	w.cap("s-a", { open: 2, pause: { reason: "quota", at: w.clock.now(), until } });
 	await run(watch, w.clock, 2);
-	assert.equal(w.told.length, 2, "a second pause 5 minutes later is held");
+	assert.equal(w.told.length, 2, "a second pause 5 minutes later, to the same resume time, is held");
+	w.cap("s-a", { open: 2 });
+	await run(watch, w.clock, 1);
+	w.cap("s-a", { open: 2, pause: { reason: "quota", at: w.clock.now(), until: until + 24 * 3600_000 } });
+	await run(watch, w.clock, 2);
+	assert.deepEqual(w.told.map((e) => e.kind), ["quota", "resumed", "quota"], "a new pause to another resume time is told inside the 30 minutes");
+	w.cap("s-a", { open: 2, pause: { reason: "quota", at: w.clock.now(), until: until + 48 * 3600_000 } });
+	await run(watch, w.clock, 2);
+	assert.deepEqual(w.told.map((e) => e.kind), ["quota", "resumed", "quota", "quota"], "a pause whose resume time moves while it holds is told again");
 });
 
 test("stale on an unattended device: a main with open todos unmoved 30 minutes is told once; a paused one never", async () => {
