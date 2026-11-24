@@ -109,12 +109,13 @@ const key = (name: string) => name.trim().toLowerCase();
 const round = (n: number) => Math.round(n * 100) / 100;
 
 /**
- * Whether a main is stale. On an unattended device: it has open todos, is not paused, and neither its session file nor its board entry moved for 30 minutes (whatever its state). Elsewhere the board's own rule: idle,
+ * Whether a main is stale. On an unattended device: it has open todos, runs nothing (no running worker or train, no points in use: a main commanding work is never stale), is not paused, and neither its session file nor its board entry moved for 30 minutes (whatever its state). Elsewhere the board's own rule: idle,
  * commanding nothing, not standing, and its entry over 2 hours old. A paused main is never stale.
  */
-export function staleOf(m: Pick<MainFacts, "state" | "commanding" | "duty" | "fileMtime" | "entryUpdated">, c: Pick<MainCap, "open" | "pause"> | undefined, unattended: boolean, now: number): boolean {
+export function staleOf(m: Pick<MainFacts, "state" | "commanding" | "duty" | "fileMtime" | "entryUpdated"> & { workers?: readonly string[]; points?: number }, c: Pick<MainCap, "open" | "pause"> | undefined, unattended: boolean, now: number): boolean {
 	if (c?.pause) return false;
-	if (unattended) return (c?.open ?? 0) > 0 && Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > 0 && now - Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > STALE_UNATTENDED_MS;
+	const busy = Boolean(m.commanding) || (m.workers?.length ?? 0) > 0 || (m.points ?? 0) > 0;
+	if (unattended) return !busy && (c?.open ?? 0) > 0 && Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > 0 && now - Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > STALE_UNATTENDED_MS;
 	return m.state === "idle" && !m.commanding && m.duty !== "standing" && m.entryUpdated !== undefined && now - m.entryUpdated > STALE_MS;
 }
 
@@ -133,7 +134,7 @@ export function joinCaps(o: { mains: MainFacts[]; caps: MainCap[]; budget?: numb
 		return {
 			session: m.session, name: clean(m.name, 40), workspace: m.workspace, points: round(points), ready: ready.length, ...(minReady !== undefined ? { minReady } : {}), open: c?.open ?? 0,
 			...(c?.pause ? { paused: { ...(c.pause.until !== undefined ? { until: c.pause.until } : {}), ...(c.pause.detail ? { detail: c.pause.detail } : {}) } } : {}),
-			...(staleOf(m, c, o.unattended, o.now) ? { stale: true as const } : {}), ...(m.duty === "standing" ? { standing: true as const } : {}),
+			...(staleOf({ ...m, points }, c, o.unattended, o.now) ? { stale: true as const } : {}), ...(m.duty === "standing" ? { standing: true as const } : {}),
 		};
 	});
 	const loose = trains.filter((t) => !named.has(t)).length * DEFAULT_POINTS, smallest = mains.flatMap((r) => (r.minReady !== undefined ? [r.minReady] : []));

@@ -80,10 +80,13 @@ test("roomFor and underFor: a budget, the smallest ready todo fitting, the load 
 	assert.equal(underFor({}, NOW), undefined);
 });
 
-test("staleOf: 30 minutes of no move with open todos on an unattended device (any state), else the 2-hour idle rule; a paused main is never stale", () => {
+test("staleOf: 30 minutes of no move with open todos and nothing running on an unattended device (any state), else the 2-hour idle rule; a paused main is never stale", () => {
 	const old = (ms: number) => ({ fileMtime: NOW - ms, entryUpdated: NOW - ms });
 	const cases: [string, Parameters<typeof staleOf>[0], Parameters<typeof staleOf>[1], boolean, boolean][] = [
-		["unattended, 31 min, open", { state: "commanding", commanding: true, ...old(31 * MIN) }, { open: 2 }, true, true],
+		["unattended, 31 min, open", { state: "working", workers: [], ...old(31 * MIN) }, { open: 2 }, true, true],
+		["unattended, commanding a worker", { state: "commanding", commanding: true, workers: ["w1"], ...old(31 * MIN) }, { open: 2 }, true, false],
+		["unattended, a worker runs", { state: "idle", workers: ["w1"], ...old(31 * MIN) }, { open: 2 }, true, false],
+		["unattended, points in use (a train)", { state: "idle", workers: [], points: 1, ...old(31 * MIN) }, { open: 2 }, true, false],
 		["unattended, 29 min", { state: "idle", ...old(29 * MIN) }, { open: 2 }, true, false],
 		["unattended, file moved", { state: "idle", fileMtime: NOW - MIN, entryUpdated: NOW - 3 * 3600_000 }, { open: 2 }, true, false],
 		["unattended, nothing open", { state: "idle", ...old(3 * 3600_000) }, { open: 0 }, true, false],

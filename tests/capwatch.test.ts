@@ -88,7 +88,7 @@ test("quota: told when it is entered, its resume told once, and the next pause w
 test("stale on an unattended device: a main with open todos unmoved 30 minutes is told once; a paused one never", async () => {
 	const { w, make } = world({ unattended: true });
 	const t0 = w.clock.now();
-	w.mains[0] = { ...w.mains[0]!, fileMtime: t0, entryUpdated: t0 };
+	w.mains[0] = { ...w.mains[0]!, workers: [], fileMtime: t0, entryUpdated: t0 }; // nothing running: a main commanding work is never stale
 	w.cap("s-a", { open: 2 });
 	const watch = make();
 	await run(watch, w.clock, 31);
