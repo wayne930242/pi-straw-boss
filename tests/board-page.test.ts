@@ -117,7 +117,7 @@ test("Ask progress is on live mains only; it posts the exact prompt to the main'
 	fillBoard(b as never, net());
 	assert.equal(rowEl(b, "gone-1").querySelector(".board-ask"), null, "an ended main cannot be asked");
 	const button = () => rowEl(b, "s-1").querySelector(".board-ask") as El;
-	assert.equal(button().textContent, "Ask progress");
+	assert.equal(button().textContent, "Ask for a sitrep");
 	assert.equal(ASK_PROMPT, "The boss asks from the work board: how far has this work got? Reply in two or three lines (Traditional Chinese), and update your board line (board_set) if it is out of date.");
 	button().click();
 	await until(() => button().textContent === "Asked", "the button reads Asked");
@@ -131,7 +131,7 @@ test("Ask progress is on live mains only; it posts the exact prompt to the main'
 	assert.equal(button().textContent, "Asked");
 	at += 2;
 	later!();
-	assert.deepEqual([button().textContent, button().hasAttribute("disabled")], ["Ask progress", false], "after the minute it can be asked again");
+	assert.deepEqual([button().textContent, button().hasAttribute("disabled")], ["Ask for a sitrep", false], "after the minute it can be asked again");
 });
 
 test("a send in flight disables the button (no double tap) and a refusal says why and leaves the button free", async () => {
@@ -148,7 +148,7 @@ test("a send in flight disables the button (no double tap) and a refusal says wh
 	assert.equal(posts.length, 1);
 	release({ ok: false, status: 409, body: { error: "blocked", reason: "It is waiting on a dialog; answer it in the terminal." } });
 	await until(() => b.querySelector(".board-note")!.textContent === "It is waiting on a dialog; answer it in the terminal.", "the reason is shown");
-	assert.deepEqual([button().textContent, button().hasAttribute("disabled")], ["Ask progress", false]);
+	assert.deepEqual([button().textContent, button().hasAttribute("disabled")], ["Ask for a sitrep", false]);
 });
 
 test("Clear is on clearable rows only; it asks in the page's sheet with Cancel first and focused, and posts board/clear only after the choice", async () => {

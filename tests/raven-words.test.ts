@@ -68,14 +68,22 @@ test("the allow-list lists real messages that say 塔台 in the base, and nothin
 	for (const id of Object.keys(NEVER)) assert.match(NEVER[id]!, /Zen/, `${id} names why`);
 });
 
-test("a Raven sentence answers a message of the base with the same inputs, and only where the base said 塔台 or 智慧體", () => {
+/** The supply board's words (docs/specs/2026-11-24-capacity-supply/spec.md): the keep's crypt says them in its own words in both languages, though the base says no 塔台 or 智慧體 in them. */
+const SUPPLY = (id: string) => id.startsWith("supply_") || ["board_title", "board_label", "board_ask", "board_idle_word", "board_paused", "board_paused_bare"].includes(id);
+const en = JSON.parse(readFileSync(join(root, "gui/messages/en.json"), "utf8")) as Record<SentenceId, string>;
+
+test("a Raven sentence answers a message of the base with the same inputs, and only where the base said 塔台 or 智慧體, or for the supply board", () => {
 	raven();
 	const pack = SENTENCES["zh-TW"] ?? {};
 	assert.ok(Object.keys(pack).length >= 80, "the pack covers the sentences");
-	assert.deepEqual(Object.keys(SENTENCES), ["zh-TW"], "English keeps the base messages: the pack has no en entry");
+	assert.deepEqual(Object.keys(SENTENCES), ["zh-TW", "en"], "English keeps the base messages but for the supply board's");
+	for (const [id, text] of Object.entries(SENTENCES.en!)) {
+		assert.ok(SUPPLY(id), `${id}: Raven English says only the supply board's words`);
+		assert.deepEqual(holes(text), holes(en[id as SentenceId]), `${id} keeps the inputs in English`);
+	}
 	for (const [id, text] of Object.entries(pack)) {
 		assert.ok(id in zh, `${id} is a message`);
-		assert.ok(/塔台|智慧體/.test(zh[id as SentenceId]), `${id} said 塔台 or 智慧體 in the base`);
+		assert.ok(/塔台|智慧體/.test(zh[id as SentenceId]) || SUPPLY(id), `${id} said 塔台 or 智慧體 in the base, or is the supply board's`);
 		assert.deepEqual(holes(text), holes(zh[id as SentenceId]), `${id} keeps the inputs`);
 		assert.ok(text.length > 0 && !/\{\w*[^\w}]/.test(text), `${id} is a plain sentence`);
 	}
@@ -97,7 +105,7 @@ test("Raven English and every message a pack does not name stay the base's, byte
 		const inputs = Object.fromEntries(holes(zh[id]).map((h) => [h, `‹${h}›`]));
 		const say = (name: string, options?: { locale: "en" | "zh-TW" }) => (base as unknown as Record<string, (i: object, o?: object) => string>)[name]!(inputs, options);
 		const through = (m as unknown as Record<string, (i: object, o?: object) => string>)[id]!;
-		assert.equal(through(inputs, { locale: "en" }), say(id, { locale: "en" }), `${id} in English`);
+		if (!(id in SENTENCES.en!)) assert.equal(through(inputs, { locale: "en" }), say(id, { locale: "en" }), `${id} in English`);
 		if (!(id in pack)) assert.equal(through(inputs), say(id), `${id} is untouched`);
 	}
 });
@@ -183,4 +191,16 @@ test("gui-sentences removes a said/ module whose message is gone", () => {
 		assert.ok(!left.includes("gone_message.js") && !left.includes("gone_message.d.ts"), "stale modules are removed");
 		assert.ok(left.includes("_index.js") && left.length > 100, "the current ones are written");
 	} finally { rmSync(out, { recursive: true, force: true }); }
+});
+
+test("the supply board's words: Standard says 戰況板, 指揮官, and 詢問戰況; Raven keeps 問進度 and says the crypt's words, a pause a shut coffin and a stale main circling crows", () => {
+	standard();
+	assert.deepEqual([m.board_title(), m.supply_mains(), m.board_ask(), m.supply_title()], ["戰況板", "指揮官", "詢問戰況", "本機補給站"]);
+	raven();
+	assert.deepEqual([m.board_title(), m.supply_mains(), m.board_ask(), m.supply_title(), m.supply_barracks()], ["管家手記", "墓穴中的血僕", "問進度", "本機墓穴", "閣門"]);
+	assert.equal(m.board_paused({ time: "16:02" }), "合棺 · 16:02 甦醒");
+	assert.match(m.board_idle_word(), /^群鴉盤旋/);
+	assert.equal(m.board_ask({}, { locale: "en" }), "Ask progress");
+	standard();
+	assert.equal(m.board_ask({}, { locale: "en" }), "Ask for a sitrep");
 });

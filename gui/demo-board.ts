@@ -4,7 +4,7 @@ import { getLocale } from "./paraglide/runtime.js";
 
 // The demo's work board (`?board` on the head page, docs/specs/2026-11-09-board-view.md): eight rows over two workspaces on top of the demo net, one of each kind the section draws: a live main with items, a stale idle main (clearable), an ended row,
 // an ended row whose session is still open (`open`), a live main with no line, a train row, one long line, and one whose line is markup (it must show as text). Ask progress and Clear are answered here, with no server: Ask is accepted; the first Clear
-// reads "cleared, told it" and every other one "cleared, the reminder is queued". `?board` takes the head tower's `talk` state unless `?head=` says another.
+// reads "cleared, told it" and every other one "cleared, the reminder is queued". `?board` takes the head tower's `talk` state unless `?head=` says another. The rows carry the supply board's figures (below).
 
 const MIN = 60_000, said = (zh: string, en: string) => (getLocale() === "en" ? en : zh);
 const unit = (key: string, name: string, role: Unit["role"], mark: Unit["mark"]): Unit => ({ id: key, key, control: true, name, role, mark, note: undefined, subs: [] });
@@ -29,8 +29,14 @@ export function boardFromUrl(net: Net, now: number, update: (change: (n: Net) =>
 	const rows = boardRows(now), mark = (r: BoardViewRow) => (r.state === "working" ? "working" : "idle") as Unit["mark"];
 	const base = (id: string, label: string, tab: string, keys: string[]) => ({ id, label, mark: "working" as const, tower: null, tabs: [{ id: `${id}:${tab}`, label: tab, units: keys.map((k) => { const r = rows.find((x) => x.session === k)!; return unit(k, r.main, r.role ?? "main", mark(r)); }) }], outposts: [], outside: [] });
 	net.bases.push(base("bw-alpha", "Board Alpha", "api", ["bd-work", "bd-long", "bd-idle", "bd-bare"]), base("bw-beta", "Board Beta", "mobile", ["bd-markup", "bd-train"]));
-	Object.assign(rows[0]!, { points: 6, ready: 5 });
-	net.capacity = { points: 6, budget: 20, load1: 0.24, cores: 8, ready: 5, paused: 0 };
+	// The supply board (docs/specs/2026-11-24-capacity-supply/spec.md): api-fix runs three units of 2 points with 5 ready, docs-pass waits on its quota, web-polish is stale, the others run nothing; a teammate device is out of touch. `?board=unset`: no budget.
+	const zero = { points: 0, ready: 0, units: [] };
+	Object.assign(rows[0]!, { points: 6, ready: 5, units: ["api-build", "web-test", "db-check"].map((name) => ({ name, points: 2 })) });
+	Object.assign(rows[1]!, zero, { paused: "quota", pausedUntil: now + 40 * MIN });
+	for (const r of [rows[2]!, rows[3]!, rows[4]!]) Object.assign(r, zero);
+	const unset = new URLSearchParams(location.search).get("board") === "unset";
+	net.capacity = { points: 6, ...(unset ? {} : { budget: 20, underMinutes: 12 }), load1: 0.24, cores: 8, ready: 5, paused: 1 };
+	net.link?.allies.push({ id: "t/box01", team: "t", teamName: "moldplan", device: "box01", short: "b01", label: "Box 01", online: false, workspace: null, tower: "unknown", tabs: [] });
 	net.board = rows;
 	let cleared = 0;
 	const real = globalThis.fetch, json = (body: object) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });

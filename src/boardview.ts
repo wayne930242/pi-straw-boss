@@ -34,10 +34,15 @@ export interface BoardViewRow {
 	open?: true;
 	/** Capacity (docs/specs/2026-11-24-capacity.md): the main's points in use and ready todos, and its pause (`quota · resumes 16:02`), from the sb server's device row; `stale` is then the server's mark. */
 	points?: number; ready?: number; paused?: string; pausedUntil?: number;
+	/** The main's deployed units by name and points (docs/specs/2026-11-24-capacity-supply/spec.md), from the device row's local `units`: this computer's page only (the board reaches no link, remote turn, or operate slice). */
+	units?: { name: string; points: number }[];
 }
 /** The device row as the page shows it: numbers only. */
 export interface CapView { points: number; budget?: number; load1: number; cores: number; ready: number; underMinutes?: number; paused: number }
 export const capView = (d: DeviceCap, now: number): CapView => ({ points: d.points, ...(d.budget !== undefined ? { budget: d.budget } : {}), load1: d.load1, cores: d.cores, ready: d.ready, ...(underFor(d, now) !== undefined ? { underMinutes: Math.floor(underFor(d, now)! / 60_000) } : {}), paused: d.mains.filter((r) => r.paused).length });
+
+/** A device row's units as the page draws them: a name and finite points each, at most 32 (the file is the server's, read as it is). */
+const unitsOf = (v: unknown) => (Array.isArray(v) ? v.slice(0, 32).flatMap((u: { name?: unknown; points?: unknown } | null) => (typeof u?.name === "string" && u.name && typeof u.points === "number" && Number.isFinite(u.points) && u.points >= 0 ? [{ name: u.name.slice(0, 40), points: u.points }] : [])) : undefined);
 
 /** The ended rows shown are the newest this many (a folder that kept a hundred dead lines shows the latest); live mains are all shown. */
 export const MAX_ENDED = 100;
@@ -61,10 +66,10 @@ export function boardRows(entries: Entry[], mains: LiveMain[], now: number, open
 	const written = new Map(entries.map((e) => [e.session, e.updated])), all = joinLocal(entries, mains, now, { keepEnded: true });
 	const live = all.filter((r) => r.state !== "ended"), ended = all.filter((r) => r.state === "ended").sort((a, b) => (written.get(b.session) ?? 0) - (written.get(a.session) ?? 0)).slice(0, MAX_ENDED);
 	return [...live, ...ended].map((r): BoardViewRow => {
-		const updated = r.now === undefined ? undefined : written.get(r.session), { stale, ...cap } = rowCap(dev, r.session, now), until = dev?.mains.find((x) => x.session === r.session)?.paused?.until;
+		const updated = r.now === undefined ? undefined : written.get(r.session), { stale, ...cap } = rowCap(dev, r.session, now), mr = dev?.mains.find((x) => x.session === r.session), until = mr?.paused?.until, units = unitsOf(mr?.units);
 		return {
 			session: r.session, workspace: r.workspace, tab: r.tab, main: r.main || r.who || "", ...(r.role ? { role: r.role } : {}), state: r.state, ...(r.now !== undefined ? { now: r.now } : {}), items: r.items,
-			...(r.src ? { src: r.src } : {}), ...(r.count ? { count: r.count } : {}), ...(updated !== undefined ? { updated } : {}), ...((stale ?? r.stale) ? { stale: true as const } : {}), ...(r.state === "ended" || r.stale ? { clearable: true as const } : {}), ...(r.state === "ended" && open.has(r.session) ? { open: true as const } : {}), ...cap, ...(until !== undefined ? { pausedUntil: until } : {}),
+			...(r.src ? { src: r.src } : {}), ...(r.count ? { count: r.count } : {}), ...(updated !== undefined ? { updated } : {}), ...((stale ?? r.stale) ? { stale: true as const } : {}), ...(r.state === "ended" || r.stale ? { clearable: true as const } : {}), ...(r.state === "ended" && open.has(r.session) ? { open: true as const } : {}), ...cap, ...(until !== undefined ? { pausedUntil: until } : {}), ...(units ? { units } : {}),
 		};
 	});
 }

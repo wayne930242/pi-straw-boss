@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1280 730" width="1280" height="730"><title>未設預算</title><style>text{font-family:ui-rounded,"Avenir Next","PingFang TC",sans-serif}.pulse{animation:pulse 3s ease-in-out infinite}@keyframes pulse{50%{opacity:.38}}@media(prefers-reduced-motion:reduce){.pulse{animation:none}.moving{display:none}}</style><defs><pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M0 32V0h32" fill="none" stroke="#282e41"/></pattern><g id="pilot"><path d="M3 31v-5l7-5 12 1 7 5v4Z" fill="#49617c" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m6 11 5-8 10-2 6 7-1 11-6 5h-9l-4-6Z" fill="currentColor" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m8 13 16-4-1 7-12 4Z" fill="#24283b" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m11 14 9-2-3 3-5 1Z" fill="#b4e4ff" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m12 22 6 1-2 6Z" fill="#16161e" stroke="none" stroke-width="1" stroke-linejoin="round" /></g><g id="mage"><path d="M2 29 7 13 15 1l6 2 7 13 3 14-13-3Z" fill="currentColor" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m9 15 7-6 8 5-3 8-6 2-5-4Z" fill="#24283b" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m12 16 3 1 1 2-4-1zm6 1 4-3-1 4-3 1Z" fill="#d2c6fc" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m6 31 9-8 8 1 6 7Z" fill="#626084" stroke="none" stroke-width="1" stroke-linejoin="round" /></g><g id="guard"><path d="M3 30v-6l9-4h10l7 5v6Z" fill="#776750" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="M6 9 16 2l9 5 2 12-7 6-9-2-4-4Z" fill="currentColor" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m9 12 15-2-1 6-5 1-1 5-3-1v-5l-5 1Z" fill="#24283b" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m6 8 12-8 6 3-8 4Z" fill="#f6e6b8" stroke="none" stroke-width="1" stroke-linejoin="round" /></g><g id="unit"><path d="m0 13 7-13 3 5 8-4-4 13-5-2-3 4Z" fill="currentColor" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m5 11 4-6 1 4Z" fill="#16161e" stroke="none" stroke-width="1" stroke-linejoin="round" /></g><g id="sleep"><path d="M18 16A10 10 0 0 1 8 2a10 10 0 1 0 10 14Z" fill="currentColor" stroke="none" stroke-width="1" stroke-linejoin="round" /></g><g id="stun"><path d="M10 0 2 11h6l-2 8 12-13h-8Z" fill="currentColor" stroke="none" stroke-width="1" stroke-linejoin="round" /></g><g id="building"><path d="M0 39 43 19l49 21-45 23Z" fill="#252e41" stroke="#59657e" stroke-width="1" stroke-linejoin="round" /><path d="m9 27 33-14 39 17-35 16Z" fill="currentColor" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m9 28 36 18v12L9 41Z" fill="#3e5169" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m47 46 34-15v12L47 58Z" fill="#2c3a50" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m23 24 1-12 19-9 24 11v11L46 35Z" fill="#52687b" stroke="currentColor" stroke-width="1" stroke-linejoin="round" /><path d="m24 12 20-8 23 10-21 9Z" fill="currentColor" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m30 20 12 5v4l-12-5Zm20 5 12-5v4l-12 5Z" fill="#16161e" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m47 6 1-11 3-1 1 13Z" fill="currentColor" stroke="none" stroke-width="1" stroke-linejoin="round" /></g><g id="box"><path d="M1 7 12 2l12 5-12 6Z" fill="currentColor" stroke="none" stroke-width="1" stroke-linejoin="round" /><path d="m1 8 10 6v9L1 18Z" fill="#946b42" stroke="currentColor" stroke-width="1" stroke-linejoin="round" /><path d="m13 14 11-6v10l-11 6Z" fill="#655444" stroke="currentColor" stroke-width="1" stroke-linejoin="round" /></g></defs><rect x="0" y="0" width="1280" height="730" rx="0" fill="#16161e" stroke="none" />
+<rect x="0" y="0" width="1280" height="730" rx="0" fill="url(#grid)" stroke="none" />
+<text x="34" y="38" font-size="17" fill="#c0caf5" font-weight="800" >STRAW NET</text>
+<text x="165" y="38" font-size="15" fill="#a3accd" font-weight="500" >／　戰況板</text>
+<text x="1072" y="38" font-size="15" fill="#9ece6a" font-weight="500" >本機連線中　·　15:22</text>
+<rect x="32" y="65" width="1216" height="282" rx="10" fill="#1f2335" stroke="#444b64" />
+<text x="56" y="103" font-size="26" fill="#c0caf5" font-weight="750" >本機補給站</text>
+<text x="235" y="101" font-size="16" fill="#a3accd" font-weight="500" >Mac Studio</text>
+<text x="561" y="102" font-size="19" fill="#7dcfff" font-weight="700" >補給　已用 6 點</text>
+<text x="763" y="102" font-size="15" fill="#a3accd" font-weight="500" >負載 0.24 / 8 核</text>
+<path d="M932 84v244" fill="none" stroke="#444b64" stroke-width="1" stroke-linejoin="round" />
+<text x="956" y="102" font-size="19" fill="#9ece6a" font-weight="700" >兵營待命區</text>
+<text x="1122" y="102" font-size="16" fill="#9ece6a" font-weight="500" >可接 5 件</text><rect x="59" y="155" width="160" height="40" rx="5" fill="#264456" stroke="#7dcfff" />
+<use xlink:href="#unit" transform="translate(68 164) scale(1.3)" color="#7dcfff"/>
+<text x="103" y="180" font-size="16" fill="#c0caf5" font-weight="700" >api-build</text>
+<rect x="229" y="155" width="160" height="40" rx="5" fill="#264456" stroke="#7dcfff" />
+<use xlink:href="#unit" transform="translate(238 164) scale(1.3)" color="#7dcfff"/>
+<text x="273" y="180" font-size="16" fill="#c0caf5" font-weight="700" >web-test</text>
+<rect x="399" y="155" width="160" height="40" rx="5" fill="#264456" stroke="#7dcfff" />
+<use xlink:href="#unit" transform="translate(408 164) scale(1.3)" color="#7dcfff"/>
+<text x="443" y="180" font-size="16" fill="#c0caf5" font-weight="700" >db-check</text><text x="57" y="241" fill="#e0af68" font-size="19" font-weight="650">尚未設定補給預算</text><text x="57" y="277" fill="#a3accd" font-size="15" font-weight="500">3 個執行單位，各占 2 點。</text><path d="M964 195v-48l31-17h56l32 17v48h-22v-38h-73v38Z" fill="#485667" stroke="#9ece6a" stroke-width="1" stroke-linejoin="round" />
+<path d="M990 194v-31h65v31Z" fill="#16161e" stroke="none" stroke-width="1" stroke-linejoin="round" />
+<path d="M999 185h46m-46-8h46m-46-8h46" fill="none" stroke="#444b64" stroke-width="3" stroke-linejoin="round" />
+<use xlink:href="#unit" transform="translate(978 220) scale(1.5)" color="#9ece6a"/>
+<use xlink:href="#unit" transform="translate(1024 220) scale(1.5)" color="#9ece6a"/>
+<use xlink:href="#unit" transform="translate(1070 220) scale(1.5)" color="#9ece6a"/>
+<use xlink:href="#unit" transform="translate(1116 220) scale(1.5)" color="#9ece6a"/>
+<use xlink:href="#unit" transform="translate(1162 220) scale(1.5)" color="#9ece6a"/>
+<text x="958" y="285" font-size="15" fill="#a3accd" font-weight="500" >待命工作尚未占用補給點數</text>
+<text x="35" y="387" font-size="19" fill="#c0caf5" font-weight="700" >指揮官</text>
+<text x="584" y="387" font-size="15" fill="#a3accd" font-weight="500" >已部署單位</text>
+<text x="971" y="387" font-size="15" fill="#a3accd" font-weight="500" >待命工作</text>
+<rect x="32" y="401" width="1216" height="70" rx="7" fill="#1a1b26" stroke="#444b64" />
+<use xlink:href="#pilot" transform="translate(51 407) scale(0.7)" color="#7dcfff"/><text x="84" y="427" font-size="20" fill="#7dcfff" font-weight="700" >api-fix</text>
+<text x="215" y="427" font-size="15" fill="#7dcfff" font-weight="500" >工作中</text>
+<text x="326" y="427" font-size="14" fill="#a3accd" font-weight="500" >3 分鐘前更新</text>
+<text x="54" y="455" font-size="15" fill="#c0caf5" font-weight="500" >正在補退款邊界測試，帳本進位已修正。</text>
+<text x="974" y="443" font-size="16" fill="#9ece6a" font-weight="500" >5 件</text>
+<rect x="1148" y="421" width="76" height="32" rx="6" fill="#24283b" stroke="#444b64" id="ask0" data-target="24"/><text x="1158" y="443" font-size="14" fill="#c0caf5" font-weight="500" data-in="ask0">詢問戰況</text>
+<rect x="584" y="420" width="117" height="32" rx="5" fill="#223747" stroke="#444b64" />
+<use xlink:href="#unit" transform="translate(590 429) scale(0.9)" color="#7dcfff"/>
+<text x="613" y="442" font-size="14" fill="#7dcfff" font-weight="650" >api-build</text>
+<rect x="709" y="420" width="117" height="32" rx="5" fill="#223747" stroke="#444b64" />
+<use xlink:href="#unit" transform="translate(715 429) scale(0.9)" color="#7dcfff"/>
+<text x="738" y="442" font-size="14" fill="#7dcfff" font-weight="650" >web-test</text>
+<rect x="834" y="420" width="117" height="32" rx="5" fill="#223747" stroke="#444b64" />
+<use xlink:href="#unit" transform="translate(840 429) scale(0.9)" color="#7dcfff"/>
+<text x="863" y="442" font-size="14" fill="#7dcfff" font-weight="650" >db-check</text>
+<rect x="32" y="479" width="1216" height="70" rx="7" fill="#1a1b26" stroke="#444b64" />
+<use xlink:href="#mage" transform="translate(51 485) scale(0.7)" color="#bb9af7"/><text x="84" y="505" font-size="20" fill="#7dcfff" font-weight="700" >docs-pass</text>
+<text x="215" y="505" font-size="15" fill="#bb9af7" font-weight="500" >配額暫停</text>
+<text x="326" y="505" font-size="14" fill="#a3accd" font-weight="500" >16:02 恢復</text>
+<text x="54" y="533" font-size="15" fill="#c0caf5" font-weight="500" >安裝章節已核對，恢復後接著校對疑難排解。</text>
+<text x="974" y="521" font-size="16" fill="#a3accd" font-weight="500" >0 件</text>
+<rect x="1148" y="499" width="76" height="32" rx="6" fill="#24283b" stroke="#444b64" id="ask1" data-target="24"/><text x="1158" y="521" font-size="14" fill="#c0caf5" font-weight="500" data-in="ask1">詢問戰況</text>
+<text x="584" y="521" font-size="15" fill="#a3accd" font-weight="500" >未部署單位　·　0 點</text>
+<rect x="32" y="557" width="1216" height="70" rx="7" fill="#1a1b26" stroke="#444b64" />
+<use xlink:href="#guard" transform="translate(51 563) scale(0.7)" color="#e0af68"/><text x="84" y="583" font-size="20" fill="#7dcfff" font-weight="700" >web-polish</text>
+<text x="215" y="583" font-size="15" fill="#e0af68" font-weight="500" >閒置過久</text>
+<text x="326" y="583" font-size="14" fill="#a3accd" font-weight="500" >2 小時未更新</text>
+<text x="54" y="611" font-size="15" fill="#c0caf5" font-weight="500" >等首頁圖檔定稿，再接著排版。</text>
+<text x="974" y="599" font-size="16" fill="#a3accd" font-weight="500" >0 件</text>
+<rect x="1148" y="577" width="76" height="32" rx="6" fill="#24283b" stroke="#444b64" id="ask2" data-target="24"/><text x="1158" y="599" font-size="14" fill="#c0caf5" font-weight="500" data-in="ask2">詢問戰況</text>
+<text x="584" y="599" font-size="15" fill="#a3accd" font-weight="500" >未部署單位　·　0 點</text>
+<text x="53" y="686" font-size="18" fill="#a3accd" font-weight="700" >Box 01</text><text x="165" y="686" font-size="15" fill="#a3accd" font-weight="500" >隊友裝置　／　失聯 40 分鐘</text>
+</svg>

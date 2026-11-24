@@ -10,7 +10,7 @@
 
 ![展開對話中的待辦清單，任務旁會顯示點數](docs/gui-todo.png)
 
-![工作看板列出已用點數、裝置的點數上限和可接的任務數](docs/gui-board-capacity.png)
+<p align="center"><img src="docs/gui-board-capacity.png" width="49%" alt="標準檢視的戰況板：裝置預算畫成每格 1 點的補給格，每個已部署的單位橫跨它的點數，旁邊是空格、放待命工作的兵營，以及每位指揮官的單位與可接件數"> <img src="docs/gui-board-raven.png" width="49%" alt="鴉閣檢視的同一張板：已部署的蝙蝠點亮燭火墓位，空墓泛霧，閣門前有待命的蝙蝠，額度停機是合上的棺木，停滯的主智慧體上方群鴉盤旋"></p>
 
 <p align="center"><img src="docs/gui-comms.png" width="49%" alt="單位的通訊畫面：即時的對話紀錄、排隊等下一輪的訊息、待辦清單、背景 Monitor，以及單位檔案"> <img src="docs/gui-zen-item.png" width="49%" alt="禪檢視裡的一件待辦：墨色畫面上是一個 robot_hand 問題，選項是一行行的字"></p>
 

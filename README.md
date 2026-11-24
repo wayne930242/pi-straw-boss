@@ -10,7 +10,7 @@ English | [繁體中文](https://github.com/wayne930242/pi-straw-boss/blob/main/
 
 ![An expanded chat todo list shows points beside the task](docs/gui-todo.png)
 
-![The work board shows points in use, the device budget, and ready tasks](docs/gui-board-capacity.png)
+<p align="center"><img src="docs/gui-board-capacity.png" width="49%" alt="The situation board in the Standard view: the device budget as 1-point slots, each deployed unit a chip over its points, the free slots, the barracks with the ready work, and each commander's units and ready count"> <img src="docs/gui-board-raven.png" width="49%" alt="The same board in Raven Keep: candle graves lit by the deployed bats, empty graves in mist, the keep's gate with the waiting bats, a pause as a shut coffin and a stale main as circling crows"></p>
 
 <p align="center"><img src="docs/gui-comms.png" width="49%" alt="A unit's comms: its chat as a live log, the messages queued for its next turn, its todo list, its background monitors, and its dossier"> <img src="docs/gui-zen-item.png" width="49%" alt="The Zen view with one item: a robot_hand question on an ink-dark page, its choices as lines of text"></p>
 

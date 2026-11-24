@@ -8,6 +8,8 @@ import { LABEL } from "./render.ts";
 import { formatRoute } from "./router.ts";
 import { locate } from "./scene.ts";
 import type { Mark } from "../src/netdata.ts";
+import { iconRef, unitIcon } from "./icons.ts";
+import { alliesOf, colsHead, fillMini, fillTray, icon, rowSupply } from "./supply.ts";
 
 // The work board on the head page (docs/specs/2026-11-09-board-view.md): this computer's board as the net snapshot carries it (`net.board`), folded to one line by default, opened to the rows grouped by workspace in tab order. Every field of a row is
 // model-written text, so it is drawn as text only (`h` makes text nodes; a value goes into an attribute only as a title) and nothing a row says becomes a link or a route: the one link is a live main's name, whose route is made from the net's own unit key.
@@ -20,7 +22,7 @@ export const ASKED_MS = 60_000;
 /** The seam a test replaces: the page's sheet, its post, and the clock. */
 export const io = { choose, post: (path: string, body: Record<string, unknown>): Promise<Answer> => post(path, body), now: () => Date.now(), later: (fn: () => void, ms: number): void => void setTimeout(fn, ms) };
 
-const asked = new Map<string, number>(), sending = new Set<string>(), clearing = new Set<string>(), latest = new WeakMap<HTMLElement, Net | undefined>(), notes = new WeakMap<HTMLElement, string>(), unfolded = new WeakMap<HTMLElement, Set<string>>();
+const asked = new Map<string, number>(), sending = new Set<string>(), clearing = new Set<string>(), latest = new WeakMap<HTMLElement, Net | undefined>(), notes = new WeakMap<HTMLElement, string>(), unfolded = new WeakMap<HTMLElement, Set<string>>(), trays = new WeakMap<HTMLElement, HTMLElement>();
 type Opts = { locale?: "en" | "zh-TW" };
 const nameOf = (r: BoardViewRow) => r.main || r.session.slice(0, 8);
 const live = (r: BoardViewRow) => r.state !== "ended";
@@ -48,10 +50,12 @@ export function capText(c: CapView, o?: Opts): string {
 	return [c.budget !== undefined ? m.board_cap_budget({ points: String(c.points), budget: String(c.budget) }, o) : m.board_cap_points({ points: String(c.points) }, o), m.board_cap_load({ load: String(c.load1), cores: String(c.cores) }, o), m.board_cap_ready({ count: c.ready }, o),
 		...(c.underMinutes !== undefined ? [m.board_cap_under({ minutes: String(c.underMinutes) }, o)] : []), ...(c.paused ? [m.board_cap_paused({ count: c.paused }, o)] : [])].join(m.board_cap_sep({}, o));
 }
-/** A row's capacity: its points and ready todos, and its pause with the local time it resumes. */
+const hm = (at: number) => new Date(at).toTimeString().slice(0, 5);
+/** A row's pause with the local time it resumes. */
+const pauseText = (r: BoardViewRow, o?: Opts) => (r.pausedUntil !== undefined ? m.board_paused({ time: hm(r.pausedUntil) }, o) : m.board_paused_bare({}, o));
+/** A row's capacity: its points and ready todos, and its pause (Geek's plain line; the other views draw the supply line, docs/specs/2026-11-24-capacity-supply/spec.md). */
 export function rowCapText(r: BoardViewRow, o?: Opts): string {
-	const hm = (at: number) => new Date(at).toTimeString().slice(0, 5);
-	return [...(r.points !== undefined ? [m.board_cap_points({ points: String(r.points) }, o)] : []), ...(r.ready ? [m.board_cap_ready({ count: r.ready }, o)] : []), ...(r.paused ? [r.pausedUntil !== undefined ? m.board_paused({ time: hm(r.pausedUntil) }, o) : m.board_paused_bare({}, o)] : [])].join(m.board_cap_sep({}, o));
+	return [...(r.points !== undefined ? [m.board_cap_points({ points: String(r.points) }, o)] : []), ...(r.ready ? [m.board_cap_ready({ count: r.ready }, o)] : []), ...(r.paused ? [pauseText(r, o)] : [])].join(m.board_cap_sep({}, o));
 }
 const stateWord = (r: BoardViewRow) => (!live(r) ? (r.open ? m.board_open_word() : m.board_ended_word()) : r.stale ? m.board_idle_word() : (LABEL[r.state as Mark] ?? LABEL.unknown)());
 
@@ -102,20 +106,24 @@ function rowOf(box: HTMLElement, net: Net | undefined, r: BoardViewRow, now: num
 		if (keep.has(r.session)) items.setAttribute("open", "");
 		items.addEventListener("toggle", () => void (items.hasAttribute("open") ? keep.add(r.session) : keep.delete(r.session)));
 	}
-	return h("li", { class: "board-row", "data-session": r.session, "data-state": r.state, ...(r.stale ? { "data-stale": "" } : {}) },
+	const supply = rowSupply(r);
+	return h("li", { class: "board-row", "data-session": r.session, "data-state": r.state, ...(r.stale ? { "data-stale": "" } : {}), ...(supply ? { "data-supply": "" } : {}) },
 		h("div", { class: "board-line" },
+			...(live(r) ? [icon(r.role === "train" ? "train" : unitIcon("main", (hit?.u as { duty?: string } | undefined)?.duty), "board-mark")] : []),
 			route ? h("a", { class: "board-name", href: route, "data-route": route }, name) : h("b", { class: "board-name" }, name),
 			...(r.role === "train" ? [h("span", { class: "board-tag" }, noun("role_train"))] : []),
-			h("span", { class: "board-state" }, stateWord(r)),
+			h("span", { class: "board-state" }, ...(r.stale && live(r) ? [icon("stale")] : []), stateWord(r)),
+			...(r.paused ? [h("span", { class: "board-pause" }, icon("paused"), pauseText(r))] : []),
 			...(rowCapText(r) ? [h("span", { class: "board-cap", ...(r.paused ? { "data-paused": "" } : {}) }, rowCapText(r))] : []),
 			...(r.updated !== undefined ? [h("span", { class: "board-age", "data-updated": String(r.updated) }, ageText(now - r.updated))] : [])),
 		r.now === undefined ? h("p", { class: "board-none" }, m.board_no_line()) : h("p", { class: "board-now" }, r.now),
+		...(supply ? [supply] : []),
 		...(items ? [items] : []),
 		...(live(r) || r.clearable ? [h("div", { class: "board-acts" }, ...(live(r) ? [askButton] : []), ...(r.clearable ? [clearButton] : []))] : []));
 }
 
 /**
- * Draws the section into `box` (the `<details class="head-board">` of the head page): hidden with no row, else the fold's line and, inside, the note of the last act, then the groups. The rows are rebuilt only when what they show changes (so a tap never
+ * Draws the section into `box` (the `<details class="head-board">` of the head page): hidden with no row, else the fold's line with its mini slots and, inside, the note of the last act, the supply tray (supply.ts, rebuilt on its own signature), the commanders' head, the groups, and the teammate devices. The rows are rebuilt only when what they show changes (so a tap never
  * lands on a button that was replaced, and a fold the boss opened stays open); the ages are rewritten in place at every call. `now` is the page's clock.
  */
 export function fillBoard(box: HTMLElement, net: Net | undefined, force = false, now = io.now()) {
@@ -126,12 +134,19 @@ export function fillBoard(box: HTMLElement, net: Net | undefined, force = false,
 	const counts = boardCounts(rows), set = (sel: string, text: string) => { const el = box.querySelector(sel); if (el && el.textContent !== text) el.textContent = text; };
 	set("summary b", m.board_title());
 	set("summary span", net?.capacity ? `${counts.text}${m.board_cap_sep()}${capText(net.capacity)}` : counts.text);
-	const sig = JSON.stringify([rows, [...asked].filter(([, until]) => until > now).map(([s]) => s), [...sending], [...clearing], net?.bases.map((b) => b.id)]);
+	const mini = box.querySelector<HTMLElement>(".board-mini"), tray = trays.get(box) ?? trays.set(box, h("section", { class: "board-supply" })).get(box)!, voice = `${m.board_title()}${iconRef("unit")}`, traySig = JSON.stringify([voice, net?.capacity, rows.map((r) => [r.state, r.units])]); // `voice`: a new language or view redraws the words and icons
+	if (tray.dataset.sig !== traySig || force) {
+		tray.dataset.sig = traySig;
+		if (mini) fillMini(mini, net?.capacity, rows);
+		if (net?.capacity) fillTray(tray, net.capacity, rows);
+		tray.hidden = !net?.capacity;
+	}
+	const sig = JSON.stringify([rows, [...asked].filter(([, until]) => until > now).map(([s]) => s), [...sending], [...clearing], net?.bases.map((b) => b.id), net?.capacity ? 1 : 0, net?.link?.allies.map((a) => [a.device, a.label, a.online]), voice]);
 	if (force || box.dataset.sig !== sig) {
 		box.dataset.sig = sig;
 		const keep = unfolded.get(box) ?? unfolded.set(box, new Set()).get(box)!, body = box.querySelector<HTMLElement>(".board-rows");
 		body?.setAttribute("aria-label", m.board_label());
-		body?.replaceChildren(h("p", { class: "board-note", role: "status" }, notes.get(box) ?? ""), ...boardGroups(rows).map((g) => h("section", { class: "board-group", "data-ended": String(g.ended) }, h("h4", null, g.label), h("ul", null, ...g.rows.map((r) => rowOf(box, net, r, now, keep))))));
+		body?.replaceChildren(h("p", { class: "board-note", role: "status" }, notes.get(box) ?? ""), tray, ...(net?.capacity ? [colsHead()] : []), ...boardGroups(rows).map((g) => h("section", { class: "board-group", "data-ended": String(g.ended) }, h("h4", null, g.label), h("ul", null, ...g.rows.map((r) => rowOf(box, net, r, now, keep))))), ...[alliesOf(net)].filter((x) => x !== undefined));
 	}
 	for (const age of box.querySelectorAll<HTMLElement>("[data-updated]")) age.textContent = ageText(now - Number(age.dataset.updated));
 }

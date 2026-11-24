@@ -268,6 +268,7 @@ export const page = {
 	hasFocus: () => page.focus,
 	addEventListener: (type: string, on: (e: { target: unknown }) => void) => void (page.on[type] ??= []).push(on),
 	createElement: (tag: string) => new El(tag),
+	createElementNS: (_ns: string, tag: string) => new El(tag),
 	importNode: (el: El) => el,
 	getElementById: (id: string) => page.body.find((el) => el.id === id)[0] ?? null,
 	querySelector: (selector: string) => page.body.querySelector(selector),

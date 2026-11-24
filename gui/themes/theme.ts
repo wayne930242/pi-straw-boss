@@ -2,7 +2,7 @@ import type { NounPack } from "../nouns.ts";
 import type { SentencePack } from "../sentencepack.ts";
 import type { ThemeSounds } from "../themesounds.ts";
 
-/** What a theme's entry module exports as `theme` besides its code: the parts the page takes from it (gui/themes/registry.ts). All optional: Geek and Zen add nothing yet, and a missing part is Standard's. */
+/** What a theme's entry module exports as `theme` besides its code: the parts the page takes from it (gui/themes/registry.ts). All optional: Zen adds nothing yet, Geek only its stylesheet and the work board's plain words, and a missing part is Standard's. */
 export interface ThemeParts {
 	/** The icon sprite's symbols, with ids prefixed by the view (`raven-tower`). */
 	sprite?: string;

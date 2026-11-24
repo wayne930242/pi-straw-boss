@@ -64,6 +64,13 @@ test("joinCaps: points are the running owners' todos, each running worker no tod
 	}
 });
 
+test("joinCaps: each main row lists its deployed units by name with their points (the supply tray, docs/specs/2026-11-24-capacity-supply/spec.md), summing to the main's points", () => {
+	const d = join_([main("a", { workers: ["API-build ", "rev"] }), main("t", { role: "train", name: "Train T" })], [cap("a", { doing: [{ owner: "api-build", points: 1.5 }, { owner: "api-build", points: 0.5 }, { owner: "train t", points: 2 }, { owner: "gone", points: 3 }] })], { budget: 10 });
+	assert.deepEqual(d.mains[0]!.units, [{ name: "api-build", points: 2 }, { name: "train t", points: 2 }, { name: "rev", points: 1 }]);
+	assert.equal(d.mains[0]!.units!.reduce((n, u) => n + u.points, 0), d.mains[0]!.points);
+	assert.deepEqual(join_([main("b")], []).mains[0]!.units, [], "nothing deployed");
+});
+
 test("roomFor and underFor: a budget, the smallest ready todo fitting, the load under 0.7 per core, held 10 minutes", () => {
 	const base = { budget: 10, points: 8, minReady: 2, load1: 1, cores: 4 };
 	const cases: [string, Partial<typeof base> & { budget?: number | undefined }, boolean][] = [

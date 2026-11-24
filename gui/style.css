@@ -1332,6 +1332,51 @@ body[data-route="settings"] :is(.bar-acts, .crumbs) { display: none; } /* the pa
 .board-items > summary { display: flex; align-items: center; min-height: 44px; font-size: 12px; color: var(--dim); cursor: pointer; }
 .board-items ul { margin: 0 0 4px; padding: 0 0 0 4px; } .board-items li { padding: 2px 0; overflow-wrap: anywhere; } .board-items li[data-done="true"] { color: var(--dim); text-decoration: line-through; }
 .board-acts { grid-column: 2; grid-row: 1; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; } .board-acts .pair-btn { min-height: 44px; }
+/* The supply board (docs/specs/2026-11-24-capacity-supply/spec.md): the budget as 1-point slots (10 a row, 4 on a phone), each deployed unit a chip over its slots, the free slots with a "+" that pulse only while the device is
+   flagged under capacity, and the barracks with the ready work beside them; the fold carries mini slots, each main its chips and ready count (one line on a phone). Raven draws the same DOM as graves (raven.css); Geek hides it (geek.css). */
+.head-board > summary .board-mini { display: flex; flex: none; gap: 2px; } .board-mini:empty { display: none; }
+.board-mini i { box-sizing: border-box; width: 6px; height: 12px; border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); border-radius: 2px; } .board-mini i[data-on] { border-color: var(--accent); background: var(--accent); }
+.board-supply { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 14rem); gap: 10px 18px; margin: 0 0 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-1); } .board-supply[hidden] { display: none; }
+.supply-head { grid-column: 1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; } .supply-head h4 { margin: 0; font-size: 15px; color: var(--text); }
+.supply-points { color: var(--accent); font-size: 13px; } .supply-points b { font-size: 15px; } .supply-load { margin-left: auto; color: var(--dim); font-size: 12px; }
+.supply-tray { grid-column: 1; display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
+.supply-chip, .supply-slot { position: relative; box-sizing: border-box; min-width: 0; min-height: 52px; border: 1px solid var(--line); border-radius: 6px; background: var(--sunken); }
+.supply-chip { display: grid; grid-template-rows: auto 1fr; align-items: center; } .supply-chip[data-anon] { background: color-mix(in srgb, var(--accent) 12%, var(--sunken)); }
+.supply-cells { display: grid; grid-template-columns: repeat(var(--cells, 1), minmax(0, 1fr)); } .supply-cell svg { display: none; }
+.supply-tray[data-unset] .supply-cells { display: none; } /* no budget: no numbered slots (frame 03) */
+.supply-cell i, .supply-slot > i { padding: 2px 6px; font: 600 10px var(--mono); font-style: normal; color: var(--dim); }
+.supply-name { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0 4px 4px; padding: 4px 8px; border: 1px solid var(--accent); border-radius: 6px; background: color-mix(in srgb, var(--accent) 14%, var(--sunken)); color: var(--accent); font-size: 13px; }
+.supply-name b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .supply-kind { display: none; }
+.supply-icon { flex: none; width: 16px; height: 16px; } .supply-slot { display: grid; grid-template-rows: auto 1fr; justify-items: center; } .supply-slot > i { justify-self: start; } .supply-slot .supply-icon { align-self: center; color: var(--dim); }
+.supply-foot { grid-column: 1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; margin: 0; color: var(--dim); font-size: 12px; } .supply-free { margin-left: auto; color: var(--accent); font-size: 14px; } .supply-unset { color: var(--gold); font-size: 14px; }
+.supply-barracks { grid-column: 2; grid-row: 1 / span 3; display: grid; align-content: start; justify-items: start; gap: 8px; padding-left: 18px; border-left: 1px solid var(--line); color: var(--ok); }
+.supply-barracks h5 { margin: 0; font-size: 14px; } .supply-ready { font-size: 14px; } .supply-gate { width: 72px; height: 54px; } .supply-barracks p { margin: 0; color: var(--dim); font-size: 12px; }
+.supply-waiting { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; } .supply-waiting .supply-icon { width: 18px; height: 18px; }
+.supply-cols { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 5rem 9.5rem; gap: 8px; margin: 4px 10px; font-size: 12px; color: var(--dim); }
+.board-row[data-supply] { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 5rem 9.5rem; }
+.board-row[data-supply] > :is(.board-now, .board-none) { grid-column: 1; } .board-row[data-supply] > .board-items { grid-column: 1 / -1; }
+.board-supply-row { display: contents; } .board-units { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; color: var(--dim); font-size: 12px; }
+.board-unit { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--sunken); color: var(--accent); overflow-wrap: anywhere; } .board-unit .supply-icon { width: 14px; height: 14px; }
+.board-ready { grid-column: 3; grid-row: 1 / span 2; align-self: center; color: var(--ok); font-size: 13px; } .board-cap-phone { display: none; }
+.board-row[data-supply] > .board-acts { grid-column: 4; grid-row: 1 / span 2; align-self: center; }
+.board-line > .board-cap { display: none; } /* Geek's plain line (geek.css shows it); the other views draw the supply line */
+.board-mark { flex: none; width: 22px; height: 22px; color: var(--accent); } .board-state .supply-icon, .board-pause .supply-icon { width: 13px; height: 13px; margin-right: 3px; vertical-align: -2px; }
+.board-row[data-stale] .board-state { display: inline-flex; align-items: center; white-space: nowrap; }
+.board-pause { display: inline-flex; align-items: center; white-space: nowrap; font-size: 12px; color: var(--gold); }
+.board-allies { display: grid; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.board-ally { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; min-height: 44px; padding: 4px 12px; border: 1px dashed var(--line); border-radius: 10px; color: var(--dim); font-size: 12px; } .board-ally b { color: var(--text); font-size: 13px; } .board-ally-cap, .supply-fog { display: none; }
+@media (max-width: 640px) {
+	.board-supply { grid-template-columns: minmax(0, 1fr); padding: 10px; } .supply-tray { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; } .supply-chip, .supply-slot { min-height: 34px; }
+	.supply-cell i, .supply-slot > i { display: none; } .supply-cells { display: none; } .supply-slot { grid-template-rows: 1fr; place-items: center; } .supply-name { margin: 3px; padding: 2px 6px; } .supply-slot .supply-icon { width: 12px; height: 12px; }
+	.supply-barracks { grid-column: 1; grid-row: auto; grid-template-columns: auto auto 1fr; align-items: center; padding: 0; border: 0; } .supply-barracks .supply-gate, .supply-barracks p { display: none; } .supply-waiting { justify-self: end; }
+	.supply-cols { display: none; } .board-row[data-supply] { grid-template-columns: minmax(0, 1fr) auto; } .board-row[data-supply] > :is(.board-now, .board-none, .board-supply-row) { grid-column: 1 / -1; } .board-row[data-supply] > .board-acts { grid-column: 2; grid-row: 1; }
+	.board-supply-row { display: block; } .board-units, .board-ready { display: none; } .board-cap-phone { display: inline; font-size: 12px; color: var(--dim); }
+}
+@media (prefers-reduced-motion: no-preference) {
+	.supply-tray[data-under] .supply-slot { animation: supply-pulse 3s ease-in-out infinite; }
+}
+@keyframes supply-pulse { 50% { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); background: color-mix(in srgb, var(--accent) 8%, var(--sunken)); } }
+[data-calm] .supply-tray .supply-slot { animation: none; }
 .ask-group[open] > summary > .ask-part { display: none; } .ask-group[open] > summary .ask-foot { padding-left: 0; } /* unfolded, the card shows each text in full below: the clamped copy above it said everything twice */
 .ask-older > .ask-group, .ask-replaced > .ask-group { margin: 0 8px 8px; } .ask-replaced { margin: 0 8px 8px; border-style: dashed; }
 .ask-group > summary, .ask-older > summary, .ask-replaced > summary { display: grid; align-content: center; gap: 3px; box-sizing: border-box; min-height: 44px; padding: 6px 12px; font-size: 13px; cursor: pointer; list-style: none; }

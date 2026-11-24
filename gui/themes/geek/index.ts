@@ -1,5 +1,6 @@
-// The Geek theme: a stylesheet only (geek.css, black, monospace, nothing moves). It loads the first time a page shows Geek (gui/themes/registry.ts), or boot.js links it before the first frame.
+// The Geek theme: a stylesheet (geek.css, black, monospace, nothing moves) and the work board's plain words (sentences.ts). It loads the first time a page shows Geek (gui/themes/registry.ts), or boot.js links the stylesheet before the first frame.
 import "./geek.css";
 import type { ThemeParts } from "../theme.ts";
+import { SENTENCES } from "./sentences.ts";
 
-export const theme: ThemeParts = {};
+export const theme: ThemeParts = { sentences: SENTENCES };

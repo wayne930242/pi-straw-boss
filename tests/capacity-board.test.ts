@@ -49,6 +49,16 @@ test("board_read: each main's row carries its points, ready todos and pause, the
 	assert.deepEqual(stale.local.map((r) => r.stale), [undefined, true], "without a reading the board's own rule stands");
 });
 
+test("the supply tray's unit names reach the head page's rows only: board_read's rows and section capacity carry none", async () => {
+	const d = dir(), units = [{ name: "api-build", points: 2 }, { name: "web-test", points: 1 }];
+	writeEntry(d, "m1", { now: "api", items: [] }, NOW - 5 * MIN);
+	writeDevice(capDir(d), device({ mains: [{ session: "m1", name: "billing", workspace: "wA", points: 3, ready: 2, open: 4, workers: ["api-build", "web-test"], units }] }));
+	const rows = boardSeam({ dir: d, now: () => NOW }).rows({ bases: [{ id: "wA", label: "Alpha", mark: "idle", tower: null, tabs: [{ id: "t", label: "billing-tab", units: [{ id: "m1", key: "m1", control: true, name: "billing", role: "main", mark: "working", subs: [] }] }], outposts: [], outside: [] }] } as never)!;
+	assert.deepEqual(rows.find((r) => r.session === "m1")?.units, units);
+	const out = await readBoard({ dir: d, now: NOW, net, link: { boards: async () => [], remoteScope: () => undefined }, scope: "local" });
+	for (const word of ["api-build", "web-test", "units", "workers"]) assert.ok(!JSON.stringify(out).includes(word), `board_read carries no ${word}`);
+});
+
 test("/boss board prints the device line under its head and the numbers on each row", () => {
 	const d = dir();
 	writeEntry(d, "m1", { now: "api", items: [] }, NOW - 5 * MIN);

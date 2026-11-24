@@ -129,3 +129,7 @@
 /* The head page's target button (the target picker spec of 2026-11-24, §6): monospace, no glyph, the chevron as `v`. */
 html[data-view="geek"] .target-btn { font-family: var(--mono); } html[data-view="geek"] .target-chev { font-size: 0; } html[data-view="geek"] .target-chev::after { content: "v"; font-size: 12px; }
 html[data-view="geek"] .target-list, html[data-view="geek"] .target-find { border-radius: 0; font-family: var(--mono); }
+/* The supply board (docs/specs/2026-11-24-capacity-supply/spec.md): Geek keeps the plain lines, the fold's numbers and each row's points, ready work, and pause as text, with no tray, slots, chips, icons, or motion. */
+[data-view="geek"] :is(.board-supply, .board-mini, .supply-cols, .board-supply-row, .board-pause, .board-mark, .board-state svg, .board-allies) { display: none; }
+[data-view="geek"] .board-line .board-cap { display: inline; }
+[data-view="geek"] .board-row[data-supply] { grid-template-columns: minmax(0, 1fr) auto; } [data-view="geek"] .board-row[data-supply] > :is(.board-now, .board-none) { grid-column: 1 / -1; } [data-view="geek"] .board-row[data-supply] > .board-acts { grid-column: 2; grid-row: 1; }

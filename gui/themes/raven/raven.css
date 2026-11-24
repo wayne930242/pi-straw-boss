@@ -442,3 +442,27 @@ html[data-view="raven"]:has(#stage[data-view="head"]) .comms-in { --rk-glass: rg
 		html[data-view="raven"]:has(#stage[data-view="head"]) .comms-head { margin-bottom: clamp(0px, calc(var(--vvh, 100dvh) - 520px), 120px); }
 	}
 }
+/* The supply board as the keep's crypt (docs/specs/2026-11-24-capacity-supply/spec.md, frames 05 and 06): a slot is a grave, a deployed bat lights a candle in each grave it holds with its name under them, a free grave breathes mist
+   only while the device is under capacity (and only under no-preference, stilled by calm), the ready work waits as bats before the keep's gate, a pause is a closed coffin, a stale main has crows circling, a teammate device stands in fog. */
+html[data-view="raven"] .board-supply { background: color-mix(in srgb, var(--sunken) 70%, transparent); }
+html[data-view="raven"] :is(.supply-head h4, .supply-barracks h5) { font-family: var(--serif, inherit); letter-spacing: 0.06em; }
+html[data-view="raven"] :is(.supply-points, .supply-free, .supply-ready, .supply-barracks) { color: var(--gold); }
+html[data-view="raven"] .supply-tray { gap: 4px 8px; }
+html[data-view="raven"] .supply-tray :is(.supply-chip, .supply-slot), html[data-view="raven"] .supply-tray .supply-slot { min-height: 0; border: 0; border-radius: 0; background: none; animation: none; }
+html[data-view="raven"] .supply-cell i, html[data-view="raven"] .supply-slot > i { display: none; }
+html[data-view="raven"] .supply-tray .supply-cells { display: grid; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid color-mix(in srgb, var(--gold) 45%, transparent); }
+html[data-view="raven"] .supply-cell svg { display: block; width: 100%; height: 44px; color: var(--gold); }
+html[data-view="raven"] .supply-slot { position: relative; display: block; } html[data-view="raven"] .supply-slot .supply-icon { display: block; width: 100%; height: 44px; color: var(--dim); }
+html[data-view="raven"] .supply-name { margin: 4px 0 0; padding: 0; border: 0; background: none; color: var(--text); font-size: 12px; } html[data-view="raven"] .supply-name > .supply-icon { display: none; } html[data-view="raven"] .supply-kind { display: inline; color: var(--dim); white-space: nowrap; }
+html[data-view="raven"] .supply-tray[data-under] .supply-slot::after { content: ""; position: absolute; inset: auto 6% 0; height: 40%; border-radius: 50%; background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 30%, transparent), transparent); opacity: 0.55; pointer-events: none; }
+html[data-view="raven"] .supply-gate { width: 120px; height: 96px; color: var(--accent); } html[data-view="raven"] .supply-waiting .supply-icon { width: 28px; height: 20px; color: var(--accent); }
+html[data-view="raven"] .board-mini i { width: 5px; height: 12px; border-radius: 3px 3px 1px 1px; border-color: color-mix(in srgb, var(--dim) 55%, transparent); }
+html[data-view="raven"] .board-mini i[data-on] { position: relative; border-color: var(--gold); background: var(--gold); } html[data-view="raven"] .board-mini i[data-on]::before { content: ""; position: absolute; left: 1px; top: -5px; width: 2px; height: 4px; border-radius: 50% 50% 40% 40%; background: var(--gold); }
+html[data-view="raven"] :is(.board-unit) { padding: 0; border: 0; background: none; color: var(--accent); } html[data-view="raven"] .board-unit .supply-icon { display: none; }
+html[data-view="raven"] :is(.board-pause, .board-row[data-stale] .board-state) { color: var(--gold); } html[data-view="raven"] .board-pause .supply-icon, html[data-view="raven"] .board-state .supply-icon { width: 16px; height: 16px; color: var(--accent); }
+html[data-view="raven"] .board-ally { border-style: solid; background: color-mix(in srgb, var(--sunken) 60%, transparent); } html[data-view="raven"] :is(.board-ally-cap, .supply-fog) { display: inline; } html[data-view="raven"] .supply-fog { width: 44px; height: 30px; color: var(--dim); opacity: 0.8; }
+@media (max-width: 640px) { html[data-view="raven"] .supply-tray .supply-cells { display: grid; } html[data-view="raven"] :is(.supply-cell svg, .supply-slot .supply-icon) { height: 30px; } }
+@media (prefers-reduced-motion: no-preference) {
+	html[data-view="raven"]:not([data-calm]) .supply-tray[data-under] .supply-slot::after { animation: rk-grave-mist 5s ease-in-out infinite alternate; }
+}
+@keyframes rk-grave-mist { from { opacity: 0.25; transform: translateY(2px) scaleX(0.9); } to { opacity: 0.7; transform: translateY(-3px) scaleX(1.05); } }
