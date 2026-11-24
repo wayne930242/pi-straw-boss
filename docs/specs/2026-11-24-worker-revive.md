@@ -66,7 +66,7 @@ Each look reads the `revived` runs. A run whose `.exit` appeared, with a `type` 
 
 A reload rebuilds all of this from the entries. A step left at `reviving` (the reload came during the start) is `revived` when a pane runs the file; when none does 60 s after the step was written, the pane it records is closed and the step is `failed`.
 
-A refusal found only at a look (the session file gone, say) after the failure carried the paragraph that promised a revive is told to the launcher's model with a turn, since the paragraph said Straw Boss would say so there.
+A superseded death (a later result or ping, a newer script) is skipped with no word to the launcher's model: whoever runs it, or ran it, reports. A refusal found only at a look (the session file gone, say) after the failure carried the paragraph that promised a revive is told to the launcher's model with a turn, since the paragraph said Straw Boss would say so there.
 
 ## 5. Limits
 

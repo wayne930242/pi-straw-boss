@@ -395,3 +395,21 @@ test("RV-F008: a refusal after the paragraph promised a revive wakes the launche
 	assert.equal(w.sent[0]!.wake, true);
 	assert.match(w.sent[0]!.text, /^Straw Boss: will not revive subagent "worker-a" .*no launch script/);
 });
+
+test("RV2-F001: a noted death the model resumed anyway, running or finished, is skipped with no wake and no resume advice", async () => {
+	const note = { content: [{ type: "text", text: "Straw Boss: this is no report of \"worker-a\"'s own" }] } as Partial<Entry>;
+	const w = world(), session = w.child("r1", "worker-a");
+	w.result(session, "worker-a", { exitCode: 137 }, new Date(w.now() - 60_000).toISOString(), note);
+	writeFileSync(join(w.art, "subagent-scripts", "worker-a-resume-1.sh"), `#!/bin/bash\n# Subagent resume script for worker-a\n# Generated: ${new Date(w.now() - 30_000).toISOString()}\n# Session: ${session}\ncd ${q(w.folder)} && PI_SUBAGENT_ID='r1' pi --session ${q(session)} -e '/x/subagent-done.ts'; echo '__SUBAGENT_DONE_'$?'__'\n`);
+	w.herdr.addPane("wA:p7", "wA:t1", "pi").agent_session = { value: session };
+	w.track("r1");
+	await w.make().poll();
+	assert.deepEqual(w.steps(), ["skipped"]);
+	assert.ok(w.sent.every((s) => !s.wake && !/subagent_resume/.test(s.text)), "running: no wake, no resume advice");
+	const v = world(), done = v.child("r2", "worker-b");
+	v.result(done, "worker-b", { exitCode: 137 }, undefined, note);
+	v.result(done, "worker-b", { exitCode: 0 });
+	await v.make().poll();
+	assert.deepEqual(v.steps(), ["skipped"]);
+	assert.ok(v.sent.every((s) => !s.wake && !/subagent_resume/.test(s.text)), "finished: no wake, no resume advice");
+});

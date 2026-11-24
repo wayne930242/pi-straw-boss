@@ -151,9 +151,8 @@ export function childRevive(d: ChildRevive) {
 		const death = e.type === "custom_message" && e.customType === RESULT_TYPE && e.id ? deathOf(e.details) : undefined;
 		return death ? [{ id: e.id!, at: Date.parse(e.timestamp ?? "") || d.now(), death, index }] : [];
 	});
-	/** Why a death is no longer the run's last word (review RV-F001, RV-F002): old when first seen (a transcript from before this version), or a later result, ping, or script names its file. */
-	const superseded = (o: Open, all: Entry[], launch: Launch | string, first: number): string | undefined => {
-		if (first - o.at > LOOP_MS) return "its death is older than 10 minutes, from before Straw Boss looked";
+	/** Why a death is no longer the run's last word (review RV-F001, RV-F002): a later result, ping, or script names its file. Someone else has it: no word to the model (RV2-F001). */
+	const superseded = (o: Open, all: Entry[], launch: Launch | string): string | undefined => {
 		if (all.slice(o.index + 1).some((e) => e.type === "custom_message" && FINALS.has(e.customType ?? "") && (e.details as { sessionFile?: unknown } | undefined)?.sessionFile === o.death.file)) return "a later result or ping names its session file";
 		if (typeof launch !== "string" && launch.at > o.at) return "a launch or resume script newer than its death names its session file";
 		return undefined;
@@ -299,7 +298,16 @@ export function childRevive(d: ChildRevive) {
 			for (const o of open) {
 				if (stopped) return;
 				const launch = launchOf(launcher, o.death.file), facts = factsOf(o.death.file, ps, list);
-				const why = superseded(o, all, launch, counted(seen, o.id, now).first) ?? refusal(o.death, o.at, marks, launch) ?? (facts.mtimeMs === undefined ? "its session file is gone" : undefined);
+				const later = superseded(o, all, launch);
+				if (later) {
+					seen.delete(o.id);
+					mark({ death: o.id, file: o.death.file, name: o.death.name, step: "skipped", at: now, why: later });
+					d.tell(`Straw Boss: does not revive subagent ${o.death.name}: ${later}`);
+					continue;
+				}
+				// Old when first seen: a transcript from before this version (review RV-F001).
+				const old = counted(seen, o.id, now).first - o.at > LOOP_MS ? "its death is older than 10 minutes, from before Straw Boss looked" : undefined;
+				const why = old ?? refusal(o.death, o.at, marks, launch) ?? (facts.mtimeMs === undefined ? "its session file is gone" : undefined);
 				// pi-herdr-agents tracking the run's id again (a resume of its own) holds it as a pane does.
 				const owned = typeof launch !== "string" && launch.id !== undefined && live?.has(launch.id) === true;
 				const verdict = classify({ now, ...facts, ...(why ? { refusal: why } : {}), held: facts.held || owned, seen: counted(seen, o.id, now) });
