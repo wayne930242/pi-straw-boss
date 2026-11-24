@@ -80,7 +80,14 @@ test("a teammate whose caps do not list board.capacity (an older build) gets the
 	writeDeviceRow(capDir(a.boardDir), row(Date.now()));
 	await Promise.all([a.holder.start(), b.holder.start()]);
 	await until(() => (b.holder.boards() as { boards: unknown[] }).boards?.length === 1, 5000, "A's board at B");
-	await new Promise((done) => setTimeout(done, 200));
+	// No sleep: A must hold bob's caps (which list board.capacity) and post a board after that, so the board held is one A built knowing every caps it would get.
+	const capsOf = (a.holder as unknown as { runs: Map<string, { caps: Map<string, { features: string[] }> }> }).runs.get(TEAM_HEX)!.caps;
+	await until(() => capsOf.get(bob.id)?.features.includes("board.capacity") ?? false, 5000, "bob's caps at A");
+	const boardsOfA = () => relay.stored.filter((x) => x.envelope.header.kind === "board" && x.envelope.header.from === alice.id).length;
+	const before = boardsOfA();
+	writeEntry(a.boardDir, "main-in", { now: "api work, later", items: [] }, Date.now());
+	await until(() => boardsOfA() > before, 5000, "a board A posts after bob's caps");
+	await until(() => JSON.stringify((b.holder.boards() as { boards: unknown[] }).boards[0]).includes("api work, later"), 5000, "that board at B");
 	const held = (b.holder.boards() as { boards: { capacity?: unknown }[] }).boards[0]!;
 	assert.equal(held.capacity, undefined);
 	assert.equal(b.holder.allySeen()[0]!.timed, false);
