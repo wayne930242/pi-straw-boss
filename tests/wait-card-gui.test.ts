@@ -455,6 +455,20 @@ test("a row folds the card to one line with no press beside it; a tap on the lin
 	assert.ok(text(card).includes(m.wc_b_reply()));
 });
 
+test("a successful press folds the row before its snapshot arrives; opening it again survives that snapshot", async () => {
+	const card = rig(wait(fonstar()), { host: "row" });
+	byClass(card, "wc-fold")[0]!.click();
+	go(card, "done");
+	await settle();
+	assert.equal(card.el.dataset.folded, "true");
+	assert.match(byClass(card, "wc-fold")[0]!.textContent, /I'm done.*confirm/);
+	assert.equal(note(card).hidden, true);
+	byClass(card, "wc-fold")[0]!.click();
+	card.update(wait(fonstar(), { press: reply.body.press } as Partial<BossWait>));
+	assert.equal(card.el.dataset.folded, "false");
+	for (const id of ["reply", "skip"]) assert.equal(act(card, id)!.disabled, false);
+});
+
 test("outside the dock's dialog a long part is clamped to three lines with a More toggle", () => {
 	const long = "x".repeat(150);
 	const card = rig(wait(fonstar({ happened: long, do: "Re-authorize it.", after: "Then it goes on." })), { host: "row" });

@@ -1090,7 +1090,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 2026-11-24: companionRoute adds one line to the page.
 	// Device capacity (2026-11-24, docs/specs/2026-11-24-capacity.md; measured) 9686 to 9697 (+11): gui/board.ts `capText` and `rowCapText`, the fold's device line and each row's capacity span. Cap = measured.
 	// 2026-11-24: measured with the capacity fixture on the demo board.
-	assert.ok(page <= 9699, `the page's TypeScript has ${page} lines`);
+	// 2026-11-24: fold an answered notice once; keep a mounted return card in sync. Measured 9,708 lines.
+	assert.ok(page <= 9708, `the page's TypeScript has ${page} lines`);
 	// Unit status and notices (S5) to 4990 (measured, +24 over the 4966 the branch base measured): linkmodel.ts (`unitsFor`, `unitLine`, the notice line), render.ts (the ally base's unit list), linkbar.ts (a notice's Clear).
 	// Unattended review fixes (ut-s6) to 4991 (+1): `unitLine` says "no status lately" for a stale device and the report is titled "Last report" (the two messages that were defined and not used).
 	// Forwarded dialog card (feat/link-unattended-dialog-gui) to 4966 (measured, +131 over the 4835 the branch base measured): linkdialogs.ts (48, new: the cards, with the question panel) and linkdialogmodel.ts (44, new: states in words, the check of a sender's dialog shape, the answer's body) load with the first forwarded dialog; linkmodel.ts +11 (`dialogState`), linkbar.ts +28 (the lazy load, the card rows).
@@ -1321,7 +1322,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// F round 3, a tabless headless tower on Straw Link (2026-11-24, review REV2-F001; measured after the fresh `npm run gui:build` of `npm test`, node 24): eager bytes unchanged at 136,829, gzip 49,391 to 49,393 (+2, gzip noise: no gui file changed). Cap = measured.
 	// Zen under headless runs (2026-11-24, docs/specs/2026-11-24-zen-f.md; measured after a fresh `npm run gui:build`, node 24): eager bytes 136,829 to 136,925 (+96: main.ts keeps the last `run-dialogs` list for the Zen chunk, and the eager chunk names the changed lazy chunks by their hashes), gzip 49,434. Cap = measured.
 	// Fence-aware preview and target spacing: unchanged eager bytes, +2 gzip from chunk hashes.
-	assert.ok(eagerBytes <= 136_925 && eagerGz <= 49_436, `the map chunk and the files it loads at start are ${eagerBytes} bytes (${eagerGz} gzipped)`);
+	// 2026-11-24: folded status line, production build: 136,932 raw (49,434 gzip).
+	assert.ok(eagerBytes <= 136_932 && eagerGz <= 49_436, `the map chunk and the files it loads at start are ${eagerBytes} bytes (${eagerGz} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -1568,7 +1570,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// 2026-11-24: quiet assistant replacement and bare companion routing; measured chat 392 lines, Zen 616, chat chunks 506004 / 189870, Zen theme 143819 / 44343.
 	// pi-better-show 0.8.0 pin (2026-11-24; measured after a fresh `npm run gui:build`, node 24, tarball install): chat chunks 506,004 / 189,870 to 511,853 / 192,083 (+5,849 / +2,213: the blocks chunk, diagram comments and diagram colours); Zen theme gzip 44,343 to 44,344 (+1, hashed names). Caps = measured.
 	// Device capacity (2026-11-24, docs/specs/2026-11-24-capacity.md; measured after a fresh `npm run gui:build`, node 24): 511,853 / 192,083 to 513,545 / 192,602 (+1,692 / +519): the work board's fold and rows carry the device's and each main's capacity (gui/board.ts `capText`, `rowCapText`) and their nine `board_cap_*` and `board_paused*` messages in both languages. Cap = measured.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 514_246 && total(chunks, gz) <= 192_880, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// 2026-11-24: folded wait status, including both languages and the return panel; measured.
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 514_744 && total(chunks, gz) <= 193_031, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -1733,7 +1736,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// F round 2, headless runs in the GUI (2026-11-24, docs/specs/2026-11-23-lite-b2-d-e-f.md §4.4 and docs/specs/2026-11-23-f-entry.md §2.7–2.8; measured), after a fresh `npm run gui:build`, node 24: 140,920 / 28,915 to 141,815 / 29,084 (+895 / +169): the live message's and the run dialogs' rules. Cap = measured.
 	// Zen under headless runs (2026-11-24, docs/specs/2026-11-24-zen-f.md §6; measured after a fresh `npm run gui:build`, node 24): 141,815 / 29,084 to 143,792 / 29,450 (+1,977 / +366: the head page's target button, its list and the sheet on a phone, and the note after a direct send). Cap = measured.
 	// Device capacity (2026-11-24; measured after a fresh `npm run gui:build`, node 24): 143,792 / 29,450 to 143,827 / 29,463 (+35 / +13: `.board-cap` beside the row's state, gold while the main is paused). Cap = measured.
-	assert.ok(total(css, (n) => size(n).length) <= 143_827 && total(css, gz) <= 29_463, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	// 2026-11-24: one-line wait summary with ellipsis; measured.
+	assert.ok(total(css, (n) => size(n).length) <= 143_920 && total(css, gz) <= 29_476, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });
 
 // The Zen rows of the keymap exist only because the Zen theme's entry imports zenrows.ts for its side effect: nothing else loads them in the page, so dropping that "unused" import leaves Enter, H, [, ], and the palette key dead while every other test stays green.

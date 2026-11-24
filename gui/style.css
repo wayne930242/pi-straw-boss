@@ -420,6 +420,7 @@ html:not([data-view="zen"]) .wait-box:focus { outline: none; border-color: color
 .wait-card .ask-opt:disabled[aria-checked="true"] { border: 1px solid var(--accent); color: var(--text); } /* a pressed choice keeps its mark, flat */
 .wait-card .wc-reveal { display: grid; gap: 6px; } .wait-card .wc-skip-box { display: grid; gap: 6px; } .wait-card .wc-skip-tells { color: var(--text); }
 .wait-card .ask-own { box-sizing: border-box; width: 100%; min-height: 44px; resize: none; } .wait-card .ask-own[hidden] { display: none; }
+.wait-card .wc-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wait-card .wc-fold { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; width: 100%; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; } .wait-card .wc-fold .wc-do { flex: 1 1 14em; min-width: 0; overflow-wrap: anywhere; }
 .dialog[data-wait] .wait-card .wc-tag { display: none; } /* the dialog's badge already says the kind */
 .tower-notices .tnote + .tnote { padding-top: 8px; border-top: 1px solid var(--line); }

@@ -39,6 +39,16 @@ test("a wait row is the card folded to one line with no press beside it; a tap o
 	assert.ok(r.by(m.wc_b_reply()));
 });
 
+test("a reloaded notice shows the answer instead of the question until resolved", async () => {
+	for (const w of [{ ...CARD, answered: CARD.at }, { ...CARD, press: { act: "done" as const, at: CARD.at } }]) {
+		const r = await rig("wA", "t", [w]);
+		const line = r.box.querySelector(".wc-fold")!.textContent;
+		assert.match(line, w.press ? /I'm done.*confirm/ : /[Aa]nswered.*tower/);
+		fillNotices(r.box as unknown as HTMLElement, "wA", service([{ ...w, state: "resolved" }]), "t");
+		assert.equal(r.box.querySelector(".wc-fold"), null);
+	}
+});
+
 test("the head tower's row says the head tower (Q3) where a workspace tower's says the tower", async () => {
 	const head = await rig("@head", "sb-head", [CARD]);
 	head.unfold();

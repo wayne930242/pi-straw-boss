@@ -35,19 +35,18 @@ type Kit = { waitCard: typeof import("./waitcard.ts").waitCard; waitActions: typ
 let loading: Promise<Kit> | undefined;
 const load = () => (loading ??= Promise.all([import("./waitcard.ts"), import("./asks.ts"), import("./answer.ts")]).then(([w, a, r]) => ({ waitCard: w.waitCard, waitActions: a.waitActions, answerPost: r.answerPost })));
 
-/** The wait a parked row is about, still open in the snapshot, with where its presses go: a tower's base by its workspace, else the head's own memory. */
+/** The wait a parked row is about in the snapshot, with where its presses go: a tower's base by its workspace, else the head's own memory. */
 export function openWait(net: Net | undefined, row: BackRow): { ws: string; key: string; wait: BossWait } | undefined {
-	const open = (w: BossWait) => !w.state && !w.answered;
 	if (!row.head) {
 		for (const b of net?.bases ?? []) {
 			if (b.id !== row.workspace || !b.tower) continue;
 			const w = b.tower.service?.memory?.bossWaits.find((x) => x.id === row.id);
-			return w && open(w) ? { ws: b.id, key: b.tower.key, wait: w } : undefined;
+			return w ? { ws: b.id, key: b.tower.key, wait: w } : undefined;
 		}
 		return undefined;
 	}
 	const head = net?.head, w = head?.service?.memory?.bossWaits.find((x) => x.id === row.id);
-	return head && w && open(w) ? { ws: HEAD_KEY, key: head.key, wait: w } : undefined;
+	return head && w ? { ws: HEAD_KEY, key: head.key, wait: w } : undefined;
 }
 
 const KIND: Record<string, (i: object, o?: Opts) => string> = { refused: m.back_kind_refused, cancelled: m.back_kind_cancelled, escaped: m.back_kind_escaped, trust: m.back_kind_trust, "still-waiting": m.back_kind_stillwaiting, "re-asked": m.back_kind_reasked, backstop: m.back_kind_backstop };
@@ -57,7 +56,7 @@ const list = (title: string, rows: string[]) => (rows.length ? h("section", { cl
 export function mountBack(host: HTMLElement, d: BackDeps) {
 	const o: Opts = d.locale ? { locale: d.locale } : {};
 	const send = d.post ?? post;
-	let shown: BackReport | undefined, cards = new Map<string, { update(w: BossWait, on?: boolean): void }>(), find = new Map<string, BackRow>();
+	let shown: BackReport | undefined, cards = new Map<string, { update(w: BossWait, on?: boolean, ended?: boolean): void }>(), find = new Map<string, BackRow>();
 	host.classList.add("auto-back");
 	host.setAttribute("aria-labelledby", "auto-back-title");
 	host.setAttribute("tabindex", "-1");
@@ -74,7 +73,7 @@ export function mountBack(host: HTMLElement, d: BackDeps) {
 		const wentTo = (row: BackRow) => (row.returned === "tower" ? m.back_to_tower({}, o) : row.returned === "gone" ? m.back_gone({ name: row.from ?? "?" }, o) : m.back_to_raiser({ name: row.from ?? "?" }, o));
 		const drawn = report.parked.filter((row) => !row.returned).flatMap((row) => {
 			const at = openWait(net, row);
-			if (!at) return (settled++, []);
+			if (!at || at.wait.state || at.wait.answered) return (settled++, []);
 			const key = `${at.ws}\u001f${row.id}`, card = kit.waitCard({ host: "row", wait: at.wait, ...(at.ws === HEAD_KEY ? { head: true } : {}), actions: kit.waitActions({ ws: at.ws, id: row.id, tower: at.key }, kit.answerPost(at.key)), done: (line) => (said.textContent = line) });
 			card.update(at.wait, document.body?.dataset?.stale !== "true");
 			cards.set(key, card);
@@ -125,7 +124,7 @@ export function mountBack(host: HTMLElement, d: BackDeps) {
 		net(net: Net | undefined) {
 			for (const [key, row] of find) {
 				const at = openWait(net, row);
-				if (at) cards.get(key)?.update(at.wait, document.body?.dataset?.stale !== "true");
+				if (at) cards.get(key)?.update(at.wait, document.body?.dataset?.stale !== "true", Boolean(at.wait.state));
 			}
 		},
 	};

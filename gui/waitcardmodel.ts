@@ -1,4 +1,5 @@
 import type { BossWait, WaitCardView, WaitPressView } from "../src/net.ts";
+import { noun } from "./nouns.ts";
 import { m } from "./sentences.ts";
 
 // What a wait card shows (docs/specs/2026-11-07-wait-cards.md, The card in the GUI): which parts, which buttons, which words, decided from the wait as the snapshot carries it and the few facts of the page (a paired device, what the stream is doing, what
@@ -74,10 +75,11 @@ const told = (card: WaitCardView | undefined, press: WaitPressView, o?: Opts): s
 	return (press.main.status === "gone" ? word(m.wc_told_gone, m.wc_told_gone_head, o) : press.main.status === "failed" ? word(m.wc_told_failed, m.wc_told_failed_head, o) : word(m.wc_told_both, m.wc_told_both_head, o))({ name: f.name }, o);
 };
 /** The line a press leaves: what the boss did and who was told. The secret card's first step is not a press line (it has its own words). */
-export function pressedLine(w: BossWait, o?: Opts): string {
+export function pressedLine(w: BossWait, o?: Opts, compact = false): string {
 	const p = w.press;
 	if (!p || p.act === "secret") return "";
 	const said = p.act === "done" ? m.wc_pressed_done({}, o) : p.act === "choose" ? m.wc_pressed_choose({ label: w.card?.options?.[p.option ?? -1]?.label ?? "" }, o) : p.act === "decline" ? m.wc_pressed_decline({}, o) : word(m.wc_pressed_restate, m.wc_pressed_restate_head, o)({}, o);
+	if (compact) return m.wc_pending({ answer: said, tower: noun(o?.head ? "head_tower" : "role_tower") }, o);
 	return p.act === "restate" ? said : `${said}${m.wc_sep({}, o)}${told(w.card, p, o)}`;
 }
 const secretLine = (w: BossWait, secretOpen: boolean | undefined, o?: Opts): string => {

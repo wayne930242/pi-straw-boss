@@ -322,6 +322,18 @@ test("a card of the panel presses through the tower's memory route, as its row d
 	assert.equal(store.get(), REPORT.until, "this report is seen on this device");
 });
 
+test("a mounted parked card follows answered and resolved snapshots", async () => {
+	const wait = w("W1", { card: cardOf("action") });
+	const { host, back } = panelWith(towerNet([wait]));
+	await back.open(REPORT);
+	const answered = { ...wait, answered: WAIT_AT, press: { act: "done", at: WAIT_AT } };
+	back.net(towerNet([answered]));
+	assert.match(host.querySelector(".wc-fold")!.textContent, /I'm done/);
+	back.net(towerNet([{ ...answered, state: "resolved", outcome: "verified" }]));
+	assert.equal(host.querySelector(".wait-card")!.dataset.phase, "ended");
+	assert.match(host.querySelector(".ask-note")!.textContent, /verified/);
+});
+
 test("the head's parked card is found in the head's memory and pressed at the head's route", async () => {
 	sent.length = 0;
 	const netNow: Net = { bases: [], head: { key: "sb-head", name: "head", mark: "idle", state: "running", asks: [], service: { state: "running", memory: memoryOf([w("W5", { card: cardOf("action") })]) } } } as never;
