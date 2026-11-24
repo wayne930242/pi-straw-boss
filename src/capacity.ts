@@ -114,8 +114,7 @@ const round = (n: number) => Math.round(n * 100) / 100;
  */
 export function staleOf(m: Pick<MainFacts, "state" | "commanding" | "duty" | "fileMtime" | "entryUpdated"> & { workers?: readonly string[]; points?: number }, c: Pick<MainCap, "open" | "pause"> | undefined, unattended: boolean, now: number): boolean {
 	if (c?.pause) return false;
-	const busy = Boolean(m.commanding) || (m.workers?.length ?? 0) > 0 || (m.points ?? 0) > 0;
-	if (unattended) return !busy && (c?.open ?? 0) > 0 && Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > 0 && now - Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > STALE_UNATTENDED_MS;
+	if (unattended) return !m.commanding && !m.workers?.length && !m.points && (c?.open ?? 0) > 0 && Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > 0 && now - Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > STALE_UNATTENDED_MS;
 	return m.state === "idle" && !m.commanding && m.duty !== "standing" && m.entryUpdated !== undefined && now - m.entryUpdated > STALE_MS;
 }
 
