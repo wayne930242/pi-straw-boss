@@ -28,7 +28,8 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 2026-11-23 (D, review threads, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.5; measured): main.md off 541 to 563.
 // 2026-11-24 (capacity, docs/specs/2026-11-24-capacity.md, Prompts; boss 2026-11-24 「無人塔台值守和一般的 main agent 都應該把產能放在心上」; measured): main.md off 563 to 603, on 808 to 848 (dispatch up to the budget, an idle main takes its next work, a capacity notice is its own); tower.md off 468 to 492, on 538 to 562 (a capacity notice is an incident).
 // 2026-11-24 (capacity review prompts-review F003; measured): tower.md off 492 to 500, on 562 to 570 (`device-silent-2h`, sb's escalation at 2 hours, goes to the boss).
-const BUDGETS: Record<string, number> = { "main.md": 603, "tower.md": 500, "member.md": 140, "member-no-main.md": 150 };
+// 2026-11-24 (capacity routing; field, MP Center box 2: three notices to the standing main and the tower over 2.5 h started nothing; measured): main.md off 603 to 617, on 848 to 862 (a notice on your work: dispatch now or say why, to whoever asked; sb's on the board); tower.md off 500 to 516, on 570 to 586 (`under` and `stale` reach the main from sb; `under-30m`, sb's at 30 min: ask that main).
+const BUDGETS: Record<string, number> = { "main.md": 617, "tower.md": 516, "member.md": 140, "member-no-main.md": 150 };
 // Its review fixes (SB-F001, F003, F005: the Approval line quotes words already given and asks only when they are missing, the tower reports nothing back on a forwarded slip): main.md 680 to 700, tower.md 390 to 395, integrator.md 320 to 340 (SB-F002 and F006: the deploy gate before `Merge`, a subagent briefed for one step).
 // Train workers (docs/specs/2026-11-07-train-workers.md §13.1, task 8): tower.md on 424 to 471 (forward with `forward`, open a train with `role: "train"`, a car notice's `blocked`; off stays 402); main.md on 715 to 720 (Batch owner, Handoff route, Record and Approval say who schedules, who departs, who notifies, and where the boss's nod is quoted); integrator.md 340 to 380 and train.md ~450 have their own budgets below.
 // Fix round of task 8 (prompts-review.md, TP-F001 to F018): budgets = measured: main.md on 720 to 725, tower.md on 471 to 469 (the resident tower forwards nothing), planning.md on 670 to 681 (the check command), integrator.md 380 to 412 (todo lifecycle, legacy trains), train.md 450 to 511 (holds, load and lock, the Record file, the metadata.sb keys).
@@ -39,7 +40,7 @@ const BUDGETS: Record<string, number> = { "main.md": 603, "tower.md": 500, "memb
 // 2026-11-23 (the tower closes agent panes, docs/specs/2026-11-23-tower-close-panes.md §5): measured: tower.md on 508 to 538 and off 438 to 468 (close a main that handed over once its successor is live, whoever opened it; list and close dead agent panes).
 // 2026-11-23 (lite main, as for BUDGETS above; measured): main.md on 743 to 786.
 // 2026-11-23 (D, review threads, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.5; measured): main.md on 786 to 808 (a reviewed change: boss_pair, both briefs, Thread: T<n>, relay nothing).
-const ON_BUDGETS: Record<string, number> = { "main.md": 848, "tower.md": 570 };
+const ON_BUDGETS: Record<string, number> = { "main.md": 862, "tower.md": 586 };
 // 2026-11-08 (todo #125 task 5, TP-F004): `{{cli}}` is the command that runs cli.mjs.
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir", "state", "cli", "duty"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
@@ -155,7 +156,7 @@ test("merge train: main hands integration cars over with why shared, planning st
 		const text = readFileSync(`${PROMPT_DIR}/${file}`, "utf8");
 		for (const term of file === "tower.md" ? ["`integration`", "integrator", "boss_open_main"] : ["`integration`", "integrator", "boss_open_main", "integrator.md"]) assert.ok(text.includes(term), `${file} names ${term}`);
 	}
-	for (const off of [false, true]) assert.ok(words(strip(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), off)) <= (off ? 500 : 570)); // wait cards: +31; 0.81.6 shared heads-up: +15/+11; 2026-11-23 revive: +21/+21; 2026-11-23 close panes: +30/+30, see BUDGETS
+	for (const off of [false, true]) assert.ok(words(strip(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), off)) <= (off ? 516 : 586)); // wait cards: +31; 0.81.6 shared heads-up: +15/+11; 2026-11-23 revive: +21/+21; 2026-11-23 close panes: +30/+30, see BUDGETS
 	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("finding with evidence"));
 });
 
@@ -418,5 +419,17 @@ test("capacity: the head routes device-silent to the workspace that works with t
 	for (const file of ["head-run.md", "tower-run.md", "tower.md", "duty-standing.md"]) {
 		assert.ok(read(file).includes("`device-silent-2h`"), `${file} names device-silent-2h`);
 		assert.doesNotMatch(read(file), /past 2 hours/, `${file} keeps no timer of its own`);
+	}
+});
+
+// Capacity routing (field, MP Center box 2, 2026-11-24): sb tells `under` and `stale` to the main itself; the main dispatches or says why; the standing main asks a main still under at its next notice
+// and escalates to its tower when no dispatch follows; the towers act on sb's `under-30m`; nobody keeps a timer beyond sb's notices.
+test("capacity routing: the main answers its own notice, the standing main asks on the next one and escalates, the towers take sb's under-30m", () => {
+	const read = (f: string) => readFileSync(`${PROMPT_DIR}/${f}`, "utf8");
+	assert.ok(read("main.md").includes("A capacity notice on your work: dispatch its ready work now, or say why not (blocked, shared files, the boss): reply to whoever asked; sb's: board it."), "main.md");
+	assert.ok(read("duty-standing.md").includes("when the same main is still under at your next notice (sb's `under-30m` included), ask it directly to dispatch or say why, and `call_tower` `why: blocked` naming it for its tower when no dispatch follows; keep no timer: sb's notices are the clock"), "duty-standing.md");
+	for (const file of ["tower.md", "tower-run.md"]) {
+		assert.ok(read(file).includes("`under-30m`"), `${file} names under-30m`);
+		assert.doesNotMatch(read(file), /send `under` and `stale` to the main/, `${file} relays no notice sb told the main itself`);
 	}
 });

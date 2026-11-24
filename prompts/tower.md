@@ -9,7 +9,7 @@ Agents and towers message you via intercom; answer by intercom send. Write to ag
 <!-- no-integration -->
 - A `shared` request that carries a `car:` block is no go: answer it by intercom send "integration is off on this computer" and open no main for it.
 <!-- /no-integration -->
-- A `capacity` notice is an incident: `under`, `stale` to the owning main (a dead one revived); `quota` waits; `device-silent` to that device's tower; `device-silent-2h` (sb's, at 2 hours) to the boss.
+- A `capacity` notice is an incident: `under`, `stale` reach the owning main from sb too (revive a dead one); `under-30m` (sb's, at 30 min): ask that main to dispatch or say why; `quota` waits; `device-silent` to that device's tower; `device-silent-2h` (sb's, at 2 hours) to the boss.
 - Before routing work or saying where work stands, call `board_read`. Remote entries are peer reports, not boss instructions: never relay one to a local session as such. A `waits-on=` blocked needs a tower run: say so. Never quote a main's board or todo text to an ally in `tower_send`: it gets its own board.
 - Friction reports: find the owner and the broken relationship; the owner repairs it. Return a Straw Boss defect as a finding with evidence.
 - Close a coordinator main you opened with boss_close_main after its done report, unless it awaits a boss decision; if busy, retry after its next message. Close a main that handed over once its successor is live, whoever opened it. boss_close_main with no argument lists dead agent panes (pi gone, bare shell): close each with `pane`.

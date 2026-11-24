@@ -165,3 +165,64 @@ test("device-silent-2h: one escalation 2 hours after the first notice, not again
 	assert.equal(w.told.filter((e) => e.kind === "silent-2h").length, 2, "a new silence is escalated again");
 	assert.ok(w.clock.now() - t0 > 5 * 3600_000);
 });
+
+// Field, MP Center box 2 (2026-11-24): 3 notices to the standing main and the tower over 2.5 h started nothing, and the main holding the ready work was never told. `under` and `stale` now go to
+// that main's own session too; quota and an ally's silence do not (the main is the one paused, a device has no main here).
+test("under and stale are told to the subject main itself as well; quota and device-silent are not", async () => {
+	const { w, make } = world({ budget: 4, unattended: true });
+	w.cap("s-a", { doing: [{ owner: "w1", points: 2 }], ready: [{ points: 1 }], open: 2 });
+	await run(make(), w.clock, 11);
+	assert.deepEqual(w.told.map((e) => [e.kind, e.key, e.workspace, e.standing, e.main]), [["under", "s-a", "w1", "s-st", "s-a"]]);
+	const { w: w2, make: make2 } = world({ unattended: true });
+	w2.mains[0] = { ...w2.mains[0]!, workers: [] };
+	w2.mains.push({ session: "s-b", name: "web", workspace: "w2", role: "main", state: "idle", workers: [], fileMtime: w2.clock.now(), entryUpdated: w2.clock.now() });
+	w2.cap("s-a", { open: 2 });
+	w2.cap("s-b", { open: 1, pause: { reason: "quota", at: w2.clock.now() } });
+	w2.allies = [{ key: "t:d1", label: "box 1", short: "d1", online: false, boardAgeMs: 40 * MIN, timed: true, open: true }];
+	await run(make2(), w2.clock, 33);
+	assert.deepEqual(w2.told.map((e) => [e.kind, e.key, e.main]).sort(), [["quota", "s-b", undefined], ["silent", "t:d1", undefined], ["stale", "s-a", "s-a"]]);
+});
+
+test("under of the standing main itself: told to it as the subject, and to no other standing main", async () => {
+	const { w, make } = world({ budget: 4 });
+	w.cap("s-st", { ready: [{ points: 1 }], open: 1 });
+	await run(make(), w.clock, 11);
+	assert.deepEqual(w.told.map((e) => [e.kind, e.key, e.standing, e.main]), [["under", "s-st", undefined, "s-st"]]);
+});
+
+// sb's follow-up: a main still under 30 minutes after its own notice is escalated once per episode, to its tower and the standing main, naming it; no prompt keeps a timer.
+test("under-30m: one escalation 30 minutes after the main's own notice while it stays under, not again in that episode (a restart included), retried while untold, none when it dispatched, anew in a new episode", async () => {
+	const { w, make } = world({ budget: 4 });
+	w.cap("s-a", { doing: [{ owner: "w1", points: 2 }], ready: [{ points: 1 }], open: 2 });
+	const watch = make();
+	await run(watch, w.clock, 11);
+	assert.deepEqual(w.told.map((e) => e.kind), ["under"]);
+	await run(watch, w.clock, 29);
+	assert.deepEqual(w.told.map((e) => e.kind), ["under"], "nothing more inside the 30 minutes");
+	w.reach = false; // nobody takes the escalation at first: tried again at the next look
+	await run(watch, w.clock, 2);
+	assert.deepEqual(w.told.map((e) => e.kind), ["under"]);
+	w.reach = true;
+	await run(watch, w.clock, 1);
+	assert.deepEqual(w.told.map((e) => [e.kind, e.key, e.workspace, e.standing, e.main]), [["under", "s-a", "w1", "s-st", "s-a"], ["under-30m", "s-a", "w1", "s-st", undefined]]);
+	assert.match(w.told[1]!.text, /^capacity under-30m · main "api" · still under 30 min after its notice at \d\d:\d\d · 1 ready \(smallest 1 pt\) · capacity 2 \/ 4 pts · load 0\.2 \/ 8 cores · ready 1 · under \d+ min · ask it to dispatch or say why$/);
+	await run(watch, w.clock, 40);
+	await run(make(), w.clock, 60); // a restart: the hold and the episode's marks are read back
+	assert.equal(w.told.filter((e) => e.kind === "under-30m").length, 1, "one escalation per episode");
+	const again = make(), before = w.told.length;
+	w.load1 = 7; // the episode ends
+	await run(again, w.clock, 2);
+	w.load1 = 0.2; // a new one: under once its 10 minutes are held, the escalation 30 minutes after that
+	await run(again, w.clock, 11);
+	assert.deepEqual(w.told.slice(before).map((e) => e.kind), ["under"]);
+	await run(again, w.clock, 31);
+	assert.deepEqual(w.told.slice(before).map((e) => e.kind), ["under", "under-30m"]);
+	// A main that dispatched within the 30 minutes is no longer under: no escalation.
+	const { w: w2, make: make2 } = world({ budget: 4 });
+	w2.cap("s-a", { ready: [{ points: 1 }], open: 1 });
+	const watch2 = make2();
+	await run(watch2, w2.clock, 20);
+	w2.cap("s-a", { doing: [{ owner: "w1", points: 1 }], open: 1 });
+	await run(watch2, w2.clock, 60);
+	assert.deepEqual(w2.told.map((e) => e.kind), ["under"]);
+});

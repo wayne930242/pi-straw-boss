@@ -12,7 +12,7 @@ import { inTestRun } from "./testguard.ts";
 import type { Towers } from "./towers.ts";
 
 // The server's side of the capacity watch (capwatch.ts): what it reads of this machine (pi-intercom's list, Herdr's panes, the board and capacity files, the load, `capacity.budget`), and whom it tells:
-// the tower of the main's workspace (as the stall watch finds it) and this device's standing main. Kept out of main.ts, which carries a line budget.
+// the tower of the main's workspace (as the stall watch finds it), this device's standing main, and for `under` and `stale` the main itself. Kept out of main.ts, which carries a line budget.
 
 /** `capacity.budget` of `<state dir>/config.json`: a number of points over 0 (at most 1000); none when it is unset or not such a number. */
 export function readBudget(stateDir: string): number | undefined {
@@ -54,13 +54,15 @@ export interface StartCap {
 	every?: number;
 }
 
-/** Tells an event: as a notice to the tower that hears of the main's workspace (the head tower for an ally device), and to this device's standing main. True when either took it. */
+/** Tells an event: as a notice to the tower that hears of the main's workspace (the head tower for an ally device), to this device's standing main, and to the event's own main (`under`, `stale`)
+ *  unless it is that standing main. True when any took it. */
 export async function tellCap(e: CapEvent, o: Pick<StartCap, "run" | "towers" | "tellSession">, at: number): Promise<boolean> {
 	const towers = o.towers();
 	const to = towers ? stallTarget(e.workspace, await herdrWorkspaces(o.run).catch(() => []), towers.status().map((r) => r.workspace), towers.head.status()?.workspace) : undefined;
 	const tower = to !== undefined && towers!.runs.notice(to, e.text, `capacity:${e.kind}:${e.key}:${at}`);
-	const told = e.standing ? await o.tellSession(e.standing, e.text).then((r) => r === "delivered" || r === "queued", () => false) : false;
-	return tower || told;
+	const tell = (session: string | undefined) => (session ? o.tellSession(session, e.text).then((r) => r === "delivered" || r === "queued", () => false) : Promise.resolve(false));
+	const told = await tell(e.standing), own = e.main !== e.standing ? await tell(e.main) : false;
+	return tower || told || own;
 }
 
 /** The watch of this server, ticking once a minute; none in a test run without seams. Returns its stop. */

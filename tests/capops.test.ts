@@ -60,3 +60,14 @@ test("an event goes to the tower of the main's workspace and to the standing mai
 	assert.deepEqual(notices[1]!.slice(0, 1), ["wH"], "no workspace: the head tower");
 	assert.equal(await tellCap({ kind: "stale", key: "s-b", text: "x", workspace: "w2" }, { ...o, towers: () => undefined }, 9), false, "no tower service and no standing main: nobody took it");
 });
+
+test("an under or stale event also goes to its main's own session, once when that main is the standing main told", async () => {
+	const told: [string, string][] = [];
+	const run: HerdrRun = async () => JSON.stringify({ result: { workspaces: [] } });
+	const o = { run, towers: () => undefined, tellSession: async (session: string, text: string) => (told.push([session, text]), session === "gone" ? "failed" : "queued") };
+	assert.equal(await tellCap({ kind: "under", key: "s-a", text: "u", subject: "s-a", workspace: "w1", standing: "s-st", main: "s-a" }, o, 1), true);
+	assert.deepEqual(told, [["s-st", "u"], ["s-a", "u"]]);
+	assert.equal(await tellCap({ kind: "under", key: "s-st", text: "v", subject: "s-st", workspace: "w0", standing: "s-st", main: "s-st" }, o, 2), true);
+	assert.deepEqual(told.slice(2), [["s-st", "v"]], "the standing main is told once");
+	assert.equal(await tellCap({ kind: "stale", key: "gone", text: "w", subject: "gone", workspace: "w2", main: "gone" }, o, 3), false, "the main alone did not take it");
+});
