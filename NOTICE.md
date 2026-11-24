@@ -77,7 +77,7 @@ Its three sounds are released under Creative Commons Zero (CC0 1.0), trimmed and
 
 ## pi-better-show (`dist/gui/assets/blockschunk-*.js`)
 
-The GUI's block chunk bundles [pi-better-show](https://github.com/wayne930242/pi-better-show) 0.5.0 (its parser, its answer encoding, and its fourteen elements), and with it the [yaml](https://github.com/eemeli/yaml) library 2.9.1.
+The GUI's block chunk bundles [pi-better-show](https://github.com/wayne930242/pi-better-show) 0.8.0 (its parser, its answer encoding, and its fourteen elements), and with it the [yaml](https://github.com/eemeli/yaml) library 2.9.1.
 
 pi-better-show: MIT License, Copyright (c) 2026 wayne930242
 
