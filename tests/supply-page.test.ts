@@ -132,3 +132,10 @@ test("Geek keeps the plain text: no tray, mini slots, chips, or icons; the row's
 	assert.match(css, /html\[data-view="zen"\] :is\(\.shell, \.dock\) \{ display: none; \}/, "Zen hides the page that carries the board");
 	for (const name of readdirSync(new URL("../gui/", import.meta.url)).filter((n) => /^zen.*\.ts$/.test(n))) assert.ok(!/capacity|\.board\b|supply/.test(readFileSync(new URL(`../gui/${name}`, import.meta.url), "utf8").replace(/\/\/.*$/gm, "")), `${name} reads no capacity`);
 });
+
+test("a row's status keeps its icon and word on one line (the note and the age wrap instead), and a phone's free slot centres its +", () => {
+	const rule = (sel: string) => rulesOf(css).filter((r) => r.parts.includes(sel)).map((r) => r.body).join(";");
+	for (const sel of [".board-state", ".board-pause"]) assert.match(rule(sel), /white-space:\s*nowrap/, `${sel} does not break`);
+	const phone = /@media \(max-width: 640px\) \{[\s\S]*?\n\}/g, inPhone = [...css.matchAll(phone)].map((x) => x[0]).join("\n");
+	assert.ok(rulesOf(inPhone).some((r) => r.parts.includes(".supply-slot") && /place-items:\s*center/.test(r.body) && /grid-template-rows:\s*1fr/.test(r.body)), "the phone's slot centres its +");
+});
