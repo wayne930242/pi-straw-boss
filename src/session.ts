@@ -14,6 +14,7 @@ import type { MainDuty } from "./mainduty.ts";
 import { orphans } from "./orphan.ts";
 import { createWorkerCap, deviceRoom } from "./workercap.ts";
 import { inherited, RESULT } from "./inherit.ts";
+import { childRevive } from "./childrevive.ts";
 import { keyOf, REVIVE_TOKEN } from "./revive.ts";
 import { armSignals, signalSeen } from "./signalseen.ts";
 import { restored } from "./restored.ts";
@@ -48,12 +49,13 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		pi.appendEntry(ENTRY, { revived: cfg.now() });
 		return true;
 	};
-	let nudges: ReturnType<typeof orphans> | undefined, restores: ReturnType<typeof restored> | undefined, inherits: ReturnType<typeof inherited> | undefined, nudgeTimer: ReturnType<typeof setInterval> | undefined, unwatch: (() => void) | undefined, retryTimer: ReturnType<typeof setTimeout> | undefined;
+	let nudges: ReturnType<typeof orphans> | undefined, restores: ReturnType<typeof restored> | undefined, revives: ReturnType<typeof childRevive> | undefined, inherits: ReturnType<typeof inherited> | undefined, nudgeTimer: ReturnType<typeof setInterval> | undefined, unwatch: (() => void) | undefined, retryTimer: ReturnType<typeof setTimeout> | undefined;
 	const stopWatching = () => {
 		clearInterval(nudgeTimer);
 		clearTimeout(retryTimer);
 		nudges?.stop();
 		restores?.stop();
+		revives?.stop();
 		inherits?.stop();
 		inherits = undefined;
 		unwatch?.();
@@ -145,6 +147,8 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
 		// Subagents a Herdr restart brought back as plain pi sessions are closed, and this session is asked to resume them (restored.ts).
 		restores = restored({ run, sleep: cfg.sleep, file: () => log.getSessionFile(), entries: () => log.getEntries(), active: () => !s.isTower, launcher: () => (me() ? { id: me(), name: who() } : undefined), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), resume: (text, details) => pi.sendMessage({ customType: RESUME, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
+		// A subagent whose own pi died while this session lives is revived from its session file, and its result brought here (childrevive.ts).
+		revives = childRevive({ run, sleep: cfg.sleep, now: cfg.now, file: () => log.getSessionFile(), entries: () => log.getEntries(), pane: () => env.HERDR_PANE_ID, sessions: host.sessions, active: () => !s.isTower, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), deliver: (customType, text, details, wake) => pi.sendMessage({ customType, content: text, display: true, details }, wake ? { triggerTurn: true, deliverAs: "steer" } : { triggerTurn: false }), tell, note: (text) => void (s.at && note(text)) }); // a session that never joined has no workspace to note in
 		// A session a tower revived picks up the subagents it launched before it died (inherit.ts), at its claim and at every start after (a /reload), until none is left to watch.
 		startInherit = () => {
 			if (inherits || s.isTower) return;
@@ -152,7 +156,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			void inherits.poll();
 		};
 		if (typeof s.saved.revived === "number") startInherit();
-		nudgeTimer = setInterval(() => void Promise.allSettled([nudges?.poll(), restores?.poll(), inherits?.poll()]), cfg.nudgeMs).unref();
+		nudgeTimer = setInterval(() => void Promise.allSettled([nudges?.poll(), restores?.poll(), revives?.poll(), inherits?.poll()]), cfg.nudgeMs).unref();
 		// Starting runs in the background: pi awaits session_start handlers in turn, and pi-intercom connects in its own, after this one.
 		const asTower = () => {
 			s.trainSettled = true; // a tower is no train
@@ -319,6 +323,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	pi.on("session_info_changed", (event) => void (!runMode.active() && mainDuty.migrate((event as { name?: string }).name)));
 	pi.on("agent_settled", () => void (!runMode.active() && briefing.settled()));
 	pi.on("message_end", (event) => void (!runMode.active() && briefing.delivered(event.message))); // a role steer counts as told once pi delivers it (briefing.ts `told`)
+	pi.on("message_end", (event) => ((message) => (message ? { message } : undefined))(revives?.annotate(event.message))); // a subagent's death says, before the model reads it, that it comes back
 	// Compaction and tree navigation can remove earlier steers. Resend current guidance without touching the role section.
 	pi.on("session_compact", (event) => void (!runMode.active() && briefing.fresh(event.willRetry)));
 	pi.on("session_tree", () => void (!runMode.active() && briefing.fresh()));

@@ -356,6 +356,7 @@ export class FakeHerdr {
 			return out({});
 		}
 		if (group === "tab" && cmd === "focus") return out({});
+		if (group === "pane" && cmd === "rename") return ((this.pane(args[2]!).label = args.slice(3).join(" ")), out({}));
 		if (group === "pane" && (cmd === "send-keys" || cmd === "send-text")) return (this.keys.push(args), out({}));
 		if (group === "pane" && cmd === "read") return this.screen;
 		throw new Error(`unexpected herdr call: ${args.join(" ")}`);

@@ -1413,6 +1413,44 @@ Covering it would mean closing a pane on a guess, so a restart after a resume st
 
 </details>
 
+### A subagent that dies is revived
+
+A subagent whose own pi dies while the session that launched it lives (a crash, a `kill -9`, its pane closed in Herdr) comes back by itself. The launcher's Straw Boss starts the run's own launch command again on its session file, in a new pane of the launcher's tab, and brings its report to the launcher when it ends, as pi-herdr-agents would have.
+
+```mermaid
+sequenceDiagram
+    participant W as Subagent pi
+    participant H as pi-herdr-agents
+    participant S as Straw Boss (launcher)
+    participant M as Launcher's model
+    W->>W: dies (crash, kill, pane closed)
+    H->>M: subagent_result: failed, with Straw Boss's paragraph added
+    S->>S: dead in two looks a minute apart
+    S->>W: its launch command again, the revive notice as first message
+    S->>M: one line: revived in pane P
+    W->>S: .exit when it ends
+    S->>M: its report (straw-boss-orphan-result)
+```
+
+<details>
+<summary>Details</summary>
+
+**What a death is.** pi-herdr-agents ends a run on the child's `.exit` sidecar, on its launch script's `__SUBAGENT_DONE_<code>__` line, or on its pane's disappearance, and gives the launcher one `subagent_result`. The child writes `.exit` before it exits, so a report of its own always comes through the sidecar. One table (`src/childdead.ts`) reads the result's details: a pane that disappeared, a process that ended before any evidence (pi-herdr-agents' own three error texts), or a pi that exited with a code other than 0 and 130 and no error of its own, is a death. A cancel (`error: "cancelled"`), a completion (exit 0), an error the child reported (a provider error), a persistent specialist's crash, a help request (`subagent_ping`), and a Ctrl-C in the pane (exit 130) are not.
+
+**Who acts, and when.** The launcher's own Straw Boss, on the same 15 s look as the nudge and the restore above: only that process knows what it launched and can hand its model a message. A death is acted on when it is found dead in two looks at least 60 s apart: no Herdr pane runs the session file, the broker does not list the child's session, the file has not moved in the last minute, and pi-herdr-agents does not track the run. A pane that runs the file in two looks a minute apart (the launcher resumed it itself, a restore, the boss) means someone else holds it: it is left alone, with one line to the launcher. Herdr's recovery window needs no wait here: a Herdr restart ends every pane's pi, the launcher's too, so a launcher that lives has seen none since the death.
+
+**Never revived.** A run with no launch or resume script in the launcher's artifacts that names its file, a command not in pi-herdr-agents' own shape (`[cd '<folder>' && ]<environment> pi --session … ['@<message>']; echo '__SUBAGENT_DONE_'$?'__'`), a persistent specialist, a session that never started (a launch failure), a folder that is gone, a file whose revive failed in the last 24 hours, and a death within 10 minutes of a revive of the same file. Each is told to the boss once and kept in the session; the launcher's model acts on the failure itself.
+
+**The revive.** An entry `{workerRevive: {death, file, step}}` goes into the launcher's session before anything is done, keyed by the id of the failure's own entry, so a death is acted on once, across a reload. Straw Boss splits the launcher's own pane (`herdr pane split --direction right --cwd <folder> --no-focus`), labels the new pane with the run's name, checks once more that no pane runs the file and the broker does not list it, and types `bash '<script>'` into it. The script, in `artifacts/<launcher>/straw-boss-revive/`, is the newest launch or resume command of the run with two changes: its first message is the revive notice instead of the task, and `PI_SUBAGENT_SURFACE` names the new pane. So the revived pi has the same session file, folder (a managed worktree's checkout too), model, thinking, tools, environment, and pi-herdr-agents' child extension, which writes its `.exit` when it ends. The notice says when and how it died, what its last turn was ([cut.ts](#a-child-cut-off-mid-turn-is-told-to-go-on)), that its launcher waits for its report, to check the state before re-running anything that changes it, and to finish its task and report. Straw Boss waits up to 60 s for Herdr to list pi on the file in the new pane: then the step is `revived`; else the pane is closed, the step is `failed`, and the launcher is told to resume or respawn it.
+
+**The result.** pi-herdr-agents no longer tracks the run, so Straw Boss watches it. When its `.exit` appears, the step becomes `delivered`, and the launcher's model gets one steering message: the run's last message (encoded as for a [revived main's inherited runs](#a-revived-main-picks-up-its-subagents): every line prefixed, controls written out, 16,000 characters at most), its error, or its question with the `subagent_resume` arguments to answer it. The `.exit` is removed, as pi-herdr-agents' watcher consumes it, and the pane is closed once pi has left it. A revived pi that is gone again with no `.exit`, in two looks a minute apart, is told to the launcher with its last message, and is not revived again. A reload of the launcher reads all of this back from the entries; a revive the reload cut off is `revived` when a pane runs the file, else `failed` and told.
+
+**What the launcher's model sees.** The failure, with one paragraph Straw Boss adds before the model reads it (pi's `message_end`): it is no report of the run's own, Straw Boss revives it in about a minute and brings its report, so do not resume, respawn, or cancel it. Then one line when the run is back, which starts no turn, and its report when it ends, which does. A run that cannot be revived gets no paragraph. A failure Straw Boss could not keep its word on (the start failed, it died again) is said, with what to do.
+
+**Limits.** A nested subagent is not revived: a subagent runs no Straw Boss session. The worker cap counts pi-herdr-agents' registry, which no longer holds a revived run. A managed worktree's manifest keeps the state pi-herdr-agents wrote at the death. A pane the boss closed on purpose looks like any other death. A run whose failure was delivered just before a Herdr restart, and whose file the restore started a plain pi on, stays `live` and is not revived (the restore above does not take it either, since a result names its file). Mac sleep is no death; a reboot ends the launcher too, and a [revived main](#a-revived-main-picks-up-its-subagents) picks up its subagents itself. Design record: [docs/specs/2026-11-24-worker-revive.md](specs/2026-11-24-worker-revive.md).
+
+</details>
+
 ## Browser view
 
 `/boss gui` shows the whole net in your default browser: a game-style map, live and animated, where you can read any unit's comms and type into its session.
@@ -4053,7 +4091,8 @@ Straw Boss keeps its state in files in the state directory, starting with the sb
 - On a tower's standing pane, Herdr's `pane.report_agent` and `pane.release_agent` (source `straw-boss`, agent `tower`, idle, the state as the message, no resume command or session) while the tower prompt runs there, and that prompt's command typed into the pane's idle shell ([The standing pane](#the-standing-pane)).
 - Pane tokens `sb_order` (a sort key), `sb_mark` (a role label) and, on subagents, `sb_indent` (a tree branch) and `sb_name` (the subagent's name), and on a train `sb_step` (its current step) next to `sb_role`, and the subagent ones on the panes of the subagents the session launched, with the same refresh, TTL and takeover rewrite; they feed the sidebar net view and the optional rows below (see [Sidebar net view](#sidebar-net-view)).
 - `roles/<hash>.json` in the state directory, one record per tower, main, or train by pi session file: its role, pane, tab, and workspace, so a Herdr restore gives the role back; the record claims, and for a tower and a train the tab Herdr lists proves (see [A Herdr restore](#sidebar-net-view)).
-- A pi session entry `straw-boss` (`tower`) so a tower resumed in its tower tab keeps its role, and `{ duty, dutyFrom, dutyWhy, dutyAt }` for each change of a main's kind (the last one wins at restore). Members write no entry for their role: every session joins at start, so entries saved by 0.4.0 (`asked`, `joined`) are ignored. The other entries carry `nudged`, a subagent run that was asked to report, or `closing`, `unclosed`, `resumed`, `continued` and `gaveUp` (a restored subagent run that was closed, found still open after all, handed to the launcher for resuming, told that its turn was cut, or given up on), and `seen` with `terminal` (the terminal a running child's pane was in) (see [Subagents a Herdr restore brought back plain](#subagents-a-herdr-restore-brought-back-plain)).
+- A pi session entry `straw-boss` (`tower`) so a tower resumed in its tower tab keeps its role, and `{ duty, dutyFrom, dutyWhy, dutyAt }` for each change of a main's kind (the last one wins at restore). Members write no entry for their role: every session joins at start, so entries saved by 0.4.0 (`asked`, `joined`) are ignored. The other entries carry `nudged`, a subagent run that was asked to report, or `closing`, `unclosed`, `resumed`, `continued` and `gaveUp` (a restored subagent run that was closed, found still open after all, handed to the launcher for resuming, told that its turn was cut, or given up on), and `seen` with `terminal` (the terminal a running child's pane was in) (see [Subagents a Herdr restore brought back plain](#subagents-a-herdr-restore-brought-back-plain)), and `workerRevive` (a subagent's death and each step of its revive: `reviving`, `revived`, `delivered`, `failed`, `skipped`; see [A subagent that dies is revived](#a-subagent-that-dies-is-revived)).
+- `straw-boss-revive/` in a launcher's pi-herdr-agents artifacts folder (`artifacts/<session id>/`, beside the session file): the revive notice and the script of each subagent it revived ([A subagent that dies is revived](#a-subagent-that-dies-is-revived)).
 - When a team is set up: the files under `<pi agent dir>/straw-boss/link/` and the intercom channel `straw-boss/link` (not owner-eligible), registered by the sb server and by every tower ([the link holder](#straw-link-towers-across-computers-the-link-holder)).
 - The control channel `straw-boss/control` (not owner-eligible, so it has no owner): registered by every tower and by a main a tower opened, and used for the `close-main` ask and its answer ([Closing an opened main](#closing-an-opened-main)).
 - Every message it sends through intercom (`boss_broadcast`, `call_tower`, `tower_send`, the nudge, the request handed to an opened main) has a message id with a nonce of the current process: pi-intercom refuses an id it saw from a session again with other content, and a restarted pi keeps its session id.
