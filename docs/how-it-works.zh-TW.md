@@ -1,4 +1,4 @@
-# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ 05e42a00 -->
+# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ d395796b -->
 
 [README](../README.zh-TW.md) 背後的完整行為。使用說明在各篇指南；這份參考則逐節寫出程式實際怎麼做，所以請在下面找到需要的那一節，其餘可以略過。
 
@@ -45,10 +45,10 @@ flowchart TD
 
 | 種類 | 角色名稱 | 用途 | 協調者派出它時 |
 |---|---|---|---|
-| `worker`（工作者） | `worker` | 做一件任務：修改、執行、建置 | 同一個主智慧體最多同時 4 個：第 5 個被拒絕 |
-| `scout`（偵察） | `scout` | 調查並回報 | 不算在上限內 |
-| `planner`（規劃） | `planner` | 寫計畫或設計 | 不算在上限內 |
-| `reviewer`（審查） | `reviewer`、`visual-tester`、`adversarial-reviewer` | 審查變更或檢查 UI | 不算在上限內 |
+| `worker`（工作者） | `worker` | 做一件任務：修改、執行、建置 | 沒有數量上限；在無人值守的裝置上，受它產能預算的點數限制 |
+| `scout`（偵察） | `scout` | 調查並回報 | 一律不擋 |
+| `planner`（規劃） | `planner` | 寫計畫或設計 | 一律不擋 |
+| `reviewer`（審查） | `reviewer`、`visual-tester`、`adversarial-reviewer` | 審查變更或檢查 UI | 一律不擋 |
 
 **塔台 run的種類**（喚醒塔台的東西；規則在[本機 run](#本機 run)、[老闆對話](#老闆對話)與[隊友 run](#隊友-run)）
 
@@ -103,9 +103,9 @@ stateDiagram-v2
 2. 成員透過升任成為所在分頁的**主智慧體**。工作變大時（步驟變多、要派工作者、涉及不只一個 app），智慧體會呼叫 `boss_promote`；成員的 prompt 會這樣告訴它。成員如果沒有升任就呼叫 pi-herdr-agents 的 `subagent` 或 `subagent_resume` 工具，會在子智慧體啟動或恢復之前自動升任。啟動時加入失敗、等到 session 的 pane 搬到另一個分頁後才重試的，會登記在它現在所在的分頁，所以那裡不會冒出第二個主智慧體。
 3. 一個分頁只有一個主智慧體。智慧體絕不會接手既有的主智慧體：分頁的主智慧體還活著時，`boss_promote` 會被拒絕並附上訊息，自動升任也會跳過。成員仍然可以派自己的子智慧體，但它的 prompt 要它先透過 intercom 通知主智慧體：它要做什麼、會用到哪些資源。
 4. 主智慧體不會降級。它的 session 結束後，分頁就沒有主智慧體，直到有成員升任為止（這時成員的 prompt 會提議升任）。`/boss` 是使用者手動接手：即使已經有別的主智慧體，它也會讓這個 session 成為分頁的主智慧體。
-5. 主智慧體有一種**類型**：`coordinator`（預設：規劃並派工）、`integrator`（專案的合併火車）、`standing`（負責一個系統或一台機器，沒有結束的時候）。類型就是這個主智慧體執行的 prompt：`main.md`，加上 `integrator.md` 或 `duty-standing.md`。每種類型都帶著 `main.md` 裡的派工規則：按負責的 app 拆分工作、每個工作者出發前先開 todo、相依的任務用 `blockedBy`、平行寫入的工作者各用一個 worktree、最多同時 4 個工作者。計畫在 `metadata.graph` 裡的協調圖（`single-loop`、`fan-out/fan-in`、`orchestrator-worker`；由 `planGraph` 讀取，取最新的未完成者）只是頁面上的標示，沒有 prompt 會隨它改變（0.83.0，[lite-main 規格](specs/2026-11-23-lite-main.md)）。
+5. 主智慧體有一種**類型**：`coordinator`（預設：規劃並派工）、`integrator`（專案的合併火車）、`standing`（負責一個系統或一台機器，沒有結束的時候）。類型就是這個主智慧體執行的 prompt：`main.md`，加上 `integrator.md` 或 `duty-standing.md`。每種類型都帶著 `main.md` 裡的派工規則：按負責的 app 拆分工作、每個工作者出發前先開 todo、相依的任務用 `blockedBy`、平行寫入的工作者各用一個 worktree、工作者平行出發（在無人值守的裝置上受它的產能預算限制）。計畫在 `metadata.graph` 裡的協調圖（`single-loop`、`fan-out/fan-in`、`orchestrator-worker`；由 `planGraph` 讀取，取最新的未完成者）只是頁面上的標示，沒有 prompt 會隨它改變（0.83.0，[lite-main 規格](specs/2026-11-23-lite-main.md)）。
 
-   派工不再需要計畫。同一個 session 已有 4 個工作者在跑，或在同一則訊息裡正要出發時（依 pi-herdr-agents 登記的、還在等結果的子智慧體，加上這一輪已放行的呼叫），再呼叫 `subagent` 派 `worker` 會被拒絕並回 `sb: 4 workers run for this main already …`；scout、planner、reviewer、其他角色和 `subagent_resume` 不算在內。設了 `capacity.budget` 時改由裝置的點數決定（[裝置產能](#裝置產能)的「放行」）。主智慧體用 `boss_duty` 改變類型（附一行理由；新類型的 prompt 以 steer 送達，段落保持不變；它會寫下一筆 `straw-boss` 條目 `{ duty, dutyFrom, dutyWhy, dutyAt }`，記進塔台的摘要，並顯示在頁面上）。
+   派工不需要計畫，也沒有數量上限：有人值守的裝置由老闆自己盯，那裡不擋任何 `worker`。在設了 `capacity.budget` 的無人值守裝置上，由裝置的點數決定 `worker` 能否出發（[裝置產能](#裝置產能)的「放行」）；scout、planner、reviewer、其他角色和 `subagent_resume` 一律不擋。主智慧體用 `boss_duty` 改變類型（附一行理由；新類型的 prompt 以 steer 送達，段落保持不變；它會寫下一筆 `straw-boss` 條目 `{ duty, dutyFrom, dutyWhy, dutyAt }`，記進塔台的摘要，並顯示在頁面上）。
    在本機輪次裡，呼叫 `boss_duty` 宣告 `standing`，或由值守主智慧體呼叫 `boss_rename` 時，如果同一個工作區已有同名且仍在運作的值守主智慧體（比對方式與等待事項路由相同：不計大小寫，連續空白視為一個），工具會警告：指名這個 session 為負責人的 Straw Link 等待事項會同時符合兩位，因此不會只送給其中一位，而會送給每一位值守主智慧體。
 
    尚未宣告類型、且名稱是 `integ <project>`（在啟動時，或任何一次改名時：`boss_rename`、`/name`、其他擴充），或持有 `train` todo 的主智慧體，會遷移為 `integrator` 一次，條目為 `migrated: name` 或 `migrated: train todos`。已宣告的類型絕不遷移。每次 `/reload`、`/new`、`/resume`、`/fork` 都會重讀整合開關；整合關閉時，整合員會以協調者的身分執行並發布 `coordinator`。頁面在每種主題下都以同一個詞顯示類型（協調者、整合員、值守 / coordinator, integrator, on watch），後面接計畫的圖（單一迴圈、分支匯流、多工編排 / single loop, fan-out, orchestrated），切換則是時間軸上的一個事件。
@@ -124,7 +124,7 @@ stateDiagram-v2
 
 | 角色 | 對象 | 得到什麼 |
 |---|---|---|
-| 主智慧體 | 在分頁裡最先升任的成員，或 `/boss` 的接手者 | 一段簡短的 prompt：按 app 拆分工作、每個工作者出發前先開 todo、最多 4 個工作者、交代工作者、檢查結果、合併或部署前先問老闆 |
+| 主智慧體 | 在分頁裡最先升任的成員，或 `/boss` 的接手者 | 一段簡短的 prompt：按 app 拆分工作、每個工作者出發前先開 todo、工作者平行出發、交代工作者、檢查結果、合併或部署前先問老闆 |
 | 成員 | 其他每個已加入的 session | 一段簡短的 prompt：分頁裡有主智慧體時，派子智慧體前先告訴它；沒有時，工作變大就升任 |
 | 塔台 | 每個工作區一座，在自己的分頁裡，分頁標籤是 Nerd Font 的無線電塔字符（U+F043B） | 一段 prompt：協調智慧體、修復協調上的摩擦，以及在沒有 session 擁有某個請求時開啟主智慧體；它從不詢問使用者 |
 
@@ -147,7 +147,7 @@ pi 閒置時會直接存入 steer，這種情況在送出時就算說過。
 pi 重試當前輪次時用 steer；若當前輪次隨壓縮結束，就存成訊息，不另開一輪；若沒有執行中的輪次，則在下次執行開始時送出。
 這些情況都不會改寫 system prompt 的段落。
 
-派工規則就寫在 `main.md` 裡；主智慧體為了計畫和錨點讀 `prompts/planning.md`，拆分工作時則讀 `prompts/apps-config.md`，這樣規劃的細節就不會佔著每次執行的 system prompt。它會替頁面指名一種協調圖：single-loop（一項任務，自己做或交給一個子智慧體）不需要計畫。fan-out/fan-in 和 orchestrator-worker 則把計畫寫成 pi 的 `todo` 項目：每項任務一個，`owner` 是子智慧體（或 `self`），它依賴的任務放進 `blockedBy`（其餘的就保持平行，最多同時 4 個工作者），並在描述和 metadata 裡寫上檢查它的錨點。共用同一個錨點的任務共用一個檢查點 todo，而不是每個分支各檢查同一件事。
+派工規則就寫在 `main.md` 裡；主智慧體為了計畫和錨點讀 `prompts/planning.md`，拆分工作時則讀 `prompts/apps-config.md`，這樣規劃的細節就不會佔著每次執行的 system prompt。它會替頁面指名一種協調圖：single-loop（一項任務，自己做或交給一個子智慧體）不需要計畫。fan-out/fan-in 和 orchestrator-worker 則把計畫寫成 pi 的 `todo` 項目：每項任務一個，`owner` 是子智慧體（或 `self`），它依賴的任務放進 `blockedBy`（其餘的就保持平行；在無人值守的裝置上受它的產能預算限制），並在描述和 metadata 裡寫上檢查它的錨點。共用同一個錨點的任務共用一個檢查點 todo，而不是每個分支各檢查同一件事。
 
 錨點有測試、擬人、真人和對抗式審查，每一種都是在變更之前就可能失敗的最輕量檢查。主智慧體派工時不請老闆確認計畫；它只在計畫解決不了的決定、且在被它們擋住的任務之前問老闆：不清楚或與架構矛盾的需求，以及像是合併到共用分支或部署這類的授權。瀏覽器檢視會把這些 todo 顯示成計畫的進度。
 
@@ -757,7 +757,7 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 **補給站。** 主塔台頁面把裝置列畫成托盤（`gui/supply.ts`、`docs/specs/2026-11-24-capacity-supply/spec.md`）：預算每 1 點一格，每個已部署的單位是一個橫跨它點數的方塊（名稱與點數來自裝置列的 `units`，只留在這台電腦上，從不進 `board_read`、連線、遠端輪次或 operate 切片），空格只在裝置被標為產能閒置時柔和閃動（減少動態或靜止時不動），加上可用格數，以及放待命工作的兵營；沒設預算時只畫已部署的方塊。摺疊行帶迷你格；每個主智慧體顯示它種類的徽記、它的單位方塊與可接件數（手機上是一行 `6 pts · 5 ready`，中文介面寫「6 點 · 可接 5 件」），額度停機旁有月亮，停滯的狀態字前有沙漏；最後是隊友裝置，在線或失聯，產能不明。鴉閣把它畫成燭火墓位、閣門、合上的棺木與盤旋的群鴉；Geek 保留純文字；禪完全不顯示。
 
-**放行。** 設了 `capacity.budget` 時，只有當裝置列的點數（5 分鐘內的）、裝置上的保留量與這個 `worker` 子智慧體自己的權重都放得進預算，它才會出發：權重是主智慧體自己的 todo 中，`owner` 等於子智慧體 `name`（不分大小寫、去掉前後空白；沒有這樣的 todo，或它已完成時算 1）那一項的 `metadata.points`。出發時先寫下自己的保留（`capacity/_reserved/<id>.json`，一筆一個檔，寫好再改名就位，記下所屬的主智慧體與工作者名稱），再讀裝置列與加總，所以同一台裝置上同時派工的兩個主智慧體看得到彼此，被拒的那一筆什麼都不留。保留在出發結果回來後仍然算數，直到主智慧體讀到的裝置列顯示這個工作者正在該主智慧體底下執行（裝置列記著每個主智慧體取樣到的工作者，只存在本機），而且是在出發之後取樣的；讀到較舊裝置列的主智慧體仍然算它。出發失敗，或該輪結束時還沒有結果，保留立刻釋放；沒有任何裝置列顯示過的保留，在出發 10 分鐘後失效。裝置列沒有列出的主智慧體（另一個 Herdr slot，或還沒取樣到）沿用每個主智慧體最多 4 個的規則，不寫保留。拒絕訊息：`sb: the device runs 1 of its 2 capacity points, 0.5 more held by launches it does not count yet: this worker needs 2. …`。沒有預算或沒有新的裝置列時，沿用每個主智慧體最多 4 個的規則。
+**放行。** sb 不以數量擋工作者。在有人值守的裝置上（有人在場：沒有無人值守的 policy 檔），什麼都不會擋下 `worker`，那裡的 `capacity.budget` 只用於看板、補給盤與產能通知。在設了 `capacity.budget` 的無人值守裝置上，只有當裝置列的點數（5 分鐘內的）、裝置上的保留量與這個 `worker` 子智慧體自己的權重都放得進預算，它才會出發：權重是主智慧體自己的 todo 中，`owner` 等於子智慧體 `name`（不分大小寫、去掉前後空白；沒有這樣的 todo，或它已完成時算 1）那一項的 `metadata.points`。出發時先寫下自己的保留（`capacity/_reserved/<id>.json`，一筆一個檔，寫好再改名就位，記下所屬的主智慧體與工作者名稱），再讀裝置列與加總，所以同一台裝置上同時派工的兩個主智慧體看得到彼此，被拒的那一筆什麼都不留。保留在出發結果回來後仍然算數，直到主智慧體讀到的裝置列顯示這個工作者正在該主智慧體底下執行（裝置列記著每個主智慧體取樣到的工作者，只存在本機），而且是在出發之後取樣的；讀到較舊裝置列的主智慧體仍然算它。出發失敗，或該輪結束時還沒有結果，保留立刻釋放；沒有任何裝置列顯示過的保留，在出發 10 分鐘後失效。裝置列沒有列出的主智慧體（另一個 Herdr slot，或還沒取樣到），以及沒有新的裝置列時的任何主智慧體，照樣在整台裝置上寫保留，並加上 pi-herdr-agents 登記中自己正在跑的工作者，因為沒有裝置列算到它們。預算在每次放行時從 `config.json` 讀取，所以改了不必重新啟動就生效；沒設就什麼都不擋（sb 自己沒有預設數字）。輕量、受 API 限制的工作者，它的 todo 可以只算 0.25 點。拒絕訊息：`sb: the device runs 1 of its 2 capacity points, 0.5 more held by launches it does not count yet: this worker needs 2. …`。
 
 **停機接口。** 撞到模型額度而停下的主智慧體自己寫不了看板，所以由它 session 裡的擴充代為標記：pi-agent-basic 在 pi 的行程內事件匯流排發出 `straw-boss:pause`，`{ v: 1, state: "paused" | "resumed", reason: "quota", until?: <epoch ms>, detail?: <at most 120 characters> }`（`detail` 至多 120 字元）；sb 不 import basic 的任何東西，收到後把該主智慧體標成停機，直到收到 `resumed` 或該 session 開始新的一輪。`/reload` 保留這個標記，停機中的主智慧體永遠不算停滯。
 
