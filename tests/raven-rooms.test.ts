@@ -34,7 +34,8 @@ test("the four rooms are WebP pictures of 1280 by 800 and at most 44 KB each, an
 	// The source folder holds the stylesheet with its comments, which the build strips: the spec's 450 KB is the built folder's (tests/imports.test.ts caps it, 425,889 bytes measured). The source folder was 449,505 bytes before the glass (todo #138: +8,064, raven.css's glass, phone frame and strike blocks with their reasons) and 457,569 after round 1; round 2 (the lit head turn, the head page's thin glass and backings, the phone's strip) measured 461,146 (+3,577); round 3 (the bolt layer, the perch's place, the backings, with their reasons) measured 466,807 (+5,661); the head turn as a swap and the flyer at one speed (boss, 2026-11-09) measured 468,594 (+1,787, most of it the reasons). Cap = measured + 500.
 	// Wait cards on the question panel (todo #144 task 5; measured): 469,094 to 469,670 (+576: the 15 `_head` sentences in sentences.ts, and the ornament exclusions for a card nested in the tower card in raven.css). Cap = measured.
 	// Wait-card review fixes (todo #145): 469,670 to 469,710 (+40: the `wait_sent_head` sentence). Cap = measured.
-	assert.ok(total(dir) <= 469_710, `the raven folder is ${total(dir)} bytes`);
+	// Supply board (2026-11-24, docs/specs/2026-11-24-capacity-supply/spec.md; measured): 469,710 to 478,004 (+8,294: the crypt's rules in raven.css with their reasons, the supply words in sentences.ts in both languages, and six sprite symbols). The built folder stays under the spec's 450 KB (tests/imports.test.ts). Cap = measured.
+	assert.ok(total(dir) <= 478_004, `the raven folder is ${total(dir)} bytes`);
 });
 
 test("the sprite's blood goblet (血僕) and keep (鴉閣) are bold shapes, not traced engravings: each symbol is at most 3 KB, so no thorn or tracery detail is left to blur at 16 px", () => {
