@@ -1083,6 +1083,7 @@
   "wc_sending": "送出中…",
   "wc_sep": "・",
   "wc_pressed_done": "你按了「我做完了」",
+  "wc_pending": "{answer}，等{tower}確認",
   "wc_pressed_choose": "你選了：{label}",
   "wc_pressed_decline": "你略過了這件事",
   "wc_pressed_restate": "已請塔台重寫",

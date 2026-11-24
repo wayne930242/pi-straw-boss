@@ -1265,6 +1265,7 @@
   "wc_sending": "Sending…",
   "wc_sep": " · ",
   "wc_pressed_done": "You pressed “I'm done”",
+  "wc_pending": "{answer} · waiting for the {tower} to confirm",
   "wc_pressed_choose": "You chose: {label}",
   "wc_pressed_decline": "You skipped this",
   "wc_pressed_restate": "The tower was asked to rewrite it",

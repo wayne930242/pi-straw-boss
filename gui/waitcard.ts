@@ -66,6 +66,7 @@ export function waitCard(o: WaitCardOptions) {
 	const wrap = o.send ?? ((reply: Promise<Answer>) => reply);
 	const reply = replyBox({ actions: o.actions, ...(o.send ? { send: o.send } : {}), ...(o.head ? { head: true } : {}) });
 	let cur = o.wait, live = true, blocked: string | undefined, over = false, inflight: Pick | undefined, refusal = "", folded = o.host === "row", local: WaitPressView | undefined, full: { card?: WaitCardView; press?: WaitPressView } | undefined, read = false, last = "", rowsSig = "", linkSig = "", pick: Pick | undefined;
+	let lastAnswer: string | undefined;
 	const expanded = new Set<string>();
 	const remote = () => o.remote ?? isRemote();
 	// The persistent parts: the question panel's own (askview.ts) — Send, the status line, the radiogroup, and the boxes a picked row reveals, which keep their state across a redraw of the rest.
@@ -81,7 +82,7 @@ export function waitCard(o: WaitCardOptions) {
 
 	/** The wait with what the page learned beyond the snapshot: the whole card of a cut one, and the press a reply carried before the snapshot brings it. */
 	const effective = (): BossWait => {
-		const press = cur.press ?? full?.press ?? local;
+		const press = local ?? cur.press ?? full?.press;
 		return { ...cur, ...(full?.card ? { card: full.card } : {}), ...(press ? { press } : {}), ...(full?.card ? { cut: undefined } : {}) } as BossWait;
 	};
 	const phase = (): Phase => (over || cur.state === "resolved" ? "ended" : inflight ? "sending" : !live ? "stale" : refusal ? "refused" : "open");
@@ -188,6 +189,11 @@ export function waitCard(o: WaitCardOptions) {
 	function render() {
 		const w = effective(), md = model(), lang = w.card?.lang ?? "", ph = phase();
 		const doText = md.parts.find((p) => p.id === "do" || p.id === "words")?.text ?? "";
+		// Fold once per answer, not on every snapshot: the boss can reopen it to reply or skip.
+		const answer = o.host === "row" && ph !== "ended" && w.press?.act !== "secret" ? w.press?.at ?? w.answered : undefined;
+		if (answer && answer !== lastAnswer) { folded = true; pick = undefined; }
+		lastAnswer = answer;
+		const summary = answer && folded ? pressedLine(w, { head: o.head }, true) || m.memory_wait_answered_boss() : "";
 		const rowOf = md.buttons.filter((b) => b.id !== "main");
 		if (pick && !rowOf.some((b) => same(pick, b) && !(b.disabled && ph === "open"))) pick = undefined; // the row is gone, or was pressed elsewhere (the wait was pressed or ended)
 		root.dataset.kind = md.kind;
@@ -197,11 +203,12 @@ export function waitCard(o: WaitCardOptions) {
 		root.dataset.parked = String(Boolean(md.parked));
 		root.dataset.step = String(md.step ?? "");
 		// The head: a row's folded line (tag, what to do, who raised it; a tap unfolds the rest), else the tag, the parked mark, and the raiser.
-		const sig = JSON.stringify([md.tag, md.parked, md.raised, md.parts, md.remote, folded, [...expanded], o.host, doText]);
+		const sig = JSON.stringify([md.tag, md.parked, md.raised, md.parts, md.remote, folded, [...expanded], o.host, doText, summary]);
 		if (sig !== last) {
 			last = sig;
 			if (o.host === "row") {
 				const fold = h("button", { type: "button", class: "wc-fold", "aria-expanded": String(!folded) }, h("b", { class: "wc-tag" }, md.tag), md.parked ? h("small", { class: "wc-parked" }, md.parked) : null, h("span", { class: "wc-do", lang }, doText), h("small", { class: "wc-raised" }, md.raised));
+				if (summary) fold.replaceChildren(h("span", { class: "wc-summary", title: summary }, summary));
 				fold.onclick = () => ((folded = !folded), folded && (pick = undefined), render()); // folding drops the pick: nothing is preselected when it is unfolded again
 				head.replaceChildren(fold);
 			} else head.replaceChildren(...nodes(h("b", { class: "wc-tag" }, md.tag), md.parked ? h("small", { class: "wc-parked" }, md.parked) : null, h("small", { class: "wc-raised" }, md.raised)));
@@ -249,6 +256,7 @@ export function waitCard(o: WaitCardOptions) {
 			if (link) acts.append(link);
 		}
 		// The status line: sending, a refusal, or what the wait says of itself (what was pressed and who was told, the secret's second step, a stream that is down or a tower that closed it).
+		note.hidden = Boolean(summary) && live && !refusal;
 		say(note, inflight ? "" : refusal ? "error" : root.dataset.pressed === "true" ? "ok" : "", inflight ? m.wc_sending() : refusal || md.line);
 	}
 
