@@ -1,12 +1,12 @@
 # Planning work
 
-The plan your main prompt's Dispatch rules ask for, and its anchors. Revise it when the work's shape changes.
+Revise the plan when the work changes.
 
 ## 1. Name the graph
 
 The page shows it beside your kind. Take the first case that matches:
 
-- **single-loop**: one bounded task that you carry yourself, or that one subagent carries. Its plan is one todo whose `metadata.anchor` names its check.
+- **single-loop**: one bounded task for you or one subagent. Its plan is one todo whose `metadata.anchor` names its check.
 - **fan-out/fan-in**: independent branches run in subagents, and you integrate their results.
 - **orchestrator-worker**: several workers, each owning one app's task end to end, with dependency edges.
 
@@ -17,11 +17,11 @@ An independent review is a checkpoint, not a graph.
 For fan-out and orchestrator-worker, one todo per task:
 
 - `subject`: the required outcome.
-- `owner`: the subagent's name, or `self` for work you carry yourself.
+- `owner`: the subagent's name, or `self`.
 - `description`: the app, the worktree branch for a parallel writer, the anchor and who exercises it, and the exact artifact path a dependent will read.
 - `blockedBy`: the tasks whose output or landed change this one needs; the rest run in parallel up to the capacity budget (`board_read` `capacity`; else 4). Serialize only on a real dependency or shared files.
 - `metadata`: `{ "graph": "<a graph name from section 1, exactly>", "anchor": "...", "checkpoint": "own" | "<checkpoint todo id>", "points": <n> }`: its weight against the budget, as the boss or project weighs it (default 1).
-- Set `metadata.until` to an ISO date or datetime for a todo scheduled for later; it is not ready before then. A running monitor, active loop, or `boss_watch` of yours keeps your main from going stale.
+- For later work, set `metadata.until` (ISO date/datetime). Your running monitor, active loop, or `boss_watch` prevents stale notices.
 
 ## 3. Name the anchors
 
@@ -29,7 +29,7 @@ Each anchor is the lightest check that can fail before the change and still reac
 
 - **testing**: the default for code changes. Use the smallest test that goes red first. Repo-wide suites, lint, and type checks run once, at the shared checkpoint or before merge, never inside each task.<!-- integration --> In an `integration` app, see below.<!-- /integration -->
 - **pseudo-human**: a browser or computer operates the real interface and records screenshots and measurements.
-- **human**: the boss operates or judges the delivered result. Use it where the boss's judgment is the real check: UI feel, wording, a business rule.
+- **human**: the boss operates or judges the result: UI feel, wording, a business rule.
 - **adversarial-review**: a fresh-context agent challenges the result against the requirement. Use it for read-only work that has no executable checkpoint.
 
 Tasks that share one anchor share one checkpoint. Give each such group one checkpoint todo, `blockedBy` every task it covers, and tell those workers to hand it their evidence. A task whose check is distinct, or plainly cheaper in place, keeps its own.
