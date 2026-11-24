@@ -10,6 +10,12 @@ import { CODE, result, SHA_A, sb } from "./train-fixtures.ts";
 const snap = (tasks: unknown[]) => ({ tasks, nextId: tasks.length + 1 });
 const task = (id: number, status: string, metadata?: unknown) => ({ id, subject: `step ${id}`, status, ...(metadata === undefined ? {} : { metadata }) });
 
+test("local todo details retain the latest recorded run and prefer metadata points, including zero", () => {
+	const run = { command: "npm test", result: "pass", at: "2026-11-24T09:40:00Z", sha: "0123456789" };
+	const base = task(1, "pending", { points: 0 });
+	assert.deepEqual(todosOf(snap([{ ...base, points: 2, anchor: "suite passes", evidence: [{ ...run, result: "fail" }, run] }])), [{ id: 1, status: "pending", subject: "step 1", points: 0, anchor: "suite passes", evidence: { ...run, sha: "0123456" } }]);
+});
+
 test("a todo with no metadata is what it was: no `sb` on it, and the short list has no steps", () => {
 	const list = todosOf(snap([task(1, "pending"), task(2, "in_progress", { other: "x" })]))!;
 	assert.deepEqual(list.map((t) => Object.keys(t).sort()), [["id", "status", "subject"], ["id", "status", "subject"]]);

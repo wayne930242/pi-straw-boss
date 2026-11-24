@@ -8,6 +8,10 @@
 
 ![標準檢視下瀏覽器裡的稻草網：各座基地的塔台、智慧體和子智慧體，狀態即時更新，頂端有各項計數和等待中的單位](docs/straw-net-gui.png)
 
+![展開對話中的待辦清單，任務旁會顯示點數](docs/gui-todo.png)
+
+![工作看板列出已用點數、裝置的點數上限和可接的任務數](docs/gui-board-capacity.png)
+
 <p align="center"><img src="docs/gui-comms.png" width="49%" alt="單位的通訊畫面：即時的對話紀錄、排隊等下一輪的訊息、待辦清單、背景 Monitor，以及單位檔案"> <img src="docs/gui-zen-item.png" width="49%" alt="禪檢視裡的一件待辦：墨色畫面上是一個 robot_hand 問題，選項是一行行的字"></p>
 
 ## 為什麼需要它

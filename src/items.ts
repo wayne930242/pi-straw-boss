@@ -12,7 +12,7 @@ export const FULL_LIMIT = FULL;
 
 export interface Tool { id: string; name: string; summary: string; args?: string; cut?: true }
 /** One task of a session's todo list, as pi-todo-ledger (its `todo/v1` entries) or @juicesharp/rpiv-todo (its snapshot entries and todo results) keeps it; deleted ones are left out. */
-export interface Todo { id: number; subject: string; status: "pending" | "in_progress" | "completed"; activeForm?: string; /** A train's step (`metadata.sb`), bounded: see `stepInfo`. */ sb?: StepInfo; /** The plan's graph (`metadata.graph` through `graphOf`), when the todo names one. */ graph?: Graph; /** Who works on it (rpiv-todo's `owner`), the ids it waits on, and its capacity points (`metadata.points`, else the ledger's own `points`, 0 to 10; capacity.ts). */ owner?: string; blockedBy?: number[]; points?: number }
+export interface Todo { id: number; subject: string; status: "pending" | "in_progress" | "completed"; activeForm?: string; /** A train's step (`metadata.sb`), bounded: see `stepInfo`. */ sb?: StepInfo; /** The plan's graph (`metadata.graph` through `graphOf`), when the todo names one. */ graph?: Graph; /** Who works on it (rpiv-todo's `owner`), the ids it waits on, and its capacity points (`metadata.points`, else the ledger's own `points`, 0 to 10; capacity.ts). */ owner?: string; blockedBy?: number[]; points?: number; anchor?: string; evidence?: { command: string; result: "pass" | "fail"; sha?: string; at: string } }
 /** What the page keeps of a step's `metadata.sb` (docs/specs/2026-11-07-train-workers.md §11.1): its kind and name, whose it is, the check's type, what it holds and needs, and how it ended; never a command, a path, or evidence text. */
 export interface StepInfo {
 	kind: string; name?: string; project?: string; app?: string; train?: string; round?: number; check?: string;
@@ -53,7 +53,9 @@ export function todosOf(snapshot: unknown): Todo[] | undefined {
 	return s.tasks.slice(0, 200).flatMap((t: Json) => {
 		if (!(typeof t?.id === "number" && typeof t.subject === "string" && STATUSES.has(t.status))) return [];
 		const sb = stepInfo(t.metadata), graph = obj(t.metadata) ? graphOf(t.metadata.graph) : undefined, points = pointsOf(obj(t.metadata) ? t.metadata.points : undefined) ?? pointsOf(t.points);
-		return [{ id: t.id, subject: t.subject.slice(0, 300), status: t.status, ...(typeof t.activeForm === "string" && { activeForm: t.activeForm.slice(0, 120) }), ...(sb && { sb }), ...(graph && { graph }), ...(typeof t.owner === "string" && t.owner.trim() && { owner: t.owner.trim().slice(0, 64) }), ...(Array.isArray(t.blockedBy) && { blockedBy: t.blockedBy.filter(Number.isSafeInteger).slice(0, 50) }), ...(points !== undefined && { points }) }];
+		const e = Array.isArray(t.evidence) ? t.evidence.at(-1) : undefined;
+		const evidence = e && typeof e.command === "string" && (e.result === "pass" || e.result === "fail") && typeof e.at === "string" && Number.isFinite(Date.parse(e.at)) ? { command: e.command.slice(0, 500), result: e.result, at: e.at, ...(typeof e.sha === "string" && { sha: e.sha.slice(0, 7) }) } : undefined;
+		return [{ ...(typeof t.anchor === "string" && t.anchor && { anchor: t.anchor.slice(0, 500) }), ...(evidence && { evidence }), id: t.id, subject: t.subject.slice(0, 300), status: t.status, ...(typeof t.activeForm === "string" && { activeForm: t.activeForm.slice(0, 120) }), ...(sb && { sb }), ...(graph && { graph }), ...(typeof t.owner === "string" && t.owner.trim() && { owner: t.owner.trim().slice(0, 64) }), ...(Array.isArray(t.blockedBy) && { blockedBy: t.blockedBy.filter(Number.isSafeInteger).slice(0, 50) }), ...(points !== undefined && { points }) }];
 	});
 }
 export interface Item {

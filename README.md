@@ -8,6 +8,10 @@ English | [繁體中文](https://github.com/wayne930242/pi-straw-boss/blob/main/
 
 ![The straw net in the browser in the Standard view: its bases with their towers, agents, and subagents in live states, with the counts and the waiting units in the header](docs/straw-net-gui.png)
 
+![An expanded chat todo list shows points beside the task](docs/gui-todo.png)
+
+![The work board shows points in use, the device budget, and ready tasks](docs/gui-board-capacity.png)
+
 <p align="center"><img src="docs/gui-comms.png" width="49%" alt="A unit's comms: its chat as a live log, the messages queued for its next turn, its todo list, its background monitors, and its dossier"> <img src="docs/gui-zen-item.png" width="49%" alt="The Zen view with one item: a robot_hand question on an ink-dark page, its choices as lines of text"></p>
 
 ## Why

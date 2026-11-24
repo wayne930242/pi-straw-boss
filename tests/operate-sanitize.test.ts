@@ -219,7 +219,7 @@ test("a history item's pictures are those four types under 1 MB; others are drop
 
 test("a history event is rebuilt: unknown kinds and fields go, text loses its controls, the unit's key is the page's", () => {
 	const told: string[] = [];
-	const out = sanitizeHistory({ key: "k1", state: "live", reset: true, successor: "../x", base: "wA", name: "n\u0007", role: "main", before: "e0", header: { id: "i", cwd: "/home/agent", extra: 1 }, unreadable: 0, todos: [{ id: 1, subject: "do", status: "pending", extra: 1 }, { id: 2, subject: "x", status: "weird" }], leak: "x",
+	const out = sanitizeHistory({ key: "k1", state: "live", reset: true, successor: "../x", base: "wA", name: "n\u0007", role: "main", before: "e0", header: { id: "i", cwd: "/home/agent", extra: 1 }, unreadable: 0, todos: [{ id: 1, subject: "do", status: "pending", points: 2, anchor: "private", evidence: [{ command: "private", result: "pass" }], extra: 1 }, { id: 2, subject: "x", status: "weird" }], leak: "x",
 		items: [{ id: "e1", kind: "assistant", text: "hi\u001b[31m", tools: [{ id: "t", name: "bash", summary: "ls", args: "{}", extra: 1 }], model: "m", leak: "/etc/shadow" }, { id: "e2", kind: "rm" }, { kind: "user" }, "junk"] }, rw(told)) as Record<string, unknown>;
 	const items = out.items as Record<string, unknown>[];
 	assert.equal(out.key, "K:k1");

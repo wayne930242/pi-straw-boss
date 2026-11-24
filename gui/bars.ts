@@ -76,7 +76,13 @@ export function drawTodos(view: HTMLElement, list: Todo[] | null | undefined) {
 	const done = list.filter((t) => t.status === "completed").length, now = list.find((t) => t.status === "in_progress");
 	text(box, "summary b", m.todos_count({ done, total: list.length }));
 	text(box, "summary span", now ? (now.activeForm ?? now.subject) : done === list.length ? m.todos_done() : "");
-	box.querySelector("ol")!.replaceChildren(...list.map((t) => Object.assign(document.createElement("li"), { textContent: t.subject, className: t.status })));
+	box.querySelector("ol")!.replaceChildren(...list.map((t) => {
+		const row = Object.assign(document.createElement("li"), { textContent: t.subject, className: t.status });
+		if (t.points !== undefined) row.append(" ", Object.assign(document.createElement("small"), { textContent: m.todos_points({ points: t.points }) }));
+		const e = t.evidence, detail = [t.anchor && m.todos_anchor({ anchor: t.anchor }), e && m.todos_recorded({ run: [e.command, e.result, e.sha, new Date(e.at).toLocaleString()].filter(Boolean).join(" · ") })].filter(Boolean).join("\n");
+		if (detail) { row.title = detail; row.setAttribute("aria-description", detail); }
+		return row;
+	}));
 }
 /** The session's background monitors under its todos (read-only: pi-loop-monitor lets nothing else stop one): folded to how many run or failed and the newest running one's last line, unfolded to each with its state, exit code, line count, and last line. */
 export function drawMonitors(view: HTMLElement, list: Monitor[] | undefined) {

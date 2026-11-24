@@ -22,6 +22,8 @@ function declared(selector: string, property: string): string | undefined {
 class El {
 	kids: (El | string)[] = [];
 	title = "";
+	attrs = new Map<string, string>();
+	setAttribute(k: string, v: string) { this.attrs.set(k, v); }
 	hidden = false;
 	textContent = "";
 	tag: string;
@@ -40,6 +42,15 @@ class El {
 }
 Object.assign(globalThis, { document: { createElement: (tag: string) => new El(tag), createTextNode: (s: string) => s } });
 const { drawQueued, foldQueue, mountQueueEdit, mountQueueFold } = await import("../gui/bars.ts");
+
+test("todo details stay off the summary and are both hoverable and accessible", async () => {
+	const { drawTodos } = await import("../gui/bars.ts");
+	const ol = new El("ol"), label = new El("span"), count = new El("b");
+	const box = { querySelector: (s: string) => s === "ol" ? ol : s === "summary span" ? label : count };
+	drawTodos({ querySelector: () => box } as unknown as HTMLElement, [{ id: 1, subject: "Round", status: "in_progress", points: 0, anchor: "Rounds", evidence: { command: "test", result: "pass", sha: "abcdef0", at: "2026-11-24T00:00:00Z" } }, { id: 2, subject: "Plain", status: "pending" }]);
+	const [one, plain] = ol.kids as El[];
+	assert.equal(label.text, "Round"); assert.equal(one!.text, "Round 0 pt"); assert.match(one!.title, /Anchor: Rounds\nRecorded: test · pass · abcdef0/); assert.equal(one!.attrs.get("aria-description"), one!.title); assert.equal(plain!.text, "Plain"); assert.equal(plain!.title, "");
+});
 
 const draw = (list: Queued[] | undefined) => {
 	const box = new El("div");

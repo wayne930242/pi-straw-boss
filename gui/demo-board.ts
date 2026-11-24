@@ -29,6 +29,8 @@ export function boardFromUrl(net: Net, now: number, update: (change: (n: Net) =>
 	const rows = boardRows(now), mark = (r: BoardViewRow) => (r.state === "working" ? "working" : "idle") as Unit["mark"];
 	const base = (id: string, label: string, tab: string, keys: string[]) => ({ id, label, mark: "working" as const, tower: null, tabs: [{ id: `${id}:${tab}`, label: tab, units: keys.map((k) => { const r = rows.find((x) => x.session === k)!; return unit(k, r.main, r.role ?? "main", mark(r)); }) }], outposts: [], outside: [] });
 	net.bases.push(base("bw-alpha", "Board Alpha", "api", ["bd-work", "bd-long", "bd-idle", "bd-bare"]), base("bw-beta", "Board Beta", "mobile", ["bd-markup", "bd-train"]));
+	Object.assign(rows[0]!, { points: 6, ready: 5 });
+	net.capacity = { points: 6, budget: 20, load1: 0.24, cores: 8, ready: 5, paused: 0 };
 	net.board = rows;
 	let cleared = 0;
 	const real = globalThis.fetch, json = (body: object) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
