@@ -54,6 +54,12 @@ export function pauseOf(data: unknown, now: number): { state: "paused"; pause: P
 
 /** `<state dir>/capacity`, beside the board folder (whose listing the board's readers and purge own). */
 export const capDir = (boardDir: string) => join(dirname(boardDir), "capacity");
+/** `capacity.budget` of `<state dir>/config.json`: a number of points over 0 (at most 1000); none when it is unset or not such a number. Read at each call, so a change applies at once. */
+export function readBudget(stateDir: string): number | undefined {
+	let b: unknown;
+	try { b = (JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8")) as { capacity?: { budget?: unknown } }).capacity?.budget; } catch { return undefined; }
+	return typeof b === "number" && Number.isFinite(b) && b > 0 && b <= 1000 ? b : undefined;
+}
 const DEVICE = "_device.json", SENT = "_sent.json";
 function writeJson(dir: string, name: string, value: unknown): void {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });

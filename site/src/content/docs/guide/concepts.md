@@ -82,7 +82,7 @@ The roles come from pi-herdr-agents and its role packs; what a role does is in i
 Any other role name stays a plain subagent.
 
 A main dispatches any of them without a plan; its prompt asks for a todo before each worker.
-At most 4 workers of one main run at once: a fifth is refused with `sb: 4 workers run for this main already` until a result comes back. Scouts, planners, and reviewers are not counted.
+No count caps the workers: on your own computer you watch them. Only an unattended device holds a worker back, while its points would pass `capacity.budget` (`sb: the device runs … capacity points …`, until a result comes back). Scouts, planners, and reviewers are never held.
 
 ### Watching with boss_watch
 

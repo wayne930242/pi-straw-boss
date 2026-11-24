@@ -3,11 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { type Agent, settle, World } from "./fakes.ts";
+import { type Agent, type AgentOptions, settle, World } from "./fakes.ts";
 import { ServerWorld } from "./server-world.ts";
 
 // docs/specs/2026-11-23-lite-main.md: what Straw Boss gives a main is lighter. The plan's graph steers nothing and gates nothing (§1), the role section is the same bytes for the whole session,
-// boss_duty included (§2), a main runs at most 4 workers at once (§3), and train_car and link_request are registered only where they can be used (§4).
+// boss_duty included (§2), no count caps a main's workers (§3), and train_car and link_request are registered only where they can be used (§4).
 
 let world: World | undefined, sw: ServerWorld | undefined;
 const dirs: string[] = [];
@@ -20,9 +20,9 @@ afterEach(async () => {
 });
 const REGISTRY = Symbol.for("pi-subagents/runtime");
 const snap = (...tasks: { id: number; status?: string; graph?: string }[]) => ({ customType: "rpiv-todo-state", data: { nextId: tasks.length + 1, tasks: tasks.map((t) => ({ id: t.id, subject: `t${t.id}`, status: t.status ?? "pending", metadata: t.graph ? { graph: t.graph } : {} })) } });
-const main = async (env: Record<string, string> = {}): Promise<Agent> => {
+const main = async (env: Record<string, string> = {}, deps?: AgentOptions["deps"]): Promise<Agent> => {
 	world = new World();
-	const a = world.agent({ id: "m-docs", name: "Docs", pane: "wA:p1", tab: "wA:t1", env });
+	const a = world.agent({ id: "m-docs", name: "Docs", pane: "wA:p1", tab: "wA:t1", env, ...(deps ? { deps } : {}) });
 	await a.start();
 	await a.promote();
 	return a;
@@ -51,7 +51,7 @@ test("a todo call that sets, changes, or clears a plan's graph posts no steer, a
 test("the section carries the dispatch rules from the first run, with no graph and no plan-first wording", async () => {
 	for (const env of [{}, { STRAW_BOSS_INTEGRATION: "off" }] as Record<string, string>[]) {
 		const t = await section(await main(env));
-		for (const term of ["owning app", "worktree", "`blockedBy`", "todo", "4 workers"]) assert.ok(t.includes(term), `${JSON.stringify(env)}: names ${term}`);
+		for (const term of ["owning app", "worktree", "`blockedBy`", "todo", "capacity budget"]) assert.ok(t.includes(term), `${JSON.stringify(env)}: names ${term}`);
 		assert.doesNotMatch(t, /plan first|metadata\.graph|## Graph:/);
 		await world!.stopAll();
 	}
@@ -78,22 +78,28 @@ test("boss_duty does not rewrite the section: the new kind arrives once, as a st
 	assert.equal(steers(a).length, 1, "nothing more");
 });
 
-test("a main runs at most 4 workers at once: a fifth is refused, other roles pass, and the calls of one message count before the registry holds them", async () => {
-	const a = await main();
-	await section(a);
-	const running = new Map<string, { id: string; agent?: string }>();
+// Boss 2026-11-24: 「本來就不該有上限，我自己盯。只有無人塔台要有點數上限，而且不該寫死」 (docs/specs/2026-11-24-capacity.md, The cap).
+test("no count caps a main's workers: an attended device admits past 4 even with a budget, an unattended one admits by the points of the budget config.json names now", async () => {
+	const running = new Map<string, { id: string; name: string; agent?: string }>();
 	(globalThis as Record<symbol, unknown>)[REGISTRY] = { runningSubagents: running };
-	for (let i = 0; i < 3; i++) running.set(`w${i}`, { id: `w${i}`, agent: "worker" });
-	running.set("s0", { id: "s0", agent: "scout" });
-	assert.equal(await dispatch(a, { agent: "worker" }, "c4"), undefined, "the fourth");
-	assert.match((await dispatch(a, { agent: "worker" }, "c5"))?.reason ?? "", /^sb: 4 workers run for this main already .*: wait for a result, then dispatch the next; a scout, a planner, or a reviewer may run now\.$/, "a fifth in the same message; the retired watchdog is not named");
-	for (const agent of ["scout", "planner", "reviewer"]) assert.equal(await dispatch(a, { agent }, `c-${agent}`), undefined, agent);
-	// The fourth's tool ran: the registry holds it and the call no longer counts twice.
-	running.set("w3", { id: "w3", agent: "worker" });
-	await a.fire("tool_result", { toolName: "subagent", toolCallId: "c4", input: { agent: "worker" }, content: [], isError: false });
-	assert.match((await dispatch(a, { agent: "worker" }, "c6"))?.reason ?? "", /4 workers/);
-	running.delete("w0"); // a result was delivered
-	assert.equal(await dispatch(a, { agent: "worker" }, "c7"), undefined);
+	for (let i = 0; i < 6; i++) running.set(`w${i}`, { id: `w${i}`, name: `w${i}`, agent: "worker" });
+	const budget = (dir: string, points: number) => writeFileSync(join(dir, "config.json"), JSON.stringify({ capacity: { budget: points } }));
+	const absent = { read: () => { throw Object.assign(new Error("none"), { code: "ENOENT" }); } };
+	const a = await main({}, { link: { policy: absent } });
+	budget(world!.stateDir, 1);
+	for (let i = 0; i < 6; i++) assert.equal(await dispatch(a, { agent: "worker", name: `x${i}` }, `c${i}`), undefined, `attended: worker ${i + 7}`);
+	await world!.stopAll();
+
+	running.clear();
+	running.set("w0", { id: "w0", name: "w0", agent: "worker" });
+	const box = { read: () => JSON.stringify({ unattended: true }), uid: 501, stat: () => ({ uid: 0, symlink: false }), writable: () => false };
+	const b = await main({}, { link: { policy: box } });
+	budget(world!.stateDir, 2);
+	assert.equal(await dispatch(b, { agent: "worker", name: "y1" }, "d1"), undefined, "w0 (its own, no row yet) + y1 fit 2");
+	assert.match((await dispatch(b, { agent: "worker", name: "y2" }, "d2"))?.reason ?? "", /^sb: the device runs 1 of its 2 capacity points, 1 more held by launches it does not count yet: this worker needs 1\. Wait for a result, then dispatch the next; a scout, a planner, or a reviewer may run now\.$/);
+	for (const agent of ["scout", "planner", "reviewer"]) assert.equal(await dispatch(b, { agent }, `d-${agent}`), undefined, agent);
+	budget(world!.stateDir, 3);
+	assert.equal(await dispatch(b, { agent: "worker", name: "y3" }, "d3"), undefined, "the raised budget, without a restart");
 });
 
 /** A project folder whose apps.json names one app, with or without `integration`. */

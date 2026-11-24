@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import { availableParallelism, homedir, loadavg } from "node:os";
 import { join } from "node:path";
 import { readEntries, safeSession } from "../board.ts";
-import { capDir, type MainFacts } from "../capacity.ts";
+import { capDir, type MainFacts, readBudget } from "../capacity.ts";
 import { type HerdrRun, panes as herdrPanes, type Session, workspaces as herdrWorkspaces } from "../herdr.ts";
 import { commanding, sessionMark, subagentsOfAll } from "../netdata.ts";
 import { nameOf, netMembers } from "../reach.ts";
@@ -13,16 +13,6 @@ import type { Towers } from "./towers.ts";
 
 // The server's side of the capacity watch (capwatch.ts): what it reads of this machine (pi-intercom's list, Herdr's panes, the board and capacity files, the load, `capacity.budget`), and whom it tells:
 // the tower of the main's workspace (as the stall watch finds it), this device's standing main, and for `under` and `stale` the main itself. Kept out of main.ts, which carries a line budget.
-
-/** `capacity.budget` of `<state dir>/config.json`: a number of points over 0 (at most 1000); none when it is unset or not such a number. */
-export function readBudget(stateDir: string): number | undefined {
-	try {
-		const b = (JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8")) as { capacity?: { budget?: unknown } }).capacity?.budget;
-		return typeof b === "number" && Number.isFinite(b) && b > 0 && b <= 1000 ? b : undefined;
-	} catch {
-		return undefined;
-	}
-}
 
 /** pi-loop-monitor persists loops-<pi-session-id>.json. No mutating store import; consume only the active flag and expiry. */
 export function armedLoop(dir: string, session: string, now: number): boolean {

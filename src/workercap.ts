@@ -1,46 +1,43 @@
 import { join } from "node:path";
-import { capDir, DEFAULT_POINTS, nameKey, readDevice } from "./capacity.ts";
+import { capDir, DEFAULT_POINTS, nameKey, readBudget, readDevice } from "./capacity.ts";
 import { createReservations, type Holder, type Reservations } from "./capres.ts";
 import { dutyOfAgent } from "./duty.ts";
 import { todosOf } from "./items.ts";
 import { snapshotScan } from "./todo.ts";
 
-// The cap on a session's concurrent workers (docs/specs/2026-11-23-lite-main.md §3): at most 4 `worker` subagents run at once, counted from pi-herdr-agents' registry of the children this process
-// launched and is still waiting on (orphan.ts `tracked` reads the same slot), plus the worker calls admitted in the message being prepared: pi prepares every tool call of an assistant message before any
-// runs, so the registry holds none of them yet. Scouts, planners, reviewers, and resumes are not workers and are never held. A registry that cannot be read holds nothing back.
+// Worker admission (docs/specs/2026-11-24-capacity.md, The cap). sb holds back no worker by count: on an attended device (the boss's own, who watches it) nothing gates a worker, and its
+// `capacity.budget` only feeds the board and the capacity notices. On an unattended device the device's points gate `worker` subagents against `capacity.budget`, read from config.json at
+// each admission (a change applies at once; none set: no cap, and no built-in figure). Scouts, planners, reviewers, and resumes are not workers and are never held.
 
-export const WORKER_CAP = 4;
 const REGISTRY = Symbol.for("pi-subagents/runtime");
 
-/** The workers pi-herdr-agents runs for this process, or undefined when its registry cannot be read. */
-function runningWorkers(): number | undefined {
+/** The names of the workers pi-herdr-agents runs for this process (its registry of the children it still waits on), or undefined when the registry cannot be read. */
+function runningWorkers(): string[] | undefined {
 	const map = (globalThis as Record<symbol, { runningSubagents?: unknown } | undefined>)[REGISTRY]?.runningSubagents;
 	if (!(map instanceof Map)) return undefined;
-	let n = 0;
-	for (const run of map.values()) if (dutyOfAgent((run as { agent?: unknown } | null)?.agent as string | undefined) === "worker") n++;
-	return n;
+	return [...map.values()].flatMap((run) => (dutyOfAgent((run as { agent?: string } | null)?.agent) === "worker" ? [String((run as { name?: unknown }).name ?? "")] : []));
 }
 
-/** The device's capacity as the sb server last wrote it (capacity.ts `readDevice`): points in use, the budget when one is set, when the row was sampled, and the mains it sampled with their running workers. */
-export interface Room { points: number; budget?: number | undefined; at?: number; mains?: readonly { session: string; workers?: readonly string[] }[] }
-/** What the cap reads of the device: its row, the reservations every main of it shares (capres.ts), and this main's session id. */
-export interface DeviceSide { room(): Room | undefined; store: Reservations; session(): string | undefined }
+/** The device's capacity as the sb server last wrote it (capacity.ts `readDevice`): points in use, when the row was sampled, and the mains it sampled with their running workers. */
+export interface Room { points: number; at?: number; mains?: readonly { session: string; workers?: readonly string[] }[] }
+/** What the cap reads of the device: its fresh row, the reservations every main of it shares (capres.ts), this main's session id, the budget now, and whether a person is at it. */
+export interface DeviceSide { room(): Room | undefined; store: Reservations; session(): string | undefined; budget(): number | undefined; attended(): boolean }
 
-// With a capacity budget (docs/specs/2026-11-24-capacity.md, The cap) the device's points decide instead of the count of 4: a worker starts while the points in use, the points the device's
-// reservations hold (launches of any main that no row shows yet), and its own fit the budget. Its reservation is written before the row and the sum are read, so two mains that launch at once
-// see each other. Only a main the row lists takes this path: the server samples the mains of its own Herdr slot, so a main of another slot, or one not sampled yet, keeps the count of 4 and
-// holds nothing device-wide. A device row that is missing or stale falls back to the count.
-/** The device row and reservations beside the board folder under `guiDir`, for the main whose session id `me` gives. */
-export const deviceRoom = (guiDir: string, me: () => string | undefined): DeviceSide => {
-	const dir = capDir(join(guiDir, "board"));
-	return { room: () => readDevice(dir, Date.now()), store: createReservations(dir, Date.now), session: me };
+// A worker starts while the points in use, the points the device's reservations hold (launches of any main that no row shows yet), and its own fit the budget. Its reservation is written
+// before the row and the sum are read, so two mains that launch at once see each other. The server samples only the mains of its own Herdr slot: a main the row does not list (another slot,
+// not sampled yet) or any main while no fresh row exists still reserves device-wide, and adds its own running workers from its registry, which no row counts, in place of its own launched reservations.
+/** The device row, reservations, and budget of the state folder `stateDir`, for the main whose session id `me` gives; `attended` says whether a person is at the device (the link's policy). */
+export const deviceRoom = (stateDir: string, me: () => string | undefined, attended: () => boolean): DeviceSide => {
+	const dir = capDir(join(stateDir, "board"));
+	return { room: () => readDevice(dir, Date.now()), store: createReservations(dir, Date.now), session: me, budget: () => readBudget(stateDir), attended };
 };
 /** The row shows a launch: it lists the main's session with a running worker of the launch's (folded) name. */
 const shows = (r: Room, h: Holder) => h.worker !== "" && (r.mains?.find((m) => m.session === h.session)?.workers ?? []).some((w) => nameKey(w) === h.worker);
+const sum = (xs: readonly number[]) => xs.reduce((n, x) => n + x, 0);
 
-export function createWorkerCap(cap = WORKER_CAP, device?: DeviceSide) {
-	/** Worker calls admitted whose tool has not returned yet: the registry may not hold them. With a budget, each holds a reservation (its id). */
-	const admitted = new Map<string, string | undefined>();
+export function createWorkerCap(device?: DeviceSide) {
+	/** Worker calls admitted whose tool has not returned yet, each with its reservation's id. */
+	const admitted = new Map<string, string>();
 	const snapshotOf = snapshotScan();
 	/** The `metadata.points` of the main's own open todo whose `owner` is the subagent's `name` (read as capfill.ts reads the list), as the board's headroom weighs a ready todo; 1 without one. */
 	const weight = (name: unknown, branch?: () => readonly unknown[]): number => {
@@ -51,32 +48,30 @@ export function createWorkerCap(cap = WORKER_CAP, device?: DeviceSide) {
 		return (mine.find((t) => t.status === "in_progress") ?? mine[0])?.points ?? DEFAULT_POINTS;
 	};
 	return {
-		/** pi's `tool_call` for `subagent`: a refusal when `input.agent` is a worker and the budget, or `cap` workers already run or are admitted, leave no room. `branch`: the main's session entries, for the todo's weight. */
+		/** pi's `tool_call` for `subagent`: on an unattended device with a budget, a refusal when `input.agent` is a worker the device's points leave no room for. `branch`: the main's session entries, for the todo's weight. */
 		admit(toolCallId: string, input: unknown, branch?: () => readonly unknown[]): { block: true; reason: string } | undefined {
 			const { agent, name } = (input ?? {}) as { agent?: unknown; name?: unknown };
-			if (typeof agent !== "string" || dutyOfAgent(agent) !== "worker") return undefined;
-			const me = device?.session(), listed = (r: Room | undefined): r is Room & { budget: number } => r?.budget !== undefined && me !== undefined && (r.mains ?? []).some((m) => m.session === me);
-			if (device && listed(device.room())) {
-				const need = weight(name, branch);
-				let id: string | undefined, r: Room | undefined, held = 0;
-				try {
-					id = device.store.add(need, { session: me!, worker: typeof name === "string" ? nameKey(name) : "" });
-					r = device.room(); // read after the reservation is published
-					if (listed(r)) held = device.store.live(r.at ?? -Infinity, (h) => shows(r!, h)).filter((x) => x.id !== id).reduce((n, x) => n + x.points, 0);
-				} catch (error) {
-					try { if (id !== undefined) device.store.drop(id); } catch { /* it expires */ }
-					return { block: true, reason: `sb: the device's capacity reservation could not be written (${(error as Error).message}): no worker starts until it can.` };
-				}
-				if (!listed(r)) device.store.drop(id); // the row went stale or no longer lists this main: the count of 4 below
-				else if (r.points + held + need > r.budget) {
-					device.store.drop(id);
-					return { block: true, reason: `sb: the device runs ${r.points} of its ${r.budget} capacity points, ${Math.round(held * 100) / 100} more held by launches it does not count yet: this worker needs ${need}. Wait for a result, then dispatch the next; a scout, a planner, or a reviewer may run now.` };
-				} else return void admitted.set(toolCallId, id);
+			if (typeof agent !== "string" || dutyOfAgent(agent) !== "worker" || !device || device.attended()) return undefined;
+			const budget = device.budget();
+			if (budget === undefined) return undefined;
+			const me = device.session() ?? "", need = weight(name, branch);
+			let id: string | undefined, used = 0, held = 0;
+			try {
+				id = device.store.add(need, { session: me, worker: typeof name === "string" ? nameKey(name) : "" });
+				const r = device.room(); // read after the reservation is published
+				const own = r?.mains?.some((m) => m.session === me) ? undefined : runningWorkers(); // no row counts this main's workers: its registry does
+				used = (r?.points ?? 0) + sum((own ?? []).map((w) => weight(w, branch)));
+				held = sum(device.store.live(r?.at ?? -Infinity, (h) => r !== undefined && shows(r, h)).filter((x) => x.id !== id && !(own && x.session === me && x.launched)).map((x) => x.points));
+			} catch (error) {
+				try { if (id !== undefined) device.store.drop(id); } catch { /* it expires */ }
+				return { block: true, reason: `sb: the device's capacity reservation could not be written (${(error as Error).message}): no worker starts until it can.` };
 			}
-			const running = runningWorkers();
-			if (running === undefined) return undefined;
-			if (running + admitted.size >= cap) return { block: true, reason: `sb: ${cap} workers run for this main already (${running} running, ${admitted.size} starting in this message): wait for a result, then dispatch the next; a scout, a planner, or a reviewer may run now.` };
-			admitted.set(toolCallId, undefined);
+			if (used + held + need > budget) {
+				device.store.drop(id);
+				const pts = (n: number) => Math.round(n * 100) / 100;
+				return { block: true, reason: `sb: the device runs ${pts(used)} of its ${budget} capacity points, ${pts(held)} more held by launches it does not count yet: this worker needs ${need}. Wait for a result, then dispatch the next; a scout, a planner, or a reviewer may run now.` };
+			}
+			admitted.set(toolCallId, id);
 			return undefined;
 		},
 		/** pi's `tool_result` for `subagent`: the launch ended, and the registry holds the worker if it started. A reservation stays for a launch that returned, and goes for one that failed. */
@@ -87,7 +82,7 @@ export function createWorkerCap(cap = WORKER_CAP, device?: DeviceSide) {
 		},
 		/** The turn ended: every call of it has run, or was blocked by another extension, which leaves no result: its reservation goes. */
 		settle(): void {
-			for (const id of admitted.values()) if (id !== undefined && device) try { device.store.drop(id); } catch { /* it expires */ }
+			for (const id of admitted.values()) if (device) try { device.store.drop(id); } catch { /* it expires */ }
 			admitted.clear();
 		},
 	};

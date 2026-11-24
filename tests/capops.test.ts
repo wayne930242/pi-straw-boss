@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { writeEntry } from "../src/board.ts";
+import { readBudget } from "../src/capacity.ts";
 import type { HerdrRun, Pane, Session } from "../src/herdr.ts";
-import { armedLoop, mainFacts, readBudget, tellCap } from "../src/server/capops.ts";
+import { armedLoop, mainFacts, tellCap } from "../src/server/capops.ts";
 
 // The server's side of the capacity watch (src/server/capops.ts): `capacity.budget`, the facts of the live mains, and where an event goes.
 

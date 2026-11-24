@@ -33,7 +33,7 @@ const CHECKING = "Straw Boss is still asking Herdr whether this is a sub workspa
 const UNPLACED = (why: string) => `Straw Boss could not tell whether this is a sub workspace: ${why}; it asks again`;
 
 /** What the session does at its start, around each run, and at its end. */
-export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, integration, startTower }: { mainDuty: MainDuty; runMode: RunMode; briefing: Briefing; roles: Roles; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; control: Control; integration: IntegrationWatch; startTower(): Promise<void> }) {
+export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, integration, startTower, attended }: { mainDuty: MainDuty; runMode: RunMode; briefing: Briefing; roles: Roles; presence: Presence; membership: Membership; guard: Guard; host: ReturnType<typeof createHost>; reach: Reach; digest: Digest; control: Control; integration: IntegrationWatch; startTower(): Promise<void>; /** Whether a person is at this device (the link's policy): the worker cap holds only on an unattended one. */ attended(): boolean }) {
 	const { pi, cfg, s, guiDir, me, role, tell } = kit;
 	const { run, env, version } = cfg;
 	const who = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
@@ -325,7 +325,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 
 	// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
-	const cap = createWorkerCap(undefined, deviceRoom(guiDir, me));
+	const cap = createWorkerCap(deviceRoom(guiDir, me, attended));
 	pi.on("turn_end", () => cap.settle());
 	pi.on("tool_call", async (event, ctx) => {
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || runMode.active()) return;
@@ -346,7 +346,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			tell(`Straw Boss: ${(error as Error).message}`, "warning");
 		}
 		mainDuty.migrate(pi.getSessionName()); // the promotion above may have just made this an `integ <project>` main whose migration had not run
-		// No plan gates a worker (docs/specs/2026-11-23-lite-main.md §1); the cap does (§3): at most 4 workers of this session run at once, or, with a capacity budget, as many as the device's points allow (docs/specs/2026-11-24-capacity.md, The cap).
+		// No plan gates a worker (docs/specs/2026-11-23-lite-main.md §1) and no count does: only an unattended device with a capacity budget holds one back, by its points (docs/specs/2026-11-24-capacity.md, The cap).
 		if (event.toolName === "subagent") return cap.admit(event.toolCallId, event.input, () => ctx.sessionManager.getBranch()); // the todo its `name` owns weighs it
 	});
 

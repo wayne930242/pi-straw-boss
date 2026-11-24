@@ -108,7 +108,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck, turn: bridge.turn });
 		const watch = createBossWatch(kit, { ask: cfg.ask ?? look?.ask, control, openTower: reach.openTower, remote: () => Boolean(link.remoteScope()) });
-		registerSession(kit, { mainDuty, integration: createIntegrationWatch(kit), runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest, roles, reach }) });
+		registerSession(kit, { mainDuty, attended: () => link.attended(), integration: createIntegrationWatch(kit), runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest, roles, reach }) });
 		trainGuard = registerTrainGuard(kit, cars.client, mainDuty);
 		mainDuty.trainOn(() => Boolean(trainGuard)); // a train's todo and MonitorCreate calls, and the integrator's train todos (nothing loads with the merge train off)
 		registerBoss(kit, { runMode, host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look, paths: createBossPaths(kit, { host, server: look, closeSelf, here: host.here }) });

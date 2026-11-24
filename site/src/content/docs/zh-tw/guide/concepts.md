@@ -82,7 +82,7 @@ Straw Boss 從子智慧體啟動時用的 pi-herdr-agents 角色名稱，讀出�
 其他角色名稱仍是一般的子智慧體。
 
 主智慧體不必先寫計畫就能派出任何一種；它的提示要它在每個工作者出發前先開一個 todo。
-同一個主智慧體最多同時跑 4 個工作者：第 5 個會被 `sb: 4 workers run for this main already` 拒絕，等有結果回來再派。偵察、規劃與審查不算在內。
+工作者沒有數量上限：在你自己的電腦上由你盯著。只有無人值守的裝置會擋下工作者，條件是它的點數會超過 `capacity.budget`（`sb: the device runs … capacity points …`，等有結果回來再派）。偵察、規劃與審查一律不擋。
 
 ### 用 boss_watch 盯著一件事
 

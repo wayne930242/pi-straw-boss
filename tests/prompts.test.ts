@@ -29,6 +29,7 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 2026-11-24 (capacity, docs/specs/2026-11-24-capacity.md, Prompts; boss 2026-11-24 「無人塔台值守和一般的 main agent 都應該把產能放在心上」; measured): main.md off 563 to 603, on 808 to 848 (dispatch up to the budget, an idle main takes its next work, a capacity notice is its own); tower.md off 468 to 492, on 538 to 562 (a capacity notice is an incident).
 // 2026-11-24 (capacity review prompts-review F003; measured): tower.md off 492 to 500, on 562 to 570 (`device-silent-2h`, sb's escalation at 2 hours, goes to the boss).
 // 2026-11-24 (capacity routing; field, MP Center box 2: three notices to the standing main and the tower over 2.5 h started nothing; measured): main.md off 603 to 617, on 848 to 862 (a notice on your work: dispatch now or say why, to whoever asked; sb's on the board); tower.md off 500 to 516, on 570 to 586 (`under` and `stale` reach the main from sb; `under-30m`, sb's at 30 min: ask that main).
+// 2026-11-24 (no count cap, boss: only an unattended device caps workers, by points; measured): main.md stays 617/862 (the trust-prompt reason shortened to make room), planning.md 511/635 to 516/640.
 const BUDGETS: Record<string, number> = { "main.md": 617, "tower.md": 516, "member.md": 140, "member-no-main.md": 150 };
 // Its review fixes (SB-F001, F003, F005: the Approval line quotes words already given and asks only when they are missing, the tower reports nothing back on a forwarded slip): main.md 680 to 700, tower.md 390 to 395, integrator.md 320 to 340 (SB-F002 and F006: the deploy gate before `Merge`, a subagent briefed for one step).
 // Train workers (docs/specs/2026-11-07-train-workers.md §13.1, task 8): tower.md on 424 to 471 (forward with `forward`, open a train with `role: "train"`, a car notice's `blocked`; off stays 402); main.md on 715 to 720 (Batch owner, Handoff route, Record and Approval say who schedules, who departs, who notifies, and where the boss's nod is quoted); integrator.md 340 to 380 and train.md ~450 have their own budgets below.
@@ -171,7 +172,9 @@ test("merge train: the integrator prompt carries no legacy own-merge exemption, 
 test("the main dispatches work independent of its chain to a subagent in parallel", () => {
 	// 0.80.x moved the line to the two graph addenda (docs/specs/2026-11-09-agent-kinds.md §2a); 0.83.0 folds the dispatch rules back into main.md once (docs/specs/2026-11-23-lite-main.md §1).
 	const main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
-	for (const term of ["work independent of your chain goes to subagents in parallel", "at most 4 workers at once", "a todo before its worker starts", "split work by owning app", "parallel writers get worktrees", "Dependent tasks wait"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	for (const term of ["work independent of your chain goes to subagents in parallel", "on an unattended device within its capacity budget", "`metadata.points` 0.25", "a todo before its worker starts", "split work by owning app", "parallel writers get worktrees", "Dependent tasks wait"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	// Boss 2026-11-24 (「本來就不該有上限，我自己盯。只有無人塔台要有點數上限」): no count caps a main's workers.
+	for (const file of ["main.md", "planning.md"]) assert.doesNotMatch(readFileSync(`${PROMPT_DIR}/${file}`, "utf8"), /at most 4|else 4\)/, file);
 });
 
 // docs/specs/2026-11-06-seam-bindings.md: the `integrating` and `deploying` skills of the merge-train contract leave six seams open (references/seams.md) and read one `## Seam bindings` block from the session's instructions.
