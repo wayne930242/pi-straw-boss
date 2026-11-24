@@ -48,6 +48,15 @@ test("scheduled todos become ready on a server tick without a ledger change", ()
 	}
 });
 
+test("only a named person suppresses stale and ready work", () => {
+	for (const waitsOn of [" boss ", "", "  ", 42]) {
+		const snapshot = { nextId: 2, tasks: [{ id: 1, subject: "review", status: "pending", metadata: { waitsOn } }] };
+		const dir = tmp(); writeCap(dir, cap("a", capOfTodos(todosOf(snapshot)!, snapshot)));
+		const d = join_([main("a", { state: "idle", fileMtime: 1, entryUpdated: 1 })], readCaps(dir));
+		assert.deepEqual([d.ready, !!d.mains[0]?.stale], waitsOn === " boss " ? [0, false] : [1, true]);
+	}
+});
+
 test("background work clears stale in both modes without reserving capacity", () => {
 	for (const unattended of [false, true]) {
 		const d = join_([main("a", { background: true, state: "idle", fileMtime: 1, entryUpdated: 1 })], [cap("a", { open: 1 })], { unattended });

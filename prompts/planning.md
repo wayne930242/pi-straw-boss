@@ -21,7 +21,7 @@ For fan-out and orchestrator-worker, one todo per task:
 - `description`: the app, the worktree branch for a parallel writer, the anchor and who exercises it, and the exact artifact path a dependent will read.
 - `blockedBy`: the tasks whose output or landed change this one needs; the rest run in parallel up to the capacity budget (`board_read` `capacity`; else 4). Serialize only on a real dependency or shared files.
 - `metadata`: `{ "graph": "<a graph name from section 1, exactly>", "anchor": "...", "checkpoint": "own" | "<checkpoint todo id>", "points": <n> }`: its weight against the budget, as the boss or project weighs it (default 1).
-- For later work, set `metadata.until` (ISO date/datetime). Your running monitor, active loop, or `boss_watch` prevents stale notices.
+- Defer: `metadata.until` (ISO) or `metadata.waitsOn` (person). Your monitor, loop or `boss_watch` prevents stale notices.
 
 ## 3. Name the anchors
 

@@ -13,6 +13,8 @@ const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null 
 export function todoDeadlines(snapshot: unknown): Map<number, number> {
 	const dates = new Map<number, number>();
 	if (isObject(snapshot) && Array.isArray(snapshot.tasks)) for (const t of snapshot.tasks.slice(0, 200)) {
+		// A person has no scheduled return; use the last representable instant in the local capacity file.
+		if (typeof t?.metadata?.waitsOn === "string" && t.metadata.waitsOn.trim()) { dates.set(t.id, 8.64e15); continue; }
 		const s = t?.metadata?.until;
 		if (typeof s !== "string" || !/^\d{4}-\d\d-\d\d(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?)?$/.test(s)) continue;
 		const at = Date.parse(s), day = s.slice(0, 10), midnight = Date.parse(day);
