@@ -19,8 +19,8 @@ For fan-out and orchestrator-worker, one todo per task:
 - `subject`: the required outcome.
 - `owner`: the subagent's name, or `self` for work you carry yourself.
 - `description`: the app, the worktree branch for a parallel writer, the anchor and who exercises it, and the exact artifact path a dependent will read.
-- `blockedBy`: the tasks whose output or landed change this one needs; the rest run in parallel. Writers that would clash in one checkout wait.
-- `metadata`: `{ "graph": "<a graph name from section 1, exactly>", "anchor": "...", "checkpoint": "own" | "<checkpoint todo id>" }`.
+- `blockedBy`: the tasks whose output or landed change this one needs; the rest run in parallel up to the capacity budget (`board_read` `capacity`; else 4). Serialize only on a real dependency or shared files.
+- `metadata`: `{ "graph": "<a graph name from section 1, exactly>", "anchor": "...", "checkpoint": "own" | "<checkpoint todo id>", "points": <n> }`: its weight against the budget, as the boss or project weighs it (default 1).
 
 ## 3. Name the anchors
 

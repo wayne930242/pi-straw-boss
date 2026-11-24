@@ -12,7 +12,7 @@ import { CONNECT_MS, type Membership } from "./membership.ts";
 import { type CoordinatorDuty, isCoordinatorDuty } from "./duty.ts";
 import type { MainDuty } from "./mainduty.ts";
 import { orphans } from "./orphan.ts";
-import { createWorkerCap } from "./workercap.ts";
+import { createWorkerCap, deviceRoom } from "./workercap.ts";
 import { inherited, RESULT } from "./inherit.ts";
 import { keyOf, REVIVE_TOKEN } from "./revive.ts";
 import { armSignals, signalSeen } from "./signalseen.ts";
@@ -325,7 +325,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 
 	// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
-	const cap = createWorkerCap();
+	const cap = createWorkerCap(undefined, deviceRoom(guiDir));
 	pi.on("turn_end", () => cap.settle());
 	pi.on("tool_call", async (event) => {
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || runMode.active()) return;
@@ -346,7 +346,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			tell(`Straw Boss: ${(error as Error).message}`, "warning");
 		}
 		mainDuty.migrate(pi.getSessionName()); // the promotion above may have just made this an `integ <project>` main whose migration had not run
-		// No plan gates a worker (docs/specs/2026-11-23-lite-main.md §1); the cap does (§3): at most 4 workers of this session run at once.
+		// No plan gates a worker (docs/specs/2026-11-23-lite-main.md §1); the cap does (§3): at most 4 workers of this session run at once, or, with a capacity budget, as many as the device's points allow (docs/specs/2026-11-24-capacity.md, The cap).
 		if (event.toolName === "subagent") return cap.admit(event.toolCallId, (event.input as { agent?: unknown } | undefined)?.agent);
 	});
 

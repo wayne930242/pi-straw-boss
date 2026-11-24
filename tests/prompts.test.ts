@@ -26,7 +26,8 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 2026-11-07 (wait cards, docs/specs/2026-11-07-wait-cards.md, Prompts; shortened in the GUI review, GR-F012): tower.md +31 for "the boss is not an agent: write a wait for them in plain full sentences" (off 371 to 402, on 393 to 424); main.md +20 for the `wait_card` message and `secret_drop` (off 481 to 501, on 695 to 715). Budgets = measured.
 // 2026-11-23 (lite main, docs/specs/2026-11-23-lite-main.md §1; measured): dispatch.md (77 words, until then a steer for a coordinator with a graph) folded into main.md once, with a todo before a worker and the cap of 4: main.md off 501 to 541.
 // 2026-11-23 (D, review threads, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.5; measured): main.md off 541 to 563.
-const BUDGETS: Record<string, number> = { "main.md": 563, "tower.md": 468, "member.md": 140, "member-no-main.md": 150 };
+// 2026-11-24 (capacity, docs/specs/2026-11-24-capacity.md, Prompts; boss 2026-11-24 「無人塔台值守和一般的 main agent 都應該把產能放在心上」; measured): main.md off 563 to 603, on 808 to 848 (dispatch up to the budget, an idle main takes its next work, a capacity notice is its own); tower.md off 468 to 492, on 538 to 562 (a capacity notice is an incident).
+const BUDGETS: Record<string, number> = { "main.md": 603, "tower.md": 492, "member.md": 140, "member-no-main.md": 150 };
 // Its review fixes (SB-F001, F003, F005: the Approval line quotes words already given and asks only when they are missing, the tower reports nothing back on a forwarded slip): main.md 680 to 700, tower.md 390 to 395, integrator.md 320 to 340 (SB-F002 and F006: the deploy gate before `Merge`, a subagent briefed for one step).
 // Train workers (docs/specs/2026-11-07-train-workers.md §13.1, task 8): tower.md on 424 to 471 (forward with `forward`, open a train with `role: "train"`, a car notice's `blocked`; off stays 402); main.md on 715 to 720 (Batch owner, Handoff route, Record and Approval say who schedules, who departs, who notifies, and where the boss's nod is quoted); integrator.md 340 to 380 and train.md ~450 have their own budgets below.
 // Fix round of task 8 (prompts-review.md, TP-F001 to F018): budgets = measured: main.md on 720 to 725, tower.md on 471 to 469 (the resident tower forwards nothing), planning.md on 670 to 681 (the check command), integrator.md 380 to 412 (todo lifecycle, legacy trains), train.md 450 to 511 (holds, load and lock, the Record file, the metadata.sb keys).
@@ -37,7 +38,7 @@ const BUDGETS: Record<string, number> = { "main.md": 563, "tower.md": 468, "memb
 // 2026-11-23 (the tower closes agent panes, docs/specs/2026-11-23-tower-close-panes.md §5): measured: tower.md on 508 to 538 and off 438 to 468 (close a main that handed over once its successor is live, whoever opened it; list and close dead agent panes).
 // 2026-11-23 (lite main, as for BUDGETS above; measured): main.md on 743 to 786.
 // 2026-11-23 (D, review threads, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.5; measured): main.md on 786 to 808 (a reviewed change: boss_pair, both briefs, Thread: T<n>, relay nothing).
-const ON_BUDGETS: Record<string, number> = { "main.md": 808, "tower.md": 538 };
+const ON_BUDGETS: Record<string, number> = { "main.md": 848, "tower.md": 562 };
 // 2026-11-08 (todo #125 task 5, TP-F004): `{{cli}}` is the command that runs cli.mjs.
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir", "state", "cli", "duty"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
@@ -85,7 +86,8 @@ test("the main plans from planning.md: graph, todos with owners and blockedBy, s
 	// 2026-11-02 audit (a coordinator offered the boss a page-local design that the app's rules forbade, and a single-loop task opened no anchor loop): +45 words, 20 cut, budget 650 to 670.
 	for (const term of ["Its plan is one todo whose `metadata.anchor` names its check", "read the owning app's instructions", "quote the rule that settles the design in the brief"]) assert.ok(plan.includes(term), `planning.md names ${term}`);
 	// 2026-11-23 (lite main): the graph is no longer a gate and the cap is main.md's: 670/699 to the measured 502/626.
-	for (const off of [false, true]) assert.ok(words(strip(plan, off)) <= (off ? 502 : 626), `planning.md has ${words(strip(plan, off))} words with integration ${off ? "off" : "on"} (budget ${off ? 502 : 626})`);
+	// 2026-11-24 (capacity, measured): 502/626 to 528/652: parallel up to the capacity budget, serialize only on a real dependency, `points` in the todo metadata.
+	for (const off of [false, true]) assert.ok(words(strip(plan, off)) <= (off ? 528 : 652), `planning.md has ${words(strip(plan, off))} words with integration ${off ? "off" : "on"} (budget ${off ? 528 : 652})`);
 });
 
 // D18 and D19 (docs/specs/2026-10-26-sb-backend.md, Decisions): coordination goes through the tower, and a main calls it at three points only. main.md goes from 332 to about 425 words for that rule; the "who owns it" clause of `blocked` takes it to about 445.
@@ -122,7 +124,8 @@ test("merge train: apps-config names the integration fields and points to the sk
 	// 0.75.3 raised 510 to 530 (measured): the rule that a forward with `origin=remote:` covers only `strict` targets its device's boss granted, else blocked (R151-F006, boss 2026-11-12).
 	// 0.77.3 raised 530 to 538 (measured): train_car's `car` is the slip's first ticket, and the slip's `car:` is the app (a coordinator wrote a ticket in car:).
 	// 0.81.6 raised 538 to 544 (measured, review HUR-F001): the departure waits for the tower's answer, unlike a heads-up; a refusal means no train opened.
-	assert.ok(words(integrator) <= 544, `integrator.md has ${words(integrator)} words`);
+	// 2026-11-24 (capacity, measured): 544 to 578: depart with 2 or 3 cars that share no files, a red gate drops the breaking car, never skip a gate.
+	assert.ok(words(integrator) <= 578, `integrator.md has ${words(integrator)} words`);
 });
 
 // Train stages (docs/specs/2026-11-05-train-stages.md, boss form 2026-11-05): one integrator carries a train through merge, deploy, and UAT; Straw Boss names the flow, never an environment.
@@ -151,7 +154,7 @@ test("merge train: main hands integration cars over with why shared, planning st
 		const text = readFileSync(`${PROMPT_DIR}/${file}`, "utf8");
 		for (const term of file === "tower.md" ? ["`integration`", "integrator", "boss_open_main"] : ["`integration`", "integrator", "boss_open_main", "integrator.md"]) assert.ok(text.includes(term), `${file} names ${term}`);
 	}
-	for (const off of [false, true]) assert.ok(words(strip(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), off)) <= (off ? 468 : 538)); // wait cards: +31; 0.81.6 shared heads-up: +15/+11; 2026-11-23 revive: +21/+21; 2026-11-23 close panes: +30/+30, see BUDGETS
+	for (const off of [false, true]) assert.ok(words(strip(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), off)) <= (off ? 492 : 562)); // wait cards: +31; 0.81.6 shared heads-up: +15/+11; 2026-11-23 revive: +21/+21; 2026-11-23 close panes: +30/+30, see BUDGETS
 	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("finding with evidence"));
 });
 
@@ -241,7 +244,7 @@ test("train workers: train.md and integrator.md stay within their budgets, on an
 	const train = read("train.md");
 	assert.ok(words(strip(train, false)) > 300 && words(strip(train, false)) <= 632, `train.md has ${words(strip(train, false))} words on`);
 	assert.equal(words(strip(train, true)), 0, "train.md is empty with the train off");
-	assert.ok(words(read("integrator.md")) > 300 && words(read("integrator.md")) <= 544, `integrator.md has ${words(read("integrator.md"))} words`);
+	assert.ok(words(read("integrator.md")) > 300 && words(read("integrator.md")) <= 578, `integrator.md has ${words(read("integrator.md"))} words`);
 });
 
 test("train workers: train.md ends with its own block of the seven seams in the order of seams.md, and main.md keeps six", () => {
@@ -391,4 +394,17 @@ test("D14: duty-standing.md lets the standing main approve anything as the boss'
 	assert.ok(on.includes("Add `bossOnly: true` when only the boss may decide it (a strict train target's auth or approval, a credential, a team join)."), "tower-run.md bossOnly");
 	assert.ok(on.includes("its answer comes as a server notice in the delegate's words, not the boss's; act on it as the card's answer and never quote it as the boss's (not as `auth`)."), "tower-run.md the delegate's words");
 	assert.ok(off.includes("Add `bossOnly: true` when only the boss may decide it (a credential, a team join).") && off.includes("never quote it as the boss's. One it does not approve"), "with the train off the clause names no train");
+});
+
+// Capacity (docs/specs/2026-11-24-capacity.md, Prompts): every role that can act on idle capacity says so.
+test("capacity: main and planning dispatch up to the budget, standing and towers treat capacity notices as incidents, the integrator batches cars", () => {
+	const read = (f: string) => readFileSync(`${PROMPT_DIR}/${f}`, "utf8");
+	for (const [file, terms] of [
+		["main.md", ["capacity budget", "Idle with ready todos: dispatch them", "A capacity notice on your work"]],
+		["planning.md", ["capacity budget", "Serialize only on a real dependency or shared files", "\"points\""]],
+		["duty-standing.md", ["Capacity is yours to mind", "`capacity_notice`", "`under`", "`stale`", "`quota`", "`device-silent`"]],
+		["tower.md", ["A `capacity` notice is an incident"]],
+		["tower-run.md", ["A `capacity` notice from the sb server", "is an incident, not a report"]],
+		["integrator.md", ["Depart with 2 or 3 cars that share no files", "A red gate drops the car that broke it; never skip a gate"]],
+	] as const) for (const term of terms) assert.ok(read(file).includes(term), `${file} names ${term}`);
 });

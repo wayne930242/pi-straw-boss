@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { capDir, readDevice } from "./capacity.ts";
 import { dutyOfAgent } from "./duty.ts";
 
 // The cap on a session's concurrent workers (docs/specs/2026-11-23-lite-main.md §3): at most 4 `worker` subagents run at once, counted from pi-herdr-agents' registry of the children this process
@@ -16,13 +18,27 @@ function runningWorkers(): number | undefined {
 	return n;
 }
 
-export function createWorkerCap(cap = WORKER_CAP) {
+/** The device's capacity as the sb server last wrote it (capacity.ts `readDevice`): points in use and the budget, when one is set. */
+export interface Room { points: number; budget?: number | undefined }
+
+// With a capacity budget (docs/specs/2026-11-24-capacity.md, The cap) the device's points decide instead of the count of 4: a worker starts while the points in use, the workers
+// starting in this message, and the new one (1 point each, as an unnamed worker counts) fit the budget. A device row that is missing or stale falls back to the count.
+/** The reader of the device row beside the board folder under `guiDir`. */
+export const deviceRoom = (guiDir: string) => (): Room | undefined => readDevice(capDir(join(guiDir, "board")), Date.now());
+
+export function createWorkerCap(cap = WORKER_CAP, room: () => Room | undefined = () => undefined) {
 	/** Worker calls admitted whose tool has not returned yet: the registry may not hold them. */
 	const admitted = new Set<string>();
 	return {
 		/** pi's `tool_call` for `subagent`: a refusal when `agent` is a worker and `cap` already run or are admitted. */
 		admit(toolCallId: string, agent: unknown): { block: true; reason: string } | undefined {
 			if (typeof agent !== "string" || dutyOfAgent(agent) !== "worker") return undefined;
+			const r = room();
+			if (r?.budget !== undefined) {
+				if (r.points + admitted.size + 1 > r.budget) return { block: true, reason: `sb: the device runs ${r.points} of its ${r.budget} capacity points (${admitted.size} more starting in this message): wait for a result, then dispatch the next; a scout, a planner, or a reviewer may run now.` };
+				admitted.add(toolCallId);
+				return undefined;
+			}
 			const running = runningWorkers();
 			if (running === undefined) return undefined;
 			if (running + admitted.size >= cap) return { block: true, reason: `sb: ${cap} workers run for this main already (${running} running, ${admitted.size} starting in this message): wait for a result, then dispatch the next; a scout, a planner, or a reviewer may run now.` };
