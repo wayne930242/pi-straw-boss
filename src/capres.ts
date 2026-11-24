@@ -2,19 +2,19 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Device-wide worker admission (docs/specs/2026-11-24-capacity.md, The cap): the device row is sampled once a minute, so a launch holds its points in a reservation until a row counts its worker.
-// One file per reservation in `<state dir>/capacity/_reserved/`, written under a temporary name and renamed, so every main's session on the device reads only whole ones. A reservation stands until
-// its tool call failed or its turn ended without a result (`drop`), a device row sampled `RES_MARGIN_MS` after its launch reflects it, or `RES_EXPIRE_MS` after it was made.
+// Device-wide worker admission (docs/specs/2026-11-24-capacity.md, The cap): the device row is sampled once a minute, so a launch holds its points in a reservation until a row shows its worker.
+// One file per reservation in `<state dir>/capacity/_reserved/`, written under a temporary name and renamed, so every main's session on the device reads only whole ones. A reservation goes when
+// its tool call failed or its turn ended without a result (`drop`), or `RES_EXPIRE_MS` after it was made. A launched one stops counting for a reader whose row shows its worker under its main
+// (sampled after the launch), or whose row is no older than one that did (`seen`); a reader with an older row counts it still. A timestamp alone never retires one.
 
-const MIN = 60_000;
-/** A launched worker shows in the device row this long after its launch at the latest: the server's minute, and the pane's subagent mark. */
-export const RES_MARGIN_MS = 2 * MIN;
-/** A reservation no device row counted goes after this long (the server stopped, or the worker never showed). */
-export const RES_EXPIRE_MS = 10 * MIN;
+/** A reservation no device row showed goes after this long (the server stopped, the worker never showed, or it ended between two rows). */
+export const RES_EXPIRE_MS = 10 * 60_000;
 const FOLDER = "_reserved", ID = /^[0-9a-z-]{8,64}$/;
 
-/** `at`: when it was made, then when its launch returned; `launched`: its tool call returned without error, so a row sampled after it counts the worker. */
-export interface Reservation { id: string; at: number; points: number; launched: boolean }
+/** Whose launch it is: the main's session and the worker's name, case- and space-folded (empty for a nameless worker, which no row can show). */
+export interface Holder { session: string; worker: string }
+/** `at`: when it was made, then when its launch returned; `launched`: its tool call returned without error; `seen`: the sampling time of the first row that showed its worker. */
+export interface Reservation extends Holder { id: string; at: number; points: number; launched: boolean; seen?: number }
 export type Reservations = ReturnType<typeof createReservations>;
 
 /** The reservations of the device under the capacity folder `dir` (capacity.ts `capDir`). File errors throw: the caller refuses the launch it cannot hold. */
@@ -34,33 +34,42 @@ export function createReservations(dir: string, now: () => number) {
 	const read = (id: string): Reservation | undefined => {
 		try {
 			const r = JSON.parse(readFileSync(file(id), "utf8")) as Partial<Reservation>;
-			return typeof r.at === "number" && Number.isFinite(r.at) && typeof r.points === "number" && r.points >= 0 && r.points <= 10 ? { id, at: r.at, points: r.points, launched: r.launched === true } : undefined;
+			const time = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+			if (!time(r.at) || typeof r.points !== "number" || r.points < 0 || r.points > 10 || typeof r.session !== "string" || typeof r.worker !== "string") return undefined;
+			return { id, at: r.at!, points: r.points, session: r.session, worker: r.worker, launched: r.launched === true, ...(time(r.seen) ? { seen: r.seen } : {}) };
 		} catch {
 			return undefined;
 		}
 	};
 	return {
-		/** The reservations that stand against a device row sampled at `rowAt`; the expired and reflected ones, and files that are not a reservation, are removed. */
-		live(rowAt: number | undefined): Reservation[] {
+		/**
+		 * The reservations that count against a device row sampled at `rowAt`, whose sampled workers `shows` tells. A launched one that row shows is marked `seen` and not counted; one a row no
+		 * older than `rowAt` showed before is not counted either. The expired ones, and files that are not a reservation, are removed.
+		 */
+		live(rowAt: number, shows: (h: Holder) => boolean): Reservation[] {
 			let names: string[] = [];
 			try { names = readdirSync(folder).filter((n) => n.endsWith(".json")); } catch { /* none yet */ }
 			const t = now();
 			return names.flatMap((name): Reservation[] => {
 				const id = name.slice(0, -".json".length), r = ID.test(id) ? read(id) : undefined;
-				if (r && t - r.at <= RES_EXPIRE_MS && !(r.launched && rowAt !== undefined && rowAt > r.at + RES_MARGIN_MS)) return [r];
-				rmSync(join(folder, name), { force: true });
-				return [];
+				if (!r || t - r.at > RES_EXPIRE_MS) return rmSync(join(folder, name), { force: true }), [];
+				if (r.launched && rowAt > r.at && shows(r)) {
+					if (r.seen === undefined || rowAt < r.seen) try { write({ ...r, seen: rowAt }); } catch { /* the next reader marks it */ }
+					return [];
+				}
+				return r.seen !== undefined && rowAt >= r.seen ? [] : [r];
 			});
 		},
-		/** A new reservation of `points`; its id. */
-		add(points: number): string {
+		/** A new reservation of `points` for `who`; its id. */
+		add(points: number, who: Holder): string {
 			const id = `${now().toString(36)}-${process.pid.toString(36)}-${randomBytes(4).toString("hex")}`;
-			write({ id, at: now(), points, launched: false });
+			write({ id, at: now(), points, session: who.session, worker: who.worker, launched: false });
 			return id;
 		},
-		/** Its launch returned: it stands until a row sampled after now counts the worker. */
+		/** Its launch returned: it counts until a row sampled after now shows the worker. */
 		launched(id: string): void {
-			if (read(id)) write({ ...read(id)!, at: now(), launched: true });
+			const r = read(id);
+			if (r) write({ ...r, at: now(), launched: true });
 		},
 		drop: (id: string) => void rmSync(file(id), { force: true }),
 	};

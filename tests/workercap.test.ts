@@ -3,12 +3,12 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { createReservations, RES_EXPIRE_MS, RES_MARGIN_MS } from "../src/capres.ts";
+import { createReservations, RES_EXPIRE_MS, type Reservations } from "../src/capres.ts";
 import { createWorkerCap, type Room } from "../src/workercap.ts";
 import { fakeClock } from "./fake-clock.ts";
 
 // docs/specs/2026-11-24-capacity.md, The cap: with a capacity budget the device's points gate a worker instead of the count of 4, and a launch holds its points in a reservation every main of the
-// device sees until a device row sampled after it counts the worker, its call fails, or it expires.
+// device sees until a device row sampled after its launch shows that worker under its main, its call fails, or it expires. A main the row does not list keeps the count of 4.
 const REGISTRY = Symbol.for("pi-subagents/runtime");
 const MIN = 60_000;
 const registry = (workers: number) => {
@@ -18,14 +18,16 @@ const registry = (workers: number) => {
 };
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+/** The mains the server sampled, with the running workers it saw: `s-a` and `s-b` unless named. */
+const sampled = (a: string[] = [], b: string[] = []) => [{ session: "s-a", workers: a }, { session: "s-b", workers: b }];
 /** One device: its capacity folder, a clock, and the device row every main reads (`row`, which the test replaces as the server would). */
-function device(row: Room) {
+function device(row: Partial<Room> & { points: number }) {
 	const dir = mkdtempSync(join(tmpdir(), "psb-wcap-")), clock = fakeClock(Date.parse("2026-11-24T10:00:00Z"));
 	dirs.push(dir);
-	const d = { dir, clock, row: { ...row, at: row.at ?? clock.now() } as Room };
-	/** A main: its own cap and its own store over the shared folder, as a second process would have. */
-	const main = () => createWorkerCap(undefined, { room: () => d.row, store: createReservations(dir, clock.now) });
-	return { d, main, held: () => readdirSync(join(dir, "_reserved")).filter((n) => n.endsWith(".json")).length };
+	const d = { dir, clock, row: { mains: sampled(), ...row, at: row.at ?? clock.now() } as Room };
+	/** A main: its own cap and its own store over the shared folder, as a second process would have; `room` is its own read of the row (a test may lag it). */
+	const main = (session = "s-a", room = () => d.row, store: Reservations = createReservations(dir, clock.now)) => createWorkerCap(undefined, { room, store, session: () => session });
+	return { d, main, held: () => { try { return readdirSync(join(dir, "_reserved")).filter((n) => n.endsWith(".json")).length; } catch { return 0; } } };
 }
 const worker = (name?: string) => ({ agent: "worker", ...(name ? { name } : {}) });
 const todos = (tasks: { id: number; owner?: string; status?: string; points?: number }[]) => () => [{ type: "custom", customType: "rpiv-todo-state", data: { nextId: 99, tasks: tasks.map((t) => ({ id: t.id, subject: `t${t.id}`, status: t.status ?? "pending", ...(t.owner ? { owner: t.owner } : {}), ...(t.points !== undefined ? { metadata: { points: t.points } } : {}) })) } }];
@@ -39,53 +41,87 @@ test("with a budget, the device's points gate a worker, past the count of 4", ()
 	assert.match(cap.admit("c3", worker())?.reason ?? "", /^sb: the device runs 6 of its 8 capacity points, 2 more held by launches it does not count yet: this worker needs 1\. Wait for a result/);
 	assert.equal(cap.admit("c-s", { agent: "scout" }), undefined, "a scout is no worker");
 	cap.settle();
-	d.row = { points: 8, budget: 8, at: d.clock.now() };
+	d.row = { points: 8, budget: 8, at: d.clock.now(), mains: sampled() };
 	assert.match(cap.admit("c4", worker())?.reason ?? "", /8 of its 8 capacity points/);
 });
 
 test("without a budget, or with no fresh device row, the count of 4 stands", () => {
 	registry(4);
 	const { d } = device({ points: 0 }), store = createReservations(d.dir, Date.now);
-	for (const room of [undefined, { points: 0 }]) {
-		const cap = createWorkerCap(undefined, { room: () => room, store });
+	for (const room of [undefined, { points: 0, mains: sampled() }]) {
+		const cap = createWorkerCap(undefined, { room: () => room, store, session: () => "s-a" });
 		assert.match(cap.admit("c1", worker())?.reason ?? "", /^sb: 4 workers run for this main already/);
 	}
 	registry(3);
-	assert.equal(createWorkerCap(undefined, { room: () => ({ points: 0 }), store }).admit("c1", worker()), undefined);
+	assert.equal(createWorkerCap(undefined, { room: () => ({ points: 0, mains: sampled() }), store, session: () => "s-a" }).admit("c1", worker()), undefined);
 });
 
 // Review prompts-review F001: one device row (sampled once a minute, usable for 5) let every launch through, turn after turn and main after main, because a launch that returned forgot its points.
-test("two mains, several turns, one snapshot: the device's reservations hold the budget until a later row counts them, a failed call frees its points, an unlaunched one goes at the turn's end, and one expires", () => {
+test("two mains, several turns, one snapshot: the device's reservations hold the budget until a later row shows their workers, a failed call frees its points, an unlaunched one goes at the turn's end, and one expires", () => {
 	registry(0);
-	const { d, main, held } = device({ points: 0, budget: 2 }), a = main(), b = main();
+	const { d, main, held } = device({ points: 0, budget: 2 }), a = main("s-a"), b = main("s-b");
 	for (const id of ["a1", "a2"]) {
-		assert.equal(a.admit(id, worker()), undefined, `${id} fits`);
+		assert.equal(a.admit(id, worker(id)), undefined, `${id} fits`);
 		a.ran(id, false);
 		a.settle();
 		d.clock.advance(10_000);
 	}
-	assert.match(a.admit("a3", worker())?.reason ?? "", /runs 0 of its 2 capacity points, 2 more held/, "a third launch of the same main in a later turn");
-	assert.match(b.admit("b1", worker())?.reason ?? "", /runs 0 of its 2 capacity points, 2 more held/, "another main sees the same reservations");
+	assert.match(a.admit("a3", worker("a3"))?.reason ?? "", /runs 0 of its 2 capacity points, 2 more held/, "a third launch of the same main in a later turn");
+	assert.match(b.admit("b1", worker("b1"))?.reason ?? "", /runs 0 of its 2 capacity points, 2 more held/, "another main sees the same reservations");
 	assert.equal(held(), 2);
 
-	d.row = { points: 2, budget: 2, at: d.clock.now() + RES_MARGIN_MS + 1 }; // the server's next row, sampled after both launches, counts both workers
-	d.clock.advance(RES_MARGIN_MS + 1);
-	assert.match(b.admit("b2", worker())?.reason ?? "", /runs 2 of its 2 capacity points, 0 more held/);
-	assert.equal(held(), 0, "the reservations a later row counts are gone");
+	d.row = { points: 2, budget: 2, at: d.clock.now(), mains: sampled([" A1", "a2"]) }; // the server's next row, sampled after both launches, shows both workers under main s-a
+	assert.match(b.admit("b2", worker("b2"))?.reason ?? "", /runs 2 of its 2 capacity points, 0 more held/);
 
-	d.row = { points: 1, budget: 2, at: d.clock.now() }; // one worker ended
-	assert.equal(b.admit("b3", worker()), undefined);
+	d.row = { points: 1, budget: 2, at: d.clock.now(), mains: sampled(["a1"]) }; // a2 ended
+	assert.equal(b.admit("b3", worker("b3")), undefined, "a2's reservation, shown by an earlier row, is not counted again by a newer one");
 	b.ran("b3", true); // its call failed: no worker started
-	assert.equal(held(), 0, "a failed call frees its points");
-	assert.equal(b.admit("b4", worker()), undefined);
-	assert.match(a.admit("a4", worker())?.reason ?? "", /runs 1 of its 2 capacity points, 1 more held/, "b4 holds its point while its call runs");
+	assert.equal(b.admit("b4", worker("b4")), undefined, "a failed call frees its points");
+	assert.match(a.admit("a4", worker("a4"))?.reason ?? "", /runs 1 of its 2 capacity points, 1 more held/, "b4 holds its point while its call runs");
 	b.settle(); // b4's turn ended without its result (another extension blocked it)
-	assert.equal(a.admit("a5", worker()), undefined, "an unlaunched reservation goes with its turn");
+	assert.equal(a.admit("a5", worker("a5")), undefined, "an unlaunched reservation goes with its turn");
 	a.ran("a5", false);
 	a.settle();
-	assert.match(b.admit("b5", worker())?.reason ?? "", /1 more held/, "the row is older than a5's launch: it holds");
+	d.clock.advance(MIN);
+	d.row = { ...d.row, at: d.clock.now(), mains: sampled(["a1"]) }; // sampled after a5's launch, without a5 (its pane not marked yet)
+	assert.match(b.admit("b5", worker("b5"))?.reason ?? "", /1 more held/, "a newer row that does not show a5 retires nothing: a timestamp alone never does");
 	d.clock.advance(RES_EXPIRE_MS + 1);
-	assert.equal(b.admit("b6", worker()), undefined, "a reservation no row counted expires after 10 minutes");
+	assert.equal(b.admit("b6", worker("b6")), undefined, "a reservation no row showed expires after 10 minutes");
+});
+
+// Re-review of F001, hole 1: a reader whose row lags must still count a launch a newer row showed to another reader; and the row is read after the reservation is published.
+test("a lagging reader counts a launch only a newer row shows, and admission reads the row after it published its reservation", () => {
+	registry(0);
+	const { d, main } = device({ points: 0, budget: 2 }), lagging = d.row;
+	const a = main("s-a", () => lagging), b = main("s-b");
+	assert.equal(a.admit("a1", worker("a1")), undefined);
+	a.ran("a1", false);
+	a.settle();
+	d.clock.advance(MIN);
+	d.row = { points: 1, budget: 2, at: d.clock.now(), mains: sampled(["a1"]) }; // B reads the server's newer row, which counts a1
+	assert.equal(b.admit("b1", worker("b1")), undefined, "1 used (a1) + b1 fits 2");
+	assert.match(a.admit("a2", worker("a2"))?.reason ?? "", /runs 0 of its 2 capacity points, 2 more held/, "A's row predates a1: a1 and b1 both count");
+
+	const { d: d2, main: main2, held } = device({ points: 0, budget: 2 });
+	const store = createReservations(d2.dir, d2.clock.now);
+	// The server writes a newer row between the first read and the reservation: the admission must decide on the row read after it published.
+	const racing: Reservations = { ...store, add: (points, who) => ((d2.row = { points: 2, budget: 2, at: d2.clock.now(), mains: sampled() }), store.add(points, who)) };
+	const c = main2("s-a", undefined, racing);
+	assert.match(c.admit("c1", worker("c1"))?.reason ?? "", /runs 2 of its 2 capacity points/, "decided on the row read after publishing");
+	assert.equal(held(), 0, "the refused launch leaves nothing");
+});
+
+// Re-review of F001, hole 2: only the primary server's Herdr slot is sampled; a main the row does not list (another slot, or not sampled yet) keeps the count of 4 and holds nothing device-wide.
+test("a main the device row does not list keeps the per-main count of 4 and writes no reservation", () => {
+	const { d, main, held } = device({ points: 0, budget: 2 }), other = main("s-other");
+	registry(4);
+	assert.match(other.admit("o1", worker("o1"))?.reason ?? "", /^sb: 4 workers run for this main already/);
+	registry(0);
+	for (const id of ["o2", "o3", "o4"]) assert.equal(other.admit(id, worker(id)), undefined, `${id}: the count, not the budget`);
+	other.ran("o2", false);
+	assert.equal(held(), 0, "no reservation");
+	d.row = { ...d.row, mains: sampled(), at: d.clock.now() };
+	assert.equal(main("s-a").admit("a1", worker("a1")), undefined, "a listed main still has the budget to itself");
 });
 
 // Review prompts-review F002: the board's headroom weighs the ready todo's points, so admission weighs the todo the subagent's name owns, not 1 per worker.
@@ -96,7 +132,7 @@ test("admission weighs the todo whose owner is the subagent's name (case- and sp
 	assert.equal(cap.admit("c1", worker(" ready one"), branch), undefined, "1.5 used + 0.5 ready fits 2");
 	assert.match(cap.admit("c1b", worker("x"), branch)?.reason ?? "", /runs 1\.5 of its 2 capacity points, 0\.5 more held by launches it does not count yet: this worker needs 1\./, "c1 holds its 0.5");
 	cap.settle();
-	d.row = { points: 1, budget: 2, at: d.clock.now() };
+	d.row = { points: 1, budget: 2, at: d.clock.now(), mains: sampled() };
 	assert.match(cap.admit("c2", worker("BIG"), branch)?.reason ?? "", /runs 1 of its 2 capacity points, 0 more held by launches it does not count yet: this worker needs 2\./, "a 2-point ticket at 1 point of headroom");
 	assert.equal(cap.admit("c3", worker("done one"), branch), undefined, "a completed todo weighs nothing: the default 1 fits");
 	assert.match(cap.admit("c4", worker(), branch)?.reason ?? "", /1 more held by launches it does not count yet: this worker needs 1\./, "no name: 1");

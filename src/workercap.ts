@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { capDir, DEFAULT_POINTS, nameKey, readDevice } from "./capacity.ts";
-import { createReservations, type Reservations } from "./capres.ts";
+import { createReservations, type Holder, type Reservations } from "./capres.ts";
 import { dutyOfAgent } from "./duty.ts";
 import { todosOf } from "./items.ts";
 import { snapshotScan } from "./todo.ts";
@@ -21,19 +21,22 @@ function runningWorkers(): number | undefined {
 	return n;
 }
 
-/** The device's capacity as the sb server last wrote it (capacity.ts `readDevice`): points in use, the budget when one is set, and when the row was sampled. */
-export interface Room { points: number; budget?: number | undefined; at?: number }
-/** What the cap reads of the device: its row, and the reservations every main of it shares (capres.ts). */
-export interface DeviceSide { room(): Room | undefined; store: Reservations }
+/** The device's capacity as the sb server last wrote it (capacity.ts `readDevice`): points in use, the budget when one is set, when the row was sampled, and the mains it sampled with their running workers. */
+export interface Room { points: number; budget?: number | undefined; at?: number; mains?: readonly { session: string; workers?: readonly string[] }[] }
+/** What the cap reads of the device: its row, the reservations every main of it shares (capres.ts), and this main's session id. */
+export interface DeviceSide { room(): Room | undefined; store: Reservations; session(): string | undefined }
 
 // With a capacity budget (docs/specs/2026-11-24-capacity.md, The cap) the device's points decide instead of the count of 4: a worker starts while the points in use, the points the device's
-// reservations hold (launches of any main that no row counts yet), and its own fit the budget. Its reservation is written before the sum is read, so two mains that launch at once see each
-// other and the later reader refuses. A device row that is missing or stale falls back to the count.
-/** The device row and reservations beside the board folder under `guiDir`. */
-export const deviceRoom = (guiDir: string): DeviceSide => {
+// reservations hold (launches of any main that no row shows yet), and its own fit the budget. Its reservation is written before the row and the sum are read, so two mains that launch at once
+// see each other. Only a main the row lists takes this path: the server samples the mains of its own Herdr slot, so a main of another slot, or one not sampled yet, keeps the count of 4 and
+// holds nothing device-wide. A device row that is missing or stale falls back to the count.
+/** The device row and reservations beside the board folder under `guiDir`, for the main whose session id `me` gives. */
+export const deviceRoom = (guiDir: string, me: () => string | undefined): DeviceSide => {
 	const dir = capDir(join(guiDir, "board"));
-	return { room: () => readDevice(dir, Date.now()), store: createReservations(dir, Date.now) };
+	return { room: () => readDevice(dir, Date.now()), store: createReservations(dir, Date.now), session: me };
 };
+/** The row shows a launch: it lists the main's session with a running worker of the launch's (folded) name. */
+const shows = (r: Room, h: Holder) => h.worker !== "" && (r.mains?.find((m) => m.session === h.session)?.workers ?? []).some((w) => nameKey(w) === h.worker);
 
 export function createWorkerCap(cap = WORKER_CAP, device?: DeviceSide) {
 	/** Worker calls admitted whose tool has not returned yet: the registry may not hold them. With a budget, each holds a reservation (its id). */
@@ -52,22 +55,23 @@ export function createWorkerCap(cap = WORKER_CAP, device?: DeviceSide) {
 		admit(toolCallId: string, input: unknown, branch?: () => readonly unknown[]): { block: true; reason: string } | undefined {
 			const { agent, name } = (input ?? {}) as { agent?: unknown; name?: unknown };
 			if (typeof agent !== "string" || dutyOfAgent(agent) !== "worker") return undefined;
-			const r = device?.room();
-			if (r?.budget !== undefined && device) {
+			const me = device?.session(), listed = (r: Room | undefined): r is Room & { budget: number } => r?.budget !== undefined && me !== undefined && (r.mains ?? []).some((m) => m.session === me);
+			if (device && listed(device.room())) {
 				const need = weight(name, branch);
-				let id: string, held: number;
+				let id: string | undefined, r: Room | undefined, held = 0;
 				try {
-					id = device.store.add(need);
-					held = device.store.live(r.at).filter((x) => x.id !== id).reduce((n, x) => n + x.points, 0);
+					id = device.store.add(need, { session: me!, worker: typeof name === "string" ? nameKey(name) : "" });
+					r = device.room(); // read after the reservation is published
+					if (listed(r)) held = device.store.live(r.at ?? -Infinity, (h) => shows(r!, h)).filter((x) => x.id !== id).reduce((n, x) => n + x.points, 0);
 				} catch (error) {
+					try { if (id !== undefined) device.store.drop(id); } catch { /* it expires */ }
 					return { block: true, reason: `sb: the device's capacity reservation could not be written (${(error as Error).message}): no worker starts until it can.` };
 				}
-				if (r.points + held + need > r.budget) {
+				if (!listed(r)) device.store.drop(id); // the row went stale or no longer lists this main: the count of 4 below
+				else if (r.points + held + need > r.budget) {
 					device.store.drop(id);
 					return { block: true, reason: `sb: the device runs ${r.points} of its ${r.budget} capacity points, ${Math.round(held * 100) / 100} more held by launches it does not count yet: this worker needs ${need}. Wait for a result, then dispatch the next; a scout, a planner, or a reviewer may run now.` };
-				}
-				admitted.set(toolCallId, id);
-				return undefined;
+				} else return void admitted.set(toolCallId, id);
 			}
 			const running = runningWorkers();
 			if (running === undefined) return undefined;

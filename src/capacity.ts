@@ -101,7 +101,7 @@ export function purgeCaps(dir: string, live: ReadonlySet<string>, now: number): 
 /** A live main as the server sees it: its workers are the names of the subagents of its pane that run now (and, for any main, the device's live trains). */
 export interface MainFacts { session: string; name: string; workspace: string; role: "main" | "train"; state: string; commanding?: boolean; duty?: string; workers: string[]; fileMtime?: number; entryUpdated?: number }
 /** One main's row of the device: points in use, its ready todos (the smallest's points), its open todos, its pause, and whether it is stale. */
-export interface MainRow { session: string; name: string; workspace: string; points: number; ready: number; minReady?: number; open: number; paused?: { until?: number; detail?: string }; stale?: true; standing?: true }
+export interface MainRow { session: string; name: string; workspace: string; points: number; ready: number; minReady?: number; open: number; paused?: { until?: number; detail?: string }; stale?: true; standing?: true; /** The running workers sampled, folded (workercap.ts matches a launch to them); the local file only, never on the wire. */ workers?: string[] }
 /** The device row. `under`: since when the device has had room for its smallest ready todo (held 10 minutes before it is flagged). */
 export interface DeviceCap { v: 1; at: number; points: number; budget?: number; load1: number; cores: number; ready: number; minReady?: number; open: number; unattended: boolean; under?: number; mains: MainRow[] }
 
@@ -133,7 +133,7 @@ export function joinCaps(o: { mains: MainFacts[]; caps: MainCap[]; budget?: numb
 		return {
 			session: m.session, name: clean(m.name, 40), workspace: m.workspace, points: round(points), ready: ready.length, ...(minReady !== undefined ? { minReady } : {}), open: c?.open ?? 0,
 			...(c?.pause ? { paused: { ...(c.pause.until !== undefined ? { until: c.pause.until } : {}), ...(c.pause.detail ? { detail: c.pause.detail } : {}) } } : {}),
-			...(staleOf({ ...m, points }, c, o.unattended, o.now) ? { stale: true as const } : {}), ...(m.duty === "standing" ? { standing: true as const } : {}),
+			...(staleOf({ ...m, points }, c, o.unattended, o.now) ? { stale: true as const } : {}), ...(m.duty === "standing" ? { standing: true as const } : {}), workers: [...own],
 		};
 	});
 	const loose = trains.filter((t) => !named.has(t)).length * DEFAULT_POINTS, smallest = mains.flatMap((r) => (r.minReady !== undefined ? [r.minReady] : []));
