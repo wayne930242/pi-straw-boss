@@ -35,7 +35,8 @@ test("the four rooms are WebP pictures of 1280 by 800 and at most 44 KB each, an
 	// Wait cards on the question panel (todo #144 task 5; measured): 469,094 to 469,670 (+576: the 15 `_head` sentences in sentences.ts, and the ornament exclusions for a card nested in the tower card in raven.css). Cap = measured.
 	// Wait-card review fixes (todo #145): 469,670 to 469,710 (+40: the `wait_sent_head` sentence). Cap = measured.
 	// Supply board (2026-11-24, docs/specs/2026-11-24-capacity-supply/spec.md; measured): 469,710 to 478,004 (+8,294: the crypt's rules in raven.css with their reasons, the supply words in sentences.ts in both languages, and six sprite symbols). The built folder stays under the spec's 450 KB (tests/imports.test.ts). Cap = measured.
-	assert.ok(total(dir) <= 478_004, `the raven folder is ${total(dir)} bytes`);
+	// Sounds only for what waits on the boss, and Raven's recorded weather (2026-11-24, docs/specs/2026-11-24-capacity-supply/spec.md, Sound; measured): 478,004 to 487,809 (+9,805: the clips go from 21,300 bytes (bell, caw, door) to 29,786 (Casper's bell, rain, thunder), and weather.ts's clip loader and its reasons replace the synthesized rain and thunder). The built folder stays under the spec's 450 KB (446,985 bytes, tests/imports.test.ts). Cap = measured.
+	assert.ok(total(dir) <= 487_809, `the raven folder is ${total(dir)} bytes`);
 });
 
 test("the sprite's blood goblet (血僕) and keep (鴉閣) are bold shapes, not traced engravings: each symbol is at most 3 KB, so no thorn or tracery detail is left to blur at 16 px", () => {
