@@ -1,6 +1,5 @@
 // pi-todo-ledger's public contract, version 1 (its CONTRACT.md and schema/todo-v1.schema.json; docs/specs/2026-11-24-todo-ledger.md): the names and shapes sb reads and registers through, with no import of that package.
 // A session's list is the newest valid `todo/v1` entry on its branch; the ledger asks registered guards before a change commits.
-
 export const TODO_V1 = "todo/v1";
 export const READY_EVENT = "todo:ready", CHANGED_EVENT = "todo:changed", GUARD_EVENT = "todo:guard";
 
@@ -13,9 +12,8 @@ const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null 
 export function todoDeadlines(snapshot: unknown): Map<number, number> {
 	const dates = new Map<number, number>();
 	if (isObject(snapshot) && Array.isArray(snapshot.tasks)) for (const t of snapshot.tasks.slice(0, 200)) {
-		// A person has no scheduled return; use the last representable instant in the local capacity file.
-		if (typeof t?.metadata?.waitsOn === "string" && t.metadata.waitsOn.trim()) { dates.set(t.id, 8.64e15); continue; }
-		const s = t?.metadata?.until;
+		const s = t?.metadata?.until, who = t?.metadata?.waitsOn;
+		if (typeof who === "string" && who.trim()) { dates.set(t.id, 8.64e15); continue; } // No scheduled return: last representable instant.
 		if (typeof s !== "string" || !/^\d{4}-\d\d-\d\d(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?)?$/.test(s)) continue;
 		const at = Date.parse(s), day = s.slice(0, 10), midnight = Date.parse(day);
 		if (Number.isFinite(at) && Number.isFinite(midnight) && new Date(midnight).toISOString().startsWith(day)) dates.set(t.id, at);
