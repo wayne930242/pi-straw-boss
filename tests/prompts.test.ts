@@ -427,7 +427,7 @@ test("capacity: the head routes device-silent to the workspace that works with t
 test("capacity routing: the main answers its own notice, the standing main asks on the next one and escalates, the towers take sb's under-30m", () => {
 	const read = (f: string) => readFileSync(`${PROMPT_DIR}/${f}`, "utf8");
 	assert.ok(read("main.md").includes("A capacity notice on your work: dispatch its ready work now, or say why not (blocked, shared files, the boss): reply to whoever asked; sb's: board it."), "main.md");
-	assert.ok(read("duty-standing.md").includes("when the same main is still under at your next notice (sb's `under-30m` included), ask it directly to dispatch or say why, and `call_tower` `why: blocked` naming it for its tower when no dispatch follows; keep no timer: sb's notices are the clock"), "duty-standing.md");
+	assert.ok(read("duty-standing.md").includes("a main still under at your next notice (`under-30m` too): ask it to dispatch or say why, then `call_tower` `why: blocked` naming it if no dispatch follows; no timer of your own"), "duty-standing.md");
 	for (const file of ["tower.md", "tower-run.md"]) {
 		assert.ok(read(file).includes("`under-30m`"), `${file} names under-30m`);
 		assert.doesNotMatch(read(file), /send `under` and `stale` to the main/, `${file} relays no notice sb told the main itself`);

@@ -26,18 +26,20 @@ test("no graph prompt and no dispatch prompt ship", () => {
 
 // 2026-11-21 (D14, the boss's delegate, docs/specs/2026-11-21-box-mac-waits.md §15; measured): duty-standing.md 900 to 974 characters: an approval comes to the standing main, which may approve anything and escalates only what the boss should decide.
 // 2026-11-24 (capacity, docs/specs/2026-11-24-capacity.md, Prompts, and review prompts-review F003; measured): duty-standing.md 6 to 7 lines and 974 to 1492 characters: capacity notices are the standing main's incidents (`under`, `stale`, `quota`, `device-silent`, and sb's `device-silent-2h` for the boss).
-test("size caps: a kind addendum is at most 7 lines and 1492 characters; integrator.md is pinned", () => {
+// 2026-11-24 (capacity routing; field, MP Center box 2; measured): 1492 to 1624 characters: a main still under at the standing main's next notice (`under-30m` too) is asked, then escalated with `call_tower`; no timer of its own.
+test("size caps: a kind addendum is at most 7 lines and 1624 characters; integrator.md is pinned", () => {
 	const standing = read("duty-standing");
-	assert.ok(lines(standing) <= 7 && standing.length <= 1492, `duty-standing: ${lines(standing)} lines, ${standing.length} characters`);
+	assert.ok(lines(standing) <= 7 && standing.length <= 1624, `duty-standing: ${lines(standing)} lines, ${standing.length} characters`);
 	assert.equal(lines(read("integrator")), 13);
 });
 
 // 27f86373 held main.md + planning.md in 9,676 characters, and 0.82.1 main.md + dispatch.md + planning.md in 9,673. 2026-11-23 (docs/specs/2026-11-23-lite-main.md §1, measured): dispatch.md folded into
 // main.md as two lines, with the cap of 4 workers and the todo before a worker: main.md 28 to 29 lines.
 // 2026-11-24 (capacity, docs/specs/2026-11-24-capacity.md, Prompts; measured): 9,687 to 10,095 characters (+408): main.md dispatches up to the device's capacity budget, an idle main takes its next work, a capacity notice is its own; planning.md runs parallel up to the budget and weighs a todo by `metadata.points`.
-test("no growth from the fold: main.md + planning.md stays within 10,095 characters, and main.md has at most 29 lines", () => {
+// 2026-11-24 (capacity routing; field, MP Center box 2; measured): 10,095 to 10,177 (+82): a capacity notice on a main's work: dispatch now, or say why to whoever asked; sb's on its board.
+test("no growth from the fold: main.md + planning.md stays within 10,177 characters, and main.md has at most 29 lines", () => {
 	const sum = read("main").length + read("planning").length;
-	assert.ok(sum <= 10095, `the two files hold ${sum} characters`); // D (0.84.0, §2.5; measured): +154 for the reviewed change's one sentence in main.md
+	assert.ok(sum <= 10177, `the two files hold ${sum} characters`); // D (0.84.0, §2.5; measured): +154 for the reviewed change's one sentence in main.md
 	assert.ok(lines(read("main")) <= 29, `main.md has ${lines(read("main"))} lines`);
 });
 
