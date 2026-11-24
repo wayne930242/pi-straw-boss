@@ -347,12 +347,12 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		}
 		mainDuty.migrate(pi.getSessionName()); // the promotion above may have just made this an `integ <project>` main whose migration had not run
 		// No plan gates a worker (docs/specs/2026-11-23-lite-main.md §1); the cap does (§3): at most 4 workers of this session run at once, or, with a capacity budget, as many as the device's points allow (docs/specs/2026-11-24-capacity.md, The cap).
-		if (event.toolName === "subagent") return cap.admit(event.toolCallId, (event.input as { agent?: unknown } | undefined)?.agent);
+		if (event.toolName === "subagent") return cap.admit(event.toolCallId, event.input);
 	});
 
 	// A launched subagent is marked within seconds, once its pane shows its session file, instead of at the next 4 minute refresh.
 	pi.on("tool_result", (event) => {
-		if (event.toolName === "subagent") cap.ran(event.toolCallId); // the registry holds a launched worker now
+		if (event.toolName === "subagent") cap.ran(event.toolCallId, event.isError); // the registry holds a launched worker now; a failed launch frees its points
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || s.isTower || s.barred || !role()) return;
 		for (const ms of KID_MARK_MS) setTimeout(() => void presence.publish(), ms).unref();
 		const { name, agent } = event.input as { name?: unknown; agent?: unknown };
