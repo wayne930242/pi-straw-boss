@@ -27,7 +27,8 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 2026-11-23 (lite main, docs/specs/2026-11-23-lite-main.md §1; measured): dispatch.md (77 words, until then a steer for a coordinator with a graph) folded into main.md once, with a todo before a worker and the cap of 4: main.md off 501 to 541.
 // 2026-11-23 (D, review threads, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.5; measured): main.md off 541 to 563.
 // 2026-11-24 (capacity, docs/specs/2026-11-24-capacity.md, Prompts; boss 2026-11-24 「無人塔台值守和一般的 main agent 都應該把產能放在心上」; measured): main.md off 563 to 603, on 808 to 848 (dispatch up to the budget, an idle main takes its next work, a capacity notice is its own); tower.md off 468 to 492, on 538 to 562 (a capacity notice is an incident).
-const BUDGETS: Record<string, number> = { "main.md": 603, "tower.md": 492, "member.md": 140, "member-no-main.md": 150 };
+// 2026-11-24 (capacity review prompts-review F003; measured): tower.md off 492 to 500, on 562 to 570 (`device-silent-2h`, sb's escalation at 2 hours, goes to the boss).
+const BUDGETS: Record<string, number> = { "main.md": 603, "tower.md": 500, "member.md": 140, "member-no-main.md": 150 };
 // Its review fixes (SB-F001, F003, F005: the Approval line quotes words already given and asks only when they are missing, the tower reports nothing back on a forwarded slip): main.md 680 to 700, tower.md 390 to 395, integrator.md 320 to 340 (SB-F002 and F006: the deploy gate before `Merge`, a subagent briefed for one step).
 // Train workers (docs/specs/2026-11-07-train-workers.md §13.1, task 8): tower.md on 424 to 471 (forward with `forward`, open a train with `role: "train"`, a car notice's `blocked`; off stays 402); main.md on 715 to 720 (Batch owner, Handoff route, Record and Approval say who schedules, who departs, who notifies, and where the boss's nod is quoted); integrator.md 340 to 380 and train.md ~450 have their own budgets below.
 // Fix round of task 8 (prompts-review.md, TP-F001 to F018): budgets = measured: main.md on 720 to 725, tower.md on 471 to 469 (the resident tower forwards nothing), planning.md on 670 to 681 (the check command), integrator.md 380 to 412 (todo lifecycle, legacy trains), train.md 450 to 511 (holds, load and lock, the Record file, the metadata.sb keys).
@@ -38,7 +39,7 @@ const BUDGETS: Record<string, number> = { "main.md": 603, "tower.md": 492, "memb
 // 2026-11-23 (the tower closes agent panes, docs/specs/2026-11-23-tower-close-panes.md §5): measured: tower.md on 508 to 538 and off 438 to 468 (close a main that handed over once its successor is live, whoever opened it; list and close dead agent panes).
 // 2026-11-23 (lite main, as for BUDGETS above; measured): main.md on 743 to 786.
 // 2026-11-23 (D, review threads, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.5; measured): main.md on 786 to 808 (a reviewed change: boss_pair, both briefs, Thread: T<n>, relay nothing).
-const ON_BUDGETS: Record<string, number> = { "main.md": 848, "tower.md": 562 };
+const ON_BUDGETS: Record<string, number> = { "main.md": 848, "tower.md": 570 };
 // 2026-11-08 (todo #125 task 5, TP-F004): `{{cli}}` is the command that runs cli.mjs.
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir", "state", "cli", "duty"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
@@ -154,7 +155,7 @@ test("merge train: main hands integration cars over with why shared, planning st
 		const text = readFileSync(`${PROMPT_DIR}/${file}`, "utf8");
 		for (const term of file === "tower.md" ? ["`integration`", "integrator", "boss_open_main"] : ["`integration`", "integrator", "boss_open_main", "integrator.md"]) assert.ok(text.includes(term), `${file} names ${term}`);
 	}
-	for (const off of [false, true]) assert.ok(words(strip(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), off)) <= (off ? 492 : 562)); // wait cards: +31; 0.81.6 shared heads-up: +15/+11; 2026-11-23 revive: +21/+21; 2026-11-23 close panes: +30/+30, see BUDGETS
+	for (const off of [false, true]) assert.ok(words(strip(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), off)) <= (off ? 500 : 570)); // wait cards: +31; 0.81.6 shared heads-up: +15/+11; 2026-11-23 revive: +21/+21; 2026-11-23 close panes: +30/+30, see BUDGETS
 	assert.ok(readFileSync(`${PROMPT_DIR}/tower.md`, "utf8").includes("finding with evidence"));
 });
 
@@ -211,10 +212,11 @@ test("wait cards: tower-run.md records a boss wait as a card (fields, language, 
 	for (const term of ["Record a wait for the boss as a card", "`type` (action", "choice when they pick", "secret when a session needs a secret from them", "`happened`", "`do`", "`url` or `command`", "`after`", "`options`", "`secret.name`", "never the value", "`from`", "the `[intercom from ...]` line", "or `self`", "the language your brief names (sb's locale)", "who has not followed the work", "A refusal lists what to fix. Fix every line and call again.", "The boss pressed", "chose", "declined", "A declined wait is over: tell the raiser what happens instead", "Do not send the raiser the same news yourself", "fonstar-staging", "tailscale"]) assert.ok(run.toLowerCase().includes(term.toLowerCase()), `tower-run.md names ${term}`);
 });
 
-test("the head's morning ledger sweep stays within its measured 896-word prompt budget (+21)", () => {
+// 2026-11-24 (capacity review prompts-review F003; measured): 896 to 936 (+40): a `capacity device-silent` notice goes to the tower of the workspace whose mains work with that device, else a wait for the boss; `device-silent-2h` is a wait for the boss.
+test("the head's morning ledger sweep stays within its measured 936-word prompt budget", () => {
 	const head = readFileSync(`${PROMPT_DIR}/head-run.md`, "utf8");
 	assert.match(head, /On the server's `ledger_sweep` notice only, call `ledger_sweep` once.*never ask the boss/);
-	assert.ok(words(head) <= 896);
+	assert.ok(words(head) <= 936, `head-run.md has ${words(head)} words`);
 });
 
 test("wait cards: head-run.md and main.md say the same in their words", () => {
@@ -407,4 +409,14 @@ test("capacity: main and planning dispatch up to the budget, standing and towers
 		["tower-run.md", ["A `capacity` notice from the sb server", "is an incident, not a report"]],
 		["integrator.md", ["Aim for 2 or 3 cars sharing no files, within the skill's limits and each car's `departs`", "a lone car departs `maxWaitMin` after it arrived", "A red gate drops the car that broke it; never skip a gate"]],
 	] as const) for (const term of terms) assert.ok(read(file).includes(term), `${file} names ${term}`);
+});
+
+// Review prompts-review F003: a device-silent notice reaches the head tower (an ally device has no workspace), which routes it; the 2-hour escalation is sb's own notice, not a prompt's timer.
+test("capacity: the head routes device-silent to the workspace that works with the device, and every prompt leaves the 2 hours to sb's device-silent-2h", () => {
+	const read = (f: string) => readFileSync(`${PROMPT_DIR}/${f}`, "utf8");
+	assert.ok(read("head-run.md").includes("A `capacity device-silent` notice: `tower_send` it to the tower of the workspace whose mains work with that device (`board_read` remote shows teams and devices), else record a wait for the boss; `device-silent-2h` needs the boss: record a wait for him."), "head-run.md");
+	for (const file of ["head-run.md", "tower-run.md", "tower.md", "duty-standing.md"]) {
+		assert.ok(read(file).includes("`device-silent-2h`"), `${file} names device-silent-2h`);
+		assert.doesNotMatch(read(file), /past 2 hours/, `${file} keeps no timer of its own`);
+	}
 });

@@ -138,3 +138,30 @@ test("the throttle outlives a restart of the server, and an event nobody took is
 	await run(make(), w.clock, 10); // another restart within 30 minutes: held by the file
 	assert.equal(w.told.length, 1);
 });
+
+// Review prompts-review F003: a device that stays silent is escalated by sb, once, 2 hours after its first notice, routed as that notice; no prompt keeps a timer of its own.
+test("device-silent-2h: one escalation 2 hours after the first notice, not again while it stays silent (a restart included), retried while untold, and again after the device came back and went silent anew", async () => {
+	const { w, make } = world();
+	const t0 = w.clock.now(), off: AllySeen = { key: "t:d1", label: "box 1", short: "d1", online: false, boardAgeMs: 40 * MIN, timed: true, open: true };
+	w.allies = [off];
+	const watch = make();
+	await run(watch, w.clock, 119);
+	assert.deepEqual(w.told.map((e) => e.kind), ["silent"], "nothing more inside the 2 hours");
+	w.reach = false; // nobody takes the escalation at first: tried again at the next look
+	await run(watch, w.clock, 2);
+	assert.deepEqual(w.told.map((e) => e.kind), ["silent"]);
+	w.reach = true;
+	await run(watch, w.clock, 1);
+	assert.deepEqual(w.told.map((e) => [e.kind, e.key, e.workspace, e.standing]), [["silent", "t:d1", undefined, "s-st"], ["silent-2h", "t:d1", undefined, "s-st"]]);
+	assert.match(w.told[1]!.text, /^capacity device-silent-2h · device "box 1" \(d1\) · still silent 2 h after the first notice at \d\d:\d\d · last board 40 min ago · offline · needs the boss$/);
+	await run(watch, w.clock, 60);
+	await run(make(), w.clock, 60); // a restart: the first notice's time and the escalation are kept in _sent.json
+	assert.equal(w.told.filter((e) => e.kind === "silent-2h").length, 1, "one escalation per silence");
+	w.allies = [{ ...off, online: true, boardAgeMs: MIN }]; // back
+	const again = make();
+	await run(again, w.clock, 2);
+	w.allies = [off]; // silent anew
+	await run(again, w.clock, 121);
+	assert.equal(w.told.filter((e) => e.kind === "silent-2h").length, 2, "a new silence is escalated again");
+	assert.ok(w.clock.now() - t0 > 5 * 3600_000);
+});
