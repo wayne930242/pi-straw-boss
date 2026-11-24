@@ -16,18 +16,18 @@ import { line } from "./safetext.ts";
 // delivers an inherited run's. Every step is an entry in the launcher's session (`{workerRevive}`), written before it acts, keyed by the failure's own entry: a death is acted on once, across a reload.
 
 export const REVIVED = "straw-boss-child-revived";
-const KEY = "workerRevive", RESULT_TYPE = "subagent_result", START_MS = 60_000, CLOSE_LOOKS = 8, HEAD = 1024 * 1024;
+const KEY = "workerRevive", RESULT_TYPE = "subagent_result", FINALS = new Set([RESULT_TYPE, "subagent_ping"]), NOTE = "Straw Boss: this is no report of ", START_MS = 60_000, CLOSE_LOOKS = 8, HEAD = 1024 * 1024;
 const TAIL = "; echo '__SUBAGENT_DONE_'$?'__'";
 /** The run id in a subagent session file's name (`<time>_<run id>[-<suffix>].jsonl`, netdata.ts `ownFile`). */
 const RUN = /_([^_]+?)(?:-[0-9a-f]{1,8}-[0-9a-f]{1,8}-[0-9a-f]{1,4})?\.jsonl$/;
 const FOLLOW = "Your pi died while you were working and was not revived. Read your session so far, check the current state before re-running anything that changes state, finish the task you were given, and report your result.";
 
-export interface Entry { type: string; id?: string; timestamp?: string; customType?: string; data?: unknown; details?: unknown }
+export interface Entry { type: string; id?: string; timestamp?: string; customType?: string; data?: unknown; details?: unknown; content?: unknown }
 type Step = "reviving" | "revived" | "delivered" | "failed" | "skipped";
 interface Mark { death: string; file: string; step: Step; at: number; name: string; pane?: string; why?: string }
-interface Open { id: string; at: number; death: Death }
+interface Open { id: string; at: number; death: Death; index: number }
 /** A run as its newest launch or resume script says: the folder and the command a revive runs again. */
-export interface Launch { name: string; id?: string; folder: string; command: string; worktree?: { path?: string; branch?: string } }
+export interface Launch { name: string; id?: string; /** When its script was generated. */ at: number; folder: string; command: string; worktree?: { path?: string; branch?: string } }
 
 export interface ChildRevive {
 	run: HerdrRun;
@@ -77,6 +77,8 @@ export function launchOf(launcher: string, file: string): Launch | string {
 	const name = /^# Subagent (?:launch|resume) script for (.+)$/m.exec(text)?.[1]?.trim() ?? "subagent";
 	if (/\bPI_SUBAGENT_PERSISTENT=1\b/.test(text)) return "it is a persistent specialist, which pi-herdr-agents cannot take back: launch a new one";
 	const command = text.split("\n").filter((l) => l.trim() && !l.startsWith("#")).at(-1) ?? "";
+	// A fork run carries its task inline (maestro taskDelivery "direct"): kept, the revived pi would start the task over (review RV-F004). Only a resume may take the notice appended.
+	if (/^# Subagent launch script/m.test(text) && command.endsWith(TAIL) && !/ '@(?:[^']|'\\'')*'$/.test(command.slice(0, -TAIL.length))) return "its task is inline in its launch command (a fork run), which a revive would start over";
 	// maestro's own shape (buildPiCommand, launch-resume): anything else would be edited on a guess.
 	if (!command.endsWith(TAIL) || !/(?:^|\s)pi --session /.test(command)) return "its launch command is not one Straw Boss knows how to start again";
 	const cd = /^cd '((?:[^']|'\\'')*)' && /.exec(command), folder = cd ? unq(cd[1]!) : sessionHeader(file)?.cwd;
@@ -84,7 +86,7 @@ export function launchOf(launcher: string, file: string): Launch | string {
 	const policy = readJson(`${file}.pi-herdr-subagent-policy.json`) as { worktree?: { path?: unknown; branch?: unknown } };
 	const worktree = policy.worktree && typeof policy.worktree === "object" ? { ...(typeof policy.worktree.path === "string" ? { path: policy.worktree.path } : {}), ...(typeof policy.worktree.branch === "string" ? { branch: policy.worktree.branch } : {}) } : undefined;
 	const id = /\bPI_SUBAGENT_ID='([^']*)'/.exec(command)?.[1];
-	return { name, folder, command: cd ? command : `cd ${q(folder)} && ${command}`, ...(id ? { id } : {}), ...(worktree ? { worktree } : {}) };
+	return { name, at: found.at, folder, command: cd ? command : `cd ${q(folder)} && ${command}`, ...(id ? { id } : {}), ...(worktree ? { worktree } : {}) };
 }
 
 /** The launch command with the revive notice as its first message instead of the task, and the pane it runs in. */
@@ -116,7 +118,7 @@ const worktreeWords = (l: Launch) => (l.worktree ? ` It is a managed worktree ru
 const resumeWords = (name: string, file: string, l?: Launch) => (l?.worktree ? worktreeWords(l) : ` Resume it with subagent_resume {sessionPath: ${JSON.stringify(file)}, name: ${said(name)}, message: ${JSON.stringify(FOLLOW)}}, or launch a new run.`);
 /** The paragraph a death's failure gets before the launcher's model reads it. */
 export const noteText = (death: Death) =>
-	`Straw Boss: this is no report of ${said(death.name)}'s own: ${death.why}. Straw Boss revives it from its session file in about a minute, once a second look shows nothing else runs it, in a new pane of your tab, and brings its report here. Do not resume, respawn, or cancel it meanwhile, and launch no replacement; go on with other work. If it cannot be revived, Straw Boss says so here.`;
+	`${NOTE}${said(death.name)}'s own: ${death.why}. Straw Boss revives it from its session file in about a minute, once a second look shows nothing else runs it, in a new pane of your tab, and brings its report here. Do not resume, respawn, or cancel it meanwhile, and launch no replacement; go on with other work. If it cannot be revived, Straw Boss says so here.`;
 
 type Looks = Map<string, { first: number; looks: number }>;
 const counted = (looks: Looks, key: string, now: number) => looks.get(key) ?? { first: now, looks: 0 };
@@ -131,7 +133,7 @@ function factsOf(file: string, ps: Pane[], list: Session[] | undefined) {
 
 export function childRevive(d: ChildRevive) {
 	// The looks that found a death dead (`seen`), held by someone else (`taken`), and a revived pi gone (`gone`); a reload starts them again.
-	const seen: Looks = new Map(), taken: Looks = new Map(), gone: Looks = new Map();
+	const seen: Looks = new Map(), gone: Looks = new Map();
 	const closing = new Map<string, { pane: string; looks: number }>();
 	let busy = false, stopped = false;
 
@@ -145,10 +147,19 @@ export function childRevive(d: ChildRevive) {
 		return out;
 	};
 	/** The deaths the transcript holds: failures that childdead.ts reads as a pi that ended without a report. */
-	const deaths = (): Open[] => d.entries().flatMap((e) => {
+	const deaths = (all: Entry[]): Open[] => all.flatMap((e, index) => {
 		const death = e.type === "custom_message" && e.customType === RESULT_TYPE && e.id ? deathOf(e.details) : undefined;
-		return death ? [{ id: e.id!, at: Date.parse(e.timestamp ?? "") || d.now(), death }] : [];
+		return death ? [{ id: e.id!, at: Date.parse(e.timestamp ?? "") || d.now(), death, index }] : [];
 	});
+	/** Why a death is no longer the run's last word (review RV-F001, RV-F002): old when first seen (a transcript from before this version), or a later result, ping, or script names its file. */
+	const superseded = (o: Open, all: Entry[], launch: Launch | string, first: number): string | undefined => {
+		if (first - o.at > LOOP_MS) return "its death is older than 10 minutes, from before Straw Boss looked";
+		if (all.slice(o.index + 1).some((e) => e.type === "custom_message" && FINALS.has(e.customType ?? "") && (e.details as { sessionFile?: unknown } | undefined)?.sessionFile === o.death.file)) return "a later result or ping names its session file";
+		if (typeof launch !== "string" && launch.at > o.at) return "a launch or resume script newer than its death names its session file";
+		return undefined;
+	};
+	/** Whether the failure carried the paragraph that promised a revive (`annotate`). */
+	const noted = (e: Entry | undefined) => JSON.stringify(e?.content ?? "").includes(NOTE.slice(0, -1));
 	/** Why a death may not be revived, from the files and the marks alone; undefined when it may. */
 	const refusal = (death: Death, at: number, marks: Map<string, Mark>, launch: Launch | string): string | undefined => {
 		if (typeof launch === "string") return launch;
@@ -180,7 +191,11 @@ export function childRevive(d: ChildRevive) {
 		};
 		const holder = async () => {
 			const p = (await panes(d.run)).find((x) => x.agent_session?.value === death.file && x.pane_id !== pane);
-			const id = sessionHeader(death.file)?.id;
+			const id = sessionHeader(death.file)?.id, fresh = launchOf(launcher, death.file);
+			// A resume pi-herdr-agents started since the look is in its registry before its pane shows the file (review RV-F006).
+			if (typeof fresh !== "string" && fresh.at > launch.at) return "a newer launch or resume script names its session file";
+			const ids = [launch.id, typeof fresh === "string" ? undefined : fresh.id].filter((x): x is string => Boolean(x));
+			if (ids.some((x) => tracked()?.has(x))) return "pi-herdr-agents runs it again";
 			return p ? `pane ${p.pane_id} runs its session now` : id && (await d.sessions().catch(() => [])).some((s) => s.id === id) ? "the broker lists its session now" : undefined;
 		};
 		try {
@@ -188,6 +203,7 @@ export function childRevive(d: ChildRevive) {
 			if (!lead || !(await panes(d.run)).some((p) => p.pane_id === lead)) return await fail("Herdr does not list this session's own pane, so there is no tab to open it in");
 			pane = (await result(d.run, ["pane", "split", lead, "--direction", "right", "--cwd", launch.folder, "--no-focus"])).pane.pane_id as string;
 			await d.run(["pane", "rename", pane, launch.name]).catch(() => {});
+			mark({ ...base, step: "reviving", at: d.now(), pane }); // a reload can close it (review RV-F005)
 			// Once more, just before pi starts: two pis on one session file corrupt it.
 			const other = await holder();
 			if (other) {
@@ -201,6 +217,7 @@ export function childRevive(d: ChildRevive) {
 			const cut = cutOf(death.file);
 			writeFileSync(notice, `Straw Boss: your pi died (${death.why}) while you were working on the task your launcher gave you, and Straw Boss revived you from your session file, in a new pane, with the same model and folder. Your launcher waits for your report.${cut ? ` Your last turn was cut: ${describe(cut)} (your last recorded step was at ${cut.at}).` : ""} Read your session so far, check the current state before re-running anything that changes state (a command may have run halfway), then finish the task you were given and report your result.`);
 			writeFileSync(script, `#!/bin/bash\n# Straw Boss revive script for ${launch.name}\n# Generated: ${new Date(d.now()).toISOString()}\n# Session: ${death.file}\n# Surface: ${pane}\n${reviveCommand(launch, notice, pane)}\n`, { mode: 0o755 });
+			if (stopped) return await close(); // a reload: the next start gives it up from its `reviving` step
 			await d.run(["pane", "run", pane, `bash ${q(script)}`]);
 			const limit = d.now() + (d.startMs ?? START_MS);
 			let up = false;
@@ -225,6 +242,7 @@ export function childRevive(d: ChildRevive) {
 		const exit = `${m.file}.exit`;
 		if (existsSync(exit)) {
 			const x = readJson(exit) as { type?: unknown; message?: unknown; errorMessage?: unknown };
+			if (typeof x.type !== "string") return; // read mid-write: the next look reads it whole (review RV-F007)
 			const type = x.type === "ping" || x.type === "error" ? x.type : "done";
 			mark({ ...m, step: "delivered", at: now });
 			const launch = launchOf(d.file() ?? "", m.file);
@@ -253,8 +271,8 @@ export function childRevive(d: ChildRevive) {
 		if (busy || stopped || !launcher || !d.active()) return;
 		busy = true;
 		try {
-			const marks = marksOf(), now = d.now();
-			const open = deaths().filter((o) => !marks.has(o.id));
+			const marks = marksOf(), now = d.now(), all = d.entries();
+			const open = deaths(all).filter((o) => !marks.has(o.id));
 			// A revive a reload cut off: back when a pane runs the file, given up when none does.
 			const cutOff = [...marks.values()].filter((m) => m.step === "reviving");
 			const revived = [...marks.values()].filter((m) => m.step === "revived");
@@ -269,7 +287,9 @@ export function childRevive(d: ChildRevive) {
 			for (const m of cutOff) {
 				const p = ps.find((x) => x.agent_session?.value === m.file);
 				if (p) mark({ ...m, step: "revived", at: now, pane: p.pane_id });
+				else if (now - m.at < (d.startMs ?? START_MS)) continue; // its pi may still be starting
 				else {
+					if (m.pane) await d.run(["pane", "close", m.pane]).catch(() => {});
 					mark({ ...m, step: "failed", at: now, why: "the revive was cut off before its pi started" });
 					send(REVIVED, `Straw Boss: the revive of subagent ${said(m.name)} (sessionPath ${m.file}) was cut off before its pi started (this session reloaded). Straw Boss does not try again.${resumeWords(m.name, m.file)}`, { name: m.name, sessionFile: m.file }, true);
 				}
@@ -279,7 +299,7 @@ export function childRevive(d: ChildRevive) {
 			for (const o of open) {
 				if (stopped) return;
 				const launch = launchOf(launcher, o.death.file), facts = factsOf(o.death.file, ps, list);
-				const why = refusal(o.death, o.at, marks, launch) ?? (facts.mtimeMs === undefined ? "its session file is gone" : undefined);
+				const why = superseded(o, all, launch, counted(seen, o.id, now).first) ?? refusal(o.death, o.at, marks, launch) ?? (facts.mtimeMs === undefined ? "its session file is gone" : undefined);
 				// pi-herdr-agents tracking the run's id again (a resume of its own) holds it as a pane does.
 				const owned = typeof launch !== "string" && launch.id !== undefined && live?.has(launch.id) === true;
 				const verdict = classify({ now, ...facts, ...(why ? { refusal: why } : {}), held: facts.held || owned, seen: counted(seen, o.id, now) });
@@ -287,23 +307,18 @@ export function childRevive(d: ChildRevive) {
 					seen.delete(o.id);
 					mark({ death: o.id, file: o.death.file, name: o.death.name, step: "skipped", at: now, why: verdict.reason });
 					d.tell(`Straw Boss: does not revive subagent ${o.death.name}: ${verdict.reason}`);
+					// The paragraph said Straw Boss would say so here (review RV-F008).
+					if (noted(all[o.index])) send(REVIVED, `Straw Boss: will not revive subagent ${said(o.death.name)} (sessionPath ${o.death.file}) after all: ${verdict.reason}.${resumeWords(o.death.name, o.death.file, typeof launch === "string" ? undefined : launch)}`, { name: o.death.name, sessionFile: o.death.file }, true);
 					continue;
 				}
 				if (verdict.state === "live") {
 					seen.delete(o.id);
-					// Held by a pane or listed by the broker in two looks a minute apart: someone runs it again (the launcher's own resume, a restore, the boss).
+					// Held by a pane, listed by the broker, or tracked again: someone runs it (the launcher's own resume, a restore, the boss), and that run, not this death, ends it (review RV-F002).
 					if (!facts.held && !facts.listed && !owned) continue;
-					const t = counted(taken, o.id, now);
-					if (t.looks < LOOKS - 1 || now - t.first < CONFIRM_MS) {
-						count(taken, o.id, now);
-						continue;
-					}
-					taken.delete(o.id);
 					mark({ death: o.id, file: o.death.file, name: o.death.name, step: "skipped", at: now, why: verdict.reason });
 					send(REVIVED, `Straw Boss: did not revive subagent ${said(o.death.name)} (sessionPath ${o.death.file}): ${facts.holder ? `pane ${facts.holder.pane_id} runs its session again` : verdict.reason}. Its result goes to whoever runs it.`, { name: o.death.name, sessionFile: o.death.file }, false);
 					continue;
 				}
-				taken.delete(o.id);
 				if (verdict.state === "confirming") {
 					count(seen, o.id, now);
 					continue;

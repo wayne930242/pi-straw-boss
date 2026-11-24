@@ -30,7 +30,8 @@ pi-herdr-agents' watcher (maestro `completion.js`, `pi-run-session.js`) ends a r
 | `error: "persistent-crash"` | a persistent specialist ended | no (not revivable) |
 | `exitCode: 0` | it completed (a sidecar `done`, or pi exited cleanly) | no |
 | `errorMessage` that is none of the three below | the child reported an error (`.exit` type `error`, a provider error) | no |
-| `errorMessage` "Subagent pane disappeared …", "… native execution ended …", "… process exited before completion evidence was recorded." | its pane or process went away before any report | yes |
+| `errorMessage` "Subagent pane disappeared …" | its pane was closed (the boss, an agent's `herdr pane close`, a tab closed): maestro types the script into the pane's own shell, so a pi that crashes or is killed leaves the shell and its sentinel, and only a closed pane gives this text | no |
+| `errorMessage` "… native execution ended …", "… process exited before completion evidence was recorded." | its process went away before any report | yes |
 | no `errorMessage`, `exitCode` 130 | pi ended on SIGINT: a Ctrl-C in its pane | no |
 | no `errorMessage`, any other `exitCode` | pi exited without a report: a crash (1), a kill (137), a signal | yes |
 
@@ -42,8 +43,8 @@ A death also needs a session file that exists and holds at least one message (pi
 
 | State | Evidence |
 |---|---|
-| `refused` | no launch script names the file, the script's command cannot be read (§3), the run is a persistent specialist, its session never started, or a revive of this file failed before or came within the last 10 minutes |
-| `live` | a pane of Herdr runs the file, the broker lists its session id (the header's), or the file moved in the last 60 s: someone resumed it, or it is still going |
+| `refused` | no launch script names the file, the script's command cannot be read (§3), the run is a persistent specialist, its session never started, a revive of this file failed before or came within the last 10 minutes; or the death is superseded: older than 10 minutes when this launcher first looked at it (a transcript from before this version), a later `subagent_result` or `subagent_ping` names the file, or a launch or resume script generated after the death names it |
+| `live` | a pane of Herdr runs the file, the broker lists its session id (the header's), pi-herdr-agents tracks the run's id, or the file moved in the last 60 s: someone resumed it, or it is still going. A death seen held (a pane, the broker, the registry) even once is `skipped`: that run, not this death, ends it |
 | `confirming` | seen dead in fewer than 2 looks at least 60 s apart |
 | `dead` | none of the above: revive |
 
@@ -51,19 +52,21 @@ Herdr's recovery window: a Herdr restart ends every pane's pi, the launcher's in
 
 ## 3. The revive
 
-1. The launch command is the last line of the newest script in `artifacts/<launcher>/subagent-scripts/` whose `# Session:` header names the file (a first launch, or a `-resume-` one). It must start with `cd '<folder>' && ` and end with `'@<task file>'; echo '__SUBAGENT_DONE_'$?'__'`, as maestro's `buildPiCommand` writes it; anything else is `refused`, since editing an unknown command is a guess.
+1. The launch command is the last line of the newest script in `artifacts/<launcher>/subagent-scripts/` whose `# Session:` header names the file (a first launch, or a `-resume-` one). It must start with `cd '<folder>' && ` and end with `'@<task file>'; echo '__SUBAGENT_DONE_'$?'__'`, as maestro's `buildPiCommand` writes it; anything else is `refused`, since editing an unknown command is a guess. A first launch whose task is inline (a fork run, maestro's `taskDelivery: "direct"`) is refused: kept, the revived pi would start the task over. A resume script, which ends in its `-e` entry, takes the notice appended.
 2. An entry `{workerRevive: {death, file, step: "reviving"}}` goes into the launcher's session first, keyed by the id of the failure's own entry: a death is acted on once, whatever happens next, even across a reload.
-3. `herdr pane split <launcher pane> --direction right --cwd <folder> --no-focus`, then `herdr pane rename` to the run's name.
-4. The look checks once more that no pane runs the file and the broker does not list it; then writes `artifacts/<launcher>/straw-boss-revive/<name>-<time>.md` (the revive notice) and `<name>-<id>-<time>.sh`: the launch command with the task argument replaced by `'@<notice>'` and `PI_SUBAGENT_SURFACE` by the new pane, and types `bash '<script>'` into the new pane.
+3. `herdr pane split <launcher pane> --direction right --cwd <folder> --no-focus`, then `herdr pane rename` to the run's name, and a second `reviving` entry records the pane, so a reload can close it.
+4. The look checks once more that no pane runs the file, the broker does not list it, pi-herdr-agents does not track the run's id, and no newer launch or resume script names the file (a `subagent_resume` the model issued since the look); a hit closes the pane and marks the death `skipped`. A session stopping (a reload) closes the pane before anything is typed. Then it then writes `artifacts/<launcher>/straw-boss-revive/<name>-<time>.md` (the revive notice) and `<name>-<id>-<time>.sh`: the launch command with the task argument replaced by `'@<notice>'` and `PI_SUBAGENT_SURFACE` by the new pane, and types `bash '<script>'` into the new pane.
 5. It waits up to 60 s for Herdr to list the pane running pi on the file. Then the step becomes `revived` (with the pane), the launcher's model gets one line, and the boss a notification. Otherwise the pane is closed, the step is `failed`, and the launcher's model is told to resume or respawn it.
 
 The revive notice says when and how the pi died, that its launcher waits for its report, what its last turn was (cut.ts), to check the state before re-running anything that changes it, and to finish the task and report.
 
 ## 4. The result
 
-Each look reads the `revived` runs. A run whose `.exit` appeared is delivered: the step becomes `delivered` first, then the launcher's model gets the run's last message, encoded as inherit.ts does (every line prefixed, controls written out, 16,000 characters at most), or its error, or its question with the `subagent_resume` arguments to answer it; the `.exit` is removed, as pi-herdr-agents' watcher consumes it, and the pane is closed once pi has left it. A run whose pi is gone with no `.exit`, in two looks 60 s apart, ended again: the step becomes `failed` and the launcher is told with its last message; it is not revived again.
+Each look reads the `revived` runs. A run whose `.exit` appeared, with a `type` (one read mid-write waits for the next look), is delivered: the step becomes `delivered` first, then the launcher's model gets the run's last message, encoded as inherit.ts does (every line prefixed, controls written out, 16,000 characters at most), or its error, or its question with the `subagent_resume` arguments to answer it; the `.exit` is removed, as pi-herdr-agents' watcher consumes it, and the pane is closed once pi has left it. A run whose pi is gone with no `.exit`, in two looks 60 s apart, ended again: the step becomes `failed` and the launcher is told with its last message; it is not revived again.
 
-A reload rebuilds all of this from the entries. A step left at `reviving` (the reload came during the start) is `revived` when a pane runs the file, else `failed`.
+A reload rebuilds all of this from the entries. A step left at `reviving` (the reload came during the start) is `revived` when a pane runs the file; when none does 60 s after the step was written, the pane it records is closed and the step is `failed`.
+
+A refusal found only at a look (the session file gone, say) after the failure carried the paragraph that promised a revive is told to the launcher's model with a turn, since the paragraph said Straw Boss would say so there.
 
 ## 5. Limits
 
@@ -71,7 +74,7 @@ A reload rebuilds all of this from the entries. A step left at `reviving` (the r
 - A persistent specialist is not revived (W4).
 - The worker cap (workercap.ts) counts pi-herdr-agents' registry, which no longer holds a revived run.
 - A managed worktree's manifest keeps the state pi-herdr-agents wrote at the death (`failed`); the revived run's own report is what counts.
-- A pane the boss closed on purpose looks like any other death and is revived; the boss tells the launcher, which closes the revived pane.
+- A pane closed on purpose (the boss, an agent, a closed tab) is never revived (review RV-F003, 2026-11-24): the launcher acts on the failure itself. A pi that crashes in a pane whose shell then also dies gives the same text and is not revived either.
 - If a launcher's pi-herdr-agents delivered the failure just before a Herdr restart, and the restore started a plain pi on the run's file, the run stays `live` and is not revived; restored.ts does not take it either, since a result names the file.
 - Mac sleep is not a death; a reboot ends the launcher as well (a revived main picks up its subagents, inherit.ts).
 

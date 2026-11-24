@@ -10,7 +10,8 @@
 // | `error: "persistent-crash"`                               | no: a persistent specialist, which cannot come back |
 // | `exitCode: 0`                                             | no: it completed                                   |
 // | an `errorMessage` other than the host's three below      | no: the child reported an error (a provider error) |
-// | the host's "pane disappeared", "native execution ended", "process exited" | yes: its pane or process went first |
+// | the host's "pane disappeared"                            | no: its pane was closed (the boss, an agent, a tab); a crash leaves the shell and its sentinel |
+// | the host's "native execution ended", "process exited"     | yes: its process went first                        |
 // | no `errorMessage`, exit 130 (SIGINT)                      | no: a Ctrl-C in its pane                           |
 // | no `errorMessage`, any other exit                         | yes: a crash (1), a kill (137), another signal     |
 //
@@ -42,7 +43,8 @@ export function deathOf(details: unknown): Death | undefined {
 	if (code === 0) return undefined;
 	if (d.errorMessage !== undefined) {
 		const host = HOST_DEATHS.indexOf(String(d.errorMessage));
-		return host < 0 ? undefined : { file: d.sessionFile, name, why: ["its pane closed", "its process ended", "its process ended"][host]! };
+		// A closed pane is never revived (review RV-F003): maestro types the script into the pane's own shell, so a pi that crashes or is killed leaves the shell and its sentinel's exit code.
+		return host < 1 ? undefined : { file: d.sessionFile, name, why: "its process ended" };
 	}
 	if (code === undefined || code === 130) return undefined;
 	const signal = code > 128 ? SIGNALS[code - 128] : undefined;
