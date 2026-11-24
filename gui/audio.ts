@@ -1,4 +1,4 @@
-// The page's one playback core: every view's sounds (the Standard chime and clips, Zen's later sounds and music, Raven's weather) play through one AudioContext and one gain for each of the two classes (todo #139).
+// The page's one playback core: every view's sounds (the question clip, Zen's later sounds and music, Raven's weather) play through one AudioContext and one gain for each of the two classes (todo #139).
 // A sound is one of two classes: `effects` (the cues of events: the clips, Zen's bowl and knock) and `background` (what plays under the page: Zen's music, Raven's rain and thunder). Each class has its own gain,
 // which follows the square of that class's Volume (0 to 100; an iPhone honours a gain); a class's switch is the source's own check, so a source asks the core for its class by name and no sound reaches the output without one.
 // The context is made at the first play or unlock and resumed at each (a browser that blocks sound before any press keeps it suspended).

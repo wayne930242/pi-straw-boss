@@ -75,7 +75,8 @@ function setup(over: { hasPrompt?: boolean; kind?: "base" | "main" | "member"; s
 		progress: async (id) => (ids.push(id), snapshot ? ok(snapshot() as never) : { ok: false, status: 404, body: {} }),
 		ready: (body) => events.push(`ready:${JSON.stringify(body)}`),
 		back: () => events.push("back"),
-		chime: () => events.push("chime"),
+		// The panel once took a `chime` for the unit-ready clip; offered still, it must not be played.
+		...({ chime: () => events.push("chime") } as object),
 		trust: async (body) => (trusts.push(body), ok({ outcome: "accepted" }) as never),
 	}) as unknown as El;
 	const rows = () => panel.find((e) => e.tag === "li" && e.attrs.has("data-step")).map((li) => `${li.dataset.state}~${li.kids.slice(1).map((k) => (typeof k === "string" ? k : k.text)).join("|")}`);
@@ -123,7 +124,7 @@ test("an open without a first message shows no delivery step, and a split member
 	assert.match(setup({ kind: "base" }).panel.cls("deploy-title").text, /Deploying base/);
 });
 
-test("a finished open completes the steps, flashes ready with the chime, and goes on to the unit after the finish", async () => {
+test("a finished open completes the steps, flashes ready in silence (a finish plays no clip; boss, 2026-11-24), and goes on to the unit after the finish", async () => {
 	const p = setup();
 	p.serve({ steps: [step("create", "done"), step("start", "done"), step("join", "done"), step("deliver", "active", 800)], finished: false });
 	await p.clock.advance(500);
@@ -134,9 +135,9 @@ test("a finished open completes the steps, flashes ready with the chime, and goe
 	assert.deepEqual(p.rows().map((r) => r.split("~")[0]), ["done", "done", "done", "done"]);
 	assert.equal(p.panel.cls("deploy-count").text, "4/4");
 	assert.equal(p.panel.cls("deploy-note").text, "Unit ready");
-	assert.deepEqual(p.events, ["chime"], "the page does not move on yet");
+	assert.deepEqual(p.events, [], "the page does not move on yet");
 	await p.clock.advance(1500);
-	assert.deepEqual(p.events, ["chime", `ready:${JSON.stringify({ session: "S1", workspace: "wA" })}`]);
+	assert.deepEqual(p.events, [`ready:${JSON.stringify({ session: "S1", workspace: "wA" })}`]);
 });
 
 test("a failure names the step it failed at and the server's reason, stops polling, and can be dismissed", async () => {
@@ -214,10 +215,10 @@ test("the timeout counts silence, not total time: progress that keeps changing k
 	for (let i = 0; i < 5; i++) await Promise.resolve();
 	assert.equal(late.panel.dataset.state, "ready", "the open answered after all");
 	await late.clock.advance(1500);
-	assert.deepEqual(late.events, ["chime", `ready:${JSON.stringify({ session: "S2", workspace: "wB" })}`]);
+	assert.deepEqual(late.events, [`ready:${JSON.stringify({ session: "S2", workspace: "wB" })}`]);
 });
 
-test("closing the tile stops the polling and the chime and never goes on to the unit", async () => {
+test("closing the tile stops the polling and never goes on to the unit", async () => {
 	const p = setup();
 	p.serve({ steps: [step("create", "done"), step("start", "active"), step("join", "pending"), step("deliver", "pending")], finished: false });
 	await p.clock.advance(500);

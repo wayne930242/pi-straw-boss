@@ -26,8 +26,6 @@ export interface DeployOpts {
 	ready(body: Answer["body"]): void;
 	/** The failure is dismissed. */
 	back(): void;
-	/** Plays the unit-ready sound, when the page's Sound is on. */
-	chime?(): void;
 	/** Answers the trust question the opening waits on (POST trust/answer), shown inline in its `trust` step. */
 	trust?: TrustPost;
 	clock?: Clock;
@@ -132,11 +130,10 @@ export function deployPanel(o: DeployOpts): HTMLElement & { close(): void } {
 		note.setAttribute("role", "status");
 		note.textContent = m.deploy_ready();
 		rows = rows.map((r) => ({ ...r, state: "done", ms: r.state === "active" ? time.now() - r.since : r.ms }));
-		draw();
-		o.chime?.();
+		draw(); // in silence: a finish plays no clip (boss, 2026-11-24: only what waits on the boss rings)
 		stopGo = time.after(() => o.ready(a.body), matchMedia("(prefers-reduced-motion: reduce)").matches ? 600 : 1500);
 	}, () => fail(undefined, m.no_answer()));
 	draw();
-	/** The tile is closed: polling, the chime, and the way on to the unit stop (the unit still appears in the net). */
+	/** The tile is closed: polling and the way on to the unit stop (the unit still appears in the net). */
 	return Object.assign(root, { close: () => ((closed = true), stop(), stopGo()) });
 }

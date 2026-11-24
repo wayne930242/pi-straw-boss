@@ -13,7 +13,7 @@ import { post } from "./post.ts";
 interface Base { id: string; label: string }
 export type Opening = { kind: "base" } | { kind: "main" | "member"; base: Base; tab?: { id: string; label: string } };
 
-export function spawnTile(o: Opening, enter?: (ws: string, key: string, tile: string) => void, chime?: () => void): Tile {
+export function spawnTile(o: Opening, enter?: (ws: string, key: string, tile: string) => void): Tile {
 	const base = o.kind === "base" ? undefined : o.base, tab = o.kind === "base" ? undefined : o.tab;
 	const title = o.kind === "base" ? m.open_base_title() : o.kind === "main" ? m.open_main_title({ base: base!.label }) : tab ? m.open_member_tab_title({ tab: tab.label }) : m.open_member_title({ base: base!.label }), id = `open-${o.kind}-${base?.id ?? ""}-${tab?.id ?? ""}`;
 	let panel: { close(): void } | undefined;
@@ -31,7 +31,7 @@ export function spawnTile(o: Opening, enter?: (ws: string, key: string, tile: st
 			const at = dir, text = prompt.value, label = name.value.trim() || leaf(at, home), body = o.kind === "base" ? { dir: at, label: name.value, prompt: text } : { workspace: base!.id, ...(tab && { tab: tab.id }), dir: at, prompt: text };
 			// The form gives way to the deploy panel while the unit opens; a failure's Back brings the form back as it was.
 			root.replaceChildren((panel = deployPanel({
-				kind: o.kind, split: o.kind === "member" && Boolean(tab), hasPrompt: Boolean(text.trim()), name: o.kind === "base" ? label : leaf(at, home) || at, chime,
+				kind: o.kind, split: o.kind === "member" && Boolean(tab), hasPrompt: Boolean(text.trim()), name: o.kind === "base" ? label : leaf(at, home) || at,
 				open: (deploy) => post(`open/${o.kind}`, { ...body, deploy }),
 				progress: (deploy) => post("open/progress", { id: deploy }),
 				trust: (body) => post("trust/answer", body),

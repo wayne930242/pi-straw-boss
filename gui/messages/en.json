@@ -477,7 +477,7 @@
 	"sound_try": "▶ Try",
 	"sound_effects": "Sound effects",
 	"sound_background": "Background sound",
-	"sound_effects_title": "Sound effects: the cues for a question, a finish, or a failure. On or off, volume, and a try",
+	"sound_effects_title": "Sound effects: a cue when something waits on you (a question, a pending dialog, a trust prompt). A finish or a failure stays silent. On or off, volume, and a try",
 	"sound_background_title": "Background sound: Zen's music, Raven's rain and thunder. On or off and volume",
 	"finished_button": "Notices",
 	"finished_title": "Notices: units that finished or failed. A row opens its comms and clears it, or clear them all",

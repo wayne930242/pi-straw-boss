@@ -55,7 +55,7 @@ SOFTWARE.
 
 ## Sounds (`gui/sounds/`)
 
-The GUI's sounds come from [Kenney](https://kenney.nl) (www.kenney.nl), released under Creative Commons Zero (CC0 1.0), converted to mono MP3: `waiting.mp3` is `question_002` from Interface Sounds 1.0, `done.mp3` is `confirmation_001` from Interface Sounds 1.0, and `error.mp3` is `lowDown` from Digital Audio.
+The GUI's one sound effect, `waiting.mp3`, comes from [Kenney](https://kenney.nl) (www.kenney.nl), released under Creative Commons Zero (CC0 1.0), converted to mono MP3: it is `question_002` from Interface Sounds 1.0.
 
 ## BIP-39 English word list (`src/link/bip39-english.ts`)
 
@@ -69,11 +69,17 @@ The short lines under the Zen view's idle circle (`gui/zenlines.ts`) are one sen
 
 The Raven Keep (鴉閣) view's art is original to this project. Its ten role icons and its crest favicon were drawn as an ink-engraving sheet with an image generator (Codex image generation) and traced to single-colour SVG with [potrace](https://potrace.sourceforge.net/) (`sprite.svg`, `favicon.svg`); the backdrop illustration (`backdrop.webp`) was made with the same generator and resized; so was the perched raven (`perch.webp`, one strip of two frames, profile and head turned: the head of the second frame is blended onto the body of the first). The chat page's four rooms (`room-study.webp`, `room-hall.webp`, `room-crypt.webp`, `room-library.webp`) are the same generator's pictures, resized to 1280 by 800; the blood goblet (`raven-main`) and the keep's front (`raven-crown`) in the sprite were redrawn by hand as bold single paths after their traced designs, so they read at 16 px. The Zen ensō and Geek `>_` tab icons (`gui/themes/zen/favicon.svg`, `gui/themes/geek/favicon.svg`) are drawn for this project. Nothing in them is copied from a published setting.
 
-Its three sounds are released under Creative Commons Zero (CC0 1.0), trimmed and converted to mono MP3 (`sounds/`):
+### Raven Keep sounds (`gui/themes/raven/sounds/`): not MIT
 
-- `caw.mp3`, a crow's caw: "crow caw" by zeroisnotnull, https://opengameart.org/content/crow-caw
-- `bell.mp3`, one church-bell strike, trimmed to 1.5 s with a fade: "Church bell" by kgeshev, https://freesound.org/people/kgeshev/sounds/378799/
-- `door.mp3`, an old wooden door creaking: "An old wooden door creaking" by soundofsong, https://freesound.org/people/soundofsong/sounds/647646/
+These three clips are not covered by the MIT licence of this project's code, and they are not CC0. They come from [Casper's free sound effects](https://www.casper.tw/sound-effects/zh-tw/) and are used under its licence, https://www.casper.tw/sound-effects/zh-tw/license/: free use, with no AI training, no repackaging as a sound pack, and no Content ID registration. Each was converted to mono MP3 at a lower bitrate and sample rate, with nothing else changed:
+
+- `bell.mp3`, the question bell: 鐘樓報時鐘 (church-bell-clock-hour), https://www.casper.tw/sound-effects/zh-tw/search/?q=church-bell-clock-hour
+- `rain.mp3`, the rain loop: 森林樹冠雨聲 (rain-forest-hush), https://www.casper.tw/sound-effects/zh-tw/search/?q=rain-forest-hush
+- `thunder.mp3`, the thunder after a flash: 遠處雷聲 (weather-thunder-distant), https://www.casper.tw/sound-effects/zh-tw/thunder/#weather-thunder-distant
+
+Powered by Stability AI
+
+This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved.
 
 ## pi-better-show (`dist/gui/assets/blockschunk-*.js`)
 

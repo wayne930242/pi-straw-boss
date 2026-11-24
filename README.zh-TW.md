@@ -68,4 +68,4 @@ pi install npm:pi-straw-boss
 
 ## 授權
 
-MIT。瀏覽器畫面的圖示來自 [game-icons.net](https://game-icons.net)（Lorc 與 Delapouite，[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)）；見 [gui/ICONS.md](gui/ICONS.md)。
+MIT。瀏覽器畫面的圖示來自 [game-icons.net](https://game-icons.net)（Lorc 與 Delapouite，[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)）；見 [gui/ICONS.md](gui/ICONS.md)。鴉閣畫面的三段音效不屬 MIT，依 Casper 音效庫的授權使用；見 [NOTICE.md](NOTICE.md)。

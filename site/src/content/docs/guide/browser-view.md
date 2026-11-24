@@ -61,7 +61,7 @@ A card from the head tower says so in its own words (主塔台 in Traditional Ch
 
 ### Notices and reminders
 A unit that fails or finishes, and a monitor that fails or goes quiet, raises a quiet notice under the header's Notices button; only a unit waiting on you raises the prominent alert.
-Switches in the settings page (the gear) raise a system notification, and play a sound, when a unit waits on you, fails, or finishes.
+Switches in the settings page (the gear) raise a system notification when a unit waits on you, fails, or finishes; a sound plays only for what waits on you.
 Finished subagents on the map are dismissed one by one or all at once (Dismiss finished).
 
 The page reads in English or Traditional Chinese, following your browser, with a language menu in the settings.

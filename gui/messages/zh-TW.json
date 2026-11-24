@@ -421,7 +421,7 @@
 	"sound_try": "▶ 試聽",
 	"sound_effects": "音效",
 	"sound_background": "背景音",
-	"sound_effects_title": "音效：有問題要回答、完成或出錯時的提示音。開關、音量與試聽",
+	"sound_effects_title": "音效：有事等你處理時（問題、待決對話框、信任提問）的提示音；完成或出錯不出聲。開關、音量與試聽",
 	"sound_background_title": "背景音：Zen 的音樂、鴉閣的雨聲與雷聲。開關與音量",
 	"finished_button": "通知",
 	"finished_title": "通知：已完成或出錯的單位。點一列打開它的通訊並清掉，或全部清除",

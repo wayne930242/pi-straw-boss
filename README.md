@@ -72,4 +72,4 @@ The [documentation site](https://wayne930242.github.io/pi-straw-boss/docs/) is i
 
 ## License
 
-MIT. The browser view's icons come from [game-icons.net](https://game-icons.net) (Lorc and Delapouite, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)); see [gui/ICONS.md](gui/ICONS.md).
+MIT. The browser view's icons come from [game-icons.net](https://game-icons.net) (Lorc and Delapouite, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)); see [gui/ICONS.md](gui/ICONS.md). The Raven view's three sounds are not MIT: they are used under Casper's sound-effects licence; see [NOTICE.md](NOTICE.md).

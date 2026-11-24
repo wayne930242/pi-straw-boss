@@ -27,6 +27,17 @@ Standard says 工作板 → **戰況板**, 本機主控 → **指揮官** (the h
 - **Geek** keeps the plain lines and hides the tray, the mini slots, the chips, the icons, and the teammate rows (`geek.css`). Its sentence pack keeps 工作板 and 問進度.
 - **Zen** shows no capacity. It hides the page that carries the board, and none of its files read the board or the capacity row.
 
+## Sound
+
+Boss, 2026-11-24: 「我們應該只需要 需要使用者注意 的時候放音效（背景音）除外」 and 「我甚至覺得 finished 的音效拿掉」.
+
+- A sound effect plays only for an alert that waits on the boss (`gui/notify.ts`: a question or waiting mark, a pending dialog, a trust prompt), and for new link notices that need an answer (the link bar's chime). A finish and a failure play no clip; their silent system notification and the notice on the page stay. The deploy panel's "unit ready" is silent. The supply board makes no sound.
+- The Try button and turning Sound effects on play the question clip, now the only effect clip. `gui/sounds/done.mp3` and `error.mp3`, and Raven's `caw.mp3` and `door.mp3`, are removed.
+- Raven's question bell is Casper's `church-bell-clock-hour` (1.32 s). Standard keeps Kenney's `question_002`.
+- Raven's background weather plays two recorded clips in place of the synthesized rain and thunder: `rain.mp3` (Casper `rain-forest-hush`, 4.00 s, a seamless loop) and `thunder.mp3` (Casper `weather-thunder-distant`, 3.53 s). The rain loops as one Web Audio buffer source, between its first and last sound (`loopEdges`), so the seam has no gap. Each clip is fetched and decoded the first time it is due (`loadClips`); the thunder's fetch starts at the flash. Every rule of `gui/themes/raven/weather.ts` stays: the Background switch and volume govern both; both are quiet (rain mean about -42 dBFS and thunder peak about -22 dBFS before the volume); the thunder comes 1 to 2 s after each flash; nothing sounds on a hidden tab, before the first press, or off the backdrop; reduced motion has no thunder; calm stops both on a coarse pointer.
+- The clips are mono MP3, encoded so the Raven folder stays under the raven-view spec's 450 KB (446,985 bytes measured): `bell.mp3` 32 kb/s at 22.05 kHz, 5,764 bytes; `rain.mp3` 32 kb/s at 22.05 kHz, 16,526 bytes; `thunder.mp3` 16 kb/s at 16 kHz, 7,496 bytes. What the lower rates cut lies at −60 dB or less in the sources: the bell above 11 kHz, the thunder above 3 kHz. The rain keeps its hiss up to 11 kHz.
+- The Casper clips are not MIT and not CC0. NOTICE.md names each file and its source page, Casper's licence terms, and Stability AI's notice. The README's licence line points there.
+
 ## Data and egress
 
 `MainRow.units` (`src/capacity.ts` `joinCaps`) lists a main's deployed units: each owner of a running in-progress todo with its points, then each running worker that no such todo names, at 1 point. The units sum to the main's points. Like `MainRow.workers`, they are kept only in the local `_device.json`. `boardview.ts` copies them onto this computer's board rows (`BoardViewRow.units`), and those rows reach only this computer's page. `board_read`, the link's `WireCap`, remote turns, and the operate slice carry no unit name, and `src/server/operatesanitize.ts` is unchanged.

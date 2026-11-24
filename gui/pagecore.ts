@@ -62,7 +62,7 @@ export interface PageIo {
 	go(route: Route): void;
 	/** A modal (a confirmation, the lightbox, an open popover) holds the keyboard. */
 	modal(): boolean;
-	/** The finished-unit clip, when Sound is on. */
+	/** The question clip for new link notices that need the boss, when Sound effects is on. */
 	chime(): void;
 }
 

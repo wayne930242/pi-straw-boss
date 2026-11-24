@@ -49,13 +49,13 @@ test("each view has its favicon: Zen an open ink circle, Geek >_, raven the bone
 	assert.ok(at("gui/themes/geek/favicon.svg").includes("#000"), "Geek's black");
 });
 
-test("the backdrop is a WebP of at most 120 KB, and the three sounds are mono MP3s of at most 30 KB", () => {
+test("the backdrop is a WebP of at most 120 KB, and the three sounds (the bell, the rain, the thunder) are MP3s of at most 30 KB", () => {
 	const dir = join(root, "gui/themes/raven");
 	const back = readFileSync(join(dir, "backdrop.webp"));
 	assert.ok(back.length <= 120_000, `backdrop.webp is ${back.length} bytes`);
 	assert.equal(back.subarray(0, 4).toString(), "RIFF");
 	assert.equal(back.subarray(8, 12).toString(), "WEBP");
-	assert.deepEqual(readdirSync(join(dir, "sounds")).sort(), ["bell.mp3", "caw.mp3", "door.mp3"]);
+	assert.deepEqual(readdirSync(join(dir, "sounds")).sort(), ["bell.mp3", "rain.mp3", "thunder.mp3"]);
 	for (const name of readdirSync(join(dir, "sounds"))) {
 		const size = statSync(join(dir, "sounds", name)).size, head = readFileSync(join(dir, "sounds", name)).subarray(0, 4);
 		assert.ok(size <= 30_000, `${name} is ${size} bytes`);
@@ -63,20 +63,17 @@ test("the backdrop is a WebP of at most 120 KB, and the three sounds are mono MP
 	}
 });
 
-// Sounds by what they are (boss, 2026-11-08: 「finished 和 waiting 的音效調換一下，鐘聲比較像是需要回應」): a unit that asks the boss rings the bell, a finish is the crow's caw, a failure the door.
-test("the sounds map a wait to the bell, a finish to the caw, and a failure to the door, and no file is named after the other event", () => {
+// Only what waits on the boss rings (boss, 2026-11-24: 「我們應該只需要 需要使用者注意 的時候放音效（背景音）除外」, 「我甚至覺得 finished 的音效拿掉」): the bell for a question (boss, 2026-11-08: 「鐘聲比較像是需要回應」), no clip for a finish or a failure.
+test("the theme's one sound effect is the bell for a wait; a finish and a failure have none, and the caw and the door are gone", () => {
 	const index = at("gui/themes/raven/index.ts");
 	const imports = Object.fromEntries([...index.matchAll(/import (\w+) from "\.\/sounds\/([\w-]+)\.mp3"/g)].map((m) => [m[1]!, m[2]!]));
 	const map = /sounds:\s*\{([^}]*)\}/.exec(index)?.[1] ?? "";
-	const file = (event: string) => imports[new RegExp(`\\b${event}\\s*(?::\\s*(\\w+))?\\s*(?:,|$)`).exec(map)?.[1] ?? event];
-	assert.equal(file("waiting"), "bell");
-	assert.equal(file("done"), "caw");
-	assert.equal(file("error"), "door");
-	for (const name of ["ask", "done"]) assert.ok(!existsSync(join(root, `gui/themes/raven/sounds/${name}.mp3`)), `${name}.mp3 is gone: a name that lies`);
+	assert.equal(imports[/\bwaiting\s*:\s*(\w+)/.exec(map)?.[1] ?? ""], "bell");
+	assert.doesNotMatch(map, /\b(done|error)\b/, "no clip for a finish or a failure");
+	for (const name of ["ask", "done", "caw", "door"]) assert.ok(!existsSync(join(root, `gui/themes/raven/sounds/${name}.mp3`)), `${name}.mp3 is gone`);
+	for (const name of ["done", "error"]) assert.ok(!existsSync(join(root, `gui/sounds/${name}.mp3`)), `Standard's ${name}.mp3 is gone`);
 	const notice = at("NOTICE.md");
-	assert.match(notice, /`caw\.mp3`, a crow's caw/);
-	assert.match(notice, /`bell\.mp3`, one church-bell strike/);
-	assert.match(notice, /`door\.mp3`, an old wooden door/);
+	assert.doesNotMatch(notice, /caw\.mp3|door\.mp3|`done\.mp3`|`error\.mp3`/, "no credit for a file that is not shipped");
 });
 
 test("the perched raven is one WebP strip of two frames (profile, head turned) with alpha, at most 40 KB, and is credited as Codex-generated art", () => {
@@ -92,9 +89,16 @@ test("the perched raven is one WebP strip of two frames (profile, head turned) w
 	assert.match(notice, /perch\.webp/);
 });
 
-test("the sounds are credited with their sources and CC0 licences, and the icons as original work traced with potrace", () => {
+test("the icons are credited as original work traced with potrace, and the bell, rain, and thunder by their Casper pages, under Casper's licence and not MIT, with Stability AI's notice word for word", () => {
 	const notice = at("NOTICE.md") + at("gui/ICONS.md");
-	for (const credit of ["zeroisnotnull", "kgeshev", "soundofsong", "CC0", "potrace", "opengameart.org/content/crow-caw", "freesound.org/people/kgeshev/sounds/378799", "freesound.org/people/soundofsong/sounds/647646"]) assert.ok(notice.includes(credit), credit);
+	assert.ok(notice.includes("potrace"));
+	for (const [file, page] of [["bell.mp3", "church-bell-clock-hour"], ["rain.mp3", "rain-forest-hush"], ["thunder.mp3", "weather-thunder-distant"]]) assert.match(notice, new RegExp(`\`${file.replace(".", "\\.")}\`[^\\n]*https://www\\.casper\\.tw/sound-effects/zh-tw/[^\\s]*${page}`), file);
+	assert.ok(notice.includes("https://www.casper.tw/sound-effects/zh-tw/license/"));
+	assert.match(notice, /not covered by the MIT licen[cs]e/i);
+	assert.match(notice, /no AI training/);
+	assert.ok(notice.includes("Powered by Stability AI"));
+	assert.ok(notice.includes("This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved."));
+	assert.match(at("README.md"), /NOTICE\.md/, "the README's licence line points at the exception");
 });
 
 test("shipped text and sources name no trademark: no Strahd, Barovia, or Ravenloft in the messages, the theme folder, the page, or the built bundle", () => {

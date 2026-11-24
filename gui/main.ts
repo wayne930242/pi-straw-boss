@@ -325,7 +325,7 @@ document.addEventListener("click", (event) => {
 	const button = (event.target as Element | null)?.closest?.<HTMLElement>("button[data-open]");
 	if (button) void import("./spawn.ts").then(({ openingOf, spawnTile }) => {
 		const opening = openingOf(button, core.latest?.bases ?? []);
-		if (opening) openTile(spawnTile(opening, (ws, key, tile) => (panels?.tiles.close(tile), core.openSession(ws, key)), () => notify.chime()), true);
+		if (opening) openTile(spawnTile(opening, (ws, key, tile) => (panels?.tiles.close(tile), core.openSession(ws, key))), true);
 	});
 });
 // The yard (yard.ts, with the model in trains.ts) is a chunk of its own, fetched the first time a base's chip, the header's chip or an integrator's card opens it (data-yard names the projects).

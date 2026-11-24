@@ -16,12 +16,12 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 // --- classification -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // Every sound source of the page and the class it plays in (docs/specs/2026-11-09-sound-split.md, Classification). A source is a file that makes sound; the file must ask the core for its class by name.
 const SOURCES: [file: string, what: string, cls: "effects" | "background"][] = [
-	["audio.ts", "the clips played by `play`: Standard's done, waiting, and error cues and a theme's own (Raven's bell, caw, and door), the chime, the settings' Try", "effects"],
+	["audio.ts", "the clip played by `play`: the question cue (Standard's or Raven's bell; a finish and a failure have none), the link notices' chime, the settings' Try", "effects"],
 	["zensound.ts", "Zen's bowl, knock, and low bowl, and the Try buttons", "effects"],
 	["zensound.ts", "Zen's duck node, the way the music reaches the core", "background"],
 	["audiobus.ts", "Zen's music bus", "background"],
 	["zenmusic.ts", "Zen's music files", "background"],
-	["themes/raven/weather.ts", "Raven's rain loop and its thunder", "background"],
+	["themes/raven/weather.ts", "Raven's recorded rain loop and its thunder", "background"],
 ];
 
 test("every source asks the playback core for its class by name, and no file besides the core makes an audio context", () => {

@@ -43,13 +43,13 @@ function core() {
 	const node = () => ({ gain: param(), frequency: param(), connect() {}, type: "" });
 	const ac = {
 		currentTime: 0, sampleRate: 100,
-		createBuffer: (_c: number, len: number) => ({ getChannelData: () => new Float32Array(len) }),
-		createBufferSource: () => { const s = { loop: false, buffer: null, connect() {}, start() { s.loop && made.loops++; }, stop() {} }; return s; },
-		createBiquadFilter: node, createGain: node,
-		createOscillator: () => ({ ...node(), start() { made.thunders++; }, stop() {} }),
+		createBufferSource: () => { const s = { loop: false, buffer: null as { name: string } | null, connect() {}, start() { if (s.loop) made.loops++; else if (s.buffer?.name === "thunder") made.thunders++; }, stop() {} }; return s; },
+		createGain: node,
 	};
 	const a = { out: () => ({ c: ac, g: {} }) as never, running: () => st.running, unlock: async () => { made.unlocks++; st.running = st.allow; return st.allow; }, play() {}, volume() {} };
-	return { a, made, st };
+	/** Both clips decoded already (tests/raven-weather.test.ts covers the fetch). */
+	const clip = (name: string) => ({ name, sampleRate: 100 }) as never;
+	return { a, made, st, clip };
 }
 /** One mounted weather on a fresh page: Background on, the map showing, the context already running. */
 function page(over: { background?: boolean; running?: boolean } = {}) {
@@ -59,7 +59,7 @@ function page(over: { background?: boolean; running?: boolean } = {}) {
 	const c = core(); c.st.running = over.running ?? true;
 	let t = 100_000;
 	const frames: (() => void)[] = [];
-	const undo = mountWeather(root, c.a as never, () => t, (fn) => void frames.push(fn));
+	const undo = mountWeather(root, c.a as never, () => t, (fn) => void frames.push(fn), c.clip);
 	const [rootWatch, switchWatch] = FakeObserver.all;
 	const event = (type: string, e: Record<string, unknown> = {}) => listeners.get(type)?.forEach((f) => f({ type, timeStamp: t, ...e }));
 	const names = () => [...listeners].filter(([, s]) => s.size > 0).map(([k]) => k).sort();

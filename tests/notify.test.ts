@@ -116,9 +116,10 @@ test("a change made here is told too (the music stops when Background is switche
 	assert.equal(told, 2, "the background's own two, not the effects'");
 });
 
-const alert = (mark: string) => ({ key: mark, name: mark, mark }) as never;
+const alert = (mark: string, over: Record<string, unknown> = {}) => ({ key: mark, name: mark, mark, ...over }) as never;
 
-test("a batch plays the clip of its most urgent mark, only when Sound effects is on", () => {
+// Only what waits on the boss rings (boss, 2026-11-24: 「我們應該只需要 需要使用者注意 的時候放音效（背景音）除外」, 「我甚至覺得 finished 的音效拿掉」): a question, a dialog pending, a trust prompt. A finish and a failure play no clip.
+test("a batch rings the question clip only when it holds an alert that waits on the boss, and only with Sound effects on; a finish or a failure alone is silent", () => {
 	const off = rig();
 	off.n.signal([alert("waiting")]);
 	assert.deepEqual(played, [], "Sound effects off: silent");
@@ -127,12 +128,30 @@ test("a batch plays the clip of its most urgent mark, only when Sound effects is
 	assert.equal(played.length, 1);
 	assert.match(played[0]!, /waiting\.mp3$/);
 	r.n.signal([alert("done"), alert("error")]);
-	assert.match(played[1]!, /error\.mp3$/);
 	r.n.signal([alert("done")]);
-	assert.match(played[2]!, /done\.mp3$/);
-	assert.equal(played.length, 3);
-	assert.notEqual(played[0], played[1]);
-	assert.notEqual(played[1], played[2]);
+	r.n.signal([alert("error")]);
+	assert.equal(played.length, 1, "no clip for a finish or a failure");
+	r.n.signal([alert("working", { pending: { id: "d1" } })]);
+	r.n.signal([alert("waiting", { trust: { folder: "/p" } })]);
+	assert.equal(played.length, 3, "a pending dialog and a trust prompt ring");
+	assert.ok(played.every((u) => /waiting\.mp3$/.test(u)));
+});
+
+test("a finish and a failure keep their silent system notification while the page is hidden; only a question's may sound", () => {
+	const made: { title: string; silent: boolean }[] = [];
+	class Note { static permission = "granted"; onclick?: () => void; constructor(title: string, o: { silent: boolean }) { made.push({ title, silent: o.silent }); } close() {} }
+	const keep = { N: (globalThis as { Notification?: unknown }).Notification, hidden: page.hidden };
+	Object.assign(globalThis, { Notification: Note });
+	page.hidden = true;
+	try {
+		const r = rig({ [KEYS.effects]: "1" });
+		r.n.signal([alert("done"), alert("error"), alert("waiting")]);
+		assert.deepEqual(made.map((n) => [n.title, n.silent]), [["done", true], ["error", true], ["waiting", false]]);
+		assert.equal(played.length, 1, "one clip: the question's");
+	} finally {
+		Object.assign(globalThis, { Notification: keep.N });
+		page.hidden = keep.hidden;
+	}
 });
 
 test("the cues are effects: Background on with Effects off is silent, and Effects on with Background off plays", () => {
@@ -141,32 +160,32 @@ test("the cues are effects: Background on with Effects off is silent, and Effect
 	bgOnly.n.chime();
 	assert.deepEqual(played, []);
 	const fxOnly = rig({ [KEYS.effects]: "1" });
-	fxOnly.n.signal([alert("done")]);
+	fxOnly.n.signal([alert("waiting")]);
 	fxOnly.n.chime();
 	assert.equal(played.length, 2);
 	fxOnly.n.sound.effects.set(false);
 	fxOnly.n.sound.background.set(true);
-	fxOnly.n.signal([alert("done")]);
+	fxOnly.n.signal([alert("waiting")]);
 	assert.equal(played.length, 2, "switched off from the Zen menu: silent at once");
 });
 
-test("chime plays the finished clip with Sound effects on and nothing with it off", () => {
+test("chime (a new link notice that needs the boss) plays the question clip with Sound effects on and nothing with it off", () => {
 	const off = rig();
 	off.n.chime();
 	assert.deepEqual(played, []);
 	const r = rig({ [KEYS.effects]: "1" });
 	r.n.chime();
 	assert.equal(played.length, 1);
-	assert.match(played[0]!, /done\.mp3$/);
+	assert.match(played[0]!, /waiting\.mp3$/);
 	r.other(KEYS.effects, "0");
 	r.n.chime();
 	assert.equal(played.length, 1, "another tab's Off silences it");
 });
 
-test("Try and turning Sound effects on play the finished clip, whatever the switch said before; Background has no clip to try or to say it is on", () => {
+test("Try and turning Sound effects on play the question clip, the one sound the effects make; Background has no clip to try or to say it is on", () => {
 	const r = rig();
 	r.n.sound.effects.try();
-	assert.match(played.at(-1)!, /done\.mp3$/);
+	assert.match(played.at(-1)!, /waiting\.mp3$/);
 	played.length = 0;
 	r.n.sound.effects.set(true);
 	assert.equal(played.length, 1, "on: one clip to say so");
@@ -181,32 +200,32 @@ test("Try and turning Sound effects on play the finished clip, whatever the swit
 	assert.equal(played.length, 3, "Background plays no clip");
 });
 
-test("a theme's sounds replace the base clips for each kind while it is the view, the settings' try and the chime included, and the base clips come back with Standard", () => {
+test("a theme's question clip replaces the base one while it is the view, the settings' try and the chime included, and the base clip comes back with Standard", () => {
 	const r = rig({ [KEYS.effects]: "1" });
-	useSounds({ waiting: "/themes/raven/ask-1.mp3", done: "/themes/raven/done-2.mp3", error: "/themes/raven/error-3.mp3" });
+	useSounds({ waiting: "/themes/raven/ask-1.mp3" });
 	try {
 		r.n.signal([alert("waiting")]);
 		r.n.signal([alert("error")]);
 		r.n.signal([alert("done")]);
 		r.n.chime();
 		r.n.sound.effects.try();
-		assert.deepEqual(played, ["/themes/raven/ask-1.mp3", "/themes/raven/error-3.mp3", "/themes/raven/done-2.mp3", "/themes/raven/done-2.mp3", "/themes/raven/done-2.mp3"]);
+		assert.deepEqual(played, ["/themes/raven/ask-1.mp3", "/themes/raven/ask-1.mp3", "/themes/raven/ask-1.mp3"]);
 	} finally {
 		useSounds(undefined);
 	}
 	played.length = 0;
 	r.n.chime();
-	assert.match(played[0]!, /done\.mp3$/);
+	assert.match(played[0]!, /waiting\.mp3$/);
 	assert.ok(!played[0]!.includes("themes/"), "Standard's own clip again");
 });
 
-test("a theme's clip is played with Standard's clip of the same kind as its fallback", () => {
+test("a theme's clip is played with Standard's question clip as its fallback", () => {
 	const r = rig({ [KEYS.effects]: "1" });
 	fallbacks.length = 0;
-	useSounds({ done: "/themes/raven/done-2.mp3" });
+	useSounds({ waiting: "/themes/raven/ask-1.mp3" });
 	try {
 		r.n.chime();
-		assert.match(fallbacks[0]!, /done\.mp3$/);
+		assert.match(fallbacks[0]!, /waiting\.mp3$/);
 		assert.ok(!fallbacks[0]!.includes("themes/"));
 	} finally {
 		useSounds(undefined);
