@@ -2,7 +2,7 @@ import { constants, type FSWatcher, realpathSync, watch } from "node:fs";
 import { type FileHandle, lstat, open as openFile, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { FULL_LIMIT, type Item, type Json, parse, type Todo, toItem, todosOf } from "./items.ts";
-import { isSnapshotV1 } from "./todoledger.ts";
+import { v1Of } from "./todoledger.ts";
 
 // The session reader: a pi session file in, pages of displayable items out, plus a live tail. Only an index stays in memory
 // (type, id, parent, role, offset, length per entry); item content is read from the file by offset for the page being sent.
@@ -130,19 +130,14 @@ export function openReader(file: string, pollMs = 1000): Reader {
 		}
 		return items;
 	}
-	/** The list as todo.ts reads it: the newest valid `todo/v1` entry on the branch, else rpiv-todo's newest entry, else its newest tool result. */
-	async function todos(): Promise<Todo[] | null> {
+	async function todos(): Promise<Todo[] | null> { // as todo.ts reads a branch: the newest valid `todo/v1` entry, else rpiv-todo's newest entry, else its newest tool result
 		const on = path.filter((i) => ents[i]!.todo), last = on.findLast((i) => ents[i]!.todo === "entry") ?? on.findLast((i) => ents[i]!.todo === "result");
-		const read = (fh: FileHandle, e: Ent) => grab(fh, e.off, Math.min(e.len, 1 << 20)).then((b) => parse(b.toString("utf8")));
 		if (!on.length) return null;
-		const fh = await open(file);
+		const fh = await open(file), read = async (e: Ent) => parse((await grab(fh, e.off, Math.min(e.len, 1 << 20))).toString("utf8"));
 		try {
-			for (const i of on.filter((i) => ents[i]!.todo === "v1").reverse()) {
-				const d = await read(fh, ents[i]!);
-				if (isSnapshotV1(d?.data)) return todosOf(d!.data) ?? null;
-			}
+			for (const i of on.filter((i) => ents[i]!.todo === "v1").reverse()) { const data = v1Of(await read(ents[i]!)); if (data !== undefined) return todosOf(data) ?? null; }
 			if (last === undefined) return null;
-			const e = ents[last]!, d = await read(fh, e);
+			const e = ents[last]!, d = await read(e);
 			return todosOf(e.todo === "entry" ? d?.data : d?.message?.details) ?? null;
 		} finally {
 			await fh.close();

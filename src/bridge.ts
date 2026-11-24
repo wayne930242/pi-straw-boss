@@ -13,7 +13,6 @@ import { dequeueKey } from "./dequeuebind.ts";
 import { joined, MAX_PULL, type Pull, pulled } from "./pull.ts";
 import { type Monitor, trackMonitors } from "./monitors.ts";
 import { todoOfBranch, type TodoSum } from "./todo.ts";
-import { CHANGED_EVENT } from "./todoledger.ts";
 
 // The bridge runs in every pi session inside Herdr, subagents included. It turns the owners' dialog events (owners.ts) into one list of open
 // dialogs, relays it to the one running GUI server (gui.json in the state directory names its session G), and hands the server's answers to
@@ -324,8 +323,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 		ui = ctx;
 		ticket = taken = undefined;
 		monitors = trackMonitors(bus, () => push());
-		// pi-todo-ledger tells each change (todoledger.ts) after it wrote the change's entry: the card reads the branch again then, a call made inside another tool's included.
-		offs = [...OWNERS.map((o) => o.listen(bus, report)), listenDocs(bus, (d) => ((docs = d), changed())), () => monitors?.off(), bus.on(CHANGED_EVENT, (d) => void ((d as { v?: unknown } | null)?.v === 1 && retodo()))];
+		offs = [...OWNERS.map((o) => o.listen(bus, report)), listenDocs(bus, (d) => ((docs = d), changed())), () => monitors?.off()];
 		seen = -1; // a new session file (/new, /resume) is told to the server at once
 		follow();
 		if (!poll) (poll = setInterval(follow, POLL_MS)).unref?.();

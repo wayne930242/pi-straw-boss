@@ -23,3 +23,5 @@ const task = (t: unknown) => isObject(t) && id(t.id) && typeof t.subject === "st
 	&& opt(t.evidence, (e) => Array.isArray(e) && e.every(evidence));
 /** Whether `data` is a `todo/v1` snapshot (the schema's root): `v` 1, every task valid, and `nextId` an integer of at least 1. */
 export const isSnapshotV1 = (data: unknown): boolean => isObject(data) && data.v === 1 && Array.isArray(data.tasks) && data.tasks.every(task) && id(data.nextId);
+/** pi-todo-ledger's snapshot entry on a branch: its data when it matches the schema, else nothing (an invalid entry is skipped for an older one). */
+export const v1Of = (entry: unknown): unknown => { const e = entry as { type?: unknown; customType?: unknown; data?: unknown } | null; return e?.type === "custom" && e.customType === TODO_V1 && isSnapshotV1(e.data) ? e.data : undefined; };

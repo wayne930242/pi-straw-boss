@@ -1,7 +1,7 @@
 import { GRAPHS, type Graph } from "./duty.ts";
 import { newestOf } from "./branchscan.ts";
 import { type Todo, todosOf } from "./items.ts";
-import { isSnapshotV1, TODO_V1 } from "./todoledger.ts";
+import { v1Of } from "./todoledger.ts";
 
 // A session's todo list in short, for its card on the map: its bridge reads it from the todo snapshots on its branch (bridge.ts) and the hub
 // checks it (dialogs.ts) before it goes to the unit. A snapshot is pi-todo-ledger's `todo/v1` entry (its public contract, todoledger.ts), else rpiv-todo's records (docs/specs/2026-11-24-todo-ledger.md).
@@ -12,22 +12,16 @@ export interface StepLine { id: number; kind: string; status: Todo["status"]; na
 export const TODO_TEXT = 120;
 
 type BranchEntry = { type?: string; customType?: string; data?: unknown; message?: { role?: string; toolName?: string; details?: unknown } };
-/** pi-todo-ledger's snapshot entry, when its data matches the contract's schema; one that does not is skipped. */
-const v1Of = (entry: unknown): unknown => { const e = entry as BranchEntry; return e.type === "custom" && e.customType === TODO_V1 && isSnapshotV1(e.data) ? e.data : undefined; };
 /** rpiv-todo's state entry, and the details of a `todo` tool result, when they hold a todo list. */
 const stateOf = (entry: unknown): unknown => { const e = entry as BranchEntry; return e.type === "custom" && e.customType === "rpiv-todo-state" && todosOf(e.data) ? e.data : undefined; };
 const resultOf = (entry: unknown): unknown => { const e = entry as BranchEntry; return e.type === "message" && e.message?.role === "toolResult" && e.message.toolName === "todo" && todosOf(e.message.details) ? e.message.details : undefined; };
-/**
- * The todo list a branch holds, oldest entry first: the newest valid `todo/v1` entry, which wins over rpiv-todo's records wherever they stand (the ledger's rule); without one, the snapshot rpiv-todo left last, its state entries
- * winning over its tool results (rpiv-todo's own replay rule). Raw, with every task's metadata, for a reader that needs all of it (the train's guard). Each snapshot holds the whole list: a reader replaces its copy, never merges by id.
- */
+/** A branch's todo list, oldest entry first: the newest valid `todo/v1` entry, which wins over rpiv-todo's records wherever they stand (the ledger's rule); else the snapshot rpiv-todo left last, its state entries winning over its tool results (rpiv-todo's own replay rule). Raw, with every task's metadata, for a reader that needs all of it (the train's guard); a snapshot is the whole list, never merged by id. */
 export function snapshotOfBranch(entries: readonly unknown[]): unknown {
 	let fromEntries: unknown, fromResults: unknown;
 	for (let i = entries.length - 1; i >= 0; i--) { // from the leaf: the newest v1 entry wins, so the walk stops there
 		const v1 = v1Of(entries[i]);
 		if (v1 !== undefined) return v1;
-		fromEntries ??= stateOf(entries[i]);
-		fromResults ??= resultOf(entries[i]);
+		[fromEntries, fromResults] = [fromEntries ?? stateOf(entries[i]), fromResults ?? resultOf(entries[i])];
 	}
 	return fromEntries ?? fromResults;
 }
