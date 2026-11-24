@@ -7,6 +7,7 @@ import { startMs, writerAlive } from "./server/traingate.ts";
 import { serverCli } from "./server/version.ts";
 import { startOf } from "./startof.ts";
 import { snapshotOfBranch } from "./todo.ts";
+import { CHANGED_EVENT, GUARD_EVENT, type LedgerChange, READY_EVENT } from "./todoledger.ts";
 import { type Acceptance, acceptanceOf, checkAcceptRef, checkCar, checkEvidence, type EvidenceOptions, parseSlip, slipBlocks } from "./train/accept.ts";
 import { checkContract, type Contract, type SkillCommand } from "./train/contract.ts";
 import { type AppIntegration, carRepos, readAppIntegration } from "./train/appsconfig.ts";
@@ -29,6 +30,9 @@ import { integrationOff } from "./trainswitch.ts";
 // What the model can rewrite is exact (§21): the todo list and the step it describes, the files under `<state>/trainboard/`, and its session file on disk. What it cannot: this process's memory, the monitor's own record (what pi-loop-monitor says
 // about a monitor it ran: its status, its exit code, its lines), git, and the clock. So a `run` step passes only on the monitor's record of a run of the spec as this guard froze it; the frozen spec's hash, the runs, and the time a step
 // started live in this module's memory, are written nowhere the train can reach, and are gone with the process. A /reload therefore forgets them: a step that had run must run again, a report must be written after the step is set in_progress again.
+//
+// The `todo` rules run on one of two paths (docs/specs/2026-11-24-todo-ledger.md), never both for one call: beside rpiv-todo they run at `tool_call` on the list of the branch; beside pi-todo-ledger they are its `todo:guard` "sb-train"
+// (todoledger.ts), which judges the call's `params` on the list `before` it, and the `tool_call` path stands down once the ledger is known (its `todo:ready`, its `todo:changed`, or its first call of the check).
 
 const MIN_TIMEOUT_MS = 120_000, START_GRACE_MS = 60_000, MAX_RUNS = 200;
 const NOT_INTEGRATOR = `sb: a train todo is the integrator's: call boss_duty with duty "integrator" first`;
@@ -174,9 +178,11 @@ export class RunBook {
 
 export interface GuardPi {
 	on(event: string, handler: (event: Json, ctx: Ctx) => unknown): void;
-	events?: { on(channel: string, handler: (data: unknown) => void): unknown };
+	events?: { on(channel: string, handler: (data: unknown) => void): unknown; emit?(channel: string, data: unknown): void };
 }
-export interface Ctx { cwd?: string; sessionManager: { getBranch(): readonly unknown[] } }
+export interface Ctx { cwd?: string; sessionManager: { getBranch(): readonly unknown[]; getSessionId?(): string } }
+/** The id sb's guard registers with pi-todo-ledger. */
+export const LEDGER_GUARD_ID = "sb-train";
 export interface GuardEnv {
 	stateDir: string;
 	/** This session's train, when it is one. */
@@ -222,6 +228,15 @@ const opened = (shadow: Map<number, Row>, self: number, ticket: string): boolean
 		const s = sbOf(r);
 		return r.id !== self && s?.kind === "assemble" && s.round === 1 && isObject(s.spec) && Array.isArray(s.spec.removed) && (s.spec.removed as Json[]).some((x) => x.ticket === ticket);
 	});
+
+/** The todo list a call is judged on: its rows and the id its next created todo gets. Read lazily, inside the guard's own error handling. */
+type TodoState = () => { rows: Row[]; nextId: number };
+/** The id the ledger gives the first todo a call creates: the lowest id `after` has and `before` has not, else one past the highest id `before` holds (tombstones included: ids are never reused until a clear). */
+const nextIdOf = (before: readonly unknown[], after: readonly unknown[]): number => {
+	const ids = (list: readonly unknown[]) => list.flatMap((t) => (isObject(t) && Number.isInteger(t.id) ? [t.id as number] : []));
+	const had = new Set(ids(before)), made = ids(after).filter((id) => !had.has(id));
+	return made.length ? Math.min(...made) : Math.max(0, ...had) + 1;
+};
 
 export function rowsOfSnapshot(snapshot: unknown): { rows: Row[]; nextId: number } {
 	const s = isObject(snapshot) ? snapshot : {}, tasks = Array.isArray(s.tasks) ? s.tasks : [];
@@ -327,8 +342,8 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 		return sb.spec.check.type === "notice" || (sb.kind === "assemble" && removedTickets(sb).length > 0);
 	};
 
-	async function trainTodo(input: Json, ctx: Ctx, me: TrainId): Promise<string[]> {
-		const entries = ctx.sessionManager.getBranch(), { rows, nextId } = rowsOfSnapshot(snapshotOfBranch(entries));
+	async function trainTodo(input: Json, ctx: Ctx, me: TrainId, state: TodoState): Promise<string[]> {
+		const { rows, nextId } = state();
 		if (input.action === "clear") {
 			const started = rows.find((r) => isStep(r) && r.status !== "pending");
 			return started ? [startedWord(started.id, started.status)] : [];
@@ -406,9 +421,9 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 
 	// ---- the integrator's `train` todo (§7.4)
 
-	async function integratorTodo(input: Json, ctx: Ctx): Promise<string[]> {
+	async function integratorTodo(input: Json, ctx: Ctx, state: TodoState): Promise<string[]> {
 		if (input.action !== "create" && input.action !== "update") return [];
-		const entries = ctx.sessionManager.getBranch(), { rows, nextId } = rowsOfSnapshot(snapshotOfBranch(entries));
+		const { rows, nextId } = state();
 		const project = rows.map(sbOf).find((s) => s?.kind === "train")?.project;
 		const batch = input.action === "create" && Array.isArray(input.tasks);
 		let views: CarView[] | undefined;
@@ -427,7 +442,7 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 				if (typeof got === "string") refusals.push(got);
 				else {
 					views = got;
-					refusals.push(...receiptRefusals((sb.spec.cars as CarRow[]) ?? [], String(sb.app), got, forwardsOf(entries, fieldsOf)));
+					refusals.push(...receiptRefusals((sb.spec.cars as CarRow[]) ?? [], String(sb.app), got, forwardsOf(ctx.sessionManager.getBranch(), fieldsOf)));
 				}
 			}
 			if (refusals.length) return batch ? refusals.map((r) => r.replace(/^sb: /, `sb: tasks[${effect.item}]: `)) : refusals;
@@ -531,26 +546,74 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 
 	// ---- pi
 
+	/** The refusals of a `todo` call, judged on the list `state` gives, whichever path asks: the tool_call of rpiv-todo's call, or pi-todo-ledger's check. */
+	async function todoReasons(input: Json, ctx: Ctx, state: TodoState): Promise<string[]> {
+		const me = env.train();
+		try {
+			if (!me && env.pending?.()) return [UNSETTLED];
+			const integrators = !me && env.isMain() && (hasSb(input) || changesTrainTodo(input, state));
+			const reasons = me ? await trainTodo(input, ctx, me, state) : integrators ? (env.duty() === "integrator" ? await integratorTodo(input, ctx, state) : [NOT_INTEGRATOR]) : [];
+			// The skills the prompts follow must be the ones they assume; a call that changes nothing (a todo read) is let through.
+			const mutates = input.action === "create" || input.action === "update" || input.action === "delete" || input.action === "clear";
+			return !reasons.length && mutates && (me || integrators) ? contractRefusal() : reasons;
+		} catch (error) {
+			return [couldNot(error)];
+		}
+	}
+	function monitorReasons(event: Json, input: Json, ctx: Ctx): string[] {
+		const me = env.train();
+		try {
+			if (!me && env.pending?.()) return [UNSETTLED];
+			if (!me) return [];
+			const reason = monitorCall(event, input, ctx, me);
+			return reason ? [reason] : contractRefusal();
+		} catch (error) {
+			return [couldNot(error)];
+		}
+	}
+	const contractRefusal = (): string[] => { const contract = contractNow(); return contract && !contract.ok ? [contract.refusal] : []; };
+	// A guard that fails does not let the call through: the train's checks are enforcement.
+	const couldNot = (error: unknown) => `sb: the train guard could not check this call (${(error as Error).message}); try again`;
+
+	// ---- pi-todo-ledger (todoledger.ts): sb's rules as its guard, with the context of each session sb saw last (its contract §4: a change names the session, not its branch)
+
+	let ledger = false;
+	const seen = new Map<string, Ctx>();
+	const remember = (ctx: Ctx) => {
+		try {
+			const id = ctx.sessionManager.getSessionId?.();
+			if (typeof id === "string" && id) seen.set(id, ctx);
+		} catch {} // a replaced session's context throws: the next one is remembered at its own start
+	};
+	/** The ledger's `check`: the call's `params` on the list `before` it, the same rules the tool_call path runs; a noop update (a status said again after a /reload) is judged too, so a step's start is known again. */
+	async function ledgerCheck(change: LedgerChange): Promise<string | undefined> {
+		ledger = true;
+		if (!isObject(change) || !isObject(change.params) || !Array.isArray(change.before) || !Array.isArray(change.after)) return "sb: the train guard got a change it cannot read; try again";
+		const known = typeof change.sessionId === "string" ? seen.get(change.sessionId) : undefined;
+		const ctx: Ctx = { cwd: typeof change.cwd === "string" ? change.cwd : known?.cwd, sessionManager: { getBranch: () => { if (!known) throw new Error(`sb has not seen session ${String(change.sessionId)}`); return known.sessionManager.getBranch(); } } };
+		const reasons = await todoReasons(change.params, ctx, () => rowsOfSnapshot({ tasks: change.before, nextId: nextIdOf(change.before, change.after) }));
+		return reasons.length ? reasons.join("\n") : undefined;
+	}
+	const register = () => pi.events?.emit?.(GUARD_EVENT, { v: 1, id: LEDGER_GUARD_ID, check: ledgerCheck });
+	register(); // a ledger that loaded first hears it now; one that loads later asks with todo:ready
+	pi.events?.on(READY_EVENT, (d) => {
+		if (!isObject(d) || d.v !== 1) return;
+		ledger = true;
+		register();
+	});
+	pi.events?.on(CHANGED_EVENT, (d) => { if (isObject(d) && d.v === 1) ledger = true; }); // a ledger that loaded first restores the list at session_start
+	pi.on("session_start", (_event, ctx) => remember(ctx));
+	pi.on("session_tree", (_event, ctx) => remember(ctx));
+
 	pi.on("tool_call", async (event, ctx) => {
+		remember(ctx);
 		const input = event.input;
 		if (event.toolName === "call_tower") return isObject(input) ? departure(input, ctx) : undefined;
-		if (!isObject(input) || (event.toolName !== "todo" && event.toolName !== "MonitorCreate")) return undefined;
-		const me = env.train();
-		let reasons: string[] = [];
-		try {
-			if (!me && env.pending?.()) reasons = [UNSETTLED];
-			else if (me) reasons = event.toolName === "todo" ? await trainTodo(input, ctx, me) : [monitorCall(event, input, ctx, me)].flatMap((r) => (r ? [r] : []));
-			else if (event.toolName === "todo" && env.isMain() && (hasSb(input) || changesTrainTodo(input, ctx))) reasons = env.duty() === "integrator" ? await integratorTodo(input, ctx) : [NOT_INTEGRATOR];
-			// The skills the prompts follow must be the ones they assume; a call that changes nothing (a todo read) is let through.
-			const mutates = event.toolName === "MonitorCreate" || input.action === "create" || input.action === "update" || input.action === "delete" || input.action === "clear";
-			if (!reasons.length && mutates && (me || (event.toolName === "todo" && env.isMain() && (hasSb(input) || changesTrainTodo(input, ctx))))) {
-				const contract = contractNow();
-				if (contract && !contract.ok) reasons = [contract.refusal];
-			}
-		} catch (error) {
-			// A guard that fails does not let the call through: the train's checks are enforcement.
-			reasons = [`sb: the train guard could not check this call (${(error as Error).message}); try again`];
-		}
+		if (!isObject(input)) return undefined;
+		let reasons: string[];
+		if (event.toolName === "MonitorCreate") reasons = monitorReasons(event, input, ctx);
+		else if (event.toolName === "todo" && !ledger) reasons = await todoReasons(input, ctx, () => rowsOfSnapshot(snapshotOfBranch(ctx.sessionManager.getBranch())));
+		else return undefined; // beside the ledger, its guard judges the todo call
 		return reasons.length ? ({ block: true, reason: reasons.join("\n") } satisfies Block) : undefined;
 	});
 	/**
@@ -579,9 +642,10 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 		return meta(input.metadata) || (Array.isArray(input.tasks) && input.tasks.some((t) => isObject(t) && meta(t.metadata)));
 	}
 	/** Whether an update reaches a `train` todo of the integrator's list, whatever metadata it carries: completing one needs its result too. */
-	function changesTrainTodo(input: Json, ctx: Ctx): boolean {
-		const { rows } = rowsOfSnapshot(snapshotOfBranch(ctx.sessionManager.getBranch()));
-		return input.action === "update" && sbOf(rows.find((r) => r.id === input.id))?.kind === "train";
+	function changesTrainTodo(input: Json, state: TodoState): boolean {
+		if (input.action !== "update") return false;
+		const { rows } = state();
+		return sbOf(rows.find((r) => r.id === input.id))?.kind === "train";
 	}
 	pi.on("tool_result", (event, ctx) => {
 		if (event.toolName === "MonitorCreate" && event.isError === true && typeof event.toolCallId === "string") book.failedToStart(event.toolCallId);

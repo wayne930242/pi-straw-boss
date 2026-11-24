@@ -86,7 +86,7 @@ test("with the merge train off, nothing is registered: no handler, no guard", ()
 	assert.deepEqual(handlers, []);
 	const on = { ...kit, cfg: { env: { STRAW_BOSS_INTEGRATION: "on" }, now: Date.now } };
 	assert.ok(registerTrainGuard(on as never, undefined, { now: () => "integrator" } as never));
-	assert.deepEqual([...new Set(handlers)].sort(), ["tool_call", "tool_result", "turn_end"]);
+	assert.deepEqual([...new Set(handlers)].sort(), ["session_start", "session_tree", "tool_call", "tool_result", "turn_end"], "session_start and session_tree: the context of each session, for pi-todo-ledger's changes");
 });
 
 // ---- SB4-F001: the guard is closed while the role is unsettled (§22)

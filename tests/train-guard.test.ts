@@ -8,7 +8,7 @@ import { serverCli } from "../src/server/version.ts";
 import { acceptanceWord } from "../src/train/spec.ts";
 import { boardPath, boardState, readBoard, validateBoard, writeBoard } from "../src/train/board.ts";
 import { frozenText, gateCommand, specHash } from "../src/trainguard.ts";
-import { cleanup, forwardEntry, git, MANIFEST_HEADER, type Reply, rig, type Rig, run, sha, slipBlock } from "./train-guard-rig.ts";
+import { cleanup, forwardEntry, git, MANIFEST_HEADER, type Reply, rig, type Rig, run, SESSION_ID, sha, slipBlock } from "./train-guard-rig.ts";
 import { CODE, evidence, type Json, result, runCheck, SHA_A, SHA_B, SHA_C, sb } from "./train-fixtures.ts";
 
 // The train's guard (docs/specs/2026-11-07-train-workers.md §7, §21; todo #125 task 4): what sb checks on a train's own tools. It reads `event.input` for policy and the session branch for state, blocks with the spec's words, rewrites
@@ -388,10 +388,11 @@ test("a monitor the guard did not start for a step is none of its runs: another 
 
 test("a guard that fails on a call blocks it, a session that is neither a train nor a main is not checked, and a todo call that failed writes no board", async () => {
 	const r = rig();
-	const ctx = { cwd: r.cwd, sessionManager: { getBranch: () => { throw new Error("branch unreadable"); } } };
-	const blocked = await r.handlers.get("tool_call")![0]!({ type: "tool_call", toolName: "todo", toolCallId: "x", input: { action: "create", subject: "s" } }, ctx) as { block?: boolean; reason?: string };
-	assert.equal(blocked.block, true);
+	const ctx = { cwd: r.cwd, sessionManager: { getBranch: () => { throw new Error("branch unreadable"); }, getSessionId: () => SESSION_ID } };
+	const blocked = await r.todo({ action: "create", subject: "s" }, ctx);
+	assert.equal(blocked.ok, false);
 	assert.match(blocked.reason ?? "", /^sb: the train guard could not check this call \(branch unreadable\); try again/);
+	assert.equal(r.list.tasks.length, 0);
 	const member = rig({ train: false, main: false });
 	assert.equal((await member.todo({ action: "create", subject: "train", metadata: { sb: { v: 1, kind: "merge" } } })).ok, true);
 	assert.equal(existsSync(member.yardFile), false);
@@ -418,7 +419,7 @@ test("a /reload forgets the runs: they are in the guard's memory only, so a pass
 	const r = rig();
 	const id = await r.begin(run(r));
 	await r.runStep(id);
-	assert.deepEqual(r.entries.filter((e) => e.customType !== "rpiv-todo-state"), [], "the guard wrote nothing to the session file: the train's shell can edit it");
+	assert.deepEqual(r.entries.filter((e) => e.customType !== "rpiv-todo-state" && e.customType !== "todo/v1"), [], "the guard wrote nothing to the session file: the train's shell can edit it");
 	r.entries.push({ type: "custom", customType: "straw-boss-train-run", data: { step: id, hash: specHash(r.sbOf(id)), state: "passed", monitor: "m1", at: r.iso() }, timestamp: r.iso() });
 	const again = rig({ reuse: r });
 	await refused(again.complete(id, result()), "sb: step #1 has no passed run of its spec (last: none)");
@@ -872,7 +873,7 @@ test("a monitor of a step that is not a run check, whose spec is invalid, or tha
 	await refused(r.monitor({ description: r.describe(git), command: "true" }), /^sb: step #1 is a git check; a monitor runs a run check/);
 	// A todo list the model edited around the guard (a step with another train's name) is not run either.
 	r.list.tasks.push({ id: 9, subject: "forged", status: "in_progress", metadata: { sb: run(r, { train: "2026-11-06-n", name: "forged" }) } });
-	r.entries.push({ type: "custom", customType: "rpiv-todo-state", data: r.snapshot() });
+	r.persist();
 	await refused(r.monitor({ description: "train 1106m #9 full-check", command: "true" }), /^sb: step #9 names train 2026-11-06-n, round 1; this train is 2026-11-06-m, round 1/);
 	r.list.tasks.push({ id: 10, subject: "no sb", status: "in_progress" });
 	await refused(r.monitor({ description: "train 1106m #10 full-check", command: "true" }), /^sb: a train's monitor runs one step|every todo of a train is a step/);

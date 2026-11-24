@@ -2,6 +2,7 @@ import { constants, type FSWatcher, realpathSync, watch } from "node:fs";
 import { type FileHandle, lstat, open as openFile, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { FULL_LIMIT, type Item, type Json, parse, type Todo, toItem, todosOf } from "./items.ts";
+import { isSnapshotV1 } from "./todoledger.ts";
 
 // The session reader: a pi session file in, pages of displayable items out, plus a live tail. Only an index stays in memory
 // (type, id, parent, role, offset, length per entry); item content is read from the file by offset for the page being sent.
@@ -51,7 +52,7 @@ export interface Reader {
 	start(): void;
 	stop(): void;
 }
-interface Ent { type: string; role?: string; id: string; parent: string | null; off: number; len: number; todo?: "entry" | "result" }
+interface Ent { type: string; role?: string; id: string; parent: string | null; off: number; len: number; todo?: "v1" | "entry" | "result" }
 
 export function openReader(file: string, pollMs = 1000): Reader {
 	let ents: Ent[] = [], byId = new Map<string, number>(), path: number[] = [], bad = 0, size = 0, ino = -1, headText = "", head: Json | undefined;
@@ -79,8 +80,8 @@ export function openReader(file: string, pollMs = 1000): Reader {
 			[type, id, parent] = [d.type, d.id, d.parentId === null ? "null" : `"${d.parentId}"`];
 		}
 		const role = type === "message" ? h.match(/"message":\{"role":"(\w+)"/)?.[1] : undefined;
-		// rpiv-todo's snapshots: its own entries (written for every change), else the details of its tool's results (older sessions).
-		const todo = type === "custom" && h.includes('"customType":"rpiv-todo-state"') ? "entry" : role === "toolResult" && h.includes('"toolName":"todo"') ? "result" : undefined;
+		// The todo snapshots (todo.ts): pi-todo-ledger's `todo/v1` entries; rpiv-todo's own entries (written for every change), else the details of its tool's results (older sessions).
+		const todo = type === "custom" && h.includes('"customType":"todo/v1"') ? "v1" : type === "custom" && h.includes('"customType":"rpiv-todo-state"') ? "entry" : role === "toolResult" && h.includes('"toolName":"todo"') ? "result" : undefined;
 		byId.set(id!, ents.push({ type: type!, role, id: id!, parent: parent === "null" ? null : parent!.slice(1, -1), off: start, len, ...(todo && { todo }) }) - 1);
 	}
 	/** Feeds file bytes starting at `at`; a line cut by the end of the data stays in `cur` until its newline arrives. */
@@ -129,12 +130,19 @@ export function openReader(file: string, pollMs = 1000): Reader {
 		}
 		return items;
 	}
+	/** The list as todo.ts reads it: the newest valid `todo/v1` entry on the branch, else rpiv-todo's newest entry, else its newest tool result. */
 	async function todos(): Promise<Todo[] | null> {
-		const on = path.filter((i) => ents[i]!.todo), last = on.findLast((i) => ents[i]!.todo === "entry") ?? on.at(-1);
-		if (last === undefined) return null;
-		const e = ents[last]!, fh = await open(file);
+		const on = path.filter((i) => ents[i]!.todo), last = on.findLast((i) => ents[i]!.todo === "entry") ?? on.findLast((i) => ents[i]!.todo === "result");
+		const read = (fh: FileHandle, e: Ent) => grab(fh, e.off, Math.min(e.len, 1 << 20)).then((b) => parse(b.toString("utf8")));
+		if (!on.length) return null;
+		const fh = await open(file);
 		try {
-			const d = parse((await grab(fh, e.off, Math.min(e.len, 1 << 20))).toString("utf8"));
+			for (const i of on.filter((i) => ents[i]!.todo === "v1").reverse()) {
+				const d = await read(fh, ents[i]!);
+				if (isSnapshotV1(d?.data)) return todosOf(d!.data) ?? null;
+			}
+			if (last === undefined) return null;
+			const e = ents[last]!, d = await read(fh, e);
 			return todosOf(e.todo === "entry" ? d?.data : d?.message?.details) ?? null;
 		} finally {
 			await fh.close();

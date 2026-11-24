@@ -272,3 +272,29 @@ test("the todo list is the newest rpiv-todo snapshot on the branch: its own entr
 	writeFileSync(empty, lines([header(), user("u1", null, "hi")]));
 	assert.equal(await reader(empty).todos(), null);
 });
+
+test("a todo/v1 entry (pi-todo-ledger's contract) wins over rpiv-todo's records on the branch; an invalid one is skipped for the newest valid one, else the rpiv records", async () => {
+	const path = file();
+	const list = (...names: string[]) => names.map((name, i) => ({ id: i + 1, subject: name, status: "pending" }));
+	// pi writes a custom entry's `type`, `customType` and `data` before `id`.
+	const entry = (customType: string, id: string, parentId: string, data: unknown) => ({ type: "custom", customType, data, id, parentId, timestamp: "2026-11-24T08:00:02.000Z" });
+	const v1 = (id: string, parentId: string, names: string[], over: Record<string, unknown> = {}) => entry("todo/v1", id, parentId, { v: 1, tasks: list(...names), nextId: names.length + 1, ...over });
+	const rpiv = (id: string, parentId: string, names: string[]) => entry("rpiv-todo-state", id, parentId, { action: "update", params: {}, tasks: list(...names), nextId: names.length + 1 });
+	writeFileSync(path, lines([header(), user("u1", null, "go"), rpiv("s1", "u1", ["rpiv one"])]));
+	const r = reader(path);
+	await r.ready;
+	assert.deepEqual((await r.todos())?.map((t) => t.subject), ["rpiv one"], "no v1 entry: rpiv-todo's");
+	const changes: Change[] = [];
+	r.subscribe((c) => changes.push(c));
+	r.start();
+	appendFileSync(path, lines([v1("v1", "s1", ["ledger one"]), rpiv("s2", "v1", ["rpiv two"])]));
+	await until(() => changes.some((c) => c.todos), "a change with the list");
+	assert.deepEqual(changes.find((c) => c.todos)!.todos!.map((t) => t.subject), ["ledger one"], "the v1 entry wins over a later rpiv entry");
+	changes.length = 0;
+	appendFileSync(path, lines([v1("v2", "s2", ["bad"], { v: 2 })]));
+	await until(() => changes.some((c) => c.todos), "the next change with a snapshot");
+	assert.deepEqual(changes.find((c) => c.todos)!.todos!.map((t) => t.subject), ["ledger one"], "an invalid v1 entry is skipped");
+	const fallback = file();
+	writeFileSync(fallback, lines([header(), user("u1", null, "go"), rpiv("s1", "u1", ["rpiv one"]), v1("v1", "s1", ["bad"], { nextId: 0 })]));
+	assert.deepEqual((await reader(fallback).todos())?.map((t) => t.subject), ["rpiv one"], "only invalid v1 entries: rpiv-todo's");
+});

@@ -1,9 +1,10 @@
 import { GRAPHS, type Graph } from "./duty.ts";
 import { newestOf } from "./branchscan.ts";
 import { type Todo, todosOf } from "./items.ts";
+import { isSnapshotV1, TODO_V1 } from "./todoledger.ts";
 
-// A session's todo list in short, for its card on the map: its bridge reads it from rpiv-todo's snapshots on its branch (bridge.ts) and the hub
-// checks it (dialogs.ts) before it goes to the unit.
+// A session's todo list in short, for its card on the map: its bridge reads it from the todo snapshots on its branch (bridge.ts) and the hub
+// checks it (dialogs.ts) before it goes to the unit. A snapshot is pi-todo-ledger's `todo/v1` entry (its public contract, todoledger.ts), else rpiv-todo's records (docs/specs/2026-11-24-todo-ledger.md).
 
 /** Done of total, and the task in progress as rpiv-todo words it while it runs; `steps` are the train's (docs/specs/2026-11-07-train-workers.md §11.1), the todos that carry a `metadata.sb`. */
 export interface TodoSum { done: number; total: number; now?: string; steps?: StepLine[]; /** The graph of the plan the main runs (`planGraph`); the page shows it beside the main's kind (docs/specs/2026-11-09-agent-kinds.md §2). */ graph?: Graph }
@@ -11,23 +12,29 @@ export interface StepLine { id: number; kind: string; status: Todo["status"]; na
 export const TODO_TEXT = 120;
 
 type BranchEntry = { type?: string; customType?: string; data?: unknown; message?: { role?: string; toolName?: string; details?: unknown } };
+/** pi-todo-ledger's snapshot entry, when its data matches the contract's schema; one that does not is skipped. */
+const v1Of = (entry: unknown): unknown => { const e = entry as BranchEntry; return e.type === "custom" && e.customType === TODO_V1 && isSnapshotV1(e.data) ? e.data : undefined; };
 /** rpiv-todo's state entry, and the details of a `todo` tool result, when they hold a todo list. */
 const stateOf = (entry: unknown): unknown => { const e = entry as BranchEntry; return e.type === "custom" && e.customType === "rpiv-todo-state" && todosOf(e.data) ? e.data : undefined; };
 const resultOf = (entry: unknown): unknown => { const e = entry as BranchEntry; return e.type === "message" && e.message?.role === "toolResult" && e.message.toolName === "todo" && todosOf(e.message.details) ? e.message.details : undefined; };
-/** The snapshot rpiv-todo left last on a branch, oldest first: its state entries win over its tool results (rpiv-todo's own replay rule). Raw, with every task's metadata, for a reader that needs all of it (the train's guard). */
+/**
+ * The todo list a branch holds, oldest entry first: the newest valid `todo/v1` entry, which wins over rpiv-todo's records wherever they stand (the ledger's rule); without one, the snapshot rpiv-todo left last, its state entries
+ * winning over its tool results (rpiv-todo's own replay rule). Raw, with every task's metadata, for a reader that needs all of it (the train's guard). Each snapshot holds the whole list: a reader replaces its copy, never merges by id.
+ */
 export function snapshotOfBranch(entries: readonly unknown[]): unknown {
-	let fromResults: unknown;
-	for (let i = entries.length - 1; i >= 0; i--) { // from the leaf: the newest state entry wins, so the walk stops there
-		const fromEntries = stateOf(entries[i]);
-		if (fromEntries !== undefined) return fromEntries;
+	let fromEntries: unknown, fromResults: unknown;
+	for (let i = entries.length - 1; i >= 0; i--) { // from the leaf: the newest v1 entry wins, so the walk stops there
+		const v1 = v1Of(entries[i]);
+		if (v1 !== undefined) return v1;
+		fromEntries ??= stateOf(entries[i]);
 		fromResults ??= resultOf(entries[i]);
 	}
-	return fromResults;
+	return fromEntries ?? fromResults;
 }
 /** `snapshotOfBranch` for a reader that asks again as its branch grows (the work board's refresh at every tool call): each call walks only what was appended since the last (branchscan.ts). */
 export function snapshotScan(): (entries: readonly unknown[]) => unknown {
-	const state = newestOf(stateOf), result = newestOf(resultOf);
-	return (entries) => state(entries) ?? result(entries);
+	const v1 = newestOf(v1Of), state = newestOf(stateOf), result = newestOf(resultOf);
+	return (entries) => v1(entries) ?? state(entries) ?? result(entries);
 }
 /** The todo list from a branch's entries, oldest first. */
 export const todosOfBranch = (entries: readonly unknown[]): Todo[] | undefined => todosOf(snapshotOfBranch(entries));
