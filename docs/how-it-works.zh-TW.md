@@ -1,4 +1,4 @@
-# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ d824daee -->
+# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ f0a918dd -->
 
 [README](../README.zh-TW.md) 背後的完整行為。使用說明在各篇指南；這份參考則逐節寫出程式實際怎麼做，所以請在下面找到需要的那一節，其餘可以略過。
 
@@ -760,6 +760,8 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 **放行。** 設了 `capacity.budget` 時，只有當裝置列的點數（5 分鐘內的）、裝置上的保留量與這個 `worker` 子智慧體自己的權重都放得進預算，它才會出發：權重是主智慧體自己的 todo 中，`owner` 等於子智慧體 `name`（不分大小寫、去掉前後空白；沒有這樣的 todo，或它已完成時算 1）那一項的 `metadata.points`。出發時先寫下自己的保留（`capacity/_reserved/<id>.json`，一筆一個檔，寫好再改名就位，記下所屬的主智慧體與工作者名稱），再讀裝置列與加總，所以同一台裝置上同時派工的兩個主智慧體看得到彼此，被拒的那一筆什麼都不留。保留在出發結果回來後仍然算數，直到主智慧體讀到的裝置列顯示這個工作者正在該主智慧體底下執行（裝置列記著每個主智慧體取樣到的工作者，只存在本機），而且是在出發之後取樣的；讀到較舊裝置列的主智慧體仍然算它。出發失敗，或該輪結束時還沒有結果，保留立刻釋放；沒有任何裝置列顯示過的保留，在出發 10 分鐘後失效。裝置列沒有列出的主智慧體（另一個 Herdr slot，或還沒取樣到）沿用每個主智慧體最多 4 個的規則，不寫保留。拒絕訊息：`sb: the device runs 1 of its 2 capacity points, 0.5 more held by launches it does not count yet: this worker needs 2. …`。沒有預算或沒有新的裝置列時，沿用每個主智慧體最多 4 個的規則。
 
 **停機接口。** 撞到模型額度而停下的主智慧體自己寫不了看板，所以由它 session 裡的擴充代為標記：pi-agent-basic 在 pi 的行程內事件匯流排發出 `straw-boss:pause`，`{ v: 1, state: "paused" | "resumed", reason: "quota", until?: <epoch ms>, detail?: <at most 120 characters> }`（`detail` 至多 120 字元）；sb 不 import basic 的任何東西，收到後把該主智慧體標成停機，直到收到 `resumed` 或該 session 開始新的一輪。`/reload` 保留這個標記，停機中的主智慧體永遠不算停滯。
+
+排定日後才做的 todo 可以設定 `metadata.until`（ISO 日期或日期時間；只寫日期時，從 UTC 午夜起算）。到期前，這項 todo 仍未完成，但不算可接工作，也不會讓主智慧體被標成停滯。主智慧體有執行中的 monitor、啟用的 loop，或自己設的 `boss_watch`，也不會收到停滯通知。同一段停滯只通知一次，server 重啟後也不重發。
 
 **旗標。** `under`：設了預算、點數加上最小的可接 todo 放得進預算，而且負載低於每核 0.7，持續 10 分鐘。`stale`：在無人值守的裝置上，手上有未完成 todo、什麼都沒在跑（沒有執行中的子智慧體或列車、點數用量為 0：指揮著工作的主智慧體永遠不 stale），而且 session 檔與看板條目都 30 分鐘沒動的主智慧體，不論它的狀態；其他裝置沿用上面的 2 小時規則。讀得到裝置列的地方，以它的停滯標記取代看板自己的。`quota`：停機中。`device-silent` 由接收端判斷：最後一張看板有未完成工作、而且已離線，或看板帶產能卻超過 30 分鐘沒更新的隊友裝置。
 

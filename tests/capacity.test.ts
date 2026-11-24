@@ -35,6 +35,26 @@ test("capOfTodos: in-progress todos with an owner are doing, pending todos whose
 	for (const [name, list, want] of cases) assert.deepEqual(capOfTodos(list), want, name);
 });
 
+test("scheduled todos become ready on a server tick without a ledger change", () => {
+	const dir = tmp(), due = Date.parse("2026-12-22");
+	for (const [until, waits] of [["2026-12-22", true], ["2026-12-22T08:00:00+08:00", true], ["2026-11-22", false], ["12/22/2026", false], ["2027-02-30", false]] as const) {
+		const snapshot = { nextId: 2, tasks: [{ id: 1, subject: "retire", status: "pending", metadata: { until } }] };
+		writeCap(dir, cap("a", capOfTodos(todosOf(snapshot)!, snapshot)));
+		for (const unattended of [false, true]) for (const now of [due - 1, due]) {
+			const d = joinCaps({ now, unattended, mains: [main("a", { state: "idle" })], caps: readCaps(dir), load1: 0, budget: 2, cores: 4 });
+			const ready = !(waits && now < due);
+			assert.deepEqual([d.ready, d.minReady, !!d.mains[0]?.stale, roomFor(d)], [Number(ready), ready ? 1 : undefined, ready, ready], until);
+		}
+	}
+});
+
+test("background work clears stale in both modes without reserving capacity", () => {
+	for (const unattended of [false, true]) {
+		const d = join_([main("a", { background: true, state: "idle", fileMtime: 1, entryUpdated: 1 })], [cap("a", { open: 1 })], { unattended });
+		assert.deepEqual([d.mains[0]?.stale, d.points], [undefined, 0]);
+	}
+});
+
 test("the pause seam takes v1 quota payloads only", () => {
 	assert.deepEqual(pauseOf({ v: 1, state: "paused", reason: "quota", until: NOW + 3600_000, detail: "weekly limit\n· resets 4pm" }, NOW), { state: "paused", pause: { reason: "quota", at: NOW, until: NOW + 3600_000, detail: "weekly limit · resets 4pm" } });
 	assert.deepEqual(pauseOf({ v: 1, state: "resumed", reason: "quota" }, NOW), { state: "resumed" });

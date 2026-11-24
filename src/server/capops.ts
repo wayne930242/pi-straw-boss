@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
-import { availableParallelism, loadavg } from "node:os";
+import { availableParallelism, homedir, loadavg } from "node:os";
 import { join } from "node:path";
-import { readEntries } from "../board.ts";
+import { readEntries, safeSession } from "../board.ts";
 import { capDir, type MainFacts } from "../capacity.ts";
 import { type HerdrRun, panes as herdrPanes, type Session, workspaces as herdrWorkspaces } from "../herdr.ts";
 import { commanding, sessionMark, subagentsOfAll } from "../netdata.ts";
@@ -24,15 +24,24 @@ export function readBudget(stateDir: string): number | undefined {
 	}
 }
 
+/** pi-loop-monitor persists loops-<pi-session-id>.json. No mutating store import; consume only the active flag and expiry. */
+export function armedLoop(dir: string, session: string, now: number): boolean {
+	if (!safeSession(session)) return false;
+	try {
+		const { loops } = JSON.parse(readFileSync(join(dir, `loops-${session}.json`), "utf8"));
+		return Array.isArray(loops) && loops.some((l) => l?.status === "active" && typeof l.expiresAt === "number" && l.expiresAt > now);
+	} catch { return false; }
+}
+
 /** The live mains and trains of one reading, with every running subagent of each main's pane (no dashboard limit), when its session file last moved, and when its board entry was written. */
-export function mainFacts(sessions: Session[], ps: Awaited<ReturnType<typeof herdrPanes>>, boardDir: string, now: number, mtime: (file: string) => number | undefined): MainFacts[] {
+export function mainFacts(sessions: Session[], ps: Awaited<ReturnType<typeof herdrPanes>>, boardDir: string, now: number, mtime: (file: string) => number | undefined, background?: (session: string, pane: string | undefined) => boolean): MainFacts[] {
 	const kids = subagentsOfAll(ps, now, Infinity), entries = new Map(readEntries(boardDir).map((e) => [e.session, e.updated]));
 	return netMembers(sessions, ps).filter((m) => m.role === "main" || m.role === "train").map((m): MainFacts => {
 		const pane = ps.find((p) => p.pane_id === m.s.herdrLocation?.paneId), subs = m.role === "main" ? kids(pane).filter((r) => !r.ended) : [], mark = sessionMark(m.s, pane), file = pane?.agent_session?.value;
 		const moved = file ? mtime(file) : undefined, written = entries.get(m.s.id);
 		return {
 			session: m.s.id, name: nameOf(m.s), workspace: m.workspace.id, role: m.role === "train" ? "train" : "main", state: mark, commanding: commanding(mark, subs.map((r) => r.mark)) === "commanding",
-			...(m.duty ? { duty: m.duty } : {}), workers: subs.map((r) => r.text), ...(moved !== undefined ? { fileMtime: moved } : {}), ...(written !== undefined ? { entryUpdated: written } : {}),
+			...(m.role === "main" && background?.(m.s.id, pane?.pane_id) ? { background: true } : {}), ...(m.duty ? { duty: m.duty } : {}), workers: subs.map((r) => r.text), ...(moved !== undefined ? { fileMtime: moved } : {}), ...(written !== undefined ? { entryUpdated: written } : {}),
 		};
 	});
 }
@@ -45,6 +54,8 @@ export interface StartCap {
 	sessions(): Promise<Session[]>;
 	towers(): Pick<Towers, "status" | "head" | "runs"> | undefined;
 	unattended(): boolean;
+	monitorPanes(): Set<string>;
+	watching(session: string): boolean;
 	/** The ally devices the link holder has heard of (none without Straw Link). */
 	allies(): AllySeen[];
 	/** One intercom message from the server to a live session (boardpanel.ts `tellVia`). */
@@ -72,7 +83,11 @@ export function startCap(o: StartCap): (() => void) | undefined {
 	const watch = createCapWatch({
 		dir: capDir(boardDir), now: o.now, log: o.log, budget: () => readBudget(o.stateDir), unattended: o.unattended, allies: o.allies,
 		load: () => ({ load1: loadavg()[0] ?? 0, cores: availableParallelism() }),
-		mains: async () => mainFacts(await o.sessions(), await herdrPanes(o.run), boardDir, o.now(), (file) => { try { return statSync(file).mtimeMs; } catch { return undefined; } }),
+		mains: async () => {
+			const sessions = await o.sessions(), panes = await herdrPanes(o.run), monitors = o.monitorPanes(), now = o.now();
+			return mainFacts(sessions, panes, boardDir, now, (file) => { try { return statSync(file).mtimeMs; } catch { return undefined; } },
+				(id, pane) => (pane !== undefined && monitors.has(pane)) || o.watching(id) || armedLoop(join(homedir(), ".pi", "loops"), id, now));
+		},
 		tell: (e) => tellCap(e, o, o.now()),
 		...o.over,
 	});

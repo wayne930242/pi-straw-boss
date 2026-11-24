@@ -1,6 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { clean, safeSession, STALE_MS } from "./board.ts";
+import { todoDeadlines } from "./todoledger.ts";
 import type { Todo } from "./items.ts";
 
 // Device capacity on the work board (docs/specs/2026-11-24-capacity.md): what each main has running and ready in points, and the device row the sb server writes once a minute from them, the
@@ -20,21 +21,23 @@ const JOBS = 50, DETAIL = 120;
 /** A main stopped on its model quota: `until` (epoch ms) when it expects to resume, if known. */
 export interface Pause { reason: "quota"; at: number; until?: number; detail?: string }
 /** A todo as capacity counts it: its owner, when it names one, and its points. */
-export interface Job { owner?: string; points: number }
+export interface Job { owner?: string; points: number; until?: number }
 /** What a main writes: its in-progress todos that have an owner (`doing`), its pending todos whose blockers are all done (`ready`), its open todos, and its pause. */
-export interface MainCap { v: 1; session: string; updated: number; doing: Job[]; ready: Job[]; open: number; pause?: Pause }
+export interface MainCap { v: 1; session: string; updated: number; doing: Job[]; ready: Job[]; open: number; deadlines?: number[]; pause?: Pause }
 
 const num = (v: unknown, lo: number, hi: number) => (typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi ? v : undefined);
 const pointsOf = (t: Pick<Todo, "points">) => t.points ?? DEFAULT_POINTS;
 const job = (t: Pick<Todo, "owner" | "points">): Job => ({ ...(t.owner ? { owner: t.owner } : {}), points: pointsOf(t) });
 
 /** A todo list's capacity facts. A blocker the list no longer holds (deleted) blocks nothing. */
-export function capOfTodos(list: readonly Todo[]): Pick<MainCap, "doing" | "ready" | "open"> {
+export function capOfTodos(list: readonly Todo[], snapshot?: unknown): Pick<MainCap, "doing" | "ready" | "open" | "deadlines"> {
+	const dates = todoDeadlines(snapshot), deadlines = list.flatMap((t) => t.status !== "completed" && dates.has(t.id) ? [dates.get(t.id)!] : []);
 	const done = new Set(list.filter((t) => t.status === "completed").map((t) => t.id)), known = new Set(list.map((t) => t.id));
 	const free = (t: Todo) => (t.blockedBy ?? []).every((id) => done.has(id) || !known.has(id));
 	return {
 		doing: list.filter((t) => t.status === "in_progress" && t.owner).slice(0, JOBS).map(job),
-		ready: list.filter((t) => t.status === "pending" && free(t)).slice(0, JOBS).map(job),
+		ready: list.filter((t) => t.status === "pending" && free(t)).slice(0, deadlines.length ? 200 : JOBS).map((t) => ({ ...job(t), ...(dates.has(t.id) ? { until: dates.get(t.id)! } : {}) })),
+		...(deadlines.length ? { deadlines } : {}),
 		open: list.filter((t) => t.status !== "completed").length,
 	};
 }
@@ -71,9 +74,9 @@ const readJson = (file: string): Record<string, unknown> | undefined => {
 		return undefined;
 	}
 };
-const jobsOf = (v: unknown): Job[] => (Array.isArray(v) ? v.slice(0, JOBS).flatMap((j: Record<string, unknown> | null) => {
+const jobsOf = (v: unknown, max = JOBS): Job[] => (Array.isArray(v) ? v.slice(0, max).flatMap((j: Record<string, unknown> | null) => {
 	const points = num(j?.points, 0, 10), owner = clean(j?.owner, 64);
-	return points === undefined ? [] : [{ ...(owner ? { owner } : {}), points }];
+	return points === undefined ? [] : [{ ...(owner ? { owner } : {}), points, ...(num(j?.until, 0, 8.64e15) !== undefined ? { until: j!.until as number } : {}) }];
 }) : []);
 
 export function writeCap(dir: string, cap: MainCap): void {
@@ -90,7 +93,7 @@ export function readCaps(dir: string): MainCap[] {
 		if (raw?.v !== 1 || raw.session !== session || !safeSession(session) || num(raw.updated, 0, 8.64e15) === undefined) return [];
 		const p = raw.pause as Record<string, unknown> | undefined, at = num(p?.at, 0, 8.64e15), until = num(p?.until, 0, 8.64e15), detail = clean(p?.detail, DETAIL);
 		const pause = p?.reason === "quota" && at !== undefined ? { reason: "quota" as const, at, ...(until !== undefined ? { until } : {}), ...(detail ? { detail } : {}) } : undefined;
-		return [{ v: 1, session, updated: raw.updated as number, doing: jobsOf(raw.doing), ready: jobsOf(raw.ready), open: num(raw.open, 0, 200) ?? 0, ...(pause ? { pause } : {}) }];
+		return [{ v: 1, session, updated: raw.updated as number, doing: jobsOf(raw.doing), ready: jobsOf(raw.ready, 200), ...(Array.isArray(raw.deadlines) ? { deadlines: raw.deadlines.slice(0, 200).filter((n) => num(n, 0, 8.64e15) !== undefined) } : {}), open: num(raw.open, 0, 200) ?? 0, ...(pause ? { pause } : {}) }];
 	});
 }
 /** The files of sessions that are not live and older than a day go. */
@@ -99,7 +102,7 @@ export function purgeCaps(dir: string, live: ReadonlySet<string>, now: number): 
 }
 
 /** A live main as the server sees it: its workers are the names of the subagents of its pane that run now (and, for any main, the device's live trains). */
-export interface MainFacts { session: string; name: string; workspace: string; role: "main" | "train"; state: string; commanding?: boolean; duty?: string; workers: string[]; fileMtime?: number; entryUpdated?: number }
+export interface MainFacts { session: string; name: string; workspace: string; role: "main" | "train"; state: string; commanding?: boolean; duty?: string; workers: string[]; fileMtime?: number; entryUpdated?: number; background?: boolean }
 /** One main's row of the device: points in use, its ready todos (the smallest's points), its open todos, its pause, and whether it is stale. */
 export interface MainRow { session: string; name: string; workspace: string; points: number; ready: number; minReady?: number; open: number; paused?: { until?: number; detail?: string }; stale?: true; standing?: true; /** The running workers sampled, folded (workercap.ts matches a launch to them); the local file only, never on the wire. */ workers?: string[]; /** The deployed units by name and points (the head page's supply tray); local only, like `workers`. */ units?: { name: string; points: number }[] }
 /** The device row. `under`: since when the device has had room for its smallest ready todo (held 10 minutes before it is flagged). */
@@ -112,8 +115,8 @@ const round = (n: number) => Math.round(n * 100) / 100;
  * Whether a main is stale. On an unattended device: it has open todos, runs nothing (no running worker or train, no points in use: a main commanding work is never stale), is not paused, and neither its session file nor its board entry moved for 30 minutes (whatever its state). Elsewhere the board's own rule: idle,
  * commanding nothing, not standing, and its entry over 2 hours old. A paused main is never stale.
  */
-export function staleOf(m: Pick<MainFacts, "state" | "commanding" | "duty" | "fileMtime" | "entryUpdated"> & { workers?: readonly string[]; points?: number }, c: Pick<MainCap, "open" | "pause"> | undefined, unattended: boolean, now: number): boolean {
-	if (c?.pause) return false;
+export function staleOf(m: Pick<MainFacts, "state" | "commanding" | "duty" | "fileMtime" | "entryUpdated" | "background"> & { workers?: readonly string[]; points?: number }, c: Pick<MainCap, "open" | "pause" | "deadlines"> | undefined, unattended: boolean, now: number): boolean {
+	if (c?.pause || m.background || (c && c.open > 0 && (c.deadlines ?? []).filter((at) => at > now).length >= c.open)) return false;
 	if (unattended) return !m.commanding && !m.workers?.length && !m.points && (c?.open ?? 0) > 0 && Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > 0 && now - Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > STALE_UNATTENDED_MS;
 	return m.state === "idle" && !m.commanding && m.duty !== "standing" && m.entryUpdated !== undefined && now - m.entryUpdated > STALE_MS;
 }
@@ -126,7 +129,7 @@ export function joinCaps(o: { mains: MainFacts[]; caps: MainCap[]; budget?: numb
 	const caps = new Map(o.caps.map((c) => [c.session, c])), trains = o.mains.filter((m) => m.role === "train").map((m) => nameKey(m.name)), named = new Set<string>();
 	const mains = o.mains.filter((m) => m.role === "main").map((m): MainRow => {
 		const c = caps.get(m.session), own = new Set(m.workers.map(nameKey)), runs = (owner?: string) => owner !== undefined && (own.has(nameKey(owner)) || trains.includes(nameKey(owner)));
-		const doing = (c?.doing ?? []).filter((j) => runs(j.owner)), ready = (c?.ready ?? []).filter((j) => !runs(j.owner));
+		const doing = (c?.doing ?? []).filter((j) => runs(j.owner)), ready = (c?.ready ?? []).filter((j) => j.until === undefined || j.until <= o.now).slice(0, JOBS).filter((j) => !runs(j.owner));
 		doing.forEach((j) => named.add(nameKey(j.owner!)));
 		const points = doing.reduce((n, j) => n + j.points, 0) + [...own].filter((w) => !doing.some((j) => nameKey(j.owner!) === w)).length * DEFAULT_POINTS;
 		const minReady = ready.length ? Math.min(...ready.map((j) => j.points)) : undefined, units = new Map<string, { name: string; points: number }>();

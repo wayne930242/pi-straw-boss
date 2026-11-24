@@ -19,7 +19,7 @@ export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): { refresh(): 
 		try {
 			// A /reload keeps the pause its file holds (the model is still stopped); read once, when the session's id is known (pi-intercom may set it after the start).
 			if (!restored) (restored = true), (pause ??= readCaps(dir).find((x) => x.session === id)?.pause);
-			const facts = capOfTodos(todosOf(snapshotOf(branch())) ?? []), key = JSON.stringify([facts, pause ?? null]);
+			const snapshot = snapshotOf(branch()), facts = capOfTodos(todosOf(snapshot) ?? [], snapshot), key = JSON.stringify([facts, pause ?? null]);
 			if (key === last && wrote === id) return;
 			const cap: MainCap = { v: 1, session: id, updated: cfg.now(), ...facts, ...(pause ? { pause } : {}) };
 			writeCap(dir, cap);

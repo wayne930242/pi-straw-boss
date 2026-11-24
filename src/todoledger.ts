@@ -9,6 +9,17 @@ export interface LedgerChange { op: "create" | "update" | "delete" | "clear"; pa
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
+/** Capacity-only deadlines by todo id. Date-only means midnight UTC; reject dates Date.parse would roll into the following month. */
+export function todoDeadlines(snapshot: unknown): Map<number, number> {
+	const dates = new Map<number, number>();
+	if (isObject(snapshot) && Array.isArray(snapshot.tasks)) for (const t of snapshot.tasks.slice(0, 200)) {
+		const s = t?.metadata?.until;
+		if (typeof s !== "string" || !/^\d{4}-\d\d-\d\d(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?)?$/.test(s)) continue;
+		const at = Date.parse(s), day = s.slice(0, 10), midnight = Date.parse(day);
+		if (Number.isFinite(at) && Number.isFinite(midnight) && new Date(midnight).toISOString().startsWith(day)) dates.set(t.id, at);
+	}
+	return dates;
+}
 const STATUSES = new Set(["pending", "in_progress", "completed", "deleted"]);
 const id = (v: unknown) => Number.isInteger(v) && (v as number) >= 1;
 const opt = (v: unknown, ok: (v: unknown) => boolean) => v === undefined || ok(v);

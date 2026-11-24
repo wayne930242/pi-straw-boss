@@ -5,13 +5,22 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { writeEntry } from "../src/board.ts";
 import type { HerdrRun, Pane, Session } from "../src/herdr.ts";
-import { mainFacts, readBudget, tellCap } from "../src/server/capops.ts";
+import { armedLoop, mainFacts, readBudget, tellCap } from "../src/server/capops.ts";
 
 // The server's side of the capacity watch (src/server/capops.ts): `capacity.budget`, the facts of the live mains, and where an event goes.
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 const tmp = () => (dirs.push(mkdtempSync(join(tmpdir(), "psb-capops-"))), dirs.at(-1)!);
+
+test("only this main's active unexpired loop holds stale", () => {
+	const dir = tmp();
+	for (const [status, expiresAt, want] of [["active", 101, true], ["paused", 101, false], ["active", 100, false]] as const) {
+		writeFileSync(join(dir, "loops-main.json"), JSON.stringify({ nextId: 2, loops: [{ id: "1", status, expiresAt }] }));
+		assert.equal(armedLoop(dir, "main", 100), want);
+		assert.equal(armedLoop(dir, "other", 100), false);
+	}
+});
 
 test("capacity.budget: a number of points over 0 and at most 1000; anything else is unset", () => {
 	const d = tmp();
@@ -29,7 +38,8 @@ test("mainFacts: the live mains and trains with their duty, session file time an
 	writeEntry(board, "m1", { now: "x", items: [] }, 1000);
 	const s = (id: string, p: string): Session => ({ id, name: `${id}-name`, status: "idle", herdrLocation: { status: "current", paneId: p, workspace: { id: "wA", label: "Alpha" }, tab: { id: `t-${id}`, label: "t" } } } as Session);
 	const pane = (id: string, role: string, more: Partial<Pane> = {}): Pane => ({ pane_id: id, tab_id: "t", workspace_id: "wA", agent: "pi", agent_status: "idle", tokens: { sb_role: role }, ...more });
-	const facts = mainFacts([s("m1", "p1"), s("st", "p2"), s("tr", "p3"), s("tw", "p4"), s("mb", "p5")], [pane("p1", "main", { agent_session: { value: "/s/m1.jsonl" } as never }), pane("p2", "main", { tokens: { sb_role: "main", sb_duty: "standing" } }), pane("p3", "train"), pane("p4", "tower"), pane("p5", "member")], board, 5000, (file) => (file === "/s/m1.jsonl" ? 4000 : undefined));
+	const facts = mainFacts([s("m1", "p1"), s("st", "p2"), s("tr", "p3"), s("tw", "p4"), s("mb", "p5")], [pane("p1", "main", { agent_session: { value: "/s/m1.jsonl" } as never }), pane("p2", "main", { tokens: { sb_role: "main", sb_duty: "standing" } }), pane("p3", "train"), pane("p4", "tower"), pane("p5", "member")], board, 5000, (file) => (file === "/s/m1.jsonl" ? 4000 : undefined), (id, pane) => pane === "p1" || id === "st");
+	assert.deepEqual(facts.filter((m) => m.background).map((m) => m.session), ["m1", "st"], "pane monitor and session watch belong to their own mains");
 	assert.deepEqual(facts.map((f) => [f.session, f.role, f.duty, f.fileMtime, f.entryUpdated, f.workers]), [["m1", "main", undefined, 4000, 1000, []], ["st", "main", "standing", undefined, undefined, []], ["tr", "train", undefined, undefined, undefined, []]]);
 });
 

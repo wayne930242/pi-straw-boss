@@ -91,7 +91,13 @@ export function createCapWatch(d: CapDeps) {
 				...silent.map((a) => ally("silent", a)),
 			];
 			const next = new Set<string>();
-			for (const e of flagged) if (active.has(markOf(e)) || (await send(e, now))) next.add(markOf(e));
+			for (const e of flagged) {
+				const mark = markOf(e), episode = `episode:${mark}`;
+				if (active.has(mark) || (e.kind === "stale" && sent[episode] !== undefined) || (await send(e, now))) {
+					next.add(mark);
+					if (e.kind === "stale") sent[episode] ??= now;
+				}
+			}
 			// A silence is escalated once, 2 hours after its first notice was told, and routed as that notice; it ends when the device is no longer flagged.
 			for (const a of silent) {
 				if (next.has(`silent:${a.key}`)) sent[FIRST + a.key] ??= now;
@@ -114,7 +120,7 @@ export function createCapWatch(d: CapDeps) {
 			untold = new Set(flagged.map(markOf).filter((m) => untold.has(m)));
 			last = rows;
 			const spell = (k: string) => [FIRST, ESCALATED].find((p) => k.startsWith(p)), episode = (k: string) => [UFIRST, UESCALATED].find((p) => k.startsWith(p));
-			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < THROTTLE_MS)));
+			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (k.startsWith("episode:stale:") ? next.has(k.slice("episode:".length)) : episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < THROTTLE_MS)));
 			try { writeSent(d.dir, sent); } catch (error) { d.log("capacity-error", { text: (error as Error).message.slice(0, 200) }); }
 			return dev;
 		},

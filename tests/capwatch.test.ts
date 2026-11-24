@@ -103,6 +103,14 @@ test("stale on an unattended device: a main with open todos unmoved 30 minutes i
 	assert.equal(w.told.length, 0);
 	await run(watch, w.clock, 2);
 	assert.deepEqual(w.told.map((e) => [e.kind, e.key]), [["stale", "s-a"]]);
+	await run(watch, w.clock, 61);
+	await make().tick();
+	assert.equal(w.told.length, 1, "a restart does not repeat the same stale episode");
+	w.mains[0]!.background = true;
+	await make().tick();
+	w.mains[0]!.background = false;
+	await make().tick();
+	assert.equal(w.told.length, 2, "a new episode after background work ends can notify again");
 	const { w: w2, make: make2 } = world({ unattended: true });
 	w2.mains[0] = { ...w2.mains[0]!, fileMtime: w2.clock.now(), entryUpdated: w2.clock.now() };
 	w2.cap("s-a", { open: 2, pause: { reason: "quota", at: w2.clock.now() } });
