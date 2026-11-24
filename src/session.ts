@@ -327,7 +327,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
 	const cap = createWorkerCap(undefined, deviceRoom(guiDir));
 	pi.on("turn_end", () => cap.settle());
-	pi.on("tool_call", async (event) => {
+	pi.on("tool_call", async (event, ctx) => {
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || runMode.active()) return;
 		// Two pis on one session file corrupt it: a run whose session a live pane runs (its own pane, a restore, or another launcher's resume) is not resumed (docs/specs/2026-11-23-tower-revive.md §6).
 		if (event.toolName === "subagent_resume") {
@@ -347,7 +347,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		}
 		mainDuty.migrate(pi.getSessionName()); // the promotion above may have just made this an `integ <project>` main whose migration had not run
 		// No plan gates a worker (docs/specs/2026-11-23-lite-main.md §1); the cap does (§3): at most 4 workers of this session run at once, or, with a capacity budget, as many as the device's points allow (docs/specs/2026-11-24-capacity.md, The cap).
-		if (event.toolName === "subagent") return cap.admit(event.toolCallId, event.input);
+		if (event.toolName === "subagent") return cap.admit(event.toolCallId, event.input, () => ctx.sessionManager.getBranch()); // the todo its `name` owns weighs it
 	});
 
 	// A launched subagent is marked within seconds, once its pane shows its session file, instead of at the next 4 minute refresh.

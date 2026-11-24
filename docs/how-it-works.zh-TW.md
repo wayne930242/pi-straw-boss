@@ -105,7 +105,7 @@ stateDiagram-v2
 4. 主智慧體不會降級。它的 session 結束後，分頁就沒有主智慧體，直到有成員升任為止（這時成員的 prompt 會提議升任）。`/boss` 是使用者手動接手：即使已經有別的主智慧體，它也會讓這個 session 成為分頁的主智慧體。
 5. 主智慧體有一種**類型**：`coordinator`（預設：規劃並派工）、`integrator`（專案的合併火車）、`standing`（負責一個系統或一台機器，沒有結束的時候）。類型就是這個主智慧體執行的 prompt：`main.md`，加上 `integrator.md` 或 `duty-standing.md`。每種類型都帶著 `main.md` 裡的派工規則：按負責的 app 拆分工作、每個工作者出發前先開 todo、相依的任務用 `blockedBy`、平行寫入的工作者各用一個 worktree、最多同時 4 個工作者。計畫在 `metadata.graph` 裡的協調圖（`single-loop`、`fan-out/fan-in`、`orchestrator-worker`；由 `planGraph` 讀取，取最新的未完成者）只是頁面上的標示，沒有 prompt 會隨它改變（0.83.0，[lite-main 規格](specs/2026-11-23-lite-main.md)）。
 
-   派工不再需要計畫。同一個 session 已有 4 個工作者在跑，或在同一則訊息裡正要出發時（依 pi-herdr-agents 登記的、還在等結果的子智慧體，加上這一輪已放行的呼叫），再呼叫 `subagent` 派 `worker` 會被拒絕並回 `sb: 4 workers run for this main already …`；scout、planner、reviewer、其他角色和 `subagent_resume` 不算在內。主智慧體用 `boss_duty` 改變類型（附一行理由；新類型的 prompt 以 steer 送達，段落保持不變；它會寫下一筆 `straw-boss` 條目 `{ duty, dutyFrom, dutyWhy, dutyAt }`，記進塔台的摘要，並顯示在頁面上）。
+   派工不再需要計畫。同一個 session 已有 4 個工作者在跑，或在同一則訊息裡正要出發時（依 pi-herdr-agents 登記的、還在等結果的子智慧體，加上這一輪已放行的呼叫），再呼叫 `subagent` 派 `worker` 會被拒絕並回 `sb: 4 workers run for this main already …`；scout、planner、reviewer、其他角色和 `subagent_resume` 不算在內。設了 `capacity.budget` 時改由裝置的點數決定（[裝置產能](#裝置產能)的「放行」）。主智慧體用 `boss_duty` 改變類型（附一行理由；新類型的 prompt 以 steer 送達，段落保持不變；它會寫下一筆 `straw-boss` 條目 `{ duty, dutyFrom, dutyWhy, dutyAt }`，記進塔台的摘要，並顯示在頁面上）。
    在本機輪次裡，呼叫 `boss_duty` 宣告 `standing`，或由值守主智慧體呼叫 `boss_rename` 時，如果同一個工作區已有同名且仍在運作的值守主智慧體（比對方式與等待事項路由相同：不計大小寫，連續空白視為一個），工具會警告：指名這個 session 為負責人的 Straw Link 等待事項會同時符合兩位，因此不會只送給其中一位，而會送給每一位值守主智慧體。
 
    尚未宣告類型、且名稱是 `integ <project>`（在啟動時，或任何一次改名時：`boss_rename`、`/name`、其他擴充），或持有 `train` todo 的主智慧體，會遷移為 `integrator` 一次，條目為 `migrated: name` 或 `migrated: train todos`。已宣告的類型絕不遷移。每次 `/reload`、`/new`、`/resume`、`/fork` 都會重讀整合開關；整合關閉時，整合員會以協調者的身分執行並發布 `coordinator`。頁面在每種主題下都以同一個詞顯示類型（協調者、整合員、值守 / coordinator, integrator, on watch），後面接計畫的圖（單一迴圈、分支匯流、多工編排 / single loop, fan-out, orchestrated），切換則是時間軸上的一個事件。
@@ -754,6 +754,8 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 **檔案。** 主智慧體自己的 session 依它的 todo 清單（讀法和自動填入相同）與停機狀態寫 `<state dir>/capacity/<session>.json`，兩者任一變動就重寫，結束時刪除（`/reload` 不刪）。主要的 sb server 每分鐘一次、不經模型，把這些檔案和它看到正在執行的 subagent 合併，寫出裝置列 `capacity/_device.json`：點數、`config.json` 的 `capacity.budget`（沒設：照樣顯示數字，只是不標產能閒置）、1 分鐘負載平均與核心數、可接數與最小的可接點數、未完成的 todo 數、裝置是否無人值守，以及每個主智慧體的數字、停機與停滯標記。超過 5 分鐘的列不算讀數。
 
 **在哪裡看得到。** `board_read` 在每個主智慧體的 `local` 列放上它的 `points`、`ready` 與 `paused`（`quota · resumes 16:02`），並在 `capacity` 區段放裝置的數字（遠端輪次只列它的列看得到的停機主智慧體）；`/boss board` 在標題下印出裝置那一行（`capacity 6 / 20 pts · load 0.24 / 32 cores · ready 5 · under 42 min · 1 paused`），並在每一列附上數字；主塔台頁面的看板摺疊行與各列也一樣。隊友隨看板一起拿到它（見下文）。
+
+**放行。** 設了 `capacity.budget` 時，只有當裝置列的點數（5 分鐘內的）、裝置上的保留量與這個 `worker` 子智慧體自己的權重都放得進預算，它才會出發：權重是主智慧體自己的 todo 中，`owner` 等於子智慧體 `name`（不分大小寫、去掉前後空白；沒有這樣的 todo，或它已完成時算 1）那一項的 `metadata.points`。出發時先寫下自己的保留（`capacity/_reserved/<id>.json`，一筆一個檔，寫好再改名就位），再讀加總，所以同一台裝置上同時派工的兩個主智慧體看得到彼此，被拒的那一筆什麼都不留。保留在出發結果回來後仍然有效，直到在那個結果 2 分鐘後取樣的裝置列算進這個工作者；出發失敗，或該輪結束時還沒有結果，保留立刻釋放；沒有任何裝置列算進的保留 10 分鐘後失效。拒絕訊息：`sb: the device runs 1 of its 2 capacity points, 0.5 more held by launches it does not count yet: this worker needs 2. …`。沒有預算或沒有新的裝置列時，沿用每個主智慧體最多 4 個的規則。
 
 **停機接口。** 撞到模型額度而停下的主智慧體自己寫不了看板，所以由它 session 裡的擴充代為標記：pi-agent-basic 在 pi 的行程內事件匯流排發出 `straw-boss:pause`，`{ v: 1, state: "paused" | "resumed", reason: "quota", until?: <epoch ms>, detail?: <at most 120 characters> }`（`detail` 至多 120 字元）；sb 不 import basic 的任何東西，收到後把該主智慧體標成停機，直到收到 `resumed` 或該 session 開始新的一輪。`/reload` 保留這個標記，停機中的主智慧體永遠不算停滯。
 

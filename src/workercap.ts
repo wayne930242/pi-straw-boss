@@ -1,7 +1,9 @@
 import { join } from "node:path";
-import { capDir, readDevice } from "./capacity.ts";
+import { capDir, DEFAULT_POINTS, nameKey, readDevice } from "./capacity.ts";
 import { createReservations, type Reservations } from "./capres.ts";
 import { dutyOfAgent } from "./duty.ts";
+import { todosOf } from "./items.ts";
+import { snapshotScan } from "./todo.ts";
 
 // The cap on a session's concurrent workers (docs/specs/2026-11-23-lite-main.md §3): at most 4 `worker` subagents run at once, counted from pi-herdr-agents' registry of the children this process
 // launched and is still waiting on (orphan.ts `tracked` reads the same slot), plus the worker calls admitted in the message being prepared: pi prepares every tool call of an assistant message before any
@@ -36,15 +38,23 @@ export const deviceRoom = (guiDir: string): DeviceSide => {
 export function createWorkerCap(cap = WORKER_CAP, device?: DeviceSide) {
 	/** Worker calls admitted whose tool has not returned yet: the registry may not hold them. With a budget, each holds a reservation (its id). */
 	const admitted = new Map<string, string | undefined>();
-	const weight = () => 1;
+	const snapshotOf = snapshotScan();
+	/** The `metadata.points` of the main's own open todo whose `owner` is the subagent's `name` (read as capfill.ts reads the list), as the board's headroom weighs a ready todo; 1 without one. */
+	const weight = (name: unknown, branch?: () => readonly unknown[]): number => {
+		if (typeof name !== "string" || !name.trim() || !branch) return DEFAULT_POINTS;
+		let list: readonly unknown[] = [];
+		try { list = branch(); } catch { /* a replaced session's context throws: no todo */ }
+		const mine = (todosOf(snapshotOf(list)) ?? []).filter((t) => t.status !== "completed" && t.owner !== undefined && nameKey(t.owner) === nameKey(name));
+		return (mine.find((t) => t.status === "in_progress") ?? mine[0])?.points ?? DEFAULT_POINTS;
+	};
 	return {
-		/** pi's `tool_call` for `subagent`: a refusal when `input.agent` is a worker and the budget, or `cap` workers already run or are admitted, leave no room. */
-		admit(toolCallId: string, input: unknown): { block: true; reason: string } | undefined {
-			const { agent } = (input ?? {}) as { agent?: unknown };
+		/** pi's `tool_call` for `subagent`: a refusal when `input.agent` is a worker and the budget, or `cap` workers already run or are admitted, leave no room. `branch`: the main's session entries, for the todo's weight. */
+		admit(toolCallId: string, input: unknown, branch?: () => readonly unknown[]): { block: true; reason: string } | undefined {
+			const { agent, name } = (input ?? {}) as { agent?: unknown; name?: unknown };
 			if (typeof agent !== "string" || dutyOfAgent(agent) !== "worker") return undefined;
 			const r = device?.room();
 			if (r?.budget !== undefined && device) {
-				const need = weight();
+				const need = weight(name, branch);
 				let id: string, held: number;
 				try {
 					id = device.store.add(need);

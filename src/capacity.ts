@@ -105,7 +105,7 @@ export interface MainRow { session: string; name: string; workspace: string; poi
 /** The device row. `under`: since when the device has had room for its smallest ready todo (held 10 minutes before it is flagged). */
 export interface DeviceCap { v: 1; at: number; points: number; budget?: number; load1: number; cores: number; ready: number; minReady?: number; open: number; unattended: boolean; under?: number; mains: MainRow[] }
 
-const key = (name: string) => name.trim().toLowerCase();
+/** A worker's or owner's name as they are matched: case- and space-folded. */ export const nameKey = (name: string) => name.trim().toLowerCase();
 const round = (n: number) => Math.round(n * 100) / 100;
 
 /**
@@ -123,12 +123,12 @@ export function staleOf(m: Pick<MainFacts, "state" | "commanding" | "duty" | "fi
  * worker no such todo names counts 1; the main itself counts nothing. A live train no main's todo names counts 1. Ready: the pending todos whose blockers are done and whose owner does not run.
  */
 export function joinCaps(o: { mains: MainFacts[]; caps: MainCap[]; budget?: number | undefined; load1: number; cores: number; unattended: boolean; now: number }): DeviceCap {
-	const caps = new Map(o.caps.map((c) => [c.session, c])), trains = o.mains.filter((m) => m.role === "train").map((m) => key(m.name)), named = new Set<string>();
+	const caps = new Map(o.caps.map((c) => [c.session, c])), trains = o.mains.filter((m) => m.role === "train").map((m) => nameKey(m.name)), named = new Set<string>();
 	const mains = o.mains.filter((m) => m.role === "main").map((m): MainRow => {
-		const c = caps.get(m.session), own = new Set(m.workers.map(key)), runs = (owner?: string) => owner !== undefined && (own.has(key(owner)) || trains.includes(key(owner)));
+		const c = caps.get(m.session), own = new Set(m.workers.map(nameKey)), runs = (owner?: string) => owner !== undefined && (own.has(nameKey(owner)) || trains.includes(nameKey(owner)));
 		const doing = (c?.doing ?? []).filter((j) => runs(j.owner)), ready = (c?.ready ?? []).filter((j) => !runs(j.owner));
-		doing.forEach((j) => named.add(key(j.owner!)));
-		const points = doing.reduce((n, j) => n + j.points, 0) + [...own].filter((w) => !doing.some((j) => key(j.owner!) === w)).length * DEFAULT_POINTS;
+		doing.forEach((j) => named.add(nameKey(j.owner!)));
+		const points = doing.reduce((n, j) => n + j.points, 0) + [...own].filter((w) => !doing.some((j) => nameKey(j.owner!) === w)).length * DEFAULT_POINTS;
 		const minReady = ready.length ? Math.min(...ready.map((j) => j.points)) : undefined;
 		return {
 			session: m.session, name: clean(m.name, 40), workspace: m.workspace, points: round(points), ready: ready.length, ...(minReady !== undefined ? { minReady } : {}), open: c?.open ?? 0,

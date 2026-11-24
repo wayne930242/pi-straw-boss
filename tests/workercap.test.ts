@@ -28,7 +28,7 @@ function device(row: Room) {
 	return { d, main, held: () => readdirSync(join(dir, "_reserved")).filter((n) => n.endsWith(".json")).length };
 }
 const worker = (name?: string) => ({ agent: "worker", ...(name ? { name } : {}) });
-const _todos = (tasks: { id: number; owner?: string; status?: string; points?: number }[]) => () => [{ type: "custom", customType: "rpiv-todo-state", data: { nextId: 99, tasks: tasks.map((t) => ({ id: t.id, subject: `t${t.id}`, status: t.status ?? "pending", ...(t.owner ? { owner: t.owner } : {}), ...(t.points !== undefined ? { metadata: { points: t.points } } : {}) })) } }];
+const todos = (tasks: { id: number; owner?: string; status?: string; points?: number }[]) => () => [{ type: "custom", customType: "rpiv-todo-state", data: { nextId: 99, tasks: tasks.map((t) => ({ id: t.id, subject: `t${t.id}`, status: t.status ?? "pending", ...(t.owner ? { owner: t.owner } : {}), ...(t.points !== undefined ? { metadata: { points: t.points } } : {}) })) } }];
 
 test("with a budget, the device's points gate a worker, past the count of 4", () => {
 	registry(6);
@@ -86,4 +86,18 @@ test("two mains, several turns, one snapshot: the device's reservations hold the
 	assert.match(b.admit("b5", worker())?.reason ?? "", /1 more held/, "the row is older than a5's launch: it holds");
 	d.clock.advance(RES_EXPIRE_MS + 1);
 	assert.equal(b.admit("b6", worker()), undefined, "a reservation no row counted expires after 10 minutes");
+});
+
+// Review prompts-review F002: the board's headroom weighs the ready todo's points, so admission weighs the todo the subagent's name owns, not 1 per worker.
+test("admission weighs the todo whose owner is the subagent's name (case- and space-folded), else 1", () => {
+	registry(0);
+	const { d, main } = device({ points: 1.5, budget: 2 }), cap = main();
+	const branch = todos([{ id: 1, owner: "Ready One", points: 0.5 }, { id: 2, owner: "big", points: 2 }, { id: 3, owner: "done one", status: "completed", points: 0.5 }]);
+	assert.equal(cap.admit("c1", worker(" ready one"), branch), undefined, "1.5 used + 0.5 ready fits 2");
+	assert.match(cap.admit("c1b", worker("x"), branch)?.reason ?? "", /runs 1\.5 of its 2 capacity points, 0\.5 more held by launches it does not count yet: this worker needs 1\./, "c1 holds its 0.5");
+	cap.settle();
+	d.row = { points: 1, budget: 2, at: d.clock.now() };
+	assert.match(cap.admit("c2", worker("BIG"), branch)?.reason ?? "", /runs 1 of its 2 capacity points, 0 more held by launches it does not count yet: this worker needs 2\./, "a 2-point ticket at 1 point of headroom");
+	assert.equal(cap.admit("c3", worker("done one"), branch), undefined, "a completed todo weighs nothing: the default 1 fits");
+	assert.match(cap.admit("c4", worker(), branch)?.reason ?? "", /1 more held by launches it does not count yet: this worker needs 1\./, "no name: 1");
 });
