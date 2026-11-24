@@ -1,4 +1,4 @@
-# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ de8b66d6 -->
+# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ cbc70de0 -->
 
 [README](../README.zh-TW.md) 背後的完整行為。使用說明在各篇指南；這份參考則逐節寫出程式實際怎麼做，所以請在下面找到需要的那一節，其餘可以略過。
 
@@ -588,7 +588,7 @@ operate 搭乘唯一的 `operate` Link 種類，relay 把它視為排隊和 ephe
 
 **盒子拒絕什麼，不論控制端怎麼要求**（`src/operateroutes.ts`、`src/keys.ts`，接縫在 `src/operateseam.ts`）。每個請求都帶著已配對裝置會碰到的防護執行，而且更多：沒有 `!` shell 行（不論是輸入的，還是在以它開頭的草稿上按 Enter），沒有 `/boss` 行，沒有把輸入區文字送進非空的編輯器，沒有在任何 `/` 草稿上按 Enter，沒有 `hereOnly` 選項，也沒有密鑰 `value`；沒有 `open/*`、`dirs`、`close/base`、`close/stash`，沒有改變焦點，沒有裸 pane（`panes/*`）、信任、`link/*`、`server/*`、`head/*` 或文件（`doc/*`）。
 
-按鍵只有在盒子自己的 pi 確認這個按鍵是它即時 keybindings 裡的編輯器動作、pi 握有終端機（它的 stdin 是 raw，而且它是唯一的前景 `pi`）時，才會送進 pane，而一秒內的第二個 Escape 或 Ctrl+C 會被拒絕。文件絕不提供：卡片保留它的名稱和原因，沒有任何能力。拒絕是帶著原因詞的 `operate_refused`，並記錄一行 `operate-refused`。
+按鍵只有在盒子自己的 pi 確認這個按鍵是它即時 keybindings 裡的編輯器動作、pi 握有終端機（它的 stdin 是 raw，而且它是唯一的前景 `pi`）時，才會送進 pane，而一秒內的第二個 Escape 或 Ctrl+C 會被拒絕。文件絕不提供：卡片保留它的名稱和原因，沒有任何能力。拒絕是帶著原因詞的 `operate_refused`，並記錄一行 `operate-refused`。每項檢查都先向 session 的橋接發出探查：1 秒內沒收到回覆，就以相同 id 再問一次，最多再等 3 秒（session 正在處理一輪，或盒子負載過高時，事件迴圈可能耽擱超過 1 秒）。重問仍無回覆，或伺服器連不上橋接時，會回傳 `noanswer`（頁面提示 session 未及時回覆，請再試一次），而不是 `unread`。只有橋接有回覆、卻讀不到編輯器時，才回傳 `unread`；橋接也可回覆 `binding-unread`、`terminal`、`shell`、`boss-command`、`command` 或 `draft`（見[規格](specs/2026-11-21-operate-probe.md)）。
 
 盒子送來的一切，在控制端都被當成敵意來源處理：它依 schema 重建（未知欄位丟掉，帶有 `..` 或控制字元的鍵連同它的子樹一起拒絕，標籤當作純文字，位元組吻合的四種類型、小於 1 MB 的圖片，回覆有上限），被拒絕的則在 `link.log` 以 `operate-bad-frame` 計數。主塔台不屬於任何人的範圍，盒子的部分也一樣：沒有讀取、監看、按鍵、關閉或回答能到達它，不論在盒子上（它的鍵的擁有者是無人，而每條指名單位的路由都拒絕它），還是在控制端上（盒子帶有它那種形狀的鍵，絕不放進表格）。
 
@@ -744,16 +744,16 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 ### 自動模式
 
-給老闆不在、而且沒有任何事可以等他的時候用（`src/auto.ts`、`autostate.ts`、`autotext.ts`、`autoscope.ts`、`bossauto.ts`、`declined.ts`、`server/automode.ts`、`autoops.ts`、`autoback.ts`、`autotower.ts`、`gui/auto.ts`；設計是 `docs/specs/2026-11-09-auto-mode.md`）。它涵蓋這台電腦和它上面的每個 Herdr slot；Straw Link 的隊友不會被告知，無人值守裝置也沒有它。
+給老闆不在、而且沒有任何事可以等他的時候用（`src/auto.ts`、`autostate.ts`、`autotext.ts`、`autoscope.ts`、`bossauto.ts`、`declined.ts`、`server/automode.ts`、`autoops.ts`、`autoback.ts`、`autotower.ts`、`autoreturn.ts`、`gui/auto.ts`；設計見 `docs/specs/2026-11-09-auto-mode.md`，後由 `docs/specs/2026-11-21-auto-return.md` 修訂）。它涵蓋這台電腦和它上面的每個 Herdr slot；Straw Link 的隊友不會被告知，無人值守裝置也沒有它。
 
 狀態，以及狀態之間的門：
 
 ```mermaid
 flowchart TD
-    Off(["關閉"]) -->|"/boss auto on，<br/>或主塔台的 boss_auto"| Staged(["暫存"])
+    Off(["關閉"]) -->|"/boss auto on"| Staged(["暫存"])
     Staged -->|"老闆確認"| On(["開啟"])
     Staged -->|"10 分鐘後<br/>失效"| Off
-    Off -->|"頁面上的兩次點擊"| On
+    Off -->|"頁面上的兩次點擊，<br/>或主塔台的 boss_auto"| On
     On -->|"任何一道門；<br/>寫出回來的清單"| Off
 ```
 
@@ -763,11 +763,11 @@ flowchart TD
 
 #### 誰可以切換
 
-只有老闆自己的動作：輸入的 `/boss auto`（`on` 暫存一個請求，由終端機詢問；沒有任何東西能透過 socket 一步就開啟）、GUI 的開關，以及主塔台的 `boss_auto`。主塔台的工具依老闆在這次執行所回報為由老闆啟動的輪次（不是按下的事件，或在主塔台 pane 輸入的一行）裡說的話行動，伺服器會對照一份固定清單來讀它：問題、否定、同時兩個方向，或用過的話都會被拒絕。從 GUI 的兩次點擊以外的任何入口 `on`，都需要一筆待處理紀錄的確認，它在 10 分鐘後失效，並告訴主塔台。執行 token、operate session 和工作區塔台都得不到。
+只有老闆自己的動作：輸入的 `/boss auto`（`on` 暫存一個請求，由終端機詢問；沒有任何東西能透過 socket 一步就開啟）、GUI 的開關，以及主塔台的 `boss_auto`。主塔台的工具依老闆在這次執行所回報為由老闆啟動的輪次（不是按下的事件，或在主塔台 pane 輸入的一行）裡說的話行動，伺服器會對照一份固定清單來讀它：問題、否定、同時兩個方向，或用過的話都會被拒絕。主塔台的工具可直接開啟或關閉，不必確認（老闆在 2026-11-21 的決定：「on/off 都直接切」）。透過控制 socket 送出的 `on` 會先留下待處理紀錄，須由老闆在該終端機或用 GUI 上的按鈕確認；10 分鐘後失效。執行 token、operate session 和工作區塔台都得不到。
 
 #### 它拒絕什麼
 
-在每個 session（主智慧體、成員、火車、子智慧體）裡，新的 `ask_user_question`、`question`、`robot_hand`、`secret_drop`、`link_request` 或 `mcp` 瀏覽器登入都被拒絕，並附上一則說老闆不在的備註；工具呼叫裡開啟的確認或 prompt 以 Escape 回答，而不畫出來；Straw Link 的關卡確認被拒絕（`no one can confirm this here now`）；pi 的信任問題回答「不信任」，只有頁面的 `open/base` 啟動的 pane 例外：那是人要求開的專案，所以它的問題照常詢問。智慧體的 `boss_wait_ask` 同樣被拒絕，開著的也會結束：卡片在 GUI 與回來時的清單裡等老闆。
+在每個 session（主智慧體、成員、火車、子智慧體）裡，新的 `ask_user_question`、`question`、`robot_hand`、`secret_drop`、`link_request` 或 `mcp` 瀏覽器登入都被拒絕，並附上一則說老闆不在的備註；工具呼叫裡開啟的確認或 prompt 以 Escape 回答，而不畫出來；Straw Link 的關卡確認被拒絕（`no one can confirm this here now`）；pi 的信任問題回答「不信任」，只有頁面的 `open/base` 啟動的 pane 例外：那是人要求開的專案，所以它的問題照常詢問。智慧體的 `boss_wait_ask` 同樣被拒絕，開著的也會結束：卡片會擱置到自動模式結束。
 
 <details>
 <summary>細節</summary>
@@ -782,7 +782,7 @@ sb server 把它啟動的 pane 清單（每個 pane 附它的資料夾）留在�
 
 #### 塔台
 
-開啟期間，每座塔台和主塔台的簡報會多一行。那時記下的老闆等待事項會被擱置（記憶條目上的 `parked`），開啟時每個開著的也是；卡片的提出者會收到一則 `wait_parked` 訊息。對一個 session 的 `tower_reply`，如果該輪取走了它 `blocked` 的 `call_tower`，會附註它的 `basis`（記憶 id 或不是按下的老闆事件，否則是 `none`）。密鑰卡片的啟動按鈕會被拒絕。
+開啟期間，每座塔台和主塔台的簡報會多一行。那時記下的老闆等待事項會被擱置（記憶條目上的 `parked`），開啟時每個開著的也是；卡片的提出者會收到一則 `wait_parked` 訊息，告知老闆回來時會以 `wait_returned` 訊息把卡片退給它。對一個 session 的 `tower_reply`，如果該輪取走了它 `blocked` 的 `call_tower`，會附註它的 `basis`（記憶 id 或不是按下的老闆事件，否則是 `none`）。密鑰卡片的啟動按鈕會被拒絕。
 
 #### 監看
 
@@ -799,11 +799,11 @@ sb server 把它啟動的 pane 清單（每個 pane 附它的資料夾）留在�
 
 #### 回來的清單
 
-不論從哪個入口結束，伺服器都會為那段期間寫入 `<state>/auto-report.json`（每座塔台和主塔台被擱置的等待、每個 session 的取消和拒絕、塔台決定的回覆、無法取消的等待、外來的寫入，以及監看看到和做了什麼：它讀取的次數、其中平靜的次數、叫醒的次數、沒有主塔台開著的讀取次數、主塔台自己送出的訊息、2 小時以上沒有產出的工作區、以及它看到的每個發現，各列在一處：最後一次讀取時仍未解決（說過了，而且還在）、沒說給任何人（沒有任何一輪主塔台取走，到最後一次讀取已消失的會註明）、只由兩輪主塔台帶著當掉而被擱置的通知帶過，或在最後一則通知裡、正被一輪主塔台拿著；每份清單最多 20 個，其餘計數，說過而且已消失的不列），讓被擱置的卡片恢復普通，並給主塔台一個事件。`/boss auto off` 把它印出來，`board_read` 在 `towers` 區段顯示它的摘要，而 `/boss memory done|choose|decline W<n>` 處理被擱置的等待。
+不論以什麼方式結束自動模式，伺服器都會先結束仍在等待的擱置卡片（開著、從未按下），並退給提出者，不由塔台轉告老闆（`server/autoreturn.ts`；老闆在 2026-11-21 的決定：「auto off 以後就直接發回原 agent 請他們再問、再要求一次」）。Session 提出的卡片由塔台以自己的身分，向提出者的 session id 送出一則 `wait_returned` 訊息；若提出者是主塔台，就改送主塔台事件，因為主塔台的身分只收塔台的回答。塔台自己的卡片則以該塔台的事件送回；主塔台自己的卡片也是如此，即使它沒開，伺服器也會從其資料夾讀取。每則訊息或事件都請提出者自己再問一次。停止或重啟時，塔台會等這些訊息送回才離開 broker，最多等 5 秒。卡片的狀態改為 `resolved`，並記下 `returned`（`raiser`、`tower` 或 `gone`）和對應的結果。若提出者已離開、broker 在 5 秒內沒接收訊息，或伺服器已不再服務該塔台，就以 `gone` 結束卡片，不留下待老闆處理的事項。老闆離開期間已回答的擱置卡片只會移除擱置標記，未擱置的卡片則不變。接著伺服器會為這段期間寫入 `<state>/auto-report.json`，並送一個事件給主塔台。報告列出每座塔台和主塔台擱置的等待及其去向（每則訊息都有回覆後再寫一次）、各 session 的取消與拒絕、塔台決定的回覆、無法取消的等待，以及外來的寫入。報告也記下監看的讀取次數、其中無事發生的次數、叫醒次數、主塔台沒開時的讀取次數、主塔台自行送出的訊息、至少 2 小時沒有產出的工作區，並將所有發現依去向分類：已告知且最後一次讀取時仍未解決、還沒告知任何人（沒有主塔台的 run 取走；若最後一次讀取時已消失，會加註）、只出現在因兩輪主塔台當掉而擱置的通知裡，或出現在最後一則通知裡且還由一輪主塔台持有。每份清單最多列 20 項，其餘只計數；已告知且已消失的發現不列。`/boss auto off` 會印出報告，`board_read` 在 `towers` 區段顯示摘要，GUI 的回來面板則列出每張擱置卡片的去向；`/boss memory done|choose|decline W<n>` 仍可處理未擱置的卡片。
 
 #### 仍然可能的事
 
-同一位使用者的行程可以寫檔案、對控制 socket 說話，或在 pane 裡打字。每一次切換和暫存都會通知每個 pane，並列出它的請求者；主塔台的確認紀錄，是偽造的請求跳不過的那一個。
+同一位使用者的行程可以寫檔案、對控制 socket 說話，或在 pane 裡打字。每一次切換和暫存都會通知每個 pane，並列出它的請求者；透過 socket 暫存的請求仍須由老闆確認。主塔台的 `boss_auto` 不必確認，因此模型若誤解老闆一句符合清單的話，可能會開啟自動模式，就像先前也能直接關閉一樣。注入的文字無法切換模式，因為伺服器只讀老闆親自說的話。
 
 ### 開啟主智慧體
 
@@ -2554,7 +2554,7 @@ server 還會再回答 `watch-read` 一個版本（舊版的監控者子智慧�
 
 ### 兩次執行之間的塔台
 
-由 sb server 執行的塔台，即使沒有任何執行中的 run，也保有它的那一列：只要塔台提示在常駐 pane 上執行（[常駐 pane](#常駐-pane)），server 就會在該 pane 上回報一個替身智慧體 `tower`（閒置，訊息為 `standing by`、`3 queued` 或 `held`；有等待卡片在等老闆時則是 blocked，訊息以 `2 cards wait` 開頭），所以這一列會排在其工作區的第一個位置，作為塔台的標記，`agent.list` 也看得到它。它只是一列，沒有別的作用：網、儀表板、收起、closer 或 reaper 的檢查都不把它算作智慧體、主智慧體或成員，閒置回報也不會觸發 toast、音效或注意力計數。blocked 的替身就是 Herdr 自己的等待狀態，Herdr 給它什麼注意力就是什麼，工作區的彙總也跟著它，所以儀表板的塔台列與頁面的據點都顯示等待中；頁面上的塔台單位在 run 之間仍是閒置，不另外發警示（卡片本身就是它的警示）。run 開始時，由 pi 自己的那一列取代它；run 結束後它會再回來。隊友 run 的 pane 也是一列，就在塔台的正下方（`[ally] <device label>`，見[隊友 run](#隊友-run)）。
+由 sb server 執行的塔台，即使沒有任何執行中的 run，也保有它的那一列：只要塔台提示在常駐 pane 上執行（[常駐 pane](#常駐-pane)），server 就會在該 pane 上回報一個替身智慧體 `tower`（閒置，訊息為 `standing by`、`3 queued` 或 `held`；有等待卡片在等老闆時則是 blocked，訊息以 `2 cards wait` 開頭；主塔台的 pane 只計自己的卡片），所以這一列會排在其工作區的第一個位置，作為塔台的標記，`agent.list` 也看得到它。它只是一列，沒有別的作用：網、儀表板、收起、closer 或 reaper 的檢查都不把它算作智慧體、主智慧體或成員，閒置回報也不會觸發 toast、音效或注意力計數。blocked 的替身就是 Herdr 自己的等待狀態，Herdr 給它什麼注意力就是什麼，工作區的彙總也跟著它，所以儀表板的塔台列與頁面的據點都顯示等待中；頁面上的塔台單位在 run 之間仍是閒置，不另外發警示（卡片本身就是它的警示）。run 開始時，由 pi 自己的那一列取代它；run 結束後它會再回來。隊友 run 的 pane 也是一列，就在塔台的正下方（`[ally] <device label>`，見[隊友 run](#隊友-run)）。
 
 <details>
 <summary>細節</summary>
@@ -3346,7 +3346,7 @@ Herdr 拒絕的輸入（`pane run` 失敗）不算一次嘗試：server 記錄 `
 
 在 Windows 上，前景清單無法分辨閒置的 shell 與執行中的程式，Retry 會先讀行程表，只有在那次讀取成功、而且在 pane 的 shell 之下沒有找到老闆的程式（塔台提示除外）時才輸入：失敗的讀取會說明並且不輸入任何東西，找到的程式會讓服務再次被它保持並指名它，而 Retry 會再問一次。歸還最多把 pane 標為全新一分鐘，而 pane 被停放時完全不標。啟動失敗的通知，在按下 Retry 時、老闆寫給被保持的塔台時，以及之後有 run 聲明時消失。
 
-它在提示於最近 6 秒內輪詢過時回報替身，在訊息或狀態改變時再回報，並每 4 分鐘一次。有等待卡片在等老闆時（開著且還沒按下；密鑰卡片按了第一步仍算在等），狀態是 `blocked`：塔台算自己的，主塔台算每座塔台的加上自己的，和主塔台的執行能觸及的範圍相同；否則是 `idle`，而在無人值守裝置上一律是 `idle`，因為沒有人會回答。自動模式下仍是 blocked：卡片還在等，只是暫放，頁面也會顯示它們。訊息先說卡片數，再說 `held` 或佇列（`2 cards wait · 1 queued`），使用 [sb 的語言](#語言)。在 run 於 pane 裡啟動 pi 之前，它會釋放替身（Herdr 拒絕在有智慧體的 pane 中 `agent start`：`agent_pane_busy`），告訴提示離開，最多等 3 秒讓它消失，而且只有在 pane 的前景正是那個提示時（依 PID）才送 Ctrl+C。
+它在提示於最近 6 秒內輪詢過時回報替身，在訊息或狀態改變時再回報，並每 4 分鐘一次。有等待卡片在等老闆時（開著且還沒按下；密鑰卡片按了第一步仍算在等），狀態是 `blocked`：各塔台只計自己的卡片，主塔台也一樣（別座塔台的卡片不是主塔台的等待事項，這是老闆在 2026-11-21 的決定）；否則是 `idle`，而無人值守裝置一律是閒置，因為沒有人會回答。自動模式下仍是 blocked：卡片還在等，只是擱置，頁面也會顯示它們。訊息會先列自己的卡片數；主塔台接著會列其他塔台的卡片數（`3 cards wait at other towers`），只作提示，不影響狀態；最後再顯示 `held` 或佇列（`2 cards wait · 1 queued`、`standing by · 3 cards wait at other towers`），使用 [sb 的語言](#語言)。在 run 於 pane 裡啟動 pi 之前，它會釋放替身（Herdr 拒絕在有智慧體的 pane 中 `agent start`：`agent_pane_busy`），告訴提示離開，最多等 3 秒讓它消失，而且只有在 pane 的前景正是那個提示時（依 PID）才送 Ctrl+C。
 
 然後，在 macOS 與 Linux 上，它最多等 2 秒讓提示的行程本身消失（提示說它要離開不等於它結束：Herdr 在結束後幾毫秒就接受 `agent start`，而 zsh 還沒有讀取，指令的 Enter 就遺失了），再多等 300 毫秒讓它穩定下來；在最近 15 秒內輸入、還沒有輪詢過的提示會以同樣的方式被等待，而沒有及時結束的提示會在 log 中被指名（`run-yield`），run 繼續。
 
@@ -4039,7 +4039,7 @@ Straw Boss 把狀態放在 state 目錄的檔案裡（先是 sb server 自己的
   在 Windows 上，兩個機密檔案放在資料夾的擁有者加 SYSTEM ACL 之下，而 `lan-ca.json` 在回讀清單上。次要 slot 一個都不寫。
 - 每個分頁一個 intercom 擴充頻道，`straw-boss/tab/<hex of the tab id>`，由每個已加入的 session 與塔台註冊；頻道的擁有者（第一個加入的）只記錄主智慧體，而它並不因此就是主智慧體。超過 24 字元的分頁 id 會被拒絕。
 - 狀態資料夾裡的 `trust/<uuid>.json`、`<uuid>.answer.json` 與 `<uuid>.result.json`（一個 700 的資料夾，檔案 600，每個都以 rename 寫入）：尚未加入網的 pi 的專案信任問題、server 的答案，以及哪一方回答了（[專案信任](#瀏覽器檢視)）。詢問的 pi 在它被決定或結束時移除它的請求與答案；server 移除行程已不在的請求、2 分鐘後的結果，以及任何寫到一半的東西。`gui.json` 帶有 `trust: 1`：sb server 讀取它們。
-- 對話頻道 `straw-boss/gui/<sha256 prefix of the server's session id>`：只由 sb server 以具擁有者資格註冊（它的 intercom id 是 `gui.json` 的 `ownerSession`），並在 `gui.json` 指名一個行程存活的 server 期間，由每個 session（包含子智慧體）加入；每個 session 從啟動起每 2 秒檢查一次 `gui.json`。除了對話框之外，它還帶著 session 的文件清單（pi-herdr-doc-review 的 id、路徑、顯示名稱、理由、修訂版；橋接在啟動時再向擁有者要一次清單，所以重新載入的 session 會列出開著的內容）與寄給單一文件、每個答案 id 一次的表單答案，以及按鍵板的編輯器檢查：server 問 session 的橋接 Enter 會送出什麼，而橋接以一個類別回答（空的、文字、另一個 slash 或 `!` 指令，或不明）與至多一個會結束或取代 session 的指令名稱，絕不是草稿，而且只回給 `gui.json` 現在指名、行程存活的 server。
+- 對話頻道 `straw-boss/gui/<sha256 prefix of the server's session id>`：只由 sb server 以具擁有者資格註冊（它的 intercom id 是 `gui.json` 的 `ownerSession`），並在 `gui.json` 指名一個行程存活的 server 期間，由每個 session（包含子智慧體）加入；每個 session 從啟動起每 2 秒檢查一次 `gui.json`。除了對話框之外，它還帶著 session 的文件清單（pi-herdr-doc-review 的 id、路徑、顯示名稱、理由、修訂版；橋接在啟動時再向擁有者要一次清單，所以重新載入的 session 會列出開著的內容）與寄給單一文件、每個答案 id 一次的表單答案，以及按鍵板的編輯器檢查：server 問 session 的橋接 Enter 會送出什麼，而橋接以一個類別回答（空的、文字、另一個 slash 或 `!` 指令，或不明）與至多一個會結束或取代 session 的指令名稱，絕不是草稿，而且只回給 `gui.json` 現在指名、行程存活的 server。伺服器以 intercom 在當次讀取時指出的 session 所在 pane，以及橋接提供的 session 檔案，把橋接連到該 pane 上的單位。它不採用橋接提供的 pane id（啟動時的 `HERDR_PANE_ID`，Herdr 移動 pane 時會變更），所以 session 移動之後仍可連線。
 
 塔台分頁只用無線電塔字形（U+F043B）當標籤，它的 Herdr 智慧體名為小寫的 `tower-<workspace id>`（Herdr 的智慧體名稱在每個 server 裡是唯一的）。
 
