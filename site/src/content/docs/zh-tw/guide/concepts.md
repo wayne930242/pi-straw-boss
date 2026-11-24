@@ -28,7 +28,7 @@ flowchart TD
 | **塔台** | 每個工作區一座，在自己的分頁裡並釘在最前面 | 協調自己工作區的各個主智慧體與其他塔台，並為沒有 session 負責的工作開一個帶新主智慧體的分頁。它從不問你。 |
 | **主塔台** | 每台電腦一座，不屬於任何專案 | 接收你的指示，並把每項指示交給負責的工作區的塔台。見[主塔台](/pi-straw-boss/docs/zh-tw/guide/head-tower/)。 |
 | **火車** | 每列合併火車一個，名為 `train <MMDDx>`，由塔台開出 | 合併一批審查過的分支，然後結束。見[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。 |
-| **子智慧體** | 用 [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) 啟動的，或 Herdr worktree 工作區裡的 session | 不會加入網。由啟動它的 session 代為發言，每個檢視都把它列在那個 session 底下。 |
+| **子智慧體** | 用 [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) 啟動的，或 Herdr worktree 工作區裡的 session | 不會加入網。由啟動它的 session 代為發言，每個檢視都把它列在那個 session 底下。它的 pi 若在那個 session 還活著時死掉，Straw Boss 會用它的 session 檔把它救回來，並把它的報告帶回去（[做法](/pi-straw-boss/docs/zh-tw/reference/how-it-works/orphaned-subagents/#死掉的子智慧體會被救回)）。 |
 
 在這些角色之間切換的 `/boss` 指令與工具，見[指令](/pi-straw-boss/docs/zh-tw/reference/commands/)。
 

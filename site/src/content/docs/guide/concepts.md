@@ -28,7 +28,7 @@ flowchart TD
 | **Tower** | One per workspace, in its own tab pinned first | Coordinates the mains of its workspace and the other towers, and opens a tab with a new main for work no session owns. It never asks you. |
 | **Head tower** | One per computer, belonging to no project | Takes your instructions and hands each to the tower of the workspace that owns it. See [The head tower](/pi-straw-boss/docs/guide/head-tower/). |
 | **Train** | One per merge train, named `train <MMDDx>`, opened by the tower | Merges a batch of reviewed branches and ends. See [Merge train](/pi-straw-boss/docs/guide/merge-train/). |
-| **Subagent** | Launched with [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents), or a session in a Herdr worktree workspace | Never joins the net. The session that launched it speaks for it, and every view lists it under that session. If its pi dies while that session lives, Straw Boss revives it from its session file and brings its report back ([how](/pi-straw-boss/docs/reference/how-it-works/how-it-works/#a-subagent-that-dies-is-revived)). |
+| **Subagent** | Launched with [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents), or a session in a Herdr worktree workspace | Never joins the net. The session that launched it speaks for it, and every view lists it under that session. If its pi dies while that session lives, Straw Boss revives it from its session file and brings its report back ([how](/pi-straw-boss/docs/reference/how-it-works/orphaned-subagents/#a-subagent-that-dies-is-revived)). |
 
 The `/boss` commands and tools that move between these roles are in [Commands](/pi-straw-boss/docs/reference/commands/).
 
