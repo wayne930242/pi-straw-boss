@@ -124,8 +124,8 @@ test("merge train: apps-config names the integration fields and points to the sk
 	// 0.75.3 raised 510 to 530 (measured): the rule that a forward with `origin=remote:` covers only `strict` targets its device's boss granted, else blocked (R151-F006, boss 2026-11-12).
 	// 0.77.3 raised 530 to 538 (measured): train_car's `car` is the slip's first ticket, and the slip's `car:` is the app (a coordinator wrote a ticket in car:).
 	// 0.81.6 raised 538 to 544 (measured, review HUR-F001): the departure waits for the tower's answer, unlike a heads-up; a refusal means no train opened.
-	// 2026-11-24 (capacity, measured): 544 to 578: depart with 2 or 3 cars that share no files, a red gate drops the breaking car, never skip a gate.
-	assert.ok(words(integrator) <= 578, `integrator.md has ${words(integrator)} words`);
+	// 2026-11-24 (capacity, measured): 544 to 582: aim for 2 or 3 cars that share no files within the skill's limits and each car's `departs`, a lone car departs at `maxWaitMin`, a red gate drops the breaking car, never skip a gate.
+	assert.ok(words(integrator) <= 582, `integrator.md has ${words(integrator)} words`);
 });
 
 // Train stages (docs/specs/2026-11-05-train-stages.md, boss form 2026-11-05): one integrator carries a train through merge, deploy, and UAT; Straw Boss names the flow, never an environment.
@@ -244,7 +244,7 @@ test("train workers: train.md and integrator.md stay within their budgets, on an
 	const train = read("train.md");
 	assert.ok(words(strip(train, false)) > 300 && words(strip(train, false)) <= 632, `train.md has ${words(strip(train, false))} words on`);
 	assert.equal(words(strip(train, true)), 0, "train.md is empty with the train off");
-	assert.ok(words(read("integrator.md")) > 300 && words(read("integrator.md")) <= 578, `integrator.md has ${words(read("integrator.md"))} words`);
+	assert.ok(words(read("integrator.md")) > 300 && words(read("integrator.md")) <= 582, `integrator.md has ${words(read("integrator.md"))} words`);
 });
 
 test("train workers: train.md ends with its own block of the seven seams in the order of seams.md, and main.md keeps six", () => {
@@ -405,6 +405,6 @@ test("capacity: main and planning dispatch up to the budget, standing and towers
 		["duty-standing.md", ["Capacity is yours to mind", "`capacity_notice`", "`under`", "`stale`", "`quota`", "`device-silent`"]],
 		["tower.md", ["A `capacity` notice is an incident"]],
 		["tower-run.md", ["A `capacity` notice from the sb server", "is an incident, not a report"]],
-		["integrator.md", ["Depart with 2 or 3 cars that share no files", "A red gate drops the car that broke it; never skip a gate"]],
+		["integrator.md", ["Aim for 2 or 3 cars sharing no files, within the skill's limits and each car's `departs`", "a lone car departs `maxWaitMin` after it arrived", "A red gate drops the car that broke it; never skip a gate"]],
 	] as const) for (const term of terms) assert.ok(read(file).includes(term), `${file} names ${term}`);
 });
