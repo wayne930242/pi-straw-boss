@@ -674,7 +674,7 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 #### 自動填入
 
-自動填入（`src/boardauto.ts`、`src/boardfill.ts`）。看板在主智慧體自己的 session 裡自己填入；伺服器不參與。在一個輪次結束時、工具呼叫之後，以及 session 樹移動或 compaction 之後，主智慧體會讀它的 todo 清單（rpiv-todo 在它分支上的快照，和卡片的 todo 摘要同一種讀法）和它的名稱（`boss_rename` 或 `/name`；pi 的預設名稱，也就是 session id，不算名稱），然後寫入條目。
+自動填入（`src/boardauto.ts`、`src/boardfill.ts`）。看板在主智慧體自己的 session 裡自己填入；伺服器不參與。在一個輪次結束時、工具呼叫之後，以及 session 樹移動或 compaction 之後，主智慧體會讀它的 todo 清單（它分支上的 todo 快照，和卡片的 todo 摘要同一種讀法：pi-todo-ledger 最新且有效的 `todo/v1` 項目，沒有時讀 rpiv-todo 的紀錄；見[Todo](#todo)）和它的名稱（`boss_rename` 或 `/name`；pi 的預設名稱，也就是 session id，不算名稱），然後寫入條目。
 
 <details>
 <summary>細節</summary>
@@ -1171,7 +1171,7 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 ##### 步驟
 
-火車的每個 todo 都是一個帶有 `metadata.sb` 規格的步驟：一種類型（assemble、review、full-check、merge、ci、deploy、deploy-verify、rollback、land：只是分類，流程是 skill 的事）、讓它通過的檢查、`holds`（一條車道或目標），以及它需要的負載。擴充裡的防護會拒絕解析不了的規格，並把 `MonitorCreate` 呼叫改寫成經過 `cli.mjs train gate --spec <file>`，它會等負載和 `<state>/locks/` 底下指名的整台機器鎖，執行指令，並印出一行 JSON `progress`（永遠帶有 `message`，等待時帶有 `load`）。被丟掉的車廂會開始新的一輪：火車的 todo 被重寫，被取代的步驟以 `void` 結束。
+火車的每個 todo 都是一個帶有 `metadata.sb` 規格的步驟：一種類型（assemble、review、full-check、merge、ci、deploy、deploy-verify、rollback、land：只是分類，流程是 skill 的事）、讓它通過的檢查、`holds`（一條車道或目標），以及它需要的負載。擴充裡的防護會拒絕解析不了的規格（搭配 rpiv-todo 時，它在 `tool_call` 檢查 `todo` 呼叫；搭配 [pi-todo-ledger](https://github.com/wayne930242/pi-todo-ledger) 時，它是透過該套件公開契約註冊的變更防護 `sb-train`，被拒的呼叫在 ledger 顯示為 `Error: guard sb-train refused: <reason>`；兩條路徑的規則相同，每次呼叫只跑一次），並把 `MonitorCreate` 呼叫改寫成經過 `cli.mjs train gate --spec <file>`，它會等負載和 `<state>/locks/` 底下指名的整台機器鎖，執行指令，並印出一行 JSON `progress`（永遠帶有 `message`，等待時帶有 `load`）。被丟掉的車廂會開始新的一輪：火車的 todo 被重寫，被取代的步驟以 `void` 結束。
 
 ##### Hold、車道、目標
 
@@ -1430,7 +1430,7 @@ Straw Boss 看不到另一個 pi 的提示編輯器，而 intercom 訊息在狀�
 <details>
 <summary>細節</summary>
 
-單位卡片顯示它在目前狀態已經多久（從伺服器看到它進入該狀態起算）、它的 todo（完成數／總數與進行中的任務，來自 rpiv-todo，由該 session 的 bridge 轉送），以及它最近幾步，以一排標記顯示在卡片底部。地圖下方的**時間軸**標出網在最近 30 分鐘內的加入、離開和狀態變化（參考 [zoetrope](https://github.com/furkankly/zoetrope)）：等待和錯誤在最上，工作在中間，其餘在下，滑鼠移上去顯示名稱，並連到它的單位。伺服器保存這些資料，所以重新載入的頁面仍然有；手機則把這條時間軸收合成只顯示最新的事件。
+單位卡片顯示它在目前狀態已經多久（從伺服器看到它進入該狀態起算）、它的 todo（完成數／總數與進行中的任務，來自 pi-todo-ledger 或 rpiv-todo，由該 session 的 bridge 轉送），以及它最近幾步，以一排標記顯示在卡片底部。地圖下方的**時間軸**標出網在最近 30 分鐘內的加入、離開和狀態變化（參考 [zoetrope](https://github.com/furkankly/zoetrope)）：等待和錯誤在最上，工作在中間，其餘在下，滑鼠移上去顯示名稱，並連到它的單位。伺服器保存這些資料，所以重新載入的頁面仍然有；手機則把這條時間軸收合成只顯示最新的事件。
 
 基地像 masonry 一樣依閱讀順序排列。地圖超出視窗時，角落的總覽以各基地的狀態顏色顯示每個基地，點擊哪裡就捲動到哪裡。
 
@@ -1850,7 +1850,7 @@ session 來自 [pi-loop-monitor](https://www.npmjs.com/package/pi-loop-monitor) 
 
 #### Todo
 
-用 [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 維護 todo 清單的 session，會把它顯示在輸入框上方：收合時是 `Todos done/total` 和進行中的任務，展開時是每個任務（○ 等待、◐ 進行中、✓ 完成；已刪除的不列出）。伺服器從 session 檔讀取它，和讀取歷史一樣：目前分支上最新的 `rpiv-todo-state` 項目，否則是最新 `todo` 結果的 details（這些項目出現之前的 session），隨歷史的第一頁、每次重設，以及每個加入 snapshot 的變更一起送出。終端機模式把它隱藏，因為 pi 自己的小工具在那裡顯示它。
+用 [pi-todo-ledger](https://github.com/wayne930242/pi-todo-ledger) 或 [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 維護 todo 清單的 session，會把它顯示在輸入框上方：收合時是 `Todos done/total` 和進行中的任務，展開時是每個任務（○ 等待、◐ 進行中、✓ 完成；已刪除的不列出）。伺服器從 session 檔讀取它，和讀取歷史一樣：目前分支上符合 pi-todo-ledger schema 的最新 `todo/v1` 項目（它勝過任何 rpiv-todo 紀錄，無效的會被略過），否則是最新的 `rpiv-todo-state` 項目，再否則是最新 `todo` 結果的 details（這些項目出現之前的 session），隨歷史的第一頁、每次重設，以及每個加入 snapshot 的變更一起送出。終端機模式把它隱藏，因為 pi 自己的小工具在那裡顯示它。
 
 ### 關閉、開啟與信任
 

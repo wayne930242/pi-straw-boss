@@ -674,7 +674,7 @@ The file also says who wrote it (`src`: `set` for `board_set`, `todo` for the au
 
 #### Auto-fill
 
-Auto-fill (`src/boardauto.ts`, `src/boardfill.ts`). The board fills itself in the main's own session; the server takes no part. At the end of a turn, after a tool call, and after a move in the session tree or a compaction, a main reads its todo list (rpiv-todo's snapshots on its branch, the same reading as the card's todo summary) and its name (`boss_rename`, or `/name`; pi's default name, the session id, is no name) and writes the entry.
+Auto-fill (`src/boardauto.ts`, `src/boardfill.ts`). The board fills itself in the main's own session; the server takes no part. At the end of a turn, after a tool call, and after a move in the session tree or a compaction, a main reads its todo list (the todo snapshots on its branch, the same reading as the card's todo summary: pi-todo-ledger's newest valid `todo/v1` entry, else rpiv-todo's records; see [Todos](#todos)) and its name (`boss_rename`, or `/name`; pi's default name, the session id, is no name) and writes the entry.
 
 <details>
 <summary>Details</summary>
@@ -1171,7 +1171,7 @@ An app whose `stages` still list `uat` is a config error: the tower does not ope
 
 ##### Steps
 
-Every todo of a train is a step with a `metadata.sb` spec: a kind (assemble, review, full-check, merge, ci, deploy, deploy-verify, rollback, land: a classification only, the flow is the skill's), the checks that pass it, `holds` (a lane or target), and the load it needs. A guard in the extension refuses a spec that does not parse, and rewrites `MonitorCreate` calls to go through `cli.mjs train gate --spec <file>`, which waits for load and for the named machine-wide lock under `<state>/locks/`, runs the command, and prints one JSON `progress` line (always with a `message`, with `load` while it waits). A dropped car starts a new round: the train's todos are rewritten and the superseded steps end as `void`.
+Every todo of a train is a step with a `metadata.sb` spec: a kind (assemble, review, full-check, merge, ci, deploy, deploy-verify, rollback, land: a classification only, the flow is the skill's), the checks that pass it, `holds` (a lane or target), and the load it needs. A guard in the extension refuses a spec that does not parse (beside rpiv-todo it checks the `todo` call at `tool_call`; beside [pi-todo-ledger](https://github.com/wayne930242/pi-todo-ledger) it is that package's change guard `sb-train`, registered through its public contract, and the ledger shows a refusal as `Error: guard sb-train refused: <reason>`; the rules are the same on both paths and run once per call), and rewrites `MonitorCreate` calls to go through `cli.mjs train gate --spec <file>`, which waits for load and for the named machine-wide lock under `<state>/locks/`, runs the command, and prints one JSON `progress` line (always with a `message`, with `load` while it waits). A dropped car starts a new round: the train's todos are rewritten and the superseded steps end as `void`.
 
 ##### Holds, lanes, targets
 
@@ -1430,7 +1430,7 @@ Each workspace the net reaches is a **base**: one with a live tower or with sess
 <details>
 <summary>Details</summary>
 
-A unit's card shows how long it has been in its state (once the server has seen it take that state), its todos (done of total and the task in progress, from rpiv-todo via the session's bridge), and its last steps as marks along its foot. Under the map, a **timeline** marks the net's joins, leaves, and state changes of the last 30 minutes (after [zoetrope](https://github.com/furkankly/zoetrope)): waiting and errors on top, work in the middle, the rest below, each named on hover and linking to its unit. The server keeps them, so a reloaded page still has them; a phone folds the strip to its newest event.
+A unit's card shows how long it has been in its state (once the server has seen it take that state), its todos (done of total and the task in progress, from pi-todo-ledger or rpiv-todo via the session's bridge), and its last steps as marks along its foot. Under the map, a **timeline** marks the net's joins, leaves, and state changes of the last 30 minutes (after [zoetrope](https://github.com/furkankly/zoetrope)): waiting and errors on top, work in the middle, the rest below, each named on hover and linking to its unit. The server keeps them, so a reloaded page still has them; a phone folds the strip to its newest event.
 
 The bases pack like masonry in reading order. While the map runs past the window, an overview in the corner shows each base in its state's colour and scrolls where you click.
 
@@ -1850,7 +1850,7 @@ The same holds for any unit, subagent or not, whose pi is alive: marked done by 
 
 #### Todos
 
-A session that keeps a todo list with [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) shows it above its composer: folded to `Todos done/total` and the task in progress, unfolded to every task (○ waiting, ◐ in progress, ✓ done; deleted ones are left out). The server reads it from the session file, as it reads the history: the newest `rpiv-todo-state` entry on the current branch, else the details of the newest `todo` result (sessions from before those entries), sent with the history's first page, with every reset, and with each change that adds a snapshot. Terminal mode hides it, since pi's own widget shows it there.
+A session that keeps a todo list with [pi-todo-ledger](https://github.com/wayne930242/pi-todo-ledger) or [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) shows it above its composer: folded to `Todos done/total` and the task in progress, unfolded to every task (○ waiting, ◐ in progress, ✓ done; deleted ones are left out). The server reads it from the session file, as it reads the history: the newest `todo/v1` entry on the current branch that matches pi-todo-ledger's schema (it wins over any rpiv-todo record, and an invalid one is skipped), else the newest `rpiv-todo-state` entry, else the details of the newest `todo` result (sessions from before those entries), sent with the history's first page, with every reset, and with each change that adds a snapshot. Terminal mode hides it, since pi's own widget shows it there.
 
 ### Closing, opening, and trust
 
