@@ -41,15 +41,17 @@ export function capText(kind: CapKind, d: DeviceCap, now: number, row?: MainRow,
 }
 
 export function createCapWatch(d: CapDeps) {
-	let underSince: number | undefined, active = new Set<string>(), last: Map<string, MainRow> = new Map(), sent = readSent(d.dir);
+	// `untold`: the flags whose last try nobody took, logged once per entry while they are tried again each minute.
+	let underSince: number | undefined, active = new Set<string>(), untold = new Set<string>(), last: Map<string, MainRow> = new Map(), sent = readSent(d.dir);
 	/** Told, or held by the throttle: true. False when nobody took it, so the next look tries again. */
 	const markOf = (e: CapEvent) => `${e.kind}:${e.key}${e.tag !== undefined ? `@${e.tag}` : ""}`;
 	const send = async (e: CapEvent, now: number): Promise<boolean> => {
 		const mark = markOf(e);
 		if (now - (sent[mark] ?? -Infinity) < THROTTLE_MS) return d.log("capacity-held", { kind: e.kind, key: e.key }), true;
 		const told = await d.tell(e).catch(() => false);
-		d.log(told ? "capacity-told" : "capacity-untold", { kind: e.kind, key: e.key });
-		if (told) sent[mark] = now;
+		if (told || !untold.has(mark)) d.log(told ? "capacity-told" : "capacity-untold", { kind: e.kind, key: e.key });
+		if (told) (sent[mark] = now, untold.delete(mark));
+		else untold.add(mark);
 		return told;
 	};
 	return {
@@ -79,6 +81,7 @@ export function createCapWatch(d: CapDeps) {
 				if (kind === "quota" && !flagged.some((e) => e.kind === "quota" && e.key === session) && row && last.has(session)) await send(of("resumed", row), now);
 			}
 			active = next;
+			untold = new Set(flagged.map(markOf).filter((m) => untold.has(m)));
 			last = rows;
 			sent = Object.fromEntries(Object.entries(sent).filter(([, at]) => now - at < THROTTLE_MS));
 			try { writeSent(d.dir, sent); } catch (error) { d.log("capacity-error", { text: (error as Error).message.slice(0, 200) }); }

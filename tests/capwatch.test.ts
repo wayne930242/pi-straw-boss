@@ -19,13 +19,13 @@ function world(o: { budget?: number; unattended?: boolean } = {}) {
 	dirs.push(root);
 	const clock = fakeClock(Date.parse("2026-11-24T10:00:00Z"));
 	const w = {
-		dir, clock, told: [] as CapEvent[], reach: true, budget: o.budget as number | undefined, unattended: o.unattended ?? false, load1: 0.2,
+		dir, clock, told: [] as CapEvent[], logs: [] as string[], reach: true, budget: o.budget as number | undefined, unattended: o.unattended ?? false, load1: 0.2,
 		mains: [{ session: "s-a", name: "api", workspace: "w1", role: "main", state: "working", workers: ["w1"], fileMtime: clock.now(), entryUpdated: clock.now() }, { session: "s-st", name: "standing", workspace: "w0", role: "main", state: "idle", duty: "standing", workers: [], fileMtime: clock.now(), entryUpdated: clock.now() }] as MainFacts[],
 		allies: [] as AllySeen[],
 		cap: (session: string, over: Partial<MainCap> = {}) => writeCap(dir, { v: 1, session, updated: clock.now(), doing: [], ready: [], open: 0, ...over }),
 	};
 	const make = () => createCapWatch({
-		dir, now: clock.now, log: () => {}, budget: () => w.budget, load: () => ({ load1: w.load1, cores: 8 }), unattended: () => w.unattended,
+		dir, now: clock.now, log: (event) => void w.logs.push(event), budget: () => w.budget, load: () => ({ load1: w.load1, cores: 8 }), unattended: () => w.unattended,
 		mains: async () => w.mains, allies: () => w.allies, tell: async (e) => (w.reach ? (w.told.push(e), true) : false),
 	});
 	return { w, make };
@@ -129,8 +129,9 @@ test("the throttle outlives a restart of the server, and an event nobody took is
 	w.cap("s-a", { open: 1, pause: { reason: "quota", at: w.clock.now() } });
 	w.reach = false;
 	const first = make();
-	await run(first, w.clock, 1);
+	await run(first, w.clock, 5);
 	assert.equal(w.told.length, 0);
+	assert.equal(w.logs.filter((l) => l === "capacity-untold").length, 1, "an untold flag is logged once while it is tried every minute");
 	w.reach = true;
 	await run(first, w.clock, 1);
 	assert.equal(w.told.length, 1, "the next look tells it");
