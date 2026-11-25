@@ -80,9 +80,9 @@ export function createAuto({ pi, cfg, s, guiDir, me }: Kit, d: AutoDeps = {}) {
 		}
 	});
 	pi.on("tool_result", (event) => {
-		// A call sb cancelled never reads as the boss's Esc: the result is replaced, by the call's id.
+		// A call sb cancelled never reads as the boss's Esc: the result is replaced, by the call's id. A `call_tower` boss question keeps its own: it sent the question to the tower itself (bossask.ts).
 		const cancelledTool = cancelledIds.get(event.toolCallId);
-		if (cancelledTool !== undefined) return (cancelledIds.delete(event.toolCallId), { content: [{ type: "text" as const, text: cancelledText(current?.since, cancelledTool, kind()) }] });
+		if (cancelledTool !== undefined && (cancelledIds.delete(event.toolCallId), event.toolName !== "call_tower")) return { content: [{ type: "text" as const, text: cancelledText(current?.since, cancelledTool, kind()) }] };
 		const dialog = escaped.get(event.toolCallId);
 		escaped.delete(event.toolCallId);
 		let line: string | undefined;

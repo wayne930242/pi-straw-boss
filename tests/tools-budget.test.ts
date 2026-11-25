@@ -7,6 +7,8 @@ import { World } from "./fakes.ts";
 // D, review threads (0.84.0, §2.3; measured): 12 tools and 9,601 characters: boss_pair (698) is new, and board_read 680 to 830 for its `thread` and section `threads`.
 // Idle wrap-up (docs/specs/2026-11-25-idle-wrap-up.md, part 1; measured): 13 tools and 10,131 characters: boss_wrap (530) is new, kept out of the trimmed set as the other new ones are.
 // Boss questions asked by the main (same spec, part 2; measured): 10,131 to 10,161: call_tower's `blocked` names the boss's own decision (ask_user_question, or call_tower under auto mode).
+// The boss question drawn by code (0.91.0, same spec part 2 as rewritten; measured): 10,161 to 10,328: call_tower's `blocked` is 0.89.0's again plus one clause naming `boss`, and `boss` itself ({question, options}, no descriptions:
+// its limits are checked in bossask.ts); the trimmed set is 7,000 exactly.
 
 let world = new World();
 afterEach(async () => {
@@ -24,7 +26,7 @@ test("a main's always-on sb tools stay within their budget, and boss_status is g
 	const trimmed = tools.filter((t) => t.name !== "boss_server" && t.name !== "boss_watch" && t.name !== "boss_pair" && t.name !== "boss_wrap").reduce((n, t) => n + size(t), 0);
 	assert.ok(trimmed <= 7_000, `the trimmed tools hold ${trimmed} characters (10,634 before B2)`);
 	const all = tools.reduce((n, t) => n + size(t), 0);
-	assert.ok(all <= 10_161, `all of sb's tools hold ${all} characters (11,594 before B2 and E; 8,753 before D; 9,601 before boss_wrap)`);
+	assert.ok(all <= 10_328, `all of sb's tools hold ${all} characters (11,594 before B2 and E; 8,753 before D; 9,601 before boss_wrap; 10,161 before call_tower boss)`);
 });
 
 test("the trimmed descriptions keep the sentences that carry a rule: board_set's privacy line, call_tower's three points, boss_wait_ask over ask_user_question", async () => {

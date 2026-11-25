@@ -7,7 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AUTO_FILE, seal } from "../src/autostate.ts";
 import { createRemoteTurns } from "../src/link/hooks.ts";
 import { MESSAGE_TYPE } from "../src/link/turn.ts";
-import { IDLE_MS, idleClock, NUDGE_TEXT, WRAP_MESSAGE } from "../src/wrapup.ts";
+import { IDLE_MS, idleClock, NUDGE_TEXT, WRAP_DESCRIPTION, WRAP_MESSAGE } from "../src/wrapup.ts";
 import { type Agent, PROMPT_DIR, settle, until, World } from "./fakes.ts";
 import { bob, TEAM_HEX } from "./link/holder-world.ts";
 
@@ -246,7 +246,11 @@ test("RV-F001: a message queued or a monitor started while the boss was asked: h
 	assert.equal(r.a.stopped, false);
 });
 
-test("main.md: a done main writes a daily memory entry, then boss_wrap, and never closes its pane itself", () => {
+// 0.91.0 (boss 2026-11-25: 「收工規則也可以在提示收工的時候再給」): the wrap-up steps reach the main with the nudge and boss_wrap's own description and results; main.md's done line is 0.89.0's again.
+test("main.md holds no wrap-up rule: the nudge carries every step, and boss_wrap's description says what it does", () => {
 	const main = readFileSync(join(PROMPT_DIR, "main.md"), "utf8");
-	assert.ok(main.includes("every todo is completed or deleted. Then write a daily memory entry if you have a memory tool, and call `boss_wrap` with a summary: it asks the boss, tells the tower, clears your board, closes your pane; never close it yourself."));
+	assert.ok(!main.includes("boss_wrap") && !main.includes("daily memory entry"));
+	assert.ok(main.includes("its worktree is removed, and your board is cleared."));
+	for (const step of ["answer the intercom asks you owe", "remove the worktrees you made", "complete or delete every todo", "stop your monitors and loops", "write a daily memory entry if you have a memory tool", "call boss_wrap with a summary"]) assert.ok(NUDGE_TEXT.includes(step), step);
+	assert.match(WRAP_DESCRIPTION, /asks the boss here whether to wrap up; on yes it sends your summary to the tower/);
 });

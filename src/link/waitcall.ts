@@ -1,4 +1,6 @@
 import { Type, type Static, type TSchema } from "typebox";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type Asked, type BossAsk, bossOf, bossParameter, withBoss } from "../bossask.ts";
 import type { Reach } from "../reach.ts";
 import { waitOwner, waitWhat } from "./kinds.ts";
 import type { Link } from "./runtime.ts";
@@ -6,10 +8,13 @@ import type { Link } from "./runtime.ts";
 // `call_tower`, a joined session's call to its tower, with the two parts of a link wait (docs/specs/2026-11-21-box-mac-waits.md): `waitsOn` says the task ends at a step only a teammate device can take, and the tower forwards it as a
 // wait the other end must route (§2.1); `linkWait` answers a wait a teammate device has on this workspace (§2.4). The router in the sb server acts first, so a refusal sends nothing. Kept out of tools.ts, which carries a line budget.
 
-type Tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>) => Promise<{ text: string; details?: unknown }>) => void;
-export const CALL_TOWER_DESCRIPTION = "Send one message to your workspace's tower, or another by workspace, at three points only: why milestone (something landed; reply false unless needed), shared (a heads-up before you change something outside your tab; reply false; go ahead, the tower answers only on a clash), blocked (you wait on someone outside your tab other than the boss; a boss decision: ask_user_question, or this under auto mode). Opens the tower when none runs; the code writes the header; it answers through intercom unless reply is false. Progress goes on your board, not here.";
+/** What a tool body gets besides its parameters: the call's signal and pi's context, for a dialog in the pane. */
+export type ToolCtx = Pick<ExtensionContext, "hasUI" | "ui">;
+type Tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>, signal?: AbortSignal, ctx?: ToolCtx) => Promise<{ text: string; details?: unknown }>) => void;
+export const CALL_TOWER_DESCRIPTION = "Send one message to your workspace's tower, or another by workspace, at three points only: why milestone (something landed; reply false unless needed), shared (a heads-up before you change something outside your tab; reply false; go ahead, the tower answers only on a clash), blocked (you wait on someone outside your tab, or on a decision your authorizations do not cover; the boss's own decision: boss, asked in your pane). Opens the tower when none runs; the code writes the header; it answers through intercom unless reply is false. Progress goes on your board, not here.";
 
-export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["callTower"], link: Pick<Link, "waitOp">): void {
+/** `bossAsk` (bossask.ts) draws a `boss` question in a local main's pane; without it (a tower run) the question goes to the tower in the message. */
+export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["callTower"], link: Pick<Link, "waitOp">, bossAsk?: BossAsk): void {
 	// A main says why it calls (required); a tower's call is a blocked one, so it may leave it out and the header says unspecified.
 	const whyType = Type.Union([Type.Literal("milestone"), Type.Literal("shared"), Type.Literal("blocked")], { description: "milestone, shared, or blocked." });
 	const whyField = towerCall ? Type.Optional(whyType) : whyType;
@@ -33,9 +38,18 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 				device: Type.String({ description: "Label, short id, or id." }),
 				what: Type.Optional(Type.String({ description: "One line of at most 200 bytes; default the message's first line." })),
 			}, { description: "Instead of your tower: that device's standing main, a question (why blocked) or a notice (why milestone)." })),
+			boss: bossParameter(),
 		}),
-		async ({ message, why, workspace, reply, waitsOn, linkWait, standing }) => {
-			if ([waitsOn, linkWait, standing].filter(Boolean).length > 1) throw new Error("waitsOn, linkWait, and standing do not go together");
+		async ({ message, why, workspace, reply, waitsOn, linkWait, standing, boss }, signal, ctx) => {
+			if ([waitsOn, linkWait, standing, boss].filter(Boolean).length > 1) throw new Error("waitsOn, linkWait, standing, and boss do not go together");
+			if (boss) {
+				// A decision only the boss can make (bossask.ts): drawn in this pane, its answer the result and nothing sent; else the tower gets it as blocked.
+				if (why !== "blocked") throw new Error("boss goes with why blocked: a decision only the boss can make");
+				const q = bossOf(boss), asked: Asked = bossAsk ? await bossAsk(q, signal, ctx) : { kind: "tower" };
+				if (asked.kind !== "tower") return { text: asked.text, details: { boss: asked.kind } };
+				const sent = await callTower(withBoss(message, q), workspace, reply ?? true, why);
+				return { text: asked.note ? `${sent.text} ${asked.note}` : sent.text, details: { ...sent.details, boss: "tower" } };
+			}
 			if (standing) {
 				// D13: the code sends it as the workspace's tower identity; the tower gets no call for it.
 				if (why !== "blocked" && why !== "milestone") throw new Error("standing goes with why blocked (a question) or milestone (a notice)");

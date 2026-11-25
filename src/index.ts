@@ -12,6 +12,7 @@ import { createBoardFill } from "./boardfill.ts";
 import { createCapFill } from "./capfill.ts";
 import { createBriefing } from "./briefing.ts";
 import { createBossWatch } from "./bosswatch.ts";
+import { createBossAsk } from "./bossask.ts";
 import { createBossPair } from "./bosspair.ts";
 import { createCloseMain } from "./closemain.ts";
 import { createDigest } from "./digest.ts";
@@ -105,7 +106,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const pair = createBossPair(kit, { ask: cfg.ask ?? look?.ask, remote: () => Boolean(link.remoteScope()) }); // boss_pair and board_read's review threads (bosspair.ts)
 		createCapFill(kit); // a main's capacity facts for the board (capfill.ts)
 		const boardFill = createBoardFill(kit);
-		const tools = createTools(kit, { ...reach, mainDuty, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), closePane: (pane) => control.closePane(pane), deadPanes: () => control.deadPanes(), listen: () => control.register(), link, server: look, boardFill, pair, waitAsk: () => mainWaitAsk(kit, { ask: cfg.ask ?? look?.ask, here: (fn) => host.here(fn), auto }) });
+		const tools = createTools(kit, { ...reach, mainDuty, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), closePane: (pane) => control.closePane(pane), deadPanes: () => control.deadPanes(), listen: () => control.register(), link, server: look, boardFill, pair, waitAsk: () => mainWaitAsk(kit, { ask: cfg.ask ?? look?.ask, here: (fn) => host.here(fn), auto }), bossAsk: createBossAsk(kit, { attended: () => link.attended(), remote: () => Boolean(link.remoteScope()) }) });
 		const host = createHost(kit, { connected: membership.connected, ask: cfg.ask ?? look?.ask });
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck, turn: bridge.turn });

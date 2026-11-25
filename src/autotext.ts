@@ -4,7 +4,7 @@ import { clock } from "./autostate.ts";
 
 export type AgentKind = "main" | "subagent" | "train" | "run";
 const KIND: Record<AgentKind, string> = {
-	main: "Decide yourself only where the boss's words in your brief or this session cover it, quoting them; else park it: call_tower why: blocked with the decision and what you need, then go on with work that does not need it, or stop this line and say so on your board.",
+	main: "Decide yourself only where the boss's words in your brief or this session cover it, quoting them; else park it: call_tower why: blocked with the decision in boss and what you need, then go on with work that does not need it, or stop this line and say so on your board.",
 	subagent: "Decide within your brief; else caller_ping your dispatcher with the decision and stop.",
 	train: "call_tower blocked with reply: false naming what needs the boss, then end.",
 	run: "Record a wait for the boss with tower_memory; it is parked.",

@@ -1,6 +1,6 @@
 # Idle wrap-up, and boss questions asked by the main (2026-11-25)
 
-Status: implemented. Part 1: `src/wrapup.ts` and `prompts/main.md`, in [docs/how-it-works.md](../how-it-works.md#wrapping-up-an-idle-main). Part 2: `prompts/main.md`, `prompts/tower-run.md`, and `call_tower`'s description, in [docs/how-it-works.md](../how-it-works.md#when-a-main-calls-the-tower).
+Status: implemented. Part 1: `src/wrapup.ts`, in [docs/how-it-works.md](../how-it-works.md#wrapping-up-an-idle-main). Part 2: `src/bossask.ts` and `call_tower`'s `boss` field (0.91.0; it replaced 0.90.0's prompt rules), in [docs/how-it-works.md](../how-it-works.md#when-a-main-calls-the-tower).
 
 ## Part 1: an idle main wraps up
 
@@ -27,26 +27,34 @@ Status: implemented. Part 1: `src/wrapup.ts` and `prompts/main.md`, in [docs/how
 
 1. **Nudge.** A coordinator or integrator main idle 30 minutes since its last turn settled gets one `straw-boss-wrap` message that starts a turn. It says: if work remains, go on or clean up stale todos; if it waits on someone other than the boss, set that todo's `metadata.waitsOn` and stop; if done, answer the intercom asks it owes, remove its worktrees, complete or delete every todo, stop its monitors and loops, write a daily memory entry if it has a memory tool, and call `boss_wrap`. At most one per idle period: the next comes after a turn that the nudge did not start, and 30 more idle minutes. None while a dialog is open or Herdr shows the pane blocked, while a monitor, loop, `boss_watch`, or subagent of the main runs, or while pi has messages queued. Under auto mode the clock stops; it starts again when auto mode ends.
 2. **`boss_wrap({ summary })`.** One paragraph, 1 to 800 characters (whitespace folded). Checks in order: the role (WU-D8), the summary, auto mode (refused: "auto mode: the boss is away; wrap up when he is back"), a terminal to ask in, then every open todo by id, messages queued in pi, and everything that runs (WU-D7), all named in one refusal. Then `ctx.ui.confirm("Wrap up <name>?", summary)` in the pane; the GUI relays it as any dialog. No (or Esc): nothing closes, and no nudge comes this idle period. Yes: the same checks again, since the dialog may stand for hours (review RV-F001): a message that queued or a monitor that started meanwhile closes nothing and sends nothing. Then the milestone to the tower and the opener (WU-D9), the board cleared, and the close of `/boss close` (`closeSelf`): pi quits when the turn ends, and its pane closes, with its tab when emptied.
-3. **Prompt.** `prompts/main.md`'s "Done when" line: every task landed or reported blocked, its worktree removed, every todo completed or deleted; then a daily memory entry if a memory tool exists, and `boss_wrap`; never close the pane otherwise.
+3. **Prompt.** In 0.90.0, `prompts/main.md`'s "Done when" line carried the steps (every todo completed or deleted, a daily memory entry, `boss_wrap`). Since 0.91.0 it is 0.89.0's line again, and the steps reach the main only when they are needed: in the nudge (`NUDGE_TEXT`) and in `boss_wrap`'s description and results (boss 2026-11-25, part 2 below). A main that finishes before 30 idle minutes gets the nudge later; that is accepted.
 
-## Part 2: the main asks the boss itself
+## Part 2: the boss question is drawn by code
 
 ### Boss words (binding, 2026-11-25)
 
 > 「waiting card 我現在其實覺得稍微難用，要和 ask user question 好好整合，塔台每次問問題我都不知道是哪個 agent 問的，不知道能不能把 waiting card 發還回 main agent？」
 
-Decision: with auto mode off, a main's question for the boss is asked by the main itself with `ask_user_question` in its own pane, not relayed by the tower as a card. Under auto mode the card is parked as before and goes back to the main when auto mode ends ([2026-11-21-auto-return.md](2026-11-21-auto-return.md) AR-D3): 「是的，切回非自動的時候自動發回」.
+0.90.0 answered this with prompt rules: `prompts/main.md` told a main to ask the boss itself with `ask_user_question` (and to park it with `blocked` under auto mode), `prompts/tower-run.md` told the tower to send a local main's boss question back to it, and `call_tower`'s description said the same. That grew main.md and planning.md from 10,177 to 10,538 characters. The boss then asked for it in code, and for rules to come when they are needed:
+
+> 「main 的提示好像太多，而且「自己問我」應該做成程式碼，直接從程式碼發出而不是讓他依據這個問，至少也可以在需要問我的時候當下再給提示詞。收工規則也可以在提示收工的時候再給。請注意這個原則，提示詞可以逐步交付」
+
+Principle: the standing role prompt holds only what every turn needs; a rule needed at one moment is delivered at that moment (a tool description, a tool result, sb's wake text), and what code can do, code does. 0.91.0 replaced 0.90.0's prompt approach: main.md's `call_tower` and "Done when" lines and tower-run.md's `blocked` paragraph are 0.89.0's again (main.md and planning.md 10,167 characters), and the question is a field of `call_tower`.
 
 ### Decisions
 
 | # | Question | Decision |
 |---|---|---|
-| BQ-D1 | How does a main tell that auto mode is on? | No new signal (left open by the brief; the smallest is none). The main asks with `ask_user_question` either way: under auto mode sb refuses the call, and the refusal (`src/autotext.ts`, kind `main`) says to park the decision with `call_tower` `why: blocked`. The switch notices (`onNotice`, `offNotice`) and `board_read`'s `towers.auto` say it too, and the end notice tells it to ask again with `ask_user_question` when the parked card comes back as `wait_returned`. |
-| BQ-D2 | What is `blocked` for now? | A wait on someone outside the tab other than the boss (another main, an owner, a teammate device), or a work's owner the main cannot find; and, under auto mode, the boss's own decision. |
-| BQ-D3 | What does the tower do with a local main's `blocked` that only the boss can decide, auto mode off? | It records no card and answers the main with `tower_reply`: ask the boss yourself with `ask_user_question`. It knows auto mode is off when its run brief has no `Auto mode:` line (`autotower.ts` `briefLine`). Cards stay for the tower's own questions, a train's, a teammate device's (ally runs are unchanged), and any under auto mode. |
+| BQ-D1 | Where does a main put a decision only the boss can make? | `call_tower` with `why: blocked` and `boss: { question, options? }` (question 1 to 500 characters, at most 8 options of at most 120; the schema carries no descriptions, `call_tower`'s description names the field in one clause). It does not go with `waitsOn`, `linkWait`, or `standing`. |
+| BQ-D2 | When is it drawn? | For a tab's main (not a train or a tower) in its own turn (not a teammate's remote turn), with auto mode off, on an attended device, with a terminal. Then nothing goes to the tower. |
+| BQ-D3 | How is it drawn? | In the main's own pane: `ctx.ui.select` of the options and a last row "Type another answer…" (which opens `ctx.ui.input`), or `ctx.ui.input` alone when there are no options. The select is relayed to the GUI and paired devices as any `ctx.ui.select` (intercept.ts); an input never is (pi's input may carry a secret). Herdr shows the pane waiting. |
+| BQ-D4 | The result? | The boss's choice or typed answer, quoted as his, and that nothing went to the tower. Esc or a stopped turn: the boss did not answer, nothing was sent. |
+| BQ-D5 | Auto mode? | On: nothing is drawn; the question goes to the tower as `blocked` after the message (`For the boss: …`, `Options: …`), the tower parks the card, and it comes back as `wait_returned` when auto mode ends; the result says so and that the main asks again then with `call_tower boss`. Starting while the dialog is open: sb looks at `auto.json` every 500 ms while the dialog stands and closes it, then sends as when it was on. Auto mode's own transition may cancel the relayed select first; `auto.ts` then leaves `call_tower`'s result as it is (it sent the question itself) instead of replacing it with its cancel text. |
+| BQ-D6 | Members, trains, towers, a teammate's turn, an unattended device, no terminal? | Nothing is drawn: the field is accepted and folded into the message to the tower, as a `blocked` call was before (left open by the brief; folding keeps the question instead of refusing a call the caller cannot fix). A tower run's `call_tower` (runmode.ts) has no drawer and folds it the same way. |
+| BQ-D7 | `ask_user_question`? | Still usable by a main; no standing rule about it. Under auto mode its refusal (`src/autotext.ts`, kind `main`) says to park the decision with `call_tower why: blocked` and the decision in `boss`. |
 
 ### Behavior
 
-1. **Main prompt.** `blocked` is for someone other than the boss; "A decision only the boss can make: ask him yourself with `ask_user_question`; under auto mode sb refuses it (he is away), so `blocked` parks it and it returns as `wait_returned` when he is back." The line on `wait_returned` (ask again with `ask_user_question`) is unchanged.
-2. **Tower run prompt.** As BQ-D3.
-3. **`call_tower`'s description.** `blocked (you wait on someone outside your tab other than the boss; a boss decision: ask_user_question, or this under auto mode)`.
+1. **Prompts.** `prompts/main.md`'s `call_tower` line and `prompts/tower-run.md`'s `blocked` paragraph are 0.89.0's: `blocked` covers "a decision your authorizations do not cover", and the tower records a boss-only decision as a wait for the boss. A local main's boss question no longer reaches the tower while auto mode is off.
+2. **`call_tower`'s description.** `blocked (you wait on someone outside your tab, or on a decision your authorizations do not cover; the boss's own decision: boss, asked in your pane)`.
+3. **Code.** `src/bossask.ts` (`createBossAsk`, `bossOf`, `withBoss`) and `src/link/waitcall.ts`; the guidance for the moment (under auto mode, the re-ask on `wait_returned`) is in the tool's result.
