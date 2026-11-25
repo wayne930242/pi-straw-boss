@@ -124,6 +124,12 @@ const noticeName = (name: string) => name.replace(/\.json$/, ".notice.json");
 /** What follows a car file's name in the key of an earlier life (`<name>#<n>`); no file name holds it. */
 const PAST = "#";
 const changedAt = (held: Held) => held.file.states.at(-1)?.at ?? "";
+/** The `MAX_FILES` cars whose newest state is newest, in the book's order: the book's order after a restart is the journal's file names, so a plain slice of it would drop a car that just changed (MP-5664 was invisible to the integrator that received it). */
+const newestFiles = (list: Held[]): Held[] => {
+	if (list.length <= MAX_FILES) return list;
+	const keep = new Set([...list].sort((a, b) => (changedAt(a) < changedAt(b) ? 1 : changedAt(a) > changedAt(b) ? -1 : 0)).slice(0, MAX_FILES));
+	return list.filter((h) => keep.has(h));
+};
 /** git's first line of stderr, else the error's message (sb's own timeout names the command and its URL), with a URL's userinfo blanked (`blankUser`, also on the remotes a moved-remote refusal names): a token used as the https username goes into no tool text or log (R0772-F002, R0773-F001). */
 const blankUser = (text: string) => text.replace(/\/\/[^/@\s'"]+@/g, "//***@");
 const firstLine = (error: unknown) => blankUser(String((error as { stderr?: unknown }).stderr || (error as Error).message).trim().split("\n")[0]!).slice(0, 200);
@@ -392,9 +398,9 @@ export class CarBook {
 
 	// ---- reading
 
-	/** Every car file of a project with its notice record, unbounded: for the sender's own bookkeeping and the tests. A caller over the socket gets `readFor`. */
+	/** The newest `MAX_FILES` car files of a project with their notice records: for the sender's own bookkeeping and the tests. A caller over the socket gets `readFor`. */
 	read(project: string): CarView[] {
-		return [...(this.cars.get(project)?.values() ?? [])].slice(0, MAX_FILES).map((h) => ({ file: structuredClone(h.file), ...(h.notice ? { notice: structuredClone(h.notice) } : {}) }));
+		return newestFiles([...(this.cars.get(project)?.values() ?? [])]).map((h) => ({ file: structuredClone(h.file), ...(h.notice ? { notice: structuredClone(h.notice) } : {}) }));
 	}
 	/** The book's own record of one car (no copy; read only): the yard's notice line comes from here, and from the journal on disk only for a car this server's life has not seen (TB-F005). */
 	viewOf(project: string, app: string, head: string): CarView | undefined {
@@ -416,7 +422,7 @@ export class CarBook {
 			return [...new Set(this.trainOf(project, train!.code)?.heads ?? [])].flatMap((head) => { const life = this.lifeFor(project, head, train!.code); return life ? [view(life[1])] : []; });
 		}
 		const mine = (h: Held) => h.file.states.some((s) => s.by.session === setter.session) || this.forwardOf(h.file.car.head, setter.session) !== undefined;
-		return [...(this.cars.get(project)?.values() ?? [])].filter(mine).slice(-MAX_FILES).map(view);
+		return newestFiles([...(this.cars.get(project)?.values() ?? [])].filter(mine)).map(view);
 	}
 	/**
 	 * The life of a car (by its head) a train acts on and reads: the newest one the integrator received for this train, else the life the car lives now. A car that was dropped and then sent again rides another train in a new life (#14),

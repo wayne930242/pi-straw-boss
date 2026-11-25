@@ -479,6 +479,23 @@ test("car-forward-F004: cars-read gives a car's current life before the earlier 
 	assert.deepEqual(views.find((v) => v.file.car.head === SHA_A)!.file.states.map((s) => s.state), ["received"]);
 });
 
+test("cars-read over 256 cars gives the 256 whose newest state is newest, not the last 256 in the book's order: a car received now that sits early in the book is still read (MP-5664)", async () => {
+	const w = world();
+	await receive(w);
+	const book = (w.book as unknown as { cars: Map<string, Map<string, { file: { car: { head: string }; states: { at: string }[] } }>> }).cars.get("acme")!;
+	const [[, real]] = [...book.entries()] as [[string, { file: { car: { head: string }; states: { at: string }[] } }]];
+	for (let i = 0; i < 256; i++) {
+		const head = i.toString(16).padStart(40, "0"), file = structuredClone(real.file);
+		file.car.head = head;
+		file.states = file.states.map((s) => ({ ...s, at: `2020-01-01T00:00:${String(i % 60).padStart(2, "0")}.000Z` }));
+		book.set(`old-${i}.json`, { file });
+	}
+	const views = await w.integ.read("acme");
+	assert.equal(views.length, 256);
+	assert.ok(views.some((v) => v.file.car.head === SHA_A), "the car received last is read");
+	assert.equal(views[0]!.file.car.head, SHA_A, "in the book's order");
+});
+
 // ---- the proof the server asks for
 
 test("a raw client, as a shell would be, cannot set a state: no secret, a made-up secret, and registering after the pi all fail, and nothing is recorded", async () => {
