@@ -77,9 +77,10 @@ export type WaitWireState = (typeof WAIT_STATES)[number];
 /**
  * A link wait as it travels: its id (16 random bytes in hex), its state, the owner the sender named (40 characters), what it waits on (one line, 200 bytes), and the sender main's handle (16 hex, or empty). `kind`, the optional sixth
  * part (D13, 0.81.3), is for the receiver's standing main: `question` (it carries an ask) or `notice` (it expects nothing back); written only to a device whose `caps` list `tower.standing`. `approval` (D14, 0.81.7): a card for the
- * sender's boss that the receiver's main decides as the boss's delegate; written only to a device whose `caps` list `tower.approval`.
+ * sender's boss that the receiver's main decides as the boss's delegate; written only to a device whose `caps` list `tower.approval`. `re`, the optional seventh part (0.93.0), goes with a notice only: the id of the wait it is a note
+ * on, one the receiver sent; written only to a device whose `caps` list `tower.note`.
  */
-export interface WaitWire { id: string; state: WaitWireState; owner: string; what: string; handle: string; kind?: WaitWireKind }
+export interface WaitWire { id: string; state: WaitWireState; owner: string; what: string; handle: string; kind?: WaitWireKind; re?: string }
 export const STANDING_KINDS = ["question", "notice"] as const;
 export type StandingKind = (typeof STANDING_KINDS)[number];
 export const WAIT_KINDS = [...STANDING_KINDS, "approval"] as const;
@@ -125,16 +126,19 @@ const encodeWait = (w: WaitWire): Buffer => {
 	if (!(WAIT_STATES as readonly string[]).includes(w.state)) throw new RangeError("a wait's state is one of open, told, taken, done, declined, cancelled, expired, escalated");
 	if (w.handle !== "" && !handleOk(w.handle)) throw new RangeError("a main's handle is 16 lowercase hex digits");
 	if (w.kind !== undefined && !(WAIT_KINDS as readonly string[]).includes(w.kind)) throw new RangeError("a wait's kind is question, notice, or approval");
-	return enc(str(w.id), str(w.state), str(waitOwner(w.owner)), str(waitWhat(w.what)), str(w.handle), ...(w.kind !== undefined ? [str(w.kind)] : []));
+	if (w.re !== undefined && w.kind !== "notice") throw new RangeError("re goes with a notice");
+	if (w.re !== undefined && !askIdOk(w.re)) throw new RangeError("a wait id is 32 lowercase hex digits");
+	return enc(str(w.id), str(w.state), str(waitOwner(w.owner)), str(waitWhat(w.what)), str(w.handle), ...(w.kind !== undefined ? [str(w.kind)] : []), ...(w.re !== undefined ? [str(w.re)] : []));
 };
 const decodeWait = (b: Buffer): WaitWire => {
-	const parts = dec(b).map((f) => readStr(f)), [id, state, owner, what, handle, kind] = parts as [string, string, string, string, string, string | undefined];
-	if (parts.length !== 5 && parts.length !== 6) throw new CanonError(`a wait has 5 or 6 parts, got ${parts.length}`);
+	const parts = dec(b).map((f) => readStr(f)), [id, state, owner, what, handle, kind, re] = parts as [string, string, string, string, string, string | undefined, string | undefined];
+	if (parts.length < 5 || parts.length > 7) throw new CanonError(`a wait has 5, 6, or 7 parts, got ${parts.length}`);
+	if (re !== undefined && (kind !== "notice" || !askIdOk(re))) throw new CanonError("a wait's seventh part is the id of the wait a notice is about");
 	if (kind !== undefined && !(WAIT_KINDS as readonly string[]).includes(kind)) throw new CanonError(`a wait's kind is not ${JSON.stringify(kind.slice(0, 20))}`);
 	if (!askIdOk(id)) throw new CanonError("a wait id is 32 lowercase hex digits");
 	if (!(WAIT_STATES as readonly string[]).includes(state)) throw new CanonError(`a wait's state is not ${JSON.stringify(state.slice(0, 20))}`);
 	if (handle !== "" && !handleOk(handle)) throw new CanonError("a main's handle is 16 lowercase hex digits");
-	return { id, state: state as WaitWireState, owner: waitOwner(owner), what: waitWhat(what), handle, ...(kind !== undefined ? { kind: kind as WaitWireKind } : {}) };
+	return { id, state: state as WaitWireState, owner: waitOwner(owner), what: waitWhat(what), handle, ...(kind !== undefined ? { kind: kind as WaitWireKind } : {}), ...(re !== undefined ? { re } : {}) };
 };
 export interface UnitStatus { unit: string; state: string; monitors: string[]; report: string }
 /** `ref` is the optional fourth field (docs/specs/2026-11-21-box-mac-waits.md §4, C4): the ask id the notice is about, written only to a device whose `caps` list `notice.ref`. */

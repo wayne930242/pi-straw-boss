@@ -132,7 +132,10 @@ export function startLinkWaits(o: StartWaits): WaitsHub {
 						if (no) return { ok: false, error: no };
 						if (!identity || !link || !o.asks?.open) return { ok: false, error: "The sb server runs no tower for your workspace or no link holder, so nothing was sent" };
 						const asks = { open: o.asks.open.bind(o.asks) };
-						return { ok: true, ...(await sendStanding({ now: o.now, ws, identity, link: (b) => link.request(b, identity, true), asks, waits: router, log: o.log }, target, kind, String(body.message ?? ""), String(body.what ?? ""), { id: from, name: nameOf(me) || from })) };
+						const sent = await sendStanding({ now: o.now, ws, identity, link: (b) => link.request(b, identity, true), asks, waits: router, log: o.log }, target, kind, String(body.message ?? ""), String(body.what ?? ""), { id: from, name: nameOf(me) || from });
+						// The moment a notice goes past a wait the sender holds from that device (field 2026-11-26: box 1 told the Mac's standing main each step of nine of its questions): say where a note on it goes.
+						const held = kind === "notice" ? router.ofDevice(target.id).filter((w) => w.dir === "in" && w.wait && (w.kind === "wait" || w.kind === "question") && (w.claimedBy ? w.claimedBy.id === from : !!w.toldTo?.some((m) => m.id === from))).map((w) => `L${w.n}`) : [];
+						return { ok: true, ...sent, ...(held.length ? { text: `${sent.text} You hold ${held.join(", ")} from ${restrictLabel(target.label)}: a note on one goes in its thread (linkWait state note), to the main there that waits on it, not to its standing main; done or declined closes it.` } : {}) };
 					}
 					default: return { ok: false, error: "unknown request" };
 				}

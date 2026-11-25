@@ -160,6 +160,21 @@ test("D13: a wait for the standing main goes with its kind to a build that lists
 	assert.equal(b.holder.servedFor("sb-tower-wb").length, 1, "an ally run gets it, as before 0.81.3");
 });
 
+test("a note (0.93.0): a notice names the wait it is about only to a build that lists tower.note; to any other it goes without it, a notice for the standing main as before", async () => {
+	const { a, b } = await pair({ waits: { b: true } });
+	await until(() => capsOf(a, bob.id).includes("tower.note"), 3000, "b lists tower.note");
+	const note = { ...WAIT, owner: "", what: "MP-5666 car ready", kind: "notice" as const, re: "7d".repeat(16) };
+	const sent = await sendTo(a, "MP-5666 car ready: agent/mp-5666 2e0de8f8a", { wait: note });
+	assert.equal((details(sent) as { waited?: boolean }).waited, true, textOf(sent));
+	await until(() => b.waited.length === 1, 3000, "the router to take it");
+	assert.deepEqual(b.waited[0]!.item.wait, note);
+	withoutCap(a, bob.id, "tower.note");
+	await sendTo(a, "MP-5666 landed", { wait: { ...note, id: "7e".repeat(16) } });
+	await until(() => b.waited.length === 2, 3000, "the router to take the second");
+	const { re: _re, ...plain } = note;
+	assert.deepEqual(b.waited[1]!.item.wait, { ...plain, id: "7e".repeat(16) }, "an older build gets the notice it took before");
+});
+
 test("D14: an approval goes with its kind only to a build that lists tower.approval, and its router takes it; to any other nothing is sent, and no escalated state either", async () => {
 	const { a, b } = await pair({ waits: { a: true, b: true } });
 	await until(() => capsOf(a, bob.id).includes("tower.approval") && capsOf(b, alice.id).includes("tower.approval"), 3000, "both list tower.approval");

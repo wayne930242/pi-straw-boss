@@ -36,7 +36,7 @@ test("size caps: standing.md renders within 2,500 characters and 12 lines, integ
 
 test("standing.md carries what every standing turn needs and none of main.md's dispatch, done, car, or pairing rules", () => {
 	const standing = read("standing");
-	for (const term of ["only the boss closes you", "Your board line names what you mind", "`boss_rename`", "`boss_watch`", "`MonitorCreate`", "never `ask_user_question`", "`call_tower` `why: blocked`", "`linkWait`", "`declined`", "`escalated`", "names no owner here: forward it to the main that owns the work", "tell the sender to name the owner next time", "`under-30m`", "`stale`", "`quota`", "`resumed`", "`device-silent-2h`", "for a new main", "`boss_handover`"]) assert.ok(standing.includes(term), term);
+	for (const term of ["only the boss closes you", "Your board line names what you mind", "`boss_rename`", "`boss_watch`", "`MonitorCreate`", "never `ask_user_question`", "`call_tower` `why: blocked`", "`linkWait`", "`declined`", "`escalated`", "names no owner here: forward it to the main that owns the work", "a note on a wait goes in its thread (`linkWait` `note`), else name the owner", "`under-30m`", "`stale`", "`quota`", "`resumed`", "`device-silent-2h`", "for a new main", "`boss_handover`"]) assert.ok(standing.includes(term), term);
 	for (const term of ["Done when", "do not apply", "apps-config.md", "planning.md", "worktree", "car slip", "boss_pair", "caller_ping", "three points only", "Seam bindings", "Idle with ready todos", "re-arm", "Re-arm"]) assert.ok(!standing.includes(term), `standing.md says nothing of ${term}`);
 	assert.ok(!/<!-- (?:\/)?integration -->/.test(standing), "no integration block: a standing main sends no car");
 });

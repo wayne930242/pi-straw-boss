@@ -82,7 +82,7 @@ export interface InboxItem {
 	/** A reply whose main was gone falls back to an ally run, whose brief says which main asked. */
 	askedBy?: string;
 	/** A `tower` with the sixth field (docs/specs/2026-11-21-box-mac-waits.md §2.3): a link wait, or a state of one. It goes to the wait router (src/server/linkwaits.ts), never to an ally run. */
-	wait?: { id: string; state: string; owner: string; what: string; handle: string; kind?: string };
+	wait?: { id: string; state: string; owner: string; what: string; handle: string; kind?: string; re?: string };
 }
 
 /** What one device and this computer's towers said to each other, one row per message (docs/specs/2026-10-26-sb-backend.md, The brief, The thread store). */

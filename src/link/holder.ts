@@ -240,7 +240,7 @@ const BOARD_MIN_MS = 15_000, BOARD_REFRESH_MS = 3600_000, BOARD_OFF_MS = 3600_00
 /** A board that carries a capacity row is sent at least this often, so a teammate can tell a silent device (over 30 minutes) from a quiet one. */
 const CAP_REFRESH_MS = 10 * 60_000;
 /** What this build takes (docs/specs/2026-10-26-sb-backend.md, Replies for a main). A `caps` older than 2 hours counts as none. */
-export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval", "board.capacity"] as const;
+export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval", "board.capacity", "tower.note"] as const;
 export const CAPS_STALE_MS = 2 * 3600_000;
 /** A live frame is worth nothing late: its post gives up after this, so a stalled relay does not hold the serial chain of sends (spec §11.1, task 5). */
 const LIVE_POST_MS = 5000;
@@ -1158,6 +1158,8 @@ export class LinkHolder {
 		const approval = req.wait?.kind === "approval" || req.wait?.state === "escalated";
 		const withAsk = req.awaitsReply !== undefined && peer.includes("tower.awaitsReply"), withWait = req.wait !== undefined && peer.includes("tower.wait") && (req.wait.kind === undefined || peer.includes(approval ? "tower.approval" : "tower.standing")) && (!approval || peer.includes("tower.approval"));
 		if (approval && !withWait) return { ok: false, error: "That device's build takes no approvals (tower.approval), so nothing was sent" };
+		// A note's wait (`re`, 0.93.0) goes only to a build that lists tower.note; to any other the notice goes without it, to its standing main.
+		const wire = req.wait?.re !== undefined && !peer.includes("tower.note") ? (({ re: _re, ...rest }) => rest)(req.wait) : req.wait;
 		if (req.wait !== undefined && !withWait && req.wait.state !== "open") return { ok: false, error: "That device's build takes no link waits, so the state of one is not sent" };
 		// An open wait to a build that takes none goes as text whose first line says so: its ally run is told to escalate such a message (docs/specs/2026-11-21-box-mac-waits.md §3).
 		const text = req.wait !== undefined && !withWait && req.wait.kind === undefined ? `[waits on you: ${req.wait.what}]\n${req.text}` : req.text;
@@ -1169,7 +1171,7 @@ export class LinkHolder {
 				team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq, ts: this.now(), kind: as, to: [target.id],
 				plaintext: as === "tower-reply"
 					? encodePlaintext("tower-reply", { inReplyTo: req.inReplyTo!, text: req.text })
-					: encodePlaintext("tower", { fromWorkspace: allyLabel(workspace?.label), toWorkspace: req.workspace ?? "", replyExpected: req.reply, text, ...(withAsk ? { awaitsReply: req.awaitsReply! } : {}), ...(withWait ? { wait: req.wait! } : {}) }),
+					: encodePlaintext("tower", { fromWorkspace: allyLabel(workspace?.label), toWorkspace: req.workspace ?? "", replyExpected: req.reply, text, ...(withAsk ? { awaitsReply: req.awaitsReply! } : {}), ...(withWait ? { wait: wire! } : {}) }),
 			});
 		});
 		const post = async (as: "tower" | "tower-reply") => {
@@ -1248,7 +1250,7 @@ export class LinkHolder {
 				sent.at = now; // a failed post is tried again after the spacing (`due` is set again by the catch), not at every tick
 				sent.due = false;
 				const hello = sent.hello;
-				const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device.keys, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: (CAPS_FEATURES as readonly string[]).filter((f) => (f !== "unit-stop" || this.o.unitStop) && (f !== "operate/1" || listed) && ((f !== "tower.wait" && f !== "tower.standing" && f !== "tower.approval") || this.o.waits)).concat(hello ? [HELLO] : []) }) });
+				const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device.keys, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: (CAPS_FEATURES as readonly string[]).filter((f) => (f !== "unit-stop" || this.o.unitStop) && (f !== "operate/1" || listed) && ((f !== "tower.wait" && f !== "tower.standing" && f !== "tower.approval" && f !== "tower.note") || this.o.waits)).concat(hello ? [HELLO] : []) }) });
 				await run.client.postEnvelope(run.teamId, envelope);
 				sent.ts = ts;
 				if (hello) sent.hello = false; // the word goes once: a post that failed carries it in the next
