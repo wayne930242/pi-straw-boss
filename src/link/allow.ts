@@ -31,7 +31,7 @@ const NAMES = [/^\.env/i, /\.pem$/i, /\.key$/i, /^id_/i, /\.p12$/i];
 const HOME_DIRS = [".pi", ".ssh", ".aws", ".config", ".gnupg"];
 /** The tools that look at paths and are allowed inside the project, and the ones allowed whatever their arguments (`tower_done` ends an ally run of the sb server and does nothing else; `ally_escalate` opens a link wait and writes no peer text into a session). */
 const SEARCH = new Set(["grep", "find", "ls"]);
-const FREE = new Set(["tower_list", "board_read", "todo", "tower_done", "ally_escalate"]);
+const FREE = new Set(["tower_list", "board_read", "tower_done", "ally_escalate"]);
 /** Argument names that hold a path in pi's tools and in the tools of the extensions around it. */
 const PATH_KEYS = ["path", "file_path", "filePath", "file", "directory", "dir", "cwd", "paths", "files"];
 
@@ -125,8 +125,13 @@ export function decide(tool: string, input: Record<string, unknown>, senders: Se
 	if (tool === "link_request") return { kind: "refuse", reason: "a remote turn cannot ask for a link action; link_request is the boss's, so a trust change (for example to dispatch) is asked from a local turn" };
 	const bad = pathArgs(input, s).find((p) => pathDenied(p, s));
 	if (bad) return { kind: "refuse", reason: "that path is on the deny list of remote turns" };
-	if (FREE.has(tool)) return { kind: "allow" };
-	if (tool === "read") return typeof input.path === "string" && allowedFile(resolveArg(input.path, s.cwd, s.home), s) ? { kind: "allow" } : { kind: "gate" };
+	if (FREE.has(tool) || (tool === "todo" && input.action !== "import")) return { kind: "allow" };
+	if (tool === "read" || tool === "todo") {
+		if (typeof input.path !== "string") return { kind: "gate" };
+		const abs = resolveArg(input.path, s.cwd, s.home);
+		// Ledger paths are filenames, not pi read shorthands. Gate an ambiguous spelling rather than approve a different file.
+		return (tool === "read" || abs === resolve(s.cwd, input.path)) && allowedFile(abs, s) ? { kind: "allow" } : { kind: "gate" };
+	}
 	if (SEARCH.has(tool)) {
 		const roots = pathArgs(input, s);
 		if (roots.length === 0) roots.push(s.cwd);

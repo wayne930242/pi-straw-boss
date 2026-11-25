@@ -102,7 +102,15 @@ test("grep, find, ls: every path argument has to resolve inside the project (sym
 	assert.equal(decide("ls", { path: "src" }, [sender], { ...scope, cwd: root }).kind, "gate", "a relative path resolves against the tool's cwd, which is outside the project here");
 });
 
-test("tower_list and todo are allowed whatever their arguments (boss_status is folded into board_read in 0.83.0 and gated like any unknown name); tower_send only back to the sender", () => {
+test("todo import is a file read; other todo actions keep their ordinary permission", () => {
+	for (const [path, expected] of [[join(project, "README.md"), "allow"], [join(root, "outside/x.txt"), "gate"], ["notes/secret.txt", "gate"], [".env.example", "refuse"]]) {
+		assert.equal(verdict("todo", { action: "import", path }), expected);
+	}
+	assert.equal(verdict("todo", { action: "import" }), "gate");
+	assert.equal(verdict("todo", { action: "list" }), "allow");
+});
+
+test("tower_list and ordinary todo actions are allowed (boss_status is folded into board_read in 0.83.0 and gated like any unknown name); tower_send only back to the sender", () => {
 	for (const tool of ["tower_list", "todo"]) assert.equal(verdict(tool, {}), "allow");
 	assert.equal(verdict("boss_status", {}), "gate");
 	assert.equal(verdict("tower_send", { message: "hi", device: sender.short }), "allow");

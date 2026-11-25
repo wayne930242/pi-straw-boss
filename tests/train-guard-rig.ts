@@ -75,7 +75,7 @@ function build(o: RigOptions) {
 		const g = p as Json | null;
 		if (g && g.v === 1 && typeof g.id === "string" && g.id.trim() && typeof g.check === "function") {
 			const check = g.check as (change: Json) => unknown;
-			guards.set(g.id, (change) => change.op === "import" && g.imports !== true ? "guard has not opted into imports" : check(change));
+			guards.set(g.id, (change) => (change.params as Json).action === "import" && g.imports !== true ? "guard has not opted into imports" : check(change));
 		}
 	});
 	if (path === "ledger" && o.ledgerFirst) (listen(), pi.events.emit("todo:ready", { v: 1 })); // nobody listens yet

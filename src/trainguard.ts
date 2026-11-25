@@ -421,6 +421,14 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 
 	// ---- the integrator's `train` todo (§7.4)
 
+	/** Checks both new and imported trains. Only a new departure needs receipt forwards from this branch. */
+	function trainRefusals(sb: unknown, ctx: Ctx, status: string, id: number, project?: string): string[] {
+		const refusals = validateTrainTodo(sb, { status, id, project });
+		if (refusals.length || !isObject(sb) || !isObject(sb.spec)) return refusals;
+		const cars = sb.spec.cars as CarRow[], app = String(sb.app), config = readAppIntegration(appsDir(ctx), app);
+		return config.ok ? [...claimedRefusals(cars), ...evidenceRefusals(cars, ctx, app, config.accept)] : [config.refusal];
+	}
+
 	async function integratorTodo(input: Json, ctx: Ctx, state: TodoState): Promise<string[]> {
 		if (input.action !== "create" && input.action !== "update") return [];
 		const { rows, nextId } = state();
@@ -430,12 +438,7 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 		for (const effect of todoEffects(input, rows, nextId)) {
 			const sb = effect.metadata?.sb;
 			if (sb === undefined || effect.status === "deleted") continue;
-			const refusals = validateTrainTodo(sb, { status: effect.status, id: effect.id, ...(typeof project === "string" ? { project } : {}) });
-			if (!refusals.length && isObject(sb) && isObject(sb.spec)) {
-				// What the app requires is read from its apps.json here and in the train's manifest check, never from a flag a model passes (TB-F001); a file that cannot be read refuses (TB-F002 too: stages that list uat).
-				const cars = (sb.spec.cars as CarRow[]) ?? [], config = readAppIntegration(appsDir(ctx), String(sb.app));
-				refusals.push(...(config.ok ? [...claimedRefusals(cars), ...evidenceRefusals(cars, ctx, String(sb.app), config.accept)] : [config.refusal]));
-			}
+			const refusals = trainRefusals(sb, ctx, effect.status, effect.id, typeof project === "string" ? project : undefined);
 			// The manifest goes to the tower only when every car is received, its slip came from the coordinator the tower's forward names, and sb has told that coordinator (§5.5, §7.4).
 			if (!refusals.length && effect.status === "in_progress" && rows.find((r) => r.id === effect.id)?.status !== "in_progress" && isObject(sb) && isObject(sb.spec)) {
 				const got = views ?? (typeof sb.project === "string" ? await fetchViews(sb.project) : "sb: the train todo names no project");
@@ -558,7 +561,7 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 				for (const t of after) {
 					if (!isObject(t) || !isObject(t.metadata) || t.metadata.sb === undefined) continue;
 					if (env.duty() !== "integrator") return [NOT_INTEGRATOR];
-					const sb = t.metadata.sb, refusals = validateTrainTodo(sb, { id: t.id as number, status: t.status as string, project });
+					const sb = t.metadata.sb, refusals = trainRefusals(sb, ctx, t.status as string, t.id as number, project);
 					if (refusals.length) return refusals;
 					if (isObject(sb) && typeof sb.project === "string") project = sb.project;
 				}
