@@ -490,7 +490,14 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 		bossSign = cfg.now();
 		// Not waited for: pi takes the boss's words only after this handler, and a round trip here would let the run's own event start a turn first and the words be refused as "already processing". The request goes out now;
 		// a tower_done waits for it (below), so it is heard before the model can end the run. A server that did not hear is asked again at their next words.
-		signing = call({ cmd: "run-boss" }).catch(() => void (bossSign = undefined));
+		const mine = epoch, sign = bossSign;
+		signing = call({ cmd: "run-boss" }).then(({ idleMs }) => {
+			if (mine !== epoch || sign !== bossSign) return;
+			const minutes = typeof idleMs === "number" ? idleMs / 60_000 : undefined;
+			ctx?.ui.setStatus("tower-autoclose", minutes === undefined ? undefined : localeOf(env, guiDir) === "zh-TW"
+				? `塔台：你停止輸入 ${minutes} 分鐘後會自動收尾關閉；要立刻結束請打 /quit`
+				: `Tower: closes on its own ${minutes} min after you stop typing; /quit ends it now`);
+		}).catch(() => { if (mine === epoch && sign === bossSign) bossSign = undefined; });
 	});
 	pi.on("agent_start", () => void ((inTurn = true), (triggered = undefined), (turnStarter = startedBy), (startedBy = undefined), (turnTyped = startedTyped), (startedTyped = undefined)));
 	pi.on("agent_settled", () => void ((inTurn = false), (bossTurn = false), (turnStarter = undefined), (turnTyped = undefined), flushQuit()));
@@ -619,6 +626,8 @@ export function createRunMode(kit: Kit, look: ServerLook | undefined, deps: RunS
 	});
 	pi.on("session_shutdown", async (event) => {
 		epoch++;
+		if (bossTyped) ctx?.ui.setStatus("tower-autoclose", undefined);
+		bossSign = undefined;
 		deciding = undefined;
 		clearInterval(timer);
 		timer = undefined;

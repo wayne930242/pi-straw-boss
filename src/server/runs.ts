@@ -1530,7 +1530,7 @@ export function createRuns(o: RunsOptions) {
 		a.graceUntil = undefined;
 		markBossIn(a);
 		bossTurn(a);
-		return { ok: true as const };
+		return { ok: true as const, idleMs: t.bossAway, capAt: a.bossSince + t.bossMax };
 	}
 	/** The server is ending the run, or the boss's `bossMax` since their first word is spent: a sign of them changes nothing. */
 	function bossOver(a: Active) {

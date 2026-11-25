@@ -897,13 +897,18 @@ test("the boss's 4 hours are counted from their first word in the run, not from 
 });
 
 test("a run the server is ending at bossMax answers tower_done without a stay, and a boss sign that comes after changes nothing (SR-F005)", async () => {
+	const clock = (world.runClock = fakeClock());
 	world.runTimers = { quitAt: 250, steerAt: 120, bossMax: 400, bossAway: 60_000, quitGrace: 5000, signal: 5000 };
 	const { s } = await setup();
 	const { id, token } = await woken(s);
 	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true, "the boss speaks in this event run");
+	const capAt = clock.now() + 400;
+	clock.advance(100);
+	assert.deepEqual(await ask(s, { cmd: "run-boss", token }), { ok: true, idleMs: 60_000, capAt });
+	clock.advance(301);
 	const later = await commandsFor(s, token, 700);
 	assert.ok(later.some((c) => c.type === "quit"), JSON.stringify(later));
-	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true, "harmless");
+	assert.deepEqual(await ask(s, { cmd: "run-boss", token }), { ok: true }, "no notice after the cap");
 	const end = await ask(s, { cmd: "run-done", token, note: "wrapped up" });
 	assert.equal(end.stay, undefined, JSON.stringify(end));
 	exit(id);

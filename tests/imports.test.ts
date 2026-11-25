@@ -428,7 +428,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// R-F001 (2026-11-16 review fix; measured): runmode.ts 627 to 629 (+2: when the boss's last words at the pane were said, so a run stops counting them after 10 minutes).
 	// F round 2, headless runs in the GUI (2026-11-24, docs/specs/2026-11-23-lite-b2-d-e-f.md §4.4 and docs/specs/2026-11-23-f-entry.md §2.7–2.8; measured): runmode.ts 629 to 650 (+21): a headless run asks the server for its link_request and gated-call approvals (`run-approve`) and withdraws one its call no longer waits on; the run module loads with no pane.
 	// Zen under headless runs (2026-11-24, docs/specs/2026-11-24-zen-f.md ZF-3; measured): runmode.ts 650 to 651 (+1): a headless run's `boss_wait_ask` tells the server which wait card its dialog shows (`run-wait-shown`).
-	assert.ok(count("src/runmode.ts") <= 651, `src/runmode.ts has ${count("src/runmode.ts")} lines`);
+	// Tower auto-close notice: the signed reply updates the pane footer; stale replies are ignored and shutdown clears it.
+	assert.ok(count("src/runmode.ts") <= 660, `src/runmode.ts has ${count("src/runmode.ts")} lines`);
 	// Todo #31: runallow.ts is the list of a local run's tools and the rule that refuses the rest and the paths of the state folder (the server passes it to pi, runmode.ts enforces it); it has its own figure; 63 to 75 for the path arguments by tool, the UNC refusal, and `refusedForRun` (R31 review).
 	assert.ok(count("src/runallow.ts") <= 81, `src/runallow.ts has ${count("src/runallow.ts")} lines`);
 	// T4: towercmd.ts is `/boss tower`'s subcommands (status, parked, retry, deliver, drop, leave, new, the tower prompt's words for them); it has its own figure.

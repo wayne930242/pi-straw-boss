@@ -12,6 +12,7 @@ import { inRun, inStandingRun } from "../src/runmark.ts";
 import { ALLY_ENTRY } from "../src/state.ts";
 import { type Answer, call, type Request, results, rig as makeRig, scratchRoot } from "./run-rig.ts";
 import { until } from "./server-world.ts";
+import { fakeClock } from "./fake-clock.ts";
 
 // A local run against the events of a real pi agent session (a faux model, no network, a scripted server): the brief in its role section, its events taken one at a time at idle, the tower tools
 // that are clients of the server, `tower_done` ending it, and the `intercom` tool blocked (docs/specs/2026-10-26-sb-backend.md, Real pi session).
@@ -857,6 +858,23 @@ test("the boss typing into the run's session tells the server before the turn, a
 	assert.equal(toldFirst, true, "told before the turn the words start");
 	await r.session.prompt("and another");
 	assert.equal(srv.requests.filter((q) => q.cmd === "run-boss").length, 1, "throttled");
+});
+
+for (const [locale, expected] of [
+	["en", "Tower: closes on its own 7 min after you stop typing; /quit ends it now"],
+	["zh-TW", "塔台：你停止輸入 7 分鐘後會自動收尾關閉；要立刻結束請打 /quit"],
+] as const) test(`the run footer shows the server's silence limit in ${locale} and clears at the cap or on exit`, async () => {
+	const clock = fakeClock(), srv = server(), changes: (string | undefined)[] = [];
+	let over = false;
+	const r = await rig({ ...srv, ask: (q) => q.cmd === "run-boss" ? Promise.resolve(over ? { ok: true } : { ok: true, idleMs: 420_000, capAt: clock.now() + 900_000 }) : srv.ask(q) }, { env: { LANG: locale }, now: clock.now });
+	r.session.extensionRunner.setUIContext({ setStatus: (key: string, value?: string) => { if (key === "tower-autoclose") changes.push(value); } } as never, "tui");
+	r.faux.setResponses(Array.from({ length: 3 }, () => fauxAssistantMessage("ok")));
+	for (over of [false, true, false]) {
+		clock.advance(16_000);
+		await r.session.prompt("hello");
+	}
+	await quit(r);
+	assert.deepEqual(changes, [expected, undefined, expected, undefined]);
 });
 
 test("words sent into the session by an extension (pi-intercom's route) or by a program are no sign of the boss", async () => {
