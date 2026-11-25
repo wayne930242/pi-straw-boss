@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import type { Base, Net, TowerService, Unit } from "../src/net.ts";
 import { createAutoMode, PERIOD_FILE } from "../src/server/automode.ts";
 import { reportText } from "../src/server/autotower.ts";
-import { createAutoWatch, type Facts, factsOf, QUIET_MS, STUCK_MS, WATCH_BRIEF, WATCH_MS, WATCH_RUNBOOK, WATCH_TEXT, WATCH_TOP, WATCH_WORKSPACES, type WatchDeps, watchSection, watchText } from "../src/server/autowatch.ts";
+import { createAutoWatch, type Facts, factsOf, QUIET_MS, STUCK_MS, WATCH_BRIEF, WATCH_MS, WATCH_RUNBOOK, WATCH_TEXT, WATCH_TOP, WATCH_WORKSPACES, type WatchDeps, watchSection, watchText, workingOf } from "../src/server/autowatch.ts";
 import { buildHeadBrief } from "../src/server/headbrief.ts";
 import { readQueue } from "../src/server/towerstore.ts";
 import { callControl } from "../src/server/socket.ts";
@@ -197,6 +197,23 @@ test("the facts of a wake are read from the net and the period: waits, parked ca
 	assert.deepEqual(facts.elsewhere.waits.map((w) => [w.who, w.tool]), [["gone-1", "secret_drop"]]);
 	assert.deepEqual(facts.elsewhere.stalls, ['"lost" (pane p1): missing']);
 	assert.ok(STUCK_MS === 30 * MIN && WATCH_MS === 15 * MIN && QUIET_MS === 2 * 3600_000, "the constants the docs name");
+});
+
+test("a main whose Herdr pane is working, or that runs a monitor, is not an idle main, whatever its board line says (boss 2026-11-26 「herdr state 還在 working 的 agent 不必被詢問」); the notice says a main it does not list is not to be asked", () => {
+	const now = T0 + 3 * 3600_000, since = now - WATCH_MS, input = { now, since, notes: [], stalls: [], idleBefore: new Set(["m1"]) };
+	assert.deepEqual(factsOf(busyNet(now), input).workspaces[0]!.idle.map((m) => m.session), ["m1"], "its pane idle: listed");
+	const working = factsOf(busyNet(now), { ...input, working: new Set(["m1"]) }), [a] = working.workspaces;
+	assert.deepEqual([a!.idle, a!.keys.filter((k) => k.startsWith("idle:"))], [[], []], "its pane working: no idle main, no finding");
+	assert.equal(a!.finished, false, "a working main is not done");
+	const net = busyNet(now);
+	net.bases[0]!.tabs[0]!.units[0]!.monitors = [{ id: "1", what: "ci", status: "running", lines: 0, at: now }];
+	assert.deepEqual(factsOf(net, input).workspaces[0]!.idle, [], "a running monitor of its own");
+	assert.match(WATCH_RUNBOOK, /A main not listed idle is working or runs something: ask it nothing\./);
+});
+test("workingOf: the sessions whose Herdr pane shows agent_status working", () => {
+	const ps = [{ pane_id: "p1", agent_status: "working" }, { pane_id: "p2", agent_status: "idle" }, { pane_id: "p3", agent_status: "blocked" }] as never;
+	const ss = [{ id: "m1", herdrLocation: { paneId: "p1" } }, { id: "m2", herdrLocation: { paneId: "p2" } }, { id: "m3", herdrLocation: { paneId: "p3" } }, { id: "m4" }] as never;
+	assert.deepEqual([...workingOf(ss, ps)], ["m1"]);
 });
 
 test("the notice says what to look at per workspace, names the others in one line, and tells how long a workspace showed no output", async () => {

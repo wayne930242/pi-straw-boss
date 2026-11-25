@@ -30,7 +30,7 @@ export function mainFacts(sessions: Session[], ps: Awaited<ReturnType<typeof her
 		const pane = ps.find((p) => p.pane_id === m.s.herdrLocation?.paneId), subs = m.role === "main" ? kids(pane).filter((r) => !r.ended) : [], mark = sessionMark(m.s, pane), file = pane?.agent_session?.value;
 		const moved = file ? mtime(file) : undefined, written = entries.get(m.s.id);
 		return {
-			session: m.s.id, name: nameOf(m.s), workspace: m.workspace.id, role: m.role === "train" ? "train" : "main", state: mark, commanding: commanding(mark, subs.map((r) => r.mark)) === "commanding",
+			session: m.s.id, name: nameOf(m.s), workspace: m.workspace.id, role: m.role === "train" ? "train" : "main", state: mark, ...(pane?.agent_status ? { paneStatus: pane.agent_status } : {}), commanding: commanding(mark, subs.map((r) => r.mark)) === "commanding",
 			...(m.role === "main" && background?.(m.s.id, pane?.pane_id) ? { background: true } : {}), ...(m.duty ? { duty: m.duty } : {}), workers: subs.map((r) => r.text), ...(moved !== undefined ? { fileMtime: moved } : {}), ...(written !== undefined ? { entryUpdated: written } : {}),
 		};
 	});

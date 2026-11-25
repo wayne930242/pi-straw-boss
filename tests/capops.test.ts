@@ -39,9 +39,10 @@ test("mainFacts: the live mains and trains with their duty, session file time an
 	writeEntry(board, "m1", { now: "x", items: [] }, 1000);
 	const s = (id: string, p: string): Session => ({ id, name: `${id}-name`, status: "idle", herdrLocation: { status: "current", paneId: p, workspace: { id: "wA", label: "Alpha" }, tab: { id: `t-${id}`, label: "t" } } } as Session);
 	const pane = (id: string, role: string, more: Partial<Pane> = {}): Pane => ({ pane_id: id, tab_id: "t", workspace_id: "wA", agent: "pi", agent_status: "idle", tokens: { sb_role: role }, ...more });
-	const facts = mainFacts([s("m1", "p1"), s("st", "p2"), s("tr", "p3"), s("tw", "p4"), s("mb", "p5")], [pane("p1", "main", { agent_session: { value: "/s/m1.jsonl" } as never }), pane("p2", "main", { tokens: { sb_role: "main", sb_duty: "standing" } }), pane("p3", "train"), pane("p4", "tower"), pane("p5", "member")], board, 5000, (file) => (file === "/s/m1.jsonl" ? 4000 : undefined), (id, pane) => pane === "p1" || id === "st");
+	const facts = mainFacts([s("m1", "p1"), s("st", "p2"), s("tr", "p3"), s("tw", "p4"), s("mb", "p5")], [pane("p1", "main", { agent_session: { value: "/s/m1.jsonl" } as never, agent_status: "working" }), pane("p2", "main", { tokens: { sb_role: "main", sb_duty: "standing" } }), pane("p3", "train"), pane("p4", "tower"), pane("p5", "member")], board, 5000, (file) => (file === "/s/m1.jsonl" ? 4000 : undefined), (id, pane) => pane === "p1" || id === "st");
 	assert.deepEqual(facts.filter((m) => m.background).map((m) => m.session), ["m1", "st"], "pane monitor and session watch belong to their own mains");
 	assert.deepEqual(facts.map((f) => [f.session, f.role, f.duty, f.fileMtime, f.entryUpdated, f.workers]), [["m1", "main", undefined, 4000, 1000, []], ["st", "main", "standing", undefined, undefined, []], ["tr", "train", undefined, undefined, undefined, []]]);
+	assert.deepEqual(facts.map((f) => [f.session, f.paneStatus]), [["m1", "working"], ["st", "idle"], ["tr", "idle"]], "each main's Herdr pane state, which stale reads");
 });
 
 test("mainFacts: every running subagent of a main is a worker, not only the first 8 a dashboard shows", () => {

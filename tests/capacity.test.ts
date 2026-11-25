@@ -132,6 +132,10 @@ test("staleOf: 30 minutes of no move with open todos and nothing running on an u
 		["attended, idle 1 h", { state: "idle", ...old(60 * MIN) }, { open: 3 }, false, false],
 		["attended, commanding", { state: "idle", commanding: true, ...old(5 * 3600_000) }, { open: 3 }, false, false],
 		["attended, paused", { state: "idle", ...old(5 * 3600_000) }, { open: 3, pause: { reason: "quota", at: NOW } }, false, false],
+		// Boss 2026-11-26 「herdr state 還在 working 的 agent 不必被詢問」: a main whose Herdr pane is working is moving, whatever its file and board say.
+		["unattended, its pane working", { state: "idle", paneStatus: "working", workers: [], ...old(31 * MIN) }, { open: 2 }, true, false],
+		["attended, idle 2 h+, its pane working", { state: "idle", paneStatus: "working", ...old(121 * MIN) }, { open: 0 }, false, false],
+		["unattended, 31 min, its pane idle", { state: "working", paneStatus: "idle", workers: [], ...old(31 * MIN) }, { open: 2 }, true, true],
 	];
 	for (const [name, m, c, unattended, want] of cases) assert.equal(staleOf(m, c, unattended, NOW), want, name);
 });

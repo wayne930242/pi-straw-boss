@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { boardSeam } from "../boardview.ts";
-import type { HerdrRun, HerdrWorld, Session } from "../herdr.ts";
+import { type HerdrRun, type HerdrWorld, panes, type Session } from "../herdr.ts";
 import { netSource } from "../net.ts";
 import type { AutoMode, Period } from "./automode.ts";
-import { type AutoWatch, createAutoWatch, type NoticeWhere, type WatchDeps, type WatchReport, WATCH_KEY, WATCH_TICK_MS, factsOf, watchSection } from "./autowatch.ts";
+import { type AutoWatch, createAutoWatch, type NoticeWhere, type WatchDeps, type WatchReport, WATCH_KEY, WATCH_TICK_MS, factsOf, watchSection, workingOf } from "./autowatch.ts";
 import { readAsks } from "./headasks.ts";
 import { headSeam } from "./headnet.ts";
 import type { Slot } from "./record.ts";
@@ -78,7 +78,8 @@ export function startAutoWatch(o: StartWatch): (() => void) | undefined {
 		now: o.now, log: o.log, auto: o.auto,
 		// The head tower is woken where the server stands in for it; a service that is held starts no run, so its notices would only pile up.
 		head: () => ((row) => (row ? { workspace: row.workspace, ...(row.service?.state === "held" ? { held: true } : {}) } : undefined))(o.towers()?.head.status()),
-		facts: async (input) => factsOf(await net.read(), { ...input, stalls: o.stalls() }),
+		// The panes are read beside the net: a main whose Herdr pane is working is no idle main (boss 2026-11-26).
+		facts: async (input) => ((([n, ss, ps]) => factsOf(n, { ...input, stalls: o.stalls(), working: workingOf(ss, ps) }))(await Promise.all([net.read(), o.sessions(), panes(o.run)]))),
 		asks: () => asksOf(o.slot, o.now),
 		waiting: (workspace) => o.towers()?.runs.noticeWaits(workspace, WATCH_KEY) ?? false,
 		noticeState: (_workspace, key) => noticeState(o.towers, { key }),

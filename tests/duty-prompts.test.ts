@@ -26,6 +26,7 @@ test("no graph prompt and no dispatch prompt ship", () => {
 
 // duty-standing.md (2026-11-21 to 2026-11-24: 900 to 1,624 characters, 7 lines) was an addendum to main.md that began by setting main.md's done rule aside. 2026-11-26 (docs/specs/2026-11-26-standing-prompt.md; boss 2026-11-26
 // 「無人塔台值守的 prompt 不該是 main 的，應該要量身訂做」; measured): standing.md replaces main.md + duty-standing.md (6,092 characters) for a standing main: 2,169 characters and 12 lines, the same with integration on and off.
+// 2,296 characters and 12 lines after the same spec's items 8 and 9 (measured): a note on a wait goes in its thread, and only a main whose Herdr pane is idle is woken or asked.
 test("size caps: standing.md renders within 2,500 characters and 12 lines, integration on and off; integrator.md is pinned", () => {
 	for (const off of [false, true]) {
 		const standing = compose("standing", off).replace(/\{\{tab\}\}/g, "Ops 7");
@@ -36,7 +37,7 @@ test("size caps: standing.md renders within 2,500 characters and 12 lines, integ
 
 test("standing.md carries what every standing turn needs and none of main.md's dispatch, done, car, or pairing rules", () => {
 	const standing = read("standing");
-	for (const term of ["only the boss closes you", "Your board line names what you mind", "`boss_rename`", "`boss_watch`", "`MonitorCreate`", "never `ask_user_question`", "`call_tower` `why: blocked`", "`linkWait`", "`declined`", "`escalated`", "names no owner here: forward it to the main that owns the work", "a note on a wait goes in its thread (`linkWait` `note`), else name the owner", "`under-30m`", "`stale`", "`quota`", "`resumed`", "`device-silent-2h`", "for a new main", "`boss_handover`"]) assert.ok(standing.includes(term), term);
+	for (const term of ["only the boss closes you", "Your board line names what you mind", "`boss_rename`", "`boss_watch`", "`MonitorCreate`", "never `ask_user_question`", "`call_tower` `why: blocked`", "`linkWait`", "`declined`", "`escalated`", "names no owner here: forward it to the main that owns the work", "a note on a wait goes in its thread (`linkWait` `note`), else name the owner", "`under-30m`", "wake or ask only a main whose Herdr pane is idle", "`stale`", "`quota`", "`resumed`", "`device-silent-2h`", "for a new main", "`boss_handover`"]) assert.ok(standing.includes(term), term);
 	for (const term of ["Done when", "do not apply", "apps-config.md", "planning.md", "worktree", "car slip", "boss_pair", "caller_ping", "three points only", "Seam bindings", "Idle with ready todos", "re-arm", "Re-arm"]) assert.ok(!standing.includes(term), `standing.md says nothing of ${term}`);
 	assert.ok(!/<!-- (?:\/)?integration -->/.test(standing), "no integration block: a standing main sends no car");
 });

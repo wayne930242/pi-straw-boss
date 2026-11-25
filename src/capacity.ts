@@ -108,7 +108,7 @@ export function purgeCaps(dir: string, live: ReadonlySet<string>, now: number): 
 }
 
 /** A live main as the server sees it: its workers are the names of the subagents of its pane that run now (and, for any main, the device's live trains). */
-export interface MainFacts { session: string; name: string; workspace: string; role: "main" | "train"; state: string; commanding?: boolean; duty?: string; workers: string[]; fileMtime?: number; entryUpdated?: number; background?: boolean }
+export interface MainFacts { session: string; name: string; workspace: string; role: "main" | "train"; state: string; /** Its Herdr pane's `agent_status`. */ paneStatus?: string; commanding?: boolean; duty?: string; workers: string[]; fileMtime?: number; entryUpdated?: number; background?: boolean }
 /** One main's row of the device: points in use, its ready todos (the smallest's points), its open todos, its pause, and whether it is stale. */
 export interface MainRow { session: string; name: string; workspace: string; points: number; ready: number; minReady?: number; open: number; paused?: { until?: number; detail?: string }; stale?: true; standing?: true; /** The running workers sampled, folded (workercap.ts matches a launch to them); the local file only, never on the wire. */ workers?: string[]; /** The deployed units by name and points (the head page's supply tray); local only, like `workers`. */ units?: { name: string; points: number }[] }
 /** The device row. `under`: since when the device has had room for its smallest ready todo (held 10 minutes before it is flagged). */
@@ -119,10 +119,10 @@ const round = (n: number) => Math.round(n * 100) / 100;
 
 /**
  * Whether a main is stale. On an unattended device: it has open todos, runs nothing (no running worker or train, no points in use: a main commanding work is never stale), is not paused, and neither its session file nor its board entry moved for 30 minutes (whatever its state). Elsewhere the board's own rule: idle,
- * commanding nothing, not standing, and its entry over 2 hours old. A paused main is never stale.
+ * commanding nothing, not standing, and its entry over 2 hours old. A paused main is never stale, nor one whose Herdr pane is working: it is moving (boss 2026-11-26 「herdr state 還在 working 的 agent 不必被詢問」).
  */
-export function staleOf(m: Pick<MainFacts, "state" | "commanding" | "duty" | "fileMtime" | "entryUpdated" | "background"> & { workers?: readonly string[]; points?: number }, c: Pick<MainCap, "open" | "pause" | "deadlines"> | undefined, unattended: boolean, now: number): boolean {
-	if (c?.pause || m.background || (c && c.open > 0 && (c.deadlines ?? []).filter((at) => at > now).length >= c.open)) return false;
+export function staleOf(m: Pick<MainFacts, "state" | "paneStatus" | "commanding" | "duty" | "fileMtime" | "entryUpdated" | "background"> & { workers?: readonly string[]; points?: number }, c: Pick<MainCap, "open" | "pause" | "deadlines"> | undefined, unattended: boolean, now: number): boolean {
+	if (c?.pause || m.background || m.paneStatus === "working" || (c && c.open > 0 && (c.deadlines ?? []).filter((at) => at > now).length >= c.open)) return false;
 	if (unattended) return !m.commanding && !m.workers?.length && !m.points && (c?.open ?? 0) > 0 && Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > 0 && now - Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0) > STALE_UNATTENDED_MS;
 	return m.state === "idle" && !m.commanding && m.duty !== "standing" && m.entryUpdated !== undefined && now - m.entryUpdated > STALE_MS;
 }

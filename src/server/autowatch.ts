@@ -1,3 +1,4 @@
+import type { Pane, Session } from "../herdr.ts";
 import type { BossWait, Net, Unit } from "../net.ts";
 import type { YardNotice, YardTrainRow } from "../train/yardview.ts";
 import type { Note } from "./automode.ts";
@@ -8,7 +9,8 @@ import { secretShaped } from "./waitcard.ts";
 // The auto watch (docs/specs/2026-11-12-auto-watch.md; issue #16): while auto mode is on, the sb server wakes the head tower about every 15 minutes with one notice that says, per workspace, what the server's own state shows:
 // the sessions auto mode refused or cancelled a wait of, the waits parked for the boss, the mains that are idle with open work, a tower that does not take its events, a train or a forward of the head that made no progress,
 // the stall watch's open incidents, and the output seen since the last wake. On 2026-11-12 an unattended box produced nothing for nine hours while a watchdog only checked that its main's pane said "Working": so the watch
-// reads output (board lines written, cars told), not pane activity, and says how long a workspace has shown none.
+// reads output (board lines written, cars told), not pane activity, and says how long a workspace has shown none. A main it lists idle, though, is one to nudge: never one whose Herdr pane is working or that runs a monitor
+// (boss 2026-11-26 「herdr state 還在 working 的 agent 不必被詢問」).
 // The server reads every 15 minutes and wakes the head only when a reading holds something new to look at (boss, 11/12): a calm reading moves the output clocks and is counted, and costs no head run.
 // The server only tells. The head tower acts with the tools it has (tower_send, tower_memory, board_read, tower_list), inside the boss's standing mandate. The timer is the server's, not a model's poll: it runs only while
 // auto mode is on, its count and its last wake are kept in the period file (automode.ts), so a restart goes on from them, and the period's end puts what the watch saw and did on the return list.
@@ -147,7 +149,11 @@ export interface FactsInput {
 	stalls: readonly { session: string; pane: string; signals: readonly string[]; workspace?: string }[];
 	/** The mains that were idle with open work at the last reading. */
 	idleBefore: ReadonlySet<string>;
+	/** The sessions whose Herdr pane is working now (`workingOf`): never an idle main, whatever the broker or the board says. */
+	working?: ReadonlySet<string>;
 }
+/** The sessions whose Herdr pane shows `agent_status` working. */
+export const workingOf = (sessions: readonly Session[], ps: readonly Pane[]): Set<string> => new Set(sessions.filter((s) => ps.some((p) => p.pane_id === s.herdrLocation?.paneId && p.agent_status === "working")).map((s) => s.id));
 
 const phrase = (value: unknown, max: number) => Array.from(String(value ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim()).slice(0, max).join("");
 /** A word a session wrote, as the notice shows it: cleaned, cut, withheld when it looks like a secret, and unable to close a quote or open a header line. */
@@ -200,7 +206,7 @@ export function factsOf(net: Net, x: FactsInput): Facts {
 			if (row?.updated !== undefined && row.updated > x.since) (f.lines++, newer(f, row.updated));
 			if (u.role !== "main") continue;
 			mains++;
-			if (u.mark !== "idle" || !row) continue;
+			if (u.mark !== "idle" || !row || x.working?.has(u.key) || u.monitors?.some((m) => m.status === "running")) continue;
 			const open = row.count ? row.count.total - row.count.done : row.items.filter((i) => !i.done).length;
 			if (open <= 0) done++;
 			else {
@@ -272,7 +278,7 @@ const waitLine = (w: WsFacts["waits"][number]) => `"${w.who}" "${w.tool}" ${w.ki
 /** What the head tower does with a notice: the same in every one, written by the server. */
 export const WATCH_RUNBOOK = [
 	"What to do, with tower_send, tower_memory, board_read, and tower_list only:",
-	"- A main idle with open work at two readings in a row: tower_send its workspace's tower to nudge that main to go on, or to say on its board why it stopped. One seen idle for the first time may be between turns: leave it.",
+	"- A main idle with open work at two readings in a row: tower_send its workspace's tower to nudge that main to go on, or to say on its board why it stopped. One seen idle for the first time may be between turns: leave it. A main not listed idle is working or runs something: ask it nothing.",
 	"- A refused, cancelled, or parked wait: where a standing instruction or decision in your memory covers it, tower_send the owning tower the wait's id and that instruction's own words; the tower decides from its own memory, or records the wait for the morning. Name no S<n> or D<n> of yours: the tower's memory numbers its own. Anything else stays parked: when auto mode ends it goes back to its raiser, who asks the boss again; or you record it for the morning with tower_memory.",
 	"- A tower that takes no events, work or a forward of yours that does not move, a stall, a workspace with no output: tell the owning tower what the server saw (tower_send), or record it for the morning when no tower can act on it.",
 	"- Never decide past the boss's mandate, never ask a session to wait for the boss, and send one message per finding: an open ask of yours that covers it is not sent again. A finding is told in one notice; a later one shows it again only beside something new.",
@@ -305,11 +311,11 @@ export function watchText(facts: Facts, meta: { n: number; since: string } & Pic
 		...(hot.length > WATCH_WORKSPACES ? ["", `(+${hot.length - WATCH_WORKSPACES} more workspaces to look at: ${hot.slice(WATCH_WORKSPACES, WATCH_WORKSPACES + 8).map(named).join(", ")}; board_read and tower_list show them)`] : []),
 		...(other ? ["", ...block(facts.elsewhere, "In no workspace the server could name")] : []),
 	];
-	// The runbook is never cut: the findings give way, at a line.
-	const room = WATCH_TEXT - WATCH_RUNBOOK.length - 2;
+	// The runbook is never cut: the findings give way, at a line, with room kept for the line that counts the cut.
+	const room = WATCH_TEXT - WATCH_RUNBOOK.length - 2, more = (n: number) => `(+${n} more lines cut: board_read and tower_list show the rest)`;
 	let used = 0, kept = 0;
-	while (kept < lines.length && used + lines[kept]!.length + 1 <= room - 40) used += lines[kept++]!.length + 1;
-	return [...lines.slice(0, kept), ...(kept < lines.length ? [`(+${lines.length - kept} more lines cut: board_read and tower_list show the rest)`] : []), "", WATCH_RUNBOOK].join("\n");
+	while (kept < lines.length && used + lines[kept]!.length + 1 <= room - more(lines.length).length - 1) used += lines[kept++]!.length + 1;
+	return [...lines.slice(0, kept), ...(kept < lines.length ? [more(lines.length - kept)] : []), "", WATCH_RUNBOOK].join("\n");
 }
 
 /**

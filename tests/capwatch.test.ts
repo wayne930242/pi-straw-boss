@@ -93,6 +93,20 @@ test("quota: told when it is entered, its resume told once, the next pause to th
 	assert.deepEqual(w.told.map((e) => e.kind), ["quota", "resumed", "quota", "quota"], "a pause whose resume time moves while it holds is told again");
 });
 
+test("stale: never for a main whose Herdr pane is working (boss 2026-11-26 「herdr state 還在 working 的 agent 不必被詢問」); the same main is told once its pane is idle", async () => {
+	const { w, make } = world({ unattended: true });
+	const t0 = w.clock.now();
+	w.mains[0] = { ...w.mains[0]!, workers: [], fileMtime: t0, entryUpdated: t0, paneStatus: "working" }; // a long tool call: no file move for 30 minutes, the pane still working
+	w.cap("s-a", { open: 2 });
+	const watch = make();
+	await run(watch, w.clock, 45);
+	assert.equal(w.told.length, 0, "a working pane is moving: no stale notice");
+	assert.equal(readDevice(w.dir, w.clock.now())?.mains.find((r) => r.session === "s-a")?.stale, undefined, "nor a stale mark on its row");
+	w.mains[0]!.paneStatus = "idle";
+	await run(watch, w.clock, 1);
+	assert.deepEqual(w.told.map((e) => [e.kind, e.key]), [["stale", "s-a"]]);
+});
+
 test("stale on an unattended device: a main with open todos unmoved 30 minutes is told once; a paused one never", async () => {
 	const { w, make } = world({ unattended: true });
 	const t0 = w.clock.now();
