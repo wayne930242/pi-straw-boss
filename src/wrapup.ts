@@ -1,50 +1,26 @@
 import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BoardFill } from "./boardfill.ts";
+import { armWake, idleClock as clockOf, idleWake, idleWakes } from "./idlewake.ts";
 import { todosOf } from "./items.ts";
 import type { Reach } from "./reach.ts";
 import type { Kit } from "./state.ts";
 import { createProbe, type ProbeDeps } from "./stillruns.ts";
 import { snapshotOfBranch } from "./todo.ts";
 
-// Idle wrap-up (docs/specs/2026-11-25-idle-wrap-up.md, part 1; boss 2026-11-25): a coordinator or integrator main idle 30 minutes is asked once whether its work is done, and `boss_wrap` asks the boss in
-// this pane before it reports, clears the board, and closes the session as /boss close does. The clock is the session's own: it sees each turn start and end, so the turn the nudge starts is not counted as
-// new work (the server's minute look could not tell them apart). No nudge and no wrap-up while auto mode is on: the boss is away, and the clock starts again when he is back.
-// A standing main has no end, so no nudge and no boss_wrap: idle 2 hours with nothing armed (no boss_watch watch, monitor, loop, or subagent of its own), it is told once per idle period to re-arm what it minds,
-// under auto mode too, since it runs unattended (docs/specs/2026-11-26-standing-prompt.md; boss 2026-11-26 「閒置喚醒的條件也應該不同」).
+// Idle wrap-up (docs/specs/2026-11-25-idle-wrap-up.md, part 1; boss 2026-11-25): a coordinator or integrator main idle 30 minutes is asked once whether its work is done (the nudge, an idle wake of idlewake.ts),
+// and `boss_wrap` asks the boss in this pane before it reports, clears the board, and closes the session as /boss close does. No nudge and no wrap-up while auto mode is on: the boss is away.
+// A standing main has no end, so no nudge and no boss_wrap: its own wake (idlewake.ts `armWake`) tells it to re-arm what it minds.
 
 export const IDLE_MS = 30 * 60_000;
-const LOOK_MS = 60_000, SUMMARY_MAX = 800;
-export const WRAP_MESSAGE = "straw-boss-wrap", ARM_MESSAGE = "straw-boss-arm", ARM_IDLE_MS = 2 * 3600_000;
-export const ARM_TEXT = "sb: you have nothing armed (no watch, monitor, or loop). Re-arm what you mind from your handoff or board, or say on your board why nothing needs watching.";
+const SUMMARY_MAX = 800;
+export const WRAP_MESSAGE = "straw-boss-wrap";
+export { ARM_IDLE_MS, ARM_MESSAGE, ARM_TEXT } from "./idlewake.ts";
 export const NUDGE_TEXT = "sb: you have been idle 30 minutes. Is your work done? If work remains: dispatch your ready todos now; none ready, take your next eligible work; or clean up stale todos. If you wait on someone other than the boss, set that todo's `metadata.waitsOn` (who) and stop. If it is done: answer the intercom asks you owe, remove the worktrees you made, complete or delete every todo, stop your monitors and loops, write a daily memory entry if you have a memory tool, then call boss_wrap with a summary: it asks the boss before this pane closes.";
 export const WRAP_DESCRIPTION = "Main only, when your work is done: asks the boss here whether to wrap up; on yes it sends your summary to the tower as a milestone (and to whoever a tower opened you for), clears your board, and closes this session and its pane. Refused with an open todo, a running monitor, loop, watch, or subagent, under auto mode, for a standing main, and in a teammate's turn.";
 
-/** The idle clock of one main: when its last turn settled, and whether this idle period had its nudge (or the boss's no). */
-export function idleClock(now: () => number, idleMs = IDLE_MS) {
-	let since: number | undefined = now(), busy = false, nudged = false, nudgeTurn = false;
-	return {
-		/** A turn starts: one the nudge did not start is new work, and opens a new idle period. */
-		start() {
-			busy = true;
-			if (nudgeTurn) nudgeTurn = false;
-			else nudged = false;
-		},
-		/** The turn and its follow-ups ended: idle from now. */
-		settle() { busy = false; since = now(); },
-		/** Whether a nudge is due. `away` (auto mode) stops the clock; it starts again when the boss is back. */
-		due(away: boolean): boolean {
-			if (away) return (since = undefined), false;
-			if (busy) return false;
-			since ??= now();
-			return !nudged && now() - since >= idleMs;
-		},
-		/** The nudge went out: the turn it starts is its own, not new work. */
-		sent() { nudged = true; nudgeTurn = true; },
-		/** The boss said not yet: no nudge until the main has worked again. */
-		hold() { nudged = true; },
-	};
-}
+/** The nudge's idle clock (idlewake.ts). */
+export const idleClock = (now: () => number, idleMs = IDLE_MS) => clockOf(now, idleMs);
 
 export interface WrapDeps extends ProbeDeps {
 	reach: Pick<Reach, "callTower" | "send">;
@@ -56,35 +32,12 @@ export interface WrapDeps extends ProbeDeps {
 	first?(ctx: ExtensionContext): Promise<boolean>;
 }
 
-export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
-	const clock = idleClock(cfg.now), armClock = idleClock(cfg.now, ARM_IDLE_MS);
-	let ctx: ExtensionContext | undefined, stop: (() => void) | undefined, looking = false;
+export function createWrapUp(kit: Kit, d: WrapDeps) {
+	const { pi, cfg, s, me, role } = kit;
 	const name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
-	const kindOk = () => d.duty() === "coordinator" || d.duty() === "integrator";
 	const probe = createProbe({ cfg, s, me }, d); // what still runs for this session (stillruns.ts)
-	const look = async () => {
-		if (looking || !ctx) return;
-		looking = true;
-		try {
-			if (await d.first?.(ctx)) return;
-			if (role() !== "main" || s.isTrain || s.closing || s.openedBy?.startsWith("link:")) return;
-			const standing = d.duty() === "standing", c = standing ? armClock : clock;
-			if ((!standing && !kindOk()) || !c.due(!standing && s.autoOn()) || !ctx.isIdle() || ctx.hasPendingMessages()) return;
-			if ((await (standing ? probe.strict() : probe.nudge())).length || !ctx.isIdle()) return;
-			c.sent();
-			pi.sendMessage(standing ? { customType: ARM_MESSAGE, content: ARM_TEXT, display: true } : { customType: WRAP_MESSAGE, content: NUDGE_TEXT, display: true }, { triggerTurn: true });
-		} catch { /* the next look tries again */ } finally {
-			looking = false;
-		}
-	};
-	pi.on("session_start", (_e, c) => {
-		ctx = c;
-		stop?.();
-		stop = (cfg.idleLook ?? ((fn) => ((t) => (t.unref?.(), () => clearInterval(t)))(setInterval(() => void fn(), LOOK_MS))))(look);
-	});
-	pi.on("session_shutdown", () => void (stop?.(), (stop = undefined)));
-	pi.on("agent_start", (_e, c) => void ((ctx = c), clock.start(), armClock.start()));
-	pi.on("agent_settled", (_e, c) => void ((ctx = c), clock.settle(), armClock.settle()));
+	const nudge = idleWake(cfg.now, { idleMs: IDLE_MS, eligible: () => d.duty() === "coordinator" || d.duty() === "integrator", ready: async () => !(await probe.nudge()).length, customType: WRAP_MESSAGE, text: NUDGE_TEXT, underAuto: false });
+	const look = idleWakes(kit, [nudge, armWake(cfg.now, d.duty, probe)], d.first);
 
 	return {
 		look,
@@ -115,7 +68,7 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 					if (why.length) throw new Error(`Not ready to wrap up: ${why.join("; ")}.`);
 					const yes = await c.ui.confirm(`Wrap up ${name()}?`, text);
 					if (s.autoOn()) return reply("Auto mode started while the boss was asked: nothing closed. Wrap up when he is back.", { wrapped: false, auto: true });
-					if (!yes) return (clock.hold(), reply("The boss said not now: nothing closed. Keep this session open and do nothing more about wrapping up; sb does not ask again until you have worked again.", { wrapped: false }));
+					if (!yes) return (nudge.clock.hold(), reply("The boss said not now: nothing closed. Keep this session open and do nothing more about wrapping up; sb does not ask again until you have worked again.", { wrapped: false }));
 					const since = await notReady();
 					if (since.length) return reply(`The boss said yes, but while he was asked: ${since.join("; ")}. Nothing closed and nothing was sent: handle them, then call boss_wrap again.`, { wrapped: false });
 					const line = `${name()} (session ${me()}) wrapped up, the boss agreeing: ${text}`;

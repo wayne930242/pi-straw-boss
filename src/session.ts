@@ -25,7 +25,7 @@ import type { Reach } from "./reach.ts";
 import type { Roles } from "./roles.ts";
 import { registerStandingHint } from "./standinghint.ts";
 import { ENTRY, type Kit } from "./state.ts";
-import { ARM_MESSAGE } from "./wrapup.ts";
+import { ARM_MESSAGE } from "./idlewake.ts";
 import { isSessionRole, TRAIN, TRAIN_EVENT, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
 
 /** The custom message that asks the launcher to resume the subagents a Herdr restore brought back plain. */
