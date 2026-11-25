@@ -9,7 +9,7 @@ import { type Bus, bossQuestion, type Dialog } from "../src/owners.ts";
 import { returnedText } from "../src/server/autotower.ts";
 import { createAutoMode } from "../src/server/automode.ts";
 import { createBossAsk, OWN_ANSWER } from "../src/bossask.ts";
-import { BLOCKED_NOTE, CALL_TOWER_DESCRIPTION } from "../src/link/waitcall.ts";
+import { BLOCKED_NOTE, CALL_TOWER_DESCRIPTION } from "../src/moments.ts";
 import type { Kit } from "../src/state.ts";
 import { strip } from "../src/trainswitch.ts";
 import { type Agent, PROMPT_DIR, settle, until, World } from "./fakes.ts";

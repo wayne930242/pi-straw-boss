@@ -6,7 +6,8 @@ import { afterEach, test } from "node:test";
 import { writeEntry } from "../src/board.ts";
 import { readBudget } from "../src/capacity.ts";
 import type { HerdrRun, Pane, Session } from "../src/herdr.ts";
-import { armedLoop, MAIN_CAP_HINT, mainFacts, tellCap } from "../src/server/capops.ts";
+import { MAIN_CAP_HINT } from "../src/moments.ts";
+import { armedLoop, mainFacts, tellCap } from "../src/server/capops.ts";
 
 // The server's side of the capacity watch (src/server/capops.ts): `capacity.budget`, the facts of the live mains, and where an event goes.
 

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { TOWER_LABEL } from "../src/herdr.ts";
 import { REARM_TEXT } from "../src/revive.ts";
-import { ARM_MESSAGE } from "../src/wrapup.ts";
+import { ARM_MESSAGE } from "../src/idlewake.ts";
 import { until, World, type Agent } from "./fakes.ts";
 
 // Herdr's restore (`herdr server stop`, then a new server with resume_agents_on_restore): every pane comes back with its pi resumed into the same session

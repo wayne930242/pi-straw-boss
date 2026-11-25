@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { ARM_TEXT } from "./moments.ts";
 import type { Kit } from "./state.ts";
 import type { Probe } from "./stillruns.ts";
 
@@ -9,7 +10,6 @@ import type { Probe } from "./stillruns.ts";
 
 const LOOK_MS = 60_000;
 export const ARM_MESSAGE = "straw-boss-arm", ARM_IDLE_MS = 2 * 3600_000;
-export const ARM_TEXT = "sb: you have nothing armed (no watch, monitor, or loop). Re-arm what you mind from your handoff or board, or say on your board why nothing needs watching.";
 
 /** The idle clock of one main: when its last turn settled, and whether this idle period had its wake (or the boss's no). */
 export function idleClock(now: () => number, idleMs: number) {

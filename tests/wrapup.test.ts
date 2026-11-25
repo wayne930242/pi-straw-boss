@@ -7,7 +7,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AUTO_FILE, seal } from "../src/autostate.ts";
 import { createRemoteTurns } from "../src/link/hooks.ts";
 import { MESSAGE_TYPE } from "../src/link/turn.ts";
-import { ARM_IDLE_MS, ARM_MESSAGE, ARM_TEXT, IDLE_MS, idleClock, NUDGE_TEXT, WRAP_DESCRIPTION, WRAP_MESSAGE } from "../src/wrapup.ts";
+import { ARM_IDLE_MS, ARM_MESSAGE } from "../src/idlewake.ts";
+import { ARM_TEXT, NUDGE_TEXT, WRAP_DESCRIPTION } from "../src/moments.ts";
+import { IDLE_MS, idleClock, WRAP_MESSAGE } from "../src/wrapup.ts";
 import { type Agent, PROMPT_DIR, settle, until, World } from "./fakes.ts";
 import { bob, TEAM_HEX } from "./link/holder-world.ts";
 

@@ -142,16 +142,6 @@ export function noticeText(state: CarState, c: NoticeContext): string {
 	}
 }
 
-/** What the coordinator does next, after the line it is sent (docs/specs/2026-11-26-just-in-time-prompts.md): main.md no longer carries it. A dropped car has no rule of its own. */
-export const NOTICE_NEXT: Record<CarState, string> = {
-	received: "Its task has not landed yet: wait for the landed notice.",
-	returned: "Rework the car, then send a new car slip.",
-	dropped: "",
-	landed: "Its task has landed: complete its todo.",
-};
-/** A notice line with its next step, as the coordinator is sent it. */
-export const withNext = (state: CarState, line: string): string => (NOTICE_NEXT[state] ? `${line.replace(/[\s.]+$/, "")}. ${NOTICE_NEXT[state]}` : line);
-
 /** The line sent for one state entry of a car file: the received state of the same car names the train. Throws as `noticeText` does when a field is missing. */
 export function stateLine(file: CarFile, entry: StateEntry): string {
 	const received = file.states.find((s) => s.state === "received"), f = entry as Record<string, unknown>, train = received?.train ?? f.train;

@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { every } from "./lanface.ts";
+import { AUTO_NOTE } from "./moments.ts";
 import { type Got, hubRelay } from "./bossrelay.ts";
 import type { Bus } from "./owners.ts";
 import type { Kit } from "./state.ts";
@@ -32,7 +33,6 @@ export const withBoss = (message: string, q: BossQuestion) => `${message}\nFor t
 
 export type Asked = { kind: "answered"; text: string } | { kind: "none"; text: string } | { kind: "tower"; note?: string };
 export type BossAsk = (q: BossQuestion, signal: AbortSignal | undefined, ctx: Pick<ExtensionContext, "hasUI" | "ui"> | undefined, callId?: string) => Promise<Asked>;
-const AUTO_NOTE = "Auto mode is on (the boss is away): the tower parks it, and it comes back to you as a wait_returned message when he is back. Ask him again then, with call_tower boss.";
 type Opts = { signal: AbortSignal };
 
 /** The dialog in this pane: a select with the options and a typed answer, or an input. Auto mode starting between the pick and the typed answer opens no input (it would be answered as Escape and marked refused). */

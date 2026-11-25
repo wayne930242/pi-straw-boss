@@ -2,16 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { afterEach, test } from "node:test";
 import { PAIR_DESCRIPTION } from "../src/bosspair.ts";
-import { CAR_OFF_MESSAGE, CAR_OFF_NOTE, registerCarOff, slipMessage } from "../src/carslip.ts";
-import { BLOCKED_NOTE, CALL_TOWER_DESCRIPTION, SLIP_NOTE, withMoment } from "../src/link/waitcall.ts";
+import { CAR_OFF_MESSAGE, registerCarOff, slipMessage } from "../src/carslip.ts";
+import { withMoment } from "../src/link/waitcall.ts";
+import { ACT_ON_IT, BLOCKED_NOTE, CALL_TOWER_DESCRIPTION, CAR_OFF_NOTE, MAIN_CAP_HINT, NUDGE_TEXT, SLIP_NOTE, withNext } from "../src/moments.ts";
 import { handoff } from "../src/opener.ts";
 import { returnedText } from "../src/server/autotower.ts";
-import { MAIN_CAP_HINT } from "../src/server/capops.ts";
-import { ACT_ON_IT } from "../src/server/waitpress.ts";
 import { STANDING_HINT } from "../src/standinghint.ts";
-import { withNext } from "../src/train/cars.ts";
 import { strip } from "../src/trainswitch.ts";
-import { NUDGE_TEXT } from "../src/wrapup.ts";
 import { PROMPT_DIR, World } from "./fakes.ts";
 
 // Just-in-time prompts (docs/specs/2026-11-26-just-in-time-prompts.md; boss 2026-11-25 「main 的提示好像太多 … 請注意這個原則，提示詞可以逐步交付」, 2026-11-26 「只搬 sb 自己的」): a rule main.md held for one moment

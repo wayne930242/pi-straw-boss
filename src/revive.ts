@@ -6,6 +6,7 @@ import { classify, type DeadState, type DeadVerdict } from "./dead.ts";
 import { type CoordinatorDuty, isCoordinatorDuty } from "./duty.ts";
 import { type HerdrRun, type Pane, panes, type Session } from "./herdr.ts";
 import { integratorOf } from "./integrator.ts";
+import { REARM_TEXT } from "./moments.ts";
 import { artifacts } from "./netdata.ts";
 import { readRecords, type RoleRecord } from "./roles.ts";
 import { line } from "./safetext.ts";
@@ -314,9 +315,7 @@ export function roleRefusal(r: DeadRow, o: { integrationOff: boolean; live: Pane
 	return undefined;
 }
 
-/** A standing main's lines in every text that brings it back (a revive, a handover): it minds by what it arms, and nothing it armed survived (docs/specs/2026-11-26-standing-prompt.md). The second line
- *  holds until pi-loop-monitor stops sending a done-wake for a monitor or loop a restart retired. */
-export const REARM_TEXT = "Re-arm your watches, monitors, and loops from your handoff or board: a restart retires them. A retired monitor or loop is not finished: check its own end condition before acting on a done-wake.";
+export { REARM_TEXT }; // moments.ts
 /** The revived pi's first message (§4, step 6): facts only, written by the code. */
 export function reviveHandoff(i: { row: DeadRow; tower: { id: string; name: string }; tab: string; workspace: string; reason: string; waits: string[]; missed: Missed[]; now: number; /** The remote turn the tower called it in (`remote:<device>`): its reason is a peer's words (RVR-F011). */ origin?: string }): string {
 	const r = i.row, ended = r.record.ended;

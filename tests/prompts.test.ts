@@ -3,8 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { type CarState, validateStateFields } from "../src/train/cars.ts";
 import { acceptanceWord, KINDS } from "../src/train/spec.ts";
-import { BLOCKED_NOTE, CALL_TOWER_DESCRIPTION, SLIP_NOTE } from "../src/link/waitcall.ts";
-import { MAIN_CAP_HINT } from "../src/server/capops.ts";
+import { BLOCKED_NOTE, CALL_TOWER_DESCRIPTION, MAIN_CAP_HINT, SLIP_NOTE } from "../src/moments.ts";
 import { strip } from "../src/trainswitch.ts";
 import { PROMPT_DIR } from "./fakes.ts";
 

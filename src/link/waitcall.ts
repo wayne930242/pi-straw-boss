@@ -2,6 +2,7 @@ import { Type, type Static, type TSchema } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Asked, type BossAsk, type BossQuestion, bossOf, bossParameter, withBoss } from "../bossask.ts";
 import { SLIP } from "../carslip.ts";
+import { BLOCKED_NOTE, CALL_TOWER_DESCRIPTION, SLIP_NOTE } from "../moments.ts";
 import type { Reach } from "../reach.ts";
 import { waitOwner, waitWhat } from "./kinds.ts";
 import type { Link } from "./runtime.ts";
@@ -12,11 +13,7 @@ import type { Link } from "./runtime.ts";
 /** What a tool body gets besides its parameters: the call's signal and pi's context, for a dialog in the pane. */
 export type ToolCtx = Pick<ExtensionContext, "hasUI" | "ui">;
 type Tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>, signal?: AbortSignal, ctx?: ToolCtx, id?: string) => Promise<{ text: string; details?: unknown }>) => void;
-export const CALL_TOWER_DESCRIPTION = "Send one message to your workspace's tower, or another by workspace, at three points only: why milestone (something landed or a tower request is done; reply false unless needed), shared (a heads-up before you change anything outside your tab: port, database, shared branch, deploy target, another app's checkout, running service; say what and for how long; reply false; go ahead at once, and stop only on a clash the tower names), blocked (you wait on someone outside your tab, or on a decision your authorizations do not cover, or need a work's owner and do not know who: say what, the tower finds them; a teammate device: waitsOn; the boss's own decision: boss, asked in your pane). Opens the tower when none runs; the code writes the header; it answers through intercom unless reply is false. Progress goes on your board, not here.";
-// The rules of the moment after a call (docs/specs/2026-11-26-just-in-time-prompts.md; boss 2026-11-25 「提示詞可以逐步交付」): main.md no longer carries them, so the result does.
-export const BLOCKED_NOTE = "If the tower records it as a wait card for the boss, his answer comes as a wait_card message: act on it (it says when to call secret_drop). Ask him again about it only with boss_wait_ask.";
-export const SLIP_NOTE = "It carries a car slip: the car has not landed until sb's car notice says landed, and a returned car is yours to rework.";
-/** The result of a plain call with the note its moment needs. */
+/** The result of a plain call with the note its moment needs (docs/specs/2026-11-26-just-in-time-prompts.md: main.md no longer carries it, so the result does). */
 export const withMoment = <R extends { text: string }>(r: R, message: string, why: string | undefined): R => {
 	const note = why === "blocked" ? BLOCKED_NOTE : why === "shared" && SLIP.test(message) ? SLIP_NOTE : undefined;
 	return note ? { ...r, text: `${r.text} ${note}` } : r;
