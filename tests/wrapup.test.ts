@@ -191,6 +191,20 @@ test("a standing main with nothing armed gets one wake after 2 idle hours, under
 	assert.equal(r.arms().length, 2, "a new period after a turn and 2 more hours");
 });
 
+test("T4 review F002: no wake while the watch list does not answer (the sb server down): its watches cannot be counted; one comes once it answers", async () => {
+	let up = false;
+	const r = rig({ id: "main-1", pane: "wA:p1", tab: "wA:t1", watches: () => { if (!up) throw new Error("the sb server is down"); return []; } });
+	await r.a.start();
+	await r.a.promote();
+	await r.a.tool("boss_duty", { duty: "standing", reason: "it minds box 2" });
+	r.advance(ARM_IDLE_MS);
+	await r.look();
+	assert.equal(r.arms().length, 0, "a watch list that does not answer is no empty one");
+	up = true;
+	await r.look();
+	assert.equal(r.arms().length, 1, "it answers: nothing armed");
+});
+
 test("no wake for a standing main with a watch (a link: key too), a monitor, or a loop of any trigger (a cron one too), and never for a coordinator", async () => {
 	const keys: string[] = ["link:yixv3j"];
 	const r = rig({ id: "main-1", pane: "wA:p1", tab: "wA:t1", watches: () => keys });

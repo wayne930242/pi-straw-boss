@@ -69,14 +69,15 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 	let ctx: ExtensionContext | undefined, stop: (() => void) | undefined, looking = false;
 	const name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
 	const kindOk = () => d.duty() === "coordinator" || d.duty() === "integrator";
-	/** What still runs for this session: a dialog or monitor, a loop, a boss_watch, a subagent, and (for the nudge) a pane Herdr shows blocked. */
-	const running = async (pane: boolean): Promise<string[]> => {
+	/** What still runs for this session: a dialog or monitor, a loop, a boss_watch, a subagent, and (for the nudge) a pane Herdr shows blocked; `sure`: a watch list that does not answer counts too (T4 review F002). */
+	const running = async (pane: boolean, sure = false): Promise<string[]> => {
 		const why: string[] = [];
 		const b = d.blockers();
 		if (b) why.push(b);
 		if (armedLoop(d.loopsDir ?? join(homedir(), ".pi", "loops"), me(), cfg.now())) why.push("a loop is active");
 		const watches = await d.ask?.({ cmd: "watch-list", session: me() }, { start: "never" }).catch(() => undefined);
 		if (watches?.ok && Array.isArray(watches.watches) && watches.watches.length) why.push(`${watches.watches.length} boss_watch watch${watches.watches.length > 1 ? "es run" : " runs"} (boss_watch stop ends one)`);
+		else if (sure && !(watches?.ok && Array.isArray(watches.watches))) why.push("the watch list does not answer");
 		const all = await panes(cfg.run).catch(() => undefined), mine = all?.find((p) => p.pane_id === s.at?.paneId);
 		const kids = all ? subagents(mine, all, cfg.now()).filter((r) => !r.ended).length : 0;
 		if (kids) why.push(`${kids} subagent${kids > 1 ? "s are" : " is"} running`);
@@ -90,7 +91,7 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 			if (role() !== "main" || s.isTrain || s.closing || s.openedBy?.startsWith("link:")) return;
 			const standing = d.duty() === "standing", c = standing ? armClock : clock;
 			if ((!standing && !kindOk()) || !c.due(!standing && s.autoOn()) || !ctx.isIdle() || ctx.hasPendingMessages()) return;
-			if ((await running(true)).length || !ctx.isIdle()) return;
+			if ((await running(true, standing)).length || !ctx.isIdle()) return;
 			c.sent();
 			pi.sendMessage(standing ? { customType: ARM_MESSAGE, content: ARM_TEXT, display: true } : { customType: WRAP_MESSAGE, content: NUDGE_TEXT, display: true }, { triggerTurn: true });
 		} catch { /* the next look tries again */ } finally {
