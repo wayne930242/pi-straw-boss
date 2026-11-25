@@ -71,7 +71,7 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 	let ctx: ExtensionContext | undefined, stop: (() => void) | undefined, looking = false;
 	const name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
 	const kindOk = () => d.duty() === "coordinator" || d.duty() === "integrator";
-	/** What still runs for this session: a dialog or monitor, a loop, a boss_watch, a subagent, and (for the nudge) a pane Herdr shows blocked; `sure`: a watch list that does not answer counts too (T4 review F002). */
+	/** What still runs for this session: a dialog or monitor, a loop, a boss_watch, a subagent, and (for the nudge) a pane Herdr shows blocked; `sure`: a watch list that does not answer counts too (T4 review F002), and so does a pane list that fails or lacks this pane. */
 	const running = async (pane: boolean, sure = false): Promise<string[]> => {
 		const why: string[] = [];
 		const b = d.blockers();
@@ -81,6 +81,7 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 		if (watches?.ok && Array.isArray(watches.watches) && watches.watches.length) why.push(`${watches.watches.length} boss_watch watch${watches.watches.length > 1 ? "es run" : " runs"} (boss_watch stop ends one)`);
 		else if (sure && !(watches?.ok && Array.isArray(watches.watches))) why.push("the watch list does not answer");
 		const all = await panes(cfg.run).catch(() => undefined), mine = all?.find((p) => p.pane_id === s.at?.paneId);
+		if (sure && !mine) why.push("Herdr's pane list did not answer or lacks this pane"); // its subagents are unknown (RV6-F001)
 		const kids = all ? subagents(mine, all, cfg.now()).filter((r) => !r.ended).length : 0;
 		if (kids) why.push(`${kids} subagent${kids > 1 ? "s are" : " is"} running`);
 		if (pane && mine?.agent_status === "blocked") why.push("this pane waits on a dialog");
@@ -112,8 +113,8 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 
 	return {
 		look,
-		/** What still runs for this session: a dialog, monitor, loop, watch, or subagent, or a pane Herdr shows blocked. */
-		running: () => running(true),
+		/** What still runs for this session: a dialog, monitor, loop, watch, or subagent, or a pane Herdr shows blocked; a read that fails counts as running. */
+		running: () => running(true, true),
 		/** `boss_wrap`, with the net tools of a joined session that is no tower. */
 		addTool() {
 			pi.registerTool({

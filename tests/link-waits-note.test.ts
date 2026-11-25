@@ -110,14 +110,14 @@ test("the wire carries a notice's wait as a seventh part, and the decoder takes 
 // T5R-F002 (review of 0.93.0): a note whose wait's workspace had neither its raiser nor a standing main live was filed there and told to nobody.
 test("a note nobody in its wait's workspace can take goes to the standing main of the workspace it arrived in, and with none, to the tower", async () => {
 	const live = { mains: [] as (Main & { ws: string })[] }, posts: { ws: string; to: string[]; text: string }[] = [], notices: { ws: string; text: string; key: string }[] = [];
-	let towerRuns = true;
+	let towerRuns = true, towers = new Set(["w15X", "wB"]);
 	const router = createLinkWaits({
 		slot, now: () => Date.parse("2026-11-26T02:00:00Z"), log: () => {}, locale: () => "en",
 		net: async () => ({ sessions: live.mains.map((m, i) => ({ id: m.id, name: m.name, herdrLocation: { paneId: `p${i}` } })) as never, ps: live.mains.map((m, i) => ({ pane_id: `p${i}`, workspace_id: m.ws, tokens: { sb_role: "main", ...(m.standing ? { sb_duty: "standing" } : {}) } })) as never }),
 		post: async (ws, to, text) => (posts.push({ ws, to, text }), true),
 		send: async () => ({ ok: true }),
 		caps: () => NOTE_CAPS, deviceId: () => MAC, selfLabel: () => "mac", workspaces: () => ["w15X", "wB"],
-		notify: (ws, text, key) => towerRuns && (notices.push({ ws, text, key }), true),
+		notify: (ws, text, key) => towerRuns && towers.has(ws) && (notices.push({ ws, text, key }), true),
 	});
 	router.sent("w15X", { wait: OUT, ask: ASK, device: BOX, team: "t1", label: "waydosoft", short: "n2knna", raiser: { id: "s-urgent", name: "urgent 1124" }, owner: "", what: "FE2 MP-5666 car", plain: false, kind: "question" });
 	// The raiser gone and no standing main in w15X; the message arrived in wB, whose standing main takes it there.
@@ -140,6 +140,12 @@ test("a note nobody in its wait's workspace can take goes to the standing main o
 	assert.deepEqual(ledger().filter((e) => e.dir === "in").map((e) => [e.n, e.state]), [[2, "done"], [3, "open"]]);
 	towerRuns = true;
 	await router.take(notice({}), "w15X");
-	assert.deepEqual(notices.map((x) => x.key), ["note:L2"]);
+	assert.deepEqual(notices.map((x) => x.key), ["note:L2"], "a notice about no wait still reaches nobody (D12)");
 	assert.deepEqual(ledger().filter((e) => e.dir === "in").map((e) => [e.n, e.state]), [[2, "done"], [3, "open"], [4, "open"]]);
+	// RV6-F005: the wait's workspace has no tower the server runs; the tower of the workspace the note arrived in gets it.
+	towers = new Set(["wB"]);
+	await router.take(notice({ re: OUT }, "car two ready"), "wB");
+	assert.deepEqual(notices.slice(1).map((x) => [x.ws, x.key]), [["wB", "note:w15X:L5"]]);
+	assert.match(notices[1]!.text, /«car two ready»/);
+	assert.equal(ledger().find((e) => e.n === 5)?.state, "done");
 });

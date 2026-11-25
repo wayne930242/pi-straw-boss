@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { AUTO_FILE, seal } from "../src/autostate.ts";
 import { readEntries } from "../src/board.ts";
-import { ROT_CAP_MS } from "../src/rotclose.ts";
+import { createRotationClose, ROT_CAP_MS } from "../src/rotclose.ts";
 import { ENTRY } from "../src/state.ts";
 import { type Agent, settle, until, World } from "./fakes.ts";
 
@@ -25,7 +25,9 @@ async function town() {
 	const tower = world.tower("tower-wA", "wA:t7", "wA:p7");
 	let off = 0;
 	const looks: (() => Promise<void>)[] = [];
-	const m = world.agent({ id: "main-1", name: "box watch", pane: "wA:p1", tab: "wA:t1", deps: { now: () => Date.now() + off, idleLook: (fn) => (looks.push(fn), () => {}) } });
+	// The sb server's watch list answers (none): one that does not answer holds the close (RV6-F001).
+	const ask = async (r: Record<string, unknown>) => (r.cmd === "watch-list" ? { ok: true, watches: [] } : { ok: false, error: "not in this test" });
+	const m = world.agent({ id: "main-1", name: "box watch", pane: "wA:p1", tab: "wA:t1", deps: { now: () => Date.now() + off, idleLook: (fn) => (looks.push(fn), () => {}), ask } });
 	m.file = join(mkdtempSync(join(tmpdir(), "psb-rot-s-")), "2026-11-26T00-00-00-000Z_main-1.jsonl");
 	await Promise.all(world.agents.map((a) => a.start()));
 	await m.promote();
@@ -38,6 +40,7 @@ const successorOf = () => world.agents.find((a) => a.id === NEW.main)!;
 /** The successor's own send to the old main by intercom, as pi reports the tool's result. */
 const tellOld = async (successor: Agent, to = "main-1", isError = false) => (await successor.fire("tool_result", { toolName: "intercom", toolCallId: "c", input: { action: "send", to, message: "took over" }, content: [], isError }), await world.quiet());
 const took = (m: Agent) => m.entries.some((e) => e.customType === ENTRY && typeof (e.data as { successor?: { took?: number } }).successor?.took === "number");
+const closing = () => world.herdr.calls.some((c) => c[1] === "report-metadata" && c[2] === "wA:p1" && c.includes("sb_closing=1"));
 const closed = (m: Agent) => m.stopped && world.herdr.calls.some((c) => c[0] === "pane" && c[1] === "close" && c[2] === "wA:p1");
 const auto = (on: boolean, rev: number) => writeFileSync(join(world.stateDir, AUTO_FILE), `${JSON.stringify(seal({ v: 1, rev, on, ...(on ? { since: "2026-11-26T00:00:00Z" } : {}), by: { via: "pi", name: "test" } }))}\n`);
 
@@ -51,7 +54,9 @@ test("the successor's own send to the old main is its takeover: the idle old mai
 	assert.equal(m.stopped, false, "no confirmation, no close");
 	await tellOld(successor, "someone-else");
 	await tellOld(successor, "main-1", true);
-	assert.equal(took(m), false, "a send to another session, or one that failed, is no takeover");
+	await successor.fire("tool_result", { toolName: "intercom", toolCallId: "c", input: { action: "ask", to: "main-1", message: "where is the train record?" }, content: [], isError: false });
+	await world.quiet();
+	assert.equal(took(m), false, "a send to another session, one that failed, or an ask (a question before the takeover; RV6-F004) is no takeover");
 	await m.tool("board_set", { now: "minding the box", items: [{ t: "watch", done: false }] });
 	assert.equal(readEntries(join(world.stateDir, "board")).some((e) => e.session === "main-1"), true);
 	await tellOld(successor);
@@ -76,6 +81,11 @@ test("a running subagent holds the close; its result goes to the successor quote
 	await tellOld(successorOf());
 	await look();
 	assert.equal(m.stopped, false, "a subagent runs");
+	world.herdr.failPanes = true; // RV6-F001: a pane list that fails says nothing of the subagent: no close
+	await look();
+	await world.quiet();
+	assert.equal(closing(), false, "a failed read is no proof that nothing runs");
+	world.herdr.failPanes = false;
 	world.broker.delivered.length = 0;
 	await m.fire("message_end", { message: { role: "custom", customType: "subagent_result", content: [{ type: "text", text: "kid1: MP-5666 car ready on agent/mp-5666" }], display: true } });
 	await world.quiet();
@@ -124,4 +134,47 @@ test("a coordinator that never handed over is unaffected: its idle nudge comes a
 	await tellOld(other);
 	await look();
 	assert.equal(m.stopped, false);
+});
+
+test("a took-over from a session that is not the successor is refused, and the boss's reopen of the old session is never closed by it", async () => {
+	const { m, handoff, look } = await town();
+	await m.tool("boss_handover", { handoff, reason: "rotate" });
+	// A session that claims to be a successor of main-1: its extension sends took-over, and main-1 refuses it.
+	const forger = world.agent({ id: "x-1", pane: "wA:p9", tab: "wA:t9", entries: [{ customType: ENTRY, data: { handoverFrom: "main-1" } }] });
+	await forger.start();
+	await tellOld(forger);
+	assert.equal(took(m), false, "only the successor its own entry names");
+	await tellOld(successorOf());
+	assert.equal(took(m), true);
+	// RV6-F003: the old file opened again by the boss (`pi --session`, a fork, a resume) is his session: it starts with took in its entries and is never closed by this.
+	const looks: (() => Promise<void>)[] = [];
+	const ask = async (r: Record<string, unknown>) => (r.cmd === "watch-list" ? { ok: true, watches: [] } : { ok: false, error: "not in this test" });
+	const again = world.agent({ id: "main-1b", name: "box watch", pane: "wA:p3", tab: "wA:t3", entries: m.entries.filter((e) => e.customType === ENTRY), deps: { idleLook: (fn) => (looks.push(fn), () => {}), ask } });
+	await again.start();
+	await again.promote();
+	await looks.at(-1)!();
+	await settle();
+	assert.equal(again.stopped, false);
+	// The old main's own /reload keeps it armed.
+	await m.fire("session_start", { reason: "reload" });
+	await world.quiet();
+	await look();
+	await until(() => closed(m), "the reloaded old main closes");
+});
+
+test("RV6-F002: the successor's send in a teammate's turn is no takeover", async () => {
+	const handlers = new Map<string, (event: unknown) => void>(), notified: string[] = [];
+	const s = { saved: { handoverFrom: "main-1" } as Record<string, unknown>, remoteOrigin: undefined as string | undefined, isTower: false, closing: undefined, ownName: "" };
+	const pi = { on: (type: string, h: (event: unknown) => void) => void handlers.set(type, h), appendEntry: () => {}, getSessionName: () => "box watch" };
+	let remote = true;
+	createRotationClose({ pi, cfg: { now: Date.now }, s, me: () => "succ" } as never, { control: { register() {}, onTook() {}, notify: async (to: string) => (notified.push(to), true) } as never, running: async () => [], reach: {} as never, boardFill: { clear() {} }, closeSelf: () => undefined, remote: () => remote });
+	const send = async () => (handlers.get("tool_result")!({ toolName: "intercom", input: { action: "send", to: "main-1" }, isError: false }), await settle());
+	await send();
+	s.remoteOrigin = "link:bob";
+	remote = false;
+	await send();
+	assert.deepEqual(notified, [], "a remote turn, by the link's scope or the session's origin");
+	s.remoteOrigin = undefined;
+	await send();
+	assert.deepEqual(notified, ["main-1"], "its own turn");
 });

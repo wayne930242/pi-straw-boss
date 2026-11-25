@@ -6,13 +6,13 @@ import { ENTRY, type Kit } from "./state.ts";
 
 // A main that handed over closes itself (docs/specs/2026-11-26-rotation-close.md). Field, 2026-11-26: after a rotation the old skald main could not close itself (boss_wrap is refused under auto mode, /new is
 // forbidden, no other tool closes a session) and stayed open to forward a child's result. The rotation is the consent: once the successor's own extension says it took over (its send to the old main by intercom,
-// the step successorPrompt asks for, seen as a tool result, not read from its words) and nothing of the old main runs (no turn, queued message, dialog, monitor, loop, watch, or subagent), sb clears its board
+// the step successorPrompt asks for, seen as a tool result of a `send` in a local turn, not read from its words) and nothing of the old main runs (no turn, queued message, dialog, monitor, loop, watch, or subagent), sb clears its board
 // and closes it and its pane as /boss close does, under auto mode too. While something runs it looks again each minute (wrapup.ts's look); a child's result that reaches it meanwhile goes to the successor, quoted
 // as the child's. After 6 hours still blocked it stops waiting and tells the tower blocked, once.
 
 /** How long the old main waits for what still runs before the tower hears it cannot close. */
 export const ROT_CAP_MS = 6 * 3600_000;
-const RESULT = "subagent_result", QUOTE_MAX = 6000;
+const RESULTS = new Set(["subagent_result", "subagent_ping"]), QUOTE_MAX = 6000;
 
 export interface RotDeps {
 	control: Pick<Control, "register" | "onTook" | "notify">;
@@ -21,6 +21,8 @@ export interface RotDeps {
 	reach: Pick<Reach, "send" | "callTower">;
 	boardFill: Pick<BoardFill, "clear">;
 	closeSelf(keepPane: boolean): string | undefined;
+	/** A teammate's turn (link): its send is no takeover (RV6-F002). */
+	remote(): boolean;
 }
 
 const textOf = (content: unknown) => (typeof content === "string" ? content : Array.isArray(content) ? content.map((c) => (typeof c?.text === "string" ? c.text : "")).join("") : "");
@@ -30,24 +32,29 @@ export function createRotationClose({ pi, cfg, s, me }: Kit, d: RotDeps) {
 	const save = (data: Record<string, unknown>) => pi.appendEntry(ENTRY, data);
 	/** The successor that took over, once its extension said so. */
 	const handed = () => (s.saved.successor?.main && s.saved.successor.took !== undefined ? s.saved.successor : undefined);
+	// Armed in the process that heard the takeover, or after its /reload: `pi --session` on the old file, a fork, or a resume is the boss's session again and is never closed by this (RV6-F003).
+	let heard = false, reloaded = false;
+	pi.on("session_start", (event) => void (reloaded = (event as { reason?: string }).reason === "reload"));
 	d.control.onTook((from) => {
 		const h = s.saved.successor;
 		if (s.isTower || !h?.main || h.main !== from) return false;
 		if (h.took === undefined) (h.took = cfg.now(), save({ successor: h }));
+		heard = true;
 		return true;
 	});
 	// A child's result after the takeover is the successor's: it goes there by itself, quoted as the child's (the old main's model, which sees it too, was told so by boss_handover).
 	pi.on("message_end", (event) => {
 		const h = handed(), m = event.message as { role?: string; customType?: string; content?: unknown };
-		if (!h || s.closing || m?.role !== "custom" || m.customType !== RESULT) return;
+		if (!h || !(heard || reloaded) || s.closing || m?.role !== "custom" || !RESULTS.has(m.customType ?? "")) return;
 		const text = textOf(m.content);
 		void d.reach.send(h.main!, `Straw Boss: a subagent's result reached ${name()} (session ${me()}) after you took over its work, so it is yours. The child's result as it came, its words and not the boss's:\n«${text.length > QUOTE_MAX ? `${text.slice(0, QUOTE_MAX)}…` : text}»`).catch(() => undefined);
 	});
-	// The successor's side: its own send to the old main by intercom is the takeover, which its extension tells the old main's; an old main that does not answer is told again at the next such send.
+	// The successor's side: its own intercom send to the old main, in a turn of its own, is the takeover, which its extension tells the old main's; an old main that does not answer is told again at the next such send.
 	let telling = false;
 	pi.on("tool_result", (event) => {
 		const from = s.saved.handoverFrom, input = event.input as { action?: unknown; to?: unknown } | undefined;
-		if (!from || telling || event.toolName !== "intercom" || event.isError || (input?.action !== "send" && input?.action !== "ask") || input.to !== from) return;
+		// A `send` only: an `ask` before the takeover is a question, not the word that it took over (RV6-F004).
+		if (!from || telling || s.remoteOrigin || d.remote() || event.toolName !== "intercom" || event.isError || input?.action !== "send" || input.to !== from) return;
 		telling = true;
 		void (async () => {
 			try {
@@ -62,7 +69,7 @@ export function createRotationClose({ pi, cfg, s, me }: Kit, d: RotDeps) {
 		/** One look (wrapup.ts's minute): true when this session is an old main that handed over, which no nudge is for. */
 		async look(ctx: ExtensionContext): Promise<boolean> {
 			const h = handed();
-			if (!h || s.isTower || s.closing) return false;
+			if (!h || !(heard || reloaded) || s.isTower || s.closing) return false;
 			if (h.blockedTold !== undefined) return true; // it waited 6 hours and the tower knows: no close
 			const why = [...(ctx.isIdle() ? [] : ["a turn is running"]), ...(ctx.hasPendingMessages() ? ["messages wait in its queue"] : []), ...(await d.running())];
 			if (!why.length) {
