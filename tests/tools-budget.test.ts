@@ -5,6 +5,7 @@ import { World } from "./fakes.ts";
 // B2 (docs/specs/2026-11-23-lite-b2-d-e-f.md §1.5, boss decision b2_scope=trim): the main's tools keep their names, their descriptions are trimmed, and boss_status is folded into board_read. Tool size is what the provider receives
 // on every turn: description plus the JSON of the parameters. Measured 2026-11-23 on a promoted main with no Straw Link and no train: 11 tools, 11,594 characters before; 8,753 after (boss_watch, 1,140, is new).
 // D, review threads (0.84.0, §2.3; measured): 12 tools and 9,601 characters: boss_pair (698) is new, and board_read 680 to 830 for its `thread` and section `threads`.
+// Idle wrap-up (docs/specs/2026-11-25-idle-wrap-up.md, part 1; measured): 13 tools and 10,131 characters: boss_wrap (530) is new, kept out of the trimmed set as the other new ones are.
 
 let world = new World();
 afterEach(async () => {
@@ -19,10 +20,10 @@ test("a main's always-on sb tools stay within their budget, and boss_status is g
 	await a.promote();
 	const tools = [...a.tools.values()].filter((t) => t.name !== "ask_user_question");
 	assert.ok(!a.tools.has("boss_status"), "folded into board_read");
-	const trimmed = tools.filter((t) => t.name !== "boss_server" && t.name !== "boss_watch" && t.name !== "boss_pair").reduce((n, t) => n + size(t), 0);
+	const trimmed = tools.filter((t) => t.name !== "boss_server" && t.name !== "boss_watch" && t.name !== "boss_pair" && t.name !== "boss_wrap").reduce((n, t) => n + size(t), 0);
 	assert.ok(trimmed <= 7_000, `the trimmed tools hold ${trimmed} characters (10,634 before B2)`);
 	const all = tools.reduce((n, t) => n + size(t), 0);
-	assert.ok(all <= 9_601, `all of sb's tools hold ${all} characters (11,594 before B2 and E; 8,753 before D)`);
+	assert.ok(all <= 10_131, `all of sb's tools hold ${all} characters (11,594 before B2 and E; 8,753 before D; 9,601 before boss_wrap)`);
 });
 
 test("the trimmed descriptions keep the sentences that carry a rule: board_set's privacy line, call_tower's three points, boss_wait_ask over ask_user_question", async () => {

@@ -30,7 +30,8 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 2026-11-24 (capacity review prompts-review F003; measured): tower.md off 492 to 500, on 562 to 570 (`device-silent-2h`, sb's escalation at 2 hours, goes to the boss).
 // 2026-11-24 (capacity routing; field, MP Center box 2: three notices to the standing main and the tower over 2.5 h started nothing; measured): main.md off 603 to 617, on 848 to 862 (a notice on your work: dispatch now or say why, to whoever asked; sb's on the board); tower.md off 500 to 516, on 570 to 586 (`under` and `stale` reach the main from sb; `under-30m`, sb's at 30 min: ask that main).
 // 2026-11-24 (no count cap, boss: only an unattended device caps workers, by points; measured): main.md stays 617/862 (the trust-prompt reason shortened to make room), planning.md 511/635 to 516/640.
-const BUDGETS: Record<string, number> = { "main.md": 617, "tower.md": 516, "member.md": 140, "member-no-main.md": 150 };
+// 2026-11-25 (idle wrap-up, docs/specs/2026-11-25-idle-wrap-up.md part 1; boss 2026-11-25; measured): main.md off 617 to 654, on 862 to 899 (done: every todo completed or deleted, a daily memory entry, then `boss_wrap`; never close the pane yourself).
+const BUDGETS: Record<string, number> = { "main.md": 654, "tower.md": 516, "member.md": 140, "member-no-main.md": 150 };
 // Its review fixes (SB-F001, F003, F005: the Approval line quotes words already given and asks only when they are missing, the tower reports nothing back on a forwarded slip): main.md 680 to 700, tower.md 390 to 395, integrator.md 320 to 340 (SB-F002 and F006: the deploy gate before `Merge`, a subagent briefed for one step).
 // Train workers (docs/specs/2026-11-07-train-workers.md §13.1, task 8): tower.md on 424 to 471 (forward with `forward`, open a train with `role: "train"`, a car notice's `blocked`; off stays 402); main.md on 715 to 720 (Batch owner, Handoff route, Record and Approval say who schedules, who departs, who notifies, and where the boss's nod is quoted); integrator.md 340 to 380 and train.md ~450 have their own budgets below.
 // Fix round of task 8 (prompts-review.md, TP-F001 to F018): budgets = measured: main.md on 720 to 725, tower.md on 471 to 469 (the resident tower forwards nothing), planning.md on 670 to 681 (the check command), integrator.md 380 to 412 (todo lifecycle, legacy trains), train.md 450 to 511 (holds, load and lock, the Record file, the metadata.sb keys).
@@ -41,7 +42,7 @@ const BUDGETS: Record<string, number> = { "main.md": 617, "tower.md": 516, "memb
 // 2026-11-23 (the tower closes agent panes, docs/specs/2026-11-23-tower-close-panes.md §5): measured: tower.md on 508 to 538 and off 438 to 468 (close a main that handed over once its successor is live, whoever opened it; list and close dead agent panes).
 // 2026-11-23 (lite main, as for BUDGETS above; measured): main.md on 743 to 786.
 // 2026-11-23 (D, review threads, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.5; measured): main.md on 786 to 808 (a reviewed change: boss_pair, both briefs, Thread: T<n>, relay nothing).
-const ON_BUDGETS: Record<string, number> = { "main.md": 862, "tower.md": 586 };
+const ON_BUDGETS: Record<string, number> = { "main.md": 899, "tower.md": 586 };
 // 2026-11-08 (todo #125 task 5, TP-F004): `{{cli}}` is the command that runs cli.mjs.
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir", "state", "cli", "duty"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;

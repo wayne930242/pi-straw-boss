@@ -107,6 +107,7 @@ export function createRemoteTurns({ pi, now, config, policy: policyDeps, home, a
 		if (e.toolName === "boss_server") return { block: true, reason: "a remote turn cannot see or restart this computer's sb server, whatever its sender's level" };
 		if (e.toolName === "boss_handover") return { block: true, reason: "a remote turn cannot open a successor of this main, whatever its sender's level" };
 		if (e.toolName === "boss_pair") return { block: true, reason: "a remote turn cannot open a review thread, whatever its sender's level" };
+		if (e.toolName === "boss_wrap") return { block: true, reason: "a remote turn cannot wrap up this main, whatever its sender's level" };
 		// As an ally run (server/runtools.ts): dead panes and their list are the local tower's, whatever the sender's level; a main is checked by the tool against its `sb_opened_by` (tools.ts).
 		if (e.toolName === "boss_close_main" && (input.pane !== undefined || input.main === undefined)) return { block: true, reason: REMOTE_CLOSE };
 		if (level === "dispatch") return;
