@@ -218,7 +218,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		},
 		// A main's own session rotation (docs/specs/2026-11-23-tower-revive.md §8): it opens its successor itself, with the handoff file as the new pi's first prompt; no /new, no boss.
 		addHandover() {
-			tool("boss_handover", "Main only, when your session-rotation rule says rotate: write the handoff file, then this saves your todo list beside it for import and opens your successor in a new tab under your name and kind; it tells you by intercom when it took over, then give up your role as the rule says. Refused in a teammate's turn.",
+			tool("boss_handover", "Main only, when your session-rotation rule says rotate: write the handoff file, then this opens your successor in a new tab under your name and kind; it tells you by intercom when it took over, then give up your role as the rule says. Refused in a teammate's turn.",
 				Type.Object({
 					handoff: Type.String({ description: "The handoff file, absolute or relative to your folder; it must exist." }),
 					reason: Type.String({ description: "One line of at most 200 characters." }),
