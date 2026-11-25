@@ -41,9 +41,10 @@ test("size caps: a kind addendum is at most 7 lines and 1624 characters; integra
 // 2026-11-26 (0.91.0, prompts delivered when needed; boss 2026-11-25 「提示詞可以逐步交付」; measured): 10,538 to 10,167 (-371): the wrap-up steps live in the idle nudge and boss_wrap, the boss question in call_tower's `boss` field; main.md's two lines are 0.89.0's again.
 // 2026-11-26 (0.92.0, just-in-time prompts, docs/specs/2026-11-26-just-in-time-prompts.md; boss 2026-11-25 「提示詞可以逐步交付」; measured): 10,167 to 8,521 (-1,646) and main.md 29 to 27 lines: the rules of one moment
 // went to the notice, message, tool description, or result of that moment.
-test("no growth from the fold: main.md + planning.md stays within 8,521 characters, and main.md has at most 27 lines", () => {
+// Its review RV-F001 (measured): 8,521 to 8,559 (+38) for "Idle with ready todos: dispatch them.".
+test("no growth from the fold: main.md + planning.md stays within 8,559 characters, and main.md has at most 27 lines", () => {
 	const sum = read("main").length + read("planning").length;
-	assert.ok(sum <= 8521, `the two files hold ${sum} characters`); // D (0.84.0, §2.5; measured): +154 for the reviewed change's one sentence in main.md
+	assert.ok(sum <= 8559, `the two files hold ${sum} characters`); // D (0.84.0, §2.5; measured): +154 for the reviewed change's one sentence in main.md
 	assert.ok(lines(read("main")) <= 27, `main.md has ${lines(read("main"))} lines`);
 });
 

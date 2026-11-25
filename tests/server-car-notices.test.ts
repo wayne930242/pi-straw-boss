@@ -104,6 +104,7 @@ test("queued, a failure, and an unknown outcome are not delivered: tried again a
 	const fields = fieldsOf(tower[0]!.text)!;
 	assert.deepEqual([fields.kind, fields.why, fields.reply, fields.from, fields.id], ["call_tower", "blocked", "none", "integ acme", INTEG]);
 	assert.match(tower[0]!.text, /car T-15 is received \(acme\/web\) and its coordinator sess-coord-1 could not be told: 4 sends were not delivered \(last: queued\)\. The notice: received: your car T-15/);
+	assert.match(tower[0]!.text, /\. Its task has not landed yet: wait for the landed notice\.$/, "the tower relays the notice with its next step (RV-F002)");
 	assert.equal(status().kind, "escalated");
 	assert.deepEqual(noticeSatisfied([w.book.read("acme")[0]!], ["T-15"], "returned"), ["sb: car T-15 has no terminal state yet"]);
 	w.tick(3600 * SECOND);

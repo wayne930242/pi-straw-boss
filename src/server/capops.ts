@@ -56,7 +56,7 @@ export interface StartCap {
 }
 
 /** What the event's own main is told after the notice: the rule for that moment, which main.md no longer carries (docs/specs/2026-11-26-just-in-time-prompts.md). */
-export const MAIN_CAP_HINT = " · your work: dispatch its ready work now, or say why not (blocked, shared files, the boss) on your board with board_set";
+export const MAIN_CAP_HINT = " · your work: dispatch its ready work now, or say why not (blocked, shared files, the boss) on your board with board_set, and reply to whoever asked";
 /** Tells an event: as a notice to the tower that hears of the main's workspace (the head tower for an ally device), to this device's standing main, and to the event's own main (`under`, `stale`)
  *  unless it is that standing main; the own main's copy ends with `MAIN_CAP_HINT`. True when any took it. */
 export async function tellCap(e: CapEvent, o: Pick<StartCap, "run" | "towers" | "tellSession">, at: number): Promise<boolean> {

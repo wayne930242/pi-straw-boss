@@ -25,9 +25,11 @@ afterEach(async () => {
 const raw = readFileSync(`${PROMPT_DIR}/main.md`, "utf8"), on = strip(raw, false), off = strip(raw, true);
 const gone = (...clauses: string[]) => { for (const c of clauses) for (const [t, label] of [[raw, "raw"], [on, "on"], [off, "off"]] as const) assert.ok(!t.includes(c), `main.md (${label}) still says ${c}`); };
 
-test("capacity and idle: the notice to a main's own session and the idle nudge carry the dispatch rule", () => {
-	gone("Idle with ready todos", "report idle", "A capacity notice on your work", "sb's: board it");
-	assert.ok(MAIN_CAP_HINT.includes("dispatch its ready work now, or say why not (blocked, shared files, the boss) on your board"));
+test("capacity and idle: the notice to a main's own session and the idle nudge carry the dispatch rule; main.md keeps its shortest form", () => {
+	gone("report idle", "A capacity notice on your work", "sb's: board it");
+	// RV-F001: under auto mode no nudge comes and, without a capacity budget, no `under` either, so the shortest form stays in main.md.
+	assert.ok(raw.includes("Idle with ready todos: dispatch them."));
+	assert.ok(MAIN_CAP_HINT.includes("dispatch its ready work now, or say why not (blocked, shared files, the boss) on your board with board_set, and reply to whoever asked"), "RV-F003");
 	assert.ok(NUDGE_TEXT.includes("dispatch your ready todos now; none ready, take your next eligible work"));
 });
 

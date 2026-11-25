@@ -105,7 +105,7 @@ export class CarNotices {
 
 	private async send(intercom: Intercom, item: ReturnType<CarBook["pending"]>[number], messageId: string): Promise<{ delivered: boolean; attempt: Pick<Attempt, "outcome" | "answer"> }> {
 		const { file, entry } = item;
-		const line = withNext(entry.state, this.line(item));
+		const line = this.line(item);
 		const by = entry.by, message = stamp({ from: { name: by.name, id: by.session, role: by.role }, kind: "car_notice", scope: "session", to: [{ name: file.coordinator, id: file.coordinator, role: "session" }], reply: false }, line);
 		try {
 			const result = await intercom.send(file.coordinator, { text: message, messageId });
@@ -118,9 +118,9 @@ export class CarNotices {
 		}
 	}
 
-	/** The notice line of a state, with the train it concerns (the received state of the same car names it). */
+	/** The notice line of a state, with the train it concerns (the received state of the same car names it), and the coordinator's next step: the same words when the tower relays it (RV-F002). */
 	private line(item: ReturnType<CarBook["pending"]>[number]): string {
-		return stateLine(item.file, item.entry);
+		return withNext(item.entry.state, stateLine(item.file, item.entry));
 	}
 
 	/** One `blocked` call to the tower of the setter's workspace, naming the car, the state, the coordinator and the notice text. It counts once the tower's mailbox has it. */

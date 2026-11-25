@@ -4,11 +4,13 @@
 // `--check` reports whether docs/how-it-works.zh-TW.md still matches the English file: line for line (same line count, same kind of line,
 // every backticked token of an English line on the same zh-TW line; error), heading structure (error), and drift since the source commit (warning),
 // and every `**` that CommonMark would not turn into bold (CJK punctuation beside it), in the site's own zh pages and in docs/*.zh-TW.md (error).
+// The errors are twin.mjs's, which tests/twin.test.ts also runs in `npm test`; only the drift warning, which needs git, is here.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import GithubSlugger from "github-slugger";
+import { GENERATED, headingLines, sourceOf, twinProblems } from "./twin.mjs";
 
 const SITE = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = resolve(SITE, "..");
@@ -17,7 +19,6 @@ const CONTENT = join(SITE, "src/content/docs");
 const BASE = "/pi-straw-boss/docs";
 const GITHUB = "https://github.com/wayne930242/pi-straw-boss";
 const LOCALES = { en: { dir: "", suffix: "" }, zh: { dir: "zh-tw", suffix: ".zh-TW" } };
-const GENERATED = ["reference/how-it-works", "guide/unattended-device.md", "releases"];
 // The first H2 repeats the document's own title; on the site it names what the section covers.
 const TITLES = { "how-it-works": { en: "Roles and the tower", zh: "角色與塔台" } };
 
@@ -33,14 +34,7 @@ const plain = (text) =>
 // Headings outside code fences, with their line index, level, text, and slug in the whole document.
 function headings(lines) {
 	const slugger = new GithubSlugger();
-	const out = [];
-	let fence = false;
-	lines.forEach((line, i) => {
-		if (/^\s*```/.test(line)) fence = !fence;
-		const m = !fence && /^(#{1,6}) (.*)$/.exec(line);
-		if (m) out.push({ i, level: m[1].length, text: m[2], slug: slugger.slug(plain(m[2])) });
-	});
-	return out;
+	return headingLines(lines).map((h) => ({ ...h, slug: slugger.slug(plain(h.text)) }));
 }
 
 function read(path) {
@@ -143,120 +137,16 @@ function page(path, front, body) {
 	writeFileSync(path, `---\n${lines.join("\n")}\n---\n\n${body.trim()}\n`);
 }
 
-function sourceOf(zhText) {
-	return /<!-- source: docs\/how-it-works\.md @ ([0-9a-f]{7,40}) -->/.exec(zhText)?.[1];
-}
-
-const PUNCT = /[\p{P}\p{S}]/u;
-const SPACE = /\s/u;
-
-// The 1-based lines of `text` holding a `**` that is not bold under CommonMark's flanking rule. A delimiter that opens needs a
-// non-space after it, and a punctuation mark after it only when a space or punctuation lies before it; a delimiter that closes
-// is the mirror. Code fences are skipped, and inline code counts as its backticks (punctuation). `**` pairs are taken in order, as the parser pairs a line's runs.
-export function brokenBold(text) {
-	const out = [];
-	let fence = false;
-	text.split("\n").forEach((line, i) => {
-		if (/^\s*```/.test(line)) fence = !fence;
-		if (fence || !line.includes("**")) return;
-		const plainLine = line.replace(/`[^`]*`/g, (m) => "`".repeat(m.length));
-		const runs = [...plainLine.matchAll(/\*\*+/g)].filter((m) => m[0].length === 2);
-		let bad = false;
-		runs.forEach((m, n) => {
-			const before = m.index > 0 ? plainLine[m.index - 1] : " ";
-			const after = m.index + 2 < plainLine.length ? plainLine[m.index + 2] : " ";
-			const left = !SPACE.test(after) && (!PUNCT.test(after) || SPACE.test(before) || PUNCT.test(before));
-			const right = !SPACE.test(before) && (!PUNCT.test(before) || SPACE.test(after) || PUNCT.test(after));
-			if (n % 2 === 0 ? !left : !right) bad = true;
-		});
-		if (bad) out.push(i + 1);
-	});
-	return out;
-}
-
-function checkBold() {
-	let bad = 0;
-	const files = [];
-	const walk = (dir) => {
-		for (const f of readdirSync(dir)) {
-			const path = join(dir, f);
-			if (statSync(path).isDirectory()) walk(path);
-			else if (/\.mdx?$/.test(f)) files.push(path);
-		}
-	};
-	walk(join(CONTENT, "zh-tw"));
-	for (const path of files) {
-		if (GENERATED.some((g) => relative(join(CONTENT, "zh-tw"), path).startsWith(g))) continue;
-		const lines = brokenBold(read(path));
-		if (lines.length) console.log(`${relative(REPO, path)}: bold the page cannot show, at lines ${lines.join(", ")}`), (bad = 1);
-	}
-	for (const f of readdirSync(DOCS).filter((f) => /\.zh-TW\.md$/.test(f))) {
-		const lines = brokenBold(read(join(DOCS, f)));
-		if (lines.length) console.log(`docs/${f}: bold the page cannot show (move the punctuation outside the ** or put a space after it), at lines ${lines.join(", ")}`), (bad = 1);
-	}
-	return bad;
-}
-
-// The kind of one line, by what Markdown makes of it; lines inside a code fence are all "code".
-function lineKinds(lines) {
-	let fence = false;
-	return lines.map((line) => {
-		if (/^\s*```/.test(line)) return (fence = !fence), "fence";
-		if (fence) return "code";
-		if (!line.trim()) return "blank";
-		const h = /^(#{1,6}) /.exec(line);
-		if (h) return `h${h[1].length}`;
-		if (line.startsWith("|")) return "row";
-		if (/^\s*[-*] /.test(line)) return "bullet";
-		if (/^\s*\d+\. /.test(line)) return "number";
-		return "text";
-	});
-}
-
-// The line-for-line check: the 1-based lines where the twin's line differs from the English line in kind, or lacks a backticked token the
-// English line has (the twin may add tokens, such as the zh-TW form of a message). Returns a message when the line counts differ.
-export function twinDrift(enLines, zhLines) {
-	if (enLines.length !== zhLines.length) return { message: `${enLines.length} lines in English, ${zhLines.length} in zh-TW` };
-	const [ke, kz] = [lineKinds(enLines), lineKinds(zhLines)];
-	const bad = [];
-	enLines.forEach((line, i) => {
-		if (ke[i] !== kz[i]) return bad.push(i + 1);
-		if (ke[i] === "code" || ke[i] === "fence") return;
-		const have = new Map();
-		for (const t of zhLines[i].match(/`[^`]+`/g) ?? []) have.set(t, (have.get(t) ?? 0) + 1);
-		for (const t of line.match(/`[^`]+`/g) ?? []) {
-			if (!have.get(t)) return bad.push(i + 1);
-			have.set(t, have.get(t) - 1);
-		}
-	});
-	return { bad };
-}
-
 function check() {
-	const en = read(join(DOCS, "how-it-works.md"));
-	const zh = read(join(DOCS, "how-it-works.zh-TW.md"));
-	if (!zh) return console.log("docs/how-it-works.zh-TW.md: missing"), 1;
-	const a = headings(en.split("\n"));
-	const b = headings(zh.split("\n"));
-	let bad = 0;
-	if (a.length !== b.length) console.log(`headings: ${a.length} in English, ${b.length} in zh-TW`), (bad = 1);
-	a.forEach((h, n) => {
-		if (b[n] && b[n].level !== h.level) console.log(`heading ${n + 1} ("${h.text}"): level ${h.level} in English, ${b[n].level} in zh-TW`), (bad = 1);
-	});
-	const drift = twinDrift(en.split("\n"), zh.split("\n"));
-	if (drift.message) console.log(`line for line: ${drift.message}`), (bad = 1);
-	else if (drift.bad.length) {
-		console.log(`line for line: ${drift.bad.length} lines of docs/how-it-works.zh-TW.md differ from the English line of the same number in kind or backticked tokens (a paragraph split elsewhere than in English?), first at ${drift.bad.slice(0, 12).join(", ")}`);
-		bad = 1;
-	}
-	const sha = sourceOf(zh);
-	if (!sha) console.log("docs/how-it-works.zh-TW.md: no `<!-- source: docs/how-it-works.md @ <commit> -->` line"), (bad = 1);
-	else {
+	const problems = twinProblems(REPO);
+	for (const line of problems) console.log(line);
+	const zh = read(join(DOCS, "how-it-works.zh-TW.md")), sha = zh && sourceOf(zh);
+	if (sha) {
 		const log = execFileSync("git", ["log", "--oneline", `${sha}..HEAD`, "--", "docs/how-it-works.md"], { cwd: REPO, encoding: "utf8" }).trim();
 		if (log) console.log(`docs/how-it-works.md changed since the translation (${sha}); bring these into docs/how-it-works.zh-TW.md:\n${log}`);
 		else console.log(`docs/how-it-works.zh-TW.md matches docs/how-it-works.md at ${sha}`);
 	}
-	return bad | checkBold();
+	return problems.length ? 1 : 0;
 }
 
 function sync() {
