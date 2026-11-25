@@ -4,9 +4,10 @@ import type { DeviceUnits } from "../src/link/holder.ts";
 import type { MainStatus } from "../src/link/kinds.ts";
 import type { Net, Unit } from "../src/net.ts";
 import type { LinkWait } from "../src/server/linkwaits.ts";
-import { parseLinkKey } from "../src/server/linkwatch.ts";
+import { type LinkBoard, parseLinkKey } from "../src/server/linkwatch.ts";
 import { durationMs } from "../src/bosswatch.ts";
 import type { Reply } from "../src/server/socket.ts";
+import { lineOf } from "../src/server/watches.ts";
 import { watchReply } from "../src/server/watchesops.ts";
 import { createWatchRead, type WatchNet } from "../src/server/watchread.ts";
 import { STANDING_HINT, registerStandingHint, startsWatch } from "../src/standinghint.ts";
@@ -26,13 +27,13 @@ const netOf = (units: Unit[]): Net => ({ bases: [{ id: "w1", label: "w", mark: "
 function world() {
 	const clock = fakeClock(T0), listeners = new Set<(net: Net) => void>();
 	let status: (DeviceUnits & { label: string }) | undefined = { team: "t", device: DEV, label: "ci-box", units: [{ unit: "moldplan", state: "running", monitors: [], report: "running the train\nmore" }], mains: [main()], at: T0 };
-	let waits: LinkWait[] = [], net = netOf([localUnit()]);
+	let waits: LinkWait[] = [], net = netOf([localUnit()]), boards: LinkBoard[] = [];
 	const watchNet: WatchNet = { onRead: (cb) => (listeners.add(cb), () => void listeners.delete(cb)), last: () => net, lookup: (key) => (key === "u1" ? { key, base: "w1", name: "coord", role: "main", live: true } : undefined), read: async () => net };
 	const timer = (ms: number, fn: () => void) => { let live = true; clock.at(clock.elapsed() + ms, () => live && fn()); return () => void (live = false); };
-	const watch = createWatchRead({ net: watchNet, now: clock.now, timer, link: { units: () => (status ? [status] : []), waits: () => waits } });
+	const watch = createWatchRead({ net: watchNet, now: clock.now, timer, link: { units: () => (status ? [status] : []), waits: () => waits, boards: (device) => (device === DEV ? boards : []) } });
 	const w = {
 		clock, watch,
-		set: (next: { status?: typeof status; waits?: LinkWait[]; net?: Net }) => void ("status" in next && (status = next.status), next.waits && (waits = next.waits), next.net && (net = next.net)),
+		set: (next: { status?: typeof status; waits?: LinkWait[]; net?: Net; boards?: LinkBoard[] }) => void ("status" in next && (status = next.status), next.waits && (waits = next.waits), next.net && (net = next.net), next.boards && (boards = next.boards)),
 		patch: (over: Partial<DeviceUnits>) => void (status = { ...status!, ...over }),
 		/** One reading of the GUI host `ms` later. */
 		async beat(ms = 2000) { clock.advance(ms); for (const cb of listeners) cb(net); await settle(); },
@@ -109,6 +110,40 @@ test("`idleMs` gives `idle` once per idle spell, for a device key and for a main
 	const routes = { read: w.watch, watches: {} as never };
 	assert.equal(watchReply(routes, { cmd: "watch-read", key, idleMs: 1000 }, () => true) instanceof Promise, true);
 	assert.match(String((await watchReply(routes, { cmd: "watch-read", key, idleMs: 1000 }, () => true))?.error), /idleMs is at least 60000/);
+});
+
+// Item 4 of docs/specs/2026-11-26-standing-prompt.md (field 2026-11-25: a standing main's `link:yixv3j` woke as `changed` every minute or two with nothing it could see): a device key wakes on its content only.
+test("a device key wakes on its content (a main's board `now` or items, a main's state, capacity points or paused, online), not on a refresh, a tower run's state, or its report", async () => {
+	const w = world(), key = "link:aaaaaa";
+	const board = (over: Partial<LinkBoard> = {}, now = "M17 retest (2/5)"): LinkBoard => ({ online: true, entries: [{ id: "e1", now, items: [{ t: "M17 retest", done: false }] }], capacity: { points: 2, budget: 6, paused: [] }, ...over });
+	w.set({ boards: [board()] });
+	const first = await w.ask({ key });
+	assert.equal(first.state, "changed");
+	assert.deepEqual(first.unit?.board, { online: true, entries: 1, capacity: { points: 2, budget: 6, paused: 0 } });
+	assert.equal(lineOf(key, first), "watch link:aaaaaa: changed · mains 1 (1 working) · board 1 entry · capacity 2/6 pts", "the line says what the device holds");
+	// A refresh: a new status with the same content (the box resends every minute), a tower run's state and report, a new board of the same entries.
+	const quiet = await w.follow({ key, since: first.since }, 5 * 60_000, (i) => {
+		w.patch({ at: w.clock.now(), units: [{ unit: "moldplan", state: i % 2 ? "running" : "standing", monitors: ["M20 pipeline 47762"], report: `run ${i} done` }] });
+		w.set({ boards: [board()] });
+	});
+	assert.equal(quiet, undefined, "no wake for a refresh");
+	let since = first.since;
+	for (const [what, next] of [
+		["a main's now", () => w.set({ boards: [board({}, "M17 retest (3/5)")] })],
+		["a main's items", () => w.set({ boards: [board({ entries: [{ id: "e1", now: "M17 retest (3/5)", items: [{ t: "M17 retest", done: true }] }] })] })],
+		["capacity points", () => w.set({ boards: [board({ entries: [{ id: "e1", now: "M17 retest (3/5)", items: [{ t: "M17 retest", done: true }] }], capacity: { points: 3, budget: 6, paused: [] } })] })],
+		["a paused main", () => w.set({ boards: [board({ entries: [{ id: "e1", now: "M17 retest (3/5)", items: [{ t: "M17 retest", done: true }] }], capacity: { points: 3, budget: 6, paused: [{ id: "e1" }] } })] })],
+		["online", () => w.set({ boards: [board({ online: false, entries: [{ id: "e1", now: "M17 retest (3/5)", items: [{ t: "M17 retest", done: true }] }], capacity: { points: 3, budget: 6, paused: [{ id: "e1" }] } })] })],
+		["a main's state", () => w.patch({ at: w.clock.now(), mains: [main({ state: "blocked" })] })],
+	] as const) {
+		const got = await w.follow({ key, since }, 4000, () => { w.patch({ at: w.clock.now() }); next(); });
+		assert.equal(got?.state, "changed", what);
+		since = got!.since;
+	}
+	// The unit key still wakes on its tower's run state.
+	const unit = await w.ask({ key: "link:aaaaaa/moldplan" });
+	w.patch({ at: w.clock.now(), units: [{ unit: "moldplan", state: "running", monitors: [], report: "" }] });
+	assert.equal((await w.follow({ key: "link:aaaaaa/moldplan", since: unit.since }, 4000))?.state, "changed");
 });
 
 test("a coordinator that starts a boss_watch gets the standing hint once; a standing main never does; a list, a stop, a retired watchdog or CLI watch is no start", () => {

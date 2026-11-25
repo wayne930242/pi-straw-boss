@@ -7,6 +7,8 @@ import { isOpen, type LinkWait } from "./linkwaits.ts";
 // The `link:` keys of `watch-read` (docs/specs/2026-11-21-box-mac-waits.md §5, item D): a teammate device as this computer's Link holder last heard it in `unit-status`, read without a call to the device. `link:<short>` is the device (its
 // unit rows and the mains it shows this computer), `link:<short>/<unit>` one tower unit of it, `link:<short>/main/<handle>` one of its mains. Its texts are the device's, cut and cleaned as a card cleans them. The waits on a key are the wait
 // router's ledger (linkwaits.ts): for a device every open wait with it, for a main the waits that main raised; for a main of this computer (`waitsOf`) the waits it raised or claimed.
+// What wakes a device key is its content (docs/specs/2026-11-26-standing-prompt.md, item 4; field: a standing main woke every minute or two on `link:<short>` with nothing it could see changed): its mains' states, its board's
+// entries (each main's `now` and items), its capacity points, budget, and paused mains, and whether it is online. Its tower units' run state, monitors, and last report move with every tower run and wake only their own `link:<short>/<unit>`.
 
 /** A status older than this is offline, the page's own stale rule (holder.ts `UNITS_FRESH_MS`). */
 export const OFFLINE_MS = 3 * 60_000;
@@ -16,7 +18,11 @@ export interface LinkWatchDeps {
 	units(): (DeviceUnits & { label: string })[];
 	/** Every wait of the router's ledgers, open or closed. */
 	waits(): LinkWait[];
+	/** The boards the Link holder holds of a device (holder.ts `boards`), one per team it shares; none without them. */
+	boards?(device: string): LinkBoard[];
 }
+/** A teammate device's board as a watch reads it: what the board's own times and the load leave. */
+export interface LinkBoard { online: boolean; entries: { id: string; now: string; items: { t: string; done: boolean }[] }[]; capacity?: { points: number; budget?: number; paused: { id: string; until?: string }[] } }
 export interface LinkKey { short: string; unit?: string; handle?: string }
 /** One reading of a `link:` key: the facts that wake a hold (`changed`), the waits (`waiting`), whether it reads idle, the status time when it is stale (`offline`), and the view a reply shows. */
 export interface LinkReading { facts: string; waits: string; idle: boolean; offlineAt?: number; view: Record<string, unknown> }
@@ -56,8 +62,12 @@ export function readLinkKey(k: LinkKey, d: LinkWatchDeps, now: number): LinkRead
 	const mine = k.unit === undefined ? waits : waits.filter((w) => w.handle !== undefined && handles.has(w.handle));
 	const unitRows = rows.map((r) => ({ unit: line(r.unit, 80), state: r.state, report: line(r.report), monitors: r.monitors.map((x) => line(x, 120)) }));
 	const idle = rows.every((r) => IDLE.has(r.state)) && ours.every((m) => IDLE.has(m.state));
-	const view = { ...base, ...(k.unit !== undefined ? unitRows[0]! : { units: unitRows }), mains: ours.map((m) => ({ name: m.name, state: m.state, ...(m.kind ? { kind: m.kind } : {}), handle: m.handle })), waits: mine.map(waitView) };
-	return { facts: hash([rows.map((r) => [r.unit, r.state, r.monitors, line(r.report)]), ours.map((m) => [m.handle, m.state, m.kind ?? null])]), waits: waitFacts(mine), idle, ...(offlineAt !== undefined ? { offlineAt } : {}), view };
+	const boards = k.unit === undefined ? d.boards?.(u.device) ?? [] : [], cap = boards.find((b) => b.capacity)?.capacity, entries = boards.flatMap((b) => b.entries);
+	const board = boards.length ? { board: { online: boards.some((b) => b.online), entries: entries.length, ...(cap ? { capacity: { points: cap.points, ...(cap.budget !== undefined ? { budget: cap.budget } : {}), paused: cap.paused.length } } : {}) } } : {};
+	const view = { ...base, ...(k.unit !== undefined ? unitRows[0]! : { units: unitRows }), mains: ours.map((m) => ({ name: m.name, state: m.state, ...(m.kind ? { kind: m.kind } : {}), handle: m.handle })), ...board, waits: mine.map(waitView) };
+	const content = boards.map((b) => [b.online, b.entries.map((e) => [e.id, e.now, e.items.map((i) => [i.t, i.done])]), b.capacity ? [b.capacity.points, b.capacity.budget ?? null, b.capacity.paused.map((p) => [p.id, p.until ?? null])] : null]);
+	const facts = k.unit === undefined ? hash([ours.map((m) => [m.handle, m.state, m.kind ?? null]), content]) : hash([rows.map((r) => [r.unit, r.state, r.monitors, line(r.report)]), ours.map((m) => [m.handle, m.state, m.kind ?? null])]);
+	return { facts, waits: waitFacts(mine), idle, ...(offlineAt !== undefined ? { offlineAt } : {}), view };
 }
 
 /** The open link waits a main of this computer raised or claimed, as a hash and a view (none for a session that has none). */

@@ -52,13 +52,13 @@ export interface StartWatches {
 	stops: (() => void)[];
 	/** `watches.json` goes in this server's own folder; the `link:` keys and `waiting` read the waits' ledgers of its state folder and the Link holder (linkwatch.ts). */
 	slot: Slot;
-	holder?(): Pick<LinkHolder, "unitsSeen"> | undefined;
+	holder?(): Pick<LinkHolder, "unitsSeen" | "boards"> | undefined;
 	/** The seams of a test: the hold's length, the read interval, the timer. */
 	over?: Partial<Pick<WatchReadDeps, "holdMs" | "readMs" | "timer">>;
 }
 /** The watch routes of this server: the holds on the GUI host's readings, and the watches over them, which come back from `watches.json`. Both stop with the server. */
 export function startWatches(o: StartWatches): WatchRoutes {
-	const slot = o.slot, link = { units: () => o.holder?.()?.unitsSeen() ?? [], waits: () => listServices(slot).flatMap((r) => readWaits(slot, r.workspace).entries) };
+	const slot = o.slot, link = { units: () => o.holder?.()?.unitsSeen() ?? [], waits: () => listServices(slot).flatMap((r) => readWaits(slot, r.workspace).entries), boards: (device: string) => ((r) => (r?.ok ? r.boards : []))(o.holder?.()?.boards({ device })) };
 	const read = createWatchRead({ net: o.net, now: o.now, link, ...o.over });
 	const timer = o.over?.timer ?? ((ms: number, fn: () => void) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); });
 	const owner = (session: string) => ((f) => (f ? { live: f.live, workspace: f.base } : undefined))(o.net.lookup(session));

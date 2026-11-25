@@ -54,7 +54,11 @@ export function lineOf(key: string, r: Reply, w?: Pick<WatchAdd, "quietMs" | "id
 	if (typeof u.state === "string") parts.push(`state ${plain(u.state)}`);
 	const todo = u.todo as { done: number; total: number; now?: string } | undefined;
 	if (todo) parts.push(`todo ${todo.done}/${todo.total}${todo.now ? ` ${plain(todo.now)}` : ""}`);
-	for (const m of ((u.monitors ?? []) as { id: string; status: string; exit?: number; load?: { now: number; max: number } }[]).slice(0, 3)) parts.push(`monitor ${plain(m.id, 40)}: ${m.status}${m.exit !== undefined ? ` exit ${m.exit}` : ""}${m.load ? `, load ${m.load.now}/${m.load.max}` : ""}`);
+	for (const m of ((u.monitors ?? []) as ({ id: string; status: string; exit?: number; load?: { now: number; max: number } } | string)[]).slice(0, 3)) parts.push(typeof m === "string" ? `monitor ${plain(m, 60)}` : `monitor ${plain(m.id, 40)}: ${m.status}${m.exit !== undefined ? ` exit ${m.exit}` : ""}${m.load ? `, load ${m.load.now}/${m.load.max}` : ""}`);
+	// A teammate device (linkwatch.ts): its mains' states and its board, so the line says what a change was about.
+	const mains = Array.isArray(u.mains) ? (u.mains as { state: string }[]) : undefined, board = u.board as { online: boolean; entries: number; capacity?: { points: number; budget?: number; paused: number } } | undefined;
+	if (mains?.length) parts.push(`mains ${mains.length} (${[...new Set(mains.map((m) => plain(m.state, 20)))].map((s) => `${mains.filter((m) => plain(m.state, 20) === s).length} ${s}`).join(", ")})`);
+	if (board) parts.push(`board ${board.entries} entr${board.entries === 1 ? "y" : "ies"}${board.online ? "" : ", offline"}${board.capacity ? ` · capacity ${board.capacity.points}${board.capacity.budget !== undefined ? `/${board.capacity.budget}` : ""} pts${board.capacity.paused ? `, ${board.capacity.paused} paused` : ""}` : ""}`);
 	const train = u.train as { status: string; step?: string } | undefined;
 	if (train) parts.push(`train ${train.status}${train.step ? ` at ${plain(train.step)}` : ""}`);
 	const subs = (u.subs ?? []) as { name: string; mark: string }[];
