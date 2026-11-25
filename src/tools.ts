@@ -144,7 +144,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 			});
 			if (!s.isTower) waitAsk?.();
 			// The work board fills itself from the main's todo list and name (boardfill.ts); board_set overrides it, whole, until the todos move, and `auto` hands it back. Nothing here names another session's file.
-			if (!s.isTower) tool("board_set", "Main only: override your work board entry (now, items) until your todos move; auto hands it back to auto-fill from your todos and name; clear deletes it when your work is finished or shelved. Towers and allies read it: no secrets, credentials, customer data, or paths outside the project. Not a report.",
+			if (!s.isTower) tool("board_set", "Main only: override your work board entry (now, items) until your todos move; auto hands it back to auto-fill from your todos and name; clear deletes it when your work is finished or shelved. Towers and allies read it: no secrets, credentials, customer data, or paths outside the project. Not a report: the done report still goes to whoever asked.",
 				Type.Object({
 					now: Type.Optional(Type.String({ description: "One line of 1 to 120 characters." })),
 					items: Type.Optional(Type.Array(Type.Object({ t: Type.String({ description: "1 to 80 characters." }), done: Type.Boolean() }), { description: "At most 8; replaces the list." })),
@@ -197,7 +197,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		// A main's kind (docs/specs/2026-11-09-agent-kinds.md §3). `integrator` is left out while integration is off.
 		addDuty() {
 			const kinds = COORDINATOR_DUTIES.filter((d) => d !== "integrator" || mainDuty.integrationOn());
-			tool("boss_duty", `Your kind: coordinator (default) plans and dispatches, ${kinds.includes("integrator") ? "integrator runs a project's merge trains, " : ""}standing minds one system or machine with no end; the new kind's prompt comes as one message.`,
+			tool("boss_duty", `Your kind: coordinator (default) plans and dispatches, ${kinds.includes("integrator") ? "integrator runs a project's merge trains, " : ""}standing (watching, not finishing tasks) minds one system or machine with no end; the new kind's prompt comes as one message.`,
 				Type.Object({ duty: Type.Union(kinds.map((d) => Type.Literal(d))), reason: Type.String({ description: "One line of at most 200 characters, why now." }) }),
 				async ({ duty, reason }) => {
 					const why = reason.replace(/\s+/g, " ").trim();

@@ -39,10 +39,12 @@ test("size caps: a kind addendum is at most 7 lines and 1624 characters; integra
 // 2026-11-24 (capacity routing; field, MP Center box 2; measured): 10,095 to 10,177 (+82): a capacity notice on a main's work: dispatch now, or say why to whoever asked; sb's on its board.
 // 2026-11-25 (idle wrap-up + the main asks the boss itself, docs/specs/2026-11-25-idle-wrap-up.md; measured): 10,177 to 10,538 (+361): the done rule ends in a memory entry and `boss_wrap`; a boss-only decision is asked with `ask_user_question`.
 // 2026-11-26 (0.91.0, prompts delivered when needed; boss 2026-11-25 「提示詞可以逐步交付」; measured): 10,538 to 10,167 (-371): the wrap-up steps live in the idle nudge and boss_wrap, the boss question in call_tower's `boss` field; main.md's two lines are 0.89.0's again.
-test("no growth from the fold: main.md + planning.md stays within 10,167 characters, and main.md has at most 29 lines", () => {
+// 2026-11-26 (0.92.0, just-in-time prompts, docs/specs/2026-11-26-just-in-time-prompts.md; boss 2026-11-25 「提示詞可以逐步交付」; measured): 10,167 to 8,521 (-1,646) and main.md 29 to 27 lines: the rules of one moment
+// went to the notice, message, tool description, or result of that moment.
+test("no growth from the fold: main.md + planning.md stays within 8,521 characters, and main.md has at most 27 lines", () => {
 	const sum = read("main").length + read("planning").length;
-	assert.ok(sum <= 10167, `the two files hold ${sum} characters`); // D (0.84.0, §2.5; measured): +154 for the reviewed change's one sentence in main.md
-	assert.ok(lines(read("main")) <= 29, `main.md has ${lines(read("main"))} lines`);
+	assert.ok(sum <= 8521, `the two files hold ${sum} characters`); // D (0.84.0, §2.5; measured): +154 for the reviewed change's one sentence in main.md
+	assert.ok(lines(read("main")) <= 27, `main.md has ${lines(read("main"))} lines`);
 });
 
 test("{{duty}} renders the kind in the first line", () => {

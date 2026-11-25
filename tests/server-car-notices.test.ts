@@ -54,7 +54,7 @@ test("one message per (car, state), to the coordinator's session id, under a car
 	assert.equal(sent.to, COORD, "addressed by session id");
 	const fields = fieldsOf(sent.text)!;
 	assert.deepEqual([fields.from, fields.id, fields.role, fields.kind, fields.scope, fields.reply], ["integ acme", INTEG, "main", "car_notice", "session", "none"]);
-	assert.match(sent.text, /\] received: your car T-15 \(a{12}\) rides train 1106m; it departs next train$/);
+	assert.match(sent.text, /\] received: your car T-15 \(a{12}\) rides train 1106m; it departs next train\. Its task has not landed yet: wait for the landed notice\.$/); // the next step comes with the notice (docs/specs/2026-11-26-just-in-time-prompts.md)
 	const view = w.book.read("acme")[0]!;
 	assert.equal(status().kind, "delivered");
 	assert.equal(view.notice!.states.received!.attempts.length, 1);
@@ -199,7 +199,7 @@ test("each state of a car is told on its own: landed after received is a second 
 	await trainCar({ role: () => "train", train: () => ({ project: "acme", code: "2026-11-06-m" }), manifest: (c) => r.guard.manifestOf(c as never), client: w.train, home: w.root }, { car: "T-15", state: "landed", version: "1.2.0", commit: pushed }, r.ctx as never);
 	await sender.tick();
 	assert.equal(ic.to(COORD).length, 2);
-	assert.match(ic.to(COORD)[1]!.text, new RegExp(`\\] landed in 1\\.2\\.0, your commit is ${pushed}$`));
+	assert.match(ic.to(COORD)[1]!.text, new RegExp(`\\] landed in 1\\.2\\.0, your commit is ${pushed}\\. Its task has landed: complete its todo\\.$`));
 	assert.equal(fieldsOf(ic.to(COORD)[1]!.text)!.role, "train");
 	assert.deepEqual(noticeSatisfied([w.book.read("acme")[0]!], ["T-15"], "landed"), []);
 });
@@ -224,7 +224,7 @@ test("the message ids of a notice are the state's own: a car returned again in a
 	await returned(again);
 	await senderOf(again).tick();
 	const told = ic.to(COORD);
-	assert.deepEqual(told.map((s) => s.text.replace(/^\[[^\]]*\] /, "")), Array.from({ length: 3 }, () => "returned: your car T-15 (aaaaaaaaaaaa): no accept"));
+	assert.deepEqual(told.map((s) => s.text.replace(/^\[[^\]]*\] /, "")), Array.from({ length: 3 }, () => "returned: your car T-15 (aaaaaaaaaaaa): no accept. Rework the car, then send a new car slip."));
 	assert.ok(told.every((s) => /^car-[0-9a-f]{12}-returned-1$/.test(s.messageId ?? "")), told.map((s) => s.messageId).join(" "));
 	assert.equal(new Set(told.map((s) => s.messageId)).size, 3, told.map((s) => s.messageId).join(" "));
 });
@@ -256,5 +256,5 @@ test("car-forward-F001: a new life that takes the car's file name while a send o
 	await sender.tick();
 	w.tick(10 * 60 * SECOND);
 	await sender.tick();
-	assert.deepEqual(ic.to(COORD).map((s) => s.text.replace(/^\[[^\]]*\] /, "")), ["returned: your car T-15 (aaaaaaaaaaaa): no accept", "returned: your car T-15 (aaaaaaaaaaaa): the review is missing"], "each life told once");
+	assert.deepEqual(ic.to(COORD).map((s) => s.text.replace(/^\[[^\]]*\] /, "")), ["returned: your car T-15 (aaaaaaaaaaaa): no accept. Rework the car, then send a new car slip.", "returned: your car T-15 (aaaaaaaaaaaa): the review is missing. Rework the car, then send a new car slip."], "each life told once");
 });

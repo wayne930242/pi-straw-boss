@@ -55,13 +55,15 @@ export interface StartCap {
 	every?: number;
 }
 
+/** What the event's own main is told after the notice: the rule for that moment, which main.md no longer carries (docs/specs/2026-11-26-just-in-time-prompts.md). */
+export const MAIN_CAP_HINT = " · your work: dispatch its ready work now, or say why not (blocked, shared files, the boss) on your board with board_set";
 /** Tells an event: as a notice to the tower that hears of the main's workspace (the head tower for an ally device), to this device's standing main, and to the event's own main (`under`, `stale`)
- *  unless it is that standing main. True when any took it. */
+ *  unless it is that standing main; the own main's copy ends with `MAIN_CAP_HINT`. True when any took it. */
 export async function tellCap(e: CapEvent, o: Pick<StartCap, "run" | "towers" | "tellSession">, at: number): Promise<boolean> {
 	const towers = o.towers();
 	const to = towers ? stallTarget(e.workspace, await herdrWorkspaces(o.run).catch(() => []), towers.status().map((r) => r.workspace), towers.head.status()?.workspace) : undefined;
 	const tower = to !== undefined && towers!.runs.notice(to, e.text, `capacity:${e.kind}:${e.key}:${at}`);
-	const tell = (session: string | undefined) => (session ? o.tellSession(session, e.text).then((r) => r === "delivered" || r === "queued", () => false) : Promise.resolve(false));
+	const tell = (session: string | undefined) => (session ? o.tellSession(session, session === e.main ? `${e.text}${MAIN_CAP_HINT}` : e.text).then((r) => r === "delivered" || r === "queued", () => false) : Promise.resolve(false));
 	const told = await tell(e.standing), own = e.main !== e.standing ? await tell(e.main) : false;
 	return tower || told || own;
 }

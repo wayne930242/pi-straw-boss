@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { header } from "../src/header.ts";
+import { handoff } from "../src/opener.ts";
 import { ENTRY } from "../src/state.ts";
 import { type Agent, PROMPT_DIR, until, World, towersOf } from "./fakes.ts";
 import { readFileSync } from "node:fs";
@@ -277,10 +278,12 @@ test("a main that does not answer the control channel (an older pi-straw-boss) l
 	assert.ok(!a1.stopped);
 });
 
-test("the tower prompt teaches tower_list, tower_send without a second send, reporting back once, and closing opened mains; the main prompt reports to its tower", () => {
+test("the tower prompt teaches tower_list, tower_send without a second send, reporting back once, and closing opened mains; the opened main's brief reports to its tower", () => {
 	const tower = readFileSync(`${PROMPT_DIR}/tower.md`, "utf8"), main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
 	for (const term of ["tower_list", "tower_send", "already names", "report back once", "boss_close_main", "awaits a boss decision"]) assert.ok(tower.includes(term), `tower.md names ${term}`);
-	assert.match(main, /If a tower opened your tab, report the outcome to the sender, and to that tower with `call_tower`/);
+	// 0.92.0 (docs/specs/2026-11-26-just-in-time-prompts.md): the opened main reads it in the brief that opens it (opener.ts `handoff`), not in main.md.
+	assert.doesNotMatch(main, /If a tower opened your tab/);
+	assert.match(handoff("Alpha", { id: "s-1", name: "asker" }, "do x", { id: "t-1", name: "tower" }), /report the outcome to the sender with intercom send and to the tower that opened this tab with call_tower \(why: milestone, reply: false\)/);
 });
 
 const asks = () => world.broker.published.filter((p) => (p.payload as { type?: string }).type === "close-main").length;

@@ -9,7 +9,7 @@ import { type Bus, bossQuestion, type Dialog } from "../src/owners.ts";
 import { returnedText } from "../src/server/autotower.ts";
 import { createAutoMode } from "../src/server/automode.ts";
 import { createBossAsk, OWN_ANSWER } from "../src/bossask.ts";
-import { CALL_TOWER_DESCRIPTION } from "../src/link/waitcall.ts";
+import { BLOCKED_NOTE, CALL_TOWER_DESCRIPTION } from "../src/link/waitcall.ts";
 import type { Kit } from "../src/state.ts";
 import { strip } from "../src/trainswitch.ts";
 import { type Agent, PROMPT_DIR, settle, until, World } from "./fakes.ts";
@@ -42,7 +42,8 @@ const ask = (a: Agent, boss: Record<string, unknown>, extra: Record<string, unkn
 
 test("the standing prompts carry none of 0.90.0's sentences: main.md's blocked covers a decision again, tower-run.md routes it as in 0.89.0; call_tower names boss in one clause", () => {
 	const main = read("main.md");
-	assert.ok(main.includes("Re-ask a wait you raised only with `boss_wait_ask`; a `wait_returned` one with `call_tower` `boss`."), "one re-ask way (F003)");
+	// 0.92.0 (docs/specs/2026-11-26-just-in-time-prompts.md): the re-ask rules come at their moment: call_tower's blocked result names boss_wait_ask, wait_returned names call_tower boss.
+	assert.ok(!main.includes("Re-ask a wait") && BLOCKED_NOTE.includes("only with boss_wait_ask") && returnedText("W1", "x", "2026-11-25T00:00:00Z", "main").includes("call_tower why: blocked and boss"), "one re-ask way (F003)");
 	for (const gone of ["ask him yourself with `ask_user_question`", "other than the boss", "parks it and it returns as `wait_returned` when he is back", "call `boss_wrap`", "daily memory entry"]) assert.ok(!main.includes(gone), `main.md: ${gone}`);
 	assert.ok(main.includes("`blocked` when you wait on someone outside your tab or on a decision your authorizations do not cover, or need a work's owner and do not know who"));
 	assert.ok(main.includes("its worktree is removed, and your board is cleared."));
@@ -51,7 +52,7 @@ test("the standing prompts carry none of 0.90.0's sentences: main.md's blocked c
 		for (const gone of ["A local main's decision only the boss can make", "ask the boss itself with `ask_user_question`", "Any other decision only the boss can make"]) assert.ok(!run.includes(gone), `tower-run.md: ${gone}`);
 		assert.ok(run.includes("`blocked` or unspecified: route it to its owner. A decision only the boss can make is not sent back to the caller: record a wait for the boss in your memory"));
 	}
-	assert.match(CALL_TOWER_DESCRIPTION, /blocked \(you wait on someone outside your tab, or on a decision your authorizations do not cover; the boss's own decision: boss, asked in your pane\)/);
+	assert.match(CALL_TOWER_DESCRIPTION, /blocked \(you wait on someone outside your tab, or on a decision your authorizations do not cover, or need a work's owner and do not know who: say what, the tower finds them; a teammate device: waitsOn; the boss's own decision: boss, asked in your pane\)/);
 	assert.doesNotMatch(CALL_TOWER_DESCRIPTION, /ask_user_question/);
 });
 

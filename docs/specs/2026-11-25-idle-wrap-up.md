@@ -2,6 +2,8 @@
 
 Status: implemented. Part 1: `src/wrapup.ts`, in [docs/how-it-works.md](../how-it-works.md#wrapping-up-an-idle-main). Part 2: `src/bossask.ts` and `call_tower`'s `boss` field (0.91.0; it replaced 0.90.0's prompt rules), in [docs/how-it-works.md](../how-it-works.md#when-a-main-calls-the-tower).
 
+The same principle carried further (0.92.0, boss 2026-11-26 「只搬 sb 自己的」): [just-in-time prompts](2026-11-26-just-in-time-prompts.md) moves the rest of the sb-owned rules of one moment out of `prompts/main.md`.
+
 ## Part 1: an idle main wraps up
 
 ### Boss words (binding, 2026-11-25)

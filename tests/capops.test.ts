@@ -6,7 +6,7 @@ import { afterEach, test } from "node:test";
 import { writeEntry } from "../src/board.ts";
 import { readBudget } from "../src/capacity.ts";
 import type { HerdrRun, Pane, Session } from "../src/herdr.ts";
-import { armedLoop, mainFacts, tellCap } from "../src/server/capops.ts";
+import { armedLoop, MAIN_CAP_HINT, mainFacts, tellCap } from "../src/server/capops.ts";
 
 // The server's side of the capacity watch (src/server/capops.ts): `capacity.budget`, the facts of the live mains, and where an event goes.
 
@@ -77,8 +77,10 @@ test("an under or stale event also goes to its main's own session, once when tha
 	const run: HerdrRun = async () => JSON.stringify({ result: { workspaces: [] } });
 	const o = { run, towers: () => undefined, tellSession: async (session: string, text: string) => (told.push([session, text]), session === "gone" ? "failed" : "queued") };
 	assert.equal(await tellCap({ kind: "under", key: "s-a", text: "u", subject: "s-a", workspace: "w1", standing: "s-st", main: "s-a" }, o, 1), true);
-	assert.deepEqual(told, [["s-st", "u"], ["s-a", "u"]]);
+	// The main's own copy carries the rule for the moment (docs/specs/2026-11-26-just-in-time-prompts.md), which main.md no longer holds.
+	assert.deepEqual(told, [["s-st", "u"], ["s-a", `u${MAIN_CAP_HINT}`]]);
+	assert.match(MAIN_CAP_HINT, /dispatch its ready work now, or say why not \(blocked, shared files, the boss\) on your board/);
 	assert.equal(await tellCap({ kind: "under", key: "s-st", text: "v", subject: "s-st", workspace: "w0", standing: "s-st", main: "s-st" }, o, 2), true);
-	assert.deepEqual(told.slice(2), [["s-st", "v"]], "the standing main is told once");
+	assert.deepEqual(told.slice(2), [["s-st", `v${MAIN_CAP_HINT}`]], "the standing main is told once, as the main whose work it is");
 	assert.equal(await tellCap({ kind: "stale", key: "gone", text: "w", subject: "gone", workspace: "w2", main: "gone" }, o, 3), false, "the main alone did not take it");
 });

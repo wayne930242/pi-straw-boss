@@ -47,6 +47,9 @@ export interface PressDeps {
 	linkPress?(card: string, act: string): Promise<Delivery | undefined>;
 }
 
+/** The `wait_card` message a raiser is sent: the notice, and for a done or a choice, that it is the boss's answer to act on (a secret's notice names its step, a decline leaves the next step to the tower) (main.md no longer says so: docs/specs/2026-11-26-just-in-time-prompts.md). */
+export const ACT_ON_IT = "This is the boss's answer to your wait: act on it.";
+const cardNotice = (plan: Pick<Plan, "act" | "notice">) => (plan.act === "done" || plan.act === "choose" ? `${plan.notice!} ${ACT_ON_IT}` : plan.notice!);
 /** What a press decided: the notice for the raiser and how the event reads once the delivery is known. */
 interface Plan { entry: Entry; card?: Card; act: Act; notice?: string; event(delivery: string): string }
 
@@ -197,7 +200,7 @@ export async function pressRequest(d: PressDeps, workspace: string, json: Record
 				let timer: ReturnType<typeof setTimeout> | undefined;
 				const cutOff = new Promise<{ status?: string }>((resolve) => { timer = setTimeout(() => resolve({ status: "failed" }), d.waitMs ?? NOTICE_WAIT_MS); timer.unref?.(); });
 				try {
-					return deliveryOf((await Promise.race([d.send(raiser, plan.notice!, plan.entry.id), cutOff])).status);
+					return deliveryOf((await Promise.race([d.send(raiser, cardNotice(plan), plan.entry.id), cutOff])).status);
 				} finally {
 					clearTimeout(timer);
 				}

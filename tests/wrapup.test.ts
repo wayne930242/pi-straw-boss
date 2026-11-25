@@ -90,7 +90,8 @@ test("a coordinator main idle 30 minutes gets one nudge; its own turn does not c
 	r.advance(60_000);
 	await r.look();
 	assert.deepEqual(r.nudges().map((m) => [m.content, m.triggerTurn]), [[NUDGE_TEXT, true]]);
-	for (const term of ["metadata.waitsOn", "boss_wrap", "daily memory entry", "clean up stale todos"]) assert.ok(NUDGE_TEXT.includes(term), term);
+	// An idle main with ready todos hears the dispatch rule here, since main.md no longer carries it (docs/specs/2026-11-26-just-in-time-prompts.md).
+	for (const term of ["metadata.waitsOn", "boss_wrap", "daily memory entry", "clean up stale todos", "dispatch your ready todos now", "none ready, take your next eligible work"]) assert.ok(NUDGE_TEXT.includes(term), term);
 	await turn(r.a); // the nudge's turn
 	r.advance(2 * IDLE_MS);
 	await r.look();

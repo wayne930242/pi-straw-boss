@@ -79,7 +79,7 @@ test("done on an action card: one notice to the raiser by id, under a wait_card 
 	assert.equal(notices[0]!.to, "main-1", "by id");
 	const f = fieldsOf(notices[0]!.text)!;
 	assert.deepEqual({ kind: f.kind, reply: f.reply, wait: f.wait, why: f.why, id: f.id }, { kind: "wait_card", reply: "none", wait: "W1", why: undefined, id: "sb-tower-wa" });
-	assert.match(notices[0]!.text, /\] The boss did what wait W1 asked: Re-authorize fonstar-staging in the Tailscale admin page\.$/);
+	assert.match(notices[0]!.text, /\] The boss did what wait W1 asked: Re-authorize fonstar-staging in the Tailscale admin page\. This is the boss's answer to your wait: act on it\.$/); // main.md's wait_card line moved here (docs/specs/2026-11-26-just-in-time-prompts.md)
 	const [w] = memory().entries;
 	assert.equal(w!.state, "answered");
 	assert.deepEqual([w!.press!.act, w!.press!.main!.status], ["done", "delivered"]);
@@ -142,7 +142,7 @@ test("choose on a choice card: the option is kept by index, the event and the no
 	const before = tower().sent.length;
 	assert.equal((await press(s, { op: "press", id: "W1", act: "choose", option: 1 })).status, 200);
 	assert.equal(memory().entries[0]!.press!.option, 1);
-	assert.match(tower().sent[before]!.text, /\] The boss chose "Hold" on wait W1: The main waits for Monday\.$/);
+	assert.match(tower().sent[before]!.text, /\] The boss chose "Hold" on wait W1: The main waits for Monday\. This is the boss's answer to your wait: act on it\.$/);
 	assert.match(bossEvents()[0]!.text, /^The boss chose "Hold" on wait W1 \(Deploy the build to ws01 now\?\): The main waits for Monday\.\. Act on it, then resolve W1\. mp3946-print got it\.$|^The boss chose "Hold" on wait W1 \(Deploy the build to ws01 now\?\): The main waits for Monday\. Act on it, then resolve W1\./);
 });
 

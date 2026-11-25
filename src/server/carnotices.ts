@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { IntercomLike } from "./kit.ts";
 import { stamp } from "../header.ts";
-import { type Attempt, type CarState, RETRY_MS, stateLine, type StateEntry, type StateNotice } from "../train/cars.ts";
+import { type Attempt, type CarState, RETRY_MS, stateLine, type StateEntry, type StateNotice, withNext } from "../train/cars.ts";
 import type { CarBook } from "./carbook.ts";
 
 // The sb server's sender of car notices (docs/specs/2026-11-07-train-workers.md §5.5, D14): for every car state without a told notice it sends one intercom message to the coordinator's session id under a `car_notice` header, writes what the broker
@@ -105,7 +105,7 @@ export class CarNotices {
 
 	private async send(intercom: Intercom, item: ReturnType<CarBook["pending"]>[number], messageId: string): Promise<{ delivered: boolean; attempt: Pick<Attempt, "outcome" | "answer"> }> {
 		const { file, entry } = item;
-		const line = this.line(item);
+		const line = withNext(entry.state, this.line(item));
 		const by = entry.by, message = stamp({ from: { name: by.name, id: by.session, role: by.role }, kind: "car_notice", scope: "session", to: [{ name: file.coordinator, id: file.coordinator, role: "session" }], reply: false }, line);
 		try {
 			const result = await intercom.send(file.coordinator, { text: message, messageId });

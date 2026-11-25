@@ -19,7 +19,7 @@ import { snapshotOfBranch } from "./todo.ts";
 export const IDLE_MS = 30 * 60_000;
 const LOOK_MS = 60_000, SUMMARY_MAX = 800;
 export const WRAP_MESSAGE = "straw-boss-wrap";
-export const NUDGE_TEXT = "sb: you have been idle 30 minutes. Is your work done? If work remains, go on with it, or clean up stale todos. If you wait on someone other than the boss, set that todo's `metadata.waitsOn` (who) and stop. If it is done: answer the intercom asks you owe, remove the worktrees you made, complete or delete every todo, stop your monitors and loops, write a daily memory entry if you have a memory tool, then call boss_wrap with a summary: it asks the boss before this pane closes.";
+export const NUDGE_TEXT = "sb: you have been idle 30 minutes. Is your work done? If work remains: dispatch your ready todos now; none ready, take your next eligible work; or clean up stale todos. If you wait on someone other than the boss, set that todo's `metadata.waitsOn` (who) and stop. If it is done: answer the intercom asks you owe, remove the worktrees you made, complete or delete every todo, stop your monitors and loops, write a daily memory entry if you have a memory tool, then call boss_wrap with a summary: it asks the boss before this pane closes.";
 export const WRAP_DESCRIPTION = "Main only, when your work is done: asks the boss here whether to wrap up; on yes it sends your summary to the tower as a milestone (and to whoever a tower opened you for), clears your board, and closes this session and its pane. Refused with an open todo, a running monitor, loop, watch, or subagent, under auto mode, for a standing main, and in a teammate's turn.";
 
 /** The idle clock of one main: when its last turn settled, and whether this idle period had its nudge (or the boss's no). */

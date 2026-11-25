@@ -257,7 +257,7 @@ test("the asker is the raiser: its own result is its notice, so no wait_card is 
 	run.plant("wA", { id: "W1", card: card() as never });
 	assert.equal(await run.text({}, "I'm done"), "W1: the boss did it (Re-authorize the machine.); the tower was told.");
 	assert.deepEqual(run.sent.map((r) => r.json), [{ op: "press", id: "W1", act: "done" }], "a run names no asker");
-	assert.deepEqual(run.notices, ["main-1: The boss did what wait W1 asked: Re-authorize the machine."]);
+	assert.deepEqual(run.notices, ["main-1: The boss did what wait W1 asked: Re-authorize the machine. This is the boss's answer to your wait: act on it."]);
 	assert.equal(run.wait("wA", "W1").press!.main!.status, "delivered");
 });
 

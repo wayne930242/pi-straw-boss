@@ -3,6 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { type CarState, validateStateFields } from "../src/train/cars.ts";
 import { acceptanceWord, KINDS } from "../src/train/spec.ts";
+import { BLOCKED_NOTE, CALL_TOWER_DESCRIPTION, SLIP_NOTE } from "../src/link/waitcall.ts";
+import { MAIN_CAP_HINT } from "../src/server/capops.ts";
 import { strip } from "../src/trainswitch.ts";
 import { PROMPT_DIR } from "./fakes.ts";
 
@@ -34,7 +36,10 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 2026-11-25 (boss questions asked by the main, same spec part 2; boss 2026-11-25; measured): main.md off 654 to 683, on 899 to 928 (`blocked` is for someone other than the boss; the boss's own decision: `ask_user_question`, or under auto mode `blocked`, back as `wait_returned`).
 // 2026-11-26 (0.91.0, prompts delivered when needed, same spec part 2 as rewritten; boss 2026-11-25 「提示詞可以逐步交付」; measured): main.md off 683 to 617, on 928 to 862: the done line and `call_tower`'s line are 0.89.0's again (the wrap-up steps come with the nudge, the boss question is `call_tower`'s `boss`).
 // 2026-11-26 (0.91.0 review F003, one way to ask again; measured): main.md off 617 to 618, on 862 to 863: a `wait_returned` wait is asked again with `call_tower` `boss`, not `ask_user_question`.
-const BUDGETS: Record<string, number> = { "main.md": 618, "tower.md": 516, "member.md": 140, "member-no-main.md": 150 };
+// 2026-11-26 (0.92.0, just-in-time prompts, docs/specs/2026-11-26-just-in-time-prompts.md; boss 2026-11-25 「提示詞可以逐步交付」, 2026-11-26 「只搬 sb 自己的」; measured): main.md off 618 to 388, on 863 to 620: the rules of one
+// moment (a capacity notice, idle with ready todos, boss_pair's steps, boss_duty, board_set, call_tower's details, wait_card and wait_returned, the opened main's report, the car slip and its notices) moved to
+// the notice, message, tool description, or result that arrives at that moment; main.md keeps the triggers.
+const BUDGETS: Record<string, number> = { "main.md": 388, "tower.md": 516, "member.md": 140, "member-no-main.md": 150 };
 // Its review fixes (SB-F001, F003, F005: the Approval line quotes words already given and asks only when they are missing, the tower reports nothing back on a forwarded slip): main.md 680 to 700, tower.md 390 to 395, integrator.md 320 to 340 (SB-F002 and F006: the deploy gate before `Merge`, a subagent briefed for one step).
 // Train workers (docs/specs/2026-11-07-train-workers.md §13.1, task 8): tower.md on 424 to 471 (forward with `forward`, open a train with `role: "train"`, a car notice's `blocked`; off stays 402); main.md on 715 to 720 (Batch owner, Handoff route, Record and Approval say who schedules, who departs, who notifies, and where the boss's nod is quoted); integrator.md 340 to 380 and train.md ~450 have their own budgets below.
 // Fix round of task 8 (prompts-review.md, TP-F001 to F018): budgets = measured: main.md on 720 to 725, tower.md on 471 to 469 (the resident tower forwards nothing), planning.md on 670 to 681 (the check command), integrator.md 380 to 412 (todo lifecycle, legacy trains), train.md 450 to 511 (holds, load and lock, the Record file, the metadata.sb keys).
@@ -45,7 +50,7 @@ const BUDGETS: Record<string, number> = { "main.md": 618, "tower.md": 516, "memb
 // 2026-11-23 (the tower closes agent panes, docs/specs/2026-11-23-tower-close-panes.md §5): measured: tower.md on 508 to 538 and off 438 to 468 (close a main that handed over once its successor is live, whoever opened it; list and close dead agent panes).
 // 2026-11-23 (lite main, as for BUDGETS above; measured): main.md on 743 to 786.
 // 2026-11-23 (D, review threads, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.5; measured): main.md on 786 to 808 (a reviewed change: boss_pair, both briefs, Thread: T<n>, relay nothing).
-const ON_BUDGETS: Record<string, number> = { "main.md": 863, "tower.md": 586 };
+const ON_BUDGETS: Record<string, number> = { "main.md": 620, "tower.md": 586 };
 // 2026-11-08 (todo #125 task 5, TP-F004): `{{cli}}` is the command that runs cli.mjs.
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir", "state", "cli", "duty"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
@@ -106,7 +111,9 @@ test("the main's brief closing line covers a rule that says to ask first", () =>
 
 test("D19: the main calls the tower at three points only, routine progress stays on the board, and a milestone goes without a reply", () => {
 	const main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
-	for (const term of ["`call_tower`", "three points only", "`milestone`", "`shared`", "`blocked`", "reply: false", "never call the tower to report", "a heads-up, not a request for go", "go ahead at once"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	for (const term of ["`call_tower`", "three points only", "`milestone`", "`shared`", "`blocked`", "never call the tower to report"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	// 0.92.0 (just-in-time prompts): the heads-up and the reply flag are call_tower's own description, read at the call.
+	for (const term of ["reply false unless needed", "a heads-up before you change anything outside your tab", "reply false; go ahead at once"]) assert.ok(CALL_TOWER_DESCRIPTION.includes(term), `call_tower names ${term}`);
 	assert.doesNotMatch(main, /call_tower reaches the tower \(report coordination friction there\)/);
 	for (const file of ["member.md", "member-no-main.md"]) assert.match(readFileSync(`${PROMPT_DIR}/${file}`, "utf8"), /`call_tower` and `why: blocked`/, `${file} reports friction as blocked`);
 });
@@ -154,7 +161,9 @@ test("train stages: apps-config declares stages and targets, the integrator veri
 
 test("merge train: main hands integration cars over with why shared, planning states the principle, and the tower forwards a shared merge request to the one integrator", () => {
 	const main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
-	for (const term of ["`integration`", "never claim a pre-dev branch unless your kind is `integrator`", "never merge to its base;", "`why: shared`", "waits for sb's car notice", "the done report still goes to whoever asked", "paths outside the project"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	for (const term of ["`integration`", "never claim a pre-dev branch unless your kind is `integrator`", "never merge to its base;", "`why: shared`", "send its car slip by the Seam bindings"]) assert.ok(main.includes(term), `main.md names ${term}`);
+	// 0.92.0 (just-in-time prompts): a slip's wait for the car notice is call_tower's result, the board's privacy and "not a report" board_set's description (tests/just-in-time.test.ts).
+	assert.ok(SLIP_NOTE.includes("the car has not landed until sb's car notice says landed"));
 	const plan = readFileSync(`${PROMPT_DIR}/planning.md`, "utf8");
 	for (const term of ["`Light checks`", "once, by the integrator", "`integrating`'s Principle"]) assert.ok(plan.includes(term), `planning.md names ${term}`);
 	for (const file of ["tower.md", "tower-run.md"]) {
@@ -230,14 +239,15 @@ test("the head's morning ledger sweep stays within its measured 936-word prompt 
 test("wait cards: head-run.md and main.md say the same in their words", () => {
 	const head = readFileSync(`${PROMPT_DIR}/head-run.md`, "utf8"), main = readFileSync(`${PROMPT_DIR}/main.md`, "utf8");
 	for (const term of ["as a card", "in the language your brief names", "`from` is the tower's session id", "`restates`"]) assert.ok(head.includes(term), `head-run.md names ${term}`);
-	for (const term of ["A `wait_card` message is the boss's answer to your wait: act on it; it says when to call `secret_drop`."]) assert.ok(main.includes(term), `main.md names ${term}`);
+	// 0.92.0 (just-in-time prompts): the main reads it in call_tower's blocked result and in the wait_card message itself.
+	assert.ok(!main.includes("`wait_card`") && BLOCKED_NOTE.includes("his answer comes as a wait_card message: act on it (it says when to call secret_drop)"));
 });
 
 // docs/specs/2026-11-16-wait-cards-flow.md (Rules): a wait card is asked again only through `boss_wait_ask`, whose dialog sb draws; the resident tower (tower.md) has no such tool and keeps its rule.
 test("wait cards asked again: main.md, tower-run.md, and head-run.md name boss_wait_ask and its limits; tower.md does not", () => {
 	const main = read("main.md"), run = read("tower-run.md"), head = read("head-run.md");
 	// AR-D3 (docs/specs/2026-11-21-auto-return.md): a parked wait comes back closed when auto mode ends, and its raiser asks again itself; boss_wait_ask stays for the cards that were not parked.
-	assert.ok(main.includes("A `wait_card` message is the boss's answer to your wait: act on it; it says when to call `secret_drop`. Re-ask a wait you raised only with `boss_wait_ask`; a `wait_returned` one with `call_tower` `boss`."), "main.md"); // 0.91.0 review F003: one way to ask again
+	assert.ok(!main.includes("boss_wait_ask") && BLOCKED_NOTE.includes("Ask him again about it only with boss_wait_ask."), "main.md: call_tower's blocked result since 0.92.0"); // 0.91.0 review F003: one way to ask again (wait_returned's own text names call_tower boss)
 	assert.ok(run.includes("- Never ask the boss yourself (no questions, robot_hand, focus changes), except `boss_wait_ask` for cards in your memory while the boss is at this pane: sb draws the card, you never word it. Its press also reaches you as an event: act once, then resolve the wait. A wait of yours parked under auto mode comes back closed when it ends: record it again if it still needs the boss. A decision only the boss can make goes in the handoff note as above."), "tower-run.md");
 	assert.ok(head.includes("call `boss_auto` with `on: true`; it switches at once, so tell the boss it is on.") && head.includes("Its end sends every parked card back to whoever raised it, to ask him again; one of your own comes back to you as an event: record it again if it still needs him."), "head-run.md (AR-D1, AR-D3)");
 	assert.ok(head.includes("When he is at this pane and says he is back, or asks what waits, show the open cards with `boss_wait_ask` (no ids: every card) instead of listing them in text."), "head-run.md");
@@ -376,7 +386,7 @@ test("TB-F006, F008, F009: the prompts give the code's form, the todo order, abs
 // Box ↔ Mac waits (docs/specs/2026-11-21-box-mac-waits.md §6, §9 anchor 10): one clause each, inside the budgets above.
 test("box-mac waits: main.md blocks with waitsOn and names standing, tower-run.md forwards waitsOn and binds by default, ally-run.md escalates, duty-standing.md watches with boss_watch", () => {
 	const main = read("main.md"), run = read("tower-run.md"), ally = read("ally-run.md"), standing = read("duty-standing.md"), tower = read("tower.md");
-	assert.ok(main.includes("`waitsOn` names a teammate device") && main.includes("watching, not finishing tasks, is `standing`"), "main.md");
+	assert.ok(!main.includes("waitsOn") && CALL_TOWER_DESCRIPTION.includes("a teammate device: waitsOn") && !main.includes("`standing`"), "main.md: call_tower's and boss_duty's descriptions since 0.92.0");
 	assert.ok(run.includes("A device's answer never enters a tower run") && run.includes("leaving `reply` out binds the one main") && run.includes("Use `reply: false` only for a pure notice") && run.includes("pass the first line's `[event id: <id>]` value to `tower_send` as `waitsOn.event`"), "tower-run.md");
 	assert.ok(!run.includes("A teammate's device never answers you"), "the old rule is gone");
 	assert.ok(ally.includes("call `ally_escalate` once per item") && ally.includes("\"Mains here\""), "ally-run.md");
@@ -410,7 +420,7 @@ test("D14: duty-standing.md lets the standing main approve anything as the boss'
 test("capacity: main and planning dispatch up to the budget, standing and towers treat capacity notices as incidents, the integrator batches cars", () => {
 	const read = (f: string) => readFileSync(`${PROMPT_DIR}/${f}`, "utf8");
 	for (const [file, terms] of [
-		["main.md", ["capacity budget", "Idle with ready todos: dispatch them", "A capacity notice on your work"]],
+		["main.md", ["capacity budget"]], // 0.92.0: idle and a capacity notice come with the nudge and the notice (tests/just-in-time.test.ts)
 		["planning.md", ["capacity budget", "Serialize only on a real dependency or shared files", "\"points\""]],
 		["duty-standing.md", ["Capacity is yours to mind", "`capacity_notice`", "`under`", "`stale`", "`quota`", "`device-silent`"]],
 		["tower.md", ["A `capacity` notice is an incident"]],
@@ -433,7 +443,7 @@ test("capacity: the head routes device-silent to the workspace that works with t
 // and escalates to its tower when no dispatch follows; the towers act on sb's `under-30m`; nobody keeps a timer beyond sb's notices.
 test("capacity routing: the main answers its own notice, the standing main asks on the next one and escalates, the towers take sb's under-30m", () => {
 	const read = (f: string) => readFileSync(`${PROMPT_DIR}/${f}`, "utf8");
-	assert.ok(read("main.md").includes("A capacity notice on your work: dispatch its ready work now, or say why not (blocked, shared files, the boss): reply to whoever asked; sb's: board it."), "main.md");
+	assert.ok(MAIN_CAP_HINT.includes("your work: dispatch its ready work now, or say why not (blocked, shared files, the boss) on your board"), "the notice to the main itself (0.92.0; main.md no longer says it)");
 	assert.ok(read("duty-standing.md").includes("a main still under at your next notice (`under-30m` too): ask it to dispatch or say why, then `call_tower` `why: blocked` naming it if no dispatch follows; no timer of your own"), "duty-standing.md");
 	for (const file of ["tower.md", "tower-run.md"]) {
 		assert.ok(read(file).includes("`under-30m`"), `${file} names under-30m`);

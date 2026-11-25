@@ -87,11 +87,12 @@ test("off: no assembled prompt names the integrator, a car slip, or the train; t
 	}
 	// What apps-config still gives: the owning app and its paths.
 	for (const term of ["`name`, `dir`, `match`", "`redirectTo`", "`forbidDirectCommit`", "`gitWorkflowSkill`", "`localFiles`", "`crossAppSkills`"]) assert.ok(readFileSync(join(set.dir!, "apps-config.md"), "utf8").includes(term), `apps-config.md still names ${term}`);
-	// The plain rules, and the answer to a slip that arrives anyway.
+	// The plain rules; the answer to a slip that arrives anyway comes with the slip since 0.92.0 (src/carslip.ts, docs/specs/2026-11-26-just-in-time-prompts.md).
 	const main = set.read("main");
 	assert.match(main, /ignore `integration`, `stages`, `targets`, and `deploy`/);
 	assert.match(main, /ask the boss before you merge to a shared branch or deploy/);
-	assert.match(main, /integration is off on this computer/);
+	assert.match(main, /Integration is off on this computer:/);
+	assert.doesNotMatch(main, /`car:` block/);
 	for (const name of ["tower", "tower-run"]) assert.match(set.read(name), /`car:` block[^.]*integration is off on this computer/, name);
 	// The role prompts read the same files by {{dir}}: that is the folder without the train.
 	assert.equal(set.read("main").includes(PROMPT_DIR), false);
@@ -152,7 +153,7 @@ test("a session with the switch off is briefed without the train: main, tower, a
 	assert.match(section, /^You are the main agent of Herdr tab/);
 	assert.doesNotMatch(section, TRAIN);
 	assert.doesNotMatch(section, MARKS);
-	assert.match(section, /integration is off on this computer/);
+	assert.match(section, /Integration is off on this computer/);
 	const copy = join(dir, "prompts-off");
 	assert.ok(section.includes(copy), `the main is pointed to the folder without the train (${copy})`);
 	assert.ok(!section.includes(PROMPT_DIR));

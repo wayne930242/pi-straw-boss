@@ -20,6 +20,7 @@ import { armSignals, signalSeen } from "./signalseen.ts";
 import { restored } from "./restored.ts";
 import type { RunMode } from "./runmode.ts";
 import type { Presence } from "./presence.ts";
+import { registerCarOff } from "./carslip.ts";
 import type { Reach } from "./reach.ts";
 import type { Roles } from "./roles.ts";
 import { registerStandingHint } from "./standinghint.ts";
@@ -365,6 +366,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	});
 
 	registerStandingHint(pi, () => (role() === "main" && !runMode.active() ? mainDuty.now() : undefined)); // a coordinator that starts a watch is told of `standing` once (D8)
+	registerCarOff(pi, () => role() === "main" && !runMode.active() && !mainDuty.integrationOn()); // a car slip that reaches a main with integration off: how to answer it (carslip.ts)
 	pi.on("session_shutdown", async (event) => {
 		// A run's own shutdown is runmode.ts's: it joined nothing and holds no pane, tokens, or board entry. So is that of a pi that never became a normal session (undecided, or plain after no answer from the server):
 		// the standing pane it sits in is the server's, and a quit of it leaves the pane as it found it (RV7-F002).
