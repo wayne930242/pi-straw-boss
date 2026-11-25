@@ -6,7 +6,7 @@
 
 - `README.md` and `README.zh-TW.md` stay short: the pitch, install, quick start, and the common commands. Every tool and `/boss` command goes in `site/src/content/docs/reference/commands.md` and its twin under `site/src/content/docs/zh-tw/`; a user-facing feature gets its guide page there in both languages.
 - `site/` is the Starlight documentation site, served at https://wayne930242.github.io/pi-straw-boss/docs/ under the GUI demo by `.github/workflows/pages.yml`. `site/scripts/sync.mjs` generates its how-it-works, unattended-device, and release pages from `docs/`, so `docs/` stays the one source; keep `docs/how-it-works.md` anchors stable, since `src/` and the release notes link to them. `cd site && npm ci && npm run build` validates every internal link and anchor.
-- `docs/how-it-works.zh-TW.md` mirrors `docs/how-it-works.md` line for line, and its first line names the English commit it matches. A change to the English file changes the same lines of the twin and moves that commit, or leaves the drift for a batch pass; `npm --prefix site run check` lists the English commits not yet translated and fails when the headings no longer match.
+- `docs/how-it-works.zh-TW.md` mirrors `docs/how-it-works.md` line for line, and its first line names the English commit it matches. A change to the English file changes the same lines of the twin and moves that commit, or leaves the drift for a batch pass; `npm --prefix site run check` lists the English commits not yet translated and fails when the headings no longer match; `npm test` (tests/twin.test.ts) fails on the same line-for-line, heading, and bold checks before a push.
 
 ## Tests
 
