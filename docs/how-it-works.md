@@ -982,7 +982,7 @@ A `quit` main is revived only when a request names it. Revives and opens share t
 
 A main that rotates its session opens its successor itself with `boss_handover`: no `/new`, and nothing for the boss to do. The successor opens in the same workspace under the old main's name and kind. Its first prompt names the handoff file.
 When the main saves a todo list beside the handoff (`handoff.md` → `handoff.todos.json`), the prompt says to import it first. This keeps task ids, dependencies and evidence, including completed tasks; only deleted tasks are left out.
-If the successor's todo tool has no `import` action, it recreates the tasks from the handoff text instead.
+If the todo tool has no `import` action or refuses the import, the successor recreates the tasks from the handoff text instead. If the old main cannot write the list, the successor still gets the handoff.
 
 <details>
 <summary>Details</summary>

@@ -547,10 +547,23 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 	// ---- pi
 
 	/** The refusals of a `todo` call, judged on the list `state` gives, whichever path asks: the tool_call of rpiv-todo's call, or pi-todo-ledger's check. */
-	async function todoReasons(input: Json, ctx: Ctx, state: TodoState): Promise<string[]> {
+	async function todoReasons(input: Json, ctx: Ctx, state: TodoState, after?: readonly unknown[]): Promise<string[]> {
 		const me = env.train();
 		try {
 			if (!me && env.pending?.()) return [UNSETTLED];
+			if (input.action === "import") {
+				if (me) return ["sb: a train's list is never imported"];
+				if (!env.isMain() || !after) return []; // only the ledger supports import; its check, not tool_call, receives the list
+				let project: string | undefined;
+				for (const t of after) {
+					if (!isObject(t) || !isObject(t.metadata) || t.metadata.sb === undefined) continue;
+					if (env.duty() !== "integrator") return [NOT_INTEGRATOR];
+					const sb = t.metadata.sb, refusals = validateTrainTodo(sb, { id: t.id as number, status: t.status as string, project });
+					if (refusals.length) return refusals;
+					if (isObject(sb) && typeof sb.project === "string") project = sb.project;
+				}
+				return project === undefined ? [] : contractRefusal();
+			}
 			const integrators = !me && env.isMain() && (hasSb(input) || changesTrainTodo(input, state));
 			const reasons = me ? await trainTodo(input, ctx, me, state) : integrators ? (env.duty() === "integrator" ? await integratorTodo(input, ctx, state) : [NOT_INTEGRATOR]) : [];
 			// The skills the prompts follow must be the ones they assume; a call that changes nothing (a todo read) is let through.
@@ -591,10 +604,10 @@ export function createTrainGuard(pi: GuardPi, env: GuardEnv) {
 		if (!isObject(change) || !isObject(change.params) || !Array.isArray(change.before) || !Array.isArray(change.after)) return "sb: the train guard got a change it cannot read; try again";
 		const known = typeof change.sessionId === "string" ? seen.get(change.sessionId) : undefined;
 		const ctx: Ctx = { cwd: typeof change.cwd === "string" ? change.cwd : known?.cwd, sessionManager: { getBranch: () => { if (!known) throw new Error(`sb has not seen session ${String(change.sessionId)}`); return known.sessionManager.getBranch(); } } };
-		const reasons = await todoReasons(change.params, ctx, () => rowsOfSnapshot({ tasks: change.before, nextId: nextIdOf(change.before, change.after) }));
+		const reasons = await todoReasons(change.params, ctx, () => rowsOfSnapshot({ tasks: change.before, nextId: nextIdOf(change.before, change.after) }), change.after);
 		return reasons.length ? reasons.join("\n") : undefined;
 	}
-	const register = () => pi.events?.emit?.(GUARD_EVENT, { v: 1, id: LEDGER_GUARD_ID, check: ledgerCheck });
+	const register = () => pi.events?.emit?.(GUARD_EVENT, { v: 1, id: LEDGER_GUARD_ID, imports: true, check: ledgerCheck });
 	register(); // a ledger that loaded first hears it now; one that loads later asks with todo:ready
 	pi.events?.on(READY_EVENT, (d) => {
 		if (!isObject(d) || d.v !== 1) return;

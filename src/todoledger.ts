@@ -4,7 +4,7 @@ export const TODO_V1 = "todo/v1";
 export const READY_EVENT = "todo:ready", CHANGED_EVENT = "todo:changed", GUARD_EVENT = "todo:guard";
 
 /** One call that would change the list, as a guard's `check` receives it (`$defs/change`). */
-export interface LedgerChange { op: "create" | "update" | "delete" | "clear"; params: Record<string, unknown>; before: unknown[]; after: unknown[]; sessionId: string; cwd: string; noop?: true }
+export interface LedgerChange { op: "create" | "update" | "delete" | "clear" | "import"; params: Record<string, unknown>; before: unknown[]; after: unknown[]; sessionId: string; cwd: string; noop?: true }
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);

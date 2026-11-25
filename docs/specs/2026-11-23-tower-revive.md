@@ -176,8 +176,8 @@ No pi-herdr-agents change was made.
 The main prompt has no rotation line, so none was changed; the tool's description carries the instruction, and `main.md` stays within its character cap (`tests/duty-prompts.test.ts`). The rule lives in weihung-basic-agent `rules/session-rotation.md`, outside this repository.
 
 Before opening the tab, `boss_handover` saves the current branch’s tasks beside the handoff (`handoff.md` → `handoff.todos.json`), omitting deleted tasks and dependencies on absent ids.
-The result gives the path and task count, or says why no snapshot was written (empty list or incompatible legacy data).
-When a file was written, the successor imports it first with `todo {"action":"import","path":"<absolute path>"}`; with an older todo tool that has no import action it rebuilds the list from the handoff instead.
+The result gives the path and task count, or says why no snapshot was written (empty list, invalid data or a file error).
+When a file was written, the successor imports it first with `todo {"action":"import","path":"<absolute path>"}`; if the tool has no import action or refuses the import, the successor rebuilds the list from the handoff instead.
 
 ## 9. Prompts
 

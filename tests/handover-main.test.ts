@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { afterEach, test } from "node:test";
@@ -70,6 +70,7 @@ test("the successor imports the saved branch todos first, keeping completed evid
 	const prompt = world.broker.delivered.find((d) => d.to === NEW.main)!.message;
 	assert.ok(prompt.includes(JSON.stringify({ action: "import", path })));
 	assert.match(prompt, /older pi-todo-ledger/);
+	assert.match(prompt, /import is refused/i);
 	assert.doesNotMatch(prompt, /drop completed todos/);
 });
 
@@ -83,6 +84,17 @@ for (const invalid of [false, true]) test(`no import for ${invalid ? "an incompa
 	assert.match(textOf(result), invalid ? /not.*todo\/v1/ : /no tasks/i);
 	assert.equal(existsSync(join(dirname(handoff), "handoff-box-watch.todos.json")), false);
 	assert.doesNotMatch(world.broker.delivered.find((d) => d.to === NEW.main)!.message, /"action":"import"|\.todos\.json/);
+});
+
+test("an unwritable todos path does not prevent the handover or promise an import", async () => {
+	const { m, handoff } = await main();
+	mkdirSync(handoff.replace(/\.md$/, ".todos.json"));
+	m.entries.push({ customType: "todo/v1", data: { v: 1, nextId: 2, tasks: [{ id: 1, subject: "one", status: "pending" }] } });
+	const result = await m.tool("boss_handover", { handoff, reason: "rotate" });
+	const { written, path, count, reason } = todosOfResult(result);
+	assert.deepEqual([written, path, count], [false, null, 0]);
+	assert.ok(reason && textOf(result).includes(reason));
+	assert.doesNotMatch(world.broker.delivered.find((d) => d.to === NEW.main)!.message, /"action":"import"/);
 });
 
 test("RVR-F004: a main that handed over marks its role record, keeps the mark through its step-down, and is never raised as dead or revived", async () => {

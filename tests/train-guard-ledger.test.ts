@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { cleanup, LEDGER_GUARD, rig, run, SESSION_ID } from "./train-guard-rig.ts";
-import { result } from "./train-fixtures.ts";
+import { CODE, result, SHA_A } from "./train-fixtures.ts";
 
 // The train guard on pi-todo-ledger's path (docs/specs/2026-11-24-todo-ledger.md): the whole train-guard suite runs again with the list kept by the ledger's contract, so the rules sb checks as the ledger's `todo:guard` are the ones it
 // checks at `tool_call` beside rpiv-todo; the tests below cover what only this path has.
@@ -49,6 +49,21 @@ test("a no-op update after a /reload reaches the guard flagged noop and starts t
 	assert.equal(again.entries.length, entriesBefore, "a no-op writes no entry");
 	await again.runStep(id);
 	assert.equal((await again.complete(id, result())).ok, true);
+});
+
+test("the ledger import guard checks the proposed list for this role and duty", async () => {
+	const plain = { id: 1, subject: "ordinary work", status: "pending" };
+	const train = { v: 1, kind: "train", project: "acme", app: "web", train: CODE, spec: { cars: [{ tickets: ["T-15"], branch: "fix/t-15", head: SHA_A, coordinator: "sess-coord-1", departs: "next", accept: "none" }] } };
+	const task = { ...plain, id: 2, metadata: { sb: train } };
+	const check = (r: ReturnType<typeof rig>, ...after: unknown[]) => r.guards.get(LEDGER_GUARD)!({ op: "import", params: { action: "import", path: "/handoff.todos.json" }, before: [], after, sessionId: SESSION_ID, cwd: r.cwd });
+	assert.match(String(await check(rig(), plain)), /a train's list is never imported/);
+	const coordinator = rig({ train: false, main: true, duty: "coordinator" });
+	assert.equal(await check(coordinator, plain), undefined);
+	assert.match(String(await check(coordinator, plain, task)), /a train todo is the integrator's/);
+	const opts = { train: false, main: true, duty: "integrator" }, integrator = rig(opts);
+	assert.equal(await check(integrator, plain, task), undefined);
+	assert.match(String(await check(integrator, plain, task, { ...task, id: 3, status: "completed" })), /completed needs a result/);
+	assert.equal(await check(rig({ ...opts, contract: { ok: false, refusal: "skill contract mismatch" } }), task), "skill contract mismatch");
 });
 
 test("a change of a session sb has not seen fails closed in a train: the guard cannot read its branch", async () => {

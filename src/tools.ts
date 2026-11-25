@@ -246,7 +246,9 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 							if (net.ps.some((p) => p.pane_id === held.pane && p.agent)) throw new Error(`Your successor in pane ${held.pane} (tab ${held.tab}) is still live: one at a time. Tell it by intercom, or wait until it took over.`);
 						}
 						const name = pi.getSessionName() || s.ownName || me().slice(0, 8);
-						const todos = writeHandoverTodos(path, snapshotOfBranch(s.branch()));
+						let todos: ReturnType<typeof writeHandoverTodos>;
+						try { todos = writeHandoverTodos(path, snapshotOfBranch(s.branch())); }
+						catch (error) { todos = { written: false, path: null, count: 0, reason: String(error) }; }
 						const next = await openSuccessor({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd, sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), trustDir: trustDir(guiDir) }, { from: { id: me(), name }, handoff: path, ...(todos.written ? { todosPath: todos.path } : {}), reason: why, ...(s.duty ? { duty: s.duty } : {}), ...(s.openedBy ? { openedBy: s.openedBy } : {}) });
 						s.saved.successor = { pane: next.pane, tab: next.tab, at: cfg.now(), main: next.main };
 						pi.appendEntry(ENTRY, { successor: s.saved.successor });

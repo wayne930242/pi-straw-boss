@@ -73,7 +73,10 @@ function build(o: RigOptions) {
 	const guards = new Map<string, (change: Json) => unknown>(), changes: Json[] = [];
 	const listen = () => pi.events.on("todo:guard", (p) => {
 		const g = p as Json | null;
-		if (g && g.v === 1 && typeof g.id === "string" && g.id.trim() && typeof g.check === "function") guards.set(g.id, g.check as (change: Json) => unknown);
+		if (g && g.v === 1 && typeof g.id === "string" && g.id.trim() && typeof g.check === "function") {
+			const check = g.check as (change: Json) => unknown;
+			guards.set(g.id, (change) => change.op === "import" && g.imports !== true ? "guard has not opted into imports" : check(change));
+		}
 	});
 	if (path === "ledger" && o.ledgerFirst) (listen(), pi.events.emit("todo:ready", { v: 1 })); // nobody listens yet
 	const guard = createTrainGuard(pi as never, env);

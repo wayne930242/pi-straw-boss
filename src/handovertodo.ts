@@ -11,9 +11,10 @@ export function handoverSnapshot(snapshot: unknown) {
 	if (snapshot === undefined) return { reason: empty };
 	if (!object(snapshot) || !Array.isArray(snapshot.tasks) || typeof snapshot.nextId !== "number") return { reason: invalid };
 	let nextId = snapshot.nextId;
-	const kept: Record<string, unknown>[] = [];
+	const kept: Record<string, unknown>[] = [], seen = new Set<unknown>();
 	for (const t of snapshot.tasks as unknown[]) {
-		if (!object(t)) return { reason: invalid };
+		if (!object(t) || seen.has(t.id)) return { reason: invalid };
+		seen.add(t.id);
 		if (typeof t.id === "number") nextId = Math.max(nextId, t.id + 1);
 		if (t.status !== "deleted") kept.push(t);
 	}
@@ -33,9 +34,12 @@ export function writeHandoverTodos(handoff: string, snapshot: unknown) {
 	const { dir, name } = parse(handoff), path = join(dir, `${name}.todos.json`);
 	const { data, reason } = handoverSnapshot(snapshot);
 	if (!data) {
-		if (reason === empty) rmSync(path, { force: true }); // no stale list beside a reused handoff
+		rmSync(path, { force: true }); // no stale list beside a reused handoff
 		return { written: false as const, count: 0, path: null, reason };
 	}
-	writeJson(path, data);
+	try { writeJson(path, data); } catch (error) {
+		rmSync(path, { force: true }); // a failed replacement must not leave the old snapshot for this handoff
+		throw error;
+	}
 	return { written: true as const, count: data.tasks.length, path };
 }

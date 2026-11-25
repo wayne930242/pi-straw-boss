@@ -1,4 +1,4 @@
-# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ 2f0a2fa2 -->
+# pi-straw-boss 的運作方式 <!-- source: docs/how-it-works.md @ 4775b47d -->
 
 [README](../README.zh-TW.md) 背後的完整行為。使用說明在各篇指南；這份參考則逐節寫出程式實際怎麼做，所以請在下面找到需要的那一節，其餘可以略過。
 
@@ -982,7 +982,7 @@ Straw Boss 每次啟動塔台時，都會把它當作 `--model` 傳給 pi，並�
 
 輪替 session 的 main 用 `boss_handover` 自己開出接班者：不用 `/new`，老闆也不必做什麼。接班者在同一個工作區開新分頁，沿用舊 main 的名稱與種類。第一則提示會指出交接檔的位置。
 若舊 main 在交接檔旁存了待辦清單（`handoff.md` → `handoff.todos.json`），提示會請接班者先匯入。任務編號、相依關係與驗證紀錄都會保留，已完成的任務也在內；只有已刪除的任務不帶過去。
-若接班者的待辦工具沒有 `import` 動作，就改從交接文字重建任務。
+若待辦工具沒有 `import` 動作或拒絕匯入，接班者就從交接文字重建任務。舊 main 即使寫不出待辦清單，接班者也收得到交接檔。
 
 <details>
 <summary>細節</summary>

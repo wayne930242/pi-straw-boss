@@ -19,6 +19,11 @@ test("an extensionless handoff gets a sibling file; reusing it with no remaining
 	const tasks = [{ id: 1, subject: "one", status: "pending" }];
 	assert.deepEqual(writeHandoverTodos(handoff, { tasks, nextId: 1 }), { written: true, path, count: 1 });
 	assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { tasks, nextId: 2, v: 1 });
-	assert.equal(writeHandoverTodos(handoff, { tasks: [], nextId: 2 }).written, false);
-	assert.equal(existsSync(path), false);
+	for (const invalid of [{ tasks: [], nextId: 2 }, { tasks: [{ ...tasks[0], status: "bad" }], nextId: 2 }, { tasks: [...tasks, ...tasks], nextId: 2 }]) {
+		writeHandoverTodos(handoff, { tasks, nextId: 2 });
+		const result = writeHandoverTodos(handoff, invalid);
+		assert.equal(result.written, false);
+		assert.match(result.reason!, invalid.tasks.length ? /not.*todo\/v1/ : /no tasks/);
+		assert.equal(existsSync(path), false);
+	}
 });
