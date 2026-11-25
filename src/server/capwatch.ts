@@ -1,7 +1,7 @@
 import { capLine, clock, type DeviceCap, joinCaps, type MainFacts, type MainRow, pauseText, purgeCaps, readCaps, readDevice, readSent, roomFor, SILENT_MS, THROTTLE_MS, underFor, writeDevice, writeSent } from "../capacity.ts";
 
 // The capacity watch (docs/specs/2026-11-24-capacity.md): once a minute the sb server, with no model, joins the mains' capacity files with what runs, writes the device row, and raises the flags. A flag
-// that is entered is one event to the tower of the main's workspace and to this device's standing main (`under` and `stale` to the main itself too); the same flag of the same main (or ally device) at
+// that is entered is one event to the tower of the main's workspace and to this device's standing main (`under` and `stale` to the main itself too, unless its Herdr pane is working); the same flag of the same main (or ally device) at
 // most once per 30 minutes, and nothing when it clears except a quota that resumed. A main still under 30 minutes after its own notice, and an ally still silent 2 hours after its first, is escalated
 // once. The reads of the machine and the sending are capops.ts's.
 
@@ -42,10 +42,11 @@ const q = (name: string) => JSON.stringify(name);
 /** A teammate device's main is named with its device. */
 const on = (ally?: AllySeen) => (ally ? ` · device ${q(ally.label)} (${ally.short})` : "");
 /** The event texts: terse, the main or device named, the flag, the numbers. */
-export function capText(kind: CapKind, d: DeviceCap, now: number, row?: MainRow, ally?: AllySeen, since?: number): string {
+/** `working`: the main's Herdr pane is working, so the escalation says to ask it nothing (boss 2026-11-26 「herdr state 還在 working 的 agent 不必被詢問」). */
+export function capText(kind: CapKind, d: DeviceCap, now: number, row?: MainRow, ally?: AllySeen, since?: number, working?: boolean): string {
 	switch (kind) {
 		case "under": return `capacity under · main ${q(row!.name)} · ${row!.ready} ready (smallest ${row!.minReady} pt) · ${capLine(d, now)} · held ${Math.floor((underFor(d, now) ?? 0) / MIN)} min`;
-		case "under-30m": return `capacity under-30m · main ${q(row!.name)} · still under 30 min after its notice at ${clock(since ?? now, now)} · ${row!.ready} ready (smallest ${row!.minReady} pt) · ${capLine(d, now)} · ask it to dispatch or say why`;
+		case "under-30m": return `capacity under-30m · main ${q(row!.name)} · still under 30 min after its notice at ${clock(since ?? now, now)} · ${row!.ready} ready (smallest ${row!.minReady} pt) · ${capLine(d, now)} · ${working ? "its pane is working now: ask it nothing" : "ask it to dispatch or say why"}`;
 		case "stale": return `capacity stale · main ${q(row!.name)} · ${row!.open} open todos · no move for ${d.unattended ? "30" : "120"}+ min · state of the device: ${capLine(d, now)}`;
 		case "quota": return `capacity quota · main ${q(row!.name)}${on(ally)} · ${pauseText(row!.paused ?? {}, now)}${row!.paused?.detail ? ` · ${row!.paused.detail}` : ""}`;
 		case "resumed": return `capacity quota resumed · main ${q(row!.name)}${on(ally)}`;
@@ -79,12 +80,14 @@ export function createCapWatch(d: CapDeps) {
 			underSince = roomFor(dev) ? (underSince ?? now) : undefined;
 			if (underSince !== undefined) dev.under = underSince;
 			writeDevice(d.dir, dev);
+			// A main whose Herdr pane is working is not asked (boss 2026-11-26): its own copy of `under` is not sent, and `under-30m` tells its tower and the standing main to ask it nothing.
+			const working = new Set(facts.filter((m) => m.paneStatus === "working").map((m) => m.session));
 			const standing = (subject?: string) => dev.mains.find((r) => r.standing && r.session !== subject)?.session;
 			const allies = d.allies(), silent = allies.filter((a) => a.open && (!a.online || (a.timed && a.boardAgeMs > SILENT_MS))), silentKeys = new Set(silent.map((a) => a.key));
 			const ally = (kind: CapKind, a: AllySeen, since?: number): CapEvent => ({ kind, key: a.key, text: capText(kind, dev, now, undefined, a, since), ...(standing() ? { standing: standing()! } : {}) });
 			const of = (kind: CapKind, row: MainRow, since?: number): CapEvent => ({
-				kind, key: row.session, text: capText(kind, dev, now, row, undefined, since), subject: row.session, workspace: row.workspace, ...(standing(row.session) ? { standing: standing(row.session)! } : {}),
-				...(kind === "under" || kind === "stale" ? { main: row.session } : {}),
+				kind, key: row.session, text: capText(kind, dev, now, row, undefined, since, working.has(row.session)), subject: row.session, workspace: row.workspace, ...(standing(row.session) ? { standing: standing(row.session)! } : {}),
+				...((kind === "under" || kind === "stale") && !working.has(row.session) ? { main: row.session } : {}),
 			});
 			// A teammate device's paused main (its board's capacity row) is told to this device's standing main and the head tower as a local one is, its key the device's and the entry id: not the team's, so a box in two
 			// teams is told of once (T4 review F003; `key` is `<team>:<device>`, and an entry id is the device's own).

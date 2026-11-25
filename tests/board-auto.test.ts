@@ -397,6 +397,8 @@ test("a live idle main's entry shows as stale after 2 hours; a working main's an
 	assert.equal(joinLocal([e(T - STALE_MS - 1000)], main("working"), T)[0]!.stale, undefined, "a working main is not idle");
 	assert.equal(joinLocal([e(T - 5 * 60_000)], main("idle"), T)[0]!.stale, undefined);
 	assert.equal(joinLocal([], main("idle"), T)[0]!.stale, undefined, "no entry, nothing to be stale");
+	// T5R-F003: the broker calls it idle but its Herdr pane is working: the tower brief marks no stale (boss 2026-11-26 「herdr state 還在 working 的 agent 不必被詢問」)
+	assert.equal(joinLocal([e(T - STALE_MS - 1000)], [{ ...main("idle")[0]!, paneWorking: true }], T)[0]!.stale, undefined, "a working pane is never stale");
 	// RV-F002: an idle main that commands work (subagents, monitors) is not stale
 	assert.equal(joinLocal([e(T - STALE_MS - 1000)], [{ ...main("idle")[0]!, commanding: true }], T)[0]!.stale, undefined, "a commanding main is never stale");
 });

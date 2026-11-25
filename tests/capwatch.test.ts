@@ -280,3 +280,14 @@ test("under-30m: one escalation 30 minutes after the main's own notice while it 
 	await run(watch2, w2.clock, 60);
 	assert.deepEqual(w2.told.map((e) => e.kind), ["under"]);
 });
+
+test("under while the main's Herdr pane is working (T5R-F003): its tower and the standing main are told, the main itself is not, and under-30m says to ask it nothing", async () => {
+	const { w, make } = world({ budget: 4 });
+	w.cap("s-a", { doing: [{ owner: "w1", points: 2 }], ready: [{ points: 1 }], open: 2 });
+	w.mains[0] = { ...w.mains[0]!, paneStatus: "working" };
+	const watch = make();
+	await run(watch, w.clock, 41);
+	assert.deepEqual(w.told.map((e) => [e.kind, e.workspace, e.standing, e.main]), [["under", "w1", "s-st", undefined], ["under-30m", "w1", "s-st", undefined]]);
+	assert.match(w.told[1]!.text, / · its pane is working now: ask it nothing$/);
+	assert.doesNotMatch(w.told[1]!.text, /ask it to dispatch/);
+});
