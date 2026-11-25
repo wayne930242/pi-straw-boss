@@ -46,6 +46,7 @@ test("ensure-tower with no view makes the service with no tab; with view it make
 	const viewed = await ask(s, { cmd: "ensure-tower", workspace: "wA", view: true });
 	assert.equal(viewed.ok, true, JSON.stringify(viewed));
 	assert.equal(world.herdr.commands("tab", "create").length, 1, "one viewer tab");
+	assert.ok(world.herdr.moves.some((m) => m.tab_id === viewed.tab && m.insert_index === 0), "the viewer tab is moved first");
 	await until(() => typed().length >= 1, "the one typing");
 	assert.match(typed()[0]!, /^exec node ".*" prompt --workspace wA --state-dir /, "the viewer replaces the shell");
 	// The viewer polls: from now on the server types into that pane at no look, Retry, or run end.

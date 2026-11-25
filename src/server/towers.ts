@@ -1111,6 +1111,7 @@ export function createTowers(o: TowersOptions): Towers {
 		if (view) {
 			const tab = await createTab(run, ws, record.cwd ?? slot.stateDir, [], TOWER_LABEL);
 			await report(run, "pane", tab.paneId, { sb_role: "tower" }).catch(() => {});
+			await cfg.api("tab.move", { tab_id: tab.tabId, insert_index: 0 }).catch((cause: Error) => error("tab-move", cause.message));
 			record = { ...record, pane: tab.paneId, tab: tab.tabId };
 		}
 		writeService(slot, record);
