@@ -38,7 +38,8 @@ test("a standing main's section is standing.md alone, not main.md, with integrat
 		assert.match(t, /^You are the standing main of Herdr tab /, JSON.stringify(env));
 		assert.match(t, /## Kind: standing/);
 		assert.doesNotMatch(t, /- Dispatch: split work by owning app|Done when|of kind standing|Seam bindings|Integration is off/, JSON.stringify(env));
-		assert.ok(t.length <= 2500, `${t.length} characters`);
+		// 2,653 characters (measured 2026-11-26) after the standing main's read: a handed-over queue is dispatched, a merge needs the boss's words, a forwarded wait stays open; the same 2,800 cap as tests/duty-prompts.test.ts.
+		assert.ok(t.length <= 2800, `${t.length} characters`);
 		await world.stopAll();
 	}
 });
