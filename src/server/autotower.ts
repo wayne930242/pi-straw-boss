@@ -49,7 +49,7 @@ const rowOf = (t: Target, e: Entry, returned?: Returned): ParkedRow => ({ worksp
 
 /** What the raiser of a parked card is told when auto mode ends, under the `wait_returned` header: the boss is back, so it asks them again itself; sb closed the card, and no `wait_card` answer comes. */
 export function returnedText(id: string, what: string, at: string, role: string | undefined): string {
-	const again = role === "tower" ? "record it again with tower_memory as a wait for the boss, or ask as you asked before" : "ask them again yourself now with ask_user_question (or call_tower again if this session cannot ask them)";
+	const again = role === "tower" ? "record it again with tower_memory as a wait for the boss, or ask as you asked before" : "ask them again now with call_tower why: blocked and boss";
 	return `Wait ${id} (${what}) comes back to you: auto mode ended at ${hhmm(at)} and the boss is back. sb closed the card instead of keeping it for them, so no wait_card answer will come for it. If you still need it, ${again}.`;
 }
 /** The event of a tower (the head included) whose own parked card comes back: it records the wait again if it still needs the boss. */

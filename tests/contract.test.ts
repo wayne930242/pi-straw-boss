@@ -58,7 +58,7 @@ test("robot_hand: pending and closed reach the bridge; an answer goes out as one
 	stop();
 	off();
 	assert.equal(b.count(), 1, "only the test's own owner listener is left");
-	assert.deepEqual(OWNERS.map((o) => o.name), ["robot-hand", "robot-hand-secret", "rpiv", "pi-mcp-adapter", "pi-code", "pi-ui", "straw-link-gate", "straw-link-request"]);
+	assert.deepEqual(OWNERS.map((o) => o.name), ["robot-hand", "robot-hand-secret", "rpiv", "pi-mcp-adapter", "pi-code", "pi-ui", "straw-link-gate", "straw-link-request", "sb-boss"]); // sb-boss: call_tower's boss question (0.91.0, bossask.ts)
 	assert.equal(mcpAdapter.tool, undefined, "MCP approvals belong to no tool call");
 });
 
@@ -254,7 +254,7 @@ test("the wrap of ctx.ui is a contract v1 gate under straw-boss:ui that yields t
 });
 
 test("cancel: only the owners with a cancel path take one (rpiv, the ctx.ui wrap, the link gate and request); it goes out as {cancel: true} under the page's answerId, and checkAnswer takes it for those alone and with nothing else", () => {
-	assert.deepEqual(OWNERS.map((o) => [o.name, o.cancellable]), [["robot-hand", true], ["robot-hand-secret", undefined], ["rpiv", true], ["pi-mcp-adapter", undefined], ["pi-code", undefined], ["pi-ui", true], ["straw-link-gate", true], ["straw-link-request", true]]);
+	assert.deepEqual(OWNERS.map((o) => [o.name, o.cancellable]), [["robot-hand", true], ["robot-hand-secret", undefined], ["rpiv", true], ["pi-mcp-adapter", undefined], ["pi-code", undefined], ["pi-ui", true], ["straw-link-gate", true], ["straw-link-request", true], ["sb-boss", true]]);
 	assert.deepEqual([rpiv.cancellable, uiPrompt.cancellable, linkGate.cancellable, linkRequest.cancellable], [true, true, true, true]);
 	// rpiv: the cancel is the page's, under its answerId (the abort's own cancel keeps its `cancel-` id), and the owner's verdict comes back as for an answer.
 	const b = bus(), opened: Dialog[] = [], verdicts: unknown[] = [];

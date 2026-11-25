@@ -3,7 +3,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { AUTO_FILE, seal } from "../src/autostate.ts";
-import { refusedText } from "../src/autotext.ts";
+import { offNotice, refusedText } from "../src/autotext.ts";
+import { checkAnswer } from "../src/dialogs.ts";
+import { type Bus, bossQuestion, type Dialog } from "../src/owners.ts";
+import { returnedText } from "../src/server/autotower.ts";
 import { createAutoMode } from "../src/server/automode.ts";
 import { createBossAsk, OWN_ANSWER } from "../src/bossask.ts";
 import { CALL_TOWER_DESCRIPTION } from "../src/link/waitcall.ts";
@@ -39,6 +42,7 @@ const ask = (a: Agent, boss: Record<string, unknown>, extra: Record<string, unkn
 
 test("the standing prompts carry none of 0.90.0's sentences: main.md's blocked covers a decision again, tower-run.md routes it as in 0.89.0; call_tower names boss in one clause", () => {
 	const main = read("main.md");
+	assert.ok(main.includes("Re-ask a wait you raised only with `boss_wait_ask`; a `wait_returned` one with `call_tower` `boss`."), "one re-ask way (F003)");
 	for (const gone of ["ask him yourself with `ask_user_question`", "other than the boss", "parks it and it returns as `wait_returned` when he is back", "call `boss_wrap`", "daily memory entry"]) assert.ok(!main.includes(gone), `main.md: ${gone}`);
 	assert.ok(main.includes("`blocked` when you wait on someone outside your tab or on a decision your authorizations do not cover, or need a work's owner and do not know who"));
 	assert.ok(main.includes("its worktree is removed, and your board is cleared."));
@@ -124,7 +128,7 @@ test("boss goes with why blocked alone, and is refused beside waitsOn, linkWait,
 });
 
 test("a teammate's turn, an unattended device, no terminal, a train or a tower: no dialog, the question goes to the tower", async () => {
-	const kit = (s: Record<string, unknown>, role = "main") => ({ cfg: { face: { every: () => () => {} } }, s: { autoOn: () => false, isTrain: false, isTower: false, ...s }, role: () => role }) as unknown as Kit;
+	const kit = (s: Record<string, unknown>, role = "main") => ({ pi: { events: { on: () => () => {}, emit: () => {} } }, cfg: { face: { every: () => () => {} } }, s: { autoOn: () => false, isTrain: false, isTower: false, ...s }, role: () => role }) as unknown as Kit;
 	const ui = { select: async () => { throw new Error("drawn"); }, input: async () => { throw new Error("drawn"); } } as never;
 	const q = { question: "Deploy?" }, attended = () => true, local = () => false;
 	assert.deepEqual(await createBossAsk(kit({ remoteOrigin: "bob" }), { attended, remote: local })(q, undefined, { hasUI: true, ui }), { kind: "tower" });
@@ -158,4 +162,69 @@ test("auto mode's own transition cancelling the relayed dialog first: the questi
 	const result = (await a.fireResult("tool_result", { toolName: "call_tower", toolCallId: "c1", input: { why: "blocked" }, content: done.content, isError: false })) as { content: { text: string }[] };
 	assert.equal(result.content[0]!.text, textOf(done), "its own result stays");
 	assert.match(result.content[1]!.text, /^Auto mode: no answer from the boss before it ends\./);
+	await settle();
+	assert.ok(!a.sent.some((m) => m.customType === "straw-auto" && /call_tower was cancelled/.test(m.content)), "no cancel text for it (F002)");
+});
+
+/** The page's side of the relay: the questionnaire the bridge would relay (owners.ts `bossQuestion`), and an answer checked as the hub checks it, handed to the owner. */
+function page(a: Agent) {
+	const bus: Bus = { on: (c, h) => a.on(c, h), emit: (c, d) => a.emit(c, d) }, open: Dialog[] = [];
+	bossQuestion.listen(bus, { open: (_ad, d) => void open.push(d), closed: () => {} });
+	const answer = (json: Record<string, unknown>) => new Promise<{ accepted: boolean; reason?: string }>((resolve) => {
+		const d = open.at(-1)!, checked = checkAnswer({ dialog: d.id, digest: d.digest, questions: d.questions, cancel: true }, json);
+		if (typeof checked === "string") throw new Error(checked);
+		bossQuestion.answer(bus, d, { id: d.id, answerId: `ans-${open.length}`, digest: d.digest, ...checked }, resolve);
+	});
+	return { open, answer };
+}
+
+test("F001: the GUI or a paired device answers it fully: an option, its own words, or a question with no options; the answer is the boss's and nothing goes to the tower", async () => {
+	const r = await rig(), p = page(r.a);
+	const picked = r.a.tool("call_tower", { message: "m", why: "blocked", boss: { question: "Deploy now?", options: ["Deploy", "Wait"] } }, { id: "c1" });
+	await until(() => p.open.length === 1 && r.a.dialogs.length === 1, "relayed and drawn");
+	assert.deepEqual(p.open[0]!.questions, [{ question: "The boss decides: Deploy now?", multiple: false, options: [{ title: "Deploy" }, { title: "Wait" }] }]);
+	assert.equal(p.open[0]!.toolCallId, "c1");
+	assert.deepEqual(await p.answer({ answers: [{ choices: [1] }] }), { accepted: true });
+	assert.equal(r.a.dialogs[0]!.settled, true, "the terminal dialog went");
+	assert.match(textOf(await picked), /^The boss chose: "Wait"\. This is the boss's answer/);
+	const typed = r.a.tool("call_tower", { message: "m", why: "blocked", boss: { question: "Deploy now?", options: ["Deploy"] } }, { id: "c2" });
+	await until(() => p.open.length === 2, "relayed");
+	assert.deepEqual(await p.answer({ answers: [{ text: " after the backup " }] }), { accepted: true });
+	assert.match(textOf(await typed), /^The boss answered: "after the backup"\./);
+	let input: AbortSignal | undefined;
+	r.a.ui.input = ((_t: string, _p: string, o: { signal: AbortSignal }) => new Promise((resolve) => ((input = o.signal), o.signal.addEventListener("abort", () => resolve(undefined))))) as never;
+	const free = r.a.tool("call_tower", { message: "m", why: "blocked", boss: { question: "Which window?" } }, { id: "c3" });
+	await until(() => p.open.length === 3 && input !== undefined, "relayed with no options; the terminal input is open");
+	assert.deepEqual(p.open[2]!.questions![0]!.options, []);
+	await assert.rejects(p.answer({ answers: [{}] }), /pick an option or write your own answer/, "the hub refuses an empty answer");
+	// Two answers at once (the page and a paired device): the first wins, the second hears the dialog closed.
+	assert.deepEqual(await Promise.all([p.answer({ answers: [{ text: "Sunday 02:00" }] }), p.answer({ answers: [{ text: "late" }] })]), [{ accepted: true }, { accepted: false, reason: "closed" }]);
+	assert.equal(input!.aborted, true, "the terminal input went");
+	assert.match(textOf(await free), /^The boss answered: "Sunday 02:00"\./);
+	const cancelled = r.a.tool("call_tower", { message: "m", why: "blocked", boss: { question: "Which window?" } }, { id: "c4" });
+	await until(() => p.open.length === 4, "relayed");
+	assert.deepEqual(await p.answer({ cancel: true }), { accepted: true });
+	assert.match(textOf(await cancelled), /^The boss did not answer/);
+	await settle();
+	assert.equal(toTower().length, 0);
+});
+
+test("F002: auto mode starting between the pick of a typed answer and its input: no input opens, and the result says only that it went to the tower", async () => {
+	const r = await rig();
+	let inputs = 0;
+	r.a.ui.input = (async () => (inputs++, "x")) as never;
+	const pending = ask(r.a, { question: "Deploy now?", options: ["Deploy"] });
+	await until(() => r.a.dialogs.length === 1, "drawn");
+	auto(true, 1);
+	r.a.dialogs[0]!.settle(OWN_ANSWER);
+	const done = await pending;
+	assert.equal(inputs, 0, "no input after auto mode started");
+	assert.match(textOf(done), /^Sent to the tower of .*Auto mode started while the boss was asked/);
+	const result = (await r.a.fireResult("tool_result", { toolName: "call_tower", toolCallId: "call", input: { why: "blocked" }, content: done.content, details: done.details, isError: false })) as { content: { text: string }[] };
+	assert.ok(!result.content.some((c) => /is refused|was cancelled by sb/.test(c.text)), "no refusal or cancel line");
+});
+
+test("F003: one way to ask again: a wait that comes back says call_tower with boss", () => {
+	assert.match(returnedText("W2", "Pick a host.", "2026-11-21T07:40:00Z", "main"), /ask them again now with call_tower why: blocked and boss\.$/);
+	assert.match(offNotice("2026-11-25T01:00:00Z", "main"), /Ask them again then, with call_tower why: blocked and boss\./);
 });

@@ -255,7 +255,7 @@ test("AR-D3: at the end of auto mode a parked card goes back to the main that ra
 	const told = sentTo("main-1").filter((m) => m.fields.kind === "wait_returned");
 	assert.equal(told.length, 1);
 	assert.equal(told[0]!.fields.wait, "W1");
-	assert.match(told[0]!.text, /Wait W1 \(Say go in the terminal\.\) comes back to you: auto mode ended at \d\d:\d\d and the boss is back\. sb closed the card instead of keeping it for them, so no wait_card answer will come for it\. If you still need it, ask them again yourself now with ask_user_question \(or call_tower again if this session cannot ask them\)\.$/);
+	assert.match(told[0]!.text, /Wait W1 \(Say go in the terminal\.\) comes back to you: auto mode ended at \d\d:\d\d and the boss is back\. sb closed the card instead of keeping it for them, so no wait_card answer will come for it\. If you still need it, ask them again now with call_tower why: blocked and boss\.$/);
 	assert.ok(sentTo("main-1").every((m) => m.fields.kind !== "wait_card"), "the tower relays nothing: no wait_card");
 	assert.deepEqual(reportFile().parked.map((p) => [p.id, p.from, p.returned]), [["W1", "docs-main", "raiser"]]);
 	assert.match(String(off.report), /^- W1 \(Alpha, action, from docs-main\): Say go in the terminal\. → back to docs-main$/m);
@@ -306,7 +306,7 @@ test("AR-D4: a message the broker does not take closes the card as not reached",
 
 test("AR-D3: returnedText tells a tower raiser to record the wait again, and ownReturnedText names the tower's own card", () => {
 	assert.match(returnedText("W2", "Pick a host.", "2026-11-21T07:40:00Z", "tower"), /If you still need it, record it again with tower_memory as a wait for the boss, or ask as you asked before\.$/);
-	assert.match(returnedText("W2", "Pick a host.", "2026-11-21T07:40:00Z", "main"), /ask them again yourself now with ask_user_question/);
+	assert.match(returnedText("W2", "Pick a host.", "2026-11-21T07:40:00Z", "main"), /ask them again now with call_tower why: blocked and boss/);
 	assert.match(ownReturnedText("W3", "Look.", "2026-11-21T07:40:00Z"), /^Your wait W3 \(Look\.\) was parked while the boss was away\./);
 	assert.ok(header({ from: { name: "t", id: "sb-tower-wa", role: "tower" }, kind: "wait_returned", scope: "session", to: [{ name: "m", id: "m", role: "main" }], reply: false, wait: "W2" }).includes("kind=wait_returned"));
 });

@@ -165,4 +165,8 @@ export const linkGate = contract("straw-link-gate", GATE_PREFIX, undefined, true
 /** The approval dialog of a `link_request` (src/link/approval.ts): owned by the tool whose call it asks about, so only that call in flight can open it. */
 export const REQUEST_PREFIX = "straw-link:request";
 export const linkRequest = contract("straw-link-request", REQUEST_PREFIX, "link_request", undefined, SELECT_SHAPE, undefined, true);
-export const OWNERS: OwnerAdapter[] = [robotHand, secretDrop, rpiv, mcpAdapter, piCode, uiPrompt, linkGate, linkRequest];
+/** `call_tower`'s boss question (bossask.ts): sb's own questionnaire of one question, its options and the boss's own words, so the page and a paired device answer it as rpiv's; it takes a cancel. Its tool's twin select is dropped. */
+export const BOSS_PREFIX = "straw-boss:boss";
+const QUESTIONS_SHAPE: Shape = { parse: (owner, raw) => { const p = raw as { version?: unknown; id?: unknown; toolCallId?: unknown; digest?: unknown; questions?: Question[] }; return p?.version === 1 && str(p.id) && p.id.length <= 64 && str(p.digest) && str(p.toolCallId) && Array.isArray(p.questions) && p.questions.every((q) => str(q?.question) && Array.isArray(q.options) && q.options.every((o) => str(o?.title))) ? { owner, id: p.id, toolCallId: p.toolCallId, digest: p.digest, questions: p.questions.map((q) => ({ question: q.question, multiple: false, options: q.options.map((o) => ({ title: o.title })) })) } : undefined; }, body: (a) => (a.cancel ? { cancel: true } : { answers: a.answers }) };
+export const bossQuestion = contract("sb-boss", BOSS_PREFIX, "call_tower", undefined, QUESTIONS_SHAPE, undefined, true);
+export const OWNERS: OwnerAdapter[] = [robotHand, secretDrop, rpiv, mcpAdapter, piCode, uiPrompt, linkGate, linkRequest, bossQuestion];

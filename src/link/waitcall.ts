@@ -10,7 +10,7 @@ import type { Link } from "./runtime.ts";
 
 /** What a tool body gets besides its parameters: the call's signal and pi's context, for a dialog in the pane. */
 export type ToolCtx = Pick<ExtensionContext, "hasUI" | "ui">;
-type Tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>, signal?: AbortSignal, ctx?: ToolCtx) => Promise<{ text: string; details?: unknown }>) => void;
+type Tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>, signal?: AbortSignal, ctx?: ToolCtx, id?: string) => Promise<{ text: string; details?: unknown }>) => void;
 export const CALL_TOWER_DESCRIPTION = "Send one message to your workspace's tower, or another by workspace, at three points only: why milestone (something landed; reply false unless needed), shared (a heads-up before you change something outside your tab; reply false; go ahead, the tower answers only on a clash), blocked (you wait on someone outside your tab, or on a decision your authorizations do not cover; the boss's own decision: boss, asked in your pane). Opens the tower when none runs; the code writes the header; it answers through intercom unless reply is false. Progress goes on your board, not here.";
 
 /** `bossAsk` (bossask.ts) draws a `boss` question in a local main's pane; without it (a tower run) the question goes to the tower in the message. */
@@ -40,12 +40,12 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 			}, { description: "Instead of your tower: that device's standing main, a question (why blocked) or a notice (why milestone)." })),
 			boss: bossParameter(),
 		}),
-		async ({ message, why, workspace, reply, waitsOn, linkWait, standing, boss }, signal, ctx) => {
+		async ({ message, why, workspace, reply, waitsOn, linkWait, standing, boss }, signal, ctx, id) => {
 			if ([waitsOn, linkWait, standing, boss].filter(Boolean).length > 1) throw new Error("waitsOn, linkWait, standing, and boss do not go together");
 			if (boss) {
 				// A decision only the boss can make (bossask.ts): drawn in this pane, its answer the result and nothing sent; else the tower gets it as blocked.
 				if (why !== "blocked") throw new Error("boss goes with why blocked: a decision only the boss can make");
-				const q = bossOf(boss), asked: Asked = bossAsk ? await bossAsk(q, signal, ctx) : { kind: "tower" };
+				const q = bossOf(boss), asked: Asked = bossAsk ? await bossAsk(q, signal, ctx, id) : { kind: "tower" };
 				if (asked.kind !== "tower") return { text: asked.text, details: { boss: asked.kind } };
 				const sent = await callTower(withBoss(message, q), workspace, reply ?? true, why);
 				return { text: asked.note ? `${sent.text} ${asked.note}` : sent.text, details: { ...sent.details, boss: "tower" } };

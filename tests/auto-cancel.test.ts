@@ -85,7 +85,7 @@ test("a notice while a turn runs is a steer; the end of auto mode tells every se
 	assert.match(sentTexts(a)[1]!.content, new RegExp(offNotice(undefined, "main").replace(/\d\d:\d\d|\?/, ".+").slice(0, 40)));
 	// AR-D3 (docs/specs/2026-11-21-auto-return.md, boss 2026-11-21): a parked wait comes back to its raiser as a wait_returned message, and the raiser asks the boss again itself; this inverts the 2026-11-16 rule.
 	const said = sentTexts(a)[1]!.content;
-	assert.match(said, /A wait parked for them is not kept for them: it comes back to you as a wait_returned message, and its card is closed\. Ask them again yourself then, with ask_user_question\./);
+	assert.match(said, /A wait parked for them is not kept for them: it comes back to you as a wait_returned message, and its card is closed\. Ask them again then, with call_tower why: blocked and boss\./);
 	assert.match(said, /A card that was not parked still waits for them: when the boss is with you and the answer cannot wait, call boss_wait_ask \(its id, or none for every card you raised\): sb shows the card and his answer resolves it everywhere\.$/);
 	assert.doesNotMatch(said, /Never re-ask a parked wait|Parked waits go to them in one list/);
 	assert.match(offNotice(undefined, "train"), /Ask again with call_tower then\.$/);

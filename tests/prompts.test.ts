@@ -33,7 +33,8 @@ import { PROMPT_DIR } from "./fakes.ts";
 // 2026-11-25 (idle wrap-up, docs/specs/2026-11-25-idle-wrap-up.md part 1; boss 2026-11-25; measured): main.md off 617 to 654, on 862 to 899 (done: every todo completed or deleted, a daily memory entry, then `boss_wrap`; never close the pane yourself).
 // 2026-11-25 (boss questions asked by the main, same spec part 2; boss 2026-11-25; measured): main.md off 654 to 683, on 899 to 928 (`blocked` is for someone other than the boss; the boss's own decision: `ask_user_question`, or under auto mode `blocked`, back as `wait_returned`).
 // 2026-11-26 (0.91.0, prompts delivered when needed, same spec part 2 as rewritten; boss 2026-11-25 「提示詞可以逐步交付」; measured): main.md off 683 to 617, on 928 to 862: the done line and `call_tower`'s line are 0.89.0's again (the wrap-up steps come with the nudge, the boss question is `call_tower`'s `boss`).
-const BUDGETS: Record<string, number> = { "main.md": 617, "tower.md": 516, "member.md": 140, "member-no-main.md": 150 };
+// 2026-11-26 (0.91.0 review F003, one way to ask again; measured): main.md off 617 to 618, on 862 to 863: a `wait_returned` wait is asked again with `call_tower` `boss`, not `ask_user_question`.
+const BUDGETS: Record<string, number> = { "main.md": 618, "tower.md": 516, "member.md": 140, "member-no-main.md": 150 };
 // Its review fixes (SB-F001, F003, F005: the Approval line quotes words already given and asks only when they are missing, the tower reports nothing back on a forwarded slip): main.md 680 to 700, tower.md 390 to 395, integrator.md 320 to 340 (SB-F002 and F006: the deploy gate before `Merge`, a subagent briefed for one step).
 // Train workers (docs/specs/2026-11-07-train-workers.md §13.1, task 8): tower.md on 424 to 471 (forward with `forward`, open a train with `role: "train"`, a car notice's `blocked`; off stays 402); main.md on 715 to 720 (Batch owner, Handoff route, Record and Approval say who schedules, who departs, who notifies, and where the boss's nod is quoted); integrator.md 340 to 380 and train.md ~450 have their own budgets below.
 // Fix round of task 8 (prompts-review.md, TP-F001 to F018): budgets = measured: main.md on 720 to 725, tower.md on 471 to 469 (the resident tower forwards nothing), planning.md on 670 to 681 (the check command), integrator.md 380 to 412 (todo lifecycle, legacy trains), train.md 450 to 511 (holds, load and lock, the Record file, the metadata.sb keys).
@@ -44,7 +45,7 @@ const BUDGETS: Record<string, number> = { "main.md": 617, "tower.md": 516, "memb
 // 2026-11-23 (the tower closes agent panes, docs/specs/2026-11-23-tower-close-panes.md §5): measured: tower.md on 508 to 538 and off 438 to 468 (close a main that handed over once its successor is live, whoever opened it; list and close dead agent panes).
 // 2026-11-23 (lite main, as for BUDGETS above; measured): main.md on 743 to 786.
 // 2026-11-23 (D, review threads, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.5; measured): main.md on 786 to 808 (a reviewed change: boss_pair, both briefs, Thread: T<n>, relay nothing).
-const ON_BUDGETS: Record<string, number> = { "main.md": 862, "tower.md": 586 };
+const ON_BUDGETS: Record<string, number> = { "main.md": 863, "tower.md": 586 };
 // 2026-11-08 (todo #125 task 5, TP-F004): `{{cli}}` is the command that runs cli.mjs.
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir", "state", "cli", "duty"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
@@ -236,7 +237,7 @@ test("wait cards: head-run.md and main.md say the same in their words", () => {
 test("wait cards asked again: main.md, tower-run.md, and head-run.md name boss_wait_ask and its limits; tower.md does not", () => {
 	const main = read("main.md"), run = read("tower-run.md"), head = read("head-run.md");
 	// AR-D3 (docs/specs/2026-11-21-auto-return.md): a parked wait comes back closed when auto mode ends, and its raiser asks again itself; boss_wait_ask stays for the cards that were not parked.
-	assert.ok(main.includes("A `wait_card` message is the boss's answer to your wait: act on it; it says when to call `secret_drop`. Re-ask a wait you raised only with `boss_wait_ask`; a `wait_returned` one with `ask_user_question`."), "main.md");
+	assert.ok(main.includes("A `wait_card` message is the boss's answer to your wait: act on it; it says when to call `secret_drop`. Re-ask a wait you raised only with `boss_wait_ask`; a `wait_returned` one with `call_tower` `boss`."), "main.md"); // 0.91.0 review F003: one way to ask again
 	assert.ok(run.includes("- Never ask the boss yourself (no questions, robot_hand, focus changes), except `boss_wait_ask` for cards in your memory while the boss is at this pane: sb draws the card, you never word it. Its press also reaches you as an event: act once, then resolve the wait. A wait of yours parked under auto mode comes back closed when it ends: record it again if it still needs the boss. A decision only the boss can make goes in the handoff note as above."), "tower-run.md");
 	assert.ok(head.includes("call `boss_auto` with `on: true`; it switches at once, so tell the boss it is on.") && head.includes("Its end sends every parked card back to whoever raised it, to ask him again; one of your own comes back to you as an event: record it again if it still needs him."), "head-run.md (AR-D1, AR-D3)");
 	assert.ok(head.includes("When he is at this pane and says he is back, or asks what waits, show the open cards with `boss_wait_ask` (no ids: every card) instead of listing them in text."), "head-run.md");

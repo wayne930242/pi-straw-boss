@@ -17,7 +17,7 @@ export const cancelledText = (since: string | undefined, tool: string, kind: Age
 export const onNotice = (since: string | undefined) => `sb: auto mode is on since ${clock(since)}: the boss is away until they end it. Nothing that waits for them runs; decide only where the boss's words cover it, or park it; never wait for the boss.`;
 /** How each kind asks again for a parked wait that came back when auto mode ended (docs/specs/2026-11-21-auto-return.md, AR-D3). */
 const AGAIN: Record<AgentKind, string> = {
-	main: "Ask them again yourself then, with ask_user_question.",
+	main: "Ask them again then, with call_tower why: blocked and boss.",
 	subagent: "Ask again then as your brief allows (caller_ping your dispatcher).",
 	train: "Ask again with call_tower then.",
 	run: "Record it again with tower_memory if it still needs them.",

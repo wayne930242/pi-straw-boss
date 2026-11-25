@@ -7,6 +7,7 @@ import { type AgentKind, CALL_TOWER_LINE, cancelledText, offNotice, onNotice, re
 import type { Bridge, Ended } from "./bridge.ts";
 import type { Declined } from "./declined.ts";
 import type { Ask } from "./host.ts";
+import { bossQuestion } from "./owners.ts";
 import type { Kit } from "./state.ts";
 import { secretShaped } from "./server/waitcard.ts";
 
@@ -80,10 +81,10 @@ export function createAuto({ pi, cfg, s, guiDir, me }: Kit, d: AutoDeps = {}) {
 		}
 	});
 	pi.on("tool_result", (event) => {
-		// A call sb cancelled never reads as the boss's Esc: the result is replaced, by the call's id. A `call_tower` boss question keeps its own: it sent the question to the tower itself (bossask.ts).
-		const cancelledTool = cancelledIds.get(event.toolCallId);
-		if (cancelledTool !== undefined && (cancelledIds.delete(event.toolCallId), event.toolName !== "call_tower")) return { content: [{ type: "text" as const, text: cancelledText(current?.since, cancelledTool, kind()) }] };
-		const dialog = escaped.get(event.toolCallId);
+		// A call sb cancelled never reads as the boss's Esc: the result is replaced, by the call's id. A `call_tower` boss question that went to the tower keeps its own result, which says so (bossask.ts).
+		const cancelledTool = cancelledIds.get(event.toolCallId), sentBoss = event.toolName === "call_tower" && (event.details as { boss?: unknown } | undefined)?.boss === "tower";
+		if (cancelledTool !== undefined && (cancelledIds.delete(event.toolCallId), !sentBoss)) return { content: [{ type: "text" as const, text: cancelledText(current?.since, cancelledTool, kind()) }] };
+		const dialog = sentBoss ? undefined : escaped.get(event.toolCallId);
 		escaped.delete(event.toolCallId);
 		let line: string | undefined;
 		if (dialog) line = refusedText(current?.since, dialog, kind());
@@ -112,11 +113,13 @@ export function createAuto({ pi, cfg, s, guiDir, me }: Kit, d: AutoDeps = {}) {
 	/** A confirmed `on`: the open waits end (an owner that takes a cancel gets it; for the rest the turn is aborted), each with sb's text; a first `on` also tells the session once. */
 	function cancelOpen(st: AutoState, first: boolean) {
 		const unrelayed = tracker?.unrelayed() ?? 0, ended = d.bridge?.cancelWaits?.((dlg) => bossDialogs.has(dlg.id)) ?? { cancelled: [], stuck: [] };
-		for (const e of [...ended.cancelled, ...ended.stuck]) {
+		// `call_tower`'s boss question (bossask.ts) is cancelled too, but says nothing here: it sends itself to the tower and its result says so.
+		const own = (e: Ended) => e.dialog.owner !== bossQuestion.name;
+		for (const e of [...ended.cancelled, ...ended.stuck].filter(own)) {
 			if (e.toolCallId) (cancelledIds.set(e.toolCallId, e.tool), d.declined?.sbCancelled(e.toolCallId));
 			note({ tool: e.tool, kind: "cancelled", gist: gistOfDialog(e) });
 		}
-		const texts = [...new Set([...ended.cancelled, ...ended.stuck].map((e) => cancelledText(st.since, e.tool, kind())))];
+		const texts = [...new Set([...ended.cancelled, ...ended.stuck].filter(own).map((e) => cancelledText(st.since, e.tool, kind())))];
 		if (first && !d.silent?.()) texts.push(onNotice(st.since));
 		// An owner that took the cancel closes the ui.custom it drew (rpiv, robot_hand 0.8.0), which the wrap counts as a dialog nobody relays: those do not need the turn aborted (AMC-F001).
 		const open = Math.max(0, unrelayed - ended.cancelled.length);

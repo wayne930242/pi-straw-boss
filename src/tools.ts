@@ -61,11 +61,11 @@ export const closeParameters = () => Type.Object({
 });
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
 export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, openTower, promote, digest, closeMain, closePane, deadPanes, listen, link, server, towerCall, boardFill, pair, waitAsk, bossAsk }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read" | "openTower"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; /** A tower's close of a dead agent pane and its list (closemain.ts, deadpane.ts). */ closePane: Control["closePane"]; deadPanes: Control["deadPanes"]; /** Registers the control channel: a main that handed over answers its tower's close (closemain.ts). */ listen: () => void; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill; /** A main's review threads for board_read (bosspair.ts); none in a tower run. */ pair?: Pick<BossPair, "read" | "list">; /** Registers `boss_wait_ask` for a joined session (waitask.ts `mainWaitAsk`); a tower run registers its own (runmode.ts). */ waitAsk?: () => void; /** Draws a `call_tower` boss question in this main's pane (bossask.ts); none in a tower run. */ bossAsk?: Parameters<typeof callTowerTool>[4] }) {
-	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>, signal?: AbortSignal, ctx?: ToolCtx) => Promise<{ text: string; details?: unknown }>) =>
+	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>, signal?: AbortSignal, ctx?: ToolCtx, id?: string) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
-			execute: async (_id, params, signal, _update, ctx) => {
-				const { text, details } = await body(params, signal, ctx);
+			execute: async (id, params, signal, _update, ctx) => {
+				const { text, details } = await body(params, signal, ctx, id);
 				return { content: [{ type: "text", text }], details };
 			},
 		});
