@@ -86,10 +86,11 @@ export function createCapWatch(d: CapDeps) {
 				kind, key: row.session, text: capText(kind, dev, now, row, undefined, since), subject: row.session, workspace: row.workspace, ...(standing(row.session) ? { standing: standing(row.session)! } : {}),
 				...(kind === "under" || kind === "stale" ? { main: row.session } : {}),
 			});
-			// A teammate device's paused main (its board's capacity row) is told to this device's standing main and the head tower as a local one is, its key the device's and the entry id.
-			const allyRow = (a: AllySeen, id: string, until?: number) => ({ session: `${a.key}:${id}`, name: a.mains?.find((m) => m.id === id)?.name ?? id, workspace: "", points: 0, ready: 0, open: 0, paused: until !== undefined ? { until } : {} }) as MainRow;
+			// A teammate device's paused main (its board's capacity row) is told to this device's standing main and the head tower as a local one is, its key the device's and the entry id: not the team's, so a box in two
+			// teams is told of once (T4 review F003; `key` is `<team>:<device>`, and an entry id is the device's own).
+			const allyRow = (a: AllySeen, id: string, until?: number) => ({ session: `${a.key.slice(a.key.indexOf(":") + 1)}:${id}`, name: a.mains?.find((m) => m.id === id)?.name ?? id, workspace: "", points: 0, ready: 0, open: 0, paused: until !== undefined ? { until } : {} }) as MainRow;
 			const allyOf = (kind: CapKind, a: AllySeen, row: MainRow): CapEvent => ({ kind, key: row.session, text: capText(kind, dev, now, row, a), ...(standing() ? { standing: standing()! } : {}) });
-			const allyPaused = allies.flatMap((a) => (a.paused ?? []).map((p) => ({ a, row: allyRow(a, p.id, p.until) })));
+			const allyPaused = [...new Map(allies.flatMap((a) => (a.paused ?? []).map((p) => ({ a, row: allyRow(a, p.id, p.until) }))).map((x) => [x.row.session, x])).values()];
 			const under = underFor(dev, now) !== undefined ? dev.mains.filter((r) => r.minReady !== undefined && dev.points + r.minReady <= dev.budget!) : [], underKeys = new Set(under.map((r) => r.session));
 			const flagged: CapEvent[] = [
 				...under.map((r) => of("under", r)),
@@ -121,7 +122,7 @@ export function createCapWatch(d: CapDeps) {
 			// A quota that cleared while its main still runs is told once: the main is back at work.
 			const rows = new Map(dev.mains.map((r) => [r.session, r]));
 			// An ally's main is back when its board still has it and its pause is gone.
-			const allyMains = new Map<string, { a: AllySeen; row: MainRow }>(allies.flatMap((a) => (a.mains ?? []).map((m) => [`${a.key}:${m.id}`, { a, row: allyRow(a, m.id) }] as const)));
+			const allyMains = new Map<string, { a: AllySeen; row: MainRow }>(allies.flatMap((a) => (a.mains ?? []).map((m) => ((row) => [row.session, { a, row }] as const)(allyRow(a, m.id)))));
 			for (const mark of active) {
 				const kind = mark.slice(0, mark.indexOf(":")), session = mark.slice(mark.indexOf(":") + 1).split("@")[0]!, row = rows.get(session), theirs = allyMains.get(session);
 				if (kind !== "quota" || flagged.some((e) => e.kind === "quota" && e.key === session)) continue;

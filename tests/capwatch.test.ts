@@ -154,17 +154,28 @@ test("an ally's paused main is told once as quota, naming the device; resumed wh
 	w.allies = [box([{ id: "e1", until }, { id: "e2", until }])];
 	const watch = make();
 	await run(watch, w.clock, 40);
-	assert.deepEqual(w.told.map((e) => [e.kind, e.key, e.standing, e.subject, e.workspace, e.main]), [["quota", "t:d2:e1", "s-st", undefined, undefined, undefined], ["quota", "t:d2:e2", "s-st", undefined, undefined, undefined]], "once each, to the standing main");
+	assert.deepEqual(w.told.map((e) => [e.kind, e.key, e.standing, e.subject, e.workspace, e.main]), [["quota", "d2:e1", "s-st", undefined, undefined, undefined], ["quota", "d2:e2", "s-st", undefined, undefined, undefined]], "once each, to the standing main");
 	assert.match(w.told[0]!.text, /^capacity quota · main "work-on" · device "box 2" \(yixv3j\) · quota · resumes \d\d:\d\d$/);
 	w.allies = [box([{ id: "e2", until }])];
 	await run(watch, w.clock, 2);
-	assert.deepEqual(w.told.slice(2).map((e) => [e.kind, e.key, e.text]), [["resumed", "t:d2:e1", 'capacity quota resumed · main "work-on" · device "box 2" (yixv3j)']]);
+	assert.deepEqual(w.told.slice(2).map((e) => [e.kind, e.key, e.text]), [["resumed", "d2:e1", 'capacity quota resumed · main "work-on" · device "box 2" (yixv3j)']]);
 	w.allies = [box([{ id: "e2", until: until + 60 * MIN }])];
 	await run(watch, w.clock, 2);
-	assert.deepEqual(w.told.slice(3).map((e) => [e.kind, e.key]), [["quota", "t:d2:e2"]], "another resume time is a new pause");
+	assert.deepEqual(w.told.slice(3).map((e) => [e.kind, e.key]), [["quota", "d2:e2"]], "another resume time is a new pause");
 	w.allies = [box(undefined, [{ id: "e1", name: "work-on" }])];
 	await run(watch, w.clock, 2);
 	assert.equal(w.told.length, 4, "a main gone from the board is not told resumed");
+});
+test("T4 review F003: a box in two teams is one device: its paused main is told once, and its resume once", async () => {
+	const { w, make } = world();
+	const until = w.clock.now() + 3 * 60 * MIN, box = (team: string, paused?: AllySeen["paused"]): AllySeen => ({ key: `${team}:d2`, label: "box 2", short: "yixv3j", online: true, boardAgeMs: MIN, timed: true, open: true, mains: [{ id: "e1", name: "work-on" }], ...(paused ? { paused } : {}) });
+	w.allies = [box("t", [{ id: "e1", until }]), box("u", [{ id: "e1", until }])];
+	const watch = make();
+	await run(watch, w.clock, 3);
+	assert.deepEqual(w.told.map((e) => [e.kind, e.key]), [["quota", "d2:e1"]]);
+	w.allies = [box("t"), box("u")];
+	await run(watch, w.clock, 2);
+	assert.deepEqual(w.told.map((e) => [e.kind, e.key]), [["quota", "d2:e1"], ["resumed", "d2:e1"]]);
 });
 
 test("the throttle outlives a restart of the server, and an event nobody took is tried again at the next look", async () => {
