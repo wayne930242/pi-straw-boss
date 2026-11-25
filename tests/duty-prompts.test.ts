@@ -37,9 +37,10 @@ test("size caps: a kind addendum is at most 7 lines and 1624 characters; integra
 // main.md as two lines, with the cap of 4 workers and the todo before a worker: main.md 28 to 29 lines.
 // 2026-11-24 (capacity, docs/specs/2026-11-24-capacity.md, Prompts; measured): 9,687 to 10,095 characters (+408): main.md dispatches up to the device's capacity budget, an idle main takes its next work, a capacity notice is its own; planning.md runs parallel up to the budget and weighs a todo by `metadata.points`.
 // 2026-11-24 (capacity routing; field, MP Center box 2; measured): 10,095 to 10,177 (+82): a capacity notice on a main's work: dispatch now, or say why to whoever asked; sb's on its board.
-test("no growth from the fold: main.md + planning.md stays within 10,177 characters, and main.md has at most 29 lines", () => {
+// 2026-11-25 (idle wrap-up + the main asks the boss itself, docs/specs/2026-11-25-idle-wrap-up.md; measured): 10,177 to 10,538 (+361): the done rule ends in a memory entry and `boss_wrap`; a boss-only decision is asked with `ask_user_question`.
+test("no growth from the fold: main.md + planning.md stays within 10,538 characters, and main.md has at most 29 lines", () => {
 	const sum = read("main").length + read("planning").length;
-	assert.ok(sum <= 10177, `the two files hold ${sum} characters`); // D (0.84.0, §2.5; measured): +154 for the reviewed change's one sentence in main.md
+	assert.ok(sum <= 10538, `the two files hold ${sum} characters`); // D (0.84.0, §2.5; measured): +154 for the reviewed change's one sentence in main.md
 	assert.ok(lines(read("main")) <= 29, `main.md has ${lines(read("main"))} lines`);
 });
 

@@ -5,6 +5,7 @@ import { afterEach, test } from "node:test";
 import { AUTO_FILE, seal } from "../src/autostate.ts";
 import { offNotice } from "../src/autotext.ts";
 import { CALL_TOWER_DESCRIPTION } from "../src/link/waitcall.ts";
+import { strip } from "../src/trainswitch.ts";
 import { PROMPT_DIR, World } from "./fakes.ts";
 
 // Boss questions asked by the main (docs/specs/2026-11-25-idle-wrap-up.md, part 2; boss 2026-11-25): with auto mode off a main asks the boss itself with ask_user_question in its own pane, so the boss sees
@@ -26,7 +27,7 @@ test("main.md: blocked is for someone other than the boss; the boss's own decisi
 });
 
 test("tower-run.md: a local main's boss decision with auto mode off goes back to the main to ask itself; the other cards stay", () => {
-	const run = read("tower-run.md");
+	const run = strip(read("tower-run.md"), false); // integration on: the train's card is named
 	assert.ok(run.includes("A local main's decision only the boss can make, while your brief has no auto mode line: record no wait; tell the main with `tower_reply` to ask the boss itself with `ask_user_question` in its pane."));
 	assert.ok(run.includes("Any other decision only the boss can make (under auto mode, a train's, a teammate device's, your own) is not sent back to the caller: record a wait for the boss in your memory"));
 });
