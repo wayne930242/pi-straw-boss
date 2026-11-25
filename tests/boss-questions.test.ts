@@ -187,6 +187,12 @@ test("F001: the GUI or a paired device answers it fully: an option, its own word
 	assert.deepEqual(await p.answer({ answers: [{ choices: [1] }] }), { accepted: true });
 	assert.equal(r.a.dialogs[0]!.settled, true, "the terminal dialog went");
 	assert.match(textOf(await picked), /^The boss chose: "Wait"\. This is the boss's answer/);
+	// rv-F001 (review 2): a note the boss adds to his pick reaches the main with it.
+	const noted = r.a.tool("call_tower", { message: "m", why: "blocked", boss: { question: "Deploy now?", options: ["Deploy", "Wait"] } }, { id: "c1n" });
+	await until(() => p.open.length === 2, "relayed");
+	assert.deepEqual(await p.answer({ answers: [{ choices: [0], note: " only after the backup " }] }), { accepted: true });
+	assert.match(textOf(await noted), /^The boss chose: "Deploy"\. His note: "only after the backup"\. This is the boss's answer/);
+	p.open.splice(1, 1);
 	const typed = r.a.tool("call_tower", { message: "m", why: "blocked", boss: { question: "Deploy now?", options: ["Deploy"] } }, { id: "c2" });
 	await until(() => p.open.length === 2, "relayed");
 	assert.deepEqual(await p.answer({ answers: [{ text: " after the backup " }] }), { accepted: true });

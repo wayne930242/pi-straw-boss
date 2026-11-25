@@ -33,7 +33,7 @@ export const withBoss = (message: string, q: BossQuestion) => `${message}\nFor t
 export type Asked = { kind: "answered"; text: string } | { kind: "none"; text: string } | { kind: "tower"; note?: string };
 export type BossAsk = (q: BossQuestion, signal: AbortSignal | undefined, ctx: Pick<ExtensionContext, "hasUI" | "ui"> | undefined, callId?: string) => Promise<Asked>;
 const AUTO_NOTE = "Auto mode is on (the boss is away): the tower parks it, and it comes back to you as a wait_returned message when he is back. Ask him again then, with call_tower boss.";
-type Got = { answer: string; typed: boolean; by: "remote" | "local" } | { cancel: true };
+type Got = { answer: string; typed: boolean; by: "remote" | "local"; note?: string } | { cancel: true };
 
 export function createBossAsk({ pi, cfg, s, role }: Kit, d: { attended(): boolean; remote(): boolean }): BossAsk {
 	const watch = cfg.face?.every ?? every, bus = pi.events as unknown as Bus;
@@ -46,11 +46,11 @@ export function createBossAsk({ pi, cfg, s, role }: Kit, d: { attended(): boolea
 		const id = randomUUID(), questions: Question[] = [{ question: title, multiple: false, options: (q.options ?? []).map((title) => ({ title })) }], digest = questionsDigest(questions);
 		let got: Got | undefined;
 		const off = bus.on(`${BOSS_PREFIX}:answer`, (raw) => {
-			const a = raw as { version?: unknown; id?: unknown; answerId?: unknown; digest?: unknown; answers?: { choices?: unknown; text?: unknown }[]; cancel?: unknown };
+			const a = raw as { version?: unknown; id?: unknown; answerId?: unknown; digest?: unknown; answers?: { choices?: unknown; text?: unknown; note?: unknown }[]; cancel?: unknown };
 			if (a?.version !== 1 || a.id !== id) return;
-			const r = Array.isArray(a.answers) && a.answers.length === 1 ? a.answers[0] : undefined, pick = Array.isArray(r?.choices) && r.choices.length === 1 ? q.options?.[Number(r.choices[0])] : undefined, text = typeof r?.text === "string" ? r.text.trim() : "";
+			const r = Array.isArray(a.answers) && a.answers.length === 1 ? a.answers[0] : undefined, pick = Array.isArray(r?.choices) && r.choices.length === 1 ? q.options?.[Number(r.choices[0])] : undefined, text = typeof r?.text === "string" ? r.text.trim() : "", note = typeof r?.note === "string" ? r.note.trim() : ""; // the page's note on a pick: a condition the boss adds
 			const reason = got ? "closed" : a.digest !== digest ? "digest" : a.cancel === true || pick || text ? undefined : "malformed";
-			if (!reason) (got = a.cancel === true ? { cancel: true } : { answer: pick ?? text, typed: !pick, by: "remote" }), ac.abort();
+			if (!reason) (got = a.cancel === true ? { cancel: true } : { answer: pick ?? text, typed: !pick, by: "remote", ...(note ? { note } : {}) }), ac.abort();
 			bus.emit(`${BOSS_PREFIX}:answer-result`, { version: 1, id, answerId: a.answerId, accepted: !reason, ...(reason ? { reason } : {}) });
 		});
 		if (callId) bus.emit(`${BOSS_PREFIX}:pending`, { version: 1, id, toolCallId: callId, digest, questions });
@@ -62,9 +62,9 @@ export function createBossAsk({ pi, cfg, s, role }: Kit, d: { attended(): boolea
 		} finally {
 			stop();
 			off();
-			if (callId) bus.emit(`${BOSS_PREFIX}:closed`, { version: 1, id, by: got && "by" in got ? got.by : got ? "cancel" : signal?.aborted ? "abort" : "local" });
+			if (callId) bus.emit(`${BOSS_PREFIX}:closed`, { version: 1, id, by: got && "by" in got ? got.by : got ? "cancel" : signal?.aborted ? "abort" : s.autoOn() ? "auto" : "local" });
 		}
-		if (got && "answer" in got) return { kind: "answered", text: `The boss ${got.typed ? "answered" : "chose"}: ${JSON.stringify(got.answer)}. This is the boss's answer, asked in this pane; nothing was sent to the tower.` };
+		if (got && "answer" in got) return { kind: "answered", text: `The boss ${got.typed ? "answered" : "chose"}: ${JSON.stringify(got.answer)}${got.note ? `. His note: ${JSON.stringify(got.note)}` : ""}. This is the boss's answer, asked in this pane; nothing was sent to the tower.` };
 		if (s.autoOn()) return { kind: "tower", note: `Auto mode started while the boss was asked, so the dialog closed. ${AUTO_NOTE}` };
 		return { kind: "none", text: `The boss did not answer (${signal?.aborted ? "the turn was stopped" : "Esc"}): nothing was sent to the tower. Go on with work that does not need it; ask again only if it still blocks you.` };
 	};
