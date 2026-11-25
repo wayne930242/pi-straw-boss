@@ -2,6 +2,8 @@
 
 Status: implemented in 0.92.0. Follows part 2 of [the idle wrap-up spec](2026-11-25-idle-wrap-up.md), which moved the wrap-up steps and the boss question out of `prompts/main.md`. Tests: `tests/just-in-time.test.ts`.
 
+Since the 0.93 refactor the texts below live in `src/moments.ts`, one comment each naming its moment and its reader; the code that chooses one stays in the file this table names.
+
 ## Boss words (binding)
 
 2026-11-25:
