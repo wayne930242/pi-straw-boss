@@ -46,7 +46,7 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 			standing: Type.Optional(Type.Object({
 				device: Type.String({ description: "Label, short id, or id." }),
 				what: Type.Optional(Type.String({ description: "One line of at most 200 bytes; default the message's first line." })),
-			}, { description: "Instead of your tower: that device's standing main, a question (why blocked) or a notice (why milestone)." })),
+			}, { description: "Instead of your tower: that device's standing main, a question (why blocked) or a notice (why milestone). A notice about another main's work: reply in that wait's thread (linkWait), or use waitsOn with its owner." })),
 			boss: bossParameter(),
 		}),
 		async ({ message, why, workspace, reply, waitsOn, linkWait, standing, boss }, signal, ctx, id) => {
