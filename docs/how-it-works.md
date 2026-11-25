@@ -3567,7 +3567,8 @@ That is the choice left to the boss: give the ally run the local run's tool list
 
 #### The boss in a run
 
-Once the boss speaks in a run, it does not end on its own. They speak by writing at the [tower prompt](#the-standing-pane) (the run it wakes is theirs from its claim), by typing in the run's pi (its extension tells the server at the first word and at most every 15 seconds after: input from the keyboard only, never an event or a steer of the server's), or by starting pi by hand in the standing pane. While the boss is in the run, `tower_done` answers that they are here, keeps no note, and the run goes on, so the model keeps answering them.
+Once the boss speaks in a run, it stays open for their next turn. They speak by writing at the [tower prompt](#the-standing-pane) (the run it wakes is theirs from its claim), by typing in the run's pi (its extension tells the server at the first word and at most every 15 seconds after: input from the keyboard only, never an event or a steer of the server's), or by starting pi by hand in the standing pane. While the boss is in the run, `tower_done` answers that they are here, keeps no note, and the run goes on, so the model keeps answering them.
+When the boss types in the run’s pi pane, its footer tells them how long the run waits in silence before closing on its own and how to end it now with `/quit`.
 
 <details>
 <summary>Details</summary>
