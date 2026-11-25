@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { every } from "./lanface.ts";
-import { BOSS_PREFIX, type Bus, type Question, questionsDigest } from "./owners.ts";
+import { type Got, hubRelay } from "./bossrelay.ts";
+import type { Bus } from "./owners.ts";
 import type { Kit } from "./state.ts";
 
 // A decision only the boss can make, asked by code (docs/specs/2026-11-25-idle-wrap-up.md part 2; boss 2026-11-25: 「「自己問我」應該做成程式碼，直接從程式碼發出」). `call_tower` with `why: blocked` and `boss` draws
@@ -33,7 +33,15 @@ export const withBoss = (message: string, q: BossQuestion) => `${message}\nFor t
 export type Asked = { kind: "answered"; text: string } | { kind: "none"; text: string } | { kind: "tower"; note?: string };
 export type BossAsk = (q: BossQuestion, signal: AbortSignal | undefined, ctx: Pick<ExtensionContext, "hasUI" | "ui"> | undefined, callId?: string) => Promise<Asked>;
 const AUTO_NOTE = "Auto mode is on (the boss is away): the tower parks it, and it comes back to you as a wait_returned message when he is back. Ask him again then, with call_tower boss.";
-type Got = { answer: string; typed: boolean; by: "remote" | "local"; note?: string } | { cancel: true };
+type Opts = { signal: AbortSignal };
+
+/** The dialog in this pane: a select with the options and a typed answer, or an input. Auto mode starting between the pick and the typed answer opens no input (it would be answered as Escape and marked refused). */
+async function paneDialog(ui: ExtensionContext["ui"], q: BossQuestion, title: string, opts: Opts, away: () => boolean): Promise<Got | undefined> {
+	const pick = q.options ? await ui.select(title, [...q.options, OWN_ANSWER], opts) : OWN_ANSWER;
+	const typed = pick === OWN_ANSWER;
+	const answer = !typed ? pick : opts.signal.aborted || away() ? undefined : await ui.input(title, "Your answer", opts);
+	return answer?.trim() ? { answer: answer.trim(), typed, by: "local" } : undefined;
+}
 
 export function createBossAsk({ pi, cfg, s, role }: Kit, d: { attended(): boolean; remote(): boolean }): BossAsk {
 	const watch = cfg.face?.every ?? every, bus = pi.events as unknown as Bus;
@@ -42,27 +50,15 @@ export function createBossAsk({ pi, cfg, s, role }: Kit, d: { attended(): boolea
 		if (s.autoOn()) return { kind: "tower", note: AUTO_NOTE };
 		const title = `The boss decides: ${q.question}`, ac = new AbortController(), stop = watch(() => void (s.autoOn() && ac.abort()), WATCH_MS);
 		const opts = { signal: signal ? AbortSignal.any([signal, ac.signal]) : ac.signal };
-		// The same question relayed as sb's own questionnaire (owners.ts `bossQuestion`): the page or a paired device picks an option or types an answer, or cancels; the first answer, here or there, wins.
-		const id = randomUUID(), questions: Question[] = [{ question: title, multiple: false, options: (q.options ?? []).map((title) => ({ title })) }], digest = questionsDigest(questions);
+		// The first answer, here or there, wins: one from the page or a paired device ends the dialog here.
 		let got: Got | undefined;
-		const off = bus.on(`${BOSS_PREFIX}:answer`, (raw) => {
-			const a = raw as { version?: unknown; id?: unknown; answerId?: unknown; digest?: unknown; answers?: { choices?: unknown; text?: unknown; note?: unknown }[]; cancel?: unknown };
-			if (a?.version !== 1 || a.id !== id) return;
-			const r = Array.isArray(a.answers) && a.answers.length === 1 ? a.answers[0] : undefined, pick = Array.isArray(r?.choices) && r.choices.length === 1 ? q.options?.[Number(r.choices[0])] : undefined, text = typeof r?.text === "string" ? r.text.trim() : "", note = typeof r?.note === "string" ? r.note.trim() : ""; // the page's note on a pick: a condition the boss adds
-			const reason = got ? "closed" : a.digest !== digest ? "digest" : a.cancel === true || pick || text ? undefined : "malformed";
-			if (!reason) (got = a.cancel === true ? { cancel: true } : { answer: pick ?? text, typed: !pick, by: "remote", ...(note ? { note } : {}) }), ac.abort();
-			bus.emit(`${BOSS_PREFIX}:answer-result`, { version: 1, id, answerId: a.answerId, accepted: !reason, ...(reason ? { reason } : {}) });
-		});
-		if (callId) bus.emit(`${BOSS_PREFIX}:pending`, { version: 1, id, toolCallId: callId, digest, questions });
+		const relay = hubRelay(bus, q, title, callId, () => got !== undefined, (g) => ((got = g), ac.abort()));
 		try {
-			const pick = q.options ? await ctx.ui.select(title, [...q.options, OWN_ANSWER], opts) : OWN_ANSWER;
-			// Auto mode starting between the pick and the typed answer opens no input (it would be answered as Escape and marked refused).
-			const typed = pick === OWN_ANSWER, answer = typed && !opts.signal.aborted && !s.autoOn() ? await ctx.ui.input(title, "Your answer", opts) : typed ? undefined : pick;
-			if (!got && answer?.trim()) got = { answer: answer.trim(), typed, by: "local" };
+			const local = await paneDialog(ctx.ui, q, title, opts, () => s.autoOn());
+			if (!got && local) got = local;
 		} finally {
 			stop();
-			off();
-			if (callId) bus.emit(`${BOSS_PREFIX}:closed`, { version: 1, id, by: got && "by" in got ? got.by : got ? "cancel" : signal?.aborted ? "abort" : s.autoOn() ? "auto" : "local" });
+			relay.close(got && "by" in got ? got.by : got ? "cancel" : signal?.aborted ? "abort" : s.autoOn() ? "auto" : "local");
 		}
 		if (got && "answer" in got) return { kind: "answered", text: `The boss ${got.typed ? "answered" : "chose"}: ${JSON.stringify(got.answer)}${got.note ? `. His note: ${JSON.stringify(got.note)}` : ""}. This is the boss's answer, asked in this pane; nothing was sent to the tower.` };
 		if (s.autoOn()) return { kind: "tower", note: `Auto mode started while the boss was asked, so the dialog closed. ${AUTO_NOTE}` };
