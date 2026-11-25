@@ -538,6 +538,8 @@ export class Agent {
 	/** Widgets set through ctx.ui.setWidget, and the live component of each. */
 	widgets = new Map<string, WidgetFactory | undefined>();
 	components = new Map<string, { render(width: number): string[]; dispose?(): void }>();
+	/** Footer statuses set through ctx.ui.setStatus. */
+	statuses = new Map<string, string | undefined>();
 	tui: FakeTui = { renders: 0, requestRender: () => void this.tui.renders++ };
 	stopped = false;
 	env?: Record<string, string | undefined>;
@@ -571,6 +573,7 @@ export class Agent {
 				editor: async () => "edited",
 				// An overlay stays open until it calls done; the test drives it through `overlays`.
 				custom: (factory: (tui: FakeTui, theme: unknown, keys: unknown, done: () => void) => Overlay) => new Promise<void>((resolve) => this.overlays.push({ ...factory(this.tui, {}, {}, () => ((this.overlays.at(-1)!.closed = true), resolve())), closed: false })),
+				setStatus: (key: string, text: string | undefined) => void this.statuses.set(key, text),
 				setWidget: (key: string, factory?: WidgetFactory) => {
 					this.components.get(key)?.dispose?.();
 					this.components.delete(key);
