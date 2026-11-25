@@ -3,6 +3,8 @@ import { mkdirSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFil
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { TOWER_LABEL } from "../src/herdr.ts";
+import { REARM_TEXT } from "../src/revive.ts";
+import { ARM_MESSAGE } from "../src/wrapup.ts";
 import { until, World, type Agent } from "./fakes.ts";
 
 // Herdr's restore (`herdr server stop`, then a new server with resume_agents_on_restore): every pane comes back with its pi resumed into the same session
@@ -182,6 +184,22 @@ test("a main that quit and is resumed in the same shell takes no role from its r
 	assert.ok(!records().some((r) => r.pane === "wA:p1"), "the record is gone");
 	const [back] = await restore([{ id: "tower-2", pane: "wA:p7", file: FILES.tower }, { id: "main-3", pane: "wA:p1", file: FILES.main, deps }]).then((all) => all.slice(1)) as [Agent];
 	assert.equal(back.tokens.sb_role, "member", "and the next Herdr restore finds nothing to give back");
+});
+
+test("T4 review F001: a standing main a Herdr restore resumes is told to re-arm its watches, monitors, and loops, subagents or none; a coordinator is not", async () => {
+	const { main } = await net();
+	await main.tool("boss_duty", { duty: "standing", reason: "it minds box 2" });
+	const [, back] = await restore([{ id: "tower-2", pane: "wA:p7", file: FILES.tower }, { id: "main-2", pane: "wA:p1", file: FILES.main }]) as [Agent, Agent];
+	await until(() => back.sent.some((m) => m.customType === ARM_MESSAGE), "the re-arm text");
+	const arms = back.sent.filter((m) => m.customType === ARM_MESSAGE);
+	assert.deepEqual(arms.map((m) => [m.content, m.triggerTurn]), [[`Straw Boss: a Herdr restart resumed this standing main. ${REARM_TEXT}`, true]], "the revive's and the successor's text, once");
+});
+test("a coordinator main a Herdr restore resumes gets no re-arm text", async () => {
+	await net();
+	const [, back] = await restore([{ id: "tower-2", pane: "wA:p7", file: FILES.tower }, { id: "main-2", pane: "wA:p1", file: FILES.main }]) as [Agent, Agent];
+	await until(() => tokens("wA:p1").sb_role === "main", "the main is main again");
+	await world.quiet();
+	assert.equal(back.sent.filter((m) => m.customType === ARM_MESSAGE).length, 0);
 });
 
 test("a restored main opens no tower, and opens one the next time it becomes the main", async () => {

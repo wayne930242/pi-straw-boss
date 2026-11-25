@@ -15,7 +15,7 @@ import { orphans } from "./orphan.ts";
 import { createWorkerCap, deviceRoom } from "./workercap.ts";
 import { inherited, RESULT } from "./inherit.ts";
 import { childRevive } from "./childrevive.ts";
-import { keyOf, REVIVE_TOKEN } from "./revive.ts";
+import { keyOf, REARM_TEXT, REVIVE_TOKEN } from "./revive.ts";
 import { armSignals, signalSeen } from "./signalseen.ts";
 import { restored } from "./restored.ts";
 import type { RunMode } from "./runmode.ts";
@@ -25,6 +25,7 @@ import type { Reach } from "./reach.ts";
 import type { Roles } from "./roles.ts";
 import { registerStandingHint } from "./standinghint.ts";
 import { ENTRY, type Kit } from "./state.ts";
+import { ARM_MESSAGE } from "./wrapup.ts";
 import { isSessionRole, TRAIN, TRAIN_EVENT, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
 
 /** The custom message that asks the launcher to resume the subagents a Herdr restore brought back plain. */
@@ -262,6 +263,8 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 				if (resumed) roles.forget(); // another main holds the tab, and this session stays a member: its record would claim the next restore
 			} else if (!claimed) await membership.adoptOpener(); // a no-op when the refresh that made it the main did so already (membership.ts)
 			mainDuty.migrate(pi.getSessionName()); // a restored or opened main with the signs of an integrator
+			// A standing main a Herdr restart resumed hears what its revive and successor hear: the restart retired its watches, monitors, and loops (T4 review F001).
+			if (resumed && taken.promoted && event.reason === "startup" && mainDuty.now() === "standing") pi.sendMessage({ customType: ARM_MESSAGE, content: `Straw Boss: a Herdr restart resumed this standing main. ${REARM_TEXT}`, display: true }, { triggerTurn: true });
 		};
 		const proceedOnce = () =>
 			(proceeding ??= proceed()
