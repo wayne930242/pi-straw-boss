@@ -1,6 +1,6 @@
 import { Type, type Static, type TSchema } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { type Asked, type BossAsk, bossOf, bossParameter, withBoss } from "../bossask.ts";
+import { type Asked, type BossAsk, type BossQuestion, bossOf, bossParameter, withBoss } from "../bossask.ts";
 import { SLIP } from "../carslip.ts";
 import type { Reach } from "../reach.ts";
 import { waitOwner, waitWhat } from "./kinds.ts";
@@ -49,42 +49,65 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 			}, { description: "Instead of your tower: that device's standing main, a question (why blocked) or a notice (why milestone). A notice on a wait you hold from that device: linkWait note." })),
 			boss: bossParameter(),
 		}),
-		async ({ message, why, workspace, reply, waitsOn, linkWait, standing, boss }, signal, ctx, id) => {
+		async ({ waitsOn, linkWait, standing, boss, ...call }, signal, ctx, id) => {
 			if ([waitsOn, linkWait, standing, boss].filter(Boolean).length > 1) throw new Error("waitsOn, linkWait, standing, and boss do not go together");
-			if (boss) {
-				// A decision only the boss can make (bossask.ts): drawn in this pane, its answer the result and nothing sent; else the tower gets it as blocked.
-				if (why !== "blocked") throw new Error("boss goes with why blocked: a decision only the boss can make");
-				const q = bossOf(boss), asked: Asked = bossAsk ? await bossAsk(q, signal, ctx, id) : { kind: "tower" };
-				if (asked.kind !== "tower") return { text: asked.text, details: { boss: asked.kind } };
-				const sent = await callTower(withBoss(message, q), workspace, reply ?? true, why);
-				return { text: asked.note ? `${sent.text} ${asked.note}` : sent.text, details: { ...sent.details, boss: "tower" } };
-			}
-			if (standing) {
-				// D13: the code sends it as the workspace's tower identity; the tower gets no call for it.
-				if (why !== "blocked" && why !== "milestone") throw new Error("standing goes with why blocked (a question) or milestone (a notice)");
-				const sent = await link.waitOp({ op: "standing-send", device: standing.device, kind: why === "blocked" ? "question" : "notice", what: standing.what ?? "", message });
-				return { text: String(sent.text), details: sent.details };
-			}
-			if (linkWait) {
-				if (linkWait.state === "escalated" && why !== "blocked") throw new Error("linkWait escalated goes with why blocked: you leave the decision to the boss");
-				const acted = await link.waitOp({ op: "wait-act", id: linkWait.id, state: linkWait.state, ...(linkWait.state !== "taken" ? { message } : {}) });
-				const sent = await callTower(message, workspace, reply ?? false, why, { wait: /^L\d{1,6}$/.test(linkWait.id) ? linkWait.id : undefined });
-				return { text: `${String(acted.text)} ${sent.text}`, details: { ...sent.details, linkWait } };
-			}
-			if (!waitsOn) return withMoment(await callTower(message, workspace, reply ?? true, why), message, why);
-			if (waitsOn.cancel) {
-				if (why !== "milestone") throw new Error("waitsOn cancel goes with why milestone");
-				const target = await link.waitOp({ op: "device-resolve", device: waitsOn.device }), withdrawn = await link.waitOp({ op: "wait-cancel", device: waitsOn.device });
-				const sent = await callTower(message, workspace, reply ?? false, why, { waitsOn: { short: String(target.short), cancel: true } });
-				return { text: `${String(withdrawn.text)} ${sent.text}`, details: sent.details };
-			}
-			if (why !== "blocked") throw new Error("waitsOn goes with why blocked: you wait on a step only that device can take (a milestone report carries no waitsOn)");
-			const what = waitWhat(waitsOn.what ?? "");
-			if (!what) throw new Error("waitsOn.what is required: one line saying the step you wait on");
-			const target = await link.waitOp({ op: "device-resolve", device: waitsOn.device, raise: true });
-			const sent = await callTower(message, workspace, reply ?? true, why, { waitsOn: { short: String(target.short), what, ...(waitsOn.owner ? { owner: waitOwner(waitsOn.owner) } : {}) } });
-			return { text: `${sent.text} It waits on ${String(target.label)} (${String(target.short)}): the tower forwards it as a wait that device has to route, and you hear each step.`, details: { ...sent.details, waitsOn: target.short } };
+			const m: Modes = { callTower, link, bossAsk };
+			if (boss) return bossMode(m, call, boss, signal, ctx, id);
+			if (standing) return standingMode(m, call, standing);
+			if (linkWait) return linkWaitMode(m, call, linkWait);
+			if (!waitsOn) return plainMode(m, call);
+			return waitsOn.cancel ? cancelMode(m, call, waitsOn) : waitsOnMode(m, call, waitsOn);
 		});
+}
+
+// The modes of a call: one function each, after the check that at most one of waitsOn, linkWait, standing, and boss is given.
+interface Modes { callTower: Reach["callTower"]; link: Pick<Link, "waitOp">; bossAsk?: BossAsk }
+interface Call { message: string; why?: "milestone" | "shared" | "blocked"; workspace?: string; reply?: boolean }
+interface WaitsOn { device: string; owner?: string; what?: string; cancel?: boolean }
+
+/** A call with none of them: to the tower, with the note its moment needs. */
+const plainMode = async ({ callTower }: Modes, { message, why, workspace, reply }: Call) => withMoment(await callTower(message, workspace, reply ?? true, why), message, why);
+
+/** A decision only the boss can make (bossask.ts): drawn in this pane, its answer the result and nothing sent; else the tower gets it as blocked. */
+async function bossMode({ callTower, bossAsk }: Modes, { message, why, workspace, reply }: Call, boss: BossQuestion, signal?: AbortSignal, ctx?: ToolCtx, id?: string) {
+	if (why !== "blocked") throw new Error("boss goes with why blocked: a decision only the boss can make");
+	const q = bossOf(boss), asked: Asked = bossAsk ? await bossAsk(q, signal, ctx, id) : { kind: "tower" };
+	if (asked.kind !== "tower") return { text: asked.text, details: { boss: asked.kind } };
+	const sent = await callTower(withBoss(message, q), workspace, reply ?? true, why);
+	return { text: asked.note ? `${sent.text} ${asked.note}` : sent.text, details: { ...sent.details, boss: "tower" } };
+}
+
+/** D13: the code sends it as the workspace's tower identity; the tower gets no call for it. */
+async function standingMode({ link }: Modes, { message, why }: Call, standing: { device: string; what?: string }) {
+	if (why !== "blocked" && why !== "milestone") throw new Error("standing goes with why blocked (a question) or milestone (a notice)");
+	const sent = await link.waitOp({ op: "standing-send", device: standing.device, kind: why === "blocked" ? "question" : "notice", what: standing.what ?? "", message });
+	return { text: String(sent.text), details: sent.details };
+}
+
+/** An answer to a teammate device's wait on this workspace (§2.4). */
+async function linkWaitMode({ callTower, link }: Modes, { message, why, workspace, reply }: Call, linkWait: { id: string; state: "taken" | "note" | "done" | "declined" | "escalated" }) {
+	if (linkWait.state === "escalated" && why !== "blocked") throw new Error("linkWait escalated goes with why blocked: you leave the decision to the boss");
+	const acted = await link.waitOp({ op: "wait-act", id: linkWait.id, state: linkWait.state, ...(linkWait.state !== "taken" ? { message } : {}) });
+	const sent = await callTower(message, workspace, reply ?? false, why, { wait: /^L\d{1,6}$/.test(linkWait.id) ? linkWait.id : undefined });
+	return { text: `${String(acted.text)} ${sent.text}`, details: { ...sent.details, linkWait } };
+}
+
+/** The withdrawal of this session's open wait on a teammate device. */
+async function cancelMode({ callTower, link }: Modes, { message, why, workspace, reply }: Call, waitsOn: WaitsOn) {
+	if (why !== "milestone") throw new Error("waitsOn cancel goes with why milestone");
+	const target = await link.waitOp({ op: "device-resolve", device: waitsOn.device }), withdrawn = await link.waitOp({ op: "wait-cancel", device: waitsOn.device });
+	const sent = await callTower(message, workspace, reply ?? false, why, { waitsOn: { short: String(target.short), cancel: true } });
+	return { text: `${String(withdrawn.text)} ${sent.text}`, details: sent.details };
+}
+
+/** A task that ends at a step only a teammate device can take: the tower forwards it as a wait that device has to route (§2.1). */
+async function waitsOnMode({ callTower, link }: Modes, { message, why, workspace, reply }: Call, waitsOn: WaitsOn) {
+	if (why !== "blocked") throw new Error("waitsOn goes with why blocked: you wait on a step only that device can take (a milestone report carries no waitsOn)");
+	const what = waitWhat(waitsOn.what ?? "");
+	if (!what) throw new Error("waitsOn.what is required: one line saying the step you wait on");
+	const target = await link.waitOp({ op: "device-resolve", device: waitsOn.device, raise: true });
+	const sent = await callTower(message, workspace, reply ?? true, why, { waitsOn: { short: String(target.short), what, ...(waitsOn.owner ? { owner: waitOwner(waitsOn.owner) } : {}) } });
+	return { text: `${sent.text} It waits on ${String(target.label)} (${String(target.short)}): the tower forwards it as a wait that device has to route, and you hear each step.`, details: { ...sent.details, waitsOn: target.short } };
 }
 
 /** `ally_escalate` (§3) as an ally run registers it (runmode.ts): a client of the server's `run-tool`, which runs it free at every level. */
