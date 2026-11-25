@@ -1,6 +1,6 @@
 # Idle wrap-up, and boss questions asked by the main (2026-11-25)
 
-Status: part 1 implemented (`src/wrapup.ts`, `prompts/main.md`). The behavior is in [docs/how-it-works.md](../how-it-works.md#wrapping-up-an-idle-main).
+Status: implemented. Part 1: `src/wrapup.ts` and `prompts/main.md`, in [docs/how-it-works.md](../how-it-works.md#wrapping-up-an-idle-main). Part 2: `prompts/main.md`, `prompts/tower-run.md`, and `call_tower`'s description, in [docs/how-it-works.md](../how-it-works.md#when-a-main-calls-the-tower).
 
 ## Part 1: an idle main wraps up
 
@@ -28,3 +28,25 @@ Status: part 1 implemented (`src/wrapup.ts`, `prompts/main.md`). The behavior is
 1. **Nudge.** A coordinator or integrator main idle 30 minutes since its last turn settled gets one `straw-boss-wrap` message that starts a turn. It says: if work remains, go on or clean up stale todos; if it waits on someone other than the boss, set that todo's `metadata.waitsOn` and stop; if done, answer the intercom asks it owes, remove its worktrees, complete or delete every todo, stop its monitors and loops, write a daily memory entry if it has a memory tool, and call `boss_wrap`. At most one per idle period: the next comes after a turn that the nudge did not start, and 30 more idle minutes. None while a dialog is open or Herdr shows the pane blocked, while a monitor, loop, `boss_watch`, or subagent of the main runs, or while pi has messages queued. Under auto mode the clock stops; it starts again when auto mode ends.
 2. **`boss_wrap({ summary })`.** One paragraph, 1 to 800 characters (whitespace folded). Checks in order: the role (WU-D8), the summary, auto mode (refused: "auto mode: the boss is away; wrap up when he is back"), a terminal to ask in, then every open todo by id, messages queued in pi, and everything that runs (WU-D7), all named in one refusal. Then `ctx.ui.confirm("Wrap up <name>?", summary)` in the pane; the GUI relays it as any dialog. No (or Esc): nothing closes, and no nudge comes this idle period. Yes: the same checks again, since the dialog may stand for hours (review RV-F001): a message that queued or a monitor that started meanwhile closes nothing and sends nothing. Then the milestone to the tower and the opener (WU-D9), the board cleared, and the close of `/boss close` (`closeSelf`): pi quits when the turn ends, and its pane closes, with its tab when emptied.
 3. **Prompt.** `prompts/main.md`'s "Done when" line: every task landed or reported blocked, its worktree removed, every todo completed or deleted; then a daily memory entry if a memory tool exists, and `boss_wrap`; never close the pane otherwise.
+
+## Part 2: the main asks the boss itself
+
+### Boss words (binding, 2026-11-25)
+
+> 「waiting card 我現在其實覺得稍微難用，要和 ask user question 好好整合，塔台每次問問題我都不知道是哪個 agent 問的，不知道能不能把 waiting card 發還回 main agent？」
+
+Decision: with auto mode off, a main's question for the boss is asked by the main itself with `ask_user_question` in its own pane, not relayed by the tower as a card. Under auto mode the card is parked as before and goes back to the main when auto mode ends ([2026-11-21-auto-return.md](2026-11-21-auto-return.md) AR-D3): 「是的，切回非自動的時候自動發回」.
+
+### Decisions
+
+| # | Question | Decision |
+|---|---|---|
+| BQ-D1 | How does a main tell that auto mode is on? | No new signal (left open by the brief; the smallest is none). The main asks with `ask_user_question` either way: under auto mode sb refuses the call, and the refusal (`src/autotext.ts`, kind `main`) says to park the decision with `call_tower` `why: blocked`. The switch notices (`onNotice`, `offNotice`) and `board_read`'s `towers.auto` say it too, and the end notice tells it to ask again with `ask_user_question` when the parked card comes back as `wait_returned`. |
+| BQ-D2 | What is `blocked` for now? | A wait on someone outside the tab other than the boss (another main, an owner, a teammate device), or a work's owner the main cannot find; and, under auto mode, the boss's own decision. |
+| BQ-D3 | What does the tower do with a local main's `blocked` that only the boss can decide, auto mode off? | It records no card and answers the main with `tower_reply`: ask the boss yourself with `ask_user_question`. It knows auto mode is off when its run brief has no `Auto mode:` line (`autotower.ts` `briefLine`). Cards stay for the tower's own questions, a train's, a teammate device's (ally runs are unchanged), and any under auto mode. |
+
+### Behavior
+
+1. **Main prompt.** `blocked` is for someone other than the boss; "A decision only the boss can make: ask him yourself with `ask_user_question`; under auto mode sb refuses it (he is away), so `blocked` parks it and it returns as `wait_returned` when he is back." The line on `wait_returned` (ask again with `ask_user_question`) is unchanged.
+2. **Tower run prompt.** As BQ-D3.
+3. **`call_tower`'s description.** `blocked (you wait on someone outside your tab other than the boss; a boss decision: ask_user_question, or this under auto mode)`.

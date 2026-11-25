@@ -3470,7 +3470,7 @@ The boss decided (D18, D19) that coordination goes through the tower, and that a
 |---|---|---|
 | `milestone` | A task landed, a deliverable is ready, or what a tower asked is done. | `reply: false` unless the main needs an answer. |
 | `shared` | Before the main touches anything outside its tab: a port, a database, a shared branch, a deploy target, another app's checkout, a running service. It says what and for how long, as a heads-up, and goes ahead without waiting; the tower answers only on a clash. | No (a car slip waits for sb's car notice). |
-| `blocked` | The main waits on someone outside its tab, or on a decision its authorizations do not cover. A member reports coordination friction the same way. | Expected. |
+| `blocked` | The main waits on someone outside its tab other than the boss, or needs a work's owner. A decision only the boss can make the main asks him itself with `ask_user_question` in its own pane, so he sees which agent asks; under auto mode sb refuses that ask, the main calls `blocked`, the tower parks the card, and it comes back as `wait_returned` when auto mode ends ([spec](specs/2026-11-25-idle-wrap-up.md) part 2). A member reports coordination friction the same way. | Expected. |
 
 <details>
 <summary>Details</summary>
@@ -3486,7 +3486,7 @@ An intercom event whose header says `why=milestone` and `reply=none`, with no lo
 <details>
 <summary>Details</summary>
 
-The tower's run prompt (`prompts/tower-run.md`) says what to do with each reason: a `milestone` updates its obligations, tells whoever waits on it, and closes a main it opened; a `shared` call (a main writing to or changing something outside its tab, not reading) is a heads-up, not a request for go: the main goes ahead, and the tower checks it against the board and its obligations and tells the main and the owner only on a clash; a `blocked` call is routed to its owner, except a decision only the boss can make, which the tower names in its handoff note as waiting on the boss and tells the main so, not sending it back.
+The tower's run prompt (`prompts/tower-run.md`) says what to do with each reason: a `milestone` updates its obligations, tells whoever waits on it, and closes a main it opened; a `shared` call (a main writing to or changing something outside its tab, not reading) is a heads-up, not a request for go: the main goes ahead, and the tower checks it against the board and its obligations and tells the main and the owner only on a clash; a `blocked` call is routed to its owner, except a decision only the boss can make: from a local main while the run's brief has no auto mode line, the tower records no card and tells the main with `tower_reply` to ask the boss itself with `ask_user_question`; any other (under auto mode, a train's, a teammate device's, the tower's own) it records as a wait for the boss, names in its handoff note as waiting on the boss, and tells the main so, not sending it back.
 
 A main opened by a tower reports its done report with `call_tower` (`why: milestone`, no reply). It never asks a main for progress, since `board_read` has it.
 
