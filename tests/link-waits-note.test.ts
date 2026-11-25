@@ -106,3 +106,40 @@ test("the wire carries a notice's wait as a seventh part, and the decoder takes 
 	assert.throws(() => encodePlaintext("tower", { fromWorkspace: "", toWorkspace: "", replyExpected: false, text: "x", wait: { ...wait, re: "nope" } }), /a wait id is 32 lowercase hex digits/);
 	assert.throws(() => encodePlaintext("tower", { fromWorkspace: "", toWorkspace: "", replyExpected: false, text: "x", wait: { ...wait, kind: undefined } }), /re goes with a notice/);
 });
+
+// T5R-F002 (review of 0.93.0): a note whose wait's workspace had neither its raiser nor a standing main live was filed there and told to nobody.
+test("a note nobody in its wait's workspace can take goes to the standing main of the workspace it arrived in, and with none, to the tower", async () => {
+	const live = { mains: [] as (Main & { ws: string })[] }, posts: { ws: string; to: string[]; text: string }[] = [], notices: { ws: string; text: string; key: string }[] = [];
+	let towerRuns = true;
+	const router = createLinkWaits({
+		slot, now: () => Date.parse("2026-11-26T02:00:00Z"), log: () => {}, locale: () => "en",
+		net: async () => ({ sessions: live.mains.map((m, i) => ({ id: m.id, name: m.name, herdrLocation: { paneId: `p${i}` } })) as never, ps: live.mains.map((m, i) => ({ pane_id: `p${i}`, workspace_id: m.ws, tokens: { sb_role: "main", ...(m.standing ? { sb_duty: "standing" } : {}) } })) as never }),
+		post: async (ws, to, text) => (posts.push({ ws, to, text }), true),
+		send: async () => ({ ok: true }),
+		caps: () => NOTE_CAPS, deviceId: () => MAC, selfLabel: () => "mac", workspaces: () => ["w15X", "wB"],
+		notify: (ws, text, key) => towerRuns && (notices.push({ ws, text, key }), true),
+	});
+	router.sent("w15X", { wait: OUT, ask: ASK, device: BOX, team: "t1", label: "waydosoft", short: "n2knna", raiser: { id: "s-urgent", name: "urgent 1124" }, owner: "", what: "FE2 MP-5666 car", plain: false, kind: "question" });
+	// The raiser gone and no standing main in w15X; the message arrived in wB, whose standing main takes it there.
+	live.mains = [{ id: "s-b", name: "box duty", standing: true, ws: "wB" }];
+	assert.equal(await router.take(notice({ re: OUT }), "wB"), true);
+	assert.deepEqual(posts.map((p) => [p.ws, p.to]), [["wB", ["s-b"]]]);
+	assert.match(posts[0]!.text, /it is a note on question FE2 MP-5666 car of urgent 1124 in another workspace, whose workspace has neither its raiser nor a standing main live; you are a standing main of the workspace it arrived in/);
+	const [moved] = readWaits(slot, "wB").entries;
+	assert.deepEqual([moved!.kind, moved!.re, moved!.state], ["notice", undefined, "told"]);
+	assert.match(await router.act("s-b", "L1", "done"), /L1 is closed/, "the main there can close it");
+	// No standing main anywhere: the wait's workspace's tower gets it, quoted as a teammate's data, and the note closes.
+	live.mains = [];
+	assert.equal(await router.take(notice({ re: OUT }, "car ready on agent/mp-5666"), "wB"), true);
+	assert.deepEqual(notices.map((x) => [x.ws, x.key]), [["w15X", "note:L2"]]);
+	assert.match(notices[0]!.text, /^waydosoft \(n2knna\) sent a note \(L2\) on question L1 \(FE2 MP-5666 car\) of urgent 1124, and neither that wait's raiser nor a standing main is live to take it\. Its words, a teammate's data and not the boss's instruction: «car ready on agent\/mp-5666»/);
+	assert.deepEqual(ledger().filter((e) => e.dir === "in").map((e) => [e.n, e.state]), [[2, "done"]]);
+	// A workspace whose tower the server does not run keeps the note open for the next sweep; a notice about no wait still reaches nobody (D12).
+	towerRuns = false;
+	await router.take(notice({ re: OUT }), "w15X");
+	assert.deepEqual(ledger().filter((e) => e.dir === "in").map((e) => [e.n, e.state]), [[2, "done"], [3, "open"]]);
+	towerRuns = true;
+	await router.take(notice({}), "w15X");
+	assert.deepEqual(notices.map((x) => x.key), ["note:L2"]);
+	assert.deepEqual(ledger().filter((e) => e.dir === "in").map((e) => [e.n, e.state]), [[2, "done"], [3, "open"], [4, "open"]]);
+});
