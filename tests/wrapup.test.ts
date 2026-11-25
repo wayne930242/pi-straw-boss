@@ -7,7 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AUTO_FILE, seal } from "../src/autostate.ts";
 import { createRemoteTurns } from "../src/link/hooks.ts";
 import { MESSAGE_TYPE } from "../src/link/turn.ts";
-import { IDLE_MS, idleClock, NUDGE_TEXT, WRAP_DESCRIPTION, WRAP_MESSAGE } from "../src/wrapup.ts";
+import { ARM_IDLE_MS, ARM_MESSAGE, ARM_TEXT, IDLE_MS, idleClock, NUDGE_TEXT, WRAP_DESCRIPTION, WRAP_MESSAGE } from "../src/wrapup.ts";
 import { type Agent, PROMPT_DIR, settle, until, World } from "./fakes.ts";
 import { bob, TEAM_HEX } from "./link/holder-world.ts";
 
@@ -62,15 +62,19 @@ test("the clock: auto mode stops it and it starts again when the boss is back; t
 });
 
 /** A session whose clock and look the test drives. */
-function rig(options: { id: string; pane: string; tab: string; env?: Record<string, string> }) {
+function rig(options: { id: string; pane: string; tab: string; env?: Record<string, string>; watches?: () => string[] }) {
 	let off = 0;
 	const looks: (() => Promise<void>)[] = [];
-	const a = world.agent({ ...options, ui: true, deps: { now: () => Date.now() + off, idleLook: (fn) => (looks.push(fn), () => {}) } });
+	const { watches, ...agent } = options;
+	// `watches`: the keys the sb server's watch-list answers for this session (none: no server answers).
+	const ask = watches && (async (r: Record<string, unknown>) => (r.cmd === "watch-list" ? { ok: true, watches: watches().map((key) => ({ key })) } : { ok: false, error: "not in this test" }));
+	const a = world.agent({ ...agent, ui: true, deps: { now: () => Date.now() + off, idleLook: (fn) => (looks.push(fn), () => {}), ...(ask ? { ask } : {}) } });
 	return {
 		a,
 		advance: (ms: number) => void (off += ms),
 		look: async () => (await looks.at(-1)!(), await settle()),
 		nudges: () => a.sent.filter((m) => m.customType === WRAP_MESSAGE),
+		arms: () => a.sent.filter((m) => m.customType === ARM_MESSAGE),
 	};
 }
 async function mainRig() {
@@ -153,6 +157,67 @@ test("no nudge while a monitor, a loop, or a subagent runs", async () => {
 	world.herdr.panes = world.herdr.panes.filter((p) => p.pane_id !== "wA:p55");
 	await r.look();
 	assert.equal(r.nudges().length, 1, "nothing runs any more");
+});
+
+// A standing main idle 2 hours with nothing armed (docs/specs/2026-11-26-standing-prompt.md; boss 2026-11-26 「閒置喚醒的條件也應該不同」): one wake per idle period, under auto mode too, never for another kind.
+async function standingRig(watches: string[] = []) {
+	const r = rig({ id: "main-1", pane: "wA:p1", tab: "wA:t1", watches: () => watches });
+	await r.a.start();
+	await r.a.promote();
+	await r.a.tool("boss_duty", { duty: "standing", reason: "it minds box 2" });
+	return r;
+}
+
+test("a standing main with nothing armed gets one wake after 2 idle hours, under auto mode too; again only after a turn and 2 more hours", async () => {
+	const r = await standingRig();
+	auto(true, 1);
+	r.advance(ARM_IDLE_MS - 60_000);
+	await r.look();
+	assert.equal(r.arms().length, 0, "not before 2 hours");
+	r.advance(60_000);
+	await r.look();
+	assert.deepEqual(r.arms().map((m) => [m.content, m.triggerTurn]), [[ARM_TEXT, true]], "under auto mode: a standing main runs unattended");
+	assert.equal(r.nudges().length, 0, "never the coordinator's nudge");
+	await turn(r.a); // the wake's own turn
+	r.advance(3 * ARM_IDLE_MS);
+	await r.look();
+	assert.equal(r.arms().length, 1, "once per idle period");
+	await turn(r.a); // new work
+	r.advance(ARM_IDLE_MS - 60_000);
+	await r.look();
+	assert.equal(r.arms().length, 1);
+	r.advance(60_000);
+	await r.look();
+	assert.equal(r.arms().length, 2, "a new period after a turn and 2 more hours");
+});
+
+test("no wake for a standing main with a watch (a link: key too), a monitor, or a loop of any trigger (a cron one too), and never for a coordinator", async () => {
+	const keys: string[] = ["link:yixv3j"];
+	const r = rig({ id: "main-1", pane: "wA:p1", tab: "wA:t1", watches: () => keys });
+	await r.a.start();
+	await r.a.promote();
+	await r.a.tool("boss_duty", { duty: "standing", reason: "it minds box 2" });
+	r.advance(ARM_IDLE_MS);
+	await r.look();
+	assert.equal(r.arms().length, 0, "a link: watch");
+	keys.length = 0;
+	r.a.emit("monitor:started", { monitorId: "1", command: "tail -f log" });
+	await r.look();
+	assert.equal(r.arms().length, 0, "a monitor");
+	r.a.emit("monitor:finished", { monitorId: "1", status: "done", exitCode: 0 });
+	const loops = join(homedir(), ".pi", "loops"), loopFile = join(loops, "loops-main-1.json");
+	mkdirSync(loops, { recursive: true });
+	writeFileSync(loopFile, JSON.stringify({ loops: [{ status: "active", trigger: { type: "cron", schedule: "0 */2 * * *" }, expiresAt: Date.now() + 10 * ARM_IDLE_MS }] }));
+	await r.look();
+	assert.equal(r.arms().length, 0, "a cron loop");
+	writeFileSync(loopFile, JSON.stringify({ loops: [] }));
+	await r.look();
+	assert.equal(r.arms().length, 1, "nothing armed any more");
+	const c = await mainRig();
+	c.advance(ARM_IDLE_MS);
+	await c.look();
+	assert.equal(c.arms().length, 0, "a coordinator gets its nudge, never this wake");
+	assert.equal(c.nudges().length, 1);
 });
 
 test("boss_wrap refuses with an open todo, a running monitor, under auto mode, for a standing main, a member, and a tower", async () => {

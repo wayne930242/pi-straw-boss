@@ -15,10 +15,13 @@ import { snapshotOfBranch } from "./todo.ts";
 // Idle wrap-up (docs/specs/2026-11-25-idle-wrap-up.md, part 1; boss 2026-11-25): a coordinator or integrator main idle 30 minutes is asked once whether its work is done, and `boss_wrap` asks the boss in
 // this pane before it reports, clears the board, and closes the session as /boss close does. The clock is the session's own: it sees each turn start and end, so the turn the nudge starts is not counted as
 // new work (the server's minute look could not tell them apart). No nudge and no wrap-up while auto mode is on: the boss is away, and the clock starts again when he is back.
+// A standing main has no end, so no nudge and no boss_wrap: idle 2 hours with nothing armed (no boss_watch watch, monitor, loop, or subagent of its own), it is told once per idle period to re-arm what it minds,
+// under auto mode too, since it runs unattended (docs/specs/2026-11-26-standing-prompt.md; boss 2026-11-26 「閒置喚醒的條件也應該不同」).
 
 export const IDLE_MS = 30 * 60_000;
 const LOOK_MS = 60_000, SUMMARY_MAX = 800;
-export const WRAP_MESSAGE = "straw-boss-wrap";
+export const WRAP_MESSAGE = "straw-boss-wrap", ARM_MESSAGE = "straw-boss-arm", ARM_IDLE_MS = 2 * 3600_000;
+export const ARM_TEXT = "sb: you have nothing armed (no watch, monitor, or loop). Re-arm what you mind from your handoff or board, or say on your board why nothing needs watching.";
 export const NUDGE_TEXT = "sb: you have been idle 30 minutes. Is your work done? If work remains: dispatch your ready todos now; none ready, take your next eligible work; or clean up stale todos. If you wait on someone other than the boss, set that todo's `metadata.waitsOn` (who) and stop. If it is done: answer the intercom asks you owe, remove the worktrees you made, complete or delete every todo, stop your monitors and loops, write a daily memory entry if you have a memory tool, then call boss_wrap with a summary: it asks the boss before this pane closes.";
 export const WRAP_DESCRIPTION = "Main only, when your work is done: asks the boss here whether to wrap up; on yes it sends your summary to the tower as a milestone (and to whoever a tower opened you for), clears your board, and closes this session and its pane. Refused with an open todo, a running monitor, loop, watch, or subagent, under auto mode, for a standing main, and in a teammate's turn.";
 
@@ -62,7 +65,7 @@ export interface WrapDeps {
 }
 
 export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
-	const clock = idleClock(cfg.now);
+	const clock = idleClock(cfg.now), armClock = idleClock(cfg.now, ARM_IDLE_MS);
 	let ctx: ExtensionContext | undefined, stop: (() => void) | undefined, looking = false;
 	const name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
 	const kindOk = () => d.duty() === "coordinator" || d.duty() === "integrator";
@@ -84,11 +87,12 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 		if (looking || !ctx) return;
 		looking = true;
 		try {
-			if (role() !== "main" || s.isTrain || s.closing || !kindOk() || s.openedBy?.startsWith("link:")) return;
-			if (!clock.due(s.autoOn()) || !ctx.isIdle() || ctx.hasPendingMessages()) return;
+			if (role() !== "main" || s.isTrain || s.closing || s.openedBy?.startsWith("link:")) return;
+			const standing = d.duty() === "standing", c = standing ? armClock : clock;
+			if ((!standing && !kindOk()) || !c.due(!standing && s.autoOn()) || !ctx.isIdle() || ctx.hasPendingMessages()) return;
 			if ((await running(true)).length || !ctx.isIdle()) return;
-			clock.sent();
-			pi.sendMessage({ customType: WRAP_MESSAGE, content: NUDGE_TEXT, display: true }, { triggerTurn: true });
+			c.sent();
+			pi.sendMessage(standing ? { customType: ARM_MESSAGE, content: ARM_TEXT, display: true } : { customType: WRAP_MESSAGE, content: NUDGE_TEXT, display: true }, { triggerTurn: true });
 		} catch { /* the next look tries again */ } finally {
 			looking = false;
 		}
@@ -99,8 +103,8 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 		stop = (cfg.idleLook ?? ((fn) => ((t) => (t.unref?.(), () => clearInterval(t)))(setInterval(() => void fn(), LOOK_MS))))(look);
 	});
 	pi.on("session_shutdown", () => void (stop?.(), (stop = undefined)));
-	pi.on("agent_start", (_e, c) => void ((ctx = c), clock.start()));
-	pi.on("agent_settled", (_e, c) => void ((ctx = c), clock.settle()));
+	pi.on("agent_start", (_e, c) => void ((ctx = c), clock.start(), armClock.start()));
+	pi.on("agent_settled", (_e, c) => void ((ctx = c), clock.settle(), armClock.settle()));
 
 	return {
 		look,
