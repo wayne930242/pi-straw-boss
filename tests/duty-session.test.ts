@@ -29,6 +29,20 @@ test("a main with no entry is a coordinator: main.md alone, kind in its first li
 	assert.equal(token(), "coordinator");
 });
 
+// docs/specs/2026-11-26-standing-prompt.md (boss 2026-11-26 「無人塔台值守的 prompt 不該是 main 的，應該要量身訂做」): a standing main runs standing.md alone, with integration on and off.
+test("a standing main's section is standing.md alone, not main.md, with integration on and off", async () => {
+	for (const env of [{}, { STRAW_BOSS_INTEGRATION: "off" }] as Record<string, string>[]) {
+		world = new World();
+		const a = await main("Box", [{ customType: "straw-boss", data: { duty: "standing", dutyFrom: null, dutyWhy: "minds box 2", dutyAt: 1 } }], env);
+		const t = await text(a);
+		assert.match(t, /^You are the standing main of Herdr tab /, JSON.stringify(env));
+		assert.match(t, /## Kind: standing/);
+		assert.doesNotMatch(t, /- Dispatch: split work by owning app|Done when|of kind standing|Seam bindings|Integration is off/, JSON.stringify(env));
+		assert.ok(t.length <= 2500, `${t.length} characters`);
+		await world.stopAll();
+	}
+});
+
 test("boss_duty: standing writes all four fields, sets the kind, publishes, rebriefs once, and refusals have their own words", async () => {
 	world = new World();
 	const a = await main("Docs");
@@ -239,5 +253,5 @@ test("the addenda repeat no sentence of boss_duty's description", async () => {
 	const { readFileSync } = await import("node:fs");
 	const { PROMPT_DIR } = await import("./fakes.ts");
 	const mine = new Set(norm(description));
-	for (const name of ["duty-standing"]) assert.deepEqual(norm(readFileSync(`${PROMPT_DIR}/${name}.md`, "utf8")).filter((x) => mine.has(x)), [], name);
+	for (const name of ["standing"]) assert.deepEqual(norm(readFileSync(`${PROMPT_DIR}/${name}.md`, "utf8")).filter((x) => mine.has(x)), [], name);
 });

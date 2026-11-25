@@ -7,9 +7,9 @@ import { type PromptSet, promptSet } from "./trainswitch.ts";
 
 const LABEL_GRACE_MS = 10_000;
 const LOCATION_LABELS = ["tab", "workspace"] as const;
-const PROMPTS = ["main", "tower", "member", "member-no-main", "train", "integrator", "duty-standing"];
+const PROMPTS = ["main", "tower", "member", "member-no-main", "train", "integrator", "standing"];
 
-/** What a run was briefed with: the role and a main's kind. A plan's graph is no part of it (docs/specs/2026-11-23-lite-main.md §1): the dispatch rules are main.md's, for every kind. */
+/** What a run was briefed with: the role and a main's kind. A plan's graph is no part of it (docs/specs/2026-11-23-lite-main.md §1): the dispatch rules are main.md's, for a coordinator and an integrator; a standing main has a prompt of its own. */
 interface Briefed { name: string | undefined; duty: string }
 /** A steer's `details`: what it tells, and what it was written against (`null`: it replaces the whole role prompt, whatever the model held; every steer since 0.83.0 is one); it signs the role prompt it carries (`sig`). */
 interface Told { briefed: Briefed; base: Briefed | null; provisional?: true; sig?: string }
@@ -19,8 +19,8 @@ const sign = (text: string) => createHash("sha256").update(text).digest("hex").s
 /** The role prompt: a system prompt section, set when a run starts, and a steer when the role or the kind changes during the session. */
 export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty: MainDuty) {
 	let prompts: Record<string, string> = {}, files: PromptSet | undefined;
-	/** The files of a role's prompt, in order: a main's is `main.md`, then its kind's addendum. */
-	const partsOf = (name: string, duty: string): string[] => (name !== "main" ? [name] : ["main", ...(duty === "integrator" ? ["integrator"] : duty === "standing" ? ["duty-standing"] : [])]);
+	/** The files of a role's prompt, in order: a main's is `main.md`, then its kind's addendum; a standing main's is `standing.md` alone (docs/specs/2026-11-26-standing-prompt.md: main.md's dispatch and done rules are not its own). */
+	const partsOf = (name: string, duty: string): string[] => (name !== "main" ? [name] : duty === "standing" ? ["standing"] : ["main", ...(duty === "integrator" ? ["integrator"] : [])]);
 	const stateOf = (): Briefed => {
 		const current = role();
 		return { name: current === "member" && !s.mainId ? "member-no-main" : current, duty: current === "main" ? mainDuty.now() : "" };

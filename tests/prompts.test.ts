@@ -385,32 +385,32 @@ test("TB-F006, F008, F009: the prompts give the code's form, the todo order, abs
 });
 
 // Box ↔ Mac waits (docs/specs/2026-11-21-box-mac-waits.md §6, §9 anchor 10): one clause each, inside the budgets above.
-test("box-mac waits: main.md blocks with waitsOn and names standing, tower-run.md forwards waitsOn and binds by default, ally-run.md escalates, duty-standing.md watches with boss_watch", () => {
-	const main = read("main.md"), run = read("tower-run.md"), ally = read("ally-run.md"), standing = read("duty-standing.md"), tower = read("tower.md");
+test("box-mac waits: main.md blocks with waitsOn and names standing, tower-run.md forwards waitsOn and binds by default, ally-run.md escalates, standing.md watches with boss_watch", () => {
+	const main = read("main.md"), run = read("tower-run.md"), ally = read("ally-run.md"), standing = read("standing.md"), tower = read("tower.md");
 	assert.ok(!main.includes("waitsOn") && CALL_TOWER_DESCRIPTION.includes("a teammate device: waitsOn") && !main.includes("`standing`"), "main.md: call_tower's and boss_duty's descriptions since 0.92.0");
 	assert.ok(run.includes("A device's answer never enters a tower run") && run.includes("leaving `reply` out binds the one main") && run.includes("Use `reply: false` only for a pure notice") && run.includes("pass the first line's `[event id: <id>]` value to `tower_send` as `waitsOn.event`"), "tower-run.md");
 	assert.ok(!run.includes("A teammate's device never answers you"), "the old rule is gone");
 	assert.ok(ally.includes("call `ally_escalate` once per item") && ally.includes("\"Mains here\""), "ally-run.md");
-	assert.ok(standing.includes("Watch with `boss_watch` (`quiet`, `idle`, `until`), not by checking in your own turns") && !/watchdog|\{\{cli\}\} watch/.test(standing), "duty-standing.md");
+	assert.ok(standing.includes("Watch with `boss_watch` (`quiet`, `idle`, `until`), not by checking in your own turns") && !/watchdog|\{\{cli\}\} watch/.test(standing), "standing.md");
 	assert.ok(tower.includes("A `waits-on=` blocked needs a tower run"), "tower.md");
 });
 
-test("D9 (0.81.3): duty-standing.md says the workspace's link waits come to the standing main, answered with linkWait or taken to the boss with why blocked; the tower's prompts gain no clause to answer them", () => {
-	const standing = read("duty-standing.md");
-	assert.ok(standing.includes("This workspace's link waits come to you (`kind=link_wait`): answer one with `call_tower` `linkWait`, or ask the boss that way when the decision is not yours."), "duty-standing.md");
+test("D9 (0.81.3): standing.md says the workspace's link waits come to the standing main, answered with linkWait or taken to the boss with why blocked; the tower's prompts gain no clause to answer them", () => {
+	const standing = read("standing.md");
+	assert.ok(standing.includes("This workspace's link waits come to you (`kind=link_wait`)") && standing.includes("answer each with `call_tower` `linkWait`") && standing.includes("what the boss should decide: `escalated` with `why: blocked`"), "standing.md");
 	for (const file of ["tower.md", "tower-run.md"]) assert.ok(!read(file).includes("linkWait"), `${file} does not answer link waits`);
 });
 
 test("D13 (0.81.3): one clause each says a device's standing main is reached with tower_send standing, and that its questions and notices come to the standing main as link waits", () => {
-	assert.ok(read("duty-standing.md").includes("A device's question or notice for its standing main comes that way too"), "duty-standing.md");
+	assert.ok(read("standing.md").includes("and so do a device's standing questions and notices"), "standing.md");
 	assert.ok(read("tower-run.md").includes("For the device's standing main instead of its tower, add `standing: \"question\"` (bound as above) or `standing: \"notice\"`."), "tower-run.md");
 	assert.ok(read("ally-run.md").includes("(`standing: \"notice\"` tells its standing main instead)"), "ally-run.md");
 });
 
 // D14 (docs/specs/2026-11-21-box-mac-waits.md §15; boss: 「代理人什麼都能核准，除非他覺得應該問我」): the standing main may approve a teammate's card for its boss and escalates only what the boss should decide; a tower run marks the
 // boss-only cards and never quotes a delegate's answer as the boss's.
-test("D14: duty-standing.md lets the standing main approve anything as the boss's delegate and escalate the rest; tower-run.md marks bossOnly and keeps the delegate's words apart from the boss's", () => {
-	assert.ok(read("duty-standing.md").includes("as the boss's delegate you may approve anything (`done`), and leave only what the boss should decide with `why: blocked` and `escalated`."), "duty-standing.md");
+test("D14: standing.md lets the standing main approve anything as the boss's delegate and escalate the rest; tower-run.md marks bossOnly and keeps the delegate's words apart from the boss's", () => {
+	assert.ok(read("standing.md").includes("As the boss's delegate you may approve anything (`done`); what the boss should decide: `escalated` with `why: blocked`."), "standing.md");
 	const on = strip(read("tower-run.md"), false), off = strip(read("tower-run.md"), true);
 	assert.ok(on.includes("Add `bossOnly: true` when only the boss may decide it (a strict train target's auth or approval, a credential, a team join)."), "tower-run.md bossOnly");
 	assert.ok(on.includes("its answer comes as a server notice in the delegate's words, not the boss's; act on it as the card's answer and never quote it as the boss's (not as `auth`)."), "tower-run.md the delegate's words");
@@ -423,7 +423,7 @@ test("capacity: main and planning dispatch up to the budget, standing and towers
 	for (const [file, terms] of [
 		["main.md", ["capacity budget"]], // 0.92.0: idle and a capacity notice come with the nudge and the notice (tests/just-in-time.test.ts)
 		["planning.md", ["capacity budget", "Serialize only on a real dependency or shared files", "\"points\""]],
-		["duty-standing.md", ["Capacity is yours to mind", "`capacity_notice`", "`under`", "`stale`", "`quota`", "`device-silent`"]],
+		["standing.md", ["A `capacity_notice` is your incident", "`under`", "`stale`", "`quota`", "`device-silent`"]],
 		["tower.md", ["A `capacity` notice is an incident"]],
 		["tower-run.md", ["A `capacity` notice from the sb server", "is an incident, not a report"]],
 		["integrator.md", ["Aim for 2 or 3 cars sharing no files, within the skill's limits and each car's `departs`", "a lone car waits for a second even when no coordinator is awaited, and its arrival sets a one-shot wake at `maxWaitMin`", "A red gate drops the car that broke it; never skip a gate"]],
@@ -434,7 +434,7 @@ test("capacity: main and planning dispatch up to the budget, standing and towers
 test("capacity: the head routes device-silent to the workspace that works with the device, and every prompt leaves the 2 hours to sb's device-silent-2h", () => {
 	const read = (f: string) => readFileSync(`${PROMPT_DIR}/${f}`, "utf8");
 	assert.ok(read("head-run.md").includes("A `capacity device-silent` notice: `tower_send` it to the tower of the workspace whose mains work with that device (`board_read` remote shows teams and devices), else record a wait for the boss; `device-silent-2h` needs the boss: record a wait for him."), "head-run.md");
-	for (const file of ["head-run.md", "tower-run.md", "tower.md", "duty-standing.md"]) {
+	for (const file of ["head-run.md", "tower-run.md", "tower.md", "standing.md"]) {
 		assert.ok(read(file).includes("`device-silent-2h`"), `${file} names device-silent-2h`);
 		assert.doesNotMatch(read(file), /past 2 hours/, `${file} keeps no timer of its own`);
 	}
@@ -445,7 +445,7 @@ test("capacity: the head routes device-silent to the workspace that works with t
 test("capacity routing: the main answers its own notice, the standing main asks on the next one and escalates, the towers take sb's under-30m", () => {
 	const read = (f: string) => readFileSync(`${PROMPT_DIR}/${f}`, "utf8");
 	assert.ok(MAIN_CAP_HINT.includes("your work: dispatch its ready work now, or say why not (blocked, shared files, the boss) on your board"), "the notice to the main itself (0.92.0; main.md no longer says it)");
-	assert.ok(read("duty-standing.md").includes("a main still under at your next notice (`under-30m` too): ask it to dispatch or say why, then `call_tower` `why: blocked` naming it if no dispatch follows; no timer of your own"), "duty-standing.md");
+	assert.ok(read("standing.md").includes("a main still under at your next notice (`under-30m` too): ask it to dispatch or say why, then `call_tower` `why: blocked` naming it if no dispatch follows; no timer of your own"), "standing.md");
 	for (const file of ["tower.md", "tower-run.md"]) {
 		assert.ok(read(file).includes("`under-30m`"), `${file} names under-30m`);
 		assert.doesNotMatch(read(file), /send `under` and `stale` to the main/, `${file} relays no notice sb told the main itself`);

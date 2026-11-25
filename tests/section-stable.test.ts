@@ -371,7 +371,7 @@ test("a tree move resends the whole role prompt; each session start renders the 
 		await a.fire("session_start", { reason });
 		await world.quiet();
 		const pinned = await section(a);
-		assert.match(pinned, /of kind standing[\s\S]*## Kind: standing/, `after a session start (${reason})`);
+		assert.match(pinned, /^You are the standing main of Herdr tab [\s\S]*## Kind: standing/, `after a session start (${reason})`); // standing.md alone (docs/specs/2026-11-26-standing-prompt.md)
 		assert.doesNotMatch(pinned, /## Graph:/);
 	}
 });

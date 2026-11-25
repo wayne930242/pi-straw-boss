@@ -11,26 +11,34 @@ const read = (name: string) => readFileSync(`${PROMPT_DIR}/${name}.md`, "utf8");
 const lines = (text: string) => text.trim().split("\n").length;
 const sentences = (text: string) => text.replace(/\{\{\w+\}\}/g, "X").split(/(?<=[.!?:;])\s+|\n+/).map((x) => x.replace(/^[-#\s]+/, "").replace(/\s+/g, " ").trim().toLowerCase()).filter((x) => x.length > 24);
 const duplicates = (text: string) => { const seen = new Set<string>(), dup: string[] = []; for (const x of sentences(text)) (seen.has(x) ? dup.push(x) : seen.add(x)); return dup; };
-// What a main runs, as briefing.ts composes it: main.md, then the kind addendum.
-const compose = (duty: "coordinator" | "integrator" | "standing", off: boolean) => strip(["main", ...(duty === "integrator" ? ["integrator"] : duty === "standing" ? ["duty-standing"] : [])].map(read).join("\n\n"), off);
+// What a main runs, as briefing.ts composes it: main.md, then the kind addendum; a standing main runs standing.md alone (docs/specs/2026-11-26-standing-prompt.md).
+const compose = (duty: "coordinator" | "integrator" | "standing", off: boolean) => strip((duty === "standing" ? ["standing"] : ["main", ...(duty === "integrator" ? ["integrator"] : [])]).map(read).join("\n\n"), off);
 
 test("no composed prompt (kind x integration) holds a sentence twice, and main.md and the kind addendum repeat nothing of planning.md", () => {
 	const plan = new Set(sentences(read("planning")));
 	for (const duty of ["coordinator", "integrator", "standing"] as const) for (const off of [false, true]) assert.deepEqual(duplicates(compose(duty, off)), [], `${duty} off=${off}`);
-	for (const name of ["main", "duty-standing"]) assert.deepEqual(sentences(read(name)).filter((x) => plan.has(x)), [], `${name} repeats planning.md`);
+	for (const name of ["main", "standing"]) assert.deepEqual(sentences(read(name)).filter((x) => plan.has(x)), [], `${name} repeats planning.md`);
 });
 
 test("no graph prompt and no dispatch prompt ship", () => {
-	for (const name of ["dispatch", "graph-fan-out", "graph-orchestrator-worker"]) assert.ok(!existsSync(`${PROMPT_DIR}/${name}.md`), name);
+	for (const name of ["dispatch", "graph-fan-out", "graph-orchestrator-worker", "duty-standing"]) assert.ok(!existsSync(`${PROMPT_DIR}/${name}.md`), name);
 });
 
-// 2026-11-21 (D14, the boss's delegate, docs/specs/2026-11-21-box-mac-waits.md §15; measured): duty-standing.md 900 to 974 characters: an approval comes to the standing main, which may approve anything and escalates only what the boss should decide.
-// 2026-11-24 (capacity, docs/specs/2026-11-24-capacity.md, Prompts, and review prompts-review F003; measured): duty-standing.md 6 to 7 lines and 974 to 1492 characters: capacity notices are the standing main's incidents (`under`, `stale`, `quota`, `device-silent`, and sb's `device-silent-2h` for the boss).
-// 2026-11-24 (capacity routing; field, MP Center box 2; measured): 1492 to 1624 characters: a main still under at the standing main's next notice (`under-30m` too) is asked, then escalated with `call_tower`; no timer of its own.
-test("size caps: a kind addendum is at most 7 lines and 1624 characters; integrator.md is pinned", () => {
-	const standing = read("duty-standing");
-	assert.ok(lines(standing) <= 7 && standing.length <= 1624, `duty-standing: ${lines(standing)} lines, ${standing.length} characters`);
+// duty-standing.md (2026-11-21 to 2026-11-24: 900 to 1,624 characters, 7 lines) was an addendum to main.md that began by setting main.md's done rule aside. 2026-11-26 (docs/specs/2026-11-26-standing-prompt.md; boss 2026-11-26
+// 「無人塔台值守的 prompt 不該是 main 的，應該要量身訂做」; measured): standing.md replaces main.md + duty-standing.md (6,092 characters) for a standing main: 2,169 characters and 12 lines, the same with integration on and off.
+test("size caps: standing.md renders within 2,500 characters and 12 lines, integration on and off; integrator.md is pinned", () => {
+	for (const off of [false, true]) {
+		const standing = compose("standing", off).replace(/\{\{tab\}\}/g, "Ops 7");
+		assert.ok(lines(standing) <= 12 && standing.length <= 2500, `standing off=${off}: ${lines(standing)} lines, ${standing.length} characters`);
+	}
 	assert.equal(lines(read("integrator")), 13);
+});
+
+test("standing.md carries what every standing turn needs and none of main.md's dispatch, done, car, or pairing rules", () => {
+	const standing = read("standing");
+	for (const term of ["only the boss closes you", "Your board line names what you mind", "`boss_rename`", "`boss_watch`", "`MonitorCreate`", "never `ask_user_question`", "`call_tower` `why: blocked`", "`linkWait`", "`declined`", "`escalated`", "names no owner here: forward it to the main that owns the work", "tell the sender to name the owner next time", "`under-30m`", "`stale`", "`quota`", "`resumed`", "`device-silent-2h`", "for a new main", "`boss_handover`"]) assert.ok(standing.includes(term), term);
+	for (const term of ["Done when", "do not apply", "apps-config.md", "planning.md", "worktree", "car slip", "boss_pair", "caller_ping", "three points only", "Seam bindings", "Idle with ready todos", "re-arm", "Re-arm"]) assert.ok(!standing.includes(term), `standing.md says nothing of ${term}`);
+	assert.ok(!/<!-- (?:\/)?integration -->/.test(standing), "no integration block: a standing main sends no car");
 });
 
 // 27f86373 held main.md + planning.md in 9,676 characters, and 0.82.1 main.md + dispatch.md + planning.md in 9,673. 2026-11-23 (docs/specs/2026-11-23-lite-main.md §1, measured): dispatch.md folded into
