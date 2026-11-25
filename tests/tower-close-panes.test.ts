@@ -109,7 +109,7 @@ test("when the successor takes the handoff, the old main's workspace tower gets 
 	assert.match(told[0]!.message, /box watch \(session main-1\) handed over to its successor in tab wA:t100 \(session opened-wA:p101\)/);
 	assert.match(told[0]!.message, /boss_close_main with main "main-1"/);
 	assert.equal(world.broker.delivered.filter((d) => d.to === "tower-wB").length, 0, "another workspace's tower hears nothing");
-	assert.match(textOf(result), /your workspace's tower was told and closes this session once your successor is live/);
+	assert.match(textOf(result), /sb then closes this session and its pane once nothing of yours runs .* \(your workspace's tower was told too\)/);
 });
 
 // --- case 2: a dead agent pane --------------------------------------------------------------------------------------------------------------------------

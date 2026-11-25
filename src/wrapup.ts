@@ -62,6 +62,8 @@ export interface WrapDeps {
 	ask?: Ask;
 	/** pi-loop-monitor's folder (`~/.pi/loops`). */
 	loopsDir?: string;
+	/** Looked at first each minute (rotclose.ts): true when this session is an old main that handed over, which gets no nudge. */
+	first?(ctx: ExtensionContext): Promise<boolean>;
 }
 
 export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
@@ -88,6 +90,7 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 		if (looking || !ctx) return;
 		looking = true;
 		try {
+			if (await d.first?.(ctx)) return;
 			if (role() !== "main" || s.isTrain || s.closing || s.openedBy?.startsWith("link:")) return;
 			const standing = d.duty() === "standing", c = standing ? armClock : clock;
 			if ((!standing && !kindOk()) || !c.due(!standing && s.autoOn()) || !ctx.isIdle() || ctx.hasPendingMessages()) return;
@@ -109,6 +112,8 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 
 	return {
 		look,
+		/** What still runs for this session: a dialog, monitor, loop, watch, or subagent, or a pane Herdr shows blocked. */
+		running: () => running(true),
 		/** `boss_wrap`, with the net tools of a joined session that is no tower. */
 		addTool() {
 			pi.registerTool({

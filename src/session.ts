@@ -122,8 +122,9 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			const tower = (await workspaces(run).catch(() => [])).find((w) => w.workspace_id === s.at.workspaceId)?.tokens?.tower;
 			mainDuty.write(duty, `opened by tower ${tower ?? `of workspace ${s.at.workspaceId}`} as ${duty}`);
 		}
-		const revived = revivedNow(mine.tokens);
-		await report(run, "pane", s.at.paneId, { sb_open_main: null, ...(mine.tokens.sb_open_duty !== undefined ? { sb_open_duty: null } : {}), ...(mine.tokens[REVIVE_TOKEN] !== undefined ? { [REVIVE_TOKEN]: null } : {}) }).catch(() => {});
+		const revived = revivedNow(mine.tokens), from = mine.tokens.sb_handover_from;
+		if (typeof from === "string" && from) (s.saved.handoverFrom = from, pi.appendEntry(ENTRY, { handoverFrom: from })); // a successor tells this main once it took over (rotclose.ts)
+		await report(run, "pane", s.at.paneId, { sb_open_main: null, ...(from !== undefined ? { sb_handover_from: null } : {}), ...(mine.tokens.sb_open_duty !== undefined ? { sb_open_duty: null } : {}), ...(mine.tokens[REVIVE_TOKEN] !== undefined ? { [REVIVE_TOKEN]: null } : {}) }).catch(() => {});
 		if (revived) startInherit();
 		return true;
 	};

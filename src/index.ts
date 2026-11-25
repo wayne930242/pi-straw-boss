@@ -49,6 +49,7 @@ import { registerTrust } from "./trust/ask.ts";
 import { registerRunTrust } from "./trust/runtrust.ts";
 import { registerThreadTools } from "./threadtools.ts";
 import { createWrapUp } from "./wrapup.ts";
+import { createRotationClose } from "./rotclose.ts";
 
 export type { Deps } from "./state.ts";
 
@@ -110,7 +111,8 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const host = createHost(kit, { connected: membership.connected, ask: cfg.ask ?? look?.ask });
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck, turn: bridge.turn });
-		const wrap = createWrapUp(kit, { reach, boardFill, closeSelf, blockers: () => bridge.turn?.blockers(), duty: () => mainDuty.now(), remote: () => Boolean(link.remoteScope()), ask: cfg.ask ?? look?.ask }); // idle wrap-up and boss_wrap (wrapup.ts)
+		const wrap = createWrapUp(kit, { reach, boardFill, closeSelf, blockers: () => bridge.turn?.blockers(), duty: () => mainDuty.now(), remote: () => Boolean(link.remoteScope()), ask: cfg.ask ?? look?.ask, first: (c) => rot.look(c) }); // idle wrap-up and boss_wrap (wrapup.ts)
+		const rot = createRotationClose(kit, { control, running: () => wrap.running(), reach, boardFill, closeSelf }); // an old main closes itself once its successor took over (rotclose.ts)
 		const watch = createBossWatch(kit, { ask: cfg.ask ?? look?.ask, control, openTower: reach.openTower, remote: () => Boolean(link.remoteScope()) });
 		registerSession(kit, { mainDuty, attended: () => link.attended(), integration: createIntegrationWatch(kit), runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest, roles, reach }) });
 		trainGuard = registerTrainGuard(kit, cars.client, mainDuty);
