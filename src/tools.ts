@@ -23,6 +23,7 @@ import type { Reach } from "./reach.ts";
 import type { ServerLook } from "./server-look.ts";
 import { ENTRY, type Kit } from "./state.ts";
 import { snapshotOfBranch } from "./todo.ts";
+import { writeHandoverTodos } from "./handovertodo.ts";
 import { todosOf } from "./items.ts";
 import { integrationOff } from "./trainswitch.ts";
 import { isRoleLabel, ownsBoard, trainLabel } from "./trainrole.ts";
@@ -217,7 +218,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 		},
 		// A main's own session rotation (docs/specs/2026-11-23-tower-revive.md §8): it opens its successor itself, with the handoff file as the new pi's first prompt; no /new, no boss.
 		addHandover() {
-			tool("boss_handover", "Main only, when your session-rotation rule says rotate: write the handoff file, then this opens your successor in a new tab under your name and kind; it tells you by intercom when it took over, then give up your role as the rule says. Refused in a teammate's turn.",
+			tool("boss_handover", "Main only, when your session-rotation rule says rotate: write the handoff file, then this saves your todo list beside it for import and opens your successor in a new tab under your name and kind; it tells you by intercom when it took over, then give up your role as the rule says. Refused in a teammate's turn.",
 				Type.Object({
 					handoff: Type.String({ description: "The handoff file, absolute or relative to your folder; it must exist." }),
 					reason: Type.String({ description: "One line of at most 200 characters." }),
@@ -245,7 +246,8 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 							if (net.ps.some((p) => p.pane_id === held.pane && p.agent)) throw new Error(`Your successor in pane ${held.pane} (tab ${held.tab}) is still live: one at a time. Tell it by intercom, or wait until it took over.`);
 						}
 						const name = pi.getSessionName() || s.ownName || me().slice(0, 8);
-						const next = await openSuccessor({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd, sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), trustDir: trustDir(guiDir) }, { from: { id: me(), name }, handoff: path, reason: why, ...(s.duty ? { duty: s.duty } : {}), ...(s.openedBy ? { openedBy: s.openedBy } : {}) });
+						const todos = writeHandoverTodos(path, snapshotOfBranch(s.branch()));
+						const next = await openSuccessor({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd, sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), trustDir: trustDir(guiDir) }, { from: { id: me(), name }, handoff: path, ...(todos.written ? { todosPath: todos.path } : {}), reason: why, ...(s.duty ? { duty: s.duty } : {}), ...(s.openedBy ? { openedBy: s.openedBy } : {}) });
 						s.saved.successor = { pane: next.pane, tab: next.tab, at: cfg.now(), main: next.main };
 						pi.appendEntry(ENTRY, { successor: s.saved.successor });
 						// RVR-F004: the successor took the handoff, so this main's record says so: a later Herdr close of this tab raises no main_died, and no tower revives it.
@@ -254,7 +256,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 						try { listen(); } catch { /* no pi-intercom channel: the tower's ask goes unanswered and says so; the handover itself stands */ }
 						const told = await openTower(undefined, false).then((tower) => post(tower.id, handedNotice(name, me(), next), "call_tower", "tower", false, undefined, "milestone")).then((r) => r.status === "sent", () => false);
 						const closer = told ? "your workspace's tower was told and closes this session once your successor is live" : "no tower of this workspace took the notice, so the boss closes this session";
-						return { text: `Opened your successor in tab ${next.tab} (session ${next.main}) and handed it ${path}. When it tells you it took over, give up your role as your rule says: boss_duty coordinator (if you are standing or integrator), boss_rename to "old ${name} (handed over to ${next.main.slice(0, 8)})", stop your monitors and loops, clear your board, and wait to be closed: ${closer}.`, details: { ...next, towerTold: told } };
+						return { text: `Opened your successor in tab ${next.tab} (session ${next.main}) and handed it ${path}. ${todos.written ? `Wrote ${todos.count} tasks to ${todos.path}.` : `No todos file written (0 tasks exported): ${todos.reason}.`} When it tells you it took over, give up your role as your rule says: boss_duty coordinator (if you are standing or integrator), boss_rename to "old ${name} (handed over to ${next.main.slice(0, 8)})", stop your monitors and loops, clear your board, and wait to be closed: ${closer}.`, details: { ...next, towerTold: told, todos } };
 					} finally {
 						handing = false;
 					}

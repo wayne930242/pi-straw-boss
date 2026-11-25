@@ -175,6 +175,10 @@ No pi-herdr-agents change was made.
 
 The main prompt has no rotation line, so none was changed; the tool's description carries the instruction, and `main.md` stays within its character cap (`tests/duty-prompts.test.ts`). The rule lives in weihung-basic-agent `rules/session-rotation.md`, outside this repository.
 
+Before opening the tab, `boss_handover` saves the current branch’s tasks beside the handoff (`handoff.md` → `handoff.todos.json`), omitting deleted tasks and dependencies on absent ids.
+The result gives the path and task count, or says why no snapshot was written (empty list or incompatible legacy data).
+When a file was written, the successor imports it first with `todo {"action":"import","path":"<absolute path>"}`; with an older todo tool that has no import action it rebuilds the list from the handoff instead.
+
 ## 9. Prompts
 
 `tower.md` gains one line (a dead main whose work is not done comes back with `boss_revive_main`; no new main for its sender) and `tower-run.md` one (act on `main_died`; leave a main the boss closed on purpose or whose work ended, and say which; a `quit` main only when a request names it). Budgets, measured: `tower.md` on 487 to 508, off 417 to 438 (`tests/prompts.test.ts`, dated 2026-11-23).

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { afterEach, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { World } from "./fakes.ts";
@@ -18,6 +18,7 @@ afterEach(async () => {
 	world = new World();
 });
 const textOf = (result: { content: { type: string; text?: string }[] }) => result.content.map((c) => c.text).join("");
+const todosOfResult = (result: { details: unknown }) => (result.details as { todos: { written: boolean; path: string | null; count: number; reason?: string } }).todos;
 const NEW = { tab: "wA:t100", pane: "wA:p101", main: "opened-wA:p101" };
 
 async function main() {
@@ -46,11 +47,42 @@ test("a main's handover opens one successor tab in its workspace with its name a
 	assert.equal(world.herdr.pane(NEW.pane).tokens.sb_duty, "standing");
 	const prompt = world.broker.delivered.filter((d) => d.to === NEW.main);
 	assert.equal(prompt.length, 1);
+	assert.doesNotMatch(prompt[0]!.message, /"action":"import"|drop completed todos/);
+	assert.equal(existsSync(handoff.replace(/\.md$/, ".todos.json")), false);
 	assert.match(prompt[0]!.message, /main box watch \(session main-1\) opened this tab for you with boss_handover .* its reason: pi-session-doctor measured repeated stalls\./s);
 	assert.match(prompt[0]!.message, new RegExp(`Read the handoff file ${handoff.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} now`));
 	assert.match(prompt[0]!.message, /tell box watch by intercom \(send, to "main-1"\) that you took over/);
 	assert.match(textOf(result), /Opened your successor in tab wA:t100 .* give up your role as your rule says: boss_duty coordinator .* boss_rename to "old box watch \(handed over to opened-w\)"/s);
 	assert.deepEqual(world.herdr.commands("tab", "focus"), [], "the boss's focus stays where it is");
+});
+
+test("the successor imports the saved branch todos first, keeping completed evidence and surviving dependencies", async () => {
+	const { m, handoff } = await main();
+	const path = handoff.replace(/\.md$/, ".todos.json");
+	writeFileSync(path, "stale");
+	const done = { id: 2, subject: "checked", status: "completed", anchor: "npm test", evidence: [{ command: "npm test", sha: "abc1234", result: "pass", at: "2026-11-25T00:00:00Z" }], metadata: { points: 3 } };
+	const doing = { id: 8, subject: "next", status: "in_progress", owner: "me" };
+	m.entries.push({ customType: "todo/v1", data: { v: 1, nextId: 4, tasks: [{ ...done, blockedBy: [1] }, { id: 1, status: "deleted", subject: "gone" }, { ...doing, blockedBy: [1, 2, 99] }] } });
+	const result = await m.tool("boss_handover", { handoff: relative(process.cwd(), handoff), reason: "rotate" });
+	assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { v: 1, nextId: 9, tasks: [done, { ...doing, blockedBy: [2] }] });
+	assert.deepEqual(todosOfResult(result), { written: true, path, count: 2 });
+	assert.ok(textOf(result).includes(path));
+	const prompt = world.broker.delivered.find((d) => d.to === NEW.main)!.message;
+	assert.ok(prompt.includes(JSON.stringify({ action: "import", path })));
+	assert.match(prompt, /older pi-todo-ledger/);
+	assert.doesNotMatch(prompt, /drop completed todos/);
+});
+
+for (const invalid of [false, true]) test(`no import for ${invalid ? "an incompatible legacy snapshot" : "a tombstone-only list"}`, async () => {
+	const { m, handoff } = await main();
+	m.entries.push({ customType: "rpiv-todo-state", data: { nextId: 2, tasks: [{ id: 1, subject: "one", status: invalid ? "pending" : "deleted", anchor: 42 }] } });
+	const result = await m.tool("boss_handover", { handoff, reason: "rotate" });
+	const { written, path, count, reason } = todosOfResult(result);
+	assert.deepEqual([written, path, count], [false, null, 0]);
+	assert.match(reason!, invalid ? /not.*todo\/v1/ : /no tasks/i);
+	assert.match(textOf(result), invalid ? /not.*todo\/v1/ : /no tasks/i);
+	assert.equal(existsSync(join(dirname(handoff), "handoff-box-watch.todos.json")), false);
+	assert.doesNotMatch(world.broker.delivered.find((d) => d.to === NEW.main)!.message, /"action":"import"|\.todos\.json/);
 });
 
 test("RVR-F004: a main that handed over marks its role record, keeps the mark through its step-down, and is never raised as dead or revived", async () => {
