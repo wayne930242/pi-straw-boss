@@ -8,7 +8,8 @@ import { capLine, clock, type DeviceCap, joinCaps, type MainFacts, type MainRow,
 const MIN = 60_000;
 /** An ally device as the link holder last heard of it: how old its last board is, whether it is online now, and whether that board had open work. */
 /** `timed`: its board carries a capacity row, so it comes at least every 10 minutes and its age counts; an older build's board comes once an hour unchanged, and only its going offline counts. */
-export interface AllySeen { key: string; label: string; short: string; online: boolean; boardAgeMs: number; timed: boolean; open: boolean }
+/** `mains` and `paused`: the board's entries by id with their main's name, and the paused ones of its capacity row (field 2026-11-25: box 2's mains ran out of Claude quota for 3 hours and this device's standing main heard nothing). */
+export interface AllySeen { key: string; label: string; short: string; online: boolean; boardAgeMs: number; timed: boolean; open: boolean; mains?: { id: string; name: string }[]; paused?: { id: string; until?: number }[] }
 export type CapKind = "under" | "under-30m" | "stale" | "quota" | "resumed" | "silent" | "silent-2h";
 /** A device still silent this long after its first notice is escalated once, for the boss (`silent-2h`): the 2 hours are sb's, not a tower's or a standing main's own timer. */
 export const SILENT_ESCALATE_MS = 2 * 3600_000;
@@ -38,14 +39,16 @@ export interface CapDeps {
 }
 
 const q = (name: string) => JSON.stringify(name);
+/** A teammate device's main is named with its device. */
+const on = (ally?: AllySeen) => (ally ? ` · device ${q(ally.label)} (${ally.short})` : "");
 /** The event texts: terse, the main or device named, the flag, the numbers. */
 export function capText(kind: CapKind, d: DeviceCap, now: number, row?: MainRow, ally?: AllySeen, since?: number): string {
 	switch (kind) {
 		case "under": return `capacity under · main ${q(row!.name)} · ${row!.ready} ready (smallest ${row!.minReady} pt) · ${capLine(d, now)} · held ${Math.floor((underFor(d, now) ?? 0) / MIN)} min`;
 		case "under-30m": return `capacity under-30m · main ${q(row!.name)} · still under 30 min after its notice at ${clock(since ?? now, now)} · ${row!.ready} ready (smallest ${row!.minReady} pt) · ${capLine(d, now)} · ask it to dispatch or say why`;
 		case "stale": return `capacity stale · main ${q(row!.name)} · ${row!.open} open todos · no move for ${d.unattended ? "30" : "120"}+ min · state of the device: ${capLine(d, now)}`;
-		case "quota": return `capacity quota · main ${q(row!.name)} · ${pauseText(row!.paused ?? {}, now)}${row!.paused?.detail ? ` · ${row!.paused.detail}` : ""}`;
-		case "resumed": return `capacity quota resumed · main ${q(row!.name)}`;
+		case "quota": return `capacity quota · main ${q(row!.name)}${on(ally)} · ${pauseText(row!.paused ?? {}, now)}${row!.paused?.detail ? ` · ${row!.paused.detail}` : ""}`;
+		case "resumed": return `capacity quota resumed · main ${q(row!.name)}${on(ally)}`;
 		case "silent": return `capacity device-silent · device ${q(ally!.label)} (${ally!.short}) · last board ${Math.floor(ally!.boardAgeMs / MIN)} min ago · ${ally!.online ? "online" : "offline"} · its last board had open work`;
 		case "silent-2h": return `capacity device-silent-2h · device ${q(ally!.label)} (${ally!.short}) · still silent 2 h after the first notice at ${clock(since ?? now, now)} · last board ${Math.floor(ally!.boardAgeMs / MIN)} min ago · ${ally!.online ? "online" : "offline"} · needs the boss`;
 	}
@@ -77,18 +80,23 @@ export function createCapWatch(d: CapDeps) {
 			if (underSince !== undefined) dev.under = underSince;
 			writeDevice(d.dir, dev);
 			const standing = (subject?: string) => dev.mains.find((r) => r.standing && r.session !== subject)?.session;
-			const silent = d.allies().filter((a) => a.open && (!a.online || (a.timed && a.boardAgeMs > SILENT_MS))), silentKeys = new Set(silent.map((a) => a.key));
+			const allies = d.allies(), silent = allies.filter((a) => a.open && (!a.online || (a.timed && a.boardAgeMs > SILENT_MS))), silentKeys = new Set(silent.map((a) => a.key));
 			const ally = (kind: CapKind, a: AllySeen, since?: number): CapEvent => ({ kind, key: a.key, text: capText(kind, dev, now, undefined, a, since), ...(standing() ? { standing: standing()! } : {}) });
 			const of = (kind: CapKind, row: MainRow, since?: number): CapEvent => ({
 				kind, key: row.session, text: capText(kind, dev, now, row, undefined, since), subject: row.session, workspace: row.workspace, ...(standing(row.session) ? { standing: standing(row.session)! } : {}),
 				...(kind === "under" || kind === "stale" ? { main: row.session } : {}),
 			});
+			// A teammate device's paused main (its board's capacity row) is told to this device's standing main and the head tower as a local one is, its key the device's and the entry id.
+			const allyRow = (a: AllySeen, id: string, until?: number) => ({ session: `${a.key}:${id}`, name: a.mains?.find((m) => m.id === id)?.name ?? id, workspace: "", points: 0, ready: 0, open: 0, paused: until !== undefined ? { until } : {} }) as MainRow;
+			const allyOf = (kind: CapKind, a: AllySeen, row: MainRow): CapEvent => ({ kind, key: row.session, text: capText(kind, dev, now, row, a), ...(standing() ? { standing: standing()! } : {}) });
+			const allyPaused = allies.flatMap((a) => (a.paused ?? []).map((p) => ({ a, row: allyRow(a, p.id, p.until) })));
 			const under = underFor(dev, now) !== undefined ? dev.mains.filter((r) => r.minReady !== undefined && dev.points + r.minReady <= dev.budget!) : [], underKeys = new Set(under.map((r) => r.session));
 			const flagged: CapEvent[] = [
 				...under.map((r) => of("under", r)),
 				...dev.mains.filter((r) => r.stale && r.open > 0).map((r) => of("stale", r)),
 				...dev.mains.filter((r) => r.paused).map((r) => ({ ...of("quota", r), tag: String(r.paused!.until ?? "") })),
 				...silent.map((a) => ally("silent", a)),
+				...allyPaused.map(({ a, row }) => ({ ...allyOf("quota", a, row), tag: String(row.paused!.until ?? "") })),
 			];
 			const next = new Set<string>();
 			for (const e of flagged) {
@@ -112,9 +120,13 @@ export function createCapWatch(d: CapDeps) {
 			}
 			// A quota that cleared while its main still runs is told once: the main is back at work.
 			const rows = new Map(dev.mains.map((r) => [r.session, r]));
+			// An ally's main is back when its board still has it and its pause is gone.
+			const allyMains = new Map<string, { a: AllySeen; row: MainRow }>(allies.flatMap((a) => (a.mains ?? []).map((m) => [`${a.key}:${m.id}`, { a, row: allyRow(a, m.id) }] as const)));
 			for (const mark of active) {
-				const kind = mark.slice(0, mark.indexOf(":")), session = mark.slice(mark.indexOf(":") + 1).split("@")[0]!, row = rows.get(session);
-				if (kind === "quota" && !flagged.some((e) => e.kind === "quota" && e.key === session) && row && last.has(session)) await send(of("resumed", row), now);
+				const kind = mark.slice(0, mark.indexOf(":")), session = mark.slice(mark.indexOf(":") + 1).split("@")[0]!, row = rows.get(session), theirs = allyMains.get(session);
+				if (kind !== "quota" || flagged.some((e) => e.kind === "quota" && e.key === session)) continue;
+				if (row && last.has(session)) await send(of("resumed", row), now);
+				else if (theirs) await send(allyOf("resumed", theirs.a, theirs.row), now);
 			}
 			active = next;
 			untold = new Set(flagged.map(markOf).filter((m) => untold.has(m)));

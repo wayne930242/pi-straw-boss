@@ -71,6 +71,9 @@ test("the capacity row goes to teammates whose caps list it: numbers only, the p
 	assert.doesNotMatch(JSON.stringify(held.capacity), /api|private|weekly|main-/, "no name, session id or detail on the wire");
 	const seen = b.holder.allySeen().find((x) => x.short === alice.shortId)!;
 	assert.deepEqual([seen.label, seen.timed, seen.open], ["alice-mac", true, true]);
+	// The receiver's capacity watch gets the paused main by its entry and name (docs/specs/2026-11-26-standing-prompt.md, item 5).
+	assert.deepEqual(seen.paused, [{ id: wireId(alice.id, "main-in"), until: Date.parse((held.capacity as { paused: { until: string }[] }).paused[0]!.until) }]);
+	assert.deepEqual(seen.mains?.find((m) => m.id === wireId(alice.id, "main-in"))?.name, "main-in");
 });
 
 test("a teammate whose caps do not list board.capacity (an older build) gets the board without it", async () => {

@@ -1778,7 +1778,8 @@ export class LinkHolder {
 				const open = c ? c.points > 0 || c.ready > 0 || c.open > 0 || c.paused.length > 0 : seen.board.entries.some((e) => e.items.some((i) => !i.done) || ((m) => Boolean(m && Number(m[1]) < Number(m[2])))(/\((\d+)\/(\d+)\)$/.exec(e.now)));
 				// A board without capacity comes once an hour unchanged, so its age says nothing under an hour: only going offline counts for it.
 				const age = now - seen.at, online = presence !== undefined && now - presence.at <= PRESENCE_ONLINE_MS;
-				out.push({ key: `${run.team}:${id}`, label: restrictLabel(roster.members.get(id)?.label ?? shortId(id)), short: shortId(id), online, boardAgeMs: age, timed: c !== undefined, open });
+				const mains = seen.board.entries.map((e) => ({ id: clean(e.id, 16), name: restrictLabel(clean(e.name, BOARD.label)) })), paused = (c?.paused ?? []).map((p) => ({ id: clean(p.id, 16), ...(p.until !== undefined ? { until: Math.min(p.until, 8.64e15) } : {}) }));
+				out.push({ key: `${run.team}:${id}`, label: restrictLabel(roster.members.get(id)?.label ?? shortId(id)), short: shortId(id), online, boardAgeMs: age, timed: c !== undefined, open, mains, ...(paused.length ? { paused } : {}) });
 			}
 		}
 		return out;

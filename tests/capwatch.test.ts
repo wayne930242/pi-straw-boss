@@ -132,6 +132,27 @@ test("device-silent: an ally with open work whose board is over 30 minutes old o
 	assert.equal(w.told[0]!.text, 'capacity device-silent · device "box 1" (d1) · last board 31 min ago · online · its last board had open work');
 });
 
+// Item 5 of docs/specs/2026-11-26-standing-prompt.md (field 2026-11-25 14:16Z: box 2's mains ran out of Claude quota for about 3 hours and this device's standing main got no notice): a teammate device's paused main,
+// from its board's capacity row, is a `quota` flag here too, told once to this device's standing main (and the head tower), and `resumed` when its pause is gone while its board still has it.
+test("an ally's paused main is told once as quota, naming the device; resumed when its pause clears; a new pause to another time is a new flag", async () => {
+	const { w, make } = world();
+	const until = w.clock.now() + 3 * 60 * MIN, box = (paused: AllySeen["paused"], mains = [{ id: "e1", name: "work-on" }, { id: "e2", name: "pg" }]): AllySeen => ({ key: "t:d2", label: "box 2", short: "yixv3j", online: true, boardAgeMs: MIN, timed: true, open: true, mains, ...(paused ? { paused } : {}) });
+	w.allies = [box([{ id: "e1", until }, { id: "e2", until }])];
+	const watch = make();
+	await run(watch, w.clock, 40);
+	assert.deepEqual(w.told.map((e) => [e.kind, e.key, e.standing, e.subject, e.workspace, e.main]), [["quota", "t:d2:e1", "s-st", undefined, undefined, undefined], ["quota", "t:d2:e2", "s-st", undefined, undefined, undefined]], "once each, to the standing main");
+	assert.match(w.told[0]!.text, /^capacity quota · main "work-on" · device "box 2" \(yixv3j\) · quota · resumes \d\d:\d\d$/);
+	w.allies = [box([{ id: "e2", until }])];
+	await run(watch, w.clock, 2);
+	assert.deepEqual(w.told.slice(2).map((e) => [e.kind, e.key, e.text]), [["resumed", "t:d2:e1", 'capacity quota resumed · main "work-on" · device "box 2" (yixv3j)']]);
+	w.allies = [box([{ id: "e2", until: until + 60 * MIN }])];
+	await run(watch, w.clock, 2);
+	assert.deepEqual(w.told.slice(3).map((e) => [e.kind, e.key]), [["quota", "t:d2:e2"]], "another resume time is a new pause");
+	w.allies = [box(undefined, [{ id: "e1", name: "work-on" }])];
+	await run(watch, w.clock, 2);
+	assert.equal(w.told.length, 4, "a main gone from the board is not told resumed");
+});
+
 test("the throttle outlives a restart of the server, and an event nobody took is tried again at the next look", async () => {
 	const { w, make } = world();
 	w.cap("s-a", { open: 1, pause: { reason: "quota", at: w.clock.now() } });
