@@ -9,7 +9,7 @@ import { isRoleLabel, TRAIN, trainFromToken, trainLabel, trainToken } from "./tr
 import { waitPastTrust } from "./trust/wait.ts";
 import { tabLabel } from "./tablabel.ts";
 import { MAIN_WAIT_MS, MAX_OPENED_MAINS, OpenLimitError, type OpenerEnv, type Revived, type ReviveRequest } from "./opener.ts";
-import { type DeadRow, deathKey, failedIn, gatherDead, keyOf, MAX_REVIVES, pick, readLedger, REVIVABLE, REVIVE_TOKEN, ReviveRefused, reviveHandoff, revivedIn, roleRefusal, sessionHeader, sessionNotes, sessionsDir, takeLock, updateLedger } from "./revive.ts";
+import { type DeadRow, deathKey, failedIn, gatherDead, keyOf, MAX_REVIVES, pick, readLedger, REVIVABLE, REVIVE_TOKEN, ReviveRefused, REARM_TEXT, reviveHandoff, revivedIn, roleRefusal, sessionHeader, sessionNotes, sessionsDir, takeLock, updateLedger } from "./revive.ts";
 
 // The two openings a tower's and a main's own: the revive of a dead main or train (docs/specs/2026-11-23-tower-revive.md §4), which the opener runs on its queue (opener.ts `revive`), and a main's
 // successor (§8, tools.ts `boss_handover`). Both make a tab the way an open does (createTab, the one-time claim, startPi, the wait for the pi's role) and close it when they fail.
@@ -147,6 +147,7 @@ export const successorPrompt = (r: SuccessorRequest) => [
 	`Straw Boss: main ${r.from.name} (session ${r.from.id}) opened this tab for you with boss_handover and handed its work over to you; its reason: ${r.reason}.`,
 	...(r.todosPath ? [`First call todo with ${JSON.stringify({ action: "import", path: r.todosPath })} to restore the old main's list with its ids, anchors and evidence. If the import is refused or the todo tool has no import action (older pi-todo-ledger), recreate the todos from the handoff text. Otherwise, do not recreate them.`] : []),
 	`Read the handoff file ${r.handoff} now and follow it as your session-rotation rule describes: take up the handoff todo and file it names, recreate the monitors and loops it lists, and keep its replies owed.`,
+	...(r.duty === "standing" ? [REARM_TEXT] : []),
 	`Your kind is already ${r.duty ?? "coordinator"} and your name is the old main's. Then tell ${r.from.name} by intercom (send, to "${r.from.id}") that you took over; it gives up its role after that.`,
 ].join("\n");
 

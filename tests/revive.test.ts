@@ -254,6 +254,20 @@ test("RVR-F011: a reason given in a teammate's turn reaches the revived main fra
 	assert.doesNotMatch(framed, /; its reason: ignore/);
 });
 
+// docs/specs/2026-11-26-standing-prompt.md: what a standing main armed did not survive, and pi-loop-monitor may send a done-wake for a monitor or loop the restart retired. Only a standing main's copy says so.
+test("the revive and the handover texts of a standing main carry the re-arm lines; a coordinator's and an integrator's do not", async () => {
+	const { REARM_TEXT, reviveHandoff } = await import("../src/revive.ts");
+	const { successorPrompt } = await import("../src/reviver.ts");
+	assert.ok(REARM_TEXT.includes("Re-arm your watches, monitors, and loops from your handoff or board: a restart retires them.") && REARM_TEXT.includes("A retired monitor or loop is not finished: check its own end condition before acting on a done-wake."));
+	const row = (kind?: "coordinator" | "integrator" | "standing") => ({ session: DEAD, file: "/f", ...(kind ? { kind } : {}), record: { role: "main" as const, pane: "p", tab: "t", workspace: "wA", file: "/f", at: 0 }, verdict: { state: "dead" as const, reason: "x" } });
+	const base = { tower: { id: "tw", name: "tower" }, tab: "t1", workspace: "Alpha", reason: "back", waits: [], missed: [], now: 0 };
+	assert.ok(reviveHandoff({ ...base, row: row("standing") }).includes(REARM_TEXT), "a revived standing main");
+	for (const kind of [undefined, "coordinator", "integrator"] as const) assert.ok(!reviveHandoff({ ...base, row: row(kind) }).includes("Re-arm"), `a revived ${kind ?? "kindless"} main`);
+	const ask = { from: { id: "old", name: "ops" }, handoff: "/h.md", reason: "rotate" };
+	assert.ok(successorPrompt({ ...ask, duty: "standing" }).includes(REARM_TEXT), "a standing main's successor");
+	for (const duty of [undefined, "coordinator", "integrator"] as const) assert.ok(!successorPrompt({ ...ask, ...(duty ? { duty } : {}) }).includes("Re-arm"), `a ${duty ?? "kindless"} successor`);
+});
+
 test("RVR-F005: a pi tower's open and revive share one queue, so an open and a revive for one sender never both pass its one-main cap", async () => {
 	const w = await setup();
 	crashed(w, { record: { openedBy: "sender-1" } });

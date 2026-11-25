@@ -314,6 +314,9 @@ export function roleRefusal(r: DeadRow, o: { integrationOff: boolean; live: Pane
 	return undefined;
 }
 
+/** A standing main's lines in every text that brings it back (a revive, a handover): it minds by what it arms, and nothing it armed survived (docs/specs/2026-11-26-standing-prompt.md). The second line
+ *  holds until pi-loop-monitor stops sending a done-wake for a monitor or loop a restart retired. */
+export const REARM_TEXT = "Re-arm your watches, monitors, and loops from your handoff or board: a restart retires them. A retired monitor or loop is not finished: check its own end condition before acting on a done-wake.";
 /** The revived pi's first message (§4, step 6): facts only, written by the code. */
 export function reviveHandoff(i: { row: DeadRow; tower: { id: string; name: string }; tab: string; workspace: string; reason: string; waits: string[]; missed: Missed[]; now: number; /** The remote turn the tower called it in (`remote:<device>`): its reason is a peer's words (RVR-F011). */ origin?: string }): string {
 	const r = i.row, ended = r.record.ended;
@@ -329,6 +332,7 @@ export function reviveHandoff(i: { row: DeadRow; tower: { id: string; name: stri
 		`3. ${r.openedBy && !r.openedBy.startsWith("integ:") ? `Tell ${line(r.openedBy).slice(0, 60)} (the session that asked for your work) that you are back.` : "Tell whoever waits on you that you are back."}`,
 		"4. Your subagents: Straw Boss checks the runs you launched and sends you one message about them; act on it.",
 	];
+	if (r.kind === "standing") lines.push(REARM_TEXT);
 	if (i.waits.length) lines.push("Waits you hold:", ...i.waits.map((w) => `- ${w}`));
 	if (i.missed.length) lines.push("Messages that could not reach you while you were down (each as it was sent):", ...i.missed.map((m) => `- from ${line(m.from).slice(0, 60)} at ${new Date(m.at).toISOString()}: ${line(m.text)}`));
 	return lines.join("\n");
