@@ -1,15 +1,10 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BoardFill } from "./boardfill.ts";
-import { panes } from "./herdr.ts";
-import type { Ask } from "./host.ts";
 import { todosOf } from "./items.ts";
-import { subagents } from "./netdata.ts";
 import type { Reach } from "./reach.ts";
-import { armedLoop } from "./server/capops.ts";
 import type { Kit } from "./state.ts";
+import { createProbe, type ProbeDeps } from "./stillruns.ts";
 import { snapshotOfBranch } from "./todo.ts";
 
 // Idle wrap-up (docs/specs/2026-11-25-idle-wrap-up.md, part 1; boss 2026-11-25): a coordinator or integrator main idle 30 minutes is asked once whether its work is done, and `boss_wrap` asks the boss in
@@ -51,17 +46,12 @@ export function idleClock(now: () => number, idleMs = IDLE_MS) {
 	};
 }
 
-export interface WrapDeps {
+export interface WrapDeps extends ProbeDeps {
 	reach: Pick<Reach, "callTower" | "send">;
 	boardFill: Pick<BoardFill, "clear">;
 	closeSelf(keepPane: boolean): string | undefined;
-	/** What a stop would lose that an abort does not end (bridge.ts): an open dialog, a running monitor. */
-	blockers(): string | undefined;
 	duty(): string;
 	remote(): boolean;
-	ask?: Ask;
-	/** pi-loop-monitor's folder (`~/.pi/loops`). */
-	loopsDir?: string;
 	/** Looked at first each minute (rotclose.ts): true when this session is an old main that handed over, which gets no nudge. */
 	first?(ctx: ExtensionContext): Promise<boolean>;
 }
@@ -71,22 +61,7 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 	let ctx: ExtensionContext | undefined, stop: (() => void) | undefined, looking = false;
 	const name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
 	const kindOk = () => d.duty() === "coordinator" || d.duty() === "integrator";
-	/** What still runs for this session: a dialog or monitor, a loop, a boss_watch, a subagent, and (for the nudge) a pane Herdr shows blocked; `sure`: a watch list that does not answer counts too (T4 review F002), and so does a pane list that fails or lacks this pane. */
-	const running = async (pane: boolean, sure = false): Promise<string[]> => {
-		const why: string[] = [];
-		const b = d.blockers();
-		if (b) why.push(b);
-		if (armedLoop(d.loopsDir ?? join(homedir(), ".pi", "loops"), me(), cfg.now())) why.push("a loop is active");
-		const watches = await d.ask?.({ cmd: "watch-list", session: me() }, { start: "never" }).catch(() => undefined);
-		if (watches?.ok && Array.isArray(watches.watches) && watches.watches.length) why.push(`${watches.watches.length} boss_watch watch${watches.watches.length > 1 ? "es run" : " runs"} (boss_watch stop ends one)`);
-		else if (sure && !(watches?.ok && Array.isArray(watches.watches))) why.push("the watch list does not answer");
-		const all = await panes(cfg.run).catch(() => undefined), mine = all?.find((p) => p.pane_id === s.at?.paneId);
-		if (sure && !mine) why.push("Herdr's pane list did not answer or lacks this pane"); // its subagents are unknown (RV6-F001)
-		const kids = all ? subagents(mine, all, cfg.now()).filter((r) => !r.ended).length : 0;
-		if (kids) why.push(`${kids} subagent${kids > 1 ? "s are" : " is"} running`);
-		if (pane && mine?.agent_status === "blocked") why.push("this pane waits on a dialog");
-		return why;
-	};
+	const probe = createProbe({ cfg, s, me }, d); // what still runs for this session (stillruns.ts)
 	const look = async () => {
 		if (looking || !ctx) return;
 		looking = true;
@@ -95,7 +70,7 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 			if (role() !== "main" || s.isTrain || s.closing || s.openedBy?.startsWith("link:")) return;
 			const standing = d.duty() === "standing", c = standing ? armClock : clock;
 			if ((!standing && !kindOk()) || !c.due(!standing && s.autoOn()) || !ctx.isIdle() || ctx.hasPendingMessages()) return;
-			if ((await running(true, standing)).length || !ctx.isIdle()) return;
+			if ((await (standing ? probe.strict() : probe.nudge())).length || !ctx.isIdle()) return;
 			c.sent();
 			pi.sendMessage(standing ? { customType: ARM_MESSAGE, content: ARM_TEXT, display: true } : { customType: WRAP_MESSAGE, content: NUDGE_TEXT, display: true }, { triggerTurn: true });
 		} catch { /* the next look tries again */ } finally {
@@ -114,7 +89,7 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 	return {
 		look,
 		/** What still runs for this session: a dialog, monitor, loop, watch, or subagent, or a pane Herdr shows blocked; a read that fails counts as running. */
-		running: () => running(true, true),
+		running: probe.strict,
 		/** `boss_wrap`, with the net tools of a joined session that is no tower. */
 		addTool() {
 			pi.registerTool({
@@ -134,7 +109,7 @@ export function createWrapUp({ pi, cfg, s, me, role }: Kit, d: WrapDeps) {
 					// What would be lost by closing: asked before the boss is, and again after his yes, since the dialog may stand for hours (a message queued, a monitor a parallel call started; RV-F001).
 					const notReady = async () => {
 						const open = (todosOf(snapshotOfBranch(s.branch())) ?? []).filter((t) => t.status !== "completed");
-						return [...(open.length ? [`open todos ${open.map((t) => `#${t.id}`).join(", ")}: complete or delete each (a task you reported blocked to its owner: delete it)`] : []), ...(c.hasPendingMessages() ? ["messages wait in your queue: read them first"] : []), ...(await running(false))];
+						return [...(open.length ? [`open todos ${open.map((t) => `#${t.id}`).join(", ")}: complete or delete each (a task you reported blocked to its owner: delete it)`] : []), ...(c.hasPendingMessages() ? ["messages wait in your queue: read them first"] : []), ...(await probe.wrap())];
 					};
 					const why = await notReady();
 					if (why.length) throw new Error(`Not ready to wrap up: ${why.join("; ")}.`);
