@@ -1,6 +1,12 @@
 // agent-browser eval --stdin < scripts/style-snapshot.js. Lossless JSON: each DOM path names a
 // style row. Rows store differences from the root's style (null = property absent), once per row.
 (() => {
+	// A skipped content-visibility:auto grid has no used tracks until a descendant
+	// needs layout. Read inside each such subtree first, without scrolling, changing
+	// its CSS, or yielding a frame in which Chrome could skip it again.
+	for (const el of document.querySelectorAll('*')) {
+		if (el.firstElementChild && getComputedStyle(el).contentVisibility === 'auto') el.firstElementChild.getBoundingClientRect();
+	}
 	const nodes = {}, rows = [], intern = new Map();
 	const defaults = {};
 	const root = getComputedStyle(document.documentElement);

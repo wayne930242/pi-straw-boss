@@ -21,8 +21,8 @@ const routes = { map: '', head: 'head', workspace: 'w/w1', session: 'w/w1/s/a1',
 const ready = { map: '#bases [data-key="w1"]', head: '#session-view .chat-list .tx', workspace: '#ws-view .say:not([hidden]) p', session: '#session-view .chat-list .tx', settings: '#settings-view:not([hidden])' };
 const frame = 'new Promise(requestAnimationFrame)';
 const freeze = `async () => {
-	await document.fonts.ready;
 	[...document.querySelectorAll('button')].find(b => b.textContent === 'go silent').click();
+	await Promise.all([document.fonts.ready, ...Array.from(document.images, img => img.currentSrc ? img.decode() : undefined)]);
 	// Let entrance classes expire before measuring the resting layout. Recompute the map's
 	// wires using the final card positions, not a point halfway through its entrance.
 	await new Promise(r => setTimeout(r, 900));
@@ -30,13 +30,18 @@ const freeze = `async () => {
 	const zero = () => document.getAnimations().forEach(a => { a.pause(); a.currentTime = 0; });
 	zero(); dispatchEvent(new Event('resize'));
 	await ${frame}; await ${frame}; zero(); await ${frame};
+	// The alert portraits can retain a raster from their entrance transform. Repaint
+	// just those icons at rest; invalidating the whole page rerasterizes unrelated text.
+	const hide = document.querySelector('#alert-faces').animate([{ visibility: 'hidden' }, { visibility: 'hidden' }], { duration: 1, fill: 'both' });
+	try { hide.pause(); hide.currentTime = 0; await ${frame}; await ${frame}; } finally { hide.cancel(); }
+	await ${frame}; await ${frame};
 	if (document.documentElement.hasAttribute('data-calm')) throw Error('Unexpected calm state');
 }`;
 console.log(`session ${session}`);
 try {
-	// Skia's GPU gradient dithering can differ by 1–2 channel levels between fresh Chrome
-	// processes on the same host. Raster on the CPU; keep the original pixels and exact AE.
-	browser(['--args', '--disable-gpu,--disable-skia-runtime-opts,--force-color-profile=srgb', '--init-script', fixture, 'open']);
+	// Repaint complete tiles: reusing a partially invalidated software tile can leave
+	// different antialiasing on a rounded badge or header control at identical geometry.
+	browser(['--args', '--disable-gpu,--disable-skia-runtime-opts,--force-color-profile=srgb,--disable-partial-raster,--run-all-compositor-stages-before-draw', '--init-script', fixture, 'open']);
 	for (const [width, height] of [[1440, 900], [390, 844]]) {
 		browser(['set', 'viewport', String(width), String(height), '1']);
 		for (const label of ['standard', 'geek', 'raven', 'storybook-day', 'storybook-night', 'zen']) {
@@ -50,8 +55,10 @@ try {
 				console.log(file);
 				browser(['open', url.href]);
 				const face = view === 'zen' && route === 'settings' ? 'standard' : view;
-				const target = face === 'zen' ? '#zen:not([hidden]) .zen-corner' : ready[route];
-				browser(['wait', '--fn', `innerWidth===${width} && innerHeight===${height} && document.documentElement.dataset.view==='${face}' && ${phase ? `document.documentElement.dataset.phase==='${phase}' && ` : ''}document.querySelector('#stage').dataset.view==='${route}' && document.querySelector('#link').dataset.state==='live' && !!document.querySelector('${target}')`]);
+				// Zen covers the route but does not replace its stream. Silencing on its corner
+				// alone can discard the workspace cards or the session's first history packet.
+				const targets = face === 'zen' ? ['#zen:not([hidden]) .zen-corner', ...(route === 'map' ? [] : [ready[route]])] : [ready[route]];
+				browser(['wait', '--fn', `innerWidth===${width} && innerHeight===${height} && document.documentElement.dataset.view==='${face}' && ${phase ? `document.documentElement.dataset.phase==='${phase}' && ` : ''}document.querySelector('#stage').dataset.view==='${route}' && document.querySelector('#link').dataset.state==='live' && ${JSON.stringify(targets)}.every(s => document.querySelector(s))`]);
 				evaluate(`(${freeze})().then(() => true)`);
 				const snapshot = evaluate(source);
 				if (!Object.hasOwn(snapshot.nodes, 'html::after')) throw Error('Incomplete capture');
