@@ -1,3 +1,7 @@
+@layer standard, theme;
+/* Keep the layer order statement in minified CSS, as in style.css. */
+@media all {
+@layer theme {
 /* The Zen layer (gui/zen.ts): lofi ink. Dark only, low in colour, slow. Text is paper and ash on the ink grounds at 7 : 1 or more; borders, the circle's ring, and the focus ring at 3 : 1 or more
    (tests/zen-contrast.test.ts computes both from the values below). Only transform, opacity, and filter move; a card takes its size at once and only fades. Nothing here applies outside the Zen view (docs/specs/2026-11-01-zen-view.md). */
 [data-view="zen"] :is(#zen, .connect) {
@@ -535,3 +539,5 @@
 [data-view="zen"] .zen-decide .zen-pair-number { flex: 0 0 8rem; width: 8rem; max-width: 100%; margin-inline: auto; text-align: center; font-size: 1.4rem; letter-spacing: 0.4em; text-indent: 0.4em; }
 [data-view="zen"] .zen-decide .zen-head-note { text-align: center; }
 [data-view="zen"] .zen-decide .zen-head-note[data-tone="ok"] { color: var(--zen-ash); }
+}
+}

@@ -1,3 +1,7 @@
+@layer standard, theme;
+/* Keep the layer order statement in minified CSS, as in style.css. */
+@media all {
+@layer theme {
 /* The Geek theme (view.ts sets data-view="geek" on <html>; gui/themes/geek/index.ts loads this file the first time a page shows Geek, or boot.js links it before the first frame). */
 [data-view="geek"] .connect-ring { border-style: dashed; } /* Geek draws one plain line all round, so its still sign for "working" is a dashed ring, and a solid one when it has stopped trying */
 [data-view="geek"] .connect:is([data-state="offline"], [data-state="replaced"]) .connect-ring { border-style: solid; }
@@ -136,3 +140,5 @@ html[data-view="geek"] .target-list, html[data-view="geek"] .target-find { borde
 /* The header's Zen button reads [Zen] in Geek, on a phone too (no glyph: the word is the terminal's). */
 [data-view="geek"] .zen-enter svg { display: none; } [data-view="geek"] .zen-enter span { display: inline; } [data-view="geek"] .zen-enter span::before { content: "["; } [data-view="geek"] .zen-enter span::after { content: "]"; }
 @media (max-width: 640px) { [data-view="geek"] .zen-enter { width: auto; padding: 0 8px; } }
+}
+}

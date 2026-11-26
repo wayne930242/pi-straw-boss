@@ -1,3 +1,7 @@
+@layer standard, theme;
+/* The neutral media wrapper keeps Lightning CSS from folding the order statement into this block. */
+@media all {
+@layer standard {
 /* The palette, after Tokyo Night (enkia, MIT): every colour of the page is one of these, so a theme is one block. Its night blue keeps the
    map's look, with accents a step softer than neon for long sessions. --working is a state, --accent the page's own highlight. */
 :root {
@@ -1540,3 +1544,5 @@ summary.yard-chip { display: inline-block; cursor: pointer; list-style: none; } 
 .target-state { color: var(--dim); font-size: 12px; }
 .direct-note { margin: 2px 0 0; padding: 0 4px; color: var(--dim); font-size: 12px; } .direct-note:empty { display: none; }
 @media (forced-colors: active) { .target-dot { forced-color-adjust: none; border-color: CanvasText; } .target-row[aria-selected="true"] .target-dot { background: Highlight; } }
+}
+}

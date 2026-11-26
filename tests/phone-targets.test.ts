@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { sheetRules } from "./css-rules.ts";
 
 // The phone layout's tap targets (gui/style.css, "A phone's tap targets"): 44 px each way (Apple HIG), the composer's own row 48. They live in one
 // `@media (max-width: 640px)` block, so the desktop layout is untouched. No browser runs here: this guards the declared sizes. The measured ones (every
@@ -58,23 +59,17 @@ test("a main's Stop and its row in the Mains fold are 44 px each way on a phone,
 
 // The cascade at phone width (USC-F001): the phone block's `.au-stop { min-height: 44px }` lost to a later top-level `.au-stop { min-height: 32px }` of the same specificity, and the declarations test above read only the block.
 // This reads every rule in source order (the top level and the phone query; other queries are skipped), keeps the declarations of rules whose selector ends in the class, and applies specificity, then order.
-const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
 /** The style rules that apply at a phone's width, in source order: [selector list, declarations]. */
 function phoneRules(): [string, string][] {
 	const out: [string, string][] = [];
 	const walk = (text: string) => {
-		let depth = 0, from = 0, head = "";
-		for (let at = 0; at < text.length; at++) {
-			if (text[at] === "{" && depth++ === 0) (head = text.slice(from, at).trim(), (from = at + 1));
-			else if (text[at] === "}" && --depth === 0) {
-				const inner = text.slice(from, at);
-				if (head === MEDIA.slice(0, -2)) walk(inner);
-				else if (!head.startsWith("@")) out.push([head, inner]);
-				from = at + 1;
-			}
+		for (const { prelude, body } of sheetRules(text)) {
+			if (body === undefined) continue;
+			if ([MEDIA.slice(0, -2), "@layer standard", "@media all"].includes(prelude)) walk(body);
+			else if (!prelude.startsWith("@")) out.push([prelude, body]);
 		}
 	};
-	walk(stripped);
+	walk(css);
 	return out;
 }
 /** A selector's weight as (ids, classes + attributes + pseudo-classes): `:where()` is nothing, other pseudo-classes count one, a `::pseudo-element` none. */

@@ -1,3 +1,7 @@
+@layer standard, theme;
+/* Keep the layer order statement in minified CSS, as in style.css. */
+@media all {
+@layer theme {
 /* The Storybook theme (繪本; view.ts sets data-view="storybook" on <html>, and boot.js or the theme's phase clock sets data-phase="day" or "night"; gui/themes/storybook/index.ts loads this file the first time a page shows it, or boot.js links it before the first frame).
    docs/specs/2026-11-26-storybook-theme/spec.md §B3, the boss's pick B: a pressed-flower notebook. Cards are paper pages held by washi tape, on a fine paper grain, framed by a thin hand-drawn line (a static SVG in border-image, never a filter
    that moves); the question card has ruled lines. Day is cream paper and deep plum ink, night grey-violet pages on a navy sky held by grey-green tape. Every text colour is at least 4.5 : 1 on every surface in both phases and every border at least
@@ -399,4 +403,6 @@ html[data-view="storybook"] .connect:is([data-state="offline"], [data-state="rep
 	html[data-view="storybook"] :is([data-mark="working"], [data-mark="waiting"], [data-mark="error"], [data-mark="idle"]) > .badge { forced-color-adjust: none; background: Canvas; box-shadow: inset 0 0 0 1.3px CanvasText; }
 	html[data-view="storybook"] :is([data-mark="working"], [data-mark="waiting"], [data-mark="error"], [data-mark="idle"]) > .badge::after, html[data-view="storybook"] .connect-ring::after, html[data-view="storybook"] .unit[data-mark] > .card :is(.note, .dstate)::before, html[data-view="storybook"] .tower[data-mark] + .title .tstate::after, html[data-view="storybook"] [data-mark] > .badge::before { forced-color-adjust: none; background: CanvasText; }
 	html[data-view="storybook"] :is(.badge, .sweep, .pulse, .ring, .connect-ring), html[data-view="storybook"] :is(.badge, .plate, .connect-ring)::after, html[data-view="storybook"] .badge::before { animation: none !important; }
+}
+}
 }

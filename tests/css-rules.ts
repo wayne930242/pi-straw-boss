@@ -25,22 +25,37 @@ export function split(text: string, sep: string): string[] {
 	return out;
 }
 
-export function rulesOf(source: string): Rule[] {
-	const css = strip(source), out: Rule[] = [];
-	const walk = (text: string) => {
-		let from = 0;
-		for (let at = 0; at < text.length; at++) {
-			if (text[at] !== "{") continue;
-			let depth = 1, end = at + 1;
-			while (end < text.length && depth > 0) depth += text[end] === "{" ? 1 : text[end] === "}" ? -1 : 0, end++;
-			const prelude = text.slice(from, at).trim(), inner = text.slice(at + 1, end - 1);
-			if (/^@(media|supports|layer)\b/.test(prelude)) walk(inner);
-			else if (!prelude.startsWith("@")) out.push({ selector: prelude, parts: split(prelude, ",").map((s) => s.trim().replace(/\s+/g, " ")), body: inner });
-			from = end;
-			at = end - 1;
+interface SheetRule { prelude: string; body?: string }
+
+/** Immediate children of a sheet or grouping rule. A statement ends at `;` and has no body. */
+export function* sheetRules(source: string): Generator<SheetRule> {
+	const text = strip(source);
+	let start = 0, open = 0, depth = 0, parens = 0, quote = "";
+	for (let i = 0; i < text.length; i++) {
+		const ch = text[i]!;
+		if (ch === "\\") i++;
+		else if (quote) { if (ch === quote) quote = ""; }
+		else if (ch === "\"" || ch === "'") quote = ch;
+		else if (ch === "(" || ch === "[") parens++;
+		else if (ch === ")" || ch === "]") parens--;
+		else if (!parens && ch === "{" && depth++ === 0) open = i;
+		else if (!parens && ch === "}" && --depth === 0) {
+			yield { prelude: text.slice(start, open).trim(), body: text.slice(open + 1, i) };
+			start = i + 1;
+		} else if (!parens && !depth && ch === ";") {
+			yield { prelude: text.slice(start, i).trim() };
+			start = i + 1;
 		}
-	};
-	walk(css);
+	}
+}
+
+export function rulesOf(source: string): Rule[] {
+	const out: Rule[] = [];
+	for (const { prelude, body } of sheetRules(source)) {
+		if (body === undefined) continue;
+		if (/^@(media|supports|layer)\b/.test(prelude)) out.push(...rulesOf(body));
+		else if (!prelude.startsWith("@")) out.push({ selector: prelude, parts: split(prelude, ",").map((s) => s.trim().replace(/\s+/g, " ")), body });
+	}
 	return out;
 }
 

@@ -1,3 +1,7 @@
+@layer standard, theme;
+/* Keep the layer order statement in minified CSS, as in style.css. */
+@media all {
+@layer standard {
 /* pi-better-show's elements in this page (docs/specs/2026-11-07-better-show-host.md, Look). The `--pbs-*` tokens are not here: each view maps its own (docs/specs/2026-11-07-raven-view/spec.md §7: Standard in style.css :root,
    Geek, Raven Keep, and Zen in their own sheets), and a block takes them by inheritance from the view it is in, so one token has one source. What this file keeps is the wrapper's layout and the 44 px touch rules.
    Density is the host's attribute (compact in the comms log, comfortable in a document), not a token. */
@@ -40,4 +44,6 @@
 	.pbs-block pbs-form::part(other),
 	.pbs-block pbs-table::part(filter) { min-height: 44px; }
 	.pbs-block pbs-review::part(pick) { min-height: 44px; align-items: center; }
+}
+}
 }

@@ -1,3 +1,7 @@
+@layer standard, theme;
+/* Keep the layer order statement in minified CSS, as in style.css. */
+@media all {
+@layer theme {
 /* The Raven Keep theme (view.ts sets data-view="raven" on <html>; gui/themes/raven/index.ts loads this file the first time a page shows it, or boot.js links it before the first frame).
    Dark only: a near-black ground with a cold violet cast, bone text, candle gold for what waits, blood crimson for what failed, fog grey for what rests. Every text colour is at least 4.5 : 1 on every surface and every border
    at least 3 : 1 (tests/raven-contrast.test.ts reads the block below). The art direction is gothic castle, mist, and candlelight, as reference only; nothing official is copied. */
@@ -464,3 +468,5 @@ html[data-view="raven"] :is(.board-pause, .board-row[data-stale] .board-state) {
 html[data-view="raven"] .board-ally { border-style: solid; background: color-mix(in srgb, var(--sunken) 60%, transparent); } html[data-view="raven"] :is(.board-ally-cap, .supply-fog) { display: inline; } html[data-view="raven"] .supply-fog { width: 44px; height: 30px; color: var(--dim); opacity: 0.8; }
 @media (max-width: 640px) { html[data-view="raven"] .supply-tray .supply-cells { display: grid; } html[data-view="raven"] :is(.supply-cell svg, .supply-slot .supply-icon) { height: 30px; } }
 @keyframes rk-grave-mist { from { opacity: 0.25; transform: translateY(2px) scaleX(0.9); } to { opacity: 0.7; transform: translateY(-3px) scaleX(1.05); } }
+}
+}
