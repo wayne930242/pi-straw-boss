@@ -10,7 +10,7 @@ import type { RunSignal } from "./runs.ts";
 // the device's level is and whether or not the holder can read the roster: a signed stop is no read of the policy. Its notices are the `main-stop` ones (pending once, stopped, manual), which name the requester and the reason and everything else is the machinery above.
 
 /** A main an ally run opened for a device, as the route table keeps it. `level` is the level the run had when it opened the main; a row from before the level was kept counts as `dispatch`. */
-export interface OpenedMain { workspace: string; label: string; main: string; name: string; device: string; deviceLabel: string; team: string; level?: string; /** The main's Herdr pane, when the route kept it: a second witness that it is gone. */ pane?: string; /** A stop the box accepted for this main: a second reason to ask it to quit. */ stop?: Stop }
+export interface OpenedMain { workspace: string; label: string; main: string; name: string; device: string; deviceLabel: string; team: string; level?: string; /** The main's Herdr pane, when the route kept it: a second witness that it is gone. */ pane?: string; /** A stop the box accepted for this main: a second reason to ask it to quit. */ stop?: Stop; /** A worker (docs/specs/2026-11-26-ally-workers.md): ended with `interrupt`, so a working one aborts its turn. */ worker?: true }
 export interface RevokerDeps {
 	/** The mains ally runs opened that are on record, in every live service. */
 	opened(): OpenedMain[];
@@ -63,7 +63,7 @@ export function createRevoker(d: RevokerDeps) {
 			const why = stop ? "a stop was asked" : standing ? "the device lost dispatch" : "the device left the team", who = `The main "${row.name}" opened for ${row.deviceLabel}`;
 			const by = stop ? (d.label?.(row.team, stop.by) ?? stop.by.slice(0, 6)) : "", because = stop?.reason ? ` Reason: ${stop.reason}` : "";
 			try {
-				await d.close(row.workspace, row.main, stop?.mode === "interrupt" ? "interrupt" : "quit");
+				await d.close(row.workspace, row.main, stop?.mode === "interrupt" || row.worker ? "interrupt" : "quit");
 			} catch (cause) {
 				const reason = (cause as Error).message;
 				if (GONE.test(reason)) {

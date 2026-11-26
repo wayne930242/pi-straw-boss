@@ -3,7 +3,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BoardFill } from "./boardfill.ts";
 import { armWake, idleClock as clockOf, idleWake, idleWakes } from "./idlewake.ts";
 import { todosOf } from "./items.ts";
-import { NUDGE_TEXT, WRAP_DESCRIPTION } from "./moments.ts";
+import { NUDGE_TEXT, WORKER_NUDGE, WRAP_DESCRIPTION } from "./moments.ts";
 import type { Reach } from "./reach.ts";
 import type { Kit } from "./state.ts";
 import { createProbe, type ProbeDeps } from "./stillruns.ts";
@@ -13,7 +13,7 @@ import { snapshotOfBranch } from "./todo.ts";
 // and `boss_wrap` asks the boss in this pane before it reports, clears the board, and closes the session as /boss close does. No nudge and no wrap-up while auto mode is on: the boss is away.
 // A standing main has no end, so no nudge and no boss_wrap: its own wake (idlewake.ts `armWake`) tells it to re-arm what it minds.
 
-export const IDLE_MS = 30 * 60_000;
+export const IDLE_MS = 30 * 60_000, WORKER_IDLE_MS = 15 * 60_000;
 const SUMMARY_MAX = 800;
 export const WRAP_MESSAGE = "straw-boss-wrap";
 
@@ -35,7 +35,8 @@ export function createWrapUp(kit: Kit, d: WrapDeps) {
 	const name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
 	const probe = createProbe({ cfg, s, me }, d); // what still runs for this session (stillruns.ts)
 	const nudge = idleWake(cfg.now, { idleMs: IDLE_MS, eligible: () => d.duty() === "coordinator" || d.duty() === "integrator", ready: async () => !(await probe.nudge()).length, customType: WRAP_MESSAGE, text: NUDGE_TEXT, underAuto: false });
-	const look = idleWakes(kit, [nudge, armWake(cfg.now, d.duty, probe)], d.first);
+	const worker = idleWake(cfg.now, { idleMs: WORKER_IDLE_MS, eligible: () => d.duty() === "worker", ready: async () => !(await probe.strict()).length, customType: WRAP_MESSAGE, text: WORKER_NUDGE, underAuto: true, forLink: true });
+	const look = idleWakes(kit, [nudge, armWake(cfg.now, d.duty, probe), worker], d.first);
 
 	type Ctx = Pick<ExtensionContext, "hasUI" | "hasPendingMessages">;
 	/** Why this call may not wrap up at all, in the order the checks run; `text` is the summary as one line. */

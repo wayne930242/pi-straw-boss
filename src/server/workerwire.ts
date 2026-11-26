@@ -3,7 +3,9 @@ import { inside } from "../link/routing.ts";
 import type { Opened, OpenRequest, PeerSender as OpenerPeer } from "../opener.ts";
 import { workspaces, type HerdrRun } from "../herdr.ts";
 import { readApps } from "../train/appsconfig.ts";
-import { addRoute, type answeredAsks, openedRoom, type Peer, readRoutes } from "./allyroute.ts";
+import { addRoute, type answeredAsks, markFinal, openedRoom, type Peer, readRoutes } from "./allyroute.ts";
+import { createWorkerEnds } from "./workerrelay.ts";
+export { workerReport } from "./workerrelay.ts";
 import type { Slot } from "./record.ts";
 import type { RunWho } from "./rungate.ts";
 import { openWorker, type WorkerSlip } from "./workerally.ts";
@@ -56,4 +58,25 @@ export async function workerDoor(d: Deps): Promise<Opened> {
 		reply: (to, text) => (d.o.link ? d.o.link({ op: "send", device: peer.device, text, reply: false, inReplyTo: to }, l.record.id, true) : Promise.reject(new Error("no link holder"))),
 		log: (event, facts) => d.log.line(event, facts),
 	}, request.peer as OpenerPeer, request as OpenRequest & { slip: WorkerSlip });
+}
+
+interface ServiceLike {
+	record: { id: string; workspace: string };
+	reach?: { read(): Promise<{ sessions: { id: string }[]; ps: { pane_id: string; agent_status?: string }[] }> };
+	control?: { closeMain(query: string, opts?: { interrupt?: boolean }): Promise<unknown> };
+}
+/** The towers' worker sweep (workerrelay.ts `createWorkerEnds`) over their live services, the link holder, and the local run's notices. */
+export function workerEndsOf(o: { slot: Slot; now(): number; log: Deps["log"]; link?: Deps["o"]["link"]; live(): ServiceLike[]; forget(workspace: string, main: string): void; notice(workspace: string, text: string, key: string): void }) {
+	const of = (ws: string) => o.live().find((l) => l.record.workspace === ws);
+	return createWorkerEnds({
+		now: o.now, log: (event, facts) => o.log.line(event, facts), forget: o.forget, notice: o.notice,
+		rows: () => o.live().flatMap((l) => readRoutes(o.slot, l.record.workspace, o.now()).filter((r) => r.kind === "opened" && r.worker).map((route) => ({ workspace: l.record.workspace, route }))),
+		look: async ({ workspace, route }) => {
+			const net = await of(workspace)?.reach?.read().catch(() => undefined), pane = net?.ps.find((p) => p.pane_id === route.pane);
+			return { listed: net ? net.sessions.some((s) => s.id === route.to) : true, pane: net ? pane !== undefined : undefined, working: pane?.agent_status === "working" };
+		},
+		close: async (ws, main, mode) => void (await of(ws)!.control!.closeMain(main, mode === "interrupt" ? { interrupt: true } : undefined)),
+		send: (ws, device, text, ask) => (o.link ? o.link({ op: "send", device, text, reply: false, inReplyTo: ask }, of(ws)?.record.id ?? "", true) : Promise.reject(new Error("no link holder"))),
+		stopped: (ws, main) => markFinal(o.slot, ws, main, o.now()),
+	});
 }

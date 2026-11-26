@@ -80,7 +80,7 @@ export async function dropWorktree(o: { checkout: string; prepared: Pick<Prepare
 /**
  * The worker closed: its worktree goes only when it is clean and its HEAD is on `origin/<branch>` (pushed) or is still the base (nothing done); its local branch goes with it. Otherwise it is kept, and the reason says why.
  */
-export async function closeWorktree(o: { checkout: string; dir: string; branch: string; baseSha?: string; git?: Git }): Promise<{ removed: true; head: string } | { removed: false; reason: string; head?: string }> {
+export async function closeWorktree(o: { checkout?: string; dir: string; branch: string; baseSha?: string; git?: Git }): Promise<{ removed: true; head: string } | { removed: false; reason: string; head?: string }> {
 	const git = o.git ?? runGit;
 	if (!existsSync(o.dir)) return { removed: false, reason: "the worktree is gone already" };
 	const head = await git(["rev-parse", "HEAD"], o.dir).catch(() => "");
@@ -89,9 +89,10 @@ export async function closeWorktree(o: { checkout: string; dir: string; branch: 
 	await git(["fetch", "--quiet", "--no-tags", "origin"], o.dir, FETCH_MS).catch(() => undefined);
 	const pushed = await ok(git(["merge-base", "--is-ancestor", head, `refs/remotes/origin/${o.branch}`], o.dir));
 	if (!pushed && head !== o.baseSha) return { removed: false, reason: `HEAD ${head.slice(0, 12)} is not on origin/${o.branch}`, head };
-	await git(["worktree", "remove", "--", o.dir], o.checkout).catch(() => undefined);
+	const common = resolve(o.dir, await git(["rev-parse", "--git-common-dir"], o.dir).catch(() => ".git")), checkout = o.checkout ?? (basename(common) === ".git" ? dirname(common) : common);
+	await git(["worktree", "remove", "--", o.dir], checkout).catch(() => undefined);
 	if (existsSync(o.dir)) return { removed: false, reason: "git worktree remove failed", head };
-	await git(["branch", "-D", "--", o.branch], o.checkout).catch(() => undefined);
+	await git(["branch", "-D", "--", o.branch], checkout).catch(() => undefined);
 	return { removed: true, head };
 }
 

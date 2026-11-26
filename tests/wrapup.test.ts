@@ -8,8 +8,8 @@ import { AUTO_FILE, seal } from "../src/autostate.ts";
 import { createRemoteTurns } from "../src/link/hooks.ts";
 import { MESSAGE_TYPE } from "../src/link/turn.ts";
 import { ARM_IDLE_MS, ARM_MESSAGE } from "../src/idlewake.ts";
-import { ARM_TEXT, NUDGE_TEXT, WRAP_DESCRIPTION } from "../src/moments.ts";
-import { IDLE_MS, idleClock, WRAP_MESSAGE } from "../src/wrapup.ts";
+import { ARM_TEXT, NUDGE_TEXT, WORKER_NUDGE, WRAP_DESCRIPTION } from "../src/moments.ts";
+import { IDLE_MS, idleClock, WORKER_IDLE_MS, WRAP_MESSAGE } from "../src/wrapup.ts";
 import { type Agent, PROMPT_DIR, settle, until, World } from "./fakes.ts";
 import { bob, TEAM_HEX } from "./link/holder-world.ts";
 
@@ -335,4 +335,22 @@ test("main.md holds no wrap-up rule: the nudge carries every step, and boss_wrap
 	assert.ok(main.includes("its worktree is removed, and your board is cleared."));
 	for (const step of ["answer the intercom asks you owe", "remove the worktrees you made", "complete or delete every todo", "stop your monitors and loops", "write a daily memory entry if you have a memory tool", "call boss_wrap with a summary"]) assert.ok(NUDGE_TEXT.includes(step), step);
 	assert.match(WRAP_DESCRIPTION, /asks the boss here whether to wrap up; on yes it sends your summary to the tower/);
+});
+
+// A worker opened for a teammate's device (docs/specs/2026-11-26-ally-workers.md): idle 15 minutes with nothing running, one nudge to finish or send its final report, under auto mode too; never the coordinator's.
+test("a worker main idle 15 minutes gets the worker nudge once per idle period, under auto mode too", async () => {
+	const r = rig({ id: "main-1", pane: "wA:p1", tab: "wA:t1", env: { STRAW_BOSS_ROLE: "main" }, watches: () => [] });
+	world.herdr.pane("wA:p1").tokens = { ...world.herdr.pane("wA:p1").tokens, sb_open_main: "1", sb_opened_by: "link:dev123", sb_open_duty: "worker" };
+	await r.a.start();
+	await until(() => world.herdr.pane("wA:p1").tokens.sb_duty === "worker", "the claim made it a worker");
+	auto(true, 1);
+	r.advance(WORKER_IDLE_MS - 60_000);
+	await r.look();
+	assert.equal(r.nudges().length, 0, "not before 15 minutes");
+	r.advance(60_000);
+	await r.look();
+	assert.deepEqual(r.nudges().map((m) => m.content), [WORKER_NUDGE]);
+	r.advance(IDLE_MS);
+	await r.look();
+	assert.equal(r.nudges().length, 1, "once per idle period, and never the coordinator's");
 });

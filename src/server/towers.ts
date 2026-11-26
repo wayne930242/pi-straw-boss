@@ -37,7 +37,7 @@ import { resolvePi } from "./runchild.ts";
 import { digestOf, headLabel, openCards, type WaitDigest, type WaitList, waitList, waitRows } from "./waitlist.ts";
 import { claimGate, proofGate, seatGate, type SeatVerdict } from "./typegate.ts";
 import { forwardOpenedWait, raisedWait } from "./allywait.ts";
-import { workerDoor, workerPanes } from "./workerwire.ts";
+import { workerDoor, workerEndsOf, workerPanes, workerReport } from "./workerwire.ts";
 import { addAnswer, addRoute, answeredAsks, ALLY_LEDGER, dropAsk, dropOpened, type Peer, readAnswers, readRoutes, removeAnswer, openedFor, routedAsk, routeOf, setStop, spendRoute } from "./allyroute.ts";
 import { createRevoker, type OpenedMain } from "./revoke.ts";
 import { createDeadWatch } from "./deadwatch.ts";
@@ -446,7 +446,8 @@ export function createTowers(o: TowersOptions): Towers {
 					void forwardOpenedWait({ ws, now, identity: l.record.id, log: (event, facts) => log.line(event, facts), tell, ...(o.link ? { link: o.link } : {}), ...(o.asks ? { asks: o.asks } : {}), ...(o.waits ? { waits: o.waits } : {}) }, route, { id: from.id, name: phrase(from.name ?? from.id, 40) }, message.id, message.content.text).catch((cause: Error) => error("ally-wait", cause.message));
 				} else if (route && (!local || route.at >= local.at)) {
 					// A session an ally run wrote to or opened is answering the device, not the local run: the answer waits for the device's next ally run.
-					addAnswer(slot, ws, { id: `${Date.now().toString(36)}-${message.id}`.slice(0, 80), device: route.device, label: route.label, short: route.short, team: route.team, teamName: route.teamName, from: { id: from.id, name: phrase(from.name ?? from.id, 40) }, text: message.content.text, at: now(), ...(route.ask ? { ask: route.ask } : {}) }, now());
+					const keep = () => addAnswer(slot, ws, { id: `${Date.now().toString(36)}-${message.id}`.slice(0, 80), device: route.device, label: route.label, short: route.short, team: route.team, teamName: route.teamName, from: { id: from.id, name: phrase(from.name ?? from.id, 40) }, text: message.content.text, at: now(), ...(route.ask ? { ask: route.ask } : {}) }, now());
+					if (!workerReport({ slot, workspace: ws, now, log: (event, facts) => log.line(event, facts), sweep: () => void workerEnds.sweep(), send: (device, text, ask) => (o.link ? o.link({ op: "send", device, text, reply: false, inReplyTo: ask }, l.record.id, true) : Promise.reject(new Error("no link holder"))) }, route, message.content.text, keep)) keep(); // a worker's final report goes back by code (workerrelay.ts)
 					spendRoute(slot, ws, route, now());
 					seen.add(from.id, message.id, message.content.text);
 					log.line("tower-ally-answer", { workspace: ws, from: from.id });
@@ -964,7 +965,7 @@ export function createTowers(o: TowersOptions): Towers {
 				error("purge", (cause as Error).message);
 			}
 		}, o.refreshMs ?? REFRESH_MS));
-		timers.push(setInterval(() => void revoker.sweep(), o.revokeMs ?? REVOKE_MS));
+		timers.push(setInterval(() => void (revoker.sweep(), workerEnds.sweep()), o.revokeMs ?? REVOKE_MS));
 		timers.push(setInterval(() => void deadWatch.sweep(), o.deadMs ?? DEAD_MS));
 		// A service whose tab is not found yet (Herdr is restoring) is looked for until the minute is over; one waiting for a resident looks at it. Both stop themselves.
 		const poll = o.recoverPollMs ?? RECOVER_POLL_MS;
@@ -1171,7 +1172,8 @@ export function createTowers(o: TowersOptions): Towers {
 	const forgetClosed = <T extends { main?: string }>(ws: string, closed: T): T => { try { if (closed.main) dropOpened(slot, ws, closed.main, now()); } catch (cause) { error("ally-route", (cause as Error).message); } return closed; };
 	/** The mains ally runs opened end with their controller's dispatch (revoke.ts): asked to quit as `boss_close_main` asks, the admins told through the same notice channel as a run's end. */
 	/** The `opened` rows of every live service: a main an ally run opened for a device, with the stop the box accepted for it, if any. */
-	const openedRows = (): OpenedMain[] => (o.ally ? [...services.values()].filter((l) => !l.stopped && l.state === "live" && l.control && !isHeadL(l)).flatMap((l) => readRoutes(slot, l.record.workspace, now()).filter((r) => r.kind === "opened").map((r) => ({ workspace: l.record.workspace, label: l.record.label, main: r.to, name: r.name, device: r.device, deviceLabel: r.label, team: r.team, ...(r.level ? { level: r.level } : {}), ...(r.pane ? { pane: r.pane } : {}), ...(r.stop ? { stop: r.stop } : {}) }))) : []);
+	const openedRows = (): OpenedMain[] => (o.ally ? [...services.values()].filter((l) => !l.stopped && l.state === "live" && l.control && !isHeadL(l)).flatMap((l) => readRoutes(slot, l.record.workspace, now()).filter((r) => r.kind === "opened").map((r) => ({ workspace: l.record.workspace, label: l.record.label, main: r.to, name: r.name, device: r.device, deviceLabel: r.label, team: r.team, ...(r.level ? { level: r.level } : {}), ...(r.pane ? { pane: r.pane } : {}), ...(r.worker ? { worker: true as const } : {}), ...(r.stop ? { stop: r.stop } : {}) }))) : []);
+	const workerEnds = workerEndsOf({ slot, now, log, ...(o.link ? { link: o.link } : {}), live: () => [...services.values()].filter((l) => !l.stopped && l.state === "live" && l.control && !isHeadL(l)), forget: (ws, main) => void forgetClosed(ws, { main }), notice: (ws, text, key) => void runs.notice(ws, text, key) });
 	const revoker = createRevoker({
 		opened: openedRows,
 		known: (team) => o.ally?.known?.(team) ?? true, standing: (device, team) => o.ally?.standing(device, team),

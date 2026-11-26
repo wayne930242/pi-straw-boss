@@ -47,6 +47,8 @@ export interface WakeSpec {
 	text: string;
 	/** It goes out under auto mode too. */
 	underAuto: boolean;
+	/** It goes to a main a tower opened for a teammate's device too (a worker's, docs/specs/2026-11-26-ally-workers.md); the others never do. */
+	forLink?: true;
 }
 export const idleWake = (now: () => number, spec: WakeSpec) => ({ ...spec, clock: idleClock(now, spec.idleMs) });
 export type Wake = ReturnType<typeof idleWake>;
@@ -63,8 +65,8 @@ export function idleWakes({ pi, cfg, s, role }: Kit, wakes: Wake[], first?: (ctx
 		looking = true;
 		try {
 			if (await first?.(ctx)) return;
-			if (role() !== "main" || s.isTrain || s.closing || s.openedBy?.startsWith("link:")) return;
-			const w = wakes.find((x) => x.eligible());
+			if (role() !== "main" || s.isTrain || s.closing) return;
+			const w = wakes.find((x) => x.eligible() && (x.forLink || !s.openedBy?.startsWith("link:")));
 			if (!w || !w.clock.due(!w.underAuto && s.autoOn()) || !ctx.isIdle() || ctx.hasPendingMessages()) return;
 			if (!(await w.ready()) || !ctx.isIdle()) return;
 			w.clock.sent();
