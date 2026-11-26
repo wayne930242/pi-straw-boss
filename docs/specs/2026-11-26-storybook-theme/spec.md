@@ -200,6 +200,7 @@ There is no noun pack and no sentence pack (SB-D4): English and zh-TW keep every
 - The desk shell's colour for `storybook` (a straw-boss-desk follow-up: its window should take `#fbf5e9` or `#111a35`).
 - Per-role chat rooms like Raven's (one nook per phase instead).
 - A new hotkey for Zen.
+- Theme packages outside this repository. The boss asked (2026-11-26) whether themes should ship separately, downloaded or installed by whoever wants them, and chose 「先內建，條件到了再拆」: Storybook ships built in like Raven. Revisit when someone else wants to make a theme, when the theme folders make the package noticeably heavy, or when the non-MIT assets (Casper's clips) should leave the public repository. The first external format then is data only (CSS, pictures, sounds, a manifest, no JavaScript), since a theme's code runs in a page that answers agents' dialogs, and the themes' CSS overrides Standard's markup (`.sweep`, `.ring`), so an external theme needs a versioned markup contract first.
 
 ---
 
