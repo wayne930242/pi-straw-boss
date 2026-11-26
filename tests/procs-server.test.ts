@@ -80,21 +80,24 @@ test("T2R-F010 and F001: cli procs exits 1 when a reap leaves a process alive or
 	assert.equal(root.out, "");
 });
 
-test("pane close --checkout asks the running server's registry to reap the checkout once the pane is gone", async () => {
-	const table = [P(300, 1)], reaped: number[][] = [];
+test("pane close --checkout asks the running server's registry for its bounded reap once the pane is gone: the checkout's orphan goes, the caller and what it runs under stay", async () => {
+	// 600 is a shell init adopted that works in the checkout and runs this test's process (the caller); 300 is the loop the pane left there.
+	const me = process.pid, table = [P(600, 1), { ...P(me, 600), started: "me" }, P(300, 1)], reaped: number[][] = [];
 	const procs = {
 		read: async () => table, startOf: (pid: number) => table.find((p) => p.pid === pid)?.started, markers: async () => new Map(), protect: async () => [], real: (path: string) => path, exists: () => true, inode: () => "1",
-		checkout: () => ({ kind: "linked" as const, root: "/wt", gitdir: "/repo/.git/worktrees/wt" }), cwds: async (pids: readonly number[]) => new Map(pids.filter((pid) => pid === 300).map((pid) => [pid, { path: "/wt/app" }])),
+		checkout: () => ({ kind: "linked" as const, root: "/wt", gitdir: "/repo/.git/worktrees/wt" }), cwds: async (pids: readonly number[]) => new Map(pids.filter((pid) => [300, 600, me].includes(pid)).map((pid) => [pid, { path: "/wt/app" }])),
 		reap: async (refs: readonly { pid: number }[]) => (reaped.push(refs.map((r) => r.pid)), { termed: refs.length, killed: 0, skipped: 0, groups: 0, left: [] }),
 	};
 	const running = await world.start({ procs });
 	await running.handle.ready;
 	let closed = false;
-	const herdr = async (args: string[]) => (args[1] === "list" ? JSON.stringify({ result: { panes: closed ? [] : [{ pane_id: "w9:p2", tab_id: "w9:t2" }] } }) : args[1] === "close" ? ((closed = true), "{}") : JSON.stringify({ result: { process_info: { shell_pid: 100 } } }));
-	const done = await cli(["pane", "close", "w9:p2", "--checkout", "/wt"], { herdrCli: herdr, pane: { read: async () => [], cwds: async () => new Map(), sleep: async () => {}, protect: async () => [], platform: "darwin" } });
+	const herdr = async (args: string[]) => (args[1] === "list" ? JSON.stringify({ result: { panes: closed ? [] : [{ pane_id: "w9:p2", tab_id: "w9:t2", workspace_id: "w9", terminal_id: "term-2" }] } }) : args[1] === "close" ? ((closed = true), "{}") : JSON.stringify({ result: { process_info: { shell_pid: 100, foreground_processes: [{ pid: 100 }] } } }));
+	// The pane's shell (100) goes with the close; the tree's reap is a fake here, so no real kill sequence runs.
+	const pane = { read: async () => [...(closed ? [] : [P(100, 1)]), ...table], cwds: async () => new Map(), sleep: async () => {}, protect: async () => [], platform: "darwin" as const, real: (path: string) => path, checkout: procs.checkout, probe: () => undefined, reap: async () => ({ termed: 0, killed: 0, skipped: 0, groups: 0, left: [] }) };
+	const done = await cli(["pane", "close", "w9:p2", "--checkout", "/wt", "--force"], { herdrCli: herdr, pane });
 	assert.equal(done.code, 0, done.err || done.out);
-	assert.deepEqual(reaped, [[300]], "the orphan in the checkout went through the server's kill sequence");
-	assert.deepEqual((JSON.parse(done.out) as { reaped: { checkout: unknown } }).reaped.checkout, { owner: "(checkout)", reason: "reap", targets: 1, termed: 1, killed: 0, skipped: 0, left: [], spared: 0 });
+	assert.deepEqual(reaped, [[300]], "the orphan in the checkout went through the server's kill sequence; not the caller or the shell it runs under");
+	assert.deepEqual((JSON.parse(done.out) as { reaped: { checkout: unknown } }).reaped.checkout, { owner: "(checkout)", reason: "pane-close", targets: 1, termed: 1, killed: 0, skipped: 0, left: [], spared: 1 });
 });
 
 test("T2R-F007: an sb server's record protects the process with its start time only; a reused pid is not spared", async () => {

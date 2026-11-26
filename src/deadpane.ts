@@ -56,6 +56,11 @@ export function notBare(id: string, info: ProcessInfo | undefined): string | und
 	const names = [...new Set(fg.filter((x) => x.pid !== info.shell_pid).map((x) => x.name ?? x.argv0 ?? `pid ${x.pid}`))].slice(0, 4).join(", ");
 	return `${id} is not at a bare shell: ${names} runs in it`;
 }
+/** The `reviving` row: a tower holds the revive lock of a session whose role record names this pane (`cli.mjs pane close` asks it too). */
+export const revivingAt = (stateDir: string, now: number, p: Pane) => readRecords(stateDir).some(({ record }) => {
+	if (record.pane !== p.pane_id || record.workspace !== p.workspace_id) return false;
+	try { return now - statSync(`${ledgerPath(stateDir, record.file)}.lock`).mtimeMs < LOCK_MS; } catch { return false; }
+});
 /** What the pane was, for the list: its role and the name its tokens kept. */
 export const paneWhat = (p: Pane) => {
 	const t = p.tokens ?? {}, kind = t.sb_role ?? (t.sb_train ? "train" : Object.keys(t).some((k) => k.startsWith("piha_")) ? "subagent" : "pi"), name = t.sb_main_tab ?? t.sb_name ?? t.sb_tab ?? t.sb_member_tab;
@@ -79,10 +84,7 @@ export function createDeadPanes(env: DeadPaneEnv) {
 	const onWindows = () => {
 		if (platform === "win32") throw new Error(WINDOWS_REFUSAL);
 	};
-	const reviving = (p: Pane) => readRecords(env.stateDir).some(({ record }) => {
-		if (record.pane !== p.pane_id || record.workspace !== p.workspace_id) return false;
-		try { return env.now() - statSync(`${ledgerPath(env.stateDir, record.file)}.lock`).mtimeMs < LOCK_MS; } catch { return false; }
-	});
+	const reviving = (p: Pane) => revivingAt(env.stateDir, env.now(), p);
 	const look = async () => {
 		const [all, sessions, ws] = await Promise.all([panes(run), env.sessions(), workspaces(run)]);
 		const here = env.here(), towerId = ws.find((w) => w.workspace_id === here.workspace)?.tokens?.tower;

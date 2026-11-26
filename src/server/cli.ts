@@ -43,7 +43,7 @@ const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS]
        cli.mjs procs [list]
        cli.mjs doctor --session ID|PREFIX|PANE [--json]   (another session's tools and loads: a fresh load, its session file, its pane; exit 1 on a fault)
        cli.mjs procs reap (--owner ID | --checkout PATH)   (kill what an ended worker left; refused while a live worker works in the checkout)
-       cli.mjs pane close PANE [--checkout PATH]   (close a pane, check it is gone (3 closes at most), stop what it left; exit 1 with what is left)
+       cli.mjs pane close PANE [--checkout ROOT] [--force]   (close a dead agent pane of this workspace, check it is gone (3 closes at most), stop what it left; exit 1 with what is left; --force is the boss's)
        cli.mjs train gate --spec FILE   (the wrapper of a train's run step; its monitor runs it)
        cli.mjs train check (--step FILE | --accept FILE|none [--app NAME] [--app-accept K,K] [--slip FILE])   (from the project or any folder in it; the app's integration.accept in apps.json is required, --app-accept only adds)
        cli.mjs train status [--project P] [--state live,stale,ended,unreadable] [--json] [--watch [--every SECONDS]]   (--watch: one JSONL progress line per look, changed or not)
@@ -56,7 +56,7 @@ export class UsageError extends Error {}
 export const WATCH_RETIRED = "`watch` is retired in 0.83.0: a main or a train watches with the boss_watch tool (key, quiet, idle, until), and the sb server wakes it with one message per change. Stop this monitor.";
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout", "dir", "label", "reason"], switch: ["exact", "force"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, pane: { value: ["checkout"], switch: [] }, doctor: { value: ["session"], switch: ["json"] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] }, prune: { value: [], switch: ["dry-run"] },
+	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, pane: { value: ["checkout"], switch: ["force"] }, doctor: { value: ["session"], switch: ["json"] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] }, prune: { value: [], switch: ["dry-run"] },
 };
 // `train` has a word of its own, and each word its flags.
 const TRAIN: Record<string, { value: string[]; switch: string[] }> = {
@@ -83,7 +83,7 @@ export function parseArgs(argv: string[]): Args {
 		flags.sub = sub;
 	}
 	// `pane` has the word `close` and the pane after it.
-	if (command === "pane" && (rest.shift() !== "close" || rest[0] === undefined || rest[0].startsWith("--"))) throw new UsageError(`pane close needs the pane: pane close PANE [--checkout PATH]\n${USAGE}`);
+	if (command === "pane" && (rest.shift() !== "close" || rest[0] === undefined || rest[0].startsWith("--"))) throw new UsageError(`pane close needs the pane: pane close PANE [--checkout ROOT] [--force]\n${USAGE}`);
 	if (command === "pane") flags.pane = rest.shift()!;
 	for (let i = 0; i < rest.length; i++) {
 		const flag = rest[i]!.replace(/^--/, "");
@@ -99,7 +99,7 @@ export function parseArgs(argv: string[]): Args {
 	if (command === "procs" && (flags.sub === "reap" ? (flags.owner === undefined) === (flags.checkout === undefined) : flags.owner !== undefined || flags.checkout !== undefined)) throw new UsageError(`procs reap needs --owner or --checkout, one of them; list takes neither\n${USAGE}`);
 	if (command === "doctor" && typeof flags.session !== "string") throw new UsageError(`doctor needs --session: a session id, its prefix, or a pane\n${USAGE}`);
 	if (flags.timeout !== undefined && !(Number(flags.timeout) > 0)) throw new UsageError("--timeout is a number of seconds");
-	if (flags.force === true && (typeof flags.reason !== "string" || !flags.reason.trim())) throw new UsageError("--force needs --reason: why the restart cannot wait for the train");
+	if (flags.force === true && command !== "pane" && (typeof flags.reason !== "string" || !flags.reason.trim())) throw new UsageError("--force needs --reason: why the restart cannot wait for the train");
 	if (command === "prune" && flags["dry-run"] !== true) throw new UsageError("prune requires --dry-run; only the running server prunes state");
 	if (flags.lines !== undefined && !(Number.isInteger(Number(flags.lines)) && Number(flags.lines) > 0)) throw new UsageError("--lines is a positive whole number");
 	return { command, flags };

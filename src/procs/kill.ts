@@ -17,6 +17,8 @@ export interface KillDeps {
 	sleep(ms: number): Promise<void>;
 	/** This process's pid: never signalled, nor the group it is in. */
 	self?: number;
+	/** False: no group is signalled whole, each target gets its own signal after its own identity check (a pane close, whose group membership was read off an older table). Default true. */
+	groups?: boolean;
 	graceMs?: number;
 	/** The last look: up to `tries` reads, `stepMs` apart, until nothing is left. */
 	settle?: { tries: number; stepMs: number };
@@ -79,7 +81,7 @@ export async function killSequence(refs: readonly Ref[], deps: KillDeps): Promis
 			}
 		};
 		const covered = new Set<number>();
-		for (const group of wholeGroups(targets, all, self)) {
+		for (const group of deps.groups === false ? [] : wholeGroups(targets, all, self)) {
 			const members = all.filter((p) => p.pgid === group);
 			if (send1(-group, members)) (report.groups += signal === "SIGTERM" ? 1 : 0, members.forEach((m) => covered.add(m.pid)));
 		}

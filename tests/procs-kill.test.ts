@@ -38,6 +38,14 @@ test("SIGTERM first to each whole group and each pid, then 10 s later SIGKILL to
 	assert.ok(w.clock.elapsed() >= 10_000, "the grace is 10 s on the clock");
 });
 
+test("kit2-F002: with groups off, every signal goes to one pid whose identity was read right before it, never to a group", async () => {
+	const table = [P(10, 1), P(11, 10, { pgid: 10 }), P(20, 1)];
+	const w = fakeWorld(table, (target, signal, world) => { if (signal === "SIGKILL") dies(target, world); });
+	const report = await killSequence(table.map(refOf), { ...w.deps, groups: false });
+	assert.deepEqual(w.sent, [[10, "SIGTERM"], [11, "SIGTERM"], [20, "SIGTERM"], [10, "SIGKILL"], [11, "SIGKILL"], [20, "SIGKILL"]]);
+	assert.deepEqual(report, { termed: 3, killed: 3, skipped: 0, groups: 0, left: [] });
+});
+
 test("a pid that now has another start time is not signalled: not in the first look, not in the second", async () => {
 	const table = [P(10, 1), P(20, 1)];
 	const w = fakeWorld(table, () => {});
