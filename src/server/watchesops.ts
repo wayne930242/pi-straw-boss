@@ -13,7 +13,8 @@ import { createWardRead, WARD, type WardDeps, type WardRead } from "./ward.ts";
 
 export const REPORT_RETIRED = "watch-report is retired in pi-straw-boss 0.83.0 with the watchdog: the main watches with boss_watch, and the sb server wakes it";
 /** `main`: the live main a session id is in the server's own reading of the net, with its workspace and pane, or why it is none (ward-review F003); `ready`: whether that main's control channel answers its workspace's tower identity now (F002). */
-export interface WardRoutes extends Pick<WardRead, "resolve"> { main(session: string): { workspace: string; pane?: string } | string; ready(workspace: string, session: string): Promise<boolean> }
+/** `fresh`: the server reads the net now first, as a ward's add does (ward-review F009: with no page and no watch, nothing else reads it); a list or a stop reads it only when the last reading does not show a live main. */
+export interface WardRoutes extends Pick<WardRead, "resolve"> { main(session: string, fresh?: boolean): Promise<{ workspace: string; pane?: string } | string>; ready(workspace: string, session: string): Promise<boolean> }
 export interface WatchRoutes { read: { read(q: WatchQuery): Promise<Reply> }; watches: Pick<Watches, "add" | "stop" | "list" | "has">; ward?: WardRoutes }
 const no = (error: string): Promise<Reply> => Promise.resolve({ ok: false, error });
 const number = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -36,14 +37,14 @@ export function watchReply(routes: WatchRoutes | undefined, request: Request, en
 	const session = text(request.session, 128);
 	if (!session) return no(`${request.cmd} needs session`);
 	// A ward's paths and its stop are the main's alone: the session must be a live main of the server's own reading (ward-review F003).
-	const mainOf = () => (routes.ward ? routes.ward.main(session) : "this server keeps no wards");
+	const mainOf = () => (routes.ward ? routes.ward.main(session) : Promise.resolve("this server keeps no wards"));
 	if (request.cmd === "watch-list") {
-		const list = routes.watches.list(session), hide = (list.watches as { ward?: { pane: string } }[]).some((r) => r.ward) && typeof mainOf() === "string";
-		return Promise.resolve(hide ? { ...list, watches: (list.watches as { ward?: { pane: string } }[]).map((r) => (r.ward ? { ...r, ward: { pane: r.ward.pane }, newest: undefined } : r)) } : list); // a ward's line names its file too
+		const list = routes.watches.list(session), wards = (list.watches as { ward?: { pane: string } }[]).some((r) => r.ward);
+		return (wards ? mainOf() : Promise.resolve(undefined)).then((m) => (typeof m === "string" ? { ...list, watches: (list.watches as { ward?: { pane: string } }[]).map((r) => (r.ward ? { ...r, ward: { pane: r.ward.pane }, newest: undefined } : r)) } : list)); // a ward's line names its file too
 	}
 	const key = text(request.key, 200);
 	if (!key) return no("key is 1 to 200 characters");
-	if (request.cmd === "watch-stop") return ((m) => (key.startsWith(WARD) && typeof m === "string" ? no(m) : Promise.resolve(routes.watches.stop(session, key))))(key.startsWith(WARD) ? mainOf() : undefined);
+	if (request.cmd === "watch-stop") return (key.startsWith(WARD) ? mainOf() : Promise.resolve(undefined)).then((m) => (typeof m === "string" ? { ok: false, error: m } : routes.watches.stop(session, key)));
 	if (!enabled()) return no("tower runs are off on this computer (towerRuns.enabled is false): boss_watch needs the workspace's tower identity of the sb server, which sends the wakes");
 	const ms = (v: unknown) => (number(v) ? v : undefined), [quietMs, idleMs, untilMs] = [ms(request.quietMs), ms(request.idleMs), ms(request.untilMs)];
 	// A ward (`sb_ward`, `cli.mjs ward`) has a command of its own, which a server of an older build refuses instead of keeping it as a plain watch (ward-review F005).
@@ -59,7 +60,7 @@ async function wardAdd(routes: WatchRoutes, session: string, key: string, reques
 	if (!key.startsWith(WARD)) return { ok: false, error: "ward-add takes ward:<pane>" };
 	const w = (request.ward ?? {}) as { item?: unknown; names?: unknown; cli?: unknown };
 	if ((w.item !== undefined && typeof w.item !== "string") || (w.names !== undefined && !(Array.isArray(w.names) && w.names.every((n) => typeof n === "string" && n.length <= 200)))) return { ok: false, error: "ward is { item?, names?, cli? }: item a string, names strings" };
-	const ward = routes.ward, me = ward.main(session);
+	const ward = routes.ward, me = await ward.main(session, true);
 	if (typeof me === "string") return { ok: false, error: me };
 	if (w.cli === true && !(await ward.ready(me.workspace, session).catch(() => false))) return { ok: false, error: "your session does not answer on the control channel, so the ward's wake would reach nobody: call sb_ward from the main instead (it listens first), or run this again after boss_watch or a /reload" };
 	const rec = await ward.resolve({ pane: key.slice(WARD.length), session, workspace: me.workspace, ...(w.item !== undefined ? { item: w.item as string } : {}), ...(w.names ? { names: w.names as string[] } : {}), ...(me.pane ? { here: me.pane } : {}) });
@@ -92,9 +93,15 @@ export function startWatches(o: StartWatches): WatchRoutes {
 	// A worker's own watches on this server keep it from being finished (ward-review F007); `watches` is made below and only asked at a look.
 	const ward = o.ward ? createWardRead({ ...o.ward, now: o.now, watching: (session) => watches.has(session) }) : undefined;
 	// The trusted identity of a ward's main is the server's reading of the net: the session's pane carries `sb_role=main` (the net's role), and the unit is live; its workspace is the unit's base.
-	const mainOf = (session: string): { workspace: string; pane?: string } | string => ((f) => (!f || !f.live ? "your session is not a live unit of the net the server reads (a ward is a main's; join the net, or wait for the next reading)" : f.role !== "main" ? `only a tab's main wards a worker; your session is a ${f.role}` : { workspace: f.base, ...(f.pane ? { pane: f.pane } : {}) }))(o.net.lookup(session));
+	const judgeMain = (session: string): { workspace: string; pane?: string } | string => ((f) => (!f || !f.live ? "your session is not a live unit of the net the server reads (a ward is a main's; join the net, or wait for the next reading)" : f.role !== "main" ? `only a tab's main wards a worker; your session is a ${f.role}` : { workspace: f.base, ...(f.pane ? { pane: f.pane } : {}) }))(o.net.lookup(session));
 	const watches = createWatches({ read: (q) => (q.ward && ward ? ward.read({ ...q, ward: q.ward }) : read.read(q)), now: o.now, timer, send: o.send, owner, file: join(slot.dir, "watches.json"), log: o.log });
 	watches.start();
 	o.stops.push(() => (watches.stopAll(), read.stop()));
+	const mainOf = async (session: string, fresh = false) => {
+		const known = fresh ? undefined : judgeMain(session);
+		if (known !== undefined && typeof known !== "string") return known;
+		try { await o.net.read(); } catch (error) { return `the server could not read the net: ${(error as Error).message}`; }
+		return judgeMain(session);
+	};
 	return { read, watches, ...(ward && o.ward ? { ward: { resolve: ward.resolve, main: mainOf, ready: o.ward.ready } } : {}) };
 }

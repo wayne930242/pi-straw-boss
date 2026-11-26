@@ -39,7 +39,9 @@ function world() {
 		throw new Error(`unexpected herdr ${args.join(" ")}`);
 	};
 	const units: Record<string, { role: string; base: string; pane?: string; live: boolean }> = { [MAIN]: { role: "main", base: "w1", pane: "%1", live: true }, [MEMBER]: { role: "member", base: "w1", pane: "%3", live: true } };
-	const net: WatchNet = { onRead: () => () => {}, last: () => ({ bases: [] }) as Net, lookup: (key) => (units[key] ? { key, name: key.slice(0, 8), ...units[key]! } : undefined), read: async () => ({ bases: [] }) as Net };
+	// The registry is empty until a reading (no page, no watch): only `read` fills it (ward-review F009).
+	const reading = { done: 0 };
+	const net: WatchNet = { onRead: () => () => {}, last: () => ({ bases: [] }) as Net, lookup: (key) => (reading.done && units[key] ? { key, name: key.slice(0, 8), ...units[key]! } : undefined), read: async () => (reading.done++, { bases: [] }) as Net };
 	const listening = { now: true };
 	const timer = (ms: number, fn: () => void) => { let live = true; clock.at(clock.elapsed() + ms, () => live && fn()); return () => void (live = false); };
 	const sent: { session: string; text: string; key: string; state: string; id?: string }[] = [];
@@ -49,7 +51,7 @@ function world() {
 	let routes = start();
 	after(() => stops.forEach((s) => s()));
 	return {
-		clock, file, pane, sent, monitors, loops, units, listening, takes, dir, get routes() { return routes; },
+		clock, file, pane, sent, monitors, loops, units, listening, takes, dir, reading, get routes() { return routes; },
 		/** Another pane in another workspace that runs pi. */
 		other: () => void list.push({ pane_id: "%9", tab_id: "t9", workspace_id: "w2", agent: "pi", agent_status: "working", agent_session: { value: file } }),
 		/** The server stops and a new one starts from `watches.json`. */
@@ -379,4 +381,12 @@ test("ward-review F007: a worker that waits on its own watch of the server, or w
 	writeFileSync(join(w.loops, `loops-${WORKER}.json`), JSON.stringify({ loops: [] }));
 	await w.looks(6);
 	assert.deepEqual(w.sent.filter((x) => x.key === "ward:%7").map((x) => x.state), ["finished"]);
+});
+
+test("ward-review F009: the first ward on a server with no page and no watch reads the net itself before it checks the main", async () => {
+	const w = world();
+	assert.equal(w.reading.done, 0);
+	const r = await w.add({ cli: true });
+	assert.equal(r.ok, true, JSON.stringify(r));
+	assert.ok(w.reading.done >= 1);
 });
