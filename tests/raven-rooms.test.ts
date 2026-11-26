@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -24,20 +24,12 @@ const sizeOf = (file: Buffer) => {
 	return { width: file.readUInt16LE(26) & 0x3fff, height: file.readUInt16LE(28) & 0x3fff };
 };
 
-test("the four rooms are WebP pictures of 1280 by 800 and at most 44 KB each, and the theme folder's source stays within its cap (the built folder holds the spec's 450 KB)", () => {
+test("the four rooms are WebP pictures of 1280 by 800 and at most 44 KB each", () => {
 	for (const name of Object.values(ROOMS)) {
 		const file = readFileSync(join(dir, name));
 		assert.ok(file.length <= 44_000, `${name} is ${file.length} bytes`);
 		assert.deepEqual(sizeOf(file), { width: 1280, height: 800 }, name);
 	}
-	const total = (path: string): number => readdirSync(path, { withFileTypes: true }).reduce((sum, e) => sum + (e.isDirectory() ? total(join(path, e.name)) : statSync(join(path, e.name)).size), 0);
-	// The source folder holds the stylesheet with its comments, which the build strips: the spec's 450 KB is the built folder's (tests/imports.test.ts caps it, 425,889 bytes measured). The source folder was 449,505 bytes before the glass (todo #138: +8,064, raven.css's glass, phone frame and strike blocks with their reasons) and 457,569 after round 1; round 2 (the lit head turn, the head page's thin glass and backings, the phone's strip) measured 461,146 (+3,577); round 3 (the bolt layer, the perch's place, the backings, with their reasons) measured 466,807 (+5,661); the head turn as a swap and the flyer at one speed (boss, 2026-11-09) measured 468,594 (+1,787, most of it the reasons). Cap = measured + 500.
-	// Wait cards on the question panel (todo #144 task 5; measured): 469,094 to 469,670 (+576: the 15 `_head` sentences in sentences.ts, and the ornament exclusions for a card nested in the tower card in raven.css). Cap = measured.
-	// Wait-card review fixes (todo #145): 469,670 to 469,710 (+40: the `wait_sent_head` sentence). Cap = measured.
-	// Supply board (2026-11-24, docs/specs/2026-11-24-capacity-supply/spec.md; measured): 469,710 to 478,004 (+8,294: the crypt's rules in raven.css with their reasons, the supply words in sentences.ts in both languages, and six sprite symbols). The built folder stays under the spec's 450 KB (tests/imports.test.ts). Cap = measured.
-	// Sounds only for what waits on the boss, and Raven's recorded weather (2026-11-24, docs/specs/2026-11-24-capacity-supply/spec.md, Sound; measured): 478,004 to 487,809 (+9,805: the clips go from 21,300 bytes (bell, caw, door) to 29,786 (Casper's bell, rain, thunder), and weather.ts's clip loader and its reasons replace the synthesized rain and thunder). The built folder stays under the spec's 450 KB (446,985 bytes, tests/imports.test.ts). Cap = measured. The seven kind icons (2026-11-26, fde71e0e, boss-accepted) add 2,298: 490,107; built folder 449,283.
-	// Layer order, wrapper and minifier note in raven.css: +127 bytes in source.
-	assert.ok(total(dir) <= 490_234, `the raven folder is ${total(dir)} bytes`);
 });
 
 test("the sprite's blood goblet (血僕) and keep (鴉閣) are bold shapes, not traced engravings: each symbol is at most 3 KB, so no thorn or tracery detail is left to blur at 16 px", () => {

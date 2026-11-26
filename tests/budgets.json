@@ -1,0 +1,44 @@
+{
+  "geek": {
+    "ceiling": 16000,
+    "raw": 8885,
+    "gz": 2731,
+    "sha": "674e9537c2347fcdfe041116d195ee6fa12b1662"
+  },
+  "raven": {
+    "ceiling": 512000,
+    "raw": 448020,
+    "gz": 39878,
+    "sha": "674e9537c2347fcdfe041116d195ee6fa12b1662"
+  },
+  "storybook": {
+    "ceiling": 512000,
+    "raw": 321868,
+    "gz": 24163,
+    "sha": "674e9537c2347fcdfe041116d195ee6fa12b1662"
+  },
+  "zen": {
+    "ceiling": 180000,
+    "raw": 143878,
+    "gz": 43778,
+    "sha": "674e9537c2347fcdfe041116d195ee6fa12b1662"
+  },
+  "eager": {
+    "ceiling": 180000,
+    "raw": 140200,
+    "gz": 50757,
+    "sha": "674e9537c2347fcdfe041116d195ee6fa12b1662"
+  },
+  "chat": {
+    "ceiling": 700000,
+    "raw": 531911,
+    "gz": 198762,
+    "sha": "674e9537c2347fcdfe041116d195ee6fa12b1662"
+  },
+  "stylesheet": {
+    "ceiling": 200000,
+    "raw": 151838,
+    "gz": 30852,
+    "sha": "674e9537c2347fcdfe041116d195ee6fa12b1662"
+  }
+}
