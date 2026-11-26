@@ -276,11 +276,12 @@ html[data-view="storybook"]:not([data-calm]) .comms-in .composer[data-activity="
    a crescent moon. The badge is a cream disc ringed in the state's colour, and the figure is a fixed drawing (a mask) in that colour. This block is the still figure each state keeps under calm, prefers-reduced-motion, and forced colours; the motion is the
    no-preference block below. The figures differ in shape, not hue alone, and the same figure stands beside the state word on a card (the review's P2). */
 html[data-view="storybook"] {
-	--sb-pencil: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2040%2040'%3E%3Cg%20fill='none'%20stroke='%23000'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M5%2034L8%2024%2028%204Q32%202%2035%208L14%2029%205%2034Z'%20stroke-width='3.2'/%3E%3Cpath%20d='M8%2024l6%205M25%208l6%205M5%2034l4-2'%20stroke-width='2.2'/%3E%3C/g%3E%3C/svg%3E");
-	--sb-envelope: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2040%2040'%3E%3Cg%20fill='none'%20stroke='%23000'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M4%2012L34%209%2035%2030%205%2033Z'%20stroke-width='3.2'/%3E%3Cpath%20d='M5%2013l15%2011%2013-13'%20stroke-width='2.4'/%3E%3C/g%3E%3C/svg%3E");
-	--sb-flag: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2040%2040'%3E%3Cg%20fill='none'%20stroke='%23000'%20stroke-linecap='round'%20stroke-linejoin='round'%20stroke-width='3.4'%3E%3Cpath%20d='M10%2036Q12%2019%2011%205'/%3E%3Cpath%20d='M12%207Q21%201%2027%208L34%206%2030%2014%2034%2019Q26%2024%2021%2017Q18%2014%2012%2017'%20fill='%23000'%20fill-opacity='.35'/%3E%3C/g%3E%3C/svg%3E");
-	--sb-moon: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2040%2040'%3E%3Cpath%20d='M29%204Q22%2010%2025%2018Q28%2026%2036%2025C27%2043%202%2034%205%2018Q7%206%2020%204Z'/%3E%3C/svg%3E");
-	--sb-stars: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2040%2040'%3E%3Cpath%20d='M30%208Q30%2013%2035%2014Q30%2015%2030%2020Q29%2015%2025%2014Q29%2013%2030%208ZM35%2021Q35%2023%2037%2024Q35%2025%2035%2027Q34%2025%2033%2024Q34%2023%2035%2021Z'/%3E%3C/svg%3E");
+	/* These five alpha masks also paint when a card updates. A raster has no SVG document to lay out and paint again at each badge or label size. */
+	--sb-pencil: url("./pencil.png");
+	--sb-envelope: url("./envelope.png");
+	--sb-flag: url("./flag.png");
+	--sb-moon: url("./moon.png");
+	--sb-stars: url("./stars.png");
 }
 html[data-view="storybook"] [data-mark="working"] { --sb-fig: var(--sb-pencil); }
 html[data-view="storybook"] [data-mark="waiting"] { --sb-fig: var(--sb-envelope); }
