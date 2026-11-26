@@ -58,8 +58,7 @@ test("the notebook look: washi tape, paper grain, a hand-drawn line per phase, r
 		const body = css.slice(css.indexOf(block), css.indexOf("}", css.indexOf(block)));
 		for (const token of ["--sb-frame", "--sb-rule", "--sb-grain", "--sb-tape", "--sb-ruled"]) assert.ok(body.includes(`${token}:`), `${block} sets ${token}`);
 	}
-	assert.match(css, /--sb-frame: url\("data:image\/svg\+xml,%3Csvg xmlns='http:\/\/www\.w3\.org\/2000\/svg' width='48' height='48'/, "the frame has a size of its own, so border-image slices it 1 : 1");
-	assert.match(css, /border-image: var\(--sb-frame\) 14 \/ 14px round/);
+	assert.match(css, /border-image: var\(--sb-frame\) 28 \/ 14px round/, "the frame uses 28 source pixels for a 14px corner");
 	assert.match(css, /\.ask \{[^}]*repeating-linear-gradient\(transparent 0 23px, var\(--sb-ruled\) 23px 24px\)/, "the question card is ruled");
 	assert.match(css, /:is\(\.base, \.dialog, \.head-node\)::after \{ content: ""[^}]*clip-path: polygon/, "the tape has torn ends");
 	const tape = rulesOf(css).find(r => r.selector.includes(".base") && r.selector.endsWith("::after") && r.body.includes("var(--sb-tape-2)"));
@@ -67,12 +66,25 @@ test("the notebook look: washi tape, paper grain, a hand-drawn line per phase, r
 	assert.doesNotMatch(tape!.selector, /:(nth-|first-|last-)/);
 	assert.match(css, /--sb-round: ui-rounded, "SF Pro Rounded", system-ui/);
 	assert.ok(!/@font-face|@import|https?:\/\/(?!www\.w3\.org)/.test(css), "nothing fetched from elsewhere");
-	for (const grain of css.matchAll(/--sb-grain: (url\("[^"]+"\))/g)) assert.ok(grain[1]!.length < 2048, `the grain is under 2 KB (${grain[1]!.length})`);
+});
+
+test("redrawing a notebook surface uses only raster images for its frame, divider and grain", () => {
+	for (const phase of ["day", "night"]) {
+		const selector = phase === "day" ? '[data-view="storybook"]' : '[data-view="storybook"][data-phase="night"]';
+		const block = rulesOf(css).find(r => r.selector === selector)!.body;
+		for (const [name, width, height] of [["frame", 96, 96], ["rule", 480, 8], ["grain", 180, 180]] as const) {
+			const file = `${name}-${phase}.png`;
+			assert.ok(block.includes(`--sb-${name}: url("./${file}")`), `--sb-${name} must use ${file}`);
+			const png = readFileSync(new URL(`../gui/themes/storybook/${file}`, import.meta.url));
+			assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+			assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [width, height]);
+		}
+	}
 });
 
 test("no filter moves: no transition of a filter, and no SVG filter on a page element (what moves, the status figures and the ambient layers, is held to its rules by tests/storybook-motion.test.ts)", () => {
 	assert.ok(!/transition[^;]*filter/.test(css));
-	assert.ok(!/(?<![-\w])filter:\s*url/.test(css), "no SVG filter on a page element: the grain's filter lives inside its own static image");
+	assert.ok(!/(?<![-\w])filter:\s*url/.test(css), "no SVG filter on a page element");
 });
 
 test("every rule hangs on the view (the phase only refines it), so another view never takes one", () => {

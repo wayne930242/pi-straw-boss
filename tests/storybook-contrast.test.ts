@@ -73,7 +73,14 @@ for (const phase of ["day", "night"] as const) {
 	});
 
 	test(`${phase}: every border, the hand-drawn line, and the focus ring are at least 3 : 1 on every surface`, () => {
-		const stroke = must(/--sb-frame:[^;]*?stroke%3D'%23([0-9a-f]{6})'/i.exec(block.body)?.[1] ?? /--sb-frame:[^;]*?stroke='(?:%23|#)([0-9a-f]{6})'/i.exec(block.body)?.[1], "the frame's stroke colour");
+		// All entries in the traced frame's PNG palette have the same RGB; the alpha varies along its stroke.
+		const png = readFileSync(new URL(`../gui/themes/storybook/frame-${phase}.png`, import.meta.url));
+		assert.equal(png[25], 3, "indexed PNG");
+		const palette = png.indexOf("PLTE");
+		assert.ok(palette >= 4);
+		const length = png.readUInt32BE(palette - 4), rgb = png.subarray(palette + 4, palette + 4 + length);
+		assert.ok(length >= 3 && length % 3 === 0 && rgb.every((byte, i) => byte === rgb[i % 3]), "one ink colour");
+		const stroke = rgb.subarray(0, 3).toString("hex");
 		for (const ground of grounds()) {
 			assert.ok(contrast(c["line-c"]!, ground) >= 3, `--line-c on ${ground}: ${contrast(c["line-c"]!, ground).toFixed(2)}`);
 			assert.ok(contrast(`#${stroke}`, ground) >= 3, `the hand-drawn line #${stroke} on ${ground}: ${contrast(`#${stroke}`, ground).toFixed(2)}`);

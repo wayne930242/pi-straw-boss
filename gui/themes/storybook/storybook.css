@@ -3,8 +3,7 @@
 @media all {
 @layer theme {
 /* The Storybook theme (繪本; view.ts sets data-view="storybook" on <html>, and boot.js or the theme's phase clock sets data-phase="day" or "night"; gui/themes/storybook/index.ts loads this file the first time a page shows it, or boot.js links it before the first frame).
-   docs/specs/2026-11-26-storybook-theme/spec.md §B3, the boss's pick B: a pressed-flower notebook. Cards are paper pages held by washi tape, on a fine paper grain, framed by a thin hand-drawn line (a static SVG in border-image, never a filter
-   that moves); the question card has ruled lines. Day is cream paper and deep plum ink, night grey-violet pages on a navy sky held by grey-green tape. Every text colour is at least 4.5 : 1 on every surface in both phases and every border at least
+   docs/specs/2026-11-26-storybook-theme/spec.md §B3, the boss's pick B: a pressed-flower notebook. Cards are paper pages held by washi tape, on a fine paper grain, framed by a thin hand-drawn line (a raster border-image); the question card has ruled lines. Day is cream paper and deep plum ink, night grey-violet pages on a navy sky held by grey-green tape. Every text colour is at least 4.5 : 1 on every surface in both phases and every border at least
    3 : 1 (tests/storybook-contrast.test.ts reads the two token blocks below). This is the first light theme: the overrides after the blocks undo what Standard's sheet assumes of a dark ground (the audit, listed in the change's report).
    The status figures and the backdrop's ambient layers, with their motion, are at the end of this file (B-4). */
 [data-view="storybook"] {
@@ -52,10 +51,10 @@
 	--aura-2: color-mix(in srgb, #fbe3d3 70%, transparent);
 	--grid: none;
 	--sb-round: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif;
-	/* The hand-drawn line, the divider, and the paper grain: static SVGs, one per phase (a data URI cannot read a custom property). */
-	--sb-frame: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'%3E%3Cg fill='none' stroke='%237a6f8c' stroke-linecap='round'%3E%3Cpath d='M11 2.2C20 1.6 30 2.7 37 2c6.5.3 9 3 8.8 9 .5 9-.3 18 .2 26-.4 6.6-3.2 9-9 8.7-9 .6-18-.3-26 .3-6.2-.3-8.9-3-8.7-9-.5-9 .3-18-.3-26C2.3 4.6 5 2.1 11 2.2z' stroke-width='1.5'/%3E%3Cpath d='M10.6 2.8c9.6-.8 19 .4 27 -.3 5.8.2 8.4 3.4 8 8.9.6 9.2-.4 17.6.1 26.4-.2 6-3.4 8.4-8.8 8.2-9.4.4-17.8-.4-26.2.2-5.8-.2-8.2-3.4-8-8.8-.3-9.4.5-17.4-.2-26.2C2.8 5 5.4 2.6 10.6 2.8z' stroke-width='.8' opacity='.45'/%3E%3C/g%3E%3C/svg%3E");
-	--sb-rule: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 4' preserveAspectRatio='none'%3E%3Cpath d='M1 2.2C30 1.4 52 2.8 80 2s58 .9 82-.1 50 .8 77 .2' fill='none' stroke='%239a8fa8' stroke-width='1.2' stroke-linecap='round' vector-effect='non-scaling-stroke'/%3E%3C/svg%3E");
-	--sb-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.36 0 0 0 0 0.27 0 0 0 0 0.18 0.16 0 0 0 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url%28%23g%29'/%3E%3C/svg%3E");
+	/* Traced pencil: the 96px frame is sliced at 28 source pixels for the original 14px corners. The divider and repeating grain are raster too, so redrawing a card never repaints their SVGs. */
+	--sb-frame: url("./frame-day.png");
+	--sb-rule: url("./rule-day.png");
+	--sb-grain: url("./grain-day.png");
 	--sb-tape: rgba(166, 192, 142, 0.72);
 	--sb-tape-2: rgba(240, 180, 160, 0.7);
 	--sb-ruled: rgba(61, 99, 166, 0.2);
@@ -112,9 +111,9 @@
 	--aura-2: color-mix(in srgb, #3a2f5c 40%, transparent);
 	--grid: none;
 	--sb-round: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif;
-	--sb-frame: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'%3E%3Cg fill='none' stroke='%23a29dc2' stroke-linecap='round'%3E%3Cpath d='M11 2.2C20 1.6 30 2.7 37 2c6.5.3 9 3 8.8 9 .5 9-.3 18 .2 26-.4 6.6-3.2 9-9 8.7-9 .6-18-.3-26 .3-6.2-.3-8.9-3-8.7-9-.5-9 .3-18-.3-26C2.3 4.6 5 2.1 11 2.2z' stroke-width='1.5'/%3E%3Cpath d='M10.6 2.8c9.6-.8 19 .4 27 -.3 5.8.2 8.4 3.4 8 8.9.6 9.2-.4 17.6.1 26.4-.2 6-3.4 8.4-8.8 8.2-9.4.4-17.8-.4-26.2.2-5.8-.2-8.2-3.4-8-8.8-.3-9.4.5-17.4-.2-26.2C2.8 5 5.4 2.6 10.6 2.8z' stroke-width='.8' opacity='.45'/%3E%3C/g%3E%3C/svg%3E");
-	--sb-rule: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 4' preserveAspectRatio='none'%3E%3Cpath d='M1 2.2C30 1.4 52 2.8 80 2s58 .9 82-.1 50 .8 77 .2' fill='none' stroke='%236f6b93' stroke-width='1.2' stroke-linecap='round' vector-effect='non-scaling-stroke'/%3E%3C/svg%3E");
-	--sb-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.85 0 0 0 0 0.85 0 0 0 0 1 0.07 0 0 0 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url%28%23g%29'/%3E%3C/svg%3E");
+	--sb-frame: url("./frame-night.png");
+	--sb-rule: url("./rule-night.png");
+	--sb-grain: url("./grain-night.png");
 	--sb-tape: rgba(130, 156, 132, 0.62);
 	--sb-tape-2: rgba(150, 140, 180, 0.6);
 	--sb-ruled: rgba(156, 192, 255, 0.14);
@@ -154,7 +153,7 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 [data-view="storybook"] .map { background: none; border-color: transparent; }
 
 /* Paper pages with the hand-drawn line: every large surface. The line is the border-image, so the page's own radius still clips its fill (a little paper shows past the line, as on a cut page). */
-[data-view="storybook"] :is(.hud, .base, .panel, .set-group, .sheet, .hud-pop, .dialog, .tcard, .comms-in, .tile, .head-node, .new-base, .term-hold) { border: 1.5px solid transparent; border-image: var(--sb-frame) 14 / 14px round; box-shadow: 0 2px 0 color-mix(in srgb, var(--shadow) 10%, transparent), 0 10px 22px -12px color-mix(in srgb, var(--shadow) 35%, transparent); }
+[data-view="storybook"] :is(.hud, .base, .panel, .set-group, .sheet, .hud-pop, .dialog, .tcard, .comms-in, .tile, .head-node, .new-base, .term-hold) { border: 1.5px solid transparent; border-image: var(--sb-frame) 28 / 14px round; box-shadow: 0 2px 0 color-mix(in srgb, var(--shadow) 10%, transparent), 0 10px 22px -12px color-mix(in srgb, var(--shadow) 35%, transparent); }
 [data-view="storybook"] :is(.hud, .base, .panel, .set-group, .sheet, .hud-pop, .tcard, .comms-in, .tile, .head-node) { background: var(--sb-grain), var(--panel); }
 [data-view="storybook"] .hud { border-radius: 14px; -webkit-backdrop-filter: none; backdrop-filter: none; }
 [data-view="storybook"] .base { border-radius: 14px; background: var(--sb-grain), linear-gradient(180deg, var(--surface-1), var(--surface-0)); }
@@ -169,7 +168,7 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 [data-view="storybook"] .dialog::after { top: 0; } /* the dialog scrolls (overflow), so its strip sits on its edge, not over it */
 
 /* Small cards (a unit, a subagent): a light paper slip with the line, washed by the state's colour. */
-[data-view="storybook"] .card { border: 1.2px solid transparent; border-image: var(--sb-frame) 14 / 12px round; background: color-mix(in srgb, var(--surface-1) 70%, transparent); }
+[data-view="storybook"] .card { border: 1.2px solid transparent; border-image: var(--sb-frame) 28 / 12px round; background: color-mix(in srgb, var(--surface-1) 70%, transparent); }
 [data-view="storybook"] .unit[data-mark="waiting"] > .card { background: color-mix(in srgb, var(--amber) 14%, var(--surface-0)); }
 [data-view="storybook"] .unit[data-mark="error"] > .card { background: color-mix(in srgb, var(--err) 12%, var(--surface-0)); }
 [data-view="storybook"] .unit[data-mark="working"] > .card { background: color-mix(in srgb, var(--working) 12%, var(--surface-0)); }
@@ -181,10 +180,10 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 
 /* The header's tallies and chips: paper, not white glass. */
 [data-view="storybook"] :is(.stats, .stats div, .tally div, .alerts) { background: none; border-color: transparent; }
-[data-view="storybook"] .alerts:not(:disabled) { border: 1.2px solid transparent; border-image: var(--sb-frame) 14 / 12px round; background: color-mix(in srgb, var(--amber) 12%, var(--surface-0)); }
+[data-view="storybook"] .alerts:not(:disabled) { border: 1.2px solid transparent; border-image: var(--sb-frame) 28 / 12px round; background: color-mix(in srgb, var(--amber) 12%, var(--surface-0)); }
 
 /* Buttons: an outline drawn by hand; the ones that act (Go, Send) a filled stamp. */
-[data-view="storybook"] :is(.pair-btn, .later, .cmp-alt, .quit-btn, .tab-add, .modes button, .ask-cancel, .tx-copy) { border: 1.2px solid transparent; border-image: var(--sb-frame) 14 / 10px round; background: color-mix(in srgb, var(--surface-0) 80%, transparent); color: var(--text); }
+[data-view="storybook"] :is(.pair-btn, .later, .cmp-alt, .quit-btn, .tab-add, .modes button, .ask-cancel, .tx-copy) { border: 1.2px solid transparent; border-image: var(--sb-frame) 28 / 10px round; background: color-mix(in srgb, var(--surface-0) 80%, transparent); color: var(--text); }
 [data-view="storybook"] .pair-btn:not(#lan-wait) { letter-spacing: 0.04em; text-transform: none; }
 @media (hover: hover) and (pointer: fine) { [data-view="storybook"] .pair-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 10%, var(--surface-0)); } }
 [data-view="storybook"] .view-pick button[aria-pressed="true"], [data-view="storybook"] .pair-tabs :is(.later.on, .later[aria-selected="true"]) { background: color-mix(in srgb, var(--accent) 16%, var(--surface-0)); }
@@ -193,12 +192,12 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 [data-view="storybook"] .sheet-yes { background: var(--err); color: var(--ink); }
 
 /* The question card: a ruled page (a line every 24 px) with the honey wash of what waits, held by tape. */
-[data-view="storybook"] .ask { border: 1.5px solid transparent; border-image: var(--sb-frame) 14 / 14px round; background: repeating-linear-gradient(transparent 0 23px, var(--sb-ruled) 23px 24px), color-mix(in srgb, var(--amber) 5%, var(--surface-0)); background-position: 0 6px; }
+[data-view="storybook"] .ask { border: 1.5px solid transparent; border-image: var(--sb-frame) 28 / 14px round; background: repeating-linear-gradient(transparent 0 23px, var(--sb-ruled) 23px 24px), color-mix(in srgb, var(--amber) 5%, var(--surface-0)); background-position: 0 6px; }
 [data-view="storybook"] .dialog, [data-view="storybook"] .tcard { background: var(--sb-grain), linear-gradient(var(--c1), var(--surface-0) 70%), var(--raised); box-shadow: 0 16px 36px -14px color-mix(in srgb, var(--shadow) 55%, transparent); }
 [data-view="storybook"] .ask-head { background: color-mix(in srgb, var(--amber) 14%, var(--surface-0)); color: var(--amber); text-transform: none; }
-[data-view="storybook"] .ask-opt { border: 1.2px solid transparent; border-image: var(--sb-frame) 14 / 10px round; background: color-mix(in srgb, var(--surface-0) 85%, transparent); }
+[data-view="storybook"] .ask-opt { border: 1.2px solid transparent; border-image: var(--sb-frame) 28 / 10px round; background: color-mix(in srgb, var(--surface-0) 85%, transparent); }
 [data-view="storybook"] .ask-opt[aria-checked="true"] { background: color-mix(in srgb, var(--working) 14%, var(--surface-0)); }
-[data-view="storybook"] .ask-own, [data-view="storybook"] :where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="hidden"], [type="color"]), select, textarea) { border: 1.2px solid transparent; border-image: var(--sb-frame) 14 / 10px round; background: var(--surface-0); color: var(--text); }
+[data-view="storybook"] .ask-own, [data-view="storybook"] :where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="hidden"], [type="color"]), select, textarea) { border: 1.2px solid transparent; border-image: var(--sb-frame) 28 / 10px round; background: var(--surface-0); color: var(--text); }
 
 /* The chat page (spec §B11, the boss's pick A of 2026-11-26): the whole log is one notebook page. Ruled lines and a red margin line scroll with the log, binding holes run down the left, washi tape holds the page at the top
    twice, and the speakers' woodcut animals are stamped in the margin (a notice's is its sender's, chat.ts and icons.ts `senderRef`). The column is written on the page, not boxed, and stays near 800 px, so the corner picture
@@ -229,14 +228,14 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 [data-view="storybook"] .notice { max-width: 520px; border: 0; border-image: none; border-left: 3px solid color-mix(in srgb, var(--violet) 60%, transparent); border-radius: 8px; background: var(--sb-slip); }
 [data-view="storybook"] .notice > summary > .ava { position: absolute; left: 0; top: 0; color: var(--violet); }
 /* a tool call is a small label sticker while closed; open, it is the framed slip it was */
-[data-view="storybook"] .act { border: 1px solid transparent; border-image: var(--sb-frame) 14 / 10px round; background: color-mix(in srgb, var(--surface-0) 75%, transparent); }
+[data-view="storybook"] .act { border: 1px solid transparent; border-image: var(--sb-frame) 28 / 10px round; background: color-mix(in srgb, var(--surface-0) 75%, transparent); }
 [data-view="storybook"] .act:not([open]) { justify-self: start; max-width: 100%; border: 0; border-image: none; background: none; transform: rotate(-0.6deg); }
 [data-view="storybook"] .act:not([open]) + .act:not([open]) { transform: rotate(0.5deg); }
 [data-view="storybook"] .act:not([open]) > summary { padding-left: 26px; border: 1.1px solid color-mix(in srgb, var(--c) 55%, transparent); border-radius: 7px; background: radial-gradient(circle at 9px 50%, var(--sb-page) 2.6px, color-mix(in srgb, var(--c) 60%, transparent) 2.7px 3.4px, transparent 3.5px), linear-gradient(color-mix(in srgb, var(--c) 50%, transparent) 50%, transparent 0) 18px 3px / 1px 4.4px repeat-y, color-mix(in srgb, var(--c) 13%, var(--sb-page)); }
 [data-view="storybook"][data-phase="night"] .act > summary[data-mark="error"] { --c: var(--err-soft); }
 [data-view="storybook"] :is(.comms-head, .tile > header, .composer) { background: none; }
 [data-view="storybook"] .comms-head { background: var(--sb-rule) left bottom / 100% 4px no-repeat; }
-[data-view="storybook"] .cmp-row textarea { border: 1.2px solid transparent; border-image: var(--sb-frame) 14 / 12px round; background: var(--surface-0); }
+[data-view="storybook"] .cmp-row textarea { border: 1.2px solid transparent; border-image: var(--sb-frame) 28 / 12px round; background: var(--surface-0); }
 /* while the unit works a bee flies along the composer's top edge (its motion is in the no-preference block), in place of the ring's sweep; at night a lamp's glow goes with it. Gone when the unit is not working. */
 [data-view="storybook"] .composer { --sb-bee: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='2.68 2.8 122.65 122.65'%3E%3Cpath transform='translate(0 128) scale(1 -1)' d='M100 110 c-5 -3 -10 -10 -11 -17 -1 -3 -2 -5 -2 -5 -3 0 -8 -3 -9 -6 -2 -3 -5 -3 -7 -2 0 0 -1 2 -3 5 -17 23 -47 33 -59 18 -12 -14 4 -25 32 -22 12 1 18 0 23 -3 5 -2 4 -3 -2 -1 -21 5 -45 -14 -50 -39 -1 -5 -1 -7 0 -10 1 -3 1 -4 0 -8 -2 -5 -1 -6 3 -3 2 2 3 2 7 1 11 -3 27 3 40 15 l5 5 1 -3 c0 -2 0 -4 -2 -6 -4 -5 -3 -10 2 -9 5 2 8 14 4 19 l-2 3 2 3 2 4 4 -3 4 -2 -1 -6 c0 -6 2 -8 5 -4 5 5 3 15 -4 18 -3 1 -3 2 -2 5 l1 3 5 -3 c5 -3 10 -5 15 -5 11 0 13 19 2 30 l-3 4 3 4 c5 8 10 10 14 6 2 -3 5 -2 6 2 1 10 -20 3 -25 -8 -1 -2 -2 -3 -3 -3 -1 1 -2 1 -2 1 -2 0 1 10 4 14 2 2 5 4 8 4 4 0 6 3 4 5 -1 2 -4 2 -9 -1z m-1 -38 c2 -2 3 -8 1 -8 -2 0 -5 3 -5 6 0 4 1 5 4 2z m-48 -2 c2 -4 7 -12 12 -17 6 -5 6 -6 0 -11 l-2 -2 -5 3 c-6 5 -10 9 -14 16 -3 9 -3 11 5 13 4 1 4 1 4 -2z m-19 -16 c4 -8 11 -16 17 -20 5 -3 4 -3 -2 -7 -6 -3 -8 -2 -15 4 -6 5 -11 13 -11 17 0 3 6 12 8 12 0 0 1 -3 3 -6z'/%3E%3C/svg%3E"); }
 html[data-view="storybook"]:not([data-calm]) .comms-in .composer[data-activity="working"] .cmp-row::before { animation: none; background: color-mix(in srgb, var(--ring) 55%, transparent); }
