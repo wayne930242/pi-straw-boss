@@ -440,3 +440,23 @@ test("ward-review F006, F008: another session's file at the worker's path is not
 	for (let i = 0; i < 20 && r.turn === "unknown"; i++) r = await read();
 	assert.equal(r.turn, "ended");
 });
+
+test("ward-review F008: a ward lets go of its reader on every end: a stop, a replace, and its expiry", async () => {
+	const w = world();
+	const held = () => w.routes.ward!.held();
+	assert.equal((await w.add()).ok, true);
+	assert.equal(held(), 1);
+	assert.equal((await watchReply(w.routes, { cmd: "watch-stop", session: MAIN, key: "ward:%7" }, () => true)!).ok, true);
+	assert.equal(held(), 0, "a stop");
+	assert.equal((await w.add()).ok, true);
+	w.write(said("more"));
+	assert.equal((await w.add()).ok, true, "the same pane again replaces the ward");
+	assert.equal(held(), 1, "a replace keeps only the new ward's");
+	const short = world();
+	assert.equal((await short.add({}, MAIN, "ward:%7")).ok, true);
+	const r = await watchReply(short.routes, { cmd: "ward-add", session: MAIN, key: "ward:%7", untilMs: 60_000, ward: {} }, () => true)!;
+	assert.equal(r.ok, true);
+	await short.looks(5);
+	assert.deepEqual(short.sent.map((x) => x.state), ["expired"]);
+	assert.equal(short.routes.ward!.held(), 0, "its expiry");
+});

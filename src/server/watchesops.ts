@@ -14,7 +14,7 @@ import { createWardRead, WARD, type WardDeps, type WardRead } from "./ward.ts";
 export const REPORT_RETIRED = "watch-report is retired in pi-straw-boss 0.83.0 with the watchdog: the main watches with boss_watch, and the sb server wakes it";
 /** `main`: the live main a session id is in the server's own reading of the net, with its workspace and pane, or why it is none (ward-review F003); `ready`: whether that main's control channel answers its workspace's tower identity now (F002). */
 /** `fresh`: the server reads the net now first, as a ward's add does (ward-review F009: with no page and no watch, nothing else reads it); a list or a stop reads it only when the last reading does not show a live main. */
-export interface WardRoutes extends Pick<WardRead, "resolve"> { main(session: string, fresh?: boolean): Promise<{ workspace: string; pane?: string } | string>; ready(workspace: string, session: string): Promise<boolean> }
+export interface WardRoutes extends Pick<WardRead, "resolve" | "held"> { main(session: string, fresh?: boolean): Promise<{ workspace: string; pane?: string } | string>; ready(workspace: string, session: string): Promise<boolean> }
 export interface WatchRoutes { read: { read(q: WatchQuery): Promise<Reply> }; watches: Pick<Watches, "add" | "stop" | "list" | "has">; ward?: WardRoutes }
 const no = (error: string): Promise<Reply> => Promise.resolve({ ok: false, error });
 const number = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -94,7 +94,7 @@ export function startWatches(o: StartWatches): WatchRoutes {
 	const ward = o.ward ? createWardRead({ ...o.ward, now: o.now, watching: (session) => watches.has(session) }) : undefined;
 	// The trusted identity of a ward's main is the server's reading of the net: the session's pane carries `sb_role=main` (the net's role), and the unit is live; its workspace is the unit's base.
 	const judgeMain = (session: string): { workspace: string; pane?: string } | string => ((f) => (!f || !f.live ? "your session is not a live unit of the net the server reads (a ward is a main's; join the net, or wait for the next reading)" : f.role !== "main" ? `only a tab's main wards a worker; your session is a ${f.role}` : { workspace: f.base, ...(f.pane ? { pane: f.pane } : {}) }))(o.net.lookup(session));
-	const watches = createWatches({ read: (q) => (q.ward && ward ? ward.read({ ...q, ward: q.ward }) : read.read(q)), now: o.now, timer, send: o.send, owner, file: join(slot.dir, "watches.json"), log: o.log });
+	const watches = createWatches({ read: (q) => (q.ward && ward ? ward.read({ ...q, ward: q.ward }) : read.read(q)), now: o.now, timer, send: o.send, owner, file: join(slot.dir, "watches.json"), log: o.log, ended: (w) => void (w.ward && ward?.forget(w.ward)) });
 	watches.start();
 	o.stops.push(() => (watches.stopAll(), read.stop()));
 	const mainOf = async (session: string, fresh = false) => {
@@ -103,5 +103,5 @@ export function startWatches(o: StartWatches): WatchRoutes {
 		try { await o.net.read(); } catch (error) { return `the server could not read the net: ${(error as Error).message}`; }
 		return judgeMain(session);
 	};
-	return { read, watches, ...(ward && o.ward ? { ward: { resolve: ward.resolve, main: mainOf, ready: o.ward.ready } } : {}) };
+	return { read, watches, ...(ward && o.ward ? { ward: { resolve: ward.resolve, held: ward.held, main: mainOf, ready: o.ward.ready } } : {}) };
 }

@@ -192,6 +192,10 @@ export function createWardRead(d: WardDeps) {
 			if (v.state === "finished" || v.state === "dead") readers.delete(idOf(q.ward));
 			return { ok: true, state: v.state, since: stampOf(v.told), now: at, unit: { pane: q.ward.pane, state: v.state, why: v.why, ...(q.ward.item ? { item: q.ward.item } : {}) }, ward: wardLine(q.ward, v.state, v.why) };
 		},
+		/** The ward ended (watches.ts `ended`, from every path that ends it): its reader goes (ward-review F008). */
+		forget: (rec: WardRec) => void readers.delete(idOf(rec)),
+		/** How many readers are kept (the server's status, a test). */
+		held: () => readers.size,
 		/** The record of a new ward: the pane runs pi with a session file, it is not the caller's own pane or session, and the item (if any) is a plain key. */
 		async resolve(a: WardAsk): Promise<WardRec | string> {
 			if (a.item !== undefined && !ITEM.test(a.item)) return "item is a plain key of 1 to 64 letters, digits, and . _ : # / - (MP-123)";

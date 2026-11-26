@@ -32,6 +32,8 @@ export interface WatchesDeps {
 	send(to: { session: string; workspace: string }, text: string, facts: { key: string; state: string; id?: string }): Promise<boolean>;
 	/** Whether the session is on the net now, and its workspace; none while the server has not read it. */
 	owner(session: string): { live: boolean; workspace?: string } | undefined;
+	/** A watch ended, by any path (its ending, a stop, a replace, its owner gone): a ward lets go of what it kept for its looks. */
+	ended?(w: { key: string; ward?: WardRec }): void;
 	/** `watches.json`; none keeps the watches in memory only. */
 	file?: string;
 	log?(event: string, facts: Record<string, string | number | boolean>): void;
@@ -97,6 +99,7 @@ export function createWatches(d: WatchesDeps) {
 		w.ended = true;
 		w.timer?.();
 		if (watches.get(idOf(w.session, w.key)) === w) watches.delete(idOf(w.session, w.key));
+		d.ended?.(w);
 		save();
 		d.log?.("watch-end", { session: w.session.slice(0, 8), key: plain(w.key, 80), why });
 	};
