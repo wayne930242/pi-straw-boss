@@ -3,13 +3,17 @@
   "tokens": {
     "required": [
       "--bg", "--bg-2", "--surface-0", "--surface-1", "--raised", "--sunken", "--well", "--panel", "--plate", "--plate-hi",
-      "--line-c", "--line", "--text", "--dim", "--ink", "--hi", "--accent", "--accent-hi", "--working", "--amber", "--violet",
+      "--line-c", "--line", "--text", "--dim", "--ink", "--tint", "--accent", "--accent-hi", "--working", "--amber", "--violet",
       "--idle", "--ok", "--err", "--err-soft", "--unknown", "--gold", "--shadow", "--paper-hi", "--paper", "--paper-ink", "--paper-edge", "--term-bg", "--term-fg",
       "--pbs-bg", "--pbs-fg", "--pbs-muted", "--pbs-surface", "--pbs-line", "--pbs-control", "--pbs-accent", "--pbs-on-accent", "--pbs-note",
       "--pbs-ok", "--pbs-warn", "--pbs-risk", "--pbs-radius", "--pbs-gap", "--pbs-font", "--pbs-font-display", "--pbs-mono", "--pbs-font-size"
     ],
-    "optional": ["--aura-1", "--aura-2", "--grid", "--sans", "--mono"],
-    "deprecated": {}
+    "optional": [
+      "--aura-1", "--aura-2", "--grid", "--sans", "--mono", "--glow", "--scrim", "--err-text",
+      "--ansi-0", "--ansi-1", "--ansi-2", "--ansi-3", "--ansi-4", "--ansi-5", "--ansi-6", "--ansi-7",
+      "--ansi-8", "--ansi-9", "--ansi-10", "--ansi-11", "--ansi-12", "--ansi-13", "--ansi-14", "--ansi-15"
+    ],
+    "deprecated": { "--hi": "--tint" }
   },
   "markProperties": ["--c", "--c1", "--c4"],
   "slots": [],

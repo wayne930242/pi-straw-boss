@@ -22,6 +22,8 @@ const subset = (required: readonly string[], actual: readonly string[], label: s
 
 test("1. v1 grows by addition: every frozen name, value and containment fact remains", () => {
 	assert.equal(contract.version, 1);
+	assert.equal(contract.tokens.deprecated["--hi"], "--tint");
+	assert.equal(palette(standard, ":root").get("--tint"), "var(--hi)");
 	subset(v1.tokens, [...contract.tokens.required, ...contract.tokens.optional, ...Object.keys(contract.tokens.deprecated)], "tokens");
 	for (const key of ["classes", "ids", "markProperties", "reservedPseudo", "parts", "slots", "manifest"] as const) subset(v1[key], contract[key], key);
 	for (const [name, values] of Object.entries(v1.attributes)) subset(values, contract.attributes[name as keyof typeof contract.attributes] ?? [], name);
@@ -39,7 +41,11 @@ test("2. Standard defines all tokens; each theme palette, including night and Ze
 		const rules = rulesOf(gui(file));
 		if (source(view).phases === "day-night") roots.push(`${base}[data-phase="night"]`);
 		for (const r of rules) for (const part of r.parts) if (part.startsWith(`${base}[data-phase=`) && /^\[data-view="[\w-]+"\]\[data-phase="[\w-]+"\]$/.test(part)) roots.push(part);
-		for (const sel of new Set(roots)) subset(contract.tokens.required, [...palette(rules, sel).keys()], `${file}: ${sel}`);
+		for (const sel of new Set(roots)) {
+			const names = [...palette(rules, sel).keys()];
+			for (const [alias, token] of Object.entries(contract.tokens.deprecated)) if (names.includes(alias)) names.push(token);
+			subset(contract.tokens.required, names, `${file}: ${sel}`);
+		}
 	}
 	subset(contract.markProperties, standard.filter(r => r.selector.startsWith("[data-mark")).flatMap(r => declarations(r.body).map(([p]) => p)), "mark palette");
 });
@@ -107,27 +113,6 @@ test("8. Manifest keys and implemented code parts belong to the contract", () =>
 	for (const part of contract.parts) assert.match(parts, new RegExp(`^\\s*${part}\\?[:(]`, "m"));
 });
 
-test("9. Zen first paint matches its loaded palette; only the documented legacy paint sites may carry literals", () => {
-	const zen = rulesOf(gui("zen.css"));
-	const colors = palette(zen, '[data-view="zen"] :is(#zen, .connect)');
-	const frame = 'html[data-view="zen"]', ring = `${frame} #zen:empty:not([hidden])::after`;
-	const first = palette(standard, frame), circle = palette(standard, ring);
-	assert.equal(first.get("background"), colors.get("--zen-ground")); assert.equal(first.get("color"), colors.get("--zen-paper"));
-	assert.equal(circle.get("border"), `1px solid ${colors.get("--zen-line")}`);
-	assert.ok(palette(zen, '[data-view="zen"] .zen-circle i').get("background")?.includes("rgba(150, 136, 116, 0.14)"));
-	// §4.3 rows 8–40 exist before the token phase only. Exempt exact selector + property
-	// + value, never an entire rule or colour; the token phase removes these sites.
-	const ansi = ["414868", "f7768e", "9ece6a", "e0af68", "7aa2f7", "bb9af7", "7dcfff", "a9b1d6", "545c7e", "ff899d", "9fe044", "faba4a", "8db0ff", "c7a9ff", "a4daff", "c0caf5"];
-	for (const r of standard.filter(r => r.selector !== ":root")) for (const [p, value] of declarations(r.body)) for (const [literal] of value.matchAll(/#[\da-f]{3,8}\b|\brgba?\([^)]*\)/gi)) {
-		const ansiIndex = /^\.[ck](\d+)(?:,\s*\.kz)?$/.exec(r.selector)?.[1];
-		const original = ansiIndex && literal === `#${ansi[Number(ansiIndex)]}` && p === (r.selector.startsWith(".c") ? "color" : "background");
-		const wash = ['.link-alert[data-level="error"]', '.link-team[data-status="stopped"]'].includes(r.selector) && p === "background" && literal === "#f7768e";
-		const allowed = original || wash || (r.parts.includes(frame) && [first.get("background"), first.get("color")].includes(literal)) ||
-			(r.selector === ring && [colors.get("--zen-line"), "rgba(150, 136, 116, 0.14)"].includes(literal)) || (p.endsWith("mask") && literal === "#000" && r.selector === ".composer[data-activity] .cmp-row::before") || (r.selector === ".doc-frame" && p === "background" && literal === "#fff");
-		assert.ok(allowed, `${r.selector}: ${p}: ${literal}`);
-	}
-});
-
 test("10. Themes do not trap fixed descendants; Standard keeps its containment facts", () => {
 	for (const [sel, fact] of Object.entries(contract.containment.facts)) {
 		const [prop, value] = fact.split(": ");
@@ -178,7 +163,7 @@ function* paintedLiterals(css: string): Generator<string> {
 	}
 }
 
-test("only the Zen first paint, alpha masks and document canvas may use colour literals outside the palette", () => {
+test("9. Only the Zen first paint, alpha masks and document canvas may use colour literals outside the palette", () => {
 	const zen = readFileSync(join(root, "gui/zen.css"), "utf8"), palette = Object.fromEntries(declarations(rulesOf(zen).find(r => r.parts.includes('[data-view="zen"] :is(#zen, .connect)'))!.body));
 	const wash = rulesOf(zen).find(r => r.selector === '[data-view="zen"] .zen-circle i')!.body.match(/rgba\([^)]+\)/)![0];
 	const frame = 'html[data-view="zen"], html[data-view="zen"] body', ring = 'html[data-view="zen"] #zen:empty:not([hidden])::after';
