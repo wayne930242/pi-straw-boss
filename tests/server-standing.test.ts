@@ -544,3 +544,22 @@ test("a tower tab whose tokens lapsed but whose pane still shows the stand-in is
 	assert.equal(ensured.pane, pane, "the same pane stands in");
 	assert.equal(world.herdr.tabs.length, tabsBefore, "no new tab");
 });
+
+test("the stand-in's working counts an ally run live and not idle, as it handles a teammate's message; idle at its poll, it does not (boss 2026-11-26)", async () => {
+	const s = await world.start();
+	await s.handle.ready;
+	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	const DEV = "a".repeat(26);
+	world.ally.add("m1", DEV, "hello");
+	world.ally.level.set(DEV, "forward");
+	world.expose?.allyWaiting("sb-tower-wa");
+	await until(() => world.pis.size >= 1, "the ally pi");
+	const id = [...world.pis.keys()][0]!, pi = world.pis.get(id)!;
+	await until(() => readRun(world.slot, "wA", id)?.pid, "the pid");
+	const token = String((await ask(s, { cmd: "claim", runId: id, pane: pi.pane, pid: pi.pid, started: `T-${pi.pid}` })).token);
+	assert.equal(world.expose!.runs.working("wA"), true, "claimed and not yet idle: at work");
+	// It takes the teammate's message, then polls idle with nothing left.
+	await until(async () => { const ev = (await ask(s, { cmd: "run-poll", token, idle: true })).event as { id: string } | undefined; if (ev) await ask(s, { cmd: "run-taken", token, id: ev.id }); return !ev && !world.expose!.runs.working("wA"); }, "idle at its poll");
+	assert.equal((await ask(s, { cmd: "run-poll", token, idle: false })).ok, true);
+	assert.equal(world.expose!.runs.working("wA"), true, "at work again");
+});

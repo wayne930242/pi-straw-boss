@@ -1,6 +1,6 @@
 // The stand-in's Herdr state and message (docs/how-it-works.md, The standing pane): what the server reports on a standing pane is decided here, at every look, and nowhere else.
 //
-// The order the boss set (2026-11-26): `working` while the tower handles something (a run of its workspace is waking, or live and not idle at its last poll: an event run at work, a boss conversation's turn),
+// The order the boss set (2026-11-26): `working` while the tower handles something (a run of its workspace is waking, or live and not idle at its last poll: an event run at work, a boss conversation's turn, an ally run on a teammate's message),
 // `blocked` only while wait cards wait for him, and `idle` otherwise. A card that waits outranks the run's work, as Herdr's pi integration ranks a dialog above a turn. The stand-in never reports `done`: Herdr 0.9.5
 // shows `done` by itself after working → idle or blocked → idle on a pane the boss is not looking at, and `idle` once he focuses it, so `idle` after the handling reads "finished" until he has seen it.
 //
@@ -26,7 +26,7 @@ export interface StandinFacts {
 	prompt: boolean;
 	/** The agent Herdr shows on the pane: none, the stand-in, or another (a run's pi, a pi of the boss's own). */
 	agent: "none" | "stand-in" | "other";
-	/** A local run of the workspace handles something: it is waking, or live and not idle at its last poll (runs.ts `working`). */
+	/** A run of the workspace handles something: its local run waking, or live and not idle at its last poll, or an ally run live and not idle (runs.ts `working`). */
 	working: boolean;
 	/** The wait cards that wait for the boss here (a tower's own; the head's own at the head), parked ones under auto mode included. */
 	cards: number;
