@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Reply } from "./socket.ts";
 import { WARD_LOOK_MS, type WardRec, wardOf } from "./ward.ts";
 import type { WatchQuery } from "./watchread.ts";
@@ -74,13 +75,19 @@ export function createWatches(d: WatchesDeps) {
 	const watches = new Map<string, Watch>(), buckets = new Map<string, Bucket>();
 	let stopped = false;
 	const pause = (ms: number) => new Promise<void>((resolve) => void d.timer(ms, resolve));
+	/** The wards are kept apart, in `wards.json` beside `watches.json` (ward-review F005): a server of an older build reads only `watches.json`, so it never takes a ward for a plain watch that is gone and drops it from the file. */
+	const write = (file: string, rows: unknown[]) => {
+		writeFileSync(`${file}.tmp`, JSON.stringify({ version: 1, watches: rows }), { mode: 0o600 });
+		renameSync(`${file}.tmp`, file);
+	};
+	const wardsFile = (file: string) => join(dirname(file), "wards.json");
 	const save = () => {
 		if (!d.file) return;
 		// A change not taken yet is kept with the `since` that found it (ward-review F004): a restart sends it, where the read's next verdict would say `unchanged`.
 		const rows = [...watches.values()].map(({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt, ward, pending }) => ({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt, ward, ...(pending ? { pending: { state: pending.state, facts: pending.facts, at: pending.at, line: pending.line, id: pending.id } } : {}) }));
 		try {
-			writeFileSync(`${d.file}.tmp`, JSON.stringify({ version: 1, watches: rows }), { mode: 0o600 });
-			renameSync(`${d.file}.tmp`, d.file);
+			write(d.file, rows.filter((r) => !r.ward));
+			write(wardsFile(d.file), rows.filter((r) => r.ward));
 		} catch (error) {
 			d.log?.("watch-save-failed", { text: plain((error as Error).message, 200) });
 		}
@@ -229,8 +236,7 @@ export function createWatches(d: WatchesDeps) {
 		/** The server's start: the watches of the last one come back and their loops resume. */
 		start() {
 			if (!d.file) return;
-			let rows: unknown[] = [];
-			try { rows = ((JSON.parse(readFileSync(d.file, "utf8")) as { watches?: unknown[] }).watches ?? []); } catch { /* none yet, or unreadable: no watches */ }
+			const rows = [d.file, wardsFile(d.file)].flatMap((file) => { try { return (JSON.parse(readFileSync(file, "utf8")) as { watches?: unknown[] }).watches ?? []; } catch { return []; } }); // none yet, or unreadable: no watches
 			for (const row of rows.slice(0, PER_SERVER) as Partial<Watch>[]) {
 				if (typeof row.session !== "string" || typeof row.workspace !== "string" || typeof row.key !== "string" || typeof row.deadline !== "number" || watches.has(idOf(row.session, row.key))) continue;
 				const told = row.told && typeof row.told.facts === "string" && typeof row.told.state === "string" ? row.told : undefined;

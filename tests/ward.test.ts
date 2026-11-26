@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -49,7 +49,7 @@ function world() {
 	let routes = start();
 	after(() => stops.forEach((s) => s()));
 	return {
-		clock, file, pane, sent, monitors, loops, units, listening, takes, get routes() { return routes; },
+		clock, file, pane, sent, monitors, loops, units, listening, takes, dir, get routes() { return routes; },
 		/** Another pane in another workspace that runs pi. */
 		other: () => void list.push({ pane_id: "%9", tab_id: "t9", workspace_id: "w2", agent: "pi", agent_status: "working", agent_session: { value: file } }),
 		/** The server stops and a new one starts from `watches.json`. */
@@ -296,4 +296,15 @@ test("ward-review F004: a change found but not taken before a restart is sent af
 	v.takes.now = true;
 	await v.looks(4);
 	assert.deepEqual(v.sent.map((x) => x.state), ["dead"], "a dead found before the restart is told though the read after it is a fresh look");
+});
+
+test("ward-review F005: wards are kept in wards.json, apart from watches.json, so a server of an older build that rewrites watches.json leaves them for the next one", async () => {
+	const w = world();
+	assert.equal((await w.add({ item: "MP-9" })).ok, true);
+	const read = (name: string) => (JSON.parse(readFileSync(join(w.dir, name), "utf8")) as { watches: { key: string }[] }).watches.map((r) => r.key);
+	assert.deepEqual([read("watches.json"), read("wards.json")], [[], ["ward:%7"]]);
+	w.restart();
+	writeFileSync(join(w.dir, "watches.json"), JSON.stringify({ version: 1, watches: [] })); // an older server's save: the plain watches it knows
+	w.restart();
+	assert.deepEqual((await w.list()).map((x) => x.key), ["ward:%7"]);
 });
