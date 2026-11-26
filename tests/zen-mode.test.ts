@@ -46,15 +46,23 @@ test("A2: the storage table: sb.zen says, a legacy sb.view zen with none means o
 	for (const [v, z, choice, on] of rows) {
 		const d = device(v, z), p = page(d);
 		assert.deepEqual([p.view.choice(), p.mode.on(), p.shows()], [choice, on, on ? "zen" : resolve(choiceOf(v), false)], `sb.view ${v}, sb.zen ${z}`);
-		assert.deepEqual(d.writes, [], "loading writes nothing");
+		assert.deepEqual(d.writes, v === "zen" && z === null ? ["sb.zen=1"] : [], "loading writes nothing, but a legacy Zen device's mode under its own key");
 	}
 	const legacy = device("zen", null), p = page(legacy);
 	p.face.leave();
-	assert.deepEqual([legacy.writes, legacy.kept.get("sb.view")], [["sb.zen=0"], "zen"], "leaving writes sb.zen only: an older build on this browser still finds its Zen");
+	assert.deepEqual([legacy.writes, legacy.kept.get("sb.view")], [["sb.zen=1", "sb.zen=0"], "zen"], "leaving writes sb.zen only: an older build on this browser still finds its Zen");
 	const refused = page({ kept: new Map(), writes: [], storage: { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); } } });
 	assert.equal(refused.mode.on(), false, "a refused storage reads off");
 	refused.face.enter();
 	assert.deepEqual([refused.mode.on(), refused.shows()], [true, "zen"], "a refused write is dropped: the mode holds until the page closes");
+});
+
+test("A2 (RV-F001): a legacy Zen device that picks a theme before it ever leaves Zen still opens in Zen on its next load", () => {
+	const d = device("zen", null), first = page(d);
+	assert.equal(first.shows(), "zen");
+	first.view.set("raven");
+	assert.deepEqual([first.shows(), d.kept.get("sb.view"), d.kept.get("sb.zen")], ["zen", "raven", "1"]);
+	assert.equal(page(d).shows(), "zen", "the reload is still in Zen");
 });
 
 test("persistence: a page that entered Zen leaves sb.zen on, and the device's next page opens in Zen; leaving turns it off for the next page", () => {
