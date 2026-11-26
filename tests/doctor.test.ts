@@ -82,6 +82,14 @@ test("expected by role: a tower runs no subagent, a child adds the child protoco
 	assert.equal(diagnose(healthy({ role: "member", denied: ["subagent"], active: EXPECTED_TOOLS.main.filter((n) => n !== "subagent") })).verdict, "H2", "only a child's denials count");
 });
 
+test("a child never gets the self-check message: its tools are its launch's choice (a role's tool list, auto-exit without subagent_done)", () => {
+	const kept = ["read", "bash", "caller_ping"];
+	const child = diagnose(healthy({ role: "child", tools: kept.map((name) => ({ name })), active: kept }));
+	assert.ok(child.missing.some((t) => t.name === "intercom") && child.missing.some((t) => t.name === "subagent_done"), "the report still lists what a child lacks");
+	assert.equal(selfCheckText(child), undefined);
+	assert.match(selfCheckText(diagnose(healthy({ role: "main", tools: kept.map((name) => ({ name })), active: kept }))) ?? "", /sb self-check/, "a main still gets it");
+});
+
 test("a package not in the settings expects nothing; out of process (no active set) a registered tool counts", () => {
 	assert.equal(diagnose(healthy({ packages: [], tools: [], active: [] })).verdict, "healthy");
 	assert.equal(diagnose(healthy({ packages: [], tools: [], active: [] })).expected.length, 0);

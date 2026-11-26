@@ -84,7 +84,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		s.autoOn = auto.on;
 		registerTrust(pi, kit, undefined, auto.trust); // pi's startup trust question reaches the GUI too, before any session has joined the net (trust/ask.ts), subagents included
 		interceptUi(pi, auto); // any extension's select and confirm reach the same bridge, subagents included
-		// The doctor (doctorlive.ts): every session in a pane checks its own tools at each session start; /boss doctor goes to the ones that are no child, sb_doctor to the joined ones and the tower.
+		// The doctor (doctorlive.ts): every session in a pane checks its own tools at each session start (a child never warns); /boss doctor goes to the ones that are no child, sb_doctor to the joined ones and the tower.
 		const doctorDeps = { env, role: () => (env.PI_SUBAGENT_ID ? "child" as const : (kit.role() ?? "none")), tell: kit.tell };
 		if (env.PI_SUBAGENT_ID) return void (registerDoctor(pi, doctorDeps), registerChildKind(pi, env), auto.attach()); // a child records its role for the net (childkind.ts)
 		// A pi the sb server started for a tower run (runmode.ts) decides first, at session_start: when it is a run, nothing of the net starts.

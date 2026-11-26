@@ -162,9 +162,10 @@ export function renderDoctor(r: DoctorReport): string {
 	return lines.join("\n");
 }
 
-/** The session_start self-check's message, or undefined when every expected tool is active. */
+/** The session_start self-check's message, or undefined when every expected tool is active, and for a child, whose tools are its launch's choice (a role's tool list, auto-exit without
+ * subagent_done) and whose parent supervises it: a child told to hand over stopped before its work. */
 export function selfCheckText(r: DoctorReport): string | undefined {
-	if (!r.missing.length && r.verdict !== "H1") return undefined;
+	if (r.role === "child" || (!r.missing.length && r.verdict !== "H1")) return undefined;
 	const first = r.missing[0];
 	const what = first ? `\`${first.name}\` is not active (registered: ${first.state === "unregistered" ? "no" : "yes"}${r.silent.length ? `; ${r.silent.join(", ")} loaded nothing` : ""})` : `pi-herdr-agents failed to load (${r.stamp?.failed})`;
 	const more = r.missing.length > 1 ? `, with ${r.missing.slice(1).map((t) => t.name).join(", ")}` : "";
