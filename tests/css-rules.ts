@@ -49,15 +49,24 @@ export function* sheetRules(source: string): Generator<SheetRule> {
 	}
 }
 
-export function rulesOf(source: string): Rule[] {
-	const out: Rule[] = [];
+export interface ScopedRule extends Rule {
+	/** Enclosing conditions, outermost first. A cascade layer isn't a condition. */
+	conditions: readonly string[];
+}
+
+function* walkRules(source: string, groups: RegExp, conditions: readonly string[]): Generator<ScopedRule> {
 	for (const { prelude, body } of sheetRules(source)) {
 		if (body === undefined) continue;
-		if (/^@(media|supports|layer)\b/.test(prelude)) out.push(...rulesOf(body));
-		else if (!prelude.startsWith("@")) out.push({ selector: prelude, parts: split(prelude, ",").map((s) => s.trim().replace(/\s+/g, " ")), body });
+		if (groups.test(prelude)) yield* walkRules(body, groups, /^@layer\b/i.test(prelude) ? conditions : [...conditions, prelude]);
+		else if (!prelude.startsWith("@")) yield { selector: prelude, parts: split(prelude, ",").map((s) => s.trim().replace(/\s+/g, " ")), body, conditions };
 	}
-	return out;
 }
+
+/** Flat reader: preserve the original groups and rule shape for structural checks. */
+export const rulesOf = (source: string): Rule[] =>
+	Array.from(walkRules(source, /^@(media|supports|layer)\b/, []), ({ selector, parts, body }) => ({ selector, parts, body }));
+
+export const scopedRulesOf = (source: string): ScopedRule[] => [...walkRules(source, /^@(media|supports|container|layer)\b/i, [])];
 
 /** A rule's declarations as [property, value]. */
 export const declarations = (body: string): [string, string][] =>

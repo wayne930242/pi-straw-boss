@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { contrast, declarations, mix, type Rule, rulesOf } from "./css-rules.ts";
+import { contrast, declarations, mix, type Rule, rulesOf, scopedRulesOf, type ScopedRule } from "./css-rules.ts";
 
 // Raven Keep's palette (gui/themes/raven/raven.css, the `[data-view="raven"]` block; docs/specs/2026-11-07-raven-view/spec.md §1.5): dark only, and every text colour at least 4.5 : 1 on every surface it can sit on,
 // every border and the focus ring at least 3 : 1, including text on a state tint as the CSS mixes it. No browser runs here: the block is parsed and the arithmetic done on its values.
 const RAVEN = '[data-view="raven"]';
-const rules = rulesOf(readFileSync(new URL("../gui/themes/raven/raven.css", import.meta.url), "utf8")), entryRules = rulesOf(readFileSync(new URL("../gui/style.css", import.meta.url), "utf8"));
+const rules = scopedRulesOf(readFileSync(new URL("../gui/themes/raven/raven.css", import.meta.url), "utf8")), entryRules = scopedRulesOf(readFileSync(new URL("../gui/style.css", import.meta.url), "utf8"));
 const must = <T>(value: T | undefined, what: string): T => (assert.ok(value, what), value as T);
 const block = must(rules.find((r) => r.selector === RAVEN), "the raven token block exists");
 const root = must(entryRules.find((r) => r.selector === ":root"), "the palette block exists");
@@ -201,13 +201,29 @@ test("text on the head page's backing keeps 4.5 : 1 over the brightest unblurred
 // Keep the CSS protections paired with the rendered scenes in err/summary.md and err/tower/. The RGB bound above
 // cannot account for an ancestor fading its text together with its glass, or for a missing message backing.
 const skin = `:where(html${RAVEN})`;
-// Compare declarations for the same selector within its layer: importance first, then source order.
-function takes(sheet: Rule[], selector: string, property: string, value: string) {
-	const values = sheet.filter(r => r.parts.includes(selector)).flatMap(r => declarations(r.body)).filter(([p]) => p === property).map(([, v]) => v);
-	const important = /\s*!important\s*$/i;
+// Compare unconditional declarations for the same selector within its layer: importance first, then source order.
+function takes(sheet: ScopedRule[], selector: string, property: string, value: string) {
+	// Raven wraps its stylesheet in @media all, which imposes no restriction.
+	const values = sheet.filter(r => r.conditions.every(c => /^@media\s+all$/i.test(c)) && r.parts.includes(selector)).flatMap(r => declarations(r.body)).filter(([p]) => p === property).map(([, v]) => v);
+	const important = /\s*!\s*important\s*$/i;
 	const winner = values.findLast(v => important.test(v)) ?? values.at(-1);
 	assert.equal(winner?.replace(important, ""), value, `${selector} needs ${property}: ${value}`);
 }
+
+test("a spaced important beats a later normal declaration", () => {
+	takes(scopedRulesOf(".note { background: transparent ! important; } .note { background: black; }"), ".note", "background", "transparent");
+});
+
+test("conditional declarations keep their nesting but cannot supply the unconditional backing", () => {
+	const css = `@layer theme {
+		@media all { .note {background:black} }
+		@media (width < 600px) { .note {background:red} @supports (display:grid) { @container (width > 10px) { .note {background:blue} } } }
+	}`;
+	const scoped = scopedRulesOf(css);
+	assert.deepEqual(scoped.map(r => r.conditions), [["@media all"], ["@media (width < 600px)"], ["@media (width < 600px)", "@supports (display:grid)", "@container (width > 10px)"]]);
+	takes(scoped, ".note", "background", "black");
+	assert.deepEqual(rulesOf(css), ["background:black", "background:red"].map(body => ({ selector: ".note", parts: [".note"], body })));
+});
 
 test("desktop refusal over the bolt: only a nonempty toolbar reason gets the well", () => {
 	takes(rules, `${skin} .auto-sw-note:not(:empty)`, "background", "var(--rk-well)");
