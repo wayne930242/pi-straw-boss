@@ -18,6 +18,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | 工具 | 誰有 | 做什麼 |
 | --- | --- | --- |
 | `boss_promote` | 已加入的 session | 成為這個分頁的主智慧體；分頁已有存活的主智慧體時會被拒絕。 |
+| `call_peer` | 分頁的成員（從它的回合開始啟用） | 在標頭之下發訊息給分頁裡的同伴；sb 在呼叫當下找出對方。`to: main`（目前唯一的對象）是分頁此刻的主智慧體，所以交接之後訊息會送到接手的那一位。`ask: true` 會標上 `reply=expected`，回覆以 intercom 訊息送來。分頁沒有主智慧體時拒絕（請用 `boss_promote`），成員以外的人呼叫也拒絕。 |
 | `boss_watch` | 分頁的主智慧體與火車（塔台執行開啟時） | 請 sb server 盯著網裡的一個單位（`key`、`quiet`、`idle`、`until`、`stop`；不給鍵就列出你的盯守），每有變化就用一行字叫醒你：每個盯守每分鐘最多一則、只送最新狀態、每小時 12 則，你在工作時等這一輪結束再送。見[用 boss_watch 盯著一件事](/pi-straw-boss/docs/zh-tw/guide/concepts/#用-boss_watch-盯著一件事)。 |
 | `boss_pair` | 分頁的主智慧體與火車 | 派工前把一個 worker 和一個 reviewer 配到審查串 `T<n>` 上（`worker`、`reviewer`：你交給 `subagent` 的名稱；`rounds` 1 到 3，預設 3；`item` 可選：這一對處理的 todo uid 或 `<session8>#<id>`，記在串上與 sb 的事件帳本裡）；兩者的任務都放一行 `Thread: T<n>`，你只在串關閉時被它們的兩份結果叫醒。見[用 boss_pair 開審查串](/pi-straw-boss/docs/zh-tw/guide/concepts/#用-boss_pair-開審查串)。 |
 | `thread_post`、`thread_wait` | 主智慧體配成對的子智慧體（從第一次執行起啟用） | 在審查串上貼文（`to`、`tag`：`review`、`fix`、`done`、`blocked` 或 `note`；`text`；`refs`），以及等待點名你的貼文或串的關閉。 |

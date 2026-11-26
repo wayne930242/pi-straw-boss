@@ -264,7 +264,7 @@ test("a member's section names neither its tab's main nor the tower: it is the s
 	const b = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t1" });
 	await b.start();
 	const before = await section(b);
-	assert.match(before, /^Straw Boss: you are a member of tab work of workspace Alpha, and the tab has a main agent \(`board_read` section towers names it\)\./);
+	assert.match(before, /^Straw Boss: you are a member of tab work of workspace Alpha, and the tab has a main agent\. Before/);
 	const status = (await towersOf(b)).details as { tabs: { main: string }[] };
 	assert.equal(status.tabs[0]!.main, "a", "the live name is boss_status's");
 	a.name = "ledger rounding"; // a `/name`: the session's name moves and its tab's label stays

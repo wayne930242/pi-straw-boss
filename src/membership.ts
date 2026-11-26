@@ -137,6 +137,6 @@ export function createMembership({ pi, cfg, s, me, tell }: Kit, { presence, elec
 		}
 		return { promoted: true, text: `You are now the main agent of tab ${s.info.tab}.` };
 	};
-	return { connect, connected, joinNet, promote, adoptOpener };
+	return { connect, connected, joinNet, promote, adoptOpener, /** Reads the tab's net again (its main, the labels); call_peer looks before it sends (callpeer.ts). */ sync };
 }
 export type Membership = ReturnType<typeof createMembership>;

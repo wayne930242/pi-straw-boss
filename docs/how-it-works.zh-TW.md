@@ -101,7 +101,7 @@ stateDiagram-v2
 
 1. Herdr 裡每個可加入的 pi 在 session 啟動時，會以**成員**的身分加入所在分頁的網：不提醒、不詢問。以下情況不會加入：不在 Herdr 裡、是 pi-herdr-agents 的子智慧體（`PI_SUBAGENT_ID`，由它的上層代表它）、在子工作區（見下）、或本身就是塔台。
 2. 成員透過升任成為所在分頁的**主智慧體**。工作變大時（步驟變多、要派工作者、涉及不只一個 app），智慧體會呼叫 `boss_promote`；成員的 prompt 會這樣告訴它。成員如果沒有升任就呼叫 pi-herdr-agents 的 `subagent` 或 `subagent_resume` 工具，會在子智慧體啟動或恢復之前自動升任。啟動時加入失敗、等到 session 的 pane 搬到另一個分頁後才重試的，會登記在它現在所在的分頁，所以那裡不會冒出第二個主智慧體。
-3. 一個分頁只有一個主智慧體。智慧體絕不會接手既有的主智慧體：分頁的主智慧體還活著時，`boss_promote` 會被拒絕並附上訊息，自動升任也會跳過。成員仍然可以派自己的子智慧體，但它的 prompt 要它先透過 intercom 通知主智慧體：它要做什麼、會用到哪些資源。
+3. 一個分頁只有一個主智慧體。智慧體絕不會接手既有的主智慧體：分頁的主智慧體還活著時，`boss_promote` 會被拒絕並附上訊息，自動升任也會跳過。成員仍然可以派自己的子智慧體，但它的 prompt 要它先用 `call_peer`（`to: main`）通知主智慧體：它要做什麼、會用到哪些資源。sb 在呼叫當下從 broker 的紀錄找出分頁的主智慧體，所以交接之後的訊息會送到接手的那一位；只有成員的啟用工具裡有這個工具。
 4. 主智慧體不會降級。它的 session 結束後，分頁就沒有主智慧體，直到有成員升任為止（這時成員的 prompt 會提議升任）。`/boss` 是使用者手動接手：即使已經有別的主智慧體，它也會讓這個 session 成為分頁的主智慧體。
 5. 主智慧體有一種**類型**：`coordinator`（預設：規劃並派工）、`integrator`（專案的合併火車）、`standing`（負責一個系統或一台機器，沒有結束的時候）。類型就是這個主智慧體執行的 prompt：`main.md`，integrator 再加上 `integrator.md`；值守主智慧體只執行 `standing.md`，裡面是每一輪值守都需要的規則，沒有 `main.md` 的派工與收工規則（2026-11-26，[值守規格](specs/2026-11-26-standing-prompt.md)）。coordinator 與 integrator 帶著 `main.md` 裡的派工規則：按負責的 app 拆分工作、每個工作者出發前先開 todo、相依的任務用 `blockedBy`、平行寫入的工作者各用一個 worktree、工作者平行出發（在無人值守的裝置上受它的產能預算限制）。計畫在待辦的 `graph` 欄位裡的協調圖（pi-todo-ledger 0.4.0；舊的 `metadata.graph` 仍算數）（`single-loop`、`fan-out/fan-in`、`orchestrator-worker`；由 `planGraph` 讀取，取最新的未完成者）是頁面上的標示，沒有 prompt 會隨它改變（0.83.0，[lite-main 規格](specs/2026-11-23-lite-main.md)）。coordinator 或值守主智慧體用 `todo` 建立待辦後，若未完成的待辦都沒有協調圖，那次結果會附上濃縮的 planning.md 第 1、2 節（0.101.0，[協調圖規格](specs/2026-11-26-plan-graph-jit.md)）。
 

@@ -597,7 +597,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Zen as a mode (2026-11-26, docs/specs/2026-11-26-storybook-theme/spec.md Part A; measured on its branch +4): views.ts +5 (`MODES`, `Mode`, `Face`, and their words), bossviews.ts -1 (no completion for zen). Rebased onto the device hold: 4544 to 4548.
 	// Storybook B-1 (2026-11-26, docs/specs/2026-11-26-storybook-theme/spec.md §B1; measured) 4530 to 4531 (+1): bossviews.ts's `gui view storybook` completion. Cap = measured.
 	// 0.97.0 integration (2026-11-26; measured): the device hold and ally workers (4,548 with Zen as a mode rebased onto them) plus Storybook B-1's completion (+1): 4,549. Cap = measured.
-	assert.ok(rest <= 4549, `the rest of src has ${rest} lines`);
+	// call_peer (2026-11-26; measured) 4549 to 4603 (+54): callpeer.ts (a member's message to its tab's main, found at the call), index.ts's wiring, membership.ts's `sync`, and the header's `call_peer` kind.
+	assert.ok(rest <= 4603, `the rest of src has ${rest} lines`);
 	// Unreleased (settings check, probe): settings.ts is the lstat gate, the child's program (refuses a link it cannot follow, stats before opening; review SR5), and its runner (160); it no longer walks links. settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
 	// Unreleased raised trust/ask.ts from 182 to 183 (RC3-F001): the recorded server's start time is read when the handler registers.
 	// Unreleased raised trust/ask.ts from 183 to 201 (RC4-F001, F002): `warmServerStart` (the early read only for a live server that reads trust requests) and `guiUp` (what the handler's `up` asks) are exported for their tests, and `registerTrust` takes the terminal it answers on.
