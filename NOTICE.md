@@ -83,7 +83,7 @@ This Stability AI Model is licensed under the Stability AI Community License, Co
 
 ## pi-better-show (`dist/gui/assets/blockschunk-*.js`)
 
-The GUI's block chunk bundles [pi-better-show](https://github.com/wayne930242/pi-better-show) 0.8.0 (its parser, its answer encoding, and its fourteen elements), and with it the [yaml](https://github.com/eemeli/yaml) library 2.9.1.
+The GUI's block chunk bundles [pi-better-show](https://github.com/wayne930242/pi-better-show) 0.10.0 (its parser, its answer encoding, and its fourteen elements), and with it the [yaml](https://github.com/eemeli/yaml) library 2.9.1.
 
 pi-better-show: MIT License, Copyright (c) 2026 wayne930242
 

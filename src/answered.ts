@@ -38,8 +38,8 @@ export const MAX_ENTRIES = 2000, KEEP_MS = 90 * 24 * 3_600_000, PENDING_MS = 120
 /** A key is a JSON array, so no part can move a boundary: a chat block is its session, the message's entry id, and its index; a document block its owner, its name, the hash of the text it was answered in, and its index. */
 export const chatKey = (unit: string, entry: string, index: number) => JSON.stringify(["chat", unit, entry, index]);
 export const docKey = (unit: string, name: string, rev: string, index: number) => JSON.stringify(["doc", unit, name, rev, index]);
-
-const clip = (fields: Fields): Fields => fields.slice(0, MAX_FIELDS).map(([name, value]) => [name.slice(0, 256), value.slice(0, 1024)]);
+// A grouped review carries its visible group name in the field key; keep the full PBS field length on reload.
+const clip = (fields: Fields): Fields => fields.slice(0, MAX_FIELDS).map(([name, value]) => [name.slice(0, name.startsWith("picked:") ? 1024 : 256), value.slice(0, 1024)]);
 const HASH = /^[0-9a-f]{16}$/, MAX_PART = 4096;
 const part = (v: unknown): v is string => typeof v === "string" && v.length <= MAX_PART;
 const index = (v: unknown) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= MAX_BLOCK;

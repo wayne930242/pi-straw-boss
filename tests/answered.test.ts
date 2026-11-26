@@ -29,6 +29,15 @@ test("an answer is begun once, pending until it is done, and then answered for g
 	assert.equal(a.get(key)?.state, "done", "a finished answer is not cancelled");
 });
 
+test("two grouped picks whose names share the first 256 characters remain distinct after a restart", () => {
+	const d = disk(), store = createAnswered(d), key = docKey("S", "review.md", "0123456789abcdef", 0);
+	const prefix = "picked:" + "a".repeat(250), fields: [string, string][] = [[`${prefix}1`, "A"], [`${prefix}2`, "B"]];
+	store.begin(key);
+	store.done(key, fields);
+	const saved = createAnswered(d).get(key);
+	assert.deepEqual(saved?.state === "done" && saved.fields, fields);
+});
+
 test("a refused or failed delivery is cancelled: the block is open again, on this server and after a restart", () => {
 	const d = disk(), a = createAnswered({ ...d });
 	const key = chatKey("S1", "e7", 0);

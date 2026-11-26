@@ -1,4 +1,4 @@
-import { type Answer, type BlockSegment, encodeAnswer, INTERACTIVE_KINDS, type InlineToken, type InvalidSegment, inline, inlinePlain, parse, type TreeNode } from "pi-better-show";
+import { type Answer, type BlockSegment, encodeAnswer, INTERACTIVE_KINDS, type InlineToken, type InvalidSegment, inline, inlinePlain, parse, reviewItemName, type TreeNode } from "pi-better-show";
 import { configure, type PbsElement, TAGS } from "pi-better-show/elements";
 import type { Delivery } from "./blockanswer.ts";
 import { type Cell, lockFor } from "./blocklock.ts";
@@ -7,11 +7,8 @@ import { keepFocus } from "./focusback.ts";
 import { mount, parse as markdown } from "./markdown.ts";
 import { m } from "./sentences.ts";
 
-// The page's drawing of pi-better-show's blocks (docs/specs/2026-11-07-better-show-host.md), a lazy chunk (blockschunk.ts): the text is split by the package's parser, prose is the page's own Markdown (markdown.ts), each block is the
-// element of its kind fed with the block's data (never markup: the elements build text nodes), and a block that does not parse shows its source in code. An element's answer is handed to the host, which delivers it and only then locks the
-// element with the fields that went (`answered`); a refusal leaves it open with the reason under it. While an answer is on its way every drawing of the block is locked (inert, "Sending…"): a redraw does not find it open. What a block can name is the host's to
-// resolve: an image only through `image`, and a page, a diagram, or a link target never. What goes out under the boss's name is what the boss saw: a chip is drawn as its text, and a form or checklist whose names are not its labels (a choice's value, a question's or an
-// item's name) shows the exact outgoing text first, in a confirm step of its own, and sends that very text only when the boss presses Send. A `tree` is a display block of text only: a name is a text node, and a note's links are shown as their text, since a snapshot an agent wrote offers the page no link and no route.
+// The lazy block host (docs/specs/2026-11-07-better-show-host.md): prose uses the page's Markdown, valid blocks their elements, invalid blocks their source.
+// The host resolves review images, previews outgoing text that wasn't visible, and locks every drawing of a block while sending. On acceptance the lock keeps the fields; refusal reopens the block.
 
 export interface BlockHost {
 	density: "compact" | "comfortable";
@@ -68,7 +65,9 @@ function dataOf(seg: BlockSegment, host: BlockHost): unknown {
 const HANDLE = /^[A-Za-z0-9_.-]{1,40}$/;
 /** Whether the answer would carry text the boss was not shown as it goes: a picked choice whose value is not its label, an item of a checklist whose name is not its label, a question key that is not a plain identifier and is not its label as drawn. (A choice not picked, or a value that is a part of what was typed, may ask once more than it needs: that costs one tap.) */
 function hidden(seg: BlockSegment, fields: Answer["fields"]): boolean {
-	const differs = (name: string, label: string | undefined) => inlinePlain(label ?? name) !== name;
+	const differs = (name: string, label = name) => inlinePlain(label) !== name;
+	// The group legend is literal text. Item headings render inline Markdown, but the picks, comments and list of silent items carry the source names.
+	if (seg.kind === "review") return seg.data.items.some((item) => differs(reviewItemName(item)));
 	if (seg.kind === "checklist") return seg.data.items.some((item) => differs(item.name, item.label));
 	if (seg.kind !== "form") return false;
 	return seg.data.questions.some((q) => (differs(q.name, q.label) && !HANDLE.test(q.name)) || q.choices.some((c) => differs(c.value, c.label) && fields.some(([name, value]) => name === q.name && value.includes(c.value))));

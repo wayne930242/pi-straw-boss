@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import "./pbs-loader.ts";
 import { commandLine, deliverToDoc, deliverToUnit } from "../gui/blockanswer.ts";
+import { fieldsOf } from "../src/docs.ts";
+import { answerOfFields } from "../src/documents.ts";
 import { hasBlocks } from "../gui/mdbody.ts";
 import type { Answer as Posted } from "../gui/post.ts";
 
@@ -21,6 +23,18 @@ test("the hint finds exactly the texts the block parser would split: a fence of 
 	assert.ok(hasBlocks("> [!NOTE]"), "an alert with no title");
 	assert.ok(hasBlocks("Files:\n\n```tree\nrepo/\n  a.ts\n```"), "a tree alone loads the block code (0.4.0)");
 	for (const none of ["plain **text**", "```js\nlet a\n```", "```formal\nx\n```", "```treehouse\nx\n```", "```trees\nx\n```", "    ```form\nx\n```", "> a quote\n> [!NOTES]\n", "> text [!NOTE]", "`form`", "form\n```\nx\n```"]) assert.ok(!hasBlocks(none), none);
+});
+
+test("an HTML review form keeps group names, repeated picks, and a review with no checkbox ticked", () => {
+	for (const [query, lines] of [
+		["picked%3AHeader=Compact&picked%3AChangelog=List", "\nPicked (Header): Compact\nPicked (Changelog): List"],
+		["picked=Desktop&picked=Phone", "\nPicked: Desktop\nPicked: Phone"],
+		["", ""],
+	]) {
+		const fields = fieldsOf(`pi-kind=review&title=Release&${query}`);
+		assert.ok(Array.isArray(fields));
+		assert.equal(encodeAnswer(answerOfFields(fields)), `User reviewed "Release":${lines}`);
+	}
 });
 
 test("a command line is a text beginning with ! or /, after any space: a block never sends one", () => {

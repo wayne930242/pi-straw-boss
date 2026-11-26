@@ -26,6 +26,9 @@ On a desktop, click into a unit's terminal and it takes your keyboard.
 Each message has a **Copy** button that copies the whole message (an agent's message as the markdown it wrote), also over plain http on your Wi-Fi, where the browser has no clipboard API; if even that is refused, the message is selected, the button says Selected, and you use the browser's own Copy.
 Text you select stays selected while new messages and tool results arrive: the log waits for you to let go before it follows its end or redraws that message.
 
+A review in chat or in a Markdown document can ask you to choose one item from each group or tick as many items as you like, including none.
+You can change your picks and add comments until you press **Send**; the answered review shows which items you chose.
+
 ### Alerts
 A unit that waits on you raises an alert, and the alerts queue up.
 

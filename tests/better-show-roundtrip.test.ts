@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { DEMO_REVIEW_PICKS } from "../gui/demo-blocks.ts";
 import { createAnswered } from "../src/answered.ts";
 import { type FormMessage, type FormReply, REGISTER } from "../src/bridge.ts";
 import { createHub } from "../src/dialogs.ts";
@@ -24,6 +25,7 @@ const work = join(scratch, "work"), bundle = join(scratch, "bundle");
 for (const d of [work, bundle]) mkdirSync(d, { recursive: true });
 writeFileSync(join(bundle, "index.html"), "<!doctype html><html><head><title>Straw Net</title></head><body></body></html>");
 writeFileSync(join(work, "plan.md"), "# Plan\n\n```options\n- {title: SQLite}\n- {title: Postgres}\n```\n\n![a](a.png)\n");
+writeFileSync(join(work, "reviews.md"), DEMO_REVIEW_PICKS);
 writeFileSync(join(work, "a.png"), Buffer.from([0x89, 0x50]));
 writeFileSync(join(work, "page.html"), `<!doctype html><html><head></head><body><form action="cgi-bin:pi-answer"><input name="choice" value="a"></form></body></html>`);
 writeFileSync(join(work, "notes.txt"), "plain notes");
@@ -118,5 +120,23 @@ test("the extension's documents reach the page as cards, are read from its page 
 	const refused = await ask(t.gui, `api/doc/${caps["notes.txt"]}/answer`, { method: "POST", body: { answerId: "c".repeat(32), answer, rev: text.rev } });
 	assert.equal(refused.status, 409);
 	assert.equal(sent.length, 2);
+	t.off();
+});
+
+test("a grouped review and a multi review reach the agent and reload with all their picks", async () => {
+	const t = await host();
+	await show.show(work, ["reviews.md"], "Review the release", "page");
+	const path = `api/doc/${t.relay()["reviews.md"]}`, { rev } = json(await ask(t.gui, path));
+	const choices = [
+		{ fields: [["picked:Header", "Compact"], ["picked:Changelog", "Timeline"]], lines: ["Picked (Header): Compact", "Picked (Changelog): Timeline"] },
+		{ fields: [["picked", "Desktop"], ["picked", "Phone"]], lines: ["Picked: Desktop", "Picked: Phone"] },
+	];
+	for (const [block, { fields, lines }] of choices.entries()) {
+		const before = sent.length;
+		const r = await ask(t.gui, `${path}/answer`, { method: "POST", body: { answerId: String(block + 7).repeat(32), rev, answer: { kind: "review", fields, ref: { block } } } });
+		assert.equal(r.status, 200, r.body);
+		assert.deepEqual(sent.slice(before).map((s) => s.message.content), [['User reviewed "":', ...lines].join("\n")]);
+	}
+	assert.deepEqual((json(await ask(t.gui, path)).answered as { done: unknown }).done, choices.map(({ fields }, i) => [i, fields]));
 	t.off();
 });

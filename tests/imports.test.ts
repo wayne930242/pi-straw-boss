@@ -886,7 +886,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Wait cards on the question panel (todo #144 task 5; measured): 783 to 797 (+14: demo-waits.ts's head tower card, `headCardWait`, with its words in both languages, and the line in fixture.ts that puts it on the head's memory under `?waits=cards&head=<state>`).
 	// Kinds on the page (todo #152; measured): 797 to 799 (+2 in fixture.ts: the `?kinds` call and its import; the units' kinds ride on the lines that make them). The scene is gui/demo-kinds.ts, a file of its own.
 	// Zen under headless runs (2026-11-24, docs/specs/2026-11-24-zen-f.md §7.16; measured): 799 to 801 (+2 in fixture.ts: the `runsFromUrl` call and its import). The run, picker and addressed states are gui/demo-runs.ts, a file of its own.
-	assert.ok(demo <= 801, `the demo fixture has ${demo} lines`);
+	// PBS 0.10.0: two reviews in the document fixture, one with a choice per group and one with checkboxes.
+	assert.ok(demo <= 822, `the demo fixture has ${demo} lines`);
 	// The trains' demo (todo #125 task 7; measured): +2 in fixture.ts (the `?trains=` call and the train units that never ask a question on the demo's clock). The states themselves are gui/demo-trains.ts, a file of its own.
 	// Head tower H5 to 387 (+3 over 384): the strip's `?zen=head|head-open|head-history` states (the quiet net, the Enter and H presses, the draft), and a message to the head answered with its working mark (demo-head.ts holds the words).
 	// 0.13.0 raised views.ts to 253 for the base view's two opening buttons; the opening tile (gui/spawn.ts) has its own figure below.
@@ -1356,7 +1357,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Supply board (2026-11-24, docs/specs/2026-11-24-capacity-supply/spec.md; measured after a fresh `npm run gui:build`, node 24): eager bytes 136,925 to 136,933 (+8: the eager chunk names the changed lazy chunks by their hashes; gui/supply.ts rides the session chunk), gzip 49,430, under its cap. Cap = measured.
 	// Wait card fold (2026-11-24, merged onto the supply board): folded status line, production build: 136,932 raw (49,434 gzip).
 	// Zen as a mode (2026-11-26, docs/specs/2026-11-26-storybook-theme/spec.md Part A; measured after a fresh `npm run gui:build`, node 24): 136,932 / 49,434 to 137,542 / 49,729 (+610 / +295: mode.ts (the `sb.zen` mode, new), the header's Zen button in every theme with its ensō glyph rule, view.ts's face, viewface.ts's two-axis table, and main.ts's idle load of the device's theme under Zen). Cap = measured.
-	assert.ok(eagerBytes <= 137_542 && eagerGz <= 49_729, `the map chunk and the files it loads at start are ${eagerBytes} bytes (${eagerGz} gzipped)`);
+	// A clean install of c3f19448 with PBS 0.8.0 measures 137,633 / 49,783. PBS 0.10.0 changes only chunk names here (+4 gzip).
+	assert.ok(eagerBytes <= 137_633 && eagerGz <= 49_787, `the map chunk and the files it loads at start are ${eagerBytes} bytes (${eagerGz} gzipped)`);
 	// The lazy chunks' gzip figure was 12 KB; 0.5.0 raised it to 14 KB for the composer (about 2.2 KB gzipped) and the phone pairing tile with its POST helper (about 1.1 KB).
 	// The question panel (0.5.0, read-only, about 0.7 KB gzipped) and its place in the dialogs and the session view raised the gzip figure to 15.5 KB;
 	// 0.5.1 to 36.5 KB / 16.2 KB for the composer's note and the dialogs of units that left the net (about 0.7 KB gzipped together).
@@ -1607,7 +1609,8 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Wait card fold (2026-11-24, merged onto the supply board): folded wait status, including both languages and the return panel; measured.
 	// Supply board + wait card fold merged (2026-11-24; measured after a fresh `npm run gui:build`, node 24): 523,225 / 195,737.
 	// Device hold (2026-11-26, docs/specs/2026-11-26-device-hold.md; measured after a fresh `npm run gui:build`, node 24): 523,225 / 195,737 to 523,830 / 195,885 (+605 / +148): the fold's held and holds chips (gui/board.ts `capText`) and their four `board_hold*` messages in both languages. Caps = measured.
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 523_830 && total(chunks, gz) <= 195_885, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	// PBS 0.10.0: review lightbox navigation, grouped and multi picks, and the outgoing name check (+4,123 raw / +1,212 gzip against clean 0.8.0).
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 527_942 && total(chunks, gz) <= 197_059, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
