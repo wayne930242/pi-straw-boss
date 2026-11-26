@@ -2,6 +2,7 @@ import { bodyOf, fieldsOf } from "../header.ts";
 import { closeWorktree, type Git } from "./workeropen.ts";
 import { dropAsk, markFinal, type Route } from "./allyroute.ts";
 import type { Slot } from "./record.ts";
+import { type BookEntry, markBook, sessionLine } from "./workerbook.ts";
 
 // A worker's endings (docs/specs/2026-11-26-ally-workers.md, Relay and end): its one `call_tower` `why: milestone` goes back to the device by code, as the answer to the ask its slip came with, and no ally run
 // handles it; the sweep then closes its tab and removes its worktree when nothing would be lost. A worker gone without a report, or idle 60 minutes without one, gets a code receipt instead.
@@ -29,7 +30,8 @@ export function workerReport(d: RelayDeps, route: Route, text: string, fallback:
 	const f = fieldsOf(text);
 	if (!route.worker || route.final !== undefined || f?.kind !== "call_tower" || f.why !== "milestone") return false;
 	markFinal(d.slot, d.workspace, route.to, d.now());
-	const w = route.worker, body = bodyOf(text).trim(), report = `Worker ${w.label} (branch ${w.branch}) final report:\n${body.length > REPORT_MAX ? `${body.slice(0, REPORT_MAX)}…` : body}`;
+	markBook(d.slot.stateDir, d.now(), route.to, { ended: { at: d.now(), how: "report" } }, true);
+	const w = route.worker, body = bodyOf(text).trim(), report = `Worker ${w.label} (branch ${w.branch}) final report:\n${body.length > REPORT_MAX ? `${body.slice(0, REPORT_MAX)}…` : body}${sessionLine(route.to)}`;
 	const ask = route.ask;
 	if (!ask) return (fallback(), d.sweep(), true);
 	void d.send(route.device, report, ask).then((a) => {
@@ -46,7 +48,7 @@ export interface EndDeps {
 	rows(): WorkerRow[];
 	now(): number;
 	/** The worker's session and pane as the net shows them: `listed` by the broker, its pane still in Herdr (undefined: the read failed), and whether its pane is working. */
-	look(row: WorkerRow): Promise<{ listed: boolean; pane: boolean | undefined; working: boolean }>;
+	look(row: WorkerRow): Promise<{ listed: boolean; pane: boolean | undefined; working: boolean; /** The session file Herdr names for its pane. */ file?: string }>;
 	close(workspace: string, main: string, mode: "quit" | "interrupt"): Promise<void>;
 	send(workspace: string, device: string, text: string, ask: string): Promise<unknown>;
 	forget(workspace: string, main: string): void;
@@ -56,6 +58,8 @@ export interface EndDeps {
 	notice(workspace: string, text: string, key: string): void;
 	log(event: string, facts: Record<string, string | number | boolean>): void;
 	git?: Git;
+	/** The book's marks on the worker's session (workerbook.ts `markBook`): its file, last head, and end; `renew` at an end. */
+	book?(main: string, patch: Pick<BookEntry, "file" | "head" | "ended">, renew?: boolean): void;
 }
 
 export function createWorkerEnds(d: EndDeps) {
@@ -64,6 +68,7 @@ export function createWorkerEnds(d: EndDeps) {
 	const tidy = async (row: WorkerRow): Promise<string> => {
 		const w = row.route.worker!; // git finds the repository from the worktree itself
 		const end = await closeWorktree({ dir: w.path, branch: w.branch, baseSha: w.baseSha, ...(d.git ? { git: d.git } : {}) }).catch((e: Error) => ({ removed: false as const, reason: e.message, head: undefined as string | undefined }));
+		if (end.head) d.book?.(row.route.to, { head: end.head });
 		const head = end.head ? ` at ${end.head.slice(0, 12)}` : "";
 		if (end.removed) return (d.log("worker-worktree-removed", { main: row.route.to, branch: w.branch }), `branch ${w.branch}${head}; its worktree was removed`);
 		d.log("worker-worktree-kept", { main: row.route.to, branch: w.branch, why: end.reason.slice(0, 160) });
@@ -72,13 +77,15 @@ export function createWorkerEnds(d: EndDeps) {
 	};
 	const receipt = async (row: WorkerRow, what: string) => {
 		const ask = row.route.ask, line = await tidyOrNot(row);
-		if (ask) await d.send(row.workspace, row.route.device, `Worker ${row.route.worker!.label} ${what} without a final report: ${line}.`, ask).catch((e: Error) => d.log("worker-receipt-failed", { error: e.message.slice(0, 160) }));
+		d.book?.(row.route.to, { ended: { at: d.now(), how: "gone" } }, true);
+		if (ask) await d.send(row.workspace, row.route.device, `Worker ${row.route.worker!.label} ${what} without a final report: ${line}.${sessionLine(row.route.to)}`, ask).catch((e: Error) => d.log("worker-receipt-failed", { error: e.message.slice(0, 160) }));
 	};
 	let tidied = new Map<string, string>();
 	const tidyOrNot = async (row: WorkerRow) => tidied.get(row.route.to) ?? (await tidy(row).then((l) => (tidied.set(row.route.to, l), l)));
 	const one = async (row: WorkerRow): Promise<void> => {
 		const { route } = row, main = route.to;
 		const seen = await d.look(row);
+		if (seen.file) d.book?.(main, { file: seen.file });
 		if (route.final !== undefined) {
 			if (!seen.listed && seen.pane === false) return (await tidyOrNot(row), d.forget(row.workspace, main));
 			try { await d.close(row.workspace, main, "quit"); } catch (e) { return void d.log("worker-close-waiting", { main, why: (e as Error).message.slice(0, 160) }); }
@@ -100,9 +107,10 @@ export function createWorkerEnds(d: EndDeps) {
 		if (d.now() - since < WORKER_STOP_MS) return;
 		await d.close(row.workspace, main, "interrupt").catch(() => undefined);
 		d.stopped(row.workspace, main);
+		d.book?.(main, { ended: { at: d.now(), how: "idle" } }, true);
 		idleFrom.delete(main);
 		const ask = route.ask;
-		if (ask) await d.send(row.workspace, route.device, `Worker ${route.worker!.label} (branch ${route.worker!.branch}) was idle ${WORKER_STOP_MS / 60_000} minutes without a final report: the box stopped it; its worktree ${route.worker!.path} stays unless it is clean and pushed.`, ask).catch((e: Error) => d.log("worker-receipt-failed", { error: e.message.slice(0, 160) }));
+		if (ask) await d.send(row.workspace, route.device, `Worker ${route.worker!.label} (branch ${route.worker!.branch}) was idle ${WORKER_STOP_MS / 60_000} minutes without a final report: the box stopped it; its worktree ${route.worker!.path} stays unless it is clean and pushed.${sessionLine(main)}`, ask).catch((e: Error) => d.log("worker-receipt-failed", { error: e.message.slice(0, 160) }));
 		d.log("worker-stopped", { main });
 	};
 	return {

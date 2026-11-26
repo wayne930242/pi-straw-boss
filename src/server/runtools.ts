@@ -6,7 +6,7 @@ import { type Opened, type OpenRequest, type PeerSender, type Revived, type Revi
 import { type DeadRow, ReviveRefused, revivedText, rowLine } from "../revive.ts";
 import { bodyOf } from "../header.ts";
 import { headsIn, slipsInText } from "../train/cars.ts";
-import { parseWorker, type WorkerSpec } from "../workerslip.ts";
+import { parseWorker, type Slip } from "../workerslip.ts";
 import { remoteTowers } from "../link/remotelist.ts";
 import type { AllyBoard, AllyTeam } from "../link/holder.ts";
 import { clean } from "../board.ts";
@@ -344,7 +344,7 @@ const sameText = (a: string, b: string) => ((n: (t: string) => string) => n(a) =
  * token or any workspace's route table, refuses it here. Below `dispatch` the boss's confirm shows the call's arguments, so the ally run's request has to be the slip's own text: what the boss allows is what is forwarded (R151-F004).
  */
 /** The worker slip among the run's own taken messages (never the model's words); `branch` picks one when several came. */
-function workerSlipOf(host: ToolHost, args: Record<string, unknown>): { spec: WorkerSpec; brief: string; ask?: string } {
+function workerSlipOf(host: ToolHost, args: Record<string, unknown>): { spec: Slip; brief: string; ask?: string } {
 	const read = (host.allyMessages?.() ?? []).map((m) => ({ m, got: parseWorker(m.text) ?? parseWorker(bodyOf(m.text)) })).filter((x) => x.got !== undefined);
 	const branch = opt(args, "branch"), slips = read.flatMap(({ m, got }) => (got && "spec" in got && (branch === undefined || got.spec.branch === branch) ? [{ spec: got.spec, brief: got.brief, ...(m.ask ? { ask: m.ask } : {}) }] : []));
 	if (slips.length === 1) return slips[0]!;
@@ -543,7 +543,7 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 				if (!peer) throw new Error("A worker is opened for a teammate's device by its ally run; on this computer, dispatch a worker subagent instead");
 				const { spec, brief, ask } = workerSlipOf(host, args);
 				const opened = await host.open({ request: brief, sender: peer.id, peer, role: WORKER, slip: { spec, ...(ask ? { ask } : {}) } });
-				return { text: `Opened tab ${opened.tab} with worker ${spec.label} (session ${opened.main}) on branch ${spec.branch}. Its final report goes back to ${peer.label} by code, answering the device's ask; nothing more is yours to send for it. Close the message with tower_done.`, details: opened };
+				return { text: `${spec.resume ? "Resumed" : "Opened"} tab ${opened.tab} with worker ${spec.label} (session ${opened.main})${spec.branch ? ` on branch ${spec.branch}` : ""}. Its final report goes back to ${peer.label} by code, answering the device's ask; nothing more is yours to send for it. Close the message with tower_done.`, details: opened };
 			}
 			const sender = str(args, "sender", 300), peer = ally ? peerSender(host.who, sender) : undefined;
 			const opened = await host.open({ request: str(args, "request"), sender: peer?.id ?? sender, ...(peer ? { peer } : {}), ...(opt(args, "label") ? { label: opt(args, "label")! } : {}), ...(opt(args, "role") ? { role: opt(args, "role")! } : {}), ...(opt(args, "duty") ? { duty: opt(args, "duty")! } : {}) });

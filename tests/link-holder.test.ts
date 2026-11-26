@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { buildEnvelope, parseEnvelope } from "../src/link/envelope.ts";
-import { LinkHolder } from "../src/link/holder.ts";
-import { encodePlaintext } from "../src/link/kinds.ts";
+import { CAPS_FEATURES, capsList, LinkHolder } from "../src/link/holder.ts";
+import { decodePlaintext, encodePlaintext } from "../src/link/kinds.ts";
 import { RelayClient } from "../src/link/relay.ts";
 import { removeEntry } from "../src/link/roster.ts";
 import type { NetView } from "../src/link/routing.ts";
@@ -1051,4 +1051,16 @@ test("a wake retry that worked again does not restart the two minutes the notice
 	await new Promise((r) => setTimeout(r, 60));
 	b.skew = 125_000;
 	assert.equal(inboxAlerts(b).length, 1, "past two minutes from the first wake that worked, the retry did not hide it again");
+});
+
+test("caps list hello first and the resume feature with tower.worker; a decoder that keeps 16 still sees hello and every feature it knew", () => {
+	const all = { hello: true, unitStop: true, operate: true, waits: true, workers: true };
+	const list = capsList(all);
+	assert.equal(list[0], "hello");
+	assert.ok(list.includes("tower.worker.resume") && list.includes("tower.worker"));
+	for (const off of [{ ...all, workers: false }]) assert.ok(!capsList(off).some((f) => f.startsWith("tower.worker")), "the resume cap follows tower.worker's condition");
+	const decoded = decodePlaintext("caps", encodePlaintext("caps", { features: list })) as { features: string[] };
+	assert.deepEqual(decoded.features, list, "a new decoder reads them all");
+	const old = decoded.features.slice(0, 16), known = CAPS_FEATURES.filter((f) => f !== "tower.worker.resume");
+	assert.ok(old.includes("hello") && known.every((f) => old.includes(f)), "the 16 an older decoder keeps hold hello and all 14 features it knows");
 });

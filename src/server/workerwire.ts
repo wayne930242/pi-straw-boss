@@ -12,6 +12,7 @@ import type { RunWho } from "./rungate.ts";
 import { openWorker, type WorkerSlip } from "./workerally.ts";
 import { integrationBases, readWorkers } from "./workeropen.ts";
 import { readBudget } from "../capacity.ts";
+import { markBook } from "./workerbook.ts";
 
 // The towers' side of the worker door (workerally.ts), kept out of towers.ts, which carries a line budget: the run's peer and asks, the workspace's checkout, the route, and the code's reply to the slip's ask.
 
@@ -56,6 +57,8 @@ export async function workerDoor(d: Deps): Promise<Opened> {
 		room: () => openedRoom(slot, ws, peer.device, d.now(), live),
 		open: l.openAlly,
 		route: (opened, worker, routeAsk) => addRoute(slot, ws, { ...peer, to: opened.main, name: `worker ${worker.label}`.slice(0, 40), kind: "opened", at: d.now(), pane: opened.pane, ...(who.level ? { level: who.level } : {}), ...(routeAsk ? { ask: routeAsk } : {}), worker }, d.now(), live, panes),
+		team: who.team, workspace: ws,
+		fileOf: async (pane) => ((await l.reach?.read().catch(() => undefined))?.ps.find((p) => p.pane_id === pane) as Pane | undefined)?.agent_session?.value,
 		reply: (to, text) => (d.o.link ? d.o.link({ op: "send", device: peer.device, text, reply: false, inReplyTo: to }, l.record.id, true) : Promise.reject(new Error("no link holder"))),
 		log: (event, facts) => d.log.line(event, facts),
 	}, request.peer as OpenerPeer, request as OpenRequest & { slip: WorkerSlip });
@@ -76,10 +79,12 @@ export function workerEndsOf(o: { slot: Slot; now(): number; log: Deps["log"]; l
 			const net = await of(workspace)?.reach?.read().catch(() => undefined), pane = net?.ps.find((p) => p.pane_id === route.pane);
 			// A subagent of its pane that runs (a scout, a reviewer) is work too, whatever the pane shows (RV-F002).
 			const kids = net && pane ? subagentsOfAll(net.ps as Pane[], o.now(), Infinity)(pane as Pane).filter((r) => !r.ended).length : 0;
-			return { listed: net ? net.sessions.some((s) => s.id === route.to) : true, pane: net ? pane !== undefined : undefined, working: pane?.agent_status === "working" || kids > 0 };
+			const file = (pane as Pane | undefined)?.agent_session?.value;
+			return { listed: net ? net.sessions.some((s) => s.id === route.to) : true, pane: net ? pane !== undefined : undefined, working: pane?.agent_status === "working" || kids > 0, ...(file ? { file } : {}) };
 		},
 		close: async (ws, main, mode) => void (await of(ws)!.control!.closeMain(main, mode === "interrupt" ? { interrupt: true } : undefined)),
 		send: (ws, device, text, ask) => (o.link ? o.link({ op: "send", device, text, reply: false, inReplyTo: ask }, of(ws)?.record.id ?? "", true) : Promise.reject(new Error("no link holder"))),
 		stopped: (ws, main) => markFinal(o.slot, ws, main, o.now()),
+		book: (main, patch, renew) => markBook(o.slot.stateDir, o.now(), main, patch, renew),
 	});
 }

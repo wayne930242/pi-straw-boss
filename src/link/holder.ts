@@ -248,7 +248,7 @@ const CAP_REFRESH_MS = 10 * 60_000;
 /** A hold whose main is missing from pi-intercom's list this long is gone (a /reload or a reconnect is shorter). */
 const HOLD_GONE_MS = 2 * 60_000, HOLD_CAPS_WAIT_MS = 90_000;
 /** What this build takes (docs/specs/2026-10-26-sb-backend.md, Replies for a main). A `caps` older than 2 hours counts as none. */
-export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval", "board.capacity", "tower.note", "tower.worker", "board.holds"] as const;
+export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval", "board.capacity", "tower.note", "tower.worker", "board.holds", "tower.worker.resume"] as const;
 export const CAPS_STALE_MS = 2 * 3600_000;
 /** A live frame is worth nothing late: its post gives up after this, so a stalled relay does not hold the serial chain of sends (spec §11.1, task 5). */
 const LIVE_POST_MS = 5000;
@@ -256,6 +256,9 @@ const LIVE_POST_MS = 5000;
 const LIVE_FRESH_MS = 60_000;
 /** The word in this holder's first `caps` after it started (not a feature): see `capsSent`. */
 const HELLO = "hello";
+/** The features a `caps` lists: `hello` first, so a decoder that keeps only the first 16 (before 0.99.0) still sees it and every feature it knows; the rest by what this holder runs. */
+export const capsList = (o: { hello: boolean; unitStop: boolean; operate: boolean; waits: boolean; workers: boolean }): string[] =>
+	(o.hello ? [HELLO] : []).concat((CAPS_FEATURES as readonly string[]).filter((f) => (f !== "unit-stop" || o.unitStop) && (f !== "operate/1" || o.operate) && ((f !== "tower.wait" && f !== "tower.standing" && f !== "tower.approval" && f !== "tower.note") || o.waits) && ((f !== "tower.worker" && f !== "tower.worker.resume") || o.workers)));
 const CAPS_REFRESH_MS = 3600_000, CAPS_MIN_MS = 15_000, CAPS_OFF_MS = 3600_000, REPLY_OFF_MS = 3600_000, FALLBACK_LOG_MS = 3600_000;
 
 /** The default wait for the relay in `send`; the tower waits for the holder's answer longer than this plus the lock wait (runtime.ts `ASK_MS`), or it would give up on a message that was sent. */
@@ -1268,7 +1271,7 @@ export class LinkHolder {
 				sent.at = now; // a failed post is tried again after the spacing (`due` is set again by the catch), not at every tick
 				sent.due = false;
 				const hello = sent.hello;
-				const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device.keys, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: (CAPS_FEATURES as readonly string[]).filter((f) => (f !== "unit-stop" || this.o.unitStop) && (f !== "operate/1" || listed) && ((f !== "tower.wait" && f !== "tower.standing" && f !== "tower.approval" && f !== "tower.note") || this.o.waits) && (f !== "tower.worker" || (!!this.o.waits && this.o.workers?.() === true))).concat(hello ? [HELLO] : []) }) });
+				const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device.keys, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: capsList({ hello, unitStop: !!this.o.unitStop, operate: listed, waits: !!this.o.waits, workers: !!this.o.waits && this.o.workers?.() === true }) }) });
 				await run.client.postEnvelope(run.teamId, envelope);
 				sent.ts = ts;
 				if (hello) sent.hello = false; // the word goes once: a post that failed carries it in the next

@@ -8,6 +8,7 @@ import { addRoute, readRoutes, type Route } from "../src/server/allyroute.ts";
 import { slotOf } from "../src/server/record.ts";
 import { createRevoker } from "../src/server/revoke.ts";
 import { createWorkerEnds, WORKER_STOP_MS, workerReport, type WorkerRow } from "../src/server/workerrelay.ts";
+import { putBook, readBook } from "../src/server/workerbook.ts";
 import { fakeClock } from "./fake-clock.ts";
 
 // A worker's endings (docs/specs/2026-11-26-ally-workers.md, Relay and end): its first call_tower milestone goes to the device's ask by code; the sweep closes it after, sends a code receipt for a worker gone or idle
@@ -87,4 +88,36 @@ test("a revoke ends a worker with interrupt", async () => {
 	await r.sweep();
 	await r.sweep();
 	assert.deepEqual(modes, ["interrupt"]);
+});
+
+const SID = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+test("the final report, the gone receipt and the idle receipt end with the Session line; the book is marked with the end, the head and the file", async () => {
+	const slot = slotOf(join(root, "state"), { HOME: root }), sent: string[] = [];
+	addRoute(slot, "wA", route({ to: SID }), Date.now());
+	putBook(slot.stateDir, Date.now() - 1000, { ask: ASK, main: SID, at: Date.now() - 1000, device: DEV, branch: "feat/x" });
+	workerReport({ slot, workspace: "wA", now: Date.now, log: () => {}, sweep: () => {}, send: async (_d: string, text: string) => void sent.push(text) }, readRoutes(slot, "wA", Date.now())[0]!, milestone("done"), () => {});
+	await new Promise((r) => setImmediate(r));
+	const line = `Session: ${SID} · resume: call_tower worker {device: <this box>, resume: "${SID}", message: <the follow-up>} (kept 7 days)`;
+	assert.ok(sent[0]!.endsWith(`\n${line}`), sent[0]);
+	assert.equal(readBook(slot.stateDir, Date.now())[0]!.ended?.how, "report");
+	const marks: string[] = [];
+	const mk = (look: { listed: boolean; pane: boolean | undefined; working: boolean; file?: string }) => {
+		const clock = fakeClock(), calls: string[] = [];
+		const e = createWorkerEnds({ rows: () => [{ workspace: "wA", route: route({ to: SID }) }], now: clock.now, look: async () => look, log: () => {}, notice: () => {}, close: async () => {}, send: async (_w, _d, text) => void calls.push(text), forget: () => {}, stopped: () => {}, book: (main, patch, renew) => void marks.push(`${main === SID} ${JSON.stringify(patch)} ${renew === true}`) });
+		return { e, clock, calls };
+	};
+	const gone = mk({ listed: false, pane: false, working: false });
+	await gone.e.sweep();
+	await gone.e.sweep();
+	assert.ok(gone.calls[0]!.endsWith(line));
+	assert.ok(marks.some((m) => /^true \{"ended":\{"at":\d+,"how":"gone"\}\} true$/.test(m)), marks.join("; "));
+	const idle = mk({ listed: true, pane: true, working: false, file: "/s/x.jsonl" });
+	await idle.e.sweep();
+	idle.clock.advance(WORKER_STOP_MS);
+	await idle.e.sweep();
+	assert.ok(idle.calls[0]!.endsWith(line));
+	assert.ok(marks.includes('true {"file":"/s/x.jsonl"} false'));
+	assert.ok(marks.some((m) => m.includes('"how":"idle"') && m.endsWith("true")));
+	const plain = route();
+	assert.equal(plain.to, "w-1", "an id that is no uuid gets no Session line (the tests above end without one)");
 });

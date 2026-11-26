@@ -56,8 +56,8 @@ export const LIMITS = {
 	boardItem: 80,
 	/** A board's holds (docs/specs/2026-11-26-device-hold.md): at most this many; the rest is cut when it is decoded. */
 	boardHolds: 8,
-	/** Not in the spec: a `caps` lists at most this many features; the rest is cut when it is decoded. */
-	capsFeatures: 16,
+	/** Not in the spec: a `caps` lists at most this many features; the rest is cut when it is decoded. 16 before 0.99.0: such a decoder keeps the first 16, and `hello` goes first, so it still sees it and every feature it knows. */
+	capsFeatures: 32,
 	/** The spec's: a `unit-status` names at most this many mains, each by a name of at most `boardLabel` characters; a stop's reason is at most this many bytes. */
 	mains: 20,
 	stopReason: 200,

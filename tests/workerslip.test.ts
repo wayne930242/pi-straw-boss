@@ -28,3 +28,17 @@ test("the branch, base, model and line are refused as the table says", () => {
 	for (const t of bad) assert.ok("error" in parseWorker(t)!, t);
 	assert.throws(() => workerMessage(workerSpec({ branch: "a" }), "  "), /needs a brief/);
 });
+
+test("a resume slip names the full session id: branch is optional with it alone, base is refused with it, and it reads back", () => {
+	const id = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+	const spec = workerSpec({ label: "MP-1 again", resume: id, model: "m/x" });
+	assert.deepEqual(spec, { label: "MP-1 again", resume: id, model: "m/x" }, "no points given: the box's record has them");
+	const text = workerMessage(spec, "Fix the review's P1.");
+	assert.equal(text.split("\n")[0], `worker: MP-1 again | resume: ${id} | model: m/x`);
+	assert.deepEqual(parseWorker(text), { spec, brief: "Fix the review's P1." });
+	assert.deepEqual(parseWorker(`worker: x | resume: ${id} | branch: feat/x | points: 2\nb`), { spec: { label: "x", resume: id, branch: "feat/x", points: 2 }, brief: "b" });
+	for (const t of [`worker: x | resume: ${id} | base: develop\nb`, "worker: x | resume: 0199a1b2\nb", `worker: x | resume: ${id.toUpperCase()}\nb`, `worker: x | resume: ${id} | resume: ${id}\nb`, `worker: x | resume: ../../etc\nb`, `worker: x | resume: ${id} | branch: develop\nb`]) assert.ok("error" in parseWorker(t)!, t);
+	assert.match((parseWorker(`worker: x | resume: ${id} | base: develop\nb`) as { error: string }).error, /base goes with a new worker/);
+	assert.throws(() => workerSpec({ resume: "abc" }), /full session id/);
+	assert.ok("error" in parseWorker("worker: x\nb")!, "without resume, branch stays required");
+});
