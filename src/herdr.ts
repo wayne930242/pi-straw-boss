@@ -91,8 +91,8 @@ export const isStandin = (pane: Pick<Pane, "agent">) => pane.agent === STANDIN_A
 let lastSeq = 0;
 /** A `seq` Herdr takes: above the last one this process sent and in the space of Herdr's own pi integration (the clock in microseconds), since Herdr ignores a report or release whose seq is not above the last one it took. */
 export const nextSeq = (now = Date.now()) => (lastSeq = Math.max(lastSeq + 1, now * 1000));
-/** Reports the stand-in: idle, or blocked while wait cards wait for the boss (standing.ts `standinReport`), with a short state as the message. No resume command and no session, so a restart of Herdr never relaunches it. */
-export const reportStandin = (api: HerdrApi, paneId: string, message: string, agent: string = STANDIN_AGENT, state: "idle" | "blocked" = "idle") =>
+/** Reports the stand-in: working, blocked, or idle as server/standin.ts decides (never `done`, which Herdr shows by itself), with a short state as the message. No resume command and no session, so a restart of Herdr never relaunches it. */
+export const reportStandin = (api: HerdrApi, paneId: string, message: string, agent: string = STANDIN_AGENT, state: "working" | "blocked" | "idle" = "idle") =>
 	api("pane.report_agent", { pane_id: paneId, source: STANDIN_SOURCE, agent, state, message, seq: nextSeq() });
 export const releaseStandin = (api: HerdrApi, paneId: string, agent: string = STANDIN_AGENT) => api("pane.release_agent", { pane_id: paneId, source: STANDIN_SOURCE, agent, seq: nextSeq() });
 

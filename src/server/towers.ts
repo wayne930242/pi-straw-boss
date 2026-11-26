@@ -846,7 +846,7 @@ export function createTowers(o: TowersOptions): Towers {
 		// The head's files are in `head/`, whatever the id of its workspace is. Its runs are the hub's too (runs.ts): they resume one conversation and have the head's tools.
 		if (isHeadL(l)) bindDir(slot, record.workspace, headDir(slot));
 		runs.attach(refOf(l));
-		standing.attach({ workspace: record.workspace, label: () => l.record.label, ...(isHeadL(l) ? { agent: STANDIN_HEAD } : {}), pane: () => l.record.pane, live: () => l.state === "live" && !l.stopped && Boolean(l.client?.isConnected()), seated: (pane) => holds(l, pane), status: () => runs.status(record.workspace), cards: () => cardsFor(l), ...(isHeadL(l) ? { elsewhere: () => cardsElsewhere() } : {}), runWithin: (ms) => runs.startsWithin(record.workspace, ms), paneBusy: () => runs.paneBusy(record.workspace), busyPids: () => runs.busyPids(record.workspace), paneFree: () => runs.retry(record.workspace) }, fresh);
+		standing.attach({ workspace: record.workspace, label: () => l.record.label, ...(isHeadL(l) ? { agent: STANDIN_HEAD } : {}), pane: () => l.record.pane, live: () => l.state === "live" && !l.stopped && Boolean(l.client?.isConnected()), seated: (pane) => holds(l, pane), status: () => runs.status(record.workspace), cards: () => cardsFor(l), working: () => runs.working(record.workspace), ...(isHeadL(l) ? { elsewhere: () => cardsElsewhere() } : {}), runWithin: (ms) => runs.startsWithin(record.workspace, ms), paneBusy: () => runs.paneBusy(record.workspace), busyPids: () => runs.busyPids(record.workspace), paneFree: () => runs.retry(record.workspace) }, fresh);
 		l.starting = (async () => {
 			// A resident tower keeps its workspace; the service registers its identity once that session leaves. Two towers never hold one workspace.
 			let waited = false;
@@ -1356,7 +1356,7 @@ export function createTowers(o: TowersOptions): Towers {
 	// The boss's waits for the list and the polls' digests (waitlist.ts): the head's memory is read under its constant key, a workspace's under its id.
 	const autoView = () => ((v) => ({ on: v?.on === true, ...(v?.since ? { since: v.since } : {}) }))(o.auto?.view());
 	const listed = (): Target[] => [...services.values()].filter((l) => !l.stopped && !isHeadL(l)).map((l) => ({ workspace: l.record.workspace, label: l.record.label }));
-	/** The cards that make a stand-in wait (standing.ts `standinReport`): a tower's own, the head's own at the head; the other towers' are only named on the head's (`cardsElsewhere`, AR-D2). An unreadable memory counts none. */
+	/** The cards that make a stand-in wait (standin.ts `standinState`): a tower's own, the head's own at the head; the other towers' are only named on the head's (`cardsElsewhere`, AR-D2). An unreadable memory counts none. */
 	const cardsFor = (l: Live): number => openCards(waitRows(slot, isHeadL(l) ? HEAD_KEY : l.record.workspace, now(), isHeadL(l)).rows);
 	const cardsElsewhere = (): number => listed().reduce((n, t) => n + openCards(waitRows(slot, t.workspace, now(), false).rows), 0);
 	const api: Towers = {

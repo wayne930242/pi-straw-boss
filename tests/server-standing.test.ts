@@ -9,7 +9,7 @@ import { callControl } from "../src/server/socket.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
 import { deleteService } from "../src/server/towerstore.ts";
 import { TOWER_LABEL } from "../src/herdr.ts";
-import { idleShell, standinMessage, standinReport } from "../src/server/standing.ts";
+import { idleShell } from "../src/server/standing.ts";
 import { type Entry, updateMemory } from "../src/server/towermemory.ts";
 
 // The standing pane between runs (docs/specs/2026-10-26-sb-backend.md, The tower service, The standing pane): the sb server types the tower prompt's command into the pane's shell, and while that
@@ -142,30 +142,6 @@ test("the prompt's poll answers the state; a workspace without a tower is refuse
 	world.settingsError = undefined;
 });
 
-test("standinMessage: standing by, N queued, or held", () => {
-	const base = { state: "standing" as const, queued: 0, allyRuns: [], notices: [], parked: [] };
-	assert.equal(standinMessage(base), "standing by");
-	assert.equal(standinMessage({ ...base, queued: 3 }), "3 queued");
-	assert.equal(standinMessage({ ...base, state: "held", queued: 3 }), "held");
-});
-
-test("standinReport: blocked while cards wait for the boss and the device is attended, idle otherwise; the message names the cards first, in sb's language", () => {
-	const base = { state: "standing" as const, queued: 0, allyRuns: [], notices: [], parked: [] };
-	assert.deepEqual(standinReport(base, 0), { state: "idle", message: "standing by" });
-	assert.deepEqual(standinReport(base, 1), { state: "blocked", message: "1 card waits" });
-	assert.deepEqual(standinReport({ ...base, queued: 2 }, 3), { state: "blocked", message: "3 cards wait · 2 queued" });
-	assert.deepEqual(standinReport({ ...base, state: "held" }, 2), { state: "blocked", message: "2 cards wait · held" });
-	assert.deepEqual(standinReport(base, 2, "en", false), { state: "idle", message: "2 cards wait" }, "an unattended device has nobody to answer: idle, the count still said");
-	assert.deepEqual(standinReport(base, 0, "zh-TW"), { state: "idle", message: "待命中" });
-	assert.deepEqual(standinReport({ ...base, queued: 1 }, 2, "zh-TW"), { state: "blocked", message: "2 張卡片等你 · 1 則待處理" });
-	assert.deepEqual(standinReport({ ...base, state: "held" }, 0, "zh-TW"), { state: "idle", message: "已擱置" });
-	// AR-D2: the head's pane counts only its own cards as blocking; other towers' cards are a note, never a wait of the head
-	assert.deepEqual(standinReport(base, 0, "en", true, 3), { state: "idle", message: "standing by · 3 cards wait at other towers" });
-	assert.deepEqual(standinReport(base, 0, "en", true, 1), { state: "idle", message: "standing by · 1 card waits at another tower" });
-	assert.deepEqual(standinReport({ ...base, queued: 2 }, 1, "en", true, 2), { state: "blocked", message: "1 card waits · 2 cards wait at other towers · 2 queued" });
-	assert.deepEqual(standinReport({ ...base, state: "held" }, 0, "zh-TW", true, 2), { state: "idle", message: "其他塔台有 2 張卡片等你 · 已擱置" });
-});
-
 const card = (id: string, extra: Partial<Entry> = {}): Entry => ({ id, kind: "wait", text: `do ${id}`, by: "run", via: "run", at: new Date().toISOString(), run: "r1", for: "boss", state: "open", card: { type: "action", lang: "en", happened: "h", do: `do ${id}` }, ...extra });
 
 test("有卡片就顯示等待中: while wait cards for the boss are open the stand-in is reported blocked and names how many; a pressed or answered card no longer counts, and with none it is idle again", async () => {
@@ -187,6 +163,38 @@ test("有卡片就顯示等待中: while wait cards for the boss are open the st
 	assert.equal(world.herdr.pane(pane).standinMessage, "待命中");
 });
 
+test("headless runs (the viewer stays in the pane): the stand-in says working while the run handles something, blocked while a card waits (whatever the run does), and idle when the run waits for the boss; never blocked with no card (boss 2026-11-26)", async () => {
+	world.setFlag(true, undefined, true);
+	const s = await world.start();
+	await s.handle.ready;
+	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA", view: true });
+	assert.equal(ensured.ok, true, JSON.stringify(ensured));
+	const pane = String(ensured.pane);
+	await until(() => world.herdr.typed.length === 1, "the viewer's one typing");
+	new FakePrompt(s, pane);
+	const shown = () => `${world.herdr.pane(pane).agent_status} ${world.herdr.pane(pane).standinMessage}`;
+	await until(() => shown() === "idle standing by", "the stand-in, idle");
+	updateMemory(world.slot, "wA", Date.now(), (m) => void m.entries.push(card("W1")));
+	await until(() => shown() === "blocked 1 card waits", "blocked on the card");
+	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "hello", present: true })).ok, true);
+	await until(() => world.kids.size === 1, "the run's pi");
+	const kid = [...world.kids.values()][0]!;
+	await until(() => shown() === "blocked 1 card waits · working · 1 queued", "waking: the card still blocks, and the message says the tower works on what waits");
+	const got = await ask(s, { cmd: "claim", runId: kid.run, pane: "", pid: kid.pid, nonce: kid.nonce, liveBrief: true });
+	assert.equal(got.ok, true, JSON.stringify(got));
+	const token = String(got.token);
+	const event = (await ask(s, { cmd: "run-poll", token, idle: true })).event as { id: string };
+	assert.equal((await ask(s, { cmd: "run-taken", token, id: event.id })).ok, true);
+	assert.equal((await ask(s, { cmd: "run-poll", token, idle: false })).ok, true);
+	updateMemory(world.slot, "wA", Date.now(), (m) => void (m.entries.find((e) => e.id === "W1")!.state = "resolved"));
+	await until(() => shown() === "working working", "the card answered, the run at work: working");
+	// The run comes to rest: it polls idle (its first idle poll may be answered with a new brief, the card having moved its memory, as a run polls every few seconds).
+	await until(async () => (await ask(s, { cmd: "run-poll", token, idle: true })).ok && shown() === "idle standing by", "the run waits for the boss: idle, not the blocked of the card before the run");
+	const states = reports().map((r) => r.params.state);
+	assert.deepEqual([...new Set(states)].sort(), ["blocked", "idle", "working"]);
+	kid.exit(0);
+});
+
 test("a run's start tells the prompt to leave and takes the stand-in away first; pi starts once the prompt is gone, and the prompt is typed again and reported after the run", async () => {
 	const { s, pane } = await setup();
 	const prompt = new FakePrompt(s, pane);
@@ -199,8 +207,10 @@ test("a run's start tells the prompt to leave and takes the stand-in away first;
 	const startAt = world.herdr.calls.findIndex((c) => c[0] === "agent" && c[1] === "start");
 	assert.ok(startAt >= 0);
 	assert.equal(world.herdr.typed.length, 1, "while the run holds the pane, no prompt is typed");
+	const reported = reports().length;
 	await sleep(120);
 	assert.equal(world.herdr.typed.length, 1);
+	assert.equal(reports().length, reported, "the run's pi holds the pane: its state is Herdr's pi integration's, and no stand-in is reported over it");
 	// The run does its work and pi exits; Herdr clears the pane: the prompt comes back.
 	await work(s, id);
 	exit(id);

@@ -3,6 +3,7 @@ import type { Locale } from "../locale.ts";
 import { alive as pidAlive } from "../remote.ts";
 import type { Log } from "./log.ts";
 import type { ServiceStatus } from "./runs.ts";
+import { type Standin, standinReport } from "./standin.ts";
 import { giveBackGate, handGate, holdGate, idleShell, nameOf, refusedGate, SHELLS, settleGate, typeGate } from "./typegate.ts";
 
 /** Headless runs: how long after a viewer call made its pane the one typing may still happen (Herdr's lost Enter), and the command as typed there, so the viewer takes the shell's place (`exec`) and no shell is left behind it. */
@@ -63,6 +64,8 @@ export interface StandingTarget {
 	status(): ServiceStatus | undefined;
 	/** How many wait cards wait for the boss here (a tower's own; the head's own): the stand-in is `blocked` while there are any. */
 	cards?(): number;
+	/** Whether a local run of the workspace handles something now (runs.ts `working`): the stand-in is `working` while it does and no card waits (standin.ts). */
+	working?(): boolean;
 	/** The head only: how many cards wait at the other towers. Named on the stand-in, never `blocked` (docs/specs/2026-11-21-auto-return.md, AR-D2). */
 	elsewhere?(): number;
 	/** Whether a run starts in the pane within `ms`: a prompt typed now would only have to start, poll, and leave before the run's pi can. */
@@ -137,25 +140,6 @@ interface Mine {
 	/** The server said the label is not kept, for the prompt with this pid. */
 	unsupported?: number;
 }
-
-/** What the stand-in is reported as: its Herdr state and the short message. */
-export interface Standin { state: "idle" | "blocked"; message: string }
-const STANDIN_WORDS = {
-	en: { standing: "standing by", held: "held", queued: (n: number) => `${n} queued`, cards: (n: number) => (n === 1 ? "1 card waits" : `${n} cards wait`), elsewhere: (n: number) => (n === 1 ? "1 card waits at another tower" : `${n} cards wait at other towers`) },
-	"zh-TW": { standing: "待命中", held: "已擱置", queued: (n: number) => `${n} 則待處理`, cards: (n: number) => `${n} 張卡片等你`, elsewhere: (n: number) => `其他塔台有 ${n} 張卡片等你` },
-};
-/**
- * The stand-in (docs/how-it-works.md, The standing pane): `blocked` while wait cards wait for the boss (`cards`: a tower's own, and the head's own at the head), so Herdr's Agents list and its rollups show the tower as
- * waiting on him; `idle` with none, and always on an unattended device, where nobody answers. Auto mode does not change it: the cards still wait, parked, and the page shows them. The message names the cards first, then
- * at the head the cards of the other towers (`elsewhere`, a note that never blocks: a tower's wait is not the head's, AR-D2), then `held` or the queue: `2 cards wait · 1 queued`, `standing by`, in sb's language.
- */
-export function standinReport(status: Pick<ServiceStatus, "state" | "queued"> | undefined, cards = 0, locale: Locale = "en", attended = true, elsewhere = 0): Standin {
-	const w = STANDIN_WORDS[locale], tail = status?.state === "held" ? w.held : status && status.queued > 0 ? w.queued(status.queued) : undefined;
-	const parts = [...(cards > 0 ? [w.cards(cards)] : []), ...(elsewhere > 0 ? [w.elsewhere(elsewhere)] : []), ...(tail ? [tail] : [])];
-	return { state: cards > 0 && attended ? "blocked" : "idle", message: parts.length ? (cards > 0 || tail || !elsewhere ? parts.join(" · ") : `${w.standing} · ${parts.join(" · ")}`) : w.standing };
-}
-/** The stand-in's message alone, in English with no card: `standing by`, `3 queued`, or `held`. */
-export const standinMessage = (status: Pick<ServiceStatus, "state" | "queued"> | undefined): string => standinReport(status).message;
 
 /** The programs in the pane's foreground that are no shell and not the tower prompt: what the boss runs there. Empty when none is listed or all are shells. */
 export function programProcs(info: { foreground_processes?: unknown } | undefined): { pid?: number; name?: string; argv0?: string; cmdline?: string }[] {
@@ -262,6 +246,7 @@ export function createStanding(o: StandingOptions) {
 		let command = "";
 		// The pane as Herdr lists it at the latest reading: the tick's, and then (just before the typing) a reading of its own, since the tick's may be old by the time an earlier look of the same tick is done.
 		let seat = pane;
+		const agent = !pane?.agent ? "none" : isStandin(pane) ? "stand-in" : "other";
 		const verdict = await typeGate({
 			attached,
 			// A service that was detached while this look waited (lost, retired) is no seat: it types nothing from a look it had in flight.
@@ -270,7 +255,7 @@ export function createStanding(o: StandingOptions) {
 			busy: attached && Boolean(target.paneBusy?.()),
 			held: status?.state === "held",
 			run: m.leaving || (status !== undefined && ["waking", "running", "closing"].includes(status.state)),
-			agent: !pane?.agent ? "none" : isStandin(pane) ? "stand-in" : "other",
+			agent,
 			prompt: () => present(m),
 			// The prompt is not there. Herdr clears its label itself a moment after; a release makes it at once.
 			gone: () => unreport(m),
@@ -297,19 +282,25 @@ export function createStanding(o: StandingOptions) {
 			switch (verdict.reason) {
 				case "busy":
 					return await lookHeld(m, paneId);
-				case "run":
-					// A run holds the pane (or is about to): the prompt has left or is leaving, and no stand-in stands over the run's pi.
-					if (m.reported && !isStandin(pane)) m.reported = undefined;
-					return;
 				case "agent":
 					// Another agent holds the pane (a pi of the boss's own): the stand-in is not reported over it, and Herdr would not take it.
 					m.reported = undefined;
 					return;
+				case "run":
 				case "prompt": {
-					m.parked = false;
+					// A prompt that polls with no run ends the boss's Ctrl+D (one he started by hand).
+					if (verdict.reason === "prompt") m.parked = false;
+					// The state is standin.ts's at every look, a run's included: under headless runs the prompt stays in the pane while the run works, and the state follows the run (working, then idle) and the cards.
+					// `leaving` is read here, after the gate's await, and nothing is awaited from here until the report takes its seq: a run's start that released the stand-in meanwhile is seen, and one that releases it after
+					// sends a higher seq, which Herdr keeps over this report.
+					const next = standinReport({ verdict: verdict.reason, leaving: m.leaving, prompt: present(m), agent, working: Boolean(target.working?.()), cards: target.cards?.() ?? 0, attended: o.attended?.() ?? true, status, elsewhere: target.elsewhere?.() ?? 0, locale: o.locale?.() ?? "en" });
+					if (!next) {
+						// A run takes the pane, or its pi holds it: the prompt has left or is leaving, and the run's pi is Herdr's pi integration's to report.
+						if (m.reported && !isStandin(pane)) m.reported = undefined;
+						return;
+					}
 					if (isStandin(pane)) m.misses = 0;
-					const next = standinReport(status, target.cards?.() ?? 0, o.locale?.() ?? "en", o.attended?.() ?? true, target.elsewhere?.() ?? 0);
-					// Reported again when the message or the state changed (a card opened or was answered), and every `refreshMs`.
+					// Reported again when the message or the state changed (a card opened or was answered, the run went to work or came to rest), and every `refreshMs`.
 					if (!isStandin(pane) || !m.reported || m.reported.message !== next.message || m.reported.state !== next.state || now() - m.reported.at >= t.refreshMs) await report(m, pane, next);
 					return;
 				}

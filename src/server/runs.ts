@@ -1643,6 +1643,8 @@ export function createRuns(o: RunsOptions) {
 		attach, detach, poke: (workspace: string) => { const s = services.get(workspace); if (s) poke(s); },
 		/** Whether a run of this workspace starts within `ms`: its wake is due by then (the standing pane types no prompt that run would have to wait for, B6 VM F6). */
 		startsWithin: (workspace: string, ms: number) => { const s = services.get(workspace); return Boolean(s && !s.run && s.wake && s.wakeAt !== undefined && s.wakeAt - now() <= ms); },
+		/** Whether a local run of this workspace handles something now (the stand-in's `working`, standin.ts): it is waking, or live and not idle at its last poll; a boss conversation between his turns is idle. */
+		working: (workspace: string) => { const a = services.get(workspace)?.run; return Boolean(a && !a.ended && a.rec.kind === "local" && a.idleSince === undefined); },
 		/**
 		 * The tower prompt's poll says whether the boss is answering wait cards in the standing pane. While they are, the service's wake is held (`heldUntil`); a poll that says they are done ends the hold at once, and the
 		 * events that waited wake one run. A stretch of answering is the polls that follow each other within `answer`. Returns whether a wake is held now: events wait, and no run begins for them yet.

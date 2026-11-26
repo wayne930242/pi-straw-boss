@@ -2672,7 +2672,7 @@ sb 把工作項目的等待與審查串上發生的事，附加到一本它從�
 
 ### 兩次執行之間的塔台
 
-由 sb server 執行的塔台，即使沒有任何執行中的 run，也保有它的那一列：只要塔台提示在常駐 pane 上執行（[常駐 pane](#常駐-pane)），server 就會在該 pane 上回報一個替身智慧體 `tower`（閒置，訊息為 `standing by`、`3 queued` 或 `held`；有等待卡片在等老闆時則是 blocked，訊息以 `2 cards wait` 開頭；主塔台的 pane 只計自己的卡片），所以這一列會排在其工作區的第一個位置，作為塔台的標記，`agent.list` 也看得到它。它只是一列，沒有別的作用：網、儀表板、收起、closer 或 reaper 的檢查都不把它算作智慧體、主智慧體或成員，閒置回報也不會觸發 toast、音效或注意力計數。blocked 的替身就是 Herdr 自己的等待狀態，Herdr 給它什麼注意力就是什麼，工作區的彙總也跟著它，所以儀表板的塔台列與頁面的據點都顯示等待中；頁面上的塔台單位在 run 之間仍是閒置，不另外發警示（卡片本身就是它的警示）。run 開始時，由 pi 自己的那一列取代它；run 結束後它會再回來。隊友 run 的 pane 也是一列，就在塔台的正下方（`[ally] <device label>`，見[隊友 run](#隊友-run)）。
+由 sb server 執行的塔台，即使沒有任何執行中的 run，也保有它的那一列：只要塔台提示在常駐 pane 上執行（[常駐 pane](#常駐-pane)），server 就會在該 pane 上回報一個替身智慧體 `tower`（閒置，訊息為 `standing by`、`3 queued` 或 `held`；工作區有 run 正在處理事情、而提示留在 pane 裡時（例如無介面的 run）是 working，訊息為 `working`；有等待卡片在等老闆時則是 blocked，訊息以 `2 cards wait` 開頭；主塔台的 pane 只計自己的卡片），所以這一列會排在其工作區的第一個位置，作為塔台的標記，`agent.list` 也看得到它。它只是一列，沒有別的作用：網、儀表板、收起、closer 或 reaper 的檢查都不把它算作智慧體、主智慧體或成員，閒置回報本身也不會觸發 toast、音效或注意力計數；接在 `working` 或 `blocked` 之後的閒置回報，在老闆看過之前是 Herdr 的 done，和任何做完的智慧體一樣。blocked 的替身就是 Herdr 自己的等待狀態，Herdr 給它什麼注意力就是什麼，工作區的彙總也跟著它，所以儀表板的塔台列與頁面的據點都顯示等待中；頁面上的塔台單位在 run 之間仍是閒置，不另外發警示（卡片本身就是它的警示）。run 的 pi 在 pane 裡啟動時，由 pi 自己的那一列取代它；run 結束後它會再回來。隊友 run 的 pane 也是一列，就在塔台的正下方（`[ally] <device label>`，見[隊友 run](#隊友-run)）。
 
 <details>
 <summary>細節</summary>
@@ -3464,7 +3464,7 @@ Herdr 拒絕的輸入（`pane run` 失敗）不算一次嘗試：server 記錄 `
 
 在 Windows 上，前景清單無法分辨閒置的 shell 與執行中的程式，Retry 會先讀行程表，只有在那次讀取成功、而且在 pane 的 shell 之下沒有找到老闆的程式（塔台提示除外）時才輸入：失敗的讀取會說明並且不輸入任何東西，找到的程式會讓服務再次被它保持並指名它，而 Retry 會再問一次。歸還最多把 pane 標為全新一分鐘，而 pane 被停放時完全不標。啟動失敗的通知，在按下 Retry 時、老闆寫給被保持的塔台時，以及之後有 run 聲明時消失。
 
-它在提示於最近 6 秒內輪詢過時回報替身，在訊息或狀態改變時再回報，並每 4 分鐘一次。有等待卡片在等老闆時（開著且還沒按下；密鑰卡片按了第一步仍算在等），狀態是 `blocked`：各塔台只計自己的卡片，主塔台也一樣（別座塔台的卡片不是主塔台的等待事項，這是老闆在 2026-11-21 的決定）；否則是 `idle`，而無人值守裝置一律是閒置，因為沒有人會回答。自動模式下仍是 blocked：卡片還在等，只是擱置，頁面也會顯示它們。訊息會先列自己的卡片數；主塔台接著會列其他塔台的卡片數（`3 cards wait at other towers`），只作提示，不影響狀態；最後再顯示 `held` 或佇列（`2 cards wait · 1 queued`、`standing by · 3 cards wait at other towers`），使用 [sb 的語言](#語言)。在 run 於 pane 裡啟動 pi 之前，它會釋放替身（Herdr 拒絕在有智慧體的 pane 中 `agent start`：`agent_pane_busy`），告訴提示離開，最多等 3 秒讓它消失，而且只有在 pane 的前景正是那個提示時（依 PID）才送 Ctrl+C。
+它在提示於最近 6 秒內輪詢過時回報替身，每次查看都會回報，run 進行中也一樣（無介面的 run 執行時，提示會留在 pane 裡），在訊息或狀態改變時再回報，並每 4 分鐘一次。狀態依一套固定的順序，由 `src/server/standin.ts` 決定（老闆在 2026-11-26 定下）：有等待卡片在等老闆時（開著且還沒按下；密鑰卡片按了第一步仍算在等）是 `blocked`，不論 run 在做什麼；各塔台只計自己的卡片，主塔台也一樣（別座塔台的卡片不是主塔台的等待事項，這是老闆在 2026-11-21 的決定）；否則，工作區有 run 正在處理事情時是 `working`（run 正在喚醒，或它最近一次輪詢不是閒置：事件 run 正在工作，或老闆對話正在進行一輪）；再否則是 `idle`。無人值守裝置從不顯示 `blocked`，因為那裡沒有人會回答。自動模式下仍是 blocked：卡片還在等，只是擱置，頁面也會顯示它們。server 從不回報 `done`：在老闆沒在看的 pane 上，`working` 或 `blocked` 轉為 `idle` 後，Herdr 會自己顯示 done，老闆聚焦該 pane 後才變回 `idle`，所以處理完的塔台會一直顯示 done，直到他看過為止。run 的 pi 佔著 pane 時，由 Herdr 的 pi 整合回報那個 pi（working、idle，或在對話框上 blocked），server 什麼都不回報，兩個來源不會輪流改寫：Herdr 不會在 pane 已有的智慧體上接受另一個標籤的回報。訊息會先列自己的卡片數，接著是 `working`（沒有自己的卡片、沒有 run 在工作，也沒有 `held` 或佇列時則是 `standing by`）；主塔台接著會列其他塔台的卡片數（`3 cards wait at other towers`），只作提示，不影響狀態；最後再顯示 `held` 或佇列（`2 cards wait · working · 1 queued`、`standing by · 3 cards wait at other towers`），使用 [sb 的語言](#語言)。在 run 於 pane 裡啟動 pi 之前，它會釋放替身（Herdr 拒絕在有智慧體的 pane 中 `agent start`：`agent_pane_busy`），告訴提示離開，最多等 3 秒讓它消失，而且只有在 pane 的前景正是那個提示時（依 PID）才送 Ctrl+C。
 
 然後，在 macOS 與 Linux 上，它最多等 2 秒讓提示的行程本身消失（提示說它要離開不等於它結束：Herdr 在結束後幾毫秒就接受 `agent start`，而 zsh 還沒有讀取，指令的 Enter 就遺失了），再多等 300 毫秒讓它穩定下來；在最近 15 秒內輸入、還沒有輪詢過的提示會以同樣的方式被等待，而沒有及時結束的提示會在 log 中被指名（`run-yield`），run 繼續。
 

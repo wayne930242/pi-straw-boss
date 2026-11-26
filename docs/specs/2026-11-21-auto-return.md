@@ -67,6 +67,6 @@ A raiser that had left the net when the card was recorded (`from.gone`), one tha
 ## Tests
 
 - AR-D1: `tests/auto-state.test.ts` and `tests/auto-head.test.ts` ("AR-D1: …"): the head's 我要睡了 switches on at once, with no pending record; an event works once; refusals unchanged.
-- AR-D2: `tests/server-standing.test.ts` (`standinReport` with the other towers' count) and `tests/head-service.test.ts` ("AR-D2: …"): a tower's card leaves the head `idle` with the note; the head's own makes it `blocked`.
+- AR-D2: `tests/standin.test.ts` (`standinMessage` and `standinReport` with the other towers' count) and `tests/head-service.test.ts` ("AR-D2: …"): a tower's card leaves the head `idle` with the note; the head's own makes it `blocked`.
 - Review fixes: `tests/auto-towers.test.ts` ("AR-F002: …" a closed head's parked card, "AR-F003: …" a card the head raised, "AR-F004: …" a stop drains the returns), `tests/auto-head.test.ts` ("AR-F001: …" the head brief's line, "AR-F005: …" an unattended device refuses `boss_auto`), `tests/wait-cards.test.ts` ("AR-F006: …" a cut card keeps `returned`).
 - AR-D3, AR-D4: `tests/auto-towers.test.ts` ("AR-D3: …", "AR-D4: …"): the main gets one `wait_returned`, the card is closed before any press, a card recorded after the end stays open, an answered parked card is not returned, a gone raiser and a refused message close the card and the list is written again; `tests/auto-gui.test.ts`: the panel's lines and the card's returned line; `tests/auto-cancel.test.ts`: the end notice per kind; `tests/prompts.test.ts`: the prompts' lines.
