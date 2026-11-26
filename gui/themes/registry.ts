@@ -35,7 +35,7 @@ export async function showTheme(view: Face): Promise<void> {
 	usePack(parts?.nouns);
 	useSentences(parts?.sentences, getLocale);
 	useSounds(parts?.sounds);
-	useIcons(view, parts?.sprite);
+	useIcons(view, parts?.sprite, parts?.senders);
 	retranslate();
 	for (const fn of heard) fn(view, parts);
 }

@@ -67,7 +67,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			return sub && linkTo({ view: "session", ws: locate(scene.net, sub.key)?.base.id ?? wsOf(scene), key: sub.key }, name);
 		};
 		const opener = (path: string, card = docFor(locate(scene.net, key)?.u.docs, scene.info?.header?.cwd, path)) => card && (() => openTile(docTile(who().name, card)));
-		chat = mountChat(view.querySelector(".chat-root")!, data(key), { who, link, docFor: opener, page: true, away: () => !can(locate(scene.net, key)?.base, "input") });
+		chat = mountChat(view.querySelector(".chat-root")!, data(key), { who, link, docFor: opener, page: true, away: () => !can(locate(scene.net, key)?.base, "input"), net: () => scene.net });
 		const raw = answerPost(key, () => data(key).post), headRoute = scene.route.view === "session" && scene.route.ws === HEAD_KEY;
 		// The head page's target (docs/specs/2026-11-24-zen-f.md §6): a button before `+` with its list; the target holds for the page, and a direct send stays here with a quiet note linking that tower's comms.
 		target = undefined;

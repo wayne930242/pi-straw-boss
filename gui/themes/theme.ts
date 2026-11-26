@@ -8,6 +8,8 @@ export interface Badge { dot: string; ring: string; text: string }
 export interface ThemeParts {
 	/** The icon sprite's symbols, with ids prefixed by the view (`raven-tower`). */
 	sprite?: string;
+	/** A notice shows its sender's icon (the unit's kind or role, looked up by name) instead of the comms bird. */
+	senders?: boolean;
 	/** The role nouns by locale. */
 	nouns?: NounPack;
 	/** The sentences, by locale, that the view says in its own words (gui/sentences.ts): the ones that embed a role word, as the pack above cannot reach them. */

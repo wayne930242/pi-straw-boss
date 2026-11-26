@@ -2,7 +2,7 @@ import type { Pending } from "../src/ask.ts";
 import type { Mark } from "../src/netdata.ts";
 import type { Shelf } from "../src/documents.ts";
 import type { Item, Todo } from "../src/items.ts";
-import type { Queued, RunDialog, TowerService } from "../src/net.ts";
+import type { Net, Queued, RunDialog, TowerService } from "../src/net.ts";
 import type { Monitor } from "../src/monitors.ts";
 import { h, replay } from "./dom.ts";
 import { createFollow, reach } from "./follow.ts";
@@ -14,11 +14,12 @@ import { mdBody } from "./mdbody.ts";
 import { post } from "./post.ts";
 import { onSelectionEnd, selectedIn } from "./selection.ts";
 import type { Post } from "./composer.ts";
-import { m } from "./sentences.ts"; import { iconRef } from "./icons.ts"; import { noun } from "./nouns.ts";
+import { m } from "./sentences.ts"; import { noun } from "./nouns.ts";
 import { getLocale } from "./paraglide/runtime.js";
-import { html, roleName } from "./render.ts"; import { ICON, kindIcon } from "./icons.ts";
+import { html, roleName } from "./render.ts"; import { ICON, kindIcon, senderRef } from "./icons.ts";
 import { conversationDivider } from "./towermodel.ts";
 import { bossTurn, eventTurn, heard, senderOf, type Turn } from "./towerturns.ts";
+import { senderIn } from "./senders.ts";
 
 // The comms log of one session. The model is pure: items merge by entry id (a repeated one is ignored), tool results attach to their call by
 // callId, a reset replaces everything, and at most 600 items stay mounted (the farthest page is dropped and fetched again on scroll).
@@ -89,7 +90,7 @@ export interface HistoryEvent { key: string; state?: string; successor?: string;
 export interface Data { older(before: string): Promise<Page>; latest(): Promise<Page>; entry(id: string): Promise<Item | undefined>; pic?(id: string, n: number): string; post?: Post }
 export interface Who extends Shelf { key: string; name: string; role: string; mark: Mark; /** The head tower (its words are named for it). */ head?: boolean; note?: string; control?: boolean; ended?: boolean; pending?: Pending; queued?: Queued[]; monitors?: Monitor[]; service?: TowerService; /** A main's kind and the plan's graph (src/net.ts `Unit.duty`, `todo.graph`). */ duty?: string; todo?: { graph?: string } }
 /** `docFor` opens the document a show_doc path names while its session lists it (doc.ts), or is undefined. */
-export interface ChatDeps { /** `quiet` (Zen, docs/specs/2026-11-24-zen-f.md §3): the message under way is still ash text, with no "Writing now" tag, no caret, no motion, and no live region (a region that grows every 2 s would be read again and again). */ live?: "quiet"; who(): Who; link(name: string): HTMLAnchorElement | undefined; docFor?(path: string): (() => void) | undefined; /** The session route's log: for the head it shows the words only (docs/specs/2026-11-06-head-page-minimal.md). Zen's companion log leaves it out and shows the head's cards as before. */ page?: boolean; /** Whether the unit is a remote base's and its box takes no input now (unreachable or ended): its blocks cannot be submitted, with box_answer_blocked shown. Read at every answer and at `box()`. Without it the unit is local. */ away?(): boolean }
+export interface ChatDeps { /** `quiet` (Zen, docs/specs/2026-11-24-zen-f.md §3): the message under way is still ash text, with no "Writing now" tag, no caret, no motion, and no live region (a region that grows every 2 s would be read again and again). */ live?: "quiet"; who(): Who; link(name: string): HTMLAnchorElement | undefined; docFor?(path: string): (() => void) | undefined; /** The session route's log: for the head it shows the words only (docs/specs/2026-11-06-head-page-minimal.md). Zen's companion log leaves it out and shows the head's cards as before. */ page?: boolean; /** Whether the unit is a remote base's and its box takes no input now (unreachable or ended): its blocks cannot be submitted, with box_answer_blocked shown. Read at every answer and at `box()`. Without it the unit is local. */ away?(): boolean; /** The net, where a notice's sender (`name (id)`, towerturns.ts `senderOf`) is looked up (senders.ts): its role and kind give the notice its icon where the view draws senders. */ net?(): Net | undefined }
 /** `reveal` opens the log at an entry (scrolled into view and lit), or with none at the newest entry. `log` is the scrolling log, a focus target. `docs` shows Open beside on the show_doc cards whose document is listed now. */
 export interface Chat { apply(event: HistoryEvent): void; reveal(at?: string): void; docs(): void; /** The unit's box may have come or gone (`ChatDeps.away`): the blocks drawn read it again. */ box(): void; /** The boss conversation's runs (src/server/runs.ts `LocalRunRow`): a divider opens each in the log, with how it ended once it has. */ runs(rows: ConversationRun[]): void; log: HTMLElement }
 export type ConversationRun = NonNullable<TowerService["localRuns"]>[number];
@@ -101,11 +102,13 @@ export const speaker = (who: { role: string; head?: boolean }) => (who.head ? no
 const clock = (at?: string) => (at ? new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "");
 const size = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(n >= 10240 ? 0 : 1)} KB` : `${n} B`);
 const NOTICE: Record<string, () => string> = { intercom_message: m.notice_intercom, subagent_result: m.notice_result, subagent_ping: m.notice_ping, subagent_status: m.notice_status, "pi-loop-monitor": m.notice_monitor, "memory-context": m.notice_memory, "doc-review": m.notice_doc_review, "straw-tower": m.notice_tower, "straw-link": m.notice_straw_link };
-const icon = (name: string, duty?: string) => {
+/** `from` is a notice's sender, when the net names it: a view that draws senders (icons.ts `senderRef`) shows its icon instead of `name`'s. */
+const icon = (name: string, duty?: string, from?: { role: string; duty?: string }) => {
 	const span = html(`<span class="ava"><svg><use/></svg></span>`);
 	const use = span.querySelector("use")!, role = kindIcon(name, duty) ?? ICON[name] ?? name;
 	use.dataset.icon = role;
-	use.setAttribute("href", iconRef(role));
+	if (from) use.dataset.sender = kindIcon(from.role, from.duty) ?? ICON[from.role] ?? from.role;
+	use.setAttribute("href", senderRef(role, use.dataset.sender));
 	return span;
 };
 
@@ -120,7 +123,7 @@ function plain(text: string) {
 	return [...out, text.slice(at)];
 }
 
-export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, page, away, live: liveMode }: ChatDeps): Chat {
+export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, page, away, live: liveMode, net }: ChatDeps): Chat {
 	let pendingQuiet = false; // the live text may clear before its assistant entry arrives
 	const model = createChat(), els = new Map<string, HTMLElement>(), opens = new Set<{ paths: string[]; button: HTMLButtonElement; shown?: boolean }>(); // a card the log dropped leaves it
 	const docs = () => opens.forEach((o) => (o.button.isConnected ? ((o.shown = true), (o.button.hidden = !o.paths.some((p) => docFor?.(p)))) : o.shown && opens.delete(o)));
@@ -196,9 +199,9 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 		return h("article", { class: "tx you" }, h("header", null, copyButton(() => body, () => bubble), stamp(it), h("b", null, noun("you")), icon("user")), bubble);
 	};
 	/** An incoming message: its label on one collapsed line, its text (and the crash flag, or the verified header folded behind "details") inside. */
-	const notice = (it: Item, label: (Node | string)[], body: string, more: { crashed?: boolean; raw?: string } = {}) => {
-		const pre = h("pre", null, body);
-		return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms"), h("em", null, m.incoming()), ...label, stamp(it)), more.crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, pre, copyButton(() => body, () => pre), more.raw ? h("details", { class: "notice-raw" }, h("summary", null, m.notice_details()), h("pre", { class: "raw" }, more.raw)) : null));
+	const notice = (it: Item, label: (Node | string)[], body: string, more: { crashed?: boolean; raw?: string; from?: string } = {}) => {
+		const pre = h("pre", null, body), s = more.from ? senderOf(more.from) : undefined;
+		return h("article", { class: "tx sys" }, h("details", { class: "notice" }, h("summary", null, icon("comms", undefined, s && senderIn(net?.(), s.name, s.id)), h("em", null, m.incoming()), ...label, stamp(it)), more.crashed ? h("small", { class: "boss-flag" }, m.boss_crash_flag()) : null, pre, copyButton(() => body, () => pre), more.raw ? h("details", { class: "notice-raw" }, h("summary", null, m.notice_details()), h("pre", { class: "raw" }, more.raw)) : null));
 	};
 	/** A message from a session on this computer: its name (a link to it when the net lists it), its id, and where it comes from; a teammate's message through Straw Link says so too, so the two never read alike. */
 	const intercomLabel = (from: string | undefined): (Node | string)[] => {
@@ -227,7 +230,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 			case "user": {
 				// A run of a tower the sb server runs gets what came to the tower as user turns; the server wrote their first line, and they are not the boss's (towermodel.ts `heard`).
 				const said = who().service ? heard(it.text) : undefined;
-				if (said) return notice(it, said.kind === "intercom" ? intercomLabel(said.from) : [said.kind === "server" ? m.notice_server() : m.notice_timer()], it.text ?? "");
+				if (said) return notice(it, said.kind === "intercom" ? intercomLabel(said.from) : [said.kind === "server" ? m.notice_server() : m.notice_timer()], it.text ?? "", said.kind === "intercom" ? { from: said.from } : {});
 				const boss = who().service ? bossTurn(it.text) : undefined; // the server's marker line is not shown
 				return you(it, boss ? boss.body : (it.text ?? ""), boss?.crashed, boss ? (it.text ?? "") : "");
 			}
@@ -246,8 +249,8 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 				const turn = eventTurn(it);
 				if (turn?.kind === "boss" && who().service) return you(it, turn.body, turn.crashed, it.text ?? "");
 				if (bare() && (turn?.kind === "server" || turn?.kind === "timer")) return skipped(); // the sb server's own markers are protocol, not something the boss reads
-				if (turn && turn.kind !== "boss") return notice(it, turnLabel(turn), turn.body, turn.kind === "link" ? { raw: turn.raw } : { crashed: turn.crashed });
-				return notice(it, [NOTICE[it.type ?? ""]?.() ?? it.type ?? m.notice(), " ", (it.from && link(it.from)) || (it.from ?? "")], it.text ?? "");
+				if (turn && turn.kind !== "boss") return notice(it, turnLabel(turn), turn.body, turn.kind === "link" ? { raw: turn.raw } : { crashed: turn.crashed, ...(turn.kind === "intercom" ? { from: turn.from } : {}) });
+				return notice(it, [NOTICE[it.type ?? ""]?.() ?? it.type ?? m.notice(), " ", (it.from && link(it.from)) || (it.from ?? "")], it.text ?? "", { from: it.from });
 			}
 			case "divider": if (it.type === "chapter") return h("article", { class: "tx rule chapter" }, h("p", null, m.head_chapter({ date: it.at ? new Date(it.at).toLocaleDateString(getLocale(), { year: "numeric", month: "short", day: "numeric" }) : "", why: chapterWhy(it.code, it.text) })));
 				return h("article", { class: "tx rule" }, h("details", null, h("summary", null, it.type === "compaction" ? m.compacted({ tokens: (it.tokens ?? 0).toLocaleString() }) : m.branch_summary()), h("pre", null, it.text ?? "")));

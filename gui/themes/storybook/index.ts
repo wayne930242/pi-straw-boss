@@ -20,6 +20,8 @@ if (clock) clock.onShift(mountAmbience(clock.phase, { day, night }));
 export const theme: ThemeParts = {
 	// The waiting badge over the bunny: honey on the cream page by day, lamp gold on the night sky.
 	sprite,
+	// a message on the page is stamped with its sender's animal (spec §B11): a bee for a subagent's report, a beaver for a main's
+	senders: true,
 	sounds: { waiting: kalimba },
 	badge: () => BADGES[clock?.phase() ?? "day"],
 	onShift: (fn) => clock?.onShift(() => fn()),

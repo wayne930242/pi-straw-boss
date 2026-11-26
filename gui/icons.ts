@@ -11,22 +11,26 @@ export const kindIcon = (role: string, duty?: string): string | undefined => (ro
 /** The icon id of a unit: its kind's, else its position's (a unit with no known kind looks as it did, and the tower and the head keep theirs). */
 export const unitIcon = (role: string, duty?: string): string => kindIcon(role, duty) ?? ICON[role] ?? "member";
 
-const sprites = new Map<string, Set<string>>();
+const sprites = new Map<string, Set<string>>(), senders = new Set<string>();
 let view = "standard";
 
 /** The `<use>` target for a role or duty in the view the page shows now. */
 export const iconRef = (role: string) => (sprites.get(view)?.has(`${view}-${role}`) ? `#${view}-${role}` : `#i-${role}`);
 
+/** A notice's icon: the sender's (`data-sender`, its kind's or role's) in a view that draws who sent a message (a theme's `senders`, Storybook's animals), else its own (the comms bird). */
+export const senderRef = (icon: string, sender?: string) => iconRef(sender && senders.has(view) ? sender : icon);
+
 /** Sets `href` on the `<use data-icon>` elements under `root` (an element made from a template calls it for itself). */
 export function repoint(root: ParentNode = document) {
 	for (const use of root.querySelectorAll<SVGUseElement>("use[data-icon]")) {
-		const href = iconRef(use.dataset.icon!);
+		const href = senderRef(use.dataset.icon!, use.dataset.sender);
 		if (use.getAttribute("href") !== href) use.setAttribute("href", href);
 	}
 }
 
-/** The view whose icons `iconRef` names from now on. */
-export function useIcons(next: string, svg?: string) {
+/** The view whose icons `iconRef` names from now on; `named` when it draws a notice with its sender's icon. */
+export function useIcons(next: string, svg?: string, named?: boolean) {
+	if (named) senders.add(next);
 	if (svg !== undefined && !sprites.has(next)) {
 		const sheet = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg" id="theme-sprite-${next}" width="0" height="0" style="position:absolute" aria-hidden="true">${svg}</svg>`, "image/svg+xml").documentElement;
 		document.body.append(document.importNode(sheet, true));
