@@ -143,22 +143,28 @@ export function updateMemory<T>(slot: Slot, workspace: string, now: number, chan
 	return { value, memory };
 }
 /** What the ledger compares across a write: each wait's state, last press, park, and return. */
-const marks = (m: Memory) => new Map(m.entries.filter((e) => e.kind === "wait").map((e) => [e.id, { state: e.state, press: e.press?.at, parked: e.parked === true, returned: e.returned }]));
+const marks = (m: Memory) => new Map(m.entries.filter((e) => e.kind === "wait").map((e) => [e.id, { state: e.state, press: e.press?.at, parked: e.parked === true, returned: e.returned, session: sessionOf(e) }]));
 /**
- * The ledger's wait events of one write: `wait_raised` for a new wait, `wait_parked` when auto mode parked it, `wait_answered` for a press (a secret card's first step is none) or an open wait that became answered, and
- * `wait_returned` when auto mode's end gave it back. The session is a card's raiser (a teammate device's card names none), or the session an agent wait is on.
+ * The ledger's wait events of one write: `wait_raised` for a new wait, `wait_parked` when auto mode parked it, `wait_answered` for a press (a secret card's first step is none) or an open wait that became answered,
+ * `wait_returned` when auto mode's end gave it back, and `wait_closed` for one that ended with no answer: resolved while open (`resolved`), or gone from the file while open or answered (`dropped`: a drop, a delete, a
+ * restatement). The session is a card's raiser (a teammate device's card names none), or the session an agent wait is on.
  */
 function noteWaits(slot: Slot, workspace: string, now: number, was: ReturnType<typeof marks>, m: Memory, by: AnsweredBy): void {
+	const note = (kind: "wait_raised" | "wait_parked" | "wait_answered" | "wait_returned" | "wait_closed", id: string, session: string | null, extra: { by?: AnsweredBy; why?: string } = {}) => noteLedger(slot.stateDir, { kind, id, session, workspace, ...extra }, now);
 	for (const e of m.entries) {
 		if (e.kind !== "wait") continue;
-		const old = was.get(e.id), from = e.card?.from?.id, session = from && !from.startsWith("link:") ? from : (e.on?.id ?? null);
-		const note = (kind: "wait_raised" | "wait_parked" | "wait_answered" | "wait_returned") => noteLedger(slot.stateDir, { kind, id: e.id, session, workspace, ...(kind === "wait_answered" ? { by } : {}) }, now);
-		if (!old) note("wait_raised");
-		if (e.parked && !old?.parked) note("wait_parked");
-		if (old && ((e.press && e.press.at !== old.press && e.press.act !== "secret") || (old.state === "open" && e.state === "answered"))) note("wait_answered");
-		if (e.returned && !old?.returned) note("wait_returned");
+		const old = was.get(e.id), session = sessionOf(e);
+		if (!old) note("wait_raised", e.id, session);
+		if (e.parked && !old?.parked) note("wait_parked", e.id, session);
+		const answered = old && ((e.press && e.press.at !== old.press && e.press.act !== "secret") || (old.state === "open" && e.state === "answered"));
+		if (answered) note("wait_answered", e.id, session, { by });
+		if (e.returned && !old?.returned) note("wait_returned", e.id, session);
+		else if (old?.state === "open" && e.state === "resolved" && !answered) note("wait_closed", e.id, session, { why: "resolved" });
 	}
+	const kept = new Set(m.entries.map((e) => e.id));
+	for (const [id, old] of was) if (!kept.has(id) && (old.state === "open" || old.state === "answered")) note("wait_closed", id, old.session, { why: "dropped" });
 }
+const sessionOf = (e: Entry): string | null => ((from) => (from && !from.startsWith("link:") ? from : (e.on?.id ?? null)))(e.card?.from?.id);
 
 // --- the rules ---------------------------------------------------------------------------------------------------------------------------------------------------------
 

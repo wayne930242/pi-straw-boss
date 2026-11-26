@@ -26,8 +26,9 @@ pi-evals 0.4.0 builds a record per work item: when it started, when and how it c
 | --- | --- | --- | --- | --- |
 | `wait_raised` | server | `W<n>` | the card's raiser; an agent wait's session; `null` for a teammate device's card | |
 | `wait_parked` | server | `W<n>` | as above | at the raise under auto mode, or when auto mode starts |
-| `wait_answered` | server | `W<n>` | as above | `by`: `terminal` (pi's `/boss wait` or `/boss memory`, the tower prompt, a run's pane, the `boss_wait_ask` dialog), `gui` (this computer's page), `phone` (a paired device), `tower` (a message the tower took that names the wait, or the message an agent wait waited for) |
+| `wait_answered` | server | `W<n>` | as above | `by`: `terminal` (pi's `/boss wait` or `/boss memory`, the tower prompt, a run's pane, the `boss_wait_ask` dialog), `gui` (this computer's page), `phone` (a paired device), `box` (a box's controller, Straw Link operate), `tower` (a message the tower took that names the wait, or the message an agent wait waited for) |
 | `wait_returned` | server | `W<n>` | as above | auto mode's end gave the parked card back |
+| `wait_closed` | server | `W<n>` | as above | it ended with no answer; `why`: `resolved` (open and resolved, from `/boss memory`, the page, or a tower run) or `dropped` (open or answered and gone from the memory: a drop, a delete, a restatement) |
 | `link_wait_open` | server | `L<n>` | an out wait's raiser; an in wait's holder (none yet when it opens) | |
 | `link_wait_done` | server | `L<n>` | as above | any close: done, declined, cancelled, expired, escalated |
 | `thread_open` | server | `T<n>` | the owner main | `item` when `boss_pair` named one |
@@ -41,4 +42,4 @@ A press of a secret card's first step is no answer; its later done is. An answer
 ## Not done here
 
 - The other producers (pi-todo-ledger's `uid` and `origin`, pi-herdr-agents' `item`), and pi-evals' reading, are their own changes.
-- The ledger holds no closing kind for a resolved, dropped, or expired wait: the contract has none, and a wait's end after an answer is the tower's own step.
+- A wait resolved after its answer, and one that expired after 7 days, write nothing more: its answer is its close for the reader, and an expired wait stayed open (review T10 R-F002, the contract's `wait_closed`).

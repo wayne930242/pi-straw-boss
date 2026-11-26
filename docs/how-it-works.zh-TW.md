@@ -2626,7 +2626,7 @@ sb 把工作項目的等待與審查串上發生的事，附加到一本它從�
 
 **誰來寫**。擁有該事件的程序。sb server 寫等待（每次寫入塔台記憶時比對每個等待的前後）、連結等待（路由器唯一的那個帳本變更）與審查串。session 的擴充寫 `call_tower`（塔台收下之後，id 是 intercom 的 request id）、`wrap`（每一次 `boss_wrap` 呼叫）與 `handover`（接手者的 session id）。寫入失敗絕不讓那個動作失敗：只告知一次，寫在 server 的 log，或在 session 裡顯示警告。
 
-**種類**。`wait_raised`、`wait_parked`、帶 `by`（`terminal`、`gui`、`phone` 或 `tower`：塔台收到一則點名該等待的訊息）的 `wait_answered`，以及 `wait_returned`，對象是等待 `W<n>`，session 是提出者；`link_wait_open` 與 `link_wait_done` 對象是 `L<n>`，session 是外送等待的提出者或持有內送等待的主智慧體；`thread_open` 與 `thread_close`（`why` 為 `done`、`blocked` 或 `abandoned`）對象是 `T<n>`，帶擁有它的主智慧體與 `item`；還有 `call_tower`（`why` 為 `milestone`、`shared` 或 `blocked`）、`wrap`（`why` 為 `wrapped`、`auto` 或 `refused`）與 `handover`。祕密卡的第一步不算回答；之後的完成才算。
+**種類**。`wait_raised`、`wait_parked`、帶 `by`（`terminal`、`gui`、`phone`、`box`：box 的控制端，或 `tower`：塔台收到一則點名該等待的訊息）的 `wait_answered`、`wait_returned`，以及沒有回答就結束的等待的 `wait_closed`（`why` 為 `resolved`，或離開記憶時為 `dropped`），對象是等待 `W<n>`，session 是提出者；`link_wait_open` 與 `link_wait_done` 對象是 `L<n>`，session 是外送等待的提出者或持有內送等待的主智慧體；`thread_open` 與 `thread_close`（`why` 為 `done`、`blocked` 或 `abandoned`）對象是 `T<n>`，帶擁有它的主智慧體與 `item`；還有 `call_tower`（`why` 為 `milestone`、`shared` 或 `blocked`）、`wrap`（`why` 為 `wrapped`、`auto` 或 `refused`）與 `handover`。祕密卡的第一步不算回答；之後的完成才算。
 
 </details>
 

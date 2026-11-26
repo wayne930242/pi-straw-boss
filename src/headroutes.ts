@@ -32,7 +32,7 @@ export async function markAnswered(tower: TowerPanel, workspace: string, id: str
  * One request on the head: `scope` is `head` (the buttons, `head/<action>`) or `sessions` on the head's key (`sessions/<key>/<action>`). The reply is the route's own, or undefined for a session action the generic route takes
  * from here (the keys, mirror, focus, and commands of a live run's pane). `text` is control.ts's check of a composer's text.
  */
-export async function headRoutes(tower: TowerPanel | undefined, [scope, key = "", action = ""]: string[], json: Record<string, unknown>, text: (value: unknown) => string | Reply, far = false): Promise<Reply | undefined> {
+export async function headRoutes(tower: TowerPanel | undefined, [scope, key = "", action = ""]: string[], json: Record<string, unknown>, text: (value: unknown) => string | Reply, far = false, door: "gui" | "phone" | "box" = far ? "phone" : "gui"): Promise<Reply | undefined> {
 	if (!tower?.has(HEAD_KEY)) return no(409, "refused", HEAD_NEEDS_SERVICE);
 	if (scope === "sessions") {
 		if (action === "input") {
@@ -56,7 +56,7 @@ export async function headRoutes(tower: TowerPanel | undefined, [scope, key = ""
 	}
 	if (key === "dialog" && !action) return runRoute(tower, HEAD_KEY, "dialog", json, far);
 	if (action) return no(404, "not_found", "No such action.");
-	if (key === "memory") return tower.memory ? tower.memory(HEAD_KEY, json, far) : no(404, "not_found", "No such action.");
+	if (key === "memory") return tower.memory ? tower.memory(HEAD_KEY, json, door) : no(404, "not_found", "No such action.");
 	if (key === "close") return tower.close ? done(await tower.close(HEAD_KEY), { status: 200, body: {} }) : no(404, "not_found", "No such action.");
 	if (key === "leave" || key === "new") {
 		if (!tower.conversation) return no(404, "not_found", "No such action.");

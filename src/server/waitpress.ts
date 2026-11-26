@@ -20,10 +20,10 @@ export function deliveryOf(status: string | undefined): Delivery {
 	return status === "queued" ? "queued" : "failed";
 }
 
-/** The door a press came in by, as the log records it (never the text): pi's `/boss wait` or `/boss memory`, the tower prompt's picker, the pane of a tower run, the GUI (a paired phone's, `phone`), or the dialog sb drew for an agent's `boss_wait_ask` (waitask.ts). */
-export type PressDoor = "pi" | "prompt" | "run-pane" | "gui" | "phone" | "ask";
-/** The door as the ledger's `wait_answered` names it: the page, a phone, or else a terminal. */
-const byOf = (via: PressDoor): AnsweredBy => (via === "gui" || via === "phone" ? via : "terminal");
+/** The door a press came in by, as the log records it (never the text): pi's `/boss wait` or `/boss memory`, the tower prompt's picker, the pane of a tower run, the GUI (a paired phone's, `phone`; a box controller's, `box`), or the dialog sb drew for an agent's `boss_wait_ask` (waitask.ts). */
+export type PressDoor = "pi" | "prompt" | "run-pane" | "gui" | "phone" | "box" | "ask";
+/** The door as the ledger's `wait_answered` names it: the page, a phone, a box's controller, or else a terminal. */
+const byOf = (via: PressDoor): AnsweredBy => (via === "gui" || via === "phone" || via === "box" ? via : "terminal");
 /** The doors a control request may name (main.ts): the GUI's is its own route's, never a client's word. */
 export const doorOf = (via: unknown): PressDoor => (via === "prompt" || via === "run-pane" || via === "ask" ? via : "pi");
 /**

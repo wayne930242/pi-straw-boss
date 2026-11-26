@@ -10,7 +10,8 @@ import { ledgerFile, ledgerRow, noteLedger } from "../src/server/ledger.ts";
 import { createLinkWaits } from "../src/server/linkwaits.ts";
 import { slotOf, type Slot } from "../src/server/record.ts";
 import { startThreads, threadReply } from "../src/server/threadsops.ts";
-import { addCardWait, addWait, memoryRequest, noteMessage, updateMemory } from "../src/server/towermemory.ts";
+import { createControl } from "../src/control.ts";
+import { addCardWait, addWait, memoryRequest, noteMessage, resolveWait, updateMemory } from "../src/server/towermemory.ts";
 import { checkCard } from "../src/server/waitcard.ts";
 import { pressRequest } from "../src/server/waitpress.ts";
 import type { Request } from "../src/server/socket.ts";
@@ -104,6 +105,34 @@ test("waits: a secret card's first step is no answer, its done is; a second pres
 	const link = updateMemory(slot, "wA", T, (m) => addCardWait(m, T, "run-1", card(), { id: "link:boxdevice", name: "box", role: "session" })).value.id;
 	assert.deepEqual(kinds(), [["wait_raised", secret], ["wait_answered", secret, "terminal"], ["wait_raised", link]]);
 	assert.equal(rows().at(-1)!.session, null);
+});
+
+test("waits: one that ends without an answer is wait_closed, resolved (the boss's, a run's) or dropped; one answered first, declined, or returned is not; a box controller's press is by box", async () => {
+	const boss = (text: string) => updateMemory(slot, "wA", T, (m) => addWait(m, T, "run-1", { text: `${text} ${PLANT}`, for: "boss" })).value.id;
+	const [bossResolved, runResolved, dropped, answeredFirst, boxed] = [boss("a"), boss("b"), boss("c"), boss("d"), add()];
+	function add() { return updateMemory(slot, "wA", T, (m) => addCardWait(m, T, "run-1", card(), raiser)).value.id; }
+	const rev = () => updateMemory(slot, "wA", T, () => undefined).memory.rev;
+	assert.equal(memoryRequest(slot, "wA", T, { op: "resolve", id: bossResolved, outcome: `done ${PLANT}`, rev: rev() }).status, 200);
+	updateMemory(slot, "wA", T, (m) => void resolveWait(m, runResolved, `ok ${PLANT}`, T));
+	assert.equal(memoryRequest(slot, "wA", T, { op: "drop", id: dropped }).status, 200);
+	assert.equal(memoryRequest(slot, "wA", T, { op: "answer", id: answeredFirst }).status, 200);
+	assert.equal(memoryRequest(slot, "wA", T, { op: "resolve", id: answeredFirst, rev: rev() }).status, 200);
+	assert.equal((await pressRequest(pressDeps(), "wA", { op: "press", id: boxed, act: "decline" }, "box")).status, 200);
+	const back = add();
+	parkOpen(slot, T, [{ workspace: "wA", label: "Alpha" }]);
+	returnParked(slot, T, [{ workspace: "wA", label: "Alpha" }], () => "tower");
+	assert.deepEqual(kinds().filter(([k]) => k !== "wait_raised" && k !== "wait_parked"), [
+		["wait_closed", bossResolved, "resolved"], ["wait_closed", runResolved, "resolved"], ["wait_closed", dropped, "dropped"],
+		["wait_answered", answeredFirst, "tower"], ["wait_answered", boxed, "box"], ["wait_returned", back],
+	]);
+});
+
+test("a box controller's write to a tower's memory comes in as the box door, a paired device's as the phone, this computer's page as the page", async () => {
+	const doors: unknown[] = [];
+	const tower = { has: () => true, memory: (_ws: string, _json: unknown, door?: unknown) => (doors.push(door), { status: 200, body: {} }) };
+	const control = createControl({ lookup: () => undefined, csrf: "c".repeat(32), canonical: (f) => f, tower: tower as never });
+	for (const flags of [{ remote: true, secure: true, operate: true as const }, { remote: true, secure: true }, { remote: false, secure: false }]) await control.run(["tower", "wA", "memory"], { op: "press", id: "W1", act: "done" }, flags);
+	assert.deepEqual(doors, ["box", "phone", "gui"]);
 });
 
 test("link waits: one that opens and one that closes, with the main that holds it; the teammate's text stays out", async () => {

@@ -6,13 +6,13 @@ import { dirname, join } from "node:path";
 // the link waits, and the review threads; a session's extension for call_tower, boss_wrap, and boss_handover. A line holds ids, kinds, and times only: no message, question, card, note, or summary text ever (an id that is not
 // id-shaped is written as null). A write that fails never fails the act it records: it is told once per state folder and process, and the act goes on.
 
-export const KINDS = ["wait_raised", "wait_answered", "wait_returned", "wait_parked", "link_wait_open", "link_wait_done", "thread_open", "thread_close", "call_tower", "wrap", "handover"] as const;
+export const KINDS = ["wait_raised", "wait_answered", "wait_closed", "wait_returned", "wait_parked", "link_wait_open", "link_wait_done", "thread_open", "thread_close", "call_tower", "wrap", "handover"] as const;
 export type LedgerKind = (typeof KINDS)[number];
-/** Where a boss wait's answer came in: a terminal (pi's `/boss wait` or `/boss memory`, the tower prompt, a run's pane, the dialog of `boss_wait_ask`), this computer's page, a paired phone, or a message the tower took that names it. */
-export type AnsweredBy = "terminal" | "gui" | "phone" | "tower";
+/** Where a boss wait's answer came in: a terminal (pi's `/boss wait` or `/boss memory`, the tower prompt, a run's pane, the dialog of `boss_wait_ask`), this computer's page, a paired phone, a box's controller, or a message the tower took that names it. */
+export type AnsweredBy = "terminal" | "gui" | "phone" | "box" | "tower";
 /** The `why` each kind may carry; the others carry none. */
-const WHYS: Partial<Record<LedgerKind, readonly string[]>> = { thread_close: ["done", "blocked", "abandoned"], call_tower: ["milestone", "shared", "blocked"], wrap: ["wrapped", "refused", "auto"] };
-const BYS: readonly string[] = ["terminal", "gui", "phone", "tower"];
+const WHYS: Partial<Record<LedgerKind, readonly string[]>> = { wait_closed: ["resolved", "dropped"], thread_close: ["done", "blocked", "abandoned"], call_tower: ["milestone", "shared", "blocked"], wrap: ["wrapped", "refused", "auto"] };
+const BYS: readonly string[] = ["terminal", "gui", "phone", "box", "tower"];
 export interface LedgerEvent { kind: LedgerKind; id: string; session?: string | null; workspace?: string | null; why?: string; item?: string; by?: AnsweredBy }
 export interface LedgerRow { v: 1; at: number; kind: LedgerKind; id: string; session: string | null; workspace: string | null; why?: string; item?: string; by?: AnsweredBy }
 

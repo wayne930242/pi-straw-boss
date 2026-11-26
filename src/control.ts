@@ -90,7 +90,7 @@ export interface TowerPanel {
 	/** The boss leaves the conversation, or starts a fresh one (runs.ts `leave`, `fresh`): the pi twins are `/boss tower leave` and `/boss tower new`, which reach the same functions over the control socket. */
 	conversation?(workspace: string, what: "leave" | "new"): Promise<{ ok: boolean; error?: string; left?: boolean; fresh?: boolean; already?: boolean }>;
 	/** The memory panel's request (towermemory.ts `memoryRequest`): read the boss's standing instructions, decisions, and waits, or change them as the boss; a write names the rev it read. */
-	memory?(workspace: string, json: Record<string, unknown>, remote?: boolean): Promise<Reply> | Reply;
+	memory?(workspace: string, json: Record<string, unknown>, door?: "gui" | "phone" | "box"): Promise<Reply> | Reply;
 	/** The boss closes the tower (the head's Close; a workspace tower closes through the base's own route). */
 	close?(workspace: string): Promise<{ ok: boolean; error?: string }>;
 	/** Whether the key is the head tower's (its constant key or its Herdr workspace): the head answers api/head/… only, so api/tower/… refuses it. */
@@ -315,7 +315,7 @@ export function createControl({ auto, board, bridge, lan, overlay, link, server:
 			if (key.startsWith("@") || tower?.isHead?.(key)) return no(404, "not_found", "No such tower.");
 			// A headless run's dialog and the viewer tab are this computer's own (docs/specs/2026-11-23-f-entry.md §5): a paired device and a box's controller never get an approval card (`NO_RELAY`), and a tab opens where the boss sits.
 			if (action === "dialog" || action === "viewer") return runRoute(tower, key, action, json, Boolean(remote || operate));
-			if (action === "memory") return tower?.memory && tower.has(key) ? tower.memory(key, json, Boolean(remote || operate)) : no(404, "not_found", "No such tower.");
+			if (action === "memory") return tower?.memory && tower.has(key) ? tower.memory(key, json, operate ? "box" : remote ? "phone" : "gui") : no(404, "not_found", "No such tower.");
 			if (action === "leave" || action === "new") {
 				if (!tower?.conversation || !tower.has(key)) return no(404, "not_found", "No such tower.");
 				const done = await tower.conversation(key, action);
@@ -330,7 +330,7 @@ export function createControl({ auto, board, bridge, lan, overlay, link, server:
 		}
 		// A tower unit of the sb server's service: the composer's Send is a boss event for its next run, and with no run live there is no terminal to key into or show.
 		const unit = tower && scope === "sessions" ? lookup(key) : undefined, ws = unit?.role === "tower" && tower?.has(unit.base) ? unit.base : undefined;
-		if (scope === "head" || unit?.role === "head") { const head = await headRoutes(tower, [scope, key, action], json, checkText, Boolean(remote || operate)); if (head) return head; }
+		if (scope === "head" || unit?.role === "head") { const head = await headRoutes(tower, [scope, key, action], json, checkText, Boolean(remote || operate), operate ? "box" : remote ? "phone" : "gui"); if (head) return head; }
 		if (tower && ws) {
 			if (action === "input") {
 				const text = checkText(json.text), answers = answersOf(json);
