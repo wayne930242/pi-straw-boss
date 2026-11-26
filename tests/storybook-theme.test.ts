@@ -35,7 +35,7 @@ test("the theme brings no nouns and no sentences (every word is Standard's), and
 	assert.equal(theme.sprite, at("gui/themes/storybook/sprite.svg"));
 	assert.ok(Buffer.byteLength(theme.sprite) <= 30_000);
 	assert.deepEqual([...theme.sprite.matchAll(/<symbol id="storybook-([^"]+)" viewBox="[^"]+" fill="currentColor">/g)].map(m => m[1]).sort(),
-		["comms", "crown", "doc", "main", "member", "outpost", "outside", "subagent", "tower", "user"]);
+		["comms", "coordinator", "crown", "doc", "integrator", "main", "member", "outpost", "outside", "planner", "reviewer", "scout", "standing", "subagent", "tower", "user", "worker"]);
 	assert.equal(typeof theme.badge, "function");
 	assert.deepEqual((theme.badge as () => unknown)(), { dot: "#e0902b", ring: "#fbf5e9", text: "#3a3150" }, "no page here: the day's");
 	assert.equal(typeof theme.onShift, "function");

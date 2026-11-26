@@ -21,7 +21,7 @@ overwriteGetLocale(() => "en");
 Object.assign(document, { createComment: () => new El("#comment") });
 Object.assign(El.prototype, { replaceWith(this: El, node: El) { this.before(node); this.remove(); } });
 const { baseEl, fillBase, unitIcon } = await import("../gui/render.ts");
-const { iconRef } = await import("../gui/icons.ts");
+const { iconRef, useIcons } = await import("../gui/icons.ts");
 const { fillAllyUnits } = await import("../gui/allyunits.ts");
 void page;
 
@@ -50,6 +50,16 @@ test("every kind has a symbol of its own in Standard's sprite, distinct from eve
 	assert.ok(!/fill="#/.test(DUTIES.map((d) => symbol(`i-${d}`)).join("")), "currentColor only");
 	assert.match(html, /game-icons\.net, CC BY 3\.0/, "the credit stays");
 	assert.equal(iconRef("scout"), "#i-scout", "Standard's own symbol, which every view falls back to");
+});
+
+test("a unit takes its theme's kind symbol when available", () => {
+	try {
+		for (const view of ["storybook", "raven", "geek", "standard"]) {
+			const themed = view === "storybook" || view === "raven";
+			useIcons(view, themed ? readFileSync(new URL(`../gui/themes/${view}/sprite.svg`, import.meta.url), "utf8") : undefined);
+			for (const duty of DUTIES) assert.equal(iconRef(unitIcon(COORDINATOR_DUTIES.some(d => d === duty) ? "main" : "subagent", duty)), `#${themed ? view : "i"}-${duty}`);
+		}
+	} finally { useIcons("standard"); }
 });
 
 const unit = (key: string, role: Unit["role"], over: Partial<Unit> = {}): Unit => ({ id: key, key, control: true, name: key, role, mark: "working", note: "thinking", subs: [], ...over });

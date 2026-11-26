@@ -14,7 +14,7 @@ export const unitIcon = (role: string, duty?: string): string => kindIcon(role, 
 const sprites = new Map<string, Set<string>>();
 let view = "standard";
 
-/** The `<use>` target for a role in the view the page shows now. */
+/** The `<use>` target for a role or duty in the view the page shows now. */
 export const iconRef = (role: string) => (sprites.get(view)?.has(`${view}-${role}`) ? `#${view}-${role}` : `#i-${role}`);
 
 /** Sets `href` on the `<use data-icon>` elements under `root` (an element made from a template calls it for itself). */

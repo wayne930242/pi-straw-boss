@@ -11,6 +11,7 @@ import { declarations, rulesOf, split } from "./css-rules.ts";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const at = (path: string) => readFileSync(join(root, path), "utf8");
 const ROLES = ["user", "crown", "tower", "main", "member", "subagent", "outpost", "outside", "comms", "doc"];
+const KINDS = ["coordinator", "integrator", "standing", "worker", "scout", "planner", "reviewer"];
 const ICONS = [...ROLES, "brand"]; // the ten roles and the header's brand mark (the crest, where Standard has its antenna glyph)
 /** The supply board's marks (docs/specs/2026-11-24-capacity-supply/spec.md): a unit (a bat), a free slot (an empty grave), a lit slot (a grave with its candle), the barracks (the keep's gate), a quota pause (a coffin), a stale main (circling crows), and a teammate device (a grave in fog). */
 const SUPPLY = ["unit", "slot", "lit", "barracks", "paused", "stale", "fog"];
@@ -18,12 +19,12 @@ const SUPPLY = ["unit", "slot", "lit", "barracks", "paused", "stale", "fog"];
 test("the sprite draws the ten roles, the brand mark, and the supply board's marks Standard draws, as symbols prefixed raven-, in one colour", () => {
 	const sprite = at("gui/themes/raven/sprite.svg");
 	const ids = [...sprite.matchAll(/<symbol id="([^"]+)" viewBox="([^"]+)"/g)];
-	assert.deepEqual(ids.map((x) => x[1]), [...ICONS, ...SUPPLY].map((r) => `raven-${r}`));
-	for (const x of ids) assert.equal(x[2], "0 0 256 256");
-	const standard = [...at("gui/index.html").matchAll(/<symbol id="i-(\w+)"/g)].map((x) => x[1]).filter((x) => !["train", "coordinator", "integrator", "standing", "worker", "scout", "planner", "reviewer", "zen"].includes(x!)).sort(); // the train (task 7 of the train workers), the kinds (todo #152), and the Zen button's ensō (the header's Zen button) have no Raven twin: iconRef falls back to Standard's symbol
-	assert.deepEqual([...ICONS, ...SUPPLY].sort(), standard, "the same role keys as Standard's inline sprite");
+	assert.deepEqual(ids.map((x) => x[1]), [...ICONS, ...SUPPLY, ...KINDS].map((r) => `raven-${r}`));
+	for (const x of ids) assert.equal(x[2], KINDS.includes(x[1]!.slice(6)) ? "0 0 40 40" : "0 0 256 256");
+	const standard = [...at("gui/index.html").matchAll(/<symbol id="i-(\w+)"/g)].map((x) => x[1]).filter((x) => !["train", "zen"].includes(x!)).sort(); // The train and Zen button retain Standard's symbols.
+	assert.deepEqual([...ICONS, ...SUPPLY, ...KINDS].sort(), standard, "the same role keys as Standard's inline sprite");
 	assert.ok(!/fill="#|stroke=|<style|<script/.test(sprite), "single colour: currentColor only");
-	assert.equal([...sprite.matchAll(/fill="currentColor"/g)].length, ICONS.length + SUPPLY.length);
+	assert.equal([...sprite.matchAll(/fill="currentColor"/g)].length, ICONS.length + SUPPLY.length + KINDS.length);
 });
 
 test("the noun pack names each role in both languages with the spec's words, and only keys the chokepoint knows", () => {

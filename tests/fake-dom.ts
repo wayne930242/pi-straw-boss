@@ -272,6 +272,7 @@ export const page = {
 	importNode: (el: El) => el,
 	getElementById: (id: string) => page.body.find((el) => el.id === id)[0] ?? null,
 	querySelector: (selector: string) => page.body.querySelector(selector),
+	querySelectorAll: (selector: string) => page.body.querySelectorAll(selector),
 };
 
 /** html() parses a constant template: the fake answers each with a tree of the tags, classes, and attributes the template names, so the mounted views find their parts. */
@@ -302,7 +303,7 @@ class Parser {
 			(stack.at(-1) ?? { append: (e: El) => (root = e) }).append(el);
 			if (!self && !VOID.has(tag!)) stack.push(el);
 		}
-		return { body: { firstElementChild: root } };
+		return { documentElement: root, body: { firstElementChild: root } };
 	}
 }
 class Watcher {
