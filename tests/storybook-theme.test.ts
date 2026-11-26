@@ -1,6 +1,7 @@
+/// <reference types="vite/client" />
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { register } from "node:module";
+import { registerHooks } from "node:module";
 import { test } from "node:test";
 import { CHOICES, VIEWS } from "../src/views.ts";
 import { VIEW_ARGUMENTS } from "../src/bossviews.ts";
@@ -9,7 +10,11 @@ import { rulesOf } from "./css-rules.ts";
 // The Storybook view (繪本, docs/specs/2026-11-26-storybook-theme/spec.md §B1, §B2, §B3, SB-D4): one more name in src/views.ts and a folder under gui/themes/, with no words of its own; its waiting badge follows the phase; the
 // look is the boss's pick B (washi tape, paper grain, a hand-drawn line, ruled lines on the question card), drawn by static pictures and never by a moving filter.
 // The theme's entry imports its stylesheet: a stylesheet is an empty module here (no browser runs), so the entry's exports can be read.
-register("data:text/javascript," + encodeURIComponent(`export async function load(url, context, next) { return url.endsWith(".css") ? { format: "module", source: "", shortCircuit: true } : next(url, context); }`));
+registerHooks({ load(url, context, next) {
+	if (url.endsWith(".css")) return { format: "module", source: "", shortCircuit: true };
+	if (url.endsWith(".svg?raw")) return { format: "module", source: `export default ${JSON.stringify(readFileSync(new URL(url), "utf8"))}`, shortCircuit: true };
+	return next(url, context);
+} });
 const at = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const css = at("gui/themes/storybook/storybook.css");
 
@@ -27,7 +32,10 @@ test("the theme brings no nouns and no sentences (every word is Standard's), and
 	const { theme } = await import("../gui/themes/storybook/index.ts");
 	assert.equal(theme.nouns, undefined);
 	assert.equal(theme.sentences, undefined);
-	assert.equal(theme.sprite, undefined, "the icons come in B-2");
+	assert.equal(theme.sprite, at("gui/themes/storybook/sprite.svg"));
+	assert.ok(Buffer.byteLength(theme.sprite) <= 30_000);
+	assert.deepEqual([...theme.sprite.matchAll(/<symbol id="storybook-([^"]+)" viewBox="[^"]+" fill="currentColor">/g)].map(m => m[1]).sort(),
+		["comms", "crown", "doc", "main", "member", "outpost", "outside", "subagent", "tower", "user"]);
 	assert.equal(typeof theme.badge, "function");
 	assert.deepEqual((theme.badge as () => unknown)(), { dot: "#e0902b", ring: "#fbf5e9", text: "#3a3150" }, "no page here: the day's");
 	assert.equal(typeof theme.onShift, "function");
@@ -39,6 +47,7 @@ test("the theme brings no nouns and no sentences (every word is Standard's), and
 test("the favicon is a plum line drawing on a cream disc, small", () => {
 	const icon = at("gui/themes/storybook/favicon.svg");
 	assert.match(icon, /<circle cx="16" cy="16" r="15.5" fill="#fbf5e9"\/>/);
+	assert.match(icon, /<use href="#storybook-user"/);
 	assert.match(icon, /stroke="#3a3150"/);
 	assert.ok(icon.length < 4000, `${icon.length} bytes`);
 });
