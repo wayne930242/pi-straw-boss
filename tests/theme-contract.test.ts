@@ -72,18 +72,23 @@ test("4. Standard never supplies content on a theme's reserved pseudo-elements",
 	});
 });
 
+function writesAttribute(text: string, writer: string, attr: string) {
+	if (writer.endsWith(".html")) return new RegExp(`<[^>]*\\s${attr}(?:=|\\s|>)`).test(text);
+	const key = attr.slice(5).replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+	const write = new RegExp(`dataset\\.${key}\\s*(?:=(?!=)|\\])|["']${attr}["']\\s*:|\\.(?:set|toggle)Attribute\\(\\s*["']${attr}["']\\s*[,)]`);
+	// composer sets these two as a pair through dataset[name].
+	return write.test(text) || (writer === "composer.ts" && text.includes(`["${key}", doing?.`) && text.includes("form.dataset[name] = value"));
+}
+
+test("a presence attribute needs a writer: reading it or toggling a different attribute is not enough", () => {
+	assert.ok(!writesAttribute('el.hasAttribute("data-missing"); el.toggleAttribute("data-other", on)', "fixture.ts", "data-missing"));
+});
+
 test("5. Each attribute has a writer in the named source (not just a theme selector)", () => {
 	assert.deepEqual(Object.keys(contract.attributes).sort(), Object.keys(contract.writers).sort());
 	for (const [attr, writers] of Object.entries(contract.writers)) {
 		assert.ok(writers.length, attr);
-		const key = attr.slice(5).replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
-		for (const writer of writers) {
-			const text = gui(writer);
-			const write = writer.endsWith(".html") ? new RegExp(`<[^>]*\\s${attr}(?:=|\\s|>)`) : new RegExp(`dataset\\.${key}\\s*(?:=(?!=)|\\])|["']${attr}["']\\s*[:,]`);
-			// composer sets these two as a pair through dataset[name].
-			const pair = writer === "composer.ts" && text.includes(`["${key}", doing?.`) && text.includes("form.dataset[name] = value");
-			assert.ok(write.test(text) || pair, `${writer}: ${attr}`);
-		}
+		for (const writer of writers) assert.ok(writesAttribute(gui(writer), writer, attr), `${writer}: ${attr}`);
 	}
 });
 
