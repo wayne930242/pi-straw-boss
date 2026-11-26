@@ -43,9 +43,7 @@ export async function prepareWorktree(o: { checkout: string; spec: WorkerSpec; h
 	const problem = branchProblem(branch, o.reserved ?? []);
 	if (problem) throw new OpenLimitError(`branch ${branch} ${problem}`);
 	const refuse = (cause: Error) => { throw new OpenLimitError(cause.message); };
-	await git(["check-ref-format", "--branch", branch], o.checkout).catch(refuse);
-	const common = resolve(o.checkout, await git(["rev-parse", "--git-common-dir"], o.checkout).catch(refuse));
-	const repo = basename(common) === ".git" ? basename(dirname(common)) : basename(common).replace(/\.git$/, "");
+	const { dir, repo } = await worktreeOf({ checkout: o.checkout, branch, home: o.home, git });
 	await git(["fetch", "--quiet", "--no-tags", "origin"], o.checkout, FETCH_MS).catch(refuse);
 	const sha = (ref: string) => git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], o.checkout).catch(() => "");
 	const remote = await sha(`refs/remotes/origin/${branch}`), local = await sha(`refs/heads/${branch}`);
@@ -63,11 +61,19 @@ export async function prepareWorktree(o: { checkout: string; spec: WorkerSpec; h
 		if (!baseSha) throw new OpenLimitError(`base origin/${name} does not exist`);
 		base = `origin/${name}`;
 	}
-	const dir = join(o.home, ".herdr", "worktrees", repo, branch.replace(/\//g, "-"));
 	if (existsSync(dir)) throw new OpenLimitError(`the worktree ${dir} exists already: one worker per branch`);
 	const made = !local;
 	await git(made ? ["worktree", "add", "--no-track", "-b", branch, "--", dir, baseSha] : ["worktree", "add", "--", dir, branch], o.checkout).catch(refuse);
 	return { dir, branch, base, baseSha, repo, made, ...(remote ? { rework: true } : {}) };
+}
+
+/** The worktree a branch's worker gets, `~/.herdr/worktrees/<repo>/<branch, / as ->`: derived from the checkout's repository each time, never read from a record. */
+export async function worktreeOf(o: { checkout: string; branch: string; home: string; git?: Git }): Promise<{ dir: string; repo: string; common: string }> {
+	const git = o.git ?? runGit, refuse = (cause: Error) => { throw new OpenLimitError(cause.message); };
+	await git(["check-ref-format", "--branch", o.branch], o.checkout).catch(refuse);
+	const common = resolve(o.checkout, await git(["rev-parse", "--git-common-dir"], o.checkout).catch(refuse));
+	const repo = basename(common) === ".git" ? basename(dirname(common)) : basename(common).replace(/\.git$/, "");
+	return { dir: join(o.home, ".herdr", "worktrees", repo, o.branch.replace(/\//g, "-")), repo, common };
 }
 
 /** A failed open: nothing was handed over, so the worktree goes, and the branch if this open made it. */

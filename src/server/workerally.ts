@@ -7,6 +7,7 @@ import { admitPoints } from "../workercap.ts";
 import type { Slip } from "../workerslip.ts";
 import { modelRefusal, dropWorktree, type Git, prepareWorktree, readWorkers } from "./workeropen.ts";
 import { bookOfAsk, putBook } from "./workerbook.ts";
+import { resumeWorker } from "./workerresume.ts";
 
 // The box's door for a worker (docs/specs/2026-11-26-ally-workers.md, Device side): an ally run at `dispatch` calls `boss_open_main` `role: "worker"` on a `worker:` slip its device sent (runtools.ts reads it from the run's
 // messages); this checks the config, the model, the route cap, and the capacity budget, makes the worktree, opens the worker's tab (opener.ts), and writes its route. Every refusal or failure answers the slip's ask by code
@@ -40,6 +41,10 @@ export interface WorkerDoor {
 	workspace?: string;
 	/** The session file Herdr names for the worker's pane (its `agent_session`), when it is known yet; the sweep reads it again. */
 	fileOf?(pane: string): Promise<string | undefined>;
+	/** pi's sessions folder: a resumed session file must be inside it (revive.ts `fileRefusal`). */
+	sessionsRoot?: string;
+	/** The live worker routes of the workspace and the sessions the broker lists: a resume of a session that runs, or closes, is refused, as is one whose worktree another worker holds. */
+	live?(): { routes: { to: string; final?: number; path?: string }[]; listed?: ReadonlySet<string> };
 }
 
 /** A repeat of a slip already opened: its ask has a worker. Thrown before any reply, so the ask stays the worker's. */
@@ -52,25 +57,32 @@ const turnOf = <T>(key: string, f: () => Promise<T>): Promise<T> => {
 	return run;
 };
 
+/** The checks every open and resume passes first: the config, the hold, the budget, and the device's room. */
+export function gate(d: WorkerDoor, peer: PeerSender): { config: { models: string[] }; budget: number } {
+	const config = readWorkers(d.stateDir), budget = readBudget(d.stateDir);
+	if (!config) throw new OpenLimitError("this box opens no workers: config.json has no workers section");
+	// A held box opens workers for its holder alone (docs/specs/2026-11-26-device-hold.md, D3): its room is that device's. The opener names a peer `link:<device id>`.
+	const hold = readHold(capDir(join(d.stateDir, "board")), d.now());
+	if (hold && peer.id.replace(/^link:/, "") !== hold.device) throw new OpenLimitError(`held by ${hold.label} (${hold.short}): its capacity is that device's`);
+	if (budget === undefined) throw new OpenLimitError("this box opens no workers: config.json sets no capacity.budget");
+	const full = d.room();
+	if (full) throw new OpenLimitError(full);
+	return { config, budget };
+}
+export const turnOfDoor = turnOf;
+
 export function openWorker(d: WorkerDoor, peer: PeerSender, request: OpenRequest & { slip: WorkerSlip }): Promise<Opened> {
 	const { spec, ask } = request.slip;
-	if (spec.resume !== undefined) return turnOf(d.stateDir, () => Promise.reject(new OpenLimitError("this box does not resume workers yet")));
+	if (spec.resume !== undefined) return resumeWorker(d, peer, { ...request, slip: { spec, ...(ask ? { ask } : {}) } });
 	return turnOf(d.stateDir, async () => {
 		let reservation: string | undefined, made: Awaited<ReturnType<typeof prepareWorktree>> | undefined, checkout = "", opened: Opened | undefined;
 		const store = createReservations(capDir(join(d.stateDir, "board")), d.now);
 		const prior = ask ? bookOfAsk(d.stateDir, d.now(), ask) : undefined;
 		if (prior) throw new WorkerRepeat(`A worker was already opened for this slip (session ${prior.main}); its report answers the device's ask, so nothing was opened or sent again`);
 		try {
-			const config = readWorkers(d.stateDir), budget = readBudget(d.stateDir);
-			if (!config) throw new OpenLimitError("this box opens no workers: config.json has no workers section");
-			// A held box opens workers for its holder alone (docs/specs/2026-11-26-device-hold.md, D3): its room is that device's. The opener names a peer `link:<device id>`.
-			const hold = readHold(capDir(join(d.stateDir, "board")), d.now());
-			if (hold && peer.id.replace(/^link:/, "") !== hold.device) throw new OpenLimitError(`held by ${hold.label} (${hold.short}): its capacity is that device's`);
-			if (budget === undefined) throw new OpenLimitError("this box opens no workers: config.json sets no capacity.budget");
+			const { config, budget } = gate(d, peer);
 			const model = modelRefusal(config.models, spec.model);
 			if (model) throw new OpenLimitError(model);
-			const full = d.room();
-			if (full) throw new OpenLimitError(full);
 			checkout = await d.checkout();
 			if (d.within !== undefined && !d.inside(checkout, d.within)) throw new OpenLimitError("this workspace's checkout is outside the project the team binds on this computer");
 			const got = admitPoints({ room: () => readDevice(capDir(join(d.stateDir, "board")), d.now()), store }, budget, spec.points, { session: "", worker: "", self: true });

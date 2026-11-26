@@ -13,6 +13,7 @@ import { openWorker, type WorkerSlip } from "./workerally.ts";
 import { integrationBases, readWorkers } from "./workeropen.ts";
 import { readBudget } from "../capacity.ts";
 import { markBook } from "./workerbook.ts";
+import { sessionsDir } from "../revive.ts";
 
 // The towers' side of the worker door (workerally.ts), kept out of towers.ts, which carries a line budget: the run's peer and asks, the workspace's checkout, the route, and the code's reply to the slip's ask.
 
@@ -57,7 +58,8 @@ export async function workerDoor(d: Deps): Promise<Opened> {
 		room: () => openedRoom(slot, ws, peer.device, d.now(), live),
 		open: l.openAlly,
 		route: (opened, worker, routeAsk) => addRoute(slot, ws, { ...peer, to: opened.main, name: `worker ${worker.label}`.slice(0, 40), kind: "opened", at: d.now(), pane: opened.pane, ...(who.level ? { level: who.level } : {}), ...(routeAsk ? { ask: routeAsk } : {}), worker }, d.now(), live, panes),
-		team: who.team, workspace: ws,
+		team: who.team, workspace: ws, sessionsRoot: sessionsDir(d.o.env),
+		live: () => ({ routes: readRoutes(slot, ws, d.now()).flatMap((r) => (r.worker ? [{ to: r.to, ...(r.final !== undefined ? { final: r.final } : {}), path: r.worker.path }] : [])), ...(live ? { listed: live } : {}) }),
 		fileOf: async (pane) => ((await l.reach?.read().catch(() => undefined))?.ps.find((p) => p.pane_id === pane) as Pane | undefined)?.agent_session?.value,
 		reply: (to, text) => (d.o.link ? d.o.link({ op: "send", device: peer.device, text, reply: false, inReplyTo: to }, l.record.id, true) : Promise.reject(new Error("no link holder"))),
 		log: (event, facts) => d.log.line(event, facts),

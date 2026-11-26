@@ -13,7 +13,7 @@ import { slipsInText } from "./train/cars.ts";
 import { appFromRequest, isRoleLabel, readMaxTrains, TRAIN, type TrainId, trainFromRequest, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 import { reviveMain } from "./reviver.ts";
-import { type WorkerOpen, workerHandoff } from "./workerhandoff.ts";
+import { type WorkerOpen, workerHandoff, workerResumeHandoff } from "./workerhandoff.ts";
 import type { Slip } from "./workerslip.ts";
 export { openSuccessor, type Successor, type SuccessorEnv, type SuccessorRequest, successorPrompt } from "./reviver.ts";
 
@@ -257,20 +257,25 @@ export function opener(env: OpenerEnv) {
 		if (ofSender) throw new OpenLimitError(`Sender ${sender.name ?? sender.id} already has ${ofSender === 1 ? "an opened main" : `${ofSender} opened mains`} running in workspace ${workspace.label}; a sender gets one at a time. Wait for it to finish, or send the request to it.`);
 		if (!train && !integ && !worker && marked.length >= MAX_OPENED_MAINS) throw new OpenLimitError(`Workspace ${workspace.label} already has ${marked.length} mains opened by its tower (the limit is ${MAX_OPENED_MAINS}); try again when one has finished.`);
 		await assertSettingsSafe([dir]); // before the tab exists: pi reads the folder's .pi/settings.json before any extension can stop it (trust/settings.ts)
+		const resumed = worker?.resume;
 		const { tabId, paneId } = await createTab(run, workspace.workspace_id, dir, [`STRAW_BOSS_ROLE=${train ? TRAIN : "main"}`], label);
 		try {
 			// The marker counts toward the limits at once; sb_open_main authorises exactly one pi in this shell to promote itself (it consumes the token).
 			await report(run, "pane", paneId, { sb_opened_by: integ ? integMark(integ) : sender.id, sb_open_main: "1", ...(train ? { sb_train: trainToken(train) } : {}), ...(openDuty ? { sb_open_duty: openDuty } : {}) });
 			// Herdr agent names are unique across workspaces and lowercase only.
-			await startPi(run, sleep, `${train ? TRAIN : integ ? "integ" : "main"}-${randomUUID().slice(0, 8)}`, paneId, ["--name", train || integ ? label! : worker ? `worker · ${worker.label}` : `main · ${label ?? workspace.label}`, ...(worker?.model ? ["--model", worker.model] : [])]);
+			await startPi(run, sleep, `${train ? TRAIN : integ ? "integ" : "main"}-${randomUUID().slice(0, 8)}`, paneId, resumed ? ["--session", resumed.file, ...(resumed.model ? ["--model", resumed.model] : [])] : ["--name", train || integ ? label! : worker ? `worker · ${worker.label}` : `main · ${label ?? workspace.label}`, ...(worker?.model ? ["--model", worker.model] : [])]);
 			// The pi is the tab's main (or the train) once it has published its role, and an integrator once it has published its kind too; only then does it get the request, so its first prompt is its own role's.
 			const wanted = train ? TRAIN : "main";
 			const main = await waitPastTrust(sleep, async () => {
 				const tokens = (await panes(run, workspace.workspace_id)).find((p) => p.pane_id === paneId)?.tokens;
-				return tokens?.sb_role === wanted && (!integ || tokens.sb_duty === INTEGRATOR) ? (await env.sessions()).find((s) => s.herdrLocation?.paneId === paneId) : undefined;
+				const mine = tokens?.sb_role === wanted && (!integ || tokens.sb_duty === INTEGRATOR) ? (await env.sessions()).find((s) => s.herdrLocation?.paneId === paneId) : undefined;
+				if (resumed && mine && mine.id !== resumed.session) throw new Error(`the pi in pane ${paneId} joined as session ${mine.id.slice(0, 8)}, not ${resumed.session.slice(0, 8)}: it is no resume of that worker`);
+				return mine;
 			}, MAIN_WAIT_MS, 500, env.trustDir ? { dir: env.trustDir, pane: paneId } : undefined);
+			if (resumed && !main) throw new Error(`the pi in pane ${paneId} did not come back as session ${resumed.session.slice(0, 8)} within ${MAIN_WAIT_MS / 1000} s`);
+			if (resumed && (await panes(run)).some((p) => p.pane_id !== paneId && p.agent_session?.value === resumed.file)) throw new OpenLimitError("another pane runs this session file now; the resumed pi was closed, and that one keeps it");
 			if (!main) throw new Error(`The pi in pane ${paneId} did not become ${train ? "the train" : integ ? `the integrator of project ${integ} (a main of kind integrator)` : "the main agent"} of its tab within ${MAIN_WAIT_MS / 1000} s`);
-			const sent = await env.send(main.id, train ? trainHandoff(workspace.label, sender, request, env.tower(), train) : worker && peer ? workerHandoff(workspace.label, peer, worker, request, env.tower()) : integ ? integratorHandoff(workspace.label, integ, env.tower()) : handoff(workspace.label, sender, request, env.tower(), peer, openDuty === "standing" ? openDuty : undefined));
+			const sent = await env.send(main.id, train ? trainHandoff(workspace.label, sender, request, env.tower(), train) : worker && peer ? (resumed ? workerResumeHandoff(workspace.label, peer, { ...worker, resume: resumed }, request, env.tower()) : workerHandoff(workspace.label, peer, worker, request, env.tower())) : integ ? integratorHandoff(workspace.label, integ, env.tower()) : handoff(workspace.label, sender, request, env.tower(), peer, openDuty === "standing" ? openDuty : undefined));
 			if (sent.status !== "sent") throw new Error(`The new ${train ? "train" : integ ? "integrator" : "main"} ${main.name ?? main.id} did not take the ${integ ? "handoff" : "request"}: ${sent.status} ${sent.code ?? ""} ${sent.detail ?? ""}`.trim());
 			return { tab: tabId, pane: paneId, main: main.id, sender: sender.id, ...(train ? { train } : {}), ...(integ ? { integrator: integ } : {}) };
 		} catch (error) {

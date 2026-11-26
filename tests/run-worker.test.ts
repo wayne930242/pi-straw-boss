@@ -47,3 +47,17 @@ test("below dispatch, for another sender, with no slip, with two slips and no br
 	assert.equal(two.opens[0]!.request, "Other.");
 	await assert.rejects(open(host("dispatch").h, {}, "local"), /dispatch a worker subagent instead/);
 });
+
+test("a resume slip opens with its session; branch picks it by the book's branch for the run's own device", async () => {
+	const { mkdtempSync, rmSync } = await import("node:fs"), { tmpdir } = await import("node:os"), { join } = await import("node:path"), { putBook } = await import("../src/server/workerbook.ts");
+	const state = mkdtempSync(join(tmpdir(), "psb-run-worker-")), SID = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+	try {
+		putBook(state, Date.now(), { ask: "0".repeat(32), main: SID, at: Date.now(), device: DEV, branch: "feat/r" });
+		const two = host("dispatch", [{ id: "e1", text: SLIP }, { id: "e2", text: `worker: again | resume: ${SID}\nFollow up.`, ask: ASK }]);
+		(two.h as { stateDir?: string }).stateDir = state;
+		const r = await open(two.h, { branch: "feat/r" });
+		assert.deepEqual(two.opens[0]!.slip, { spec: { label: "again", resume: SID }, ask: ASK });
+		assert.equal(two.opens[0]!.request, "Follow up.");
+		assert.match(r.text, /^Resumed tab t1 with worker again/);
+	} finally { rmSync(state, { recursive: true, force: true }); }
+});

@@ -7,6 +7,7 @@ import { type DeadRow, ReviveRefused, revivedText, rowLine } from "../revive.ts"
 import { bodyOf } from "../header.ts";
 import { headsIn, slipsInText } from "../train/cars.ts";
 import { parseWorker, type Slip } from "../workerslip.ts";
+import { bookOf } from "./workerbook.ts";
 import { remoteTowers } from "../link/remotelist.ts";
 import type { AllyBoard, AllyTeam } from "../link/holder.ts";
 import { clean } from "../board.ts";
@@ -346,11 +347,13 @@ const sameText = (a: string, b: string) => ((n: (t: string) => string) => n(a) =
 /** The worker slip among the run's own taken messages (never the model's words); `branch` picks one when several came. */
 function workerSlipOf(host: ToolHost, args: Record<string, unknown>): { spec: Slip; brief: string; ask?: string } {
 	const read = (host.allyMessages?.() ?? []).map((m) => ({ m, got: parseWorker(m.text) ?? parseWorker(bodyOf(m.text)) })).filter((x) => x.got !== undefined);
-	const branch = opt(args, "branch"), slips = read.flatMap(({ m, got }) => (got && "spec" in got && (branch === undefined || got.spec.branch === branch) ? [{ spec: got.spec, brief: got.brief, ...(m.ask ? { ask: m.ask } : {}) }] : []));
+	// A resume slip without a branch is the branch the book records for its session on this box (workerbook.ts), for the run's own device only.
+	const branchOf = (spec: Slip) => spec.branch ?? (spec.resume !== undefined && host.stateDir && host.who.device ? bookOf(host.stateDir, Date.now(), spec.resume, host.who.device)?.branch : undefined);
+	const branch = opt(args, "branch"), slips = read.flatMap(({ m, got }) => (got && "spec" in got && (branch === undefined || branchOf(got.spec) === branch) ? [{ spec: got.spec, brief: got.brief, ...(m.ask ? { ask: m.ask } : {}) }] : []));
 	if (slips.length === 1) return slips[0]!;
 	if (slips.length > 1) throw new Error(`This run took ${slips.length} worker slips: give branch to name the one to open`);
 	const bad = read.find((x) => x.got && "error" in x.got)?.got as { error: string } | undefined;
-	throw new Error(bad ? `The worker slip cannot be opened: ${bad.error}` : `No message this run took carries a worker slip${branch ? ` for branch ${branch}` : ""} (its first line: worker: <label> | branch: <b> | …)`);
+	throw new Error(bad ? `The worker slip cannot be opened: ${bad.error}` : `No message this run took carries a worker slip${branch ? ` for branch ${branch}` : ""} (its first line: worker: <label> | branch: <b> | …, or worker: <label> | resume: <session> | …)`);
 }
 
 async function slipOf(host: ToolHost, args: Record<string, unknown>, ally: boolean): Promise<{ project?: string; event: SlipEvent }> {

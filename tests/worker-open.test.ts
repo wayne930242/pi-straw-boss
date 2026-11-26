@@ -53,3 +53,30 @@ test("role worker without a peer or with a duty, and duty worker alone, open not
 	await assert.rejects(o({ request: "x", sender: PEER.id, peer: PEER, duty: "worker" }), /duty must be/);
 	assert.equal(world.herdr.commands("tab", "create").length, 0);
 });
+
+test("a resume starts pi --session <file> with no --name (and --model only when given), refuses a pi that joins as another session or a twin pane on the file, and closes its tab then", async () => {
+	handed.length = 0;
+	world.herdr.addTab("wA:t7", "tower", "wA:p7");
+	const SID = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", file = "/s/--wt--/x_0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b.jsonl";
+	let joinAs = SID;
+	world.herdr.onAgentStart = (pane) => void world.agent({ id: joinAs, name: "worker", pane: pane.pane_id, env: { STRAW_BOSS_ROLE: "main" } }).start();
+	const resume = (model?: string) => open()({ request: "follow-up", sender: PEER.id, peer: PEER, role: "worker", worker: { ...WORKER, resume: { file, session: SID, came: "the worktree was kept on the box", ...(model ? { model } : {}) } } });
+	const first = await resume();
+	assert.deepEqual(world.herdr.commands("agent", "start").at(-1)!.slice(-2), ["--session", file]);
+	assert.ok(handed.at(-1)!.message.endsWith("Follow-up, verbatim:\nfollow-up"));
+	assert.match(handed.at(-1)!.message, /the worktree was kept on the box/);
+	await world.herdr.runFor("wA:p7")(["tab", "close", first.tab]);
+	for (const a of world.agents.filter((x) => x.id === SID)) await a.stop();
+	await resume("m/x");
+	assert.deepEqual(world.herdr.commands("agent", "start").at(-1)!.slice(-4), ["--session", file, "--model", "m/x"]);
+	for (const a of world.agents.filter((x) => x.id === SID)) await a.stop();
+	joinAs = "0199a1b2-0000-7000-8000-000000000009";
+	const tabs = world.herdr.commands("tab", "close").length;
+	await assert.rejects(resume(), /joined as session 0199a1b2, not 0199a1b2: it is no resume of that worker/);
+	assert.equal(world.herdr.commands("tab", "close").length, tabs + 1, "its tab was closed");
+	for (const a of world.agents) await a.stop();
+	joinAs = SID;
+	world.herdr.addTab("wA:t90", "busy", "wA:p90");
+	world.herdr.pane("wA:p90").agent_session = { value: file };
+	await assert.rejects(resume(), /another pane runs this session file now/);
+});
