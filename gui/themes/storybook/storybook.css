@@ -116,6 +116,10 @@ html[data-view="storybook"][data-phase="night"] { color-scheme: dark; }
 	html[data-view="storybook"][data-phase="night"] { --sb-scene: url("./backdrop-night.webp"); }
 	html[data-view="storybook"]:has(#stage[data-stale]:is([data-view="head"], [data-view="map"])) body { background: var(--bg) var(--sb-scene) center top / cover no-repeat fixed; }
 	html[data-view="storybook"]:has(#stage:is([data-view="head"], [data-view="map"])) :is(.legend, .crumbs, .new-base, .bar-acts .pair-btn) { background: var(--panel); }
+	/* Move the map as a unit: the head band and its wires stay with their columns. Keep room for three 330px tracks as the clearing opens. */
+	@media (min-width: 1280px) {
+		html[data-view="storybook"] #stage[data-view="map"] .map { margin-left: min(31%, calc(100vw - 1120px)); }
+	}
 	@media (max-width: 600px) {
 		html[data-view="storybook"]:has(#stage:is([data-view="head"], [data-view="map"])) body { background-position: 18% top; }
 		/* The mobile comms cover the viewport. Give their header a text-free strip of the tree. */

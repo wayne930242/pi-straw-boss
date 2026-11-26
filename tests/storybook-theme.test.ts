@@ -67,6 +67,12 @@ test("every rule hangs on the view (the phase only refines it), so another view 
 	for (const rule of rulesOf(css)) for (const part of rule.parts) assert.match(part, /^(html)?\[data-view="storybook"\]/, part);
 });
 
+test("only a wide Storybook map makes room beside the bases for the treehouse", () => {
+	const gutters = rulesOf(css).filter((rule) => rule.selector.includes(".map") && /margin-left:/.test(rule.body));
+	assert.deepEqual(gutters.map((rule) => rule.selector), ['html[data-view="storybook"] #stage[data-view="map"] .map']);
+	assert.match(css, /@media \(min-width: 1280px\)\s*\{\s*html\[data-view="storybook"\] #stage\[data-view="map"\] \.map \{[^}]*margin-left:/);
+});
+
 test("forced colours draw no tape and no hand-drawn line", () => {
 	const forced = css.slice(css.indexOf("@media (forced-colors: active)"));
 	assert.match(forced, /border-image: none !important/);
