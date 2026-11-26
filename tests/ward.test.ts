@@ -23,7 +23,7 @@ const line = (o: unknown) => `${JSON.stringify(o)}\n`;
 const user = (text: string) => line({ type: "message", id: "u", timestamp: "2026-11-27T00:00:00Z", message: { role: "user", content: [{ type: "text", text }] } });
 const said = (text: string) => line({ type: "message", id: "a", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text }] } });
 const calls = (id: string, name: string, args: Record<string, unknown>) => line({ type: "message", id, message: { role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id, name, arguments: args }] } });
-const result = (id: string, name: string, isError = false) => line({ type: "message", id: `r${id}`, message: { role: "toolResult", toolCallId: id, toolName: name, isError, content: [{ type: "text", text: "ok" }] } });
+const result = (id: string, name: string, details: Record<string, unknown> = name === "call_peer" ? { to: "main", id: MAIN, status: "sent" } : { messageId: `m${id}`, delivered: true }, isError = false) => line({ type: "message", id: `r${id}`, message: { role: "toolResult", toolCallId: id, toolName: name, isError, details, content: [{ type: "text", text: "ok" }] } });
 
 function world() {
 	const dir = mkdtempSync(join(tmpdir(), "sb-ward-")), loops = join(dir, "loops"), file = join(dir, `2026_${WORKER}.jsonl`);
@@ -97,9 +97,13 @@ test("a report to the main over intercom or call_peer is finished at the next lo
 	await w.looks(2);
 	assert.equal(w.sent.length, 0, "the report before the ward is old");
 	w.write(calls("c1", "intercom", { action: "send", to: "someone-else", message: "x" }) + result("c1", "intercom"));
-	w.write(calls("c2", "intercom", { action: "send", to: "boss-main", message: "done" }));
+	// ward-review F001: a name or an id prefix may resolve to another session (intercom matches a full name before an id prefix), and a result that says not delivered reached nobody.
+	w.write(calls("c3", "intercom", { action: "send", to: "boss-main", message: "done" }) + result("c3", "intercom"));
+	w.write(calls("c4", "intercom", { action: "send", to: MAIN.slice(0, 8), message: "done" }) + result("c4", "intercom"));
+	w.write(calls("c5", "intercom", { action: "send", to: MAIN, message: "done" }) + result("c5", "intercom", { messageId: "m5", delivered: false, reason: "offline" }));
+	w.write(calls("c2", "intercom", { action: "send", to: MAIN, message: "done" }));
 	await w.looks(1);
-	assert.equal(w.sent.length, 0, "a call without its result has not reached the main yet, and another target is no report");
+	assert.equal(w.sent.length, 0, "a call without its result has not reached the main yet; another target, a name, a prefix, or an undelivered send is no report");
 	w.write(result("c2", "intercom"));
 	await w.looks(1);
 	assert.equal(w.sent.length, 1);
@@ -110,6 +114,11 @@ test("a report to the main over intercom or call_peer is finished at the next lo
 
 	const v = world();
 	assert.equal((await v.add()).ok, true);
+	// call_peer to its own tab's main may reach another main than the warder: only the result's recipient id counts.
+	v.write(calls("p0", "call_peer", { to: "main", message: "done" }) + result("p0", "call_peer", { to: "main", id: "0199cccc-other-main", status: "sent" }));
+	v.write(calls("p2", "call_peer", { to: "main", message: "done" }) + result("p2", "call_peer", { to: "main", id: MAIN, status: "queued" }));
+	await v.looks(1);
+	assert.equal(v.sent.length, 0, "a call_peer to another main, or one not sent, is no report");
 	v.write(calls("p1", "call_peer", { to: "main", message: "done" }) + result("p1", "call_peer"));
 	await v.looks(1);
 	assert.deepEqual(v.sent.map((s) => s.state), ["finished"]);

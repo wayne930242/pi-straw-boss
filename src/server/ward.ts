@@ -47,8 +47,6 @@ export function judgeWard(rec: WardRec, look: WardLook, told: WardTold, at: numb
 	return { state: "finished", why: "its last turn ended and nothing of it has run for a minute", told: { quiet: told.quiet } };
 }
 
-/** Whether `to` names the main: its session id or a leading part of it (4 characters at least), or one of its names. */
-const isMain = (main: WardRec["main"], to: unknown) => typeof to === "string" && ((t) => t.length > 0 && ((t.length >= 4 && main.id.toLowerCase().startsWith(t)) || main.names.some((n) => n.toLowerCase() === t)))(to.trim().toLowerCase());
 type Json = Record<string, any>;
 const blocksOf = (m: Json): Json[] => (Array.isArray(m?.content) ? m.content.filter((b: unknown) => b && typeof b === "object") : []);
 
@@ -75,13 +73,15 @@ export function readSession(file: string, offset: number, main: WardRec["main"])
 				turn = m.stopReason === "toolUse" || tools.length ? (tools.some((b) => DIALOGS.has(String(b.name))) ? "dialog" : "working") : "ended";
 				if (start >= offset) for (const b of tools) {
 					const a: Json = b.arguments ?? {}, name = String(b.name);
-					if (name === "intercom" && (a.action === "send" || a.action === "ask") && isMain(main, a.to)) calls.set(String(b.id), `intercom ${a.action}`);
-					if (name === "call_peer" && a.to === "main" && (a.of === undefined || isMain(main, a.of))) calls.set(String(b.id), "call_peer");
+					// Only a recipient the result proves (ward-review F001): intercom resolves a full session id before any name or id prefix, so only the main's full id is the main; call_peer's result names the session it sent to.
+					if (name === "intercom" && (a.action === "send" || a.action === "ask") && typeof a.to === "string" && a.to.trim() === main.id) calls.set(String(b.id), `intercom ${a.action}`);
+					if (name === "call_peer") calls.set(String(b.id), "call_peer");
 				}
 			} else if (m.role === "toolResult") {
 				turn = "working";
-				const call = calls.get(String(m.toolCallId));
-				if (call && !m.isError && start >= offset) reported ??= call;
+				const call = calls.get(String(m.toolCallId)), det: Json = m.details ?? {};
+				const took = call === "call_peer" ? det.id === main.id && det.status === "sent" : det.delivered === true;
+				if (call && took && !m.isError && start >= offset) reported ??= call;
 			} else if (m.role === "user") turn = "working";
 		}
 		return { turn, ...(reported ? { reported } : {}) };
