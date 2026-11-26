@@ -74,3 +74,15 @@ test("D14: the boss's delegate escalates an approval with linkWait escalated and
 	assert.match(sent.text, /^L4 is escalated\. The card goes to the boss on waydosoft/);
 	assert.deepEqual(r.ops.at(-1), { op: "wait-act", id: "L4", state: "escalated", message: "the boss picks the window" });
 });
+
+test("call_tower worker (docs/specs/2026-11-26-ally-workers.md): a bad slip or an empty brief is refused before anything goes; a good one goes to worker-send, and the tower gets no call", async () => {
+	const r = rig({ "worker-send": () => ({ ok: true, text: "Worker MP-1 (branch fix/a, 1 point) went to box.", details: { worker: "fix/a" } }) });
+	await assert.rejects(r.call({ message: "brief", worker: { device: "box", branch: "develop" } }), /integration or train branch/);
+	await assert.rejects(r.call({ message: " ", worker: { device: "box", branch: "fix/a" } }), /needs a brief/);
+	await assert.rejects(r.call({ message: "brief", worker: { device: "box", branch: "fix/a" }, standing: { device: "box" } }), /do not go together/);
+	assert.equal(r.ops.length, 0, "nothing reached the router");
+	const sent = await r.call({ message: "Fix MP-1.", worker: { device: "box", branch: "fix/a", label: "MP-1" } });
+	assert.match(sent.text, /^Worker MP-1/);
+	assert.deepEqual(r.ops, [{ op: "worker-send", device: "box", worker: { branch: "fix/a", label: "MP-1" }, message: "Fix MP-1." }]);
+	assert.equal(r.calls.length, 0);
+});

@@ -10,6 +10,8 @@ import { createLinkWaits, isOpen, type LinkWaits, readWaits } from "./linkwaits.
 import type { Slot } from "./record.ts";
 import type { Towers } from "./towers.ts";
 import { sendStanding } from "./standingsend.ts";
+import { sendWorker } from "./workersend.ts";
+import { workerSpec } from "../workerslip.ts";
 import { listServices } from "./towerstore.ts";
 import { nameOf } from "../reach.ts";
 
@@ -136,6 +138,18 @@ export function startLinkWaits(o: StartWaits): WaitsHub {
 						// The moment a notice goes past a wait the sender holds from that device (field 2026-11-26: box 1 told the Mac's standing main each step of nine of its questions): say where a note on it goes.
 						const held = kind === "notice" ? router.ofDevice(target.id).filter((w) => w.dir === "in" && w.wait && (w.kind === "wait" || w.kind === "question") && (w.claimedBy ? w.claimedBy.id === from : !!w.toldTo?.some((m) => m.id === from))).map((w) => `L${w.n}`) : [];
 						return { ok: true, ...sent, ...(held.length ? { text: `${sent.text} You hold ${held.join(", ")} from ${restrictLabel(target.label)}: a note on one goes in its thread (linkWait state note), to the main there that waits on it, not to its standing main; done or declined closes it.` } : {}) };
+					}
+					case "worker-send": {
+						// A main's `call_tower` `worker` (docs/specs/2026-11-26-ally-workers.md): the same checks as standing-send; the code writes the slip and the ask.
+						const n = await net(), me = n.sessions.find((s) => s.id === from), pane = me && n.ps.find((p) => p.pane_id === me.herdrLocation?.paneId), ws = pane?.workspace_id, identity = ws ? o.towers()?.identityOf(ws) : undefined;
+						if (!me || pane?.tokens?.sb_role !== "main" || pane.tokens.sb_duty === "worker" || !ws) return { ok: false, error: "Only a main of this computer that is no worker sends a worker to a teammate's device" };
+						const link = o.link(), target = resolve(body.device);
+						if (!target.ok) return target;
+						const no = raiserRefusal(o.slot, from, target, o.now());
+						if (no) return { ok: false, error: no };
+						if (!identity || !link || !o.asks?.open) return { ok: false, error: "The sb server runs no tower for your workspace or no link holder, so nothing was sent" };
+						const spec = workerSpec(typeof body.worker === "object" && body.worker !== null ? body.worker : {});
+						return { ok: true, ...(await sendWorker({ now: o.now, ws, identity, link: (b) => link.request(b, identity, true), asks: { open: o.asks.open.bind(o.asks) }, caps: (team, device) => link.holder?.capsFor(team, device) ?? [], log: o.log }, target, spec, String(body.message ?? ""), { id: from, name: nameOf(me) || from })) };
 					}
 					default: return { ok: false, error: "unknown request" };
 				}

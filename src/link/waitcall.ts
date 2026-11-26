@@ -5,6 +5,7 @@ import { SLIP } from "../carslip.ts";
 import { BLOCKED_NOTE, CALL_TOWER_DESCRIPTION, SLIP_NOTE } from "../moments.ts";
 import type { Reach } from "../reach.ts";
 import { waitOwner, waitWhat } from "./kinds.ts";
+import { workerMessage, workerSpec } from "../workerslip.ts";
 import type { Link } from "./runtime.ts";
 
 // `call_tower`, a joined session's call to its tower, with the two parts of a link wait (docs/specs/2026-11-21-box-mac-waits.md): `waitsOn` says the task ends at a step only a teammate device can take, and the tower forwards it as a
@@ -45,12 +46,21 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 				what: Type.Optional(Type.String({ description: "One line of at most 200 bytes; default the message's first line." })),
 			}, { description: "Instead of your tower: that device's standing main, a question (why blocked) or a notice (why milestone). A notice on a wait you hold from that device: linkWait note." })),
 			boss: bossParameter(),
+			worker: Type.Optional(Type.Object({
+				device: Type.String({ description: "Label, short id, or id of a box that lists tower.worker and trusts you at dispatch." }),
+				branch: Type.String({ description: "The worker's branch: new, or one origin has (a rework); never an integration or train branch." }),
+				base: Type.Optional(Type.String({ description: "A branch of origin or a 40-hex commit to start from; default origin's default branch." })),
+				model: Type.Optional(Type.String({ description: "A model id on that box's workers.models; default pi's." })),
+				points: Type.Optional(Type.Number({ description: "Its weight in that box's capacity, 0.25 to 10; default 1." })),
+				label: Type.Optional(Type.String({ description: "A short name (a ticket id); default the branch." })),
+			}, { description: "Instead of your tower: a worker on that teammate's box, with message as its whole brief (anchor, authorizations). Its final report, or the box's refusal, comes back to you as a link_reply." })),
 		}),
-		async ({ waitsOn, linkWait, standing, boss, ...call }, signal, ctx, id) => {
-			if ([waitsOn, linkWait, standing, boss].filter(Boolean).length > 1) throw new Error("waitsOn, linkWait, standing, and boss do not go together");
+		async ({ waitsOn, linkWait, standing, boss, worker, ...call }, signal, ctx, id) => {
+			if ([waitsOn, linkWait, standing, boss, worker].filter(Boolean).length > 1) throw new Error("waitsOn, linkWait, standing, boss, and worker do not go together");
 			const m: Modes = { callTower, link, bossAsk };
 			if (boss) return bossMode(m, call, boss, signal, ctx, id);
 			if (standing) return standingMode(m, call, standing);
+			if (worker) return workerMode(m, call, worker);
 			if (linkWait) return linkWaitMode(m, call, linkWait);
 			if (!waitsOn) return plainMode(m, call);
 			return waitsOn.cancel ? cancelMode(m, call, waitsOn) : waitsOnMode(m, call, waitsOn);
@@ -78,6 +88,14 @@ async function bossMode({ callTower, bossAsk }: Modes, { message, why, workspace
 async function standingMode({ link }: Modes, { message, why }: Call, standing: { device: string; what?: string }) {
 	if (why !== "blocked" && why !== "milestone") throw new Error("standing goes with why blocked (a question) or milestone (a notice)");
 	const sent = await link.waitOp({ op: "standing-send", device: standing.device, kind: why === "blocked" ? "question" : "notice", what: standing.what ?? "", message });
+	return { text: String(sent.text), details: sent.details };
+}
+
+/** A worker on a teammate's box (docs/specs/2026-11-26-ally-workers.md): the code checks the slip here, and the sb server sends it with an ask for this main. */
+async function workerMode({ link }: Modes, { message }: Call, worker: { device: string; branch: string; base?: string; model?: string; points?: number; label?: string }) {
+	const { device, ...spec } = worker;
+	workerMessage(workerSpec(spec), message); // refused here, before anything goes, when the slip or the brief is
+	const sent = await link.waitOp({ op: "worker-send", device, worker: spec, message });
 	return { text: String(sent.text), details: sent.details };
 }
 
