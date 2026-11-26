@@ -158,7 +158,7 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 [data-view="storybook"] .tab + .tab { background: var(--sb-rule) left top / 100% 4px no-repeat; padding-top: 10px; }
 /* Washi tape holds each base, the question card, and the head band to the page: a translucent strip with torn ends, a little askew. One strip per card (the question card in the comms scrolls, so it takes the ruled page alone) and no doodle on every header (the review's P2). */
 [data-view="storybook"] :is(.base, .dialog, .head-node)::after { content: ""; position: absolute; z-index: 3; top: -8px; right: 16%; width: 56px; height: 16px; background: repeating-linear-gradient(90deg, rgb(255 255 255 / 0.22) 0 3px, transparent 3px 8px), var(--sb-tape); transform: rotate(-4deg); clip-path: polygon(0 8%, 6% 0, 12% 10%, 18% 2%, 82% 0, 88% 9%, 94% 1%, 100% 10%, 97% 50%, 100% 92%, 93% 100%, 87% 90%, 80% 100%, 16% 96%, 10% 100%, 4% 90%, 0 96%, 3% 50%); pointer-events: none; }
-[data-view="storybook"] .bases > .base:nth-child(3n + 2)::after { right: auto; left: 18%; transform: rotate(3deg); background: repeating-linear-gradient(90deg, rgb(255 255 255 / 0.22) 0 3px, transparent 3px 8px), var(--sb-tape-2); }
+[data-view="storybook"] .bases > .base:is([data-vary="1"], [data-vary="3"], [data-vary="5"])::after { right: auto; left: 18%; transform: rotate(3deg); background: repeating-linear-gradient(90deg, rgb(255 255 255 / 0.22) 0 3px, transparent 3px 8px), var(--sb-tape-2); }
 [data-view="storybook"] .head-node::after { right: auto; left: calc(50% - 28px); top: -9px; }
 [data-view="storybook"] .dialog::after { top: 0; } /* the dialog scrolls (overflow), so its strip sits on its edge, not over it */
 

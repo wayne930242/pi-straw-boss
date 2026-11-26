@@ -62,6 +62,9 @@ test("the notebook look: washi tape, paper grain, a hand-drawn line per phase, r
 	assert.match(css, /border-image: var\(--sb-frame\) 14 \/ 14px round/);
 	assert.match(css, /\.ask \{[^}]*repeating-linear-gradient\(transparent 0 23px, var\(--sb-ruled\) 23px 24px\)/, "the question card is ruled");
 	assert.match(css, /:is\(\.base, \.dialog, \.head-node\)::after \{ content: ""[^}]*clip-path: polygon/, "the tape has torn ends");
+	const tape = rulesOf(css).find(r => r.selector.includes(".base") && r.selector.endsWith("::after") && r.body.includes("var(--sb-tape-2)"));
+	assert.match(tape?.selector ?? "", /\[data-vary="[0-7]"\]/, "the alternate tape follows the card's key");
+	assert.doesNotMatch(tape!.selector, /:(nth-|first-|last-)/);
 	assert.match(css, /--sb-round: ui-rounded, "SF Pro Rounded", system-ui/);
 	assert.ok(!/@font-face|@import|https?:\/\/(?!www\.w3\.org)/.test(css), "nothing fetched from elsewhere");
 	for (const grain of css.matchAll(/--sb-grain: (url\("[^"]+"\))/g)) assert.ok(grain[1]!.length < 2048, `the grain is under 2 KB (${grain[1]!.length})`);

@@ -16,7 +16,7 @@ import { onSelectionEnd, selectedIn } from "./selection.ts";
 import type { Post } from "./composer.ts";
 import { m } from "./sentences.ts"; import { noun } from "./nouns.ts";
 import { getLocale } from "./paraglide/runtime.js";
-import { html, roleName } from "./render.ts"; import { ICON, kindIcon, senderRef } from "./icons.ts";
+import { html, keyed, roleName } from "./render.ts"; import { ICON, kindIcon, senderRef } from "./icons.ts";
 import { conversationDivider } from "./towermodel.ts";
 import { bossTurn, eventTurn, heard, senderOf, type Turn } from "./towerturns.ts";
 import { senderIn } from "./senders.ts";
@@ -225,7 +225,8 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 	const bare = () => page === true && who().head === true;
 	/** An entry the head's page does not show (docs/specs/2026-11-06-head-page-minimal.md): it keeps its place in the log, hidden. */
 	const skipped = () => h("article", { class: "tx skip", hidden: "" });
-	function render(it: Item): HTMLElement {
+	const render = (it: Item) => keyed(entry(it), it.id);
+	function entry(it: Item): HTMLElement {
 		switch (it.kind) {
 			case "user": {
 				// A run of a tower the sb server runs gets what came to the tower as user turns; the server wrote their first line, and they are not the boss's (towermodel.ts `heard`).
@@ -291,6 +292,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 			if (old && old.sig === sig && old.el.isConnected) continue;
 			old?.el.remove();
 			const say = conversationDivider(r), el = h("article", { class: "tx rule conv-rule" }, h("div", null, h("b", null, say.title), say.ended ? h("small", null, say.ended) : null));
+			keyed(el, `run/${r.id}`);
 			rules.set(r.id, { el, sig });
 			const before = anchor ? els.get(anchor) : undefined;
 			before ? before.before(el) : list.append(el);
@@ -349,6 +351,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 
 	/** The run's message under way, after the last entry; "" takes it away. */
 	const live = liveMode === "quiet" ? h("article", { class: "tx in live live-quiet" }, h("span", { class: "ava", "aria-hidden": "true" }), h("div", { class: "tx-body" }, h("p", { class: "live-text" }))) : h("article", { class: "tx live", "aria-live": "polite" }, h("small", { class: "live-tag" }, m.run_live_label()), h("p", { class: "live-text" }));
+	keyed(live, "live");
 	function writing(text: string) {
 		if (!text) return void live.remove();
 		live.querySelector(".live-text")!.textContent = text;

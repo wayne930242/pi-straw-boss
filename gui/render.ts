@@ -102,6 +102,16 @@ export function fillPlate(plate: HTMLElement, role: string, m: Mark, docs?: { on
 	else delete plate.dataset.docs;
 }
 
+/** The theme's eight stable variations: FNV-1a over the key's UTF-8 bytes, never the item's position. */
+const utf8 = new TextEncoder();
+export function keyed(el: HTMLElement, key: string): HTMLElement {
+	let hash = 0x811c9dc5;
+	for (const byte of utf8.encode(key)) hash = Math.imul(hash ^ byte, 0x01000193);
+	el.dataset.key = key;
+	el.dataset.vary = String(hash & 7);
+	return el;
+}
+
 /** Reconciles the children of `parent` with `items`: new ones enter, gone ones leave, the rest keep their element and move into order. */
 export function sync<T extends { id: string }>(parent: Element, items: T[], make: (item: T) => HTMLElement, fill: (el: HTMLElement, item: T) => void) {
 	const live = new Map<string, HTMLElement>();
@@ -110,8 +120,7 @@ export function sync<T extends { id: string }>(parent: Element, items: T[], make
 	for (const item of items) {
 		let el = live.get(item.id);
 		if (!el) {
-			el = make(item);
-			el.dataset.key = item.id;
+			el = keyed(make(item), item.id);
 			el.classList.add("enter");
 			setTimeout(() => el!.classList.remove("enter"), 600);
 		}
