@@ -71,7 +71,7 @@ Each solid arrow is a tool from [Tools](#tools). The dotted ones are not tools: 
 | opening and closing mains, the settings check | [Opening a main](#opening-a-main), [The settings check](#before-pi-starts-in-a-folder-the-settings-check), [Closing an opened main](#closing-an-opened-main) |
 | merging many branches safely | [Merge train](#merge-train) |
 | the dashboard, and subagents that lost their launcher | [Tower dashboard](#tower-dashboard), [Orphaned subagents](#orphaned-subagents) |
-| the browser page: map, comms, alerts, phone, Zen | [Browser view](#browser-view) |
+| the browser page: map, comms, alerts, phone, Zen; making a theme | [Browser view](#browser-view), [Themes](#themes) |
 | Herdr's sidebar, worktree cleanup, process cleanup | [Sidebar net view](#sidebar-net-view), [Worktree reaper](#worktree-reaper), [Process hygiene and slots](#process-hygiene-and-slots) |
 | the background server, tower runs, the standing pane, memory, ally runs | [The sb server](#the-sb-server) |
 | a command, a file it writes, Windows, developing | [Tools](#tools), [What it writes](#what-it-writes), [From a shell](#from-a-shell), [Windows](#windows), [Development](#development) |
@@ -2319,6 +2319,31 @@ A page left alone costs a phone's battery in frames, so the animations that neve
 
 ### Views, themes, phone, and settings
 
+#### Themes
+
+Every stylesheet declares `@layer standard, theme;`, so normal theme rules override Standard regardless of selector specificity or load order.
+The order reverses for `!important`: Standard's rules still stop motion in calm, reduced motion, or stale state, and keep `[hidden]` elements hidden.
+Scope theme rules to `data-view` on `<html>` so a loaded theme cannot affect another view.
+
+Set the required CSS tokens in every phase; optional tokens inherit Standard's defaults.
+Use `--tint` for overlays, `--glow` for glow strength, `--scrim` for modal backdrops, `--err-text` for error text, and `--ansi-*` for the terminal's 16 ANSI colours.
+Standard renders eight kinds of decorative `data-slot` and hides them: `backdrop`, `stage`, `head`, `map`, `hud`, `chat-edge`, `chat-corner`, and `composer-edge`.
+A theme can show a slot with absolute or fixed positioning, outside layout flow and without intercepting clicks.
+
+Each built-in theme declares its browser colour in `gui/themes/<view>/theme.json`, along with any phases, badge colours, sender-icon setting, or sounds; ambience clips include their measured mean loudness.
+Use the declared data hooks: `data-phase` selects day or night, `data-mark` gives a unit's state, and `data-vary` gives an item a stable value from 0 to 7 even when the list is reordered.
+`gui/themes/contract.json` lists the available tokens, slots, selectors, and manifest keys; `tests/theme-contract.test.ts` pins the v1 names and checks the themes against the contract.
+Version 1 grows by addition only; removing or renaming an entry requires a version bump.
+
+Use raster images or CSS gradients for decorations that repaint with live data.
+For the live map, run `node scripts/paint-trace.mjs`: the theme must produce at most 3 × Standard's `PrePaint` events in the 10-second window, with Chrome's `NavigationPredictor` disabled in both traces.
+After `npm run gui:build`, `npm run budgets` reports raw bytes for all files and gzip bytes for CSS and JavaScript only.
+The test enforces the raw design ceiling and also checks growth against each recorded figure, allowing 1% or 2,048 bytes, whichever is larger.
+The style gate uses `scripts/style-matrix.mjs` to capture deterministic snapshots and screenshots at rest on five routes at two widths, with one complete run per build and no mixing cells from separate runs.
+Standard's existing computed styles must match the baseline exactly, and new slots must be hidden.
+Compare Standard's screenshots for pixel differences as a second check.
+See the [theme contract spec](specs/2026-11-26-theme-contract/spec.md) for the full rules and capture commands.
+
 #### Phone layout
 
 Phone layout (unreleased; on a screen up to 640 px wide, a desktop is unchanged). The log gets the screen: with a main's queue of three steers or the tower waiting for the boss, the log is at least 55 % of a 390 × 844 viewport (it was 29 % and 33 %), and the first base starts within 160 px of the top of the map.
@@ -2381,7 +2406,7 @@ Storybook (繪本) is a cute, soothing picture-book skin of Standard, with the s
 
 The phase is the device's local hour, never the server's, and has no setting (`gui/phase.ts`; the demo forces one with `&phase=day` or `&phase=night`). `boot.js` sets `data-phase` on `<html>` with the view and paints the phase's `theme-color` (`#fbf5e9` by day, `#111a35` at night) before the first frame, so a page opened at night is never painted as day first. On the page the theme's clock arms one timer to the next 06:00 or 18:00 and looks again when the page is shown again (`visibilitychange`, `pageshow`) and at a snapshot at most once a minute, since a phone that slept skips timers and a time-zone change moves the boundary. At a boundary the colours switch at once, with no reload, and the tab's theme-color and waiting badge are drawn again (honey on cream by day, lamp gold on the sky at night); focus, drafts, the scroll position, and open dialogs stay as they were.
 
-Every card, button, divider, and text box keeps a hand-drawn line: a thin, slightly uneven outline drawn by a small static SVG in `border-image` (one per phase), over a fine paper grain. A strip of washi tape holds each base, the head band, and the question dialog to the page, and the question card is a ruled page. The chat is one notebook page: ruled lines and a red margin line, binding holes, two strips of tape at the top, and each speaker's animal stamped in the margin; a notice is stamped with its sender's animal when the net lists the sender (a bee for a subagent's report), else the bluebird. The boss's messages are sky-blue notes, notices violet slips, and a closed tool call is a small label sticker. A corner picture (a bunny reading by day, dozing by a lantern at night) sits in the log's corner on a wide page and after the last message on a narrow one, and the column stops near 800 px so no text crosses it. Send is a dark green stamp. None of this moves, and no filter is animated; only a bee flies along the composer's edge while the unit works. It is the first light theme, so Standard's overlays that mix white and its glows are replaced by tints of the ink on paper; the terminal keeps its dark well in both phases. Forced colours draw neither tape nor hand-drawn line. Animals mark the roles: the boss is a bunny, the head tower an owl. A pencil writes while a unit works, an envelope lifts a corner when it waits, a flag sways on error, and a crescent marks idle. Clouds, butterflies and a falling leaf cross the daytime map; at night stars twinkle, fireflies drift and the treehouse windows glow. Calm, reduced motion and forced colours keep the figures still. With Sound effects on, a question plays a kalimba note. Background sound has its own switch: birds by day, crickets by night, only while the backdrop is visible.
+Every card, button, divider, and text box keeps a hand-drawn line: a thin, slightly uneven outline drawn by a PNG in `border-image` (one per phase), over a fine paper grain. A strip of washi tape holds each base, the head band, and the question dialog to the page, and the question card is a ruled page. The chat is one notebook page: ruled lines and a red margin line, binding holes, two strips of tape at the top, and each speaker's animal stamped in the margin; a notice is stamped with its sender's animal when the net lists the sender (a bee for a subagent's report), else the bluebird. The boss's messages are sky-blue notes, notices violet slips, and a closed tool call is a small label sticker. A corner picture (a bunny reading by day, dozing by a lantern at night) sits in the log's corner on a wide page and after the last message on a narrow one, and the column stops near 800 px so no text crosses it. Send is a dark green stamp. None of this moves, and no filter is animated; only a bee flies along the composer's edge while the unit works. It is the first light theme: its overlays mix in the ink colour, it sets `--glow` to 0, and the terminal keeps its dark well in both phases. Forced colours draw neither tape nor hand-drawn line. Animals mark the roles: the boss is a bunny, the head tower an owl. A pencil writes while a unit works, an envelope lifts a corner when it waits, a flag sways on error, and a crescent marks idle. Clouds, butterflies and a falling leaf cross the daytime map; at night stars twinkle, fireflies drift and the treehouse windows glow. Calm, reduced motion and forced colours keep the figures still. With Sound effects on, a question plays a kalimba note. Background sound has its own switch: birds by day, crickets by night, only while the backdrop is visible.
 
 </details>
 

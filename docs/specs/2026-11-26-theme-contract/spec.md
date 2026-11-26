@@ -1,4 +1,4 @@
-Status: approved (2026-11-26). Nothing here is built yet. The boss approved the direction and decided Q1, Q4, and Q7 (§12, *Decided*); the other questions take their recommendation.
+Status: implemented (2026-11-26). The migration results are in §10.2. The boss approved the direction and decided Q1, Q4, and Q7 (§12, *Decided*); the other questions take their recommendation.
 
 Related: [2026-11-07-raven-view/spec.md](../2026-11-07-raven-view/spec.md) (the theme mechanism), [2026-11-26-storybook-theme/spec.md](../2026-11-26-storybook-theme/spec.md) (the first light theme, whose §B10 makes "a versioned markup contract" the condition for ever splitting themes out), [2026-11-01-zen-view.md](../2026-11-01-zen-view.md).
 

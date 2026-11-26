@@ -206,6 +206,8 @@ There is no noun pack and no sentence pack (SB-D4): English and zh-TW keep every
 - A new hotkey for Zen.
 - Theme packages outside this repository. The boss asked (2026-11-26) whether themes should ship separately, downloaded or installed by whoever wants them, and chose 「先內建，條件到了再拆」: Storybook ships built in like Raven. Revisit when someone else wants to make a theme, when the theme folders make the package noticeably heavy, or when the non-MIT assets (Casper's clips) should leave the public repository. The first external format then is data only (CSS, pictures, sounds, a manifest, no JavaScript), since a theme's code runs in a page that answers agents' dialogs, and the themes' CSS overrides Standard's markup (`.sweep`, `.ring`), so an external theme needs a versioned markup contract first.
 
+The [theme contract spec](../2026-11-26-theme-contract/spec.md) defines the versioned markup that a future external format would need.
+
 ## B11. Chat page
 
 **Design pick (boss, 2026-11-26).** After a 比稿 of two chat directions (frames and review in `scratch/design-chat/`, gitignored), the boss accepted all eight frames and chose **A, one notebook page**: the whole log is written on a single ruled page, not a card per message (the frames `01-a-chat-day.svg`, `02-a-chat-night.svg`, `05-a-phone-day.svg`, `06-working-motion.svg`). It is numbered B11 so that §B8, which tests and the size budgets cite as the budget, keeps its number.
