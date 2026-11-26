@@ -99,4 +99,6 @@ test("the budget is the record's points unless the slip gives some; a branch onl
 	git(checkout, "branch", "-D", "feat/x");
 	book({ baseSha: "f".repeat(40) });
 	await assert.rejects(resume(door().d), /base f{40} is no commit this box has/);
+	book({ workspace: "wB" });
+	await assert.rejects(resume(door({ workspace: "wA" }).d), /worked in another workspace of this box/);
 });

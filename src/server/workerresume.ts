@@ -41,6 +41,8 @@ export function resumeWorker(d: WorkerDoor, peer: PeerSender, request: OpenReque
 			entry = bookOf(d.stateDir, d.now(), session, device);
 			if (!entry || !entry.branch || !entry.baseSha) throw new OpenLimitError(unknown(d, device, session));
 			const branch = entry.branch, label = entry.label ?? branch;
+			// Another workspace's worker (two clones of one repository name share ~/.herdr/worktrees/<repo>): resumed only by the workspace that opened it (RV-F001).
+			if (d.workspace !== undefined && entry.workspace !== undefined && entry.workspace !== d.workspace) throw new OpenLimitError(`session ${session.slice(0, 8)} worked in another workspace of this box; send the follow-up to that workspace's tower`);
 			if (spec.branch !== undefined && spec.branch !== branch) throw new OpenLimitError(`session ${session.slice(0, 8)} worked on branch ${branch}, not ${spec.branch}`);
 			const live = d.live?.() ?? { routes: [] };
 			const row = live.routes.find((r) => r.to === session);

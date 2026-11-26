@@ -64,7 +64,7 @@ export interface StandingTarget {
 	status(): ServiceStatus | undefined;
 	/** How many wait cards wait for the boss here (a tower's own; the head's own): the stand-in is `blocked` while there are any. */
 	cards?(): number;
-	/** Whether a local run of the workspace handles something now (runs.ts `working`): the stand-in is `working` while it does and no card waits (standin.ts). */
+	/** Whether a run of the workspace (local, or an ally run) handles something now (runs.ts `working`): the stand-in is `working` while it does and no card waits (standin.ts). */
 	working?(): boolean;
 	/** The head only: how many cards wait at the other towers. Named on the stand-in, never `blocked` (docs/specs/2026-11-21-auto-return.md, AR-D2). */
 	elsewhere?(): number;

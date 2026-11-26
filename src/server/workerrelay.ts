@@ -84,13 +84,15 @@ export function createWorkerEnds(d: EndDeps) {
 	const tidyOrNot = async (row: WorkerRow) => tidied.get(row.route.to) ?? (await tidy(row).then((l) => (tidied.set(row.route.to, l), l)));
 	const one = async (row: WorkerRow): Promise<void> => {
 		const { route } = row, main = route.to;
+		// A resume writes a new row under the same session: what this sweep remembered of the old one goes with it (RV-F002).
+		const forget = (ws: string, m: string) => (tidied.delete(m), goneSeen.delete(m), idleFrom.delete(m), d.forget(ws, m));
 		const seen = await d.look(row);
 		if (seen.file) d.book?.(main, { file: seen.file });
 		if (route.final !== undefined) {
-			if (!seen.listed && seen.pane === false) return (await tidyOrNot(row), d.forget(row.workspace, main));
+			if (!seen.listed && seen.pane === false) return (await tidyOrNot(row), forget(row.workspace, main));
 			try { await d.close(row.workspace, main, "quit"); } catch (e) { return void d.log("worker-close-waiting", { main, why: (e as Error).message.slice(0, 160) }); }
 			await tidyOrNot(row);
-			d.forget(row.workspace, main);
+			forget(row.workspace, main);
 			return d.log("worker-closed", { main });
 		}
 		if (!seen.listed && seen.pane === false) {
@@ -98,7 +100,7 @@ export function createWorkerEnds(d: EndDeps) {
 			goneSeen.set(main, n);
 			if (n < 2) return;
 			await receipt(row, "is gone (its pi ended)");
-			return d.forget(row.workspace, main);
+			return forget(row.workspace, main);
 		}
 		goneSeen.delete(main);
 		if (seen.pane === undefined) return; // a read that failed tells nothing of its state: the idle clock neither starts nor runs on it
