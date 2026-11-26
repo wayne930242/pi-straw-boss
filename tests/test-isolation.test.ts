@@ -11,6 +11,7 @@ import { startOf } from "../src/startof.ts";
 import { until, World } from "./fakes.ts";
 import { goEnv, INHERITED, installIsolation, leftover, reap, strays, topLevel, unjudged } from "./isolation.ts";
 import { ServerWorld } from "./server-world.ts";
+import { gone } from "./standin.ts";
 
 // A run of the tests never touches the developer's machine (tests/isolation.ts, src/server/testguard.ts): the home, the agent folder, and the Herdr socket are the run's own, no sb server starts
 // outside the run's root, and nothing the run starts is left running. The scenario at the end is the leak itself: a session of a test, with a screen and a real spawn, and a "real home" of its own.
@@ -152,7 +153,7 @@ test("a pid that is no process's (0, a failed start) is never noted: reaping it 
 	assert.ok(!existsSync(join(dir, PIDS_DIR, "0")));
 });
 
-test("a process that leaves a noted server running fails when it ends, and the server is killed", () => {
+test("a process that leaves a noted server running fails when it ends, and the server is killed", async () => {
 	const source = fileURLToPath(new URL("./isolation.ts", import.meta.url));
 	const script = `
 		import { spawn } from "node:child_process";
@@ -168,7 +169,8 @@ test("a process that leaves a noted server running fails when it ends, and the s
 	assert.ok(pid > 1, ran.stderr);
 	assert.equal(ran.status, 1, "the run fails");
 	assert.match(ran.stderr, /left sb server processes running/);
-	assert.throws(() => process.kill(pid, 0), "the server is gone");
+	// Killed is not yet gone: the process stays a zombie until its new parent (init, once the child process ended) reaps it, and a zombie's pid still answers.
+	await until(() => gone(pid), "the server to be gone");
 });
 
 test("the test script and the one-file script load the isolation, and AGENTS.md says so", () => {
