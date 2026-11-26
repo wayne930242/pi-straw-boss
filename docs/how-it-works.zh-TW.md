@@ -2336,20 +2336,20 @@ QR 編碼器是套件自己的（`src/qr.ts`），部分改編自 Project Nayuki
 
 #### 檢視：自動、標準、極客、鴉閣
 
-檢視：自動、標準、極客、鴉閣（每台裝置各自設定，預設值來自 server）。設定頁的「這台裝置」群組有一個四個選項的控制項（自動、標準、極客、鴉閣；鴉閣在下一筆項目中說明），保存在這個瀏覽器的 `localStorage`（`sb.view`）；`gui/view.ts` 最先讀取它，並在任何東西繪製之前，於 `<html>` 上設定 `data-view`（以及瀏覽器的 `theme-color`）。禪不是檢視，而是一種模式，從任何檢視都能用頁首的禪按鈕進入（鴉閣之後的項目）。**標準**就是上面的色盤。
+檢視：自動、標準、極客、鴉閣、繪本（每台裝置各自設定，預設值來自 server）。設定頁的「這台裝置」群組有一個五個選項的控制項（自動、標準、極客、鴉閣、繪本；鴉閣與繪本在接下來的項目中說明），保存在這個瀏覽器的 `localStorage`（`sb.view`）；`gui/view.ts` 最先讀取它，並在任何東西繪製之前，於 `<html>` 上設定 `data-view`（以及瀏覽器的 `theme-color`）。禪不是檢視，而是一種模式，從任何檢視都能用頁首的禪按鈕進入（繪本之後的項目）。**標準**就是上面的色盤。
 
 <details>
 <summary>細節</summary>
 
 **極客**是一個終端機：黑色表面、一種 13 px 的等寬字型、每種文字顏色在每個表面上至少 7 : 1，每條邊框至少 3 : 1（`tests/geek-contrast.test.ts` 對樣式表的 `[data-view="geek"]` 區塊做這個運算，包括色調），沒有動態、光暈、漸層或按下凹陷（「動態會休息」的靜止標示一律開啟），四邊都是一條單純的邊框，而每個狀態也以單位名稱前的文字標籤呈現（`[WORK]`、`[WAIT?]`、`[CMD◈]`、`[IDLE]`、`[DONE✓]`、`[ERR!]`、`[UNKN]`），連線用文字表示，提醒、音效與背景音的開關顯示為 `[On]` 與 `[Off]`（標準在圓點旁顯示同樣的字），而被選取的東西（分頁、模式開關、選取的資料夾）以反白顯示。
 
-**自動**，以及遺失或無效的儲存值，在老闆設定了預設值時跟隨 server 的預設值（見下），否則是標準，而在系統要求更高對比時是極客（`prefers-contrast: more`，即時跟隨）；沒有淺色版本。**server 的預設值**只能從 pi 設定：`/boss gui view geek`（或 `standard`、`raven`，或會清除它的 `auto`；`zen` 會被拒絕，因為禪是模式；單獨的 `/boss gui view` 會告訴你目前的值，而 `gui-prefs.json` 仍寫著 `zen` 時會多一行說明，這個值讀作 `auto`）透過控制 socket（`gui-view`）請 sb server 處理，設定它是老闆自己的指令，所以它會啟動沒有在執行的 server，但不會啟動被停止的 GUI，而告知只是讀取：它什麼也不啟動，所以被刻意停止的 server 會維持停止），server 把它保存在 `gui.json` 旁的 `gui-prefs.json`（`{"v":1,"view":"geek"}`，mode 600、以 rename 寫入；遺失、損毀或屬於他人的檔案，或這個版本不認識的值，都是 `auto`，寫入失敗會被告知且不改變任何東西；明確設定記憶體中已有的值仍會重寫沒有寫著它的檔案，所以 `/boss gui view auto` 會取代這個版本讀不懂的值，而啟動 server 不會重寫任何東西）。
+**自動**，以及遺失或無效的儲存值，在老闆設定了預設值時跟隨 server 的預設值（見下），否則是標準，而在系統要求更高對比時是極客（`prefers-contrast: more`，即時跟隨）；沒有淺色版本。**server 的預設值**只能從 pi 設定：`/boss gui view geek`（或 `standard`、`raven`、`storybook`，或會清除它的 `auto`；`zen` 會被拒絕，因為禪是模式；單獨的 `/boss gui view` 會告訴你目前的值，而 `gui-prefs.json` 仍寫著 `zen` 時會多一行說明，這個值讀作 `auto`）透過控制 socket（`gui-view`）請 sb server 處理，設定它是老闆自己的指令，所以它會啟動沒有在執行的 server，但不會啟動被停止的 GUI，而告知只是讀取：它什麼也不啟動，所以被刻意停止的 server 會維持停止），server 把它保存在 `gui.json` 旁的 `gui-prefs.json`（`{"v":1,"view":"geek"}`，mode 600、以 rename 寫入；遺失、損毀或屬於他人的檔案，或這個版本不認識的值，都是 `auto`，寫入失敗會被告知且不改變任何東西；明確設定記憶體中已有的值仍會重寫沒有寫著它的檔案，所以 `/boss gui view auto` 會取代這個版本讀不懂的值，而啟動 server 不會重寫任何東西）。
 
 退回較舊的版本，之後再升級：舊的 server 把它不認識的值（鴉閣之前的 `raven`）讀成 `auto` 並提供自動，但它不動這個檔案，直到被告知不同的值，所以升級會把這個值帶回來，除非老闆在舊版本上設定了另一個預設值（在那裡明確設定自動對它是 no-op，因為記憶體中的值已經是 `auto`）。禪還是檢視的版本寫下的 `zen` 也同樣讀作 `auto`，並留在檔案中，直到老闆設定預設值。頁面絕不寫入它，而已配對的裝置（Tailscale 或 Wi-Fi）也沒有任何路由能寫入：唯一的入口是控制 socket。
 
-server 會把它寫進它提供的每個頁面，作為 `<meta name="sb-view" content="auto|standard|geek|raven">`，所以跟隨 server 的裝置在第一個影格就畫出預設值（沒有閃爍，在 desk 視窗或已安裝的 app 中也不必設定任何東西），把 `view` 放進每條串流的 `hello`，並在它改變時對開著的串流送出 `view` 事件，所以開著的頁面立刻切換而不需重新載入（錯過事件的串流會在它重新連線的 hello 中得知）。處於自動的裝置跟隨它，在設定頁標示為**跟隨伺服器（極客）**；選了標準或極客的裝置保留它的選擇，而預設值絕不存放在裝置上。
+server 會把它寫進它提供的每個頁面，作為 `<meta name="sb-view" content="auto|standard|geek|raven|storybook">`，所以跟隨 server 的裝置在第一個影格就畫出預設值（沒有閃爍，在 desk 視窗或已安裝的 app 中也不必設定任何東西），把 `view` 放進每條串流的 `hello`，並在它改變時對開著的串流送出 `view` 事件，所以開著的頁面立刻切換而不需重新載入（錯過事件的串流會在它重新連線的 hello 中得知）。處於自動的裝置跟隨它，在設定頁標示為**跟隨伺服器（極客）**；選了標準或極客的裝置保留它的選擇，而預設值絕不存放在裝置上。
 
-當預設值是 `auto` 時，每台裝置都回到它自己螢幕的對比偏好。`gui.json` 把預設值當成選填的 `view` 帶著（`standard`、`geek` 或 `raven`，絕不是 `zen`；`auto` 時不存在），給在頁面載入之前就繪製視窗的 shell 使用。在 `forced-colors` 下，系統的顏色接手，而狀態形狀會得到外框；QR code 與終端機保留它們自己的顏色。`calm.ts` 在極客中不執行任何計時器。
+當預設值是 `auto` 時，每台裝置都回到它自己螢幕的對比偏好。`gui.json` 把預設值當成選填的 `view` 帶著（`standard`、`geek`、`raven` 或 `storybook`，絕不是 `zen`；`auto` 時不存在），給在頁面載入之前就繪製視窗的 shell 使用。在 `forced-colors` 下，系統的顏色接手，而狀態形狀會得到外框；QR code 與終端機保留它們自己的顏色。`calm.ts` 在極客中不執行任何計時器。
 
 </details>
 
@@ -2369,6 +2369,19 @@ server 會把它寫進它提供的每個頁面，作為 `<meta name="sb-view" co
 手機（600 px 以下）把圖片畫成覆蓋螢幕高度、靠左固定讓城堡露出，沒有蝙蝠、飛行者和主塔台頁面上棲息的烏鴉；瀏覽器支援 `backdrop-filter` 時，大型面板（基地、通訊畫面、檔案與時間軸、設定群組、面板）是蓋在圖上的毛玻璃（#0a080e 的 72%、8 px 模糊，面板為 88%；主塔台頁面的通訊畫面較薄，2 px 模糊下 18%，所以城堡能在後面讀出來），文字在閃電高峰時圖片最亮處仍保持 4.5 : 1。
 
 每個檢視都把 pi-better-show 的 `--pbs-*` token 對應到它自己的色盤（`tests/pbs-tokens.test.ts`），所以文件或聊天項目中的 pbs 元素跟隨檢視。`/boss gui view raven` 和其他的一樣設定 server 的預設值；當預設值移到 raven 時，顯示禪的頁面維持禪，而帶 `prefers-contrast: more` 的自動仍是極客。
+
+</details>
+
+#### 繪本（Storybook）
+
+繪本（Storybook）是標準檢視可愛、舒心的繪本外觀，版面、互動與用詞都相同（只在頁面顯示它時才載入）：一本壓花手帳，卡片是用紙膠帶貼住的紙頁。它跟著裝置的時鐘走：06:00 到 17:59 的白天是奶油色紙與深梅紫墨色，18:00 到 05:59 的夜晚是深藍夜空上的灰紫紙頁，兩者每種文字顏色的對比都至少 4.5 : 1。
+
+<details>
+<summary>細節</summary>
+
+時段看裝置的本地時間，不看 server 的，也沒有設定（`gui/phase.ts`；示範頁用 `&phase=day` 或 `&phase=night` 指定）。`boot.js` 在設定檢視時一併在 `<html>` 設定 `data-phase`，並在第一個影格之前塗上該時段的 `theme-color`（白天 `#fbf5e9`，夜晚 `#111a35`），所以夜裡開啟的頁面不會先畫成白天。頁面上，主題的時鐘排一個到下一個 06:00 或 18:00 的計時器，並在頁面再次顯示時（`visibilitychange`、`pageshow`）以及收到快照時（最多每分鐘一次）再看一次，因為睡著的手機會跳過計時器，而時區改變會移動分界。到了分界，顏色立即切換，不需重新載入，分頁的 theme-color 與等待徽章會重畫（白天是奶油色上的蜂蜜色，夜晚是夜空上的燈金色）；焦點、草稿、捲動位置與開著的對話框都維持原狀。
+
+每張卡片、按鈕、分隔線與文字框都保留手繪的線：一條細而略不平整的外框，由 `border-image` 中的一張小型靜態 SVG 畫出（每個時段一張），疊在細緻的紙紋上。一條紙膠帶把每個基地、主塔台橫幅與提問對話框貼在頁面上，提問卡是一張有橫線的紙。通訊中老闆送出的訊息是天藍色紙條，智慧體的回覆是蜜桃色紙條，送出是深綠色的印章。這些都不會動，也沒有任何濾鏡做動畫。它是第一個淺色主題，所以標準混入白色的覆蓋層與光暈都換成紙上墨色的色調；終端機在兩個時段都保留深色的底。強制色彩下既不畫紙膠帶也不畫手繪線。它的角色圖示、插圖、狀態圖形與音效在到來之前都沿用標準的（docs/specs/2026-11-26-storybook-theme/spec.md）。
 
 </details>
 
@@ -4103,7 +4116,7 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 | `/boss memory [-w workspace] [list\|confirm P1\|reject P1\|add standing\|decision <text>\|edit S1 <text>\|delete D1\|resolve W1 [outcome]]` | 讀取並更改塔台的記憶，並回答塔台的提案；GUI 的記憶面板是同一個操作。見[塔台記憶](#塔台記憶)。 |
 | `/boss gui` | 在瀏覽器裡開啟整個網（任何 session；不加入任何東西）。它詢問 sb server，server 關著時會啟動，並印出 URL。`/boss gui stop` 從任何 session 停止 GUI，它會一直停著，直到下一次 `/boss gui` 或 `cli.mjs up`（`/boss stash` 與 `/boss close all` 不會啟動它）。`/boss gui rotate`（經確認之後）給 GUI 新的 token 與 CSRF 機密，並讓每支手機解除配對，包含 Wi-Fi 的；Wi-Fi 憑證保留。 |
 | `/boss gui lan`, `/boss gui lan off`, `/boss gui lan reset` | 不經 Tailscale，從同一個 Wi-Fi 上的手機連到 GUI（[Wi-Fi 存取](#瀏覽器檢視)）。`lan` 顯示風險並在第一次執行時製作這台電腦的憑證（在你回答 **y** 之後），開啟 Wi-Fi 存取，並開啟一個帶有憑證步驟與配對 QR 的畫面；你打它顯示的數字來允許每支新手機。`lan off` 關閉監聽並忘掉這個意願；已配對的手機仍保持配對。`lan reset` 詢問是要更新憑證並保留配對，還是製作新的並讓每個 Wi-Fi 裝置解除配對。 |
-| `/boss gui view`, `/boss gui view auto\|standard\|geek\|raven` | 顯示或設定 GUI 的預設檢視（控制 socket 上的 `gui-view`，保存在 `gui-prefs.json`）；設為自動的裝置跟隨它，自己選了檢視的裝置保留它的選擇。禪是從頁面頁首進入的模式，`zen` 會被拒絕。見瀏覽器檢視裡的**檢視：自動、標準、極客、鴉閣**。只有這個指令能設它：沒有任何頁面可以，已配對的手機也不行。 |
+| `/boss gui view`, `/boss gui view auto\|standard\|geek\|raven\|storybook` | 顯示或設定 GUI 的預設檢視（控制 socket 上的 `gui-view`，保存在 `gui-prefs.json`）；設為自動的裝置跟隨它，自己選了檢視的裝置保留它的選擇。禪是從頁面頁首進入的模式，`zen` 會被拒絕。見瀏覽器檢視裡的**檢視：自動、標準、極客、鴉閣**。只有這個指令能設它：沒有任何頁面可以，已配對的手機也不行。 |
 | `/boss server [stop\|restart [--downgrade] [reason]]` | 顯示 sb server，並在它關著時啟動它；刻意停止它；重啟它。見 [sb server](#sb-server)。 |
 | `/boss close all` | 讓這個基地的塔台、主智慧體與成員 quit 並關閉它，否則什麼都不做；見**收起與接回**。 |
 | `/boss close <name\|key>`, `/boss close all <workspace>` | 在 pi 裡經確認後，讓另一個單位、小隊或基地 quit，做法是向 sb server 的 GUI post `close/unit`、`close/tab` 或 `close/all {workspace}`（頁面的 Quit 所 post 的）。只限老闆親自打：這個指令在塔台 run或隊友 run 裡會被拒絕，也沒有任何工具能觸及它。 |
