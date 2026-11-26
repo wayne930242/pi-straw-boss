@@ -669,7 +669,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		if (read.problem !== toldConfig) (toldConfig = read.problem ?? "", read.problem && recordError("config", read.problem));
 		return read;
 	};
-	dog = startWatches({ net: guiHost.watchNet(), now, slot, holder: () => link?.holder, send: async (to, text, facts) => Boolean(await towers?.watchSend(to.workspace, to.session, text, facts).catch(() => false)), log: (event, facts) => log.line(event, facts), stops, ...(o.watches ? { over: o.watches } : {}) });
+	dog = startWatches({ net: guiHost.watchNet(), now, slot, holder: () => link?.holder, send: async (to, text, facts) => Boolean(await towers?.watchSend(to.workspace, to.session, text, facts).catch(() => false)), log: (event, facts) => log.line(event, facts), stops, ...(o.watches ? { over: o.watches } : {}),
+		ward: { run: cfg.run, monitorPanes: () => new Set(guiHost!.dialogs().hub.monitors().map((m) => m.pane)), loopsDir: join(homedir(), ".pi", "loops") } });
 	threads = startThreads({ slot, env, now, log: (event, facts) => log.line(event, facts), stops, ...(o.threads ? { over: o.threads } : {}) }); // the review threads (threadsops.ts, docs/specs/2026-11-23-lite-b2-d-e-f.md §2)
 	cars = startCars({ slot, run: cfg.run, now, startedAt, client: () => (client?.isConnected() ? client : undefined), startOf, log: (event, facts) => log.line(event, facts), stops });
 	waitsHub = startLinkWaits({ slot, env, now, log: (event, facts) => log.line(event, facts), run: cfg.run, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, link: () => link, stops, asks, autoOn: () => auto?.view().on === true, ...(o.waits !== undefined ? { tickMs: o.waits } : {}) });

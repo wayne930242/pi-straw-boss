@@ -12,6 +12,7 @@ import { createBoardFill } from "./boardfill.ts";
 import { createCapFill } from "./capfill.ts";
 import { createBriefing } from "./briefing.ts";
 import { createBossWatch } from "./bosswatch.ts";
+import { createWard } from "./wardtool.ts";
 import { createBossAsk } from "./bossask.ts";
 import { createBossPair } from "./bosspair.ts";
 import { createCloseMain } from "./closemain.ts";
@@ -108,7 +109,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		let trainGuard: TrainGuard | undefined;
 		const addPeer = createPeerTool(kit, { post: reach.post, read: reach.read, openTower: reach.openTower, sync: () => membership.sync() }); // call_peer (callpeer.ts)
 		const addTrainCar = trainCarTool(kit, () => trainGuard, cars, (text) => reach.callTower(text, undefined, false, "blocked"));
-		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (netTools(), s.isTower || (watch.addTool(), pair.addTool(), wrap.addTool()), tools.addPromote(), tools.addDuty(), tools.addHandover(), addTrainCar(), addPeer()), onMain: link.look, control: () => control });
+		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (netTools(), s.isTower || (watch.addTool(), ward.addTool(), pair.addTool(), wrap.addTool()), tools.addPromote(), tools.addDuty(), tools.addHandover(), addTrainCar(), addPeer()), onMain: link.look, control: () => control });
 		// `look` (above) starts and upgrades the sb server (src/server/) and is the way to it; a session that is no part of that has none.
 		const pair = createBossPair(kit, { ask: cfg.ask ?? look?.ask, remote: () => Boolean(link.remoteScope()) }); // boss_pair and board_read's review threads (bosspair.ts)
 		createCapFill(kit); // a main's capacity facts for the board (capfill.ts)
@@ -121,6 +122,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const wrap = createWrapUp(kit, { reach, boardFill, closeSelf, blockers: () => bridge.turn?.blockers(), duty: () => mainDuty.now(), remote: () => Boolean(link.remoteScope()), ask: cfg.ask ?? look?.ask, first: (c) => rot.look(c) }); // idle wrap-up and boss_wrap (wrapup.ts)
 		const rot = createRotationClose(kit, { control, running: () => wrap.running(), reach, boardFill, closeSelf, remote: () => Boolean(link.remoteScope()) }); // an old main closes itself once its successor took over (rotclose.ts)
 		const watch = createBossWatch(kit, { ask: cfg.ask ?? look?.ask, control, openTower: reach.openTower, remote: () => Boolean(link.remoteScope()) });
+		const ward = createWard(kit, { ask: cfg.ask ?? look?.ask, control, openTower: reach.openTower, remote: () => Boolean(link.remoteScope()) }); // sb_ward (wardtool.ts)
 		registerSession(kit, { mainDuty, attended: () => link.attended(), integration: createIntegrationWatch(kit), runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools: { ...tools, addNetTools: netTools }, control, digest, roles, reach }) });
 		trainGuard = registerTrainGuard(kit, cars.client, mainDuty);
 		mainDuty.trainOn(() => Boolean(trainGuard)); // a train's todo and MonitorCreate calls, and the integrator's train todos (nothing loads with the merge train off)

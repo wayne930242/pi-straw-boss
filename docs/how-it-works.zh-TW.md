@@ -3112,6 +3112,16 @@ flowchart TD
 
 它印出一行 JSON：`{pane, target: {socket, workspace, terminal, shell}, closed, attempts, noops, reaped: {tree, checkout}, left: [{pid, program, where}]}`；pane 已消失且什麼都沒留下時結束碼是 0，pane 仍列著、有東西留下，或有一步失敗（`error`，或沒有 server 接下清理時的 `reaped.checkout.error`）時是 1；被拒絕時在 stderr 印一行，結束碼同樣是 1。主智慧體用它關掉自己工作區裡死掉的 pane；其他情況歸老闆，要加 `--force`。
 
+### 看守一般 pane
+
+開在一般 pane 裡的 worker（用 `intercom send` 加 `openProjectPaneIfMissing` 開的，或主智慧體自己開的 pane）沒有子智慧體那一列，所以它結束時沒有東西告訴主智慧體，而 Herdr 的閒置或完成是錯的訊號：11/26 有一個 pane 監看兩次回報 worker 做完了，其實它只是在等自己的監看。`sb_ward`（主智慧體的工具，只對主智慧體啟用）和 `cli.mjs ward <pane> [--item <id>] [--until 2h] [--stop]`（從主智慧體的 shell 執行，它帶著主智慧體的 `PI_INTERCOM_SESSION_ID` 和 `HERDR_PANE_ID`）把這樣的 worker 交給 sb server，由它在 worker 真的結束時叫醒主智慧體一次，worker 還在工作時絕不叫醒。
+
+看守是 server 的一種[盯守](#盯守)，鍵是 `ward:<pane>`：它存在 `watches.json` 裡（server 重啟後還在，同一個結束不會說兩次），boss_watch 會列出它，boss_watch 的 `stop` 和 sb_ward 的一樣能結束它，它的那一行和 boss_watch 的一樣，由工作區的塔台身分從控制頻道送出，主智慧體在工作時等這一輪結束、閒著時開一輪（所以塔台執行必須開著）。看守開始時 server 讀那個 pane：它必須跑著 pi、Herdr 能指名它的 session 檔，而且不是主智慧體自己的 pane 或 session；server 記下那個檔案、worker 的 session id、檔案當時的結尾位置、工作項目（像 `MP-123` 這樣的單純鍵），以及主智慧體的 id 和名字。sb_ward 也把 `{ward, sessionFile, item}` 記成主智慧體 session 裡的一筆 `sb-ward`。用 CLI 的主智慧體要等它的 session 在控制頻道上收聽才聽得到叫醒：在它呼叫過 sb_ward 或 boss_watch 之後，或在它下一次加入或 `/reload` 之後。
+
+server 每 20 秒看一次 Herdr 清單裡的 pane、worker 的 session 檔，以及它還有什麼在跑：對話框 hub 為那個 pane 轉送的監看、它的 session 啟用中的 pi-loop-monitor 迴圈、它的 pane 裡在跑的子智慧體。**finished**：worker 在看守開始後送了報告給主智慧體（對主智慧體的 id、4 個字元以上的 id 前綴或它的某個名字做 `intercom` send 或 ask，或對 `main` 做 `call_peer`，而且工具結果已寫入、沒有錯誤），或它的最後一則訊息是助理的、沒有呼叫工具，Herdr 沒顯示它在工作，它也沒有東西在跑，而且間隔 60 秒的兩次查看都是如此。**blocked**：Herdr 顯示 pane 被擋住，或 worker 最後一次呼叫的是提問工具（`ask_user_question`、`secret_drop`、`robot_hand`、`call_tower`），每段被擋住的期間說一次。**dead**：pane 不見了（Herdr 的清單裡既沒有它的 id，也沒有握著它 session 檔的 pi pane；被 Herdr 搬動過的 pane 仍握著那個檔案）、它的智慧體不再是 pi，或它跑的是另一個 session 檔。worker 在自己的監看、迴圈或子智慧體還在跑時閒著，不屬於以上任何一種；它那一輪之後寫入的自訂訊息也不算一輪。
+
+finished 和 dead 結束看守；blocked 說過之後看守繼續等下一個結束。每一行都寫出 pane、工作項目、狀態、原因和下一步（讀報告、看那個 pane，或用 `subagent_resume` 接續那個 session 檔）。看守是唯讀的：絕不關 pane、不往裡面打字，也不對行程送訊號；關閉是[pane 關閉](#確認過的-pane-關閉)的事。CLI 印出一行 JSON（`{pane, file, item, until, now}`），結束碼為 0，或被拒絕時在 stderr 印出原因，結束碼為 1。
+
 ## sb server
 
 sb server 是獨立成一個行程的 Straw Boss 後端，讓塔台、連線持有者與頁面不必取決於哪個 pi session 剛好在執行它們（[規格](specs/2026-10-26-sb-backend.md)）。它擁有行程紀錄、控制 socket、log、與 intercom broker 的連線，以及 GUI server（頁面、它的 API、對話框 hub、遠端存取、收起與關閉路由）。連線持有者在主 server 中執行（見[連線持有者](#straw-link跨電腦的塔台連線持有者)）；塔台在 server 中以[塔台服務](#塔台服務)執行，預設開啟（在 `config.json` 設定 `"towerRuns": { "enabled": false }` 則改為常駐的 pi session）。

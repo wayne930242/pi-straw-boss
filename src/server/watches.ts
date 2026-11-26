@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { Reply } from "./socket.ts";
+import { WARD_LOOK_MS, type WardRec, wardOf } from "./ward.ts";
 import type { WatchQuery } from "./watchread.ts";
 
 // The server-owned watches behind a main's `boss_watch` (docs/specs/2026-11-23-lite-b2-d-e-f.md §3.3), which replace the watchdog subagent. Each watch runs watch-read's verdict (watchread.ts) over the server's own readings, chaining
@@ -14,14 +15,15 @@ import type { WatchQuery } from "./watchread.ts";
 // carries the same facts). A watch ends at `gone`, `expired`, or a stop, or when its session has been off the net for 15 minutes (a revived main keeps its session id, and its watches with it).
 
 export const RATE_MS = 60_000, HOUR_MS = 3_600_000, PER_HOUR = 12, PER_SESSION = 8, PER_SERVER = 64, MIN_MS = 60_000, UNTIL_MS = 6 * HOUR_MS, UNTIL_MAX_MS = 48 * HOUR_MS, OWNER_GRACE_MS = 15 * 60_000;
-const RETRY_MS = 10_000, MAX_LINE = 600, ENDS = new Set(["gone", "expired"]);
+// A ward (ward.ts) is a watch whose key is `ward:<pane>`: its own read, its own line, and two more ends, `finished` and `dead`.
+const RETRY_MS = 10_000, MAX_LINE = 600, ENDS = new Set(["gone", "expired", "finished", "dead"]);
 /** What changes with every reading and is no state: a monitor's age, last line and load reading, and the note. */
 const VOLATILE = new Set(["ageMs", "last", "note", "load"]);
 
-export interface WatchAdd { session: string; workspace: string; key: string; quietMs?: number; idleMs?: number; untilMs?: number }
+export interface WatchAdd { session: string; workspace: string; key: string; quietMs?: number; idleMs?: number; untilMs?: number; ward?: WardRec }
 export interface WatchesDeps {
 	/** One hold of watch-read (watchread.ts `read`). */
-	read(q: WatchQuery): Promise<Reply>;
+	read(q: WatchQuery & { ward?: WardRec }): Promise<Reply>;
 	now(): number;
 	/** Runs `fn` after `ms` and returns its cancel; a test gives one on a clock it moves. */
 	timer(ms: number, fn: () => void): () => void;
@@ -47,6 +49,7 @@ const factsOf = (r: Reply) => hash(JSON.stringify({ unit: r.unit ?? null, waits:
 
 /** The one line a main gets: `watch <key>: <state> · mark … · todo … · monitor …`. */
 export function lineOf(key: string, r: Reply, w?: Pick<WatchAdd, "quietMs" | "idleMs">): string {
+	if (typeof r.ward === "string") return plain(r.ward, MAX_LINE);
 	const u = (r.unit ?? {}) as Record<string, unknown>, state = String(r.state);
 	const head = state === "stalled" && w?.quietMs ? `stalled (quiet ${span(w.quietMs)})` : state === "idle" && w?.idleMs ? `idle (for ${span(w.idleMs)})` : state === "gone" && r.successor ? `gone (successor ${plain(r.successor)})` : state;
 	const parts = [head];
@@ -73,7 +76,7 @@ export function createWatches(d: WatchesDeps) {
 	const pause = (ms: number) => new Promise<void>((resolve) => void d.timer(ms, resolve));
 	const save = () => {
 		if (!d.file) return;
-		const rows = [...watches.values()].map(({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt }) => ({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt }));
+		const rows = [...watches.values()].map(({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt, ward }) => ({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt, ward }));
 		try {
 			writeFileSync(`${d.file}.tmp`, JSON.stringify({ version: 1, watches: rows }), { mode: 0o600 });
 			renameSync(`${d.file}.tmp`, d.file);
@@ -166,7 +169,7 @@ export function createWatches(d: WatchesDeps) {
 	const loop = async (w: Watch) => {
 		while (!w.ended && !stopped) {
 			const began = d.now();
-			const r = await d.read({ key: w.key, ...(w.since ? { since: w.since } : {}), ...(w.quietMs ? { quietMs: w.quietMs } : {}), ...(w.idleMs ? { idleMs: w.idleMs } : {}), deadline: w.deadline }).catch((error: Error): Reply => no(error.message));
+			const r = await d.read({ key: w.key, ...(w.since ? { since: w.since } : {}), ...(w.quietMs ? { quietMs: w.quietMs } : {}), ...(w.idleMs ? { idleMs: w.idleMs } : {}), deadline: w.deadline, ...(w.ward ? { ward: w.ward } : {}) }).catch((error: Error): Reply => no(error.message));
 			if (w.ended || stopped) return;
 			owned(w);
 			if (w.ended) return;
@@ -178,7 +181,7 @@ export function createWatches(d: WatchesDeps) {
 			if (typeof r.since === "string" && r.since !== w.since) (w.since = r.since), save();
 			if (r.state !== "unchanged") note(w, r);
 			if (ENDS.has(String(r.state))) return;
-			if (r.state === "unchanged" && d.now() - began < 1000) await pause(2000); // a hold that answers at once is not asked in a tight loop
+			if (r.state === "unchanged" && (w.ward || d.now() - began < 1000)) await pause(w.ward ? WARD_LOOK_MS : 2000); // a hold that answers at once is not asked in a tight loop; a ward looks every 20 s
 		}
 	};
 	const span1 = (v: unknown, name: string, min: number, max: number): string | undefined => (v === undefined ? undefined : typeof v !== "number" || !Number.isFinite(v) || v < min ? `${name} is at least ${span(min)}` : v > max ? `${name} is at most ${span(max)}` : undefined);
@@ -194,12 +197,12 @@ export function createWatches(d: WatchesDeps) {
 			if (all.filter((w) => w.session === q.session && w.key !== q.key).length >= PER_SESSION) return no(`at most ${PER_SESSION} watches per session: stop one first (boss_watch with stop)`);
 			if (all.length - (watches.has(id) ? 1 : 0) >= PER_SERVER) return no(`at most ${PER_SERVER} watches on this server`);
 			const at = d.now(), deadline = at + (q.untilMs ?? UNTIL_MS);
-			const first = await d.read({ key: q.key, ...(q.quietMs ? { quietMs: q.quietMs } : {}), ...(q.idleMs ? { idleMs: q.idleMs } : {}), deadline }).catch((error: Error): Reply => no(error.message));
+			const first = await d.read({ key: q.key, ...(q.quietMs ? { quietMs: q.quietMs } : {}), ...(q.idleMs ? { idleMs: q.idleMs } : {}), deadline, ...(q.ward ? { ward: q.ward } : {}) }).catch((error: Error): Reply => no(error.message));
 			if (!first.ok) return first;
 			if (ENDS.has(String(first.state))) return no(`${q.key} is ${String(first.state)}: there is nothing to watch`);
 			const old = watches.get(id);
 			if (old) end(old, "replaced");
-			const w: Watch = { session: q.session, workspace: q.workspace, key: q.key, ...(q.quietMs ? { quietMs: q.quietMs } : {}), ...(q.idleMs ? { idleMs: q.idleMs } : {}), deadline, added: at, ...(typeof first.since === "string" ? { since: first.since } : {}), told: { state: String(first.state), facts: factsOf(first), at }, sentAt: 0, fails: 0, ended: false };
+			const w: Watch = { session: q.session, workspace: q.workspace, key: q.key, ...(q.quietMs ? { quietMs: q.quietMs } : {}), ...(q.idleMs ? { idleMs: q.idleMs } : {}), ...(q.ward ? { ward: q.ward } : {}), deadline, added: at, ...(typeof first.since === "string" ? { since: first.since } : {}), told: { state: String(first.state), facts: factsOf(first), at }, sentAt: 0, fails: 0, ended: false };
 			w.newest = { state: String(first.state), line: lineOf(q.key, first, w), at };
 			watches.set(id, w);
 			save();
@@ -214,7 +217,7 @@ export function createWatches(d: WatchesDeps) {
 		},
 		/** A session's watches: each with its options, its newest state, and what was last sent. */
 		list(session: string): Reply {
-			const rows = [...watches.values()].filter((w) => w.session === session).map((w) => ({ key: w.key, ...(w.quietMs ? { quietMs: w.quietMs } : {}), ...(w.idleMs ? { idleMs: w.idleMs } : {}), until: w.deadline, ...(w.newest ? { newest: w.newest } : {}), ...(w.told && w.sentAt ? { sent: { state: w.told.state, at: w.sentAt } } : {}), ...(w.pending ? { pending: w.pending.state } : {}) }));
+			const rows = [...watches.values()].filter((w) => w.session === session).map((w) => ({ key: w.key, ...(w.ward ? { ward: { pane: w.ward.pane, file: w.ward.file, ...(w.ward.item ? { item: w.ward.item } : {}) } } : {}), ...(w.quietMs ? { quietMs: w.quietMs } : {}), ...(w.idleMs ? { idleMs: w.idleMs } : {}), until: w.deadline, ...(w.newest ? { newest: w.newest } : {}), ...(w.told && w.sentAt ? { sent: { state: w.told.state, at: w.sentAt } } : {}), ...(w.pending ? { pending: w.pending.state } : {}) }));
 			return { ok: true, watches: rows };
 		},
 		has: (session: string) => [...watches.values()].some((w) => w.session === session),
@@ -226,7 +229,9 @@ export function createWatches(d: WatchesDeps) {
 			for (const row of rows.slice(0, PER_SERVER) as Partial<Watch>[]) {
 				if (typeof row.session !== "string" || typeof row.workspace !== "string" || typeof row.key !== "string" || typeof row.deadline !== "number" || watches.has(idOf(row.session, row.key))) continue;
 				const told = row.told && typeof row.told.facts === "string" && typeof row.told.state === "string" ? row.told : undefined;
-				const w: Watch = { session: row.session, workspace: row.workspace, key: row.key, ...(typeof row.quietMs === "number" ? { quietMs: row.quietMs } : {}), ...(typeof row.idleMs === "number" ? { idleMs: row.idleMs } : {}), deadline: row.deadline, added: typeof row.added === "number" ? row.added : d.now(), ...(typeof row.since === "string" ? { since: row.since } : {}), ...(told ? { told } : {}), sentAt: typeof row.sentAt === "number" ? row.sentAt : 0, fails: 0, ended: false, restarted: true };
+				const ward = wardOf(row.ward);
+				if (row.key.startsWith("ward:") && !ward) continue;
+				const w: Watch = { session: row.session, workspace: row.workspace, key: row.key, ...(ward ? { ward } : {}), ...(typeof row.quietMs === "number" ? { quietMs: row.quietMs } : {}), ...(typeof row.idleMs === "number" ? { idleMs: row.idleMs } : {}), deadline: row.deadline, added: typeof row.added === "number" ? row.added : d.now(), ...(typeof row.since === "string" ? { since: row.since } : {}), ...(told ? { told } : {}), sentAt: typeof row.sentAt === "number" ? row.sentAt : 0, fails: 0, ended: false, restarted: true };
 				watches.set(idOf(w.session, w.key), w);
 				void loop(w);
 			}

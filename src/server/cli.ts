@@ -17,6 +17,7 @@ import { onFatal } from "./fatal.ts";
 import { runProcs } from "./procscli.ts";
 import { runDoctor } from "./doctorcli.ts";
 import { type PaneDeps, runPane } from "./panecli.ts";
+import { runWard } from "./wardcli.ts";
 import { runTrain, type TrainIo } from "./traincmds.ts";
 import { runningTrains, trainsRefusal } from "./restartguard.ts";
 import { callControl, ControlError } from "./socket.ts";
@@ -44,6 +45,7 @@ const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS]
        cli.mjs doctor --session ID|PREFIX|PANE [--json]   (another session's tools and loads: a fresh load, its session file, its pane; exit 1 on a fault)
        cli.mjs procs reap (--owner ID | --checkout PATH)   (kill what an ended worker left; refused while a live worker works in the checkout)
        cli.mjs pane close PANE [--checkout ROOT] [--force]   (close a dead agent pane of this workspace, check it is gone (3 closes at most), stop what it left; exit 1 with what is left; --force is the boss's)
+       cli.mjs ward PANE [--item ID] [--until 2h] [--stop]   (from a main's shell: wake it only when the worker in PANE finished, is blocked, or is dead; read only)
        cli.mjs train gate --spec FILE   (the wrapper of a train's run step; its monitor runs it)
        cli.mjs train check (--step FILE | --accept FILE|none [--app NAME] [--app-accept K,K] [--slip FILE])   (from the project or any folder in it; the app's integration.accept in apps.json is required, --app-accept only adds)
        cli.mjs train status [--project P] [--state live,stale,ended,unreadable] [--json] [--watch [--every SECONDS]]   (--watch: one JSONL progress line per look, changed or not)
@@ -56,7 +58,7 @@ export class UsageError extends Error {}
 export const WATCH_RETIRED = "`watch` is retired in 0.83.0: a main or a train watches with the boss_watch tool (key, quiet, idle, until), and the sb server wakes it with one message per change. Stop this monitor.";
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout", "dir", "label", "reason"], switch: ["exact", "force"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, pane: { value: ["checkout"], switch: ["force"] }, doctor: { value: ["session"], switch: ["json"] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] }, prune: { value: [], switch: ["dry-run"] },
+	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, pane: { value: ["checkout"], switch: ["force"] }, ward: { value: ["item", "until"], switch: ["stop"] }, doctor: { value: ["session"], switch: ["json"] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] }, prune: { value: [], switch: ["dry-run"] },
 };
 // `train` has a word of its own, and each word its flags.
 const TRAIN: Record<string, { value: string[]; switch: string[] }> = {
@@ -85,6 +87,8 @@ export function parseArgs(argv: string[]): Args {
 	// `pane` has the word `close` and the pane after it.
 	if (command === "pane" && (rest.shift() !== "close" || rest[0] === undefined || rest[0].startsWith("--"))) throw new UsageError(`pane close needs the pane: pane close PANE [--checkout ROOT] [--force]\n${USAGE}`);
 	if (command === "pane") flags.pane = rest.shift()!;
+	if (command === "ward" && (rest[0] === undefined || rest[0].startsWith("--"))) throw new UsageError(`ward needs the pane: ward PANE [--item ID] [--until 2h] [--stop]\n${USAGE}`);
+	if (command === "ward") flags.pane = rest.shift()!;
 	for (let i = 0; i < rest.length; i++) {
 		const flag = rest[i]!.replace(/^--/, "");
 		if (!rest[i]!.startsWith("--")) throw new UsageError(`unexpected argument ${rest[i]}\n${USAGE}`);
@@ -202,6 +206,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			case "prompt": return await promptCommand();
 			case "procs": return await runProcs(ctx, flags, { out: json, err });
 			case "pane": return await runPane(ctx, flags, { out, err, env, run: deps.herdrCli ?? herdrRun, ...(deps.pane ? { over: deps.pane } : {}) });
+			case "ward": return await runWard(ctx, flags, { out, err, env, run: deps.herdrCli ?? herdrRun });
 			case "doctor": return await runDoctor(flags, { env, run: deps.herdrCli ?? herdrRun }, { out, err });
 			case "train": return await runTrain(flags, { out, err, env, stateDir: slot.stateDir, ...(deps.out ? {} : { stream: process.stdout }), ...deps.train });
 		}

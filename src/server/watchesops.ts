@@ -6,12 +6,13 @@ import { listServices } from "./towerstore.ts";
 import type { Reply, Request } from "./socket.ts";
 import { createWatchRead, type WatchNet, type WatchQuery, type WatchReadDeps } from "./watchread.ts";
 import { createWatches, type Watches, type WatchesDeps } from "./watches.ts";
+import { createWardRead, WARD, type WardDeps, type WardRead } from "./ward.ts";
 
 // The server's side of `boss_watch` (docs/specs/2026-11-23-lite-b2-d-e-f.md §3.3): the control-socket commands `watch-add`, `watch-stop` and `watch-list` (watches.ts), their requests checked, and the watch-read holds they run on
 // (watchread.ts). Kept out of main.ts, which carries a line budget. `watch-read` is still answered for one release (0.83.0), for a watchdog child of an older build; `watch-report` is retired.
 
 export const REPORT_RETIRED = "watch-report is retired in pi-straw-boss 0.83.0 with the watchdog: the main watches with boss_watch, and the sb server wakes it";
-export interface WatchRoutes { read: { read(q: WatchQuery): Promise<Reply> }; watches: Pick<Watches, "add" | "stop" | "list" | "has"> }
+export interface WatchRoutes { read: { read(q: WatchQuery): Promise<Reply> }; watches: Pick<Watches, "add" | "stop" | "list" | "has">; ward?: Pick<WardRead, "resolve"> }
 const no = (error: string): Promise<Reply> => Promise.resolve({ ok: false, error });
 const number = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const text = (v: unknown, max: number) => (typeof v === "string" && v.length > 0 && v.length <= max ? v : undefined);
@@ -40,6 +41,14 @@ export function watchReply(routes: WatchRoutes | undefined, request: Request, en
 	const workspace = text(request.workspace, 200), ms = (v: unknown) => (number(v) ? v : undefined);
 	if (!workspace) return no("watch-add needs workspace");
 	const [quietMs, idleMs, untilMs] = [ms(request.quietMs), ms(request.idleMs), ms(request.untilMs)];
+	// A ward (`sb_ward`, `cli.mjs ward`): the pane is read now for its session file, which the ward keeps.
+	if (key.startsWith(WARD)) {
+		if (!routes.ward) return no("this server keeps no wards");
+		const w = (request.ward ?? {}) as { item?: unknown; names?: unknown; here?: unknown };
+		if ((w.item !== undefined && typeof w.item !== "string") || (w.names !== undefined && !(Array.isArray(w.names) && w.names.every((n) => typeof n === "string" && n.length <= 200))) || (w.here !== undefined && typeof w.here !== "string")) return no("ward is { item?, names?, here? } of strings");
+		const ward = routes.ward;
+		return ward.resolve({ pane: key.slice(WARD.length), session, ...(w.item !== undefined ? { item: w.item } : {}), ...(w.names ? { names: w.names as string[] } : {}), ...(w.here ? { here: w.here } : {}) }).then((rec) => (typeof rec === "string" ? { ok: false, error: rec } : routes.watches.add({ session, workspace, key, ...(untilMs !== undefined ? { untilMs } : {}), ward: rec }).then((r) => (r.ok ? { ...r, ward: { pane: rec.pane, file: rec.file, ...(rec.item ? { item: rec.item } : {}) } } : r))));
+	}
 	return routes.watches.add({ session, workspace, key, ...(quietMs !== undefined ? { quietMs } : {}), ...(idleMs !== undefined ? { idleMs } : {}), ...(untilMs !== undefined ? { untilMs } : {}) });
 }
 
@@ -53,6 +62,8 @@ export interface StartWatches {
 	/** `watches.json` goes in this server's own folder; the `link:` keys and `waiting` read the waits' ledgers of its state folder and the Link holder (linkwatch.ts). */
 	slot: Slot;
 	holder?(): Pick<LinkHolder, "unitsSeen" | "boards"> | undefined;
+	/** What a ward reads besides the session file (ward.ts); none keeps no wards. */
+	ward?: Omit<WardDeps, "now">;
 	/** The seams of a test: the hold's length, the read interval, the timer. */
 	over?: Partial<Pick<WatchReadDeps, "holdMs" | "readMs" | "timer">>;
 }
@@ -62,8 +73,9 @@ export function startWatches(o: StartWatches): WatchRoutes {
 	const read = createWatchRead({ net: o.net, now: o.now, link, ...o.over });
 	const timer = o.over?.timer ?? ((ms: number, fn: () => void) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); });
 	const owner = (session: string) => ((f) => (f ? { live: f.live, workspace: f.base } : undefined))(o.net.lookup(session));
-	const watches = createWatches({ read: (q) => read.read(q), now: o.now, timer, send: o.send, owner, file: join(slot.dir, "watches.json"), log: o.log });
+	const ward = o.ward ? createWardRead({ ...o.ward, now: o.now }) : undefined;
+	const watches = createWatches({ read: (q) => (q.ward && ward ? ward.read({ ...q, ward: q.ward }) : read.read(q)), now: o.now, timer, send: o.send, owner, file: join(slot.dir, "watches.json"), log: o.log });
 	watches.start();
 	o.stops.push(() => (watches.stopAll(), read.stop()));
-	return { read, watches };
+	return { read, watches, ...(ward ? { ward } : {}) };
 }
