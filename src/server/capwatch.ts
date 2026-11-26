@@ -51,7 +51,7 @@ export interface CapDeps {
 	holds?(): { holds: Hold[]; ended: EndedHold[] };
 }
 /** The mark in `_sent.json` of a box's hold its mains were told of, kept until they are told it ended (so a restart repeats neither). */
-const HOLD_MARK = "hold:";
+const HOLD_MARK = "hold:", HOLD_MAIN = "holdmain:";
 const holdMark = (h: Pick<HeldBy, "device" | "since">) => `${HOLD_MARK}${h.device}@${h.since}`;
 const markHold = (k: string) => ((at) => ({ device: k.slice(HOLD_MARK.length, at), since: Number(k.slice(at + 1)) }))(k.lastIndexOf("@"));
 
@@ -153,12 +153,14 @@ export function createCapWatch(d: CapDeps) {
 			}
 			// A box's hold is told once to its head tower, standing main, and coordinators, and its end once, with the reason; the marks say what they were told, so a restart repeats neither.
 			const readers = { ...(standing() ? { standing: standing()! } : {}), also: facts.filter((m) => m.role === "main" && (m.duty === undefined || m.duty === "coordinator")).map((m) => m.session) };
-			if (held && sent[holdMark(held)] === undefined && (await send({ kind: "held", key: `${held.device}@${held.since}`, text: heldText(holderName(held), clock(held.since, now)), ...readers }, now))) sent[holdMark(held)] = now;
+			if (held && sent[holdMark(held)] === undefined && (await send({ kind: "held", key: `${held.device}@${held.since}`, text: heldText(holderName(held), clock(held.since, now)), ...readers }, now))) for (const m of [holdMark(held), ...readers.also.map((x) => `${HOLD_MAIN}${x}`)]) sent[m] = now;
+			// A coordinator that starts on the held box (opened here later, or one that missed it) is told once too.
+			if (held && sent[holdMark(held)] !== undefined) for (const x of readers.also) if (sent[`${HOLD_MAIN}${x}`] === undefined && (await send({ kind: "held", key: `${held.device}@${held.since}:${x}`, text: heldText(holderName(held), clock(held.since, now)), main: x, mainText: heldText(holderName(held), clock(held.since, now)), mainOnly: true }, now))) sent[`${HOLD_MAIN}${x}`] = now;
 			for (const k of marks) {
 				const h = markHold(k), was = prev?.device === h.device && prev.since === h.since ? prev : allies.find((a) => a.device === h.device);
 				if (held && holdMark(held) === k) continue;
 				const who = was ? holderName({ byName: "byName" in was ? was.byName : "its main", label: was.label, short: was.short }) : `device ${shortOf(h.device)}`;
-				if (await send({ kind: "hold-ended", key: `${h.device}@${h.since}`, text: holdEndedText(who, endOf(allies, h, now, ignored)), ...readers }, now)) delete sent[k];
+				if (await send({ kind: "hold-ended", key: `${h.device}@${h.since}`, text: holdEndedText(who, endOf(allies, h, now, ignored)), ...readers }, now)) for (const m of Object.keys(sent)) if (m === k || m.startsWith(HOLD_MAIN)) delete sent[m];
 			}
 			// A quota that cleared while its main still runs is told once: the main is back at work.
 			const rows = new Map(dev.mains.map((r) => [r.session, r]));
@@ -174,7 +176,7 @@ export function createCapWatch(d: CapDeps) {
 			untold = new Set(flagged.map(markOf).filter((m) => untold.has(m)));
 			last = rows;
 			const spell = (k: string) => [FIRST, ESCALATED].find((p) => k.startsWith(p)), episode = (k: string) => [UFIRST, UESCALATED].find((p) => k.startsWith(p));
-			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (k.startsWith(HOLD_MARK) ? true : k.startsWith("episode:stale:") ? next.has(k.slice("episode:".length)) : episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < THROTTLE_MS)));
+			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (k.startsWith(HOLD_MARK) || k.startsWith(HOLD_MAIN) ? true : k.startsWith("episode:stale:") ? next.has(k.slice("episode:".length)) : episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < THROTTLE_MS)));
 			try { writeSent(d.dir, sent); } catch (error) { d.log("capacity-error", { text: (error as Error).message.slice(0, 200) }); }
 			return dev;
 		},

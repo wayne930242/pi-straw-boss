@@ -3,7 +3,8 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BoardFill } from "./boardfill.ts";
 import { armWake, idleClock as clockOf, idleWake, idleWakes } from "./idlewake.ts";
 import { todosOf } from "./items.ts";
-import { NUDGE_TEXT, WORKER_NUDGE, WRAP_DESCRIPTION } from "./moments.ts";
+import { heldHere } from "./hold.ts";
+import { HELD_NUDGE, NUDGE_TEXT, WORKER_NUDGE, WRAP_DESCRIPTION } from "./moments.ts";
 import type { Reach } from "./reach.ts";
 import { noteLedger } from "./server/ledger.ts";
 import type { Kit } from "./state.ts";
@@ -30,13 +31,14 @@ export interface WrapDeps extends ProbeDeps {
 }
 
 export function createWrapUp(kit: Kit, d: WrapDeps) {
-	const { pi, cfg, s, me, role } = kit, name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
+	const { pi, cfg, s, me, role, guiDir } = kit, held = () => heldHere(guiDir, cfg.now()) !== undefined; // a held box words the nudge and the wake apart (docs/specs/2026-11-26-device-hold.md)
+	const name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
 	const note = (why: string) => noteLedger(kit.guiDir, { kind: "wrap", id: me(), session: me(), workspace: s.at?.workspaceId, why }, cfg.now(), (text) => kit.tell(text, "warning"));
 	const noted = <T extends { details: unknown }>(how: Promise<T>) => how.then((r) => { const o = r.details as { wrapped?: boolean; auto?: boolean }; note(o.wrapped ? "wrapped" : o.auto ? "auto" : "refused"); return r; }, (error: unknown) => { note(s.autoOn() ? "auto" : "refused"); throw error; });
 	const probe = createProbe({ cfg, s, me }, d); // what still runs for this session (stillruns.ts)
-	const nudge = idleWake(cfg.now, { idleMs: IDLE_MS, eligible: () => d.duty() === "coordinator" || d.duty() === "integrator", ready: async () => !(await probe.nudge()).length, customType: WRAP_MESSAGE, text: NUDGE_TEXT, underAuto: false });
+	const nudge = idleWake(cfg.now, { idleMs: IDLE_MS, eligible: () => d.duty() === "coordinator" || d.duty() === "integrator", ready: async () => !(await probe.nudge()).length, customType: WRAP_MESSAGE, text: () => (held() ? HELD_NUDGE : NUDGE_TEXT), underAuto: false });
 	const worker = idleWake(cfg.now, { idleMs: WORKER_IDLE_MS, eligible: () => d.duty() === "worker", ready: async () => !(await probe.strict()).length, customType: WRAP_MESSAGE, text: WORKER_NUDGE, underAuto: true, forLink: true });
-	const look = idleWakes(kit, [nudge, armWake(cfg.now, d.duty, probe), worker], d.first);
+	const look = idleWakes(kit, [nudge, armWake(cfg.now, d.duty, probe, held), worker], d.first);
 
 	type Ctx = Pick<ExtensionContext, "hasUI" | "hasPendingMessages">;
 	/** Why this call may not wrap up at all, in the order the checks run; `text` is the summary as one line. */

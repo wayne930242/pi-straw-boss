@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { ARM_TEXT } from "./moments.ts";
+import { ARM_TEXT, HELD_ARM_TEXT } from "./moments.ts";
 import type { Kit } from "./state.ts";
 import type { Probe } from "./stillruns.ts";
 
@@ -44,7 +44,7 @@ export interface WakeSpec {
 	/** Nothing of it runs: the wake may go out. */
 	ready(): Promise<boolean>;
 	customType: string;
-	text: string;
+	/** A function: read at each wake (a held box words its wakes apart, docs/specs/2026-11-26-device-hold.md). */ text: string | (() => string);
 	/** It goes out under auto mode too. */
 	underAuto: boolean;
 	/** It goes to a main a tower opened for a teammate's device too (a worker's, docs/specs/2026-11-26-ally-workers.md); the others never do. */
@@ -54,8 +54,8 @@ export const idleWake = (now: () => number, spec: WakeSpec) => ({ ...spec, clock
 export type Wake = ReturnType<typeof idleWake>;
 
 /** The standing main's wake: idle 2 hours with nothing armed (no boss_watch watch, monitor, loop, or subagent of its own; a read that fails counts as armed), told once per idle period to re-arm what it minds. */
-export const armWake = (now: () => number, duty: () => string, probe: Pick<Probe, "strict">) =>
-	idleWake(now, { idleMs: ARM_IDLE_MS, eligible: () => duty() === "standing", ready: async () => !(await probe.strict()).length, customType: ARM_MESSAGE, text: ARM_TEXT, underAuto: true });
+export const armWake = (now: () => number, duty: () => string, probe: Pick<Probe, "strict">, held?: () => boolean) =>
+	idleWake(now, { idleMs: ARM_IDLE_MS, eligible: () => duty() === "standing", ready: async () => !(await probe.strict()).length, customType: ARM_MESSAGE, text: () => (held?.() ? HELD_ARM_TEXT : ARM_TEXT), underAuto: true });
 
 /** Looks once a minute (`cfg.idleLook` in a test): `first` before any wake (rotclose.ts: an old main that handed over gets none), then the first wake this main is eligible for. Returns the look. */
 export function idleWakes({ pi, cfg, s, role }: Kit, wakes: Wake[], first?: (ctx: ExtensionContext) => Promise<boolean>) {
@@ -70,7 +70,7 @@ export function idleWakes({ pi, cfg, s, role }: Kit, wakes: Wake[], first?: (ctx
 			if (!w || !w.clock.due(!w.underAuto && s.autoOn()) || !ctx.isIdle() || ctx.hasPendingMessages()) return;
 			if (!(await w.ready()) || !ctx.isIdle()) return;
 			w.clock.sent();
-			pi.sendMessage({ customType: w.customType, content: w.text, display: true }, { triggerTurn: true });
+			pi.sendMessage({ customType: w.customType, content: typeof w.text === "function" ? w.text() : w.text, display: true }, { triggerTurn: true });
 		} catch { /* the next look tries again */ } finally {
 			looking = false;
 		}

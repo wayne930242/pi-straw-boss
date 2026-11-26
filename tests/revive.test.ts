@@ -263,6 +263,7 @@ test("the revive and the handover texts of a standing main carry the re-arm line
 	const base = { tower: { id: "tw", name: "tower" }, tab: "t1", workspace: "Alpha", reason: "back", waits: [], missed: [], now: 0 };
 	assert.ok(reviveHandoff({ ...base, row: row("standing") }).includes(REARM_TEXT), "a revived standing main");
 	for (const kind of [undefined, "coordinator", "integrator"] as const) assert.ok(!reviveHandoff({ ...base, row: row(kind) }).includes("Re-arm"), `a revived ${kind ?? "kindless"} main`);
+	assert.match(reviveHandoff({ ...base, row: row("coordinator"), held: "This device is held by main \"w\"." }), /\nThis device is held by main "w"\.$/, "a held box's revive says so (docs/specs/2026-11-26-device-hold.md)");
 	const ask = { from: { id: "old", name: "ops" }, handoff: "/h.md", reason: "rotate" };
 	assert.ok(successorPrompt({ ...ask, duty: "standing" }).includes(REARM_TEXT), "a standing main's successor");
 	for (const duty of [undefined, "coordinator", "integrator"] as const) assert.ok(!successorPrompt({ ...ask, ...(duty ? { duty } : {}) }).includes("Re-arm"), `a ${duty ?? "kindless"} successor`);

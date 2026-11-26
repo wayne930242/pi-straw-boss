@@ -8,7 +8,8 @@ import { AUTO_FILE, seal } from "../src/autostate.ts";
 import { createRemoteTurns } from "../src/link/hooks.ts";
 import { MESSAGE_TYPE } from "../src/link/turn.ts";
 import { ARM_IDLE_MS, ARM_MESSAGE } from "../src/idlewake.ts";
-import { ARM_TEXT, NUDGE_TEXT, WORKER_NUDGE, WRAP_DESCRIPTION } from "../src/moments.ts";
+import { ARM_TEXT, HELD_ARM_TEXT, HELD_NUDGE, NUDGE_TEXT, WORKER_NUDGE, WRAP_DESCRIPTION } from "../src/moments.ts";
+import { writeHold } from "../src/hold.ts";
 import { IDLE_MS, idleClock, WORKER_IDLE_MS, WRAP_MESSAGE } from "../src/wrapup.ts";
 import { type Agent, PROMPT_DIR, settle, until, World } from "./fakes.ts";
 import { bob, TEAM_HEX } from "./link/holder-world.ts";
@@ -169,6 +170,34 @@ async function standingRig(watches: string[] = []) {
 	await r.a.tool("boss_duty", { duty: "standing", reason: "it minds box 2" });
 	return r;
 }
+
+/** The box's `_hold.json` as the sb server's capacity watch writes it (docs/specs/2026-11-26-device-hold.md), fresh at `at`. */
+const holdHere = (at: number) => writeHold(join(world.stateDir, "capacity"), { v: 1, at, held: { team: TEAM_HEX, device: bob.id, label: "mac", short: bob.shortId, by: "0123456789abcdef", byName: "work-on", since: at } });
+
+test("on a held box the coordinator's nudge takes the held words", async () => {
+	const r = await mainRig();
+	r.advance(IDLE_MS);
+	holdHere(Date.now() + IDLE_MS);
+	await r.look();
+	assert.deepEqual(r.nudges().map((m) => m.content), [HELD_NUDGE]);
+	for (const term of ["take no next eligible work", "metadata.waitsOn", "boss_wrap"]) assert.ok(HELD_NUDGE.includes(term), term);
+});
+
+test("a held box's standing main gets the held wake", async () => {
+	const st = await standingRig();
+	st.advance(ARM_IDLE_MS);
+	holdHere(Date.now() + ARM_IDLE_MS);
+	await st.look();
+	assert.deepEqual(st.arms().map((m) => m.content), [HELD_ARM_TEXT]);
+});
+
+test("a hold file 6 minutes old is no hold: the usual wake", async () => {
+	const st = await standingRig();
+	st.advance(ARM_IDLE_MS);
+	holdHere(Date.now() + ARM_IDLE_MS - 6 * 60_000);
+	await st.look();
+	assert.deepEqual(st.arms().map((m) => m.content), [ARM_TEXT]);
+});
 
 test("a standing main with nothing armed gets one wake after 2 idle hours, under auto mode too; again only after a turn and 2 more hours", async () => {
 	const r = await standingRig();

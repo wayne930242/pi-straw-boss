@@ -12,7 +12,7 @@ import { refuseHead } from "./head.ts";
 import type { Log } from "./log.ts";
 import { fieldsOf, withoutField } from "../header.ts";
 import { headId, type Slot } from "./record.ts";
-import { ageOf, gatherMains } from "./towerbrief.ts";
+import { ageOf, gatherMains, heldFlag } from "./towerbrief.ts";
 import { appendEvent, type ServiceRecord } from "./towerstore.ts";
 import { lastNote, type RunRecord } from "./towerrunstore.ts";
 import { lapsed, memorySection, readMemory } from "./towermemory.ts";
@@ -108,7 +108,7 @@ export async function headBrief(d: HeadBriefDeps, input: { woken: number; run: R
 		identity: d.record().id, woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, boss: Boolean(input.run.conversation), chapter,
 		workspaces: rows, ...(d.auto?.() ? { auto: `${d.auto()!}\n${WATCH_BRIEF}` } : {}),
 		asks: openAsks(d.slot, d.now()).map((a) => ({ id: a.id, label: phrase(a.label, 60), age: ageOf(d.now() - a.at), first: a.first, ...(a.answers.at(-1) ? { answer: a.answers.at(-1)!.first } : {}) })),
-		memory: section.text, lapsed: kept.memory.entries.filter((e) => e.for === "boss" && lapsed(e, d.now())).map((e) => e.id), ...(note ? { note: { text: note.note, age: ageOf(d.now() - Date.parse(note.at)) } } : {}), tools: headTools(d.locale), flags: [],
+		memory: section.text, lapsed: kept.memory.entries.filter((e) => e.for === "boss" && lapsed(e, d.now())).map((e) => e.id), ...(note ? { note: { text: note.note, age: ageOf(d.now() - Date.parse(note.at)) } } : {}), tools: headTools(d.locale), flags: heldFlag(d.slot.stateDir, d.now()), // a held box (docs/specs/2026-11-26-device-hold.md)
 	};
 	if (!input.split) return { digestKeys: [], expired: section.expired, text: buildHeadBrief(brief) };
 	const { fixed, live } = buildHeadSplit(brief);

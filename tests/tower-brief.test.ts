@@ -52,3 +52,18 @@ test("a tab with no join says so, and ages read as minutes, hours, days", () => 
 	assert.match(buildBrief(base()), /- none: no tab of this workspace has joined/);
 	assert.deepEqual([0, 59 * 60_000, 3 * 3600_000 + 5 * 60_000, 26 * 3600_000].map(ageOf), ["0m", "59m", "3h 5m", "1d 2h"]);
 });
+
+test("a held box's brief carries the held line among its flags, and its ally run's brief after who it is (docs/specs/2026-11-26-device-hold.md)", async () => {
+	const { mkdtempSync, rmSync } = await import("node:fs"), { tmpdir } = await import("node:os"), { join } = await import("node:path");
+	const { writeHold } = await import("../src/hold.ts"), { buildAllyBrief, heldFlag } = await import("../src/server/towerbrief.ts");
+	const state = mkdtempSync(join(tmpdir(), "psb-brief-hold-")), now = Date.now();
+	try {
+		assert.deepEqual(heldFlag(state, now), []);
+		writeHold(join(state, "capacity"), { v: 1, at: now, held: { team: "0f".repeat(16), device: "d".repeat(26), label: "mac", short: "dddddd", by: "0123456789abcdef", byName: "work-on", since: now } });
+		const [line] = heldFlag(state, now);
+		assert.equal(line, 'This device is held by main "work-on" on "mac" (dddddd): route no new work to this device\'s own mains; answer a request for new work from anyone else: held by main "work-on" on "mac" (dddddd).');
+		assert.ok(buildBrief({ ...base(), flags: [line!] }).includes(line!));
+		const ally = buildAllyBrief({ device: { label: "pc", short: "pppppp", team: "t", level: "dispatch" }, workspace: "wA", label: "Alpha", woken: "10:00", seen: [], asks: [], thread: [], tools: ["- x"], held: line! });
+		assert.ok(ally.split("\n\n")[1] === line, "right after who it is");
+	} finally { rmSync(state, { recursive: true, force: true }); }
+});

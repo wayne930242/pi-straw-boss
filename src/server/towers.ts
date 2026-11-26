@@ -30,7 +30,7 @@ import { autoAnswer, headHost, headTool, type HeadPort } from "./headtools.ts";
 import type { Allows } from "./allows.ts";
 import { runApprover } from "./runapprove.ts";
 import type { Asks } from "./asks.ts";
-import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, localTools } from "./towerbrief.ts";
+import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, heldFlag, localTools } from "./towerbrief.ts";
 import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
 import { createKids, type KidsPort } from "./runkids.ts";
 import { resolvePi } from "./runchild.ts";
@@ -336,7 +336,7 @@ export function createTowers(o: TowersOptions): Towers {
 					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
 					asks: items.filter((i) => i.awaitsReply || i.askedBy).map((i) => ({ ...(i.awaitsReply ? { id: i.awaitsReply } : {}), first: line(i.text), ...(i.askedBy ? { askedBy: i.askedBy } : {}) })),
 					thread: (o.ally?.thread(device) ?? []).map((m) => ({ dir: m.dir, kind: m.kind, text: m.text, age: ageOf(now() - m.at) })),
-					tools: allyTools(rec.level ?? "reply"), ...(o.waits ? { board: (session: string) => ((h) => (h ? `b:${h}` : undefined))(o.waits!.handleOf(session)) } : {}),
+					tools: allyTools(rec.level ?? "reply"), ...((h) => (h ? { held: h } : {}))(heldFlag(slot.stateDir, now())[0]), ...(o.waits ? { board: (session: string) => ((h) => (h ? `b:${h}` : undefined))(o.waits!.handleOf(session)) } : {}),
 				}),
 			};
 		},
@@ -363,7 +363,7 @@ export function createTowers(o: TowersOptions): Towers {
 					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
 					flags: [
 						...(crashed.length ? [`${crashed.length} event${crashed.length > 1 ? "s were" : " was"} possibly handled by a run that crashed: check before acting.`] : []),
-						...(oldest !== undefined && oldest > 10 * 60_000 ? [`The oldest event waiting is ${ageOf(oldest)} old.`] : []),
+						...(oldest !== undefined && oldest > 10 * 60_000 ? [`The oldest event waiting is ${ageOf(oldest)} old.`] : []), ...heldFlag(slot.stateDir, now()),
 					],
 					tools: localTools(localeOf(o.env, slot.stateDir)),
 				}),

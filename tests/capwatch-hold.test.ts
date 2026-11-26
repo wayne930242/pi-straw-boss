@@ -61,6 +61,10 @@ test("a held box: told once to the head tower, the standing main and the coordin
 	watch = make(); // a restart
 	await run(watch, w.clock, 3);
 	assert.equal(w.told.filter((e) => e.kind === "held").length, 1, "not told again after a restart");
+	w.mains.push({ session: "s-b", name: "new", workspace: "w1", role: "main", state: "idle", workers: [], fileMtime: w.clock.now(), entryUpdated: w.clock.now() });
+	await run(watch, w.clock, 2);
+	assert.deepEqual(w.told.filter((e) => e.kind === "held").slice(1).map((e) => [e.main, e.mainOnly]), [["s-b", true]], "a coordinator that starts on the held box is told once");
+	w.mains.pop();
 	w.allies = [mac(w.clock.now())]; // the controller's board no longer holds it
 	await run(watch, w.clock, 1);
 	const ended = w.told.filter((e) => e.kind === "hold-ended");

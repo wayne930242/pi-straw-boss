@@ -22,6 +22,8 @@ export function readHold(dir: string, now: number, any = false): HeldBy | undefi
 		return [h.team, h.device, h.label, h.short, h.by, h.byName].every((x) => typeof x === "string") && typeof h.since === "number" ? (h as HeldBy) : undefined;
 	} catch { return undefined; }
 }
+/** The hold of the box whose state folder is `stateDir` (its capacity folder is `<state dir>/capacity`). */
+export const heldHere = (stateDir: string, now: number) => readHold(join(stateDir, "capacity"), now);
 /** How a main or the boss names the holder: `main "work-on" on "mac" (k3f9qa)`. */
 export const holderName = (h: Pick<HeldBy, "byName" | "label" | "short">) => `main ${JSON.stringify(h.byName)} on ${JSON.stringify(h.label)} (${h.short})`;
 

@@ -8,6 +8,8 @@ import { assertSettingsSafe } from "./trust/settings.ts";
 import { isRoleLabel, TRAIN, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 import { tabLabel } from "./tablabel.ts";
+import { heldHere, holderName } from "./hold.ts";
+import { heldLine } from "./moments.ts";
 import { MAIN_WAIT_MS, MAX_OPENED_MAINS, OpenLimitError, type OpenerEnv, type Revived, type ReviveRequest } from "./opener.ts";
 import { type DeadRow, deathKey, failedIn, gatherDead, keyOf, MAX_REVIVES, pick, readLedger, REVIVABLE, REVIVE_TOKEN, ReviveRefused, REARM_TEXT, reviveHandoff, revivedIn, roleRefusal, sessionHeader, sessionNotes, sessionsDir, takeLock, updateLedger } from "./revive.ts";
 
@@ -101,7 +103,7 @@ export async function reviveMain(env: OpenerEnv, { session, reason, origin }: Re
 			const twins = (await panes(run)).filter((p) => p.pane_id !== paneId && p.agent_session?.value === row.file);
 			if (twins.length) throw new ReviveRefused(`another pane (${twins.map((p) => p.pane_id).join(", ")}) runs this session file now; the revived pi was closed, and that one keeps it`);
 			const missed = readLedger(env.stateDir, row.file, row.session).missed;
-			const sent = await env.send(main.id, reviveHandoff({ row, tower: env.tower(), tab: tabId, workspace: workspace.label, reason: why, waits: env.waitsOf?.(row.session) ?? [], missed, now: Date.now(), ...(origin ? { origin } : {}) }));
+			const sent = await env.send(main.id, reviveHandoff({ row, tower: env.tower(), tab: tabId, workspace: workspace.label, reason: why, waits: env.waitsOf?.(row.session) ?? [], missed, now: Date.now(), ...(origin ? { origin } : {}), ...((h) => (h ? { held: heldLine(holderName(h)) } : {}))(heldHere(env.stateDir!, Date.now())) }));
 			if (sent.status !== "sent") throw new Error(`The revived ${wanted} ${main.name ?? main.id} did not take the handoff: ${sent.status} ${sent.code ?? ""} ${sent.detail ?? ""}`.trim());
 			updateLedger(env.stateDir, row.file, Date.now(), (l) => void (l.missed = []));
 			attempt("revived", { tab: tabId, pane: paneId });
