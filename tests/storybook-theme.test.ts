@@ -66,8 +66,7 @@ test("the notebook look: washi tape, paper grain, a hand-drawn line per phase, r
 	for (const grain of css.matchAll(/--sb-grain: (url\("[^"]+"\))/g)) assert.ok(grain[1]!.length < 2048, `the grain is under 2 KB (${grain[1]!.length})`);
 });
 
-test("no picture, figure, or filter moves: the sheet has no animation, no keyframes, and no transition of a filter (B-4 brings the status figures under its rules)", () => {
-	assert.ok(!/@keyframes|animation\s*:/.test(css), "nothing animates in B-1");
+test("no filter moves: no transition of a filter, and no SVG filter on a page element (what moves, the status figures and the ambient layers, is held to its rules by tests/storybook-motion.test.ts)", () => {
 	assert.ok(!/transition[^;]*filter/.test(css));
 	assert.ok(!/(?<![-\w])filter:\s*url/.test(css), "no SVG filter on a page element: the grain's filter lives inside its own static image");
 });
