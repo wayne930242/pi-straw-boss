@@ -108,7 +108,7 @@ export function purgeCaps(dir: string, live: ReadonlySet<string>, now: number): 
 }
 
 /** A live main as the server sees it: its workers are the names of the subagents of its pane that run now (and, for any main, the device's live trains). */
-export interface MainFacts { session: string; name: string; workspace: string; role: "main" | "train"; state: string; /** Its Herdr pane's `agent_status`. */ paneStatus?: string; commanding?: boolean; duty?: string; workers: string[]; fileMtime?: number; entryUpdated?: number; background?: boolean }
+export interface MainFacts { session: string; name: string; workspace: string; role: "main" | "train"; state: string; /** Its Herdr pane's `agent_status`. */ paneStatus?: string; commanding?: boolean; duty?: string; workers: string[]; fileMtime?: number; entryUpdated?: number; background?: boolean; /** A main of kind worker opened for a teammate's device: its own points (its route). */ selfPoints?: number }
 /** One main's row of the device: points in use, its ready todos (the smallest's points), its open todos, its pause, and whether it is stale. */
 export interface MainRow { session: string; name: string; workspace: string; points: number; ready: number; minReady?: number; open: number; paused?: { until?: number; detail?: string }; stale?: true; standing?: true; /** The running workers sampled, folded (workercap.ts matches a launch to them); the local file only, never on the wire. */ workers?: string[]; /** The deployed units by name and points (the head page's supply tray); local only, like `workers`. */ units?: { name: string; points: number }[] }
 /** The device row. `under`: since when the device has had room for its smallest ready todo (held 10 minutes before it is flagged). */
@@ -135,11 +135,13 @@ export function joinCaps(o: { mains: MainFacts[]; caps: MainCap[]; budget?: numb
 	const caps = new Map(o.caps.map((c) => [c.session, c])), trains = o.mains.filter((m) => m.role === "train").map((m) => nameKey(m.name)), named = new Set<string>();
 	const mains = o.mains.filter((m) => m.role === "main").map((m): MainRow => {
 		const c = caps.get(m.session), own = new Set(m.workers.map(nameKey)), runs = (owner?: string) => owner !== undefined && (own.has(nameKey(owner)) || trains.includes(nameKey(owner)));
-		const doing = (c?.doing ?? []).filter((j) => runs(j.owner)), ready = (c?.ready ?? []).filter((j) => j.until === undefined || j.until <= o.now).slice(0, JOBS).filter((j) => !runs(j.owner));
+		const self = m.duty === "worker" ? (m.selfPoints ?? DEFAULT_POINTS) : undefined; // a worker main counts itself, and its own steps are no ready work of the device
+		const doing = self !== undefined ? [] : (c?.doing ?? []).filter((j) => runs(j.owner)), ready = self !== undefined ? [] : (c?.ready ?? []).filter((j) => j.until === undefined || j.until <= o.now).slice(0, JOBS).filter((j) => !runs(j.owner));
 		doing.forEach((j) => named.add(nameKey(j.owner!)));
-		const points = doing.reduce((n, j) => n + j.points, 0) + [...own].filter((w) => !doing.some((j) => nameKey(j.owner!) === w)).length * DEFAULT_POINTS;
+		const points = (self ?? 0) + doing.reduce((n, j) => n + j.points, 0) + [...own].filter((w) => !doing.some((j) => nameKey(j.owner!) === w)).length * DEFAULT_POINTS;
 		const minReady = ready.length ? Math.min(...ready.map((j) => j.points)) : undefined, units = new Map<string, { name: string; points: number }>();
 		for (const j of doing) units.set(nameKey(j.owner!), { name: clean(j.owner, 40), points: round((units.get(nameKey(j.owner!))?.points ?? 0) + j.points) });
+		if (self !== undefined) units.set(nameKey(m.name), { name: clean(m.name, 40), points: self });
 		for (const w of m.workers) if (!units.has(nameKey(w))) units.set(nameKey(w), { name: clean(w, 40), points: DEFAULT_POINTS });
 		return {
 			session: m.session, name: clean(m.name, 40), workspace: m.workspace, points: round(points), ready: ready.length, ...(minReady !== undefined ? { minReady } : {}), open: c?.open ?? 0,

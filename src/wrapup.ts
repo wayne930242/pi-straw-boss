@@ -45,6 +45,7 @@ export function createWrapUp(kit: Kit, d: WrapDeps) {
 		if (role() !== "main") return "Only a tab's main agent wraps up; a member's work ends with its main's";
 		if (s.remoteOrigin || d.remote()) return "A teammate's turn cannot wrap up this main";
 		if (d.duty() === "standing") return "A standing main has no end: only the boss closes it (/boss close)";
+		if (d.duty() === "worker") return "A worker ends with its one call_tower why: milestone, its final report: the tower closes it then";
 		if (s.openedBy?.startsWith("link:")) return `A main opened for a teammate's device (${s.openedBy.slice(0, 40)}) is closed by that device's stop or the tower, not by boss_wrap`;
 		if (!text || text.length > SUMMARY_MAX) return `summary is required: one paragraph of 1 to ${SUMMARY_MAX} characters`;
 		if (s.autoOn()) return "auto mode: the boss is away; wrap up when he is back";

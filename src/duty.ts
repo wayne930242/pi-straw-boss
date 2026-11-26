@@ -1,6 +1,6 @@
 // What a main agent is for (docs/specs/2026-11-09-agent-kinds.md §1): its duty, the kind of work it is given, and the graph of the plan it runs. No pi imports: the server and the page load this file.
 
-export const COORDINATOR_DUTIES = ["coordinator", "integrator", "standing"] as const;
+export const COORDINATOR_DUTIES = ["coordinator", "integrator", "standing", "worker"] as const; // a main of kind `worker` is opened for a teammate's device (docs/specs/2026-11-26-ally-workers.md); its kind is fixed
 export const WORKER_DUTIES = ["worker", "scout", "planner", "reviewer"] as const; // "train" stays the Role; `watchdog` was retired in 0.83.0 (boss_watch)
 export type Duty = (typeof COORDINATOR_DUTIES)[number] | (typeof WORKER_DUTIES)[number];
 export type CoordinatorDuty = (typeof COORDINATOR_DUTIES)[number];

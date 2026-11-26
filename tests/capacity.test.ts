@@ -156,3 +156,11 @@ test("the device row: rows carry pause and stale; the line and the files", () =>
 	assert.deepEqual(readCaps(dir).map((c) => c.session), ["s-1"], "the device row, a folder and a file that names another session are no main's");
 	assert.equal(capLine({ ...(d as DeviceCap), budget: undefined }, NOW).includes(" / 20"), false);
 });
+
+test("a worker main opened for a teammate's device counts its own points, lists itself as a unit, and its own steps are no ready work (docs/specs/2026-11-26-ally-workers.md)", () => {
+	const d = join_([main("w-1", { name: "worker · MP-1", duty: "worker", selfPoints: 2, state: "idle" })], [cap("w-1", { ready: [{ points: 1 }], open: 1 })], { budget: 4 });
+	const row = d.mains[0]!;
+	assert.deepEqual([row.points, row.ready, row.units], [2, 0, [{ name: "worker · MP-1", points: 2 }]]);
+	assert.equal(d.points, 2);
+	assert.equal(d.under, undefined, "no ready work, so no under alarm from it");
+});

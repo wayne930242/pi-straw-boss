@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { capDir, writeDevice } from "../src/capacity.ts";
 import { createReservations, RES_EXPIRE_MS, type Reservations } from "../src/capres.ts";
-import { createWorkerCap, deviceRoom, type Room } from "../src/workercap.ts";
+import { admitPoints, createWorkerCap, deviceRoom, type Room } from "../src/workercap.ts";
 import { fakeClock } from "./fake-clock.ts";
 
 // docs/specs/2026-11-24-capacity.md, The cap: sb holds back no worker by count. On an attended device (the boss's own) nothing gates a worker; on an unattended one the device's points gate it,
@@ -183,4 +183,18 @@ test("admission weighs the todo whose owner is the subagent's name (case- and sp
 	assert.match(cap.admit("c2", worker("BIG"), branch)?.reason ?? "", /runs 1 of its 2 capacity points, 0 more held by launches it does not count yet: this worker needs 2\./, "a 2-point ticket at 1 point of headroom");
 	assert.equal(cap.admit("c3", worker("done one"), branch), undefined, "a completed todo weighs nothing: the default 1 fits");
 	assert.match(cap.admit("c4", worker(), branch)?.reason ?? "", /1 more held by launches it does not count yet: this worker needs 1\./, "no name: 1");
+});
+
+test("a worker main's self reservation counts until a row lists its session, whatever workers that row shows (docs/specs/2026-11-26-ally-workers.md)", () => {
+	const { d, main } = device({ points: 0 }, 3);
+	const store = createReservations(d.dir, d.clock.now);
+	const got = admitPoints({ room: () => d.row, store }, 3, 2, { session: "", worker: "", self: true });
+	assert.ok("id" in got);
+	assert.ok(main().admit("c1", worker("u")) === undefined, "1 more fits beside the 2 held");
+	assert.ok(main().admit("c2", worker("v")), "a third point does not fit");
+	store.claim(got.id, "w-1");
+	d.clock.advance(MIN);
+	d.row = { points: 2, at: d.clock.now(), mains: [{ session: "w-1", workers: [] }] };
+	assert.deepEqual(store.live(d.row.at!, (h) => h.self === true && d.row!.mains!.some((m) => m.session === h.session)).map((r) => r.session), ["s-a"], "the worker's row shows it: only s-a's launch still counts");
+	assert.ok("refusal" in admitPoints({ room: () => d.row, store }, 3, 1, { session: "", worker: "", self: true }), "the row's 2 and s-a's 1 fill the budget");
 });

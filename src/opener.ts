@@ -13,6 +13,8 @@ import { slipsInText } from "./train/cars.ts";
 import { appFromRequest, isRoleLabel, readMaxTrains, TRAIN, type TrainId, trainFromRequest, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
 import { waitPastTrust } from "./trust/wait.ts";
 import { reviveMain } from "./reviver.ts";
+import { type WorkerOpen, workerHandoff } from "./workerhandoff.ts";
+import type { WorkerSpec } from "./workerslip.ts";
 export { openSuccessor, type Successor, type SuccessorEnv, type SuccessorRequest, successorPrompt } from "./reviver.ts";
 
 // The one thing a tower does besides routing: when no session owns a request, it opens a main for it (docs/how-it-works.md, "Opening a main").
@@ -20,6 +22,8 @@ export { openSuccessor, type Successor, type SuccessorEnv, type SuccessorRequest
 // that already exists, and `STRAW_BOSS_ROLE=main` makes that pi promote itself once it has joined (index.ts).
 
 export const MAIN_WAIT_MS = 60_000;
+/** `role: "worker"` (docs/specs/2026-11-26-ally-workers.md): a main of kind worker in a worktree of its own, opened for a teammate's device. */
+export const WORKER = "worker";
 /** At most this many mains opened by towers are alive in one workspace, and at most one per sender. */
 export const MAX_OPENED_MAINS = 2;
 /** The wait before the second look for a project's integrator where its ledger says one ran and none is seen. */
@@ -61,6 +65,8 @@ export interface OpenerEnv {
 	recovering?(): boolean;
 	/** The waits a session holds, one line each, for its revive handoff (the server reads its link waits and the tower's wait cards). */
 	waitsOf?(session: string): string[];
+	/** The panes of the workers this workspace's ally runs opened (their routes, allyroute.ts): a worker counts toward neither of the mains' limits. The route is the witness, not a pane token a local process could write. */
+	workerPanes?(): ReadonlySet<string>;
 }
 /** `boss_revive_main revive` (docs/specs/2026-11-23-tower-revive.md §4): the session by id, prefix, or name; the run's reason; `by` is the tower that asks. */
 export interface ReviveRequest { session: string; reason: string; /** The remote turn a pi tower was asked in (`s.remoteOrigin`): the handoff frames the reason as a peer's words (RVR-F011). */ origin?: string }
@@ -72,7 +78,7 @@ export interface PeerSender { id: string; label: string; short: string }
 /**
  * `role`: "train" opens a train on an integrator's manifest (docs/specs/2026-11-07-train-workers.md §3.3); "integrator" finds the one integrator of `project` or opens it, on the car slip the request carries; anything else is refused.
  */
-export interface OpenRequest { request: string; sender: string; label?: string; peer?: PeerSender; role?: string; /** `role: "integrator"`: the project as the caller words it. The code reads the project from the checkout (appsconfig.ts `checkoutProject`), and another word is refused. */ project?: string; /** `role: "integrator"`, an ally run's: the folder its team binds on this computer, which the workspace's checkout must be inside. */ within?: string; /** `role: "integrator"`: only the refusals are wanted, and nothing opens. */ dry?: true; /** The new main's kind (docs/specs/2026-11-09-agent-kinds.md §6): `coordinator` or `standing`; an integrator comes only through `role: "integrator"`, and a train's kind is fixed. */ duty?: string }
+export interface OpenRequest { request: string; sender: string; label?: string; peer?: PeerSender; role?: string; /** `role: "integrator"`: the project as the caller words it. The code reads the project from the checkout (appsconfig.ts `checkoutProject`), and another word is refused. */ project?: string; /** `role: "integrator"`, an ally run's: the folder its team binds on this computer, which the workspace's checkout must be inside. */ within?: string; /** `role: "integrator"`: only the refusals are wanted, and nothing opens. */ dry?: true; /** The new main's kind (docs/specs/2026-11-09-agent-kinds.md §6): `coordinator` or `standing`; an integrator comes only through `role: "integrator"`, and a train's kind is fixed. */ duty?: string; /** `role: "worker"`: what the server prepared (server/workeropen.ts); `request` is the brief. */ worker?: WorkerOpen; /** `role: "worker"` from an ally run: the slip the run's device sent and its ask (runtools.ts), which the server's door turns into `worker`. */ slip?: { spec: WorkerSpec; ask?: string } }
 export interface Opened { tab: string; pane: string; main: string; sender: string; /** Nothing opened: an earlier open of the same request, or the project's integrator that already runs. */ repeated?: true; /** Set for a train: its project and code. */ train?: TrainId; /** Set for an integrator: its project. */ integrator?: string }
 
 /** The text the new main starts from: who asked, and what, with nothing summarised. A coordinator answers the sender and the tower that opened it, then waits to be closed; a standing main (`duty`) has no end, so it is told no close is coming. */
@@ -135,14 +141,15 @@ export function opener(env: OpenerEnv) {
 		const turn: { end?: () => void } = {};
 		try { return await openHeld(input, turn); } finally { turn.end?.(); }
 	};
-	const openHeld = async ({ request, sender: asked, label: asked_label, peer, role, project, within, dry, duty }: OpenRequest, turn: { end?: () => void }): Promise<Opened> => {
+	const openHeld = async ({ request, sender: asked, label: asked_label, peer, role, project, within, dry, duty, worker }: OpenRequest, turn: { end?: () => void }): Promise<Opened> => {
 		const { run, sleep } = env;
-		if (role !== undefined && role !== TRAIN && role !== INTEGRATOR) throw new OpenLimitError(`role must be "train" or "integrator" when given, not ${JSON.stringify(role).slice(0, 40)}`);
+		if (role === WORKER && (!peer || !worker || duty !== undefined)) throw new OpenLimitError("A worker is opened for a teammate's device by the sb server's ally door, with no duty");
+		if (role !== undefined && role !== TRAIN && role !== INTEGRATOR && role !== WORKER) throw new OpenLimitError(`role must be "train" or "integrator" when given, not ${JSON.stringify(role).slice(0, 40)}`);
 		// The kind the new main starts with (§6): it reaches the pi as `sb_open_duty`, consumed with `sb_open_main` (session.ts). A project's integrator is opened by the door alone, which keeps one per project.
-		if (duty !== undefined && !isCoordinatorDuty(duty)) throw new OpenLimitError(`duty must be "coordinator" or "standing" when given, not ${JSON.stringify(duty).slice(0, 40)}`);
+		if (duty !== undefined && (!isCoordinatorDuty(duty) || duty === WORKER)) throw new OpenLimitError(`duty must be "coordinator" or "standing" when given, not ${JSON.stringify(duty).slice(0, 40)}`);
 		if (duty !== undefined && role === TRAIN) throw new OpenLimitError("A train's kind is fixed: train; open it with no duty");
 		if (duty === INTEGRATOR && role !== INTEGRATOR) throw new OpenLimitError("An integrator is opened with role \"integrator\" on a car slip, which keeps one per project; duty takes coordinator or standing");
-		const openDuty: CoordinatorDuty | undefined = role === INTEGRATOR ? INTEGRATOR : (duty as CoordinatorDuty | undefined);
+		const openDuty: CoordinatorDuty | undefined = role === INTEGRATOR ? INTEGRATOR : role === WORKER ? WORKER : (duty as CoordinatorDuty | undefined);
 		// A train is opened on the tower's own reading of an integrator's manifest, and only while the merge train is on; its name is its code, whatever label the caller sent.
 		let train: TrainId | undefined, label = asked_label;
 		if (role === TRAIN) {
@@ -173,7 +180,7 @@ export function opener(env: OpenerEnv) {
 		if (!workspace) throw new Error(`Workspace ${env.workspaceId} is not open any more`);
 		// Limits come from live Herdr panes carrying the marker below, so they hold across a tower restart: a closed tab takes its marker with it, and
 		// a main that died leaves one that expires with its token TTL. A restored main keeps its old marker (the asking session, now another id), so it counts toward the workspace cap only. Opens are serialised, so the count and the marker cannot race.
-		const dir = workspace.worktree?.checkout_path ?? env.cwd;
+		const dir = worker?.dir ?? workspace.worktree?.checkout_path ?? env.cwd;
 		let integ: string | undefined, found: { from: string; file: string; apps: string[] } | undefined;
 		if (role === INTEGRATOR) {
 			// The slip's apps are this checkout's, and so is the project: apps.json says both, and the caller's word only has to agree (R151-F002). A made-up name opens nothing, and one checkout has one integrator's name.
@@ -245,17 +252,17 @@ export function opener(env: OpenerEnv) {
 		// A train carries `sb_opened_by` as a main does (the tower closes it by that mark), but it counts toward neither of the mains' limits. It is the role that says it (a train in its first moments has none yet):
 		// a main's pane with an `sb_train` token left on it (a crashed train's, or one a process of the same user wrote) is still a main.
 		// An integrator the tower opened is the tower's own main: its marker names its project and no sender, and it takes none of the mains' places either (it has its own count, above).
-		const marked = here.filter((p) => p.tokens?.sb_opened_by && !integratorOf(p.tokens.sb_opened_by) && p.tokens.sb_role !== TRAIN && !(p.tokens.sb_role === undefined && p.tokens.sb_train));
-		const ofSender = train || integ ? 0 : marked.filter((p) => p.tokens!.sb_opened_by === sender.id).length;
+		const workers = env.workerPanes?.() ?? new Set<string>(), marked = here.filter((p) => !workers.has(p.pane_id) && p.tokens?.sb_opened_by && !integratorOf(p.tokens.sb_opened_by) && p.tokens.sb_role !== TRAIN && !(p.tokens.sb_role === undefined && p.tokens.sb_train));
+		const ofSender = train || integ || worker ? 0 : marked.filter((p) => p.tokens!.sb_opened_by === sender.id).length;
 		if (ofSender) throw new OpenLimitError(`Sender ${sender.name ?? sender.id} already has ${ofSender === 1 ? "an opened main" : `${ofSender} opened mains`} running in workspace ${workspace.label}; a sender gets one at a time. Wait for it to finish, or send the request to it.`);
-		if (!train && !integ && marked.length >= MAX_OPENED_MAINS) throw new OpenLimitError(`Workspace ${workspace.label} already has ${marked.length} mains opened by its tower (the limit is ${MAX_OPENED_MAINS}); try again when one has finished.`);
+		if (!train && !integ && !worker && marked.length >= MAX_OPENED_MAINS) throw new OpenLimitError(`Workspace ${workspace.label} already has ${marked.length} mains opened by its tower (the limit is ${MAX_OPENED_MAINS}); try again when one has finished.`);
 		await assertSettingsSafe([dir]); // before the tab exists: pi reads the folder's .pi/settings.json before any extension can stop it (trust/settings.ts)
 		const { tabId, paneId } = await createTab(run, workspace.workspace_id, dir, [`STRAW_BOSS_ROLE=${train ? TRAIN : "main"}`], label);
 		try {
 			// The marker counts toward the limits at once; sb_open_main authorises exactly one pi in this shell to promote itself (it consumes the token).
 			await report(run, "pane", paneId, { sb_opened_by: integ ? integMark(integ) : sender.id, sb_open_main: "1", ...(train ? { sb_train: trainToken(train) } : {}), ...(openDuty ? { sb_open_duty: openDuty } : {}) });
 			// Herdr agent names are unique across workspaces and lowercase only.
-			await startPi(run, sleep, `${train ? TRAIN : integ ? "integ" : "main"}-${randomUUID().slice(0, 8)}`, paneId, ["--name", train || integ ? label! : `main · ${label ?? workspace.label}`]);
+			await startPi(run, sleep, `${train ? TRAIN : integ ? "integ" : "main"}-${randomUUID().slice(0, 8)}`, paneId, ["--name", train || integ ? label! : worker ? `worker · ${worker.label}` : `main · ${label ?? workspace.label}`, ...(worker?.model ? ["--model", worker.model] : [])]);
 			// The pi is the tab's main (or the train) once it has published its role, and an integrator once it has published its kind too; only then does it get the request, so its first prompt is its own role's.
 			const wanted = train ? TRAIN : "main";
 			const main = await waitPastTrust(sleep, async () => {
@@ -263,7 +270,7 @@ export function opener(env: OpenerEnv) {
 				return tokens?.sb_role === wanted && (!integ || tokens.sb_duty === INTEGRATOR) ? (await env.sessions()).find((s) => s.herdrLocation?.paneId === paneId) : undefined;
 			}, MAIN_WAIT_MS, 500, env.trustDir ? { dir: env.trustDir, pane: paneId } : undefined);
 			if (!main) throw new Error(`The pi in pane ${paneId} did not become ${train ? "the train" : integ ? `the integrator of project ${integ} (a main of kind integrator)` : "the main agent"} of its tab within ${MAIN_WAIT_MS / 1000} s`);
-			const sent = await env.send(main.id, train ? trainHandoff(workspace.label, sender, request, env.tower(), train) : integ ? integratorHandoff(workspace.label, integ, env.tower()) : handoff(workspace.label, sender, request, env.tower(), peer, openDuty === "standing" ? openDuty : undefined));
+			const sent = await env.send(main.id, train ? trainHandoff(workspace.label, sender, request, env.tower(), train) : worker && peer ? workerHandoff(workspace.label, peer, worker, request, env.tower()) : integ ? integratorHandoff(workspace.label, integ, env.tower()) : handoff(workspace.label, sender, request, env.tower(), peer, openDuty === "standing" ? openDuty : undefined));
 			if (sent.status !== "sent") throw new Error(`The new ${train ? "train" : integ ? "integrator" : "main"} ${main.name ?? main.id} did not take the ${integ ? "handoff" : "request"}: ${sent.status} ${sent.code ?? ""} ${sent.detail ?? ""}`.trim());
 			return { tab: tabId, pane: paneId, main: main.id, sender: sender.id, ...(train ? { train } : {}), ...(integ ? { integrator: integ } : {}) };
 		} catch (error) {
@@ -280,7 +287,7 @@ export function opener(env: OpenerEnv) {
 	};
 	const openOne = (input: OpenRequest): Promise<Opened> => {
 		// An integrator's open is answered from the live net each time and kept in no ledger: the project's integrator closes when idle, and the next slip, even the same one sent again, opens it anew. Opens stay serialised.
-		if (input.role === INTEGRATOR) {
+		if (input.role === INTEGRATOR || input.role === WORKER) {
 			const pending = queue.then(() => open(input), () => open(input));
 			queue = pending.catch(() => {});
 			return pending;

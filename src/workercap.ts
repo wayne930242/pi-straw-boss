@@ -32,8 +32,28 @@ export const deviceRoom = (stateDir: string, me: () => string | undefined, atten
 	return { room: () => readDevice(dir, Date.now()), store: createReservations(dir, Date.now), session: me, budget: () => readBudget(stateDir), attended };
 };
 /** The row shows a launch: it lists the main's session with a running worker of the launch's (folded) name. */
-const shows = (r: Room, h: Holder) => h.worker !== "" && (r.mains?.find((m) => m.session === h.session)?.workers ?? []).some((w) => nameKey(w) === h.worker);
+const shows = (r: Room, h: Holder) => (h.self ? h.session !== "" && (r.mains ?? []).some((m) => m.session === h.session) : h.worker !== "" && (r.mains?.find((m) => m.session === h.session)?.workers ?? []).some((w) => nameKey(w) === h.worker));
 const sum = (xs: readonly number[]) => xs.reduce((n, x) => n + x, 0);
+const pts = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * The admission both a main's `subagent` call and the box's worker door (server/workerally.ts) run: a reservation of `need` for `who` is written first, then the row and the other reservations are read, and it stays when
+ * all of it fits `budget`. `own`: the workers of a main no row lists yet, weighed by `weigh`, which its registry counts in place of its own launched reservations. Throws when the reservation cannot be written.
+ */
+export function admitPoints(device: Pick<DeviceSide, "room" | "store">, budget: number, need: number, who: Holder, own?: { workers: string[]; weigh(name: string): number }): { id: string } | { refusal: string; used: number; held: number } {
+	const id = device.store.add(need, who);
+	try {
+		const r = device.room(); // read after the reservation is published
+		const used = (r?.points ?? 0) + sum((own?.workers ?? []).map((w) => own!.weigh(w)));
+		const held = sum(device.store.live(r?.at ?? -Infinity, (h) => r !== undefined && shows(r, h)).filter((x) => x.id !== id && !(own && !who.self && x.session === who.session && x.launched)).map((x) => x.points));
+		if (used + held + need <= budget) return { id };
+		device.store.drop(id);
+		return { refusal: `the device runs ${pts(used)} of its ${budget} capacity points, ${pts(held)} more held by launches it does not count yet`, used, held };
+	} catch (error) {
+		try { device.store.drop(id); } catch { /* it expires */ }
+		throw error;
+	}
+}
 
 export function createWorkerCap(device?: DeviceSide) {
 	/** Worker calls admitted whose tool has not returned yet, each with its reservation's id. */
@@ -55,23 +75,15 @@ export function createWorkerCap(device?: DeviceSide) {
 			const budget = device.budget();
 			if (budget === undefined) return undefined;
 			const me = device.session() ?? "", need = weight(name, branch);
-			let id: string | undefined, used = 0, held = 0;
+			let got: ReturnType<typeof admitPoints>;
 			try {
-				id = device.store.add(need, { session: me, worker: typeof name === "string" ? nameKey(name) : "" });
-				const r = device.room(); // read after the reservation is published
-				const own = r?.mains?.some((m) => m.session === me) ? undefined : runningWorkers(); // no row counts this main's workers: its registry does
-				used = (r?.points ?? 0) + sum((own ?? []).map((w) => weight(w, branch)));
-				held = sum(device.store.live(r?.at ?? -Infinity, (h) => r !== undefined && shows(r, h)).filter((x) => x.id !== id && !(own && x.session === me && x.launched)).map((x) => x.points));
+				const listed = device.room()?.mains?.some((m) => m.session === me), own = listed ? undefined : runningWorkers(); // no row counts this main's workers: its registry does
+				got = admitPoints(device, budget, need, { session: me, worker: typeof name === "string" ? nameKey(name) : "" }, own ? { workers: own, weigh: (w) => weight(w, branch) } : undefined);
 			} catch (error) {
-				try { if (id !== undefined) device.store.drop(id); } catch { /* it expires */ }
 				return { block: true, reason: `sb: the device's capacity reservation could not be written (${(error as Error).message}): no worker starts until it can.` };
 			}
-			if (used + held + need > budget) {
-				device.store.drop(id);
-				const pts = (n: number) => Math.round(n * 100) / 100;
-				return { block: true, reason: `sb: the device runs ${pts(used)} of its ${budget} capacity points, ${pts(held)} more held by launches it does not count yet: this worker needs ${need}. Wait for a result, then dispatch the next; a scout, a planner, or a reviewer may run now.` };
-			}
-			admitted.set(toolCallId, id);
+			if ("refusal" in got) return { block: true, reason: `sb: ${got.refusal}: this worker needs ${need}. Wait for a result, then dispatch the next; a scout, a planner, or a reviewer may run now.` };
+			admitted.set(toolCallId, got.id);
 			return undefined;
 		},
 		/** pi's `tool_result` for `subagent`: the launch ended, and the registry holds the worker if it started. A reservation stays for a launch that returned, and goes for one that failed. */

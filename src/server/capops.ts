@@ -11,6 +11,7 @@ import { type AllySeen, type CapDeps, type CapEvent, createCapWatch } from "./ca
 import { stallTarget } from "./stallops.ts";
 import { inTestRun } from "./testguard.ts";
 import type { Towers } from "./towers.ts";
+export { workerPointsOf, workersOn } from "./workerwire.ts";
 
 // The server's side of the capacity watch (capwatch.ts): what it reads of this machine (pi-intercom's list, Herdr's panes, the board and capacity files, the load, `capacity.budget`), and whom it tells:
 // the tower of the main's workspace (as the stall watch finds it), this device's standing main, and for `under` and `stale` the main itself. Kept out of main.ts, which carries a line budget.
@@ -25,14 +26,14 @@ export function armedLoop(dir: string, session: string, now: number): boolean {
 }
 
 /** The live mains and trains of one reading, with every running subagent of each main's pane (no dashboard limit), when its session file last moved, and when its board entry was written. */
-export function mainFacts(sessions: Session[], ps: Awaited<ReturnType<typeof herdrPanes>>, boardDir: string, now: number, mtime: (file: string) => number | undefined, background?: (session: string, pane: string | undefined) => boolean): MainFacts[] {
+export function mainFacts(sessions: Session[], ps: Awaited<ReturnType<typeof herdrPanes>>, boardDir: string, now: number, mtime: (file: string) => number | undefined, background?: (session: string, pane: string | undefined) => boolean, selfPoints?: ReadonlyMap<string, number>): MainFacts[] {
 	const kids = subagentsOfAll(ps, now, Infinity), entries = new Map(readEntries(boardDir).map((e) => [e.session, e.updated]));
 	return netMembers(sessions, ps).filter((m) => m.role === "main" || m.role === "train").map((m): MainFacts => {
 		const pane = ps.find((p) => p.pane_id === m.s.herdrLocation?.paneId), subs = m.role === "main" ? kids(pane).filter((r) => !r.ended) : [], mark = sessionMark(m.s, pane), file = pane?.agent_session?.value;
 		const moved = file ? mtime(file) : undefined, written = entries.get(m.s.id);
 		return {
 			session: m.s.id, name: nameOf(m.s), workspace: m.workspace.id, role: m.role === "train" ? "train" : "main", state: mark, ...(pane?.agent_status ? { paneStatus: pane.agent_status } : {}), commanding: commanding(mark, subs.map((r) => r.mark)) === "commanding",
-			...(m.role === "main" && background?.(m.s.id, pane?.pane_id) ? { background: true } : {}), ...(m.duty ? { duty: m.duty } : {}), workers: subs.map((r) => r.text), ...(moved !== undefined ? { fileMtime: moved } : {}), ...(written !== undefined ? { entryUpdated: written } : {}),
+			...(m.role === "main" && background?.(m.s.id, pane?.pane_id) ? { background: true } : {}), ...(m.duty ? { duty: m.duty } : {}), ...(m.duty === "worker" && selfPoints?.has(m.s.id) ? { selfPoints: selfPoints.get(m.s.id)! } : {}), workers: subs.map((r) => r.text), ...(moved !== undefined ? { fileMtime: moved } : {}), ...(written !== undefined ? { entryUpdated: written } : {}),
 		};
 	});
 }
@@ -49,6 +50,8 @@ export interface StartCap {
 	watching(session: string): boolean;
 	/** The ally devices the link holder has heard of (none without Straw Link). */
 	allies(): AllySeen[];
+	/** The points of the workers opened for teammates' devices, by session (their routes). */
+	workerPoints?(): Map<string, number>;
 	/** One intercom message from the server to a live session (boardpanel.ts `tellVia`). */
 	tellSession(session: string, text: string): Promise<unknown>;
 	/** The seams of a test; in a test run there is no watch without them. */
@@ -77,7 +80,7 @@ export function startCap(o: StartCap): (() => void) | undefined {
 		mains: async () => {
 			const sessions = await o.sessions(), panes = await herdrPanes(o.run), monitors = o.monitorPanes(), now = o.now();
 			return mainFacts(sessions, panes, boardDir, now, (file) => { try { return statSync(file).mtimeMs; } catch { return undefined; } },
-				(id, pane) => (pane !== undefined && monitors.has(pane)) || o.watching(id) || armedLoop(join(homedir(), ".pi", "loops"), id, now));
+				(id, pane) => (pane !== undefined && monitors.has(pane)) || o.watching(id) || armedLoop(join(homedir(), ".pi", "loops"), id, now), o.workerPoints?.());
 		},
 		tell: (e) => tellCap(e, o, o.now()),
 		...o.over,

@@ -9,7 +9,7 @@ import { isHead, isSub, type Place, panes, place, report, tabs, TOWER_LABEL, wai
 import type { createHost } from "./host.ts";
 import type { IntegrationWatch } from "./integration.ts";
 import { CONNECT_MS, type Membership } from "./membership.ts";
-import { type CoordinatorDuty, isCoordinatorDuty } from "./duty.ts";
+import { type CoordinatorDuty, dutyOfAgent, isCoordinatorDuty } from "./duty.ts";
 import type { MainDuty } from "./mainduty.ts";
 import { orphans } from "./orphan.ts";
 import { createWorkerCap, deviceRoom } from "./workercap.ts";
@@ -118,7 +118,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		pi.appendEntry(ENTRY, { openedBy: s.openedBy ?? null, openedPane: s.at.paneId }); // null, not undefined: a later claim (a pop) overrides an earlier opener
 		// The kind the tower opened it with (docs/specs/2026-11-09-agent-kinds.md §6) is consumed with the claim: the entry, `s.duty`, and, at the promotion below, the role record, which a restore before the first message reads.
 		const duty = mine.tokens.sb_open_duty;
-		if (isCoordinatorDuty(duty) && s.duty !== duty && (duty !== "integrator" || mainDuty.integrationOn())) { // `integrator` only while integration is on, as the door (opener.ts) requires: a token written by anything else gets no hidden integrator entry (R0790-F003).
+		if (isCoordinatorDuty(duty) && s.duty !== duty && (duty !== "integrator" || mainDuty.integrationOn()) && (duty !== "worker" || s.openedBy?.startsWith("link:") === true)) { // `integrator` only while integration is on, as the door (opener.ts) requires: a token written by anything else gets no hidden integrator entry (R0790-F003).
 			const tower = (await workspaces(run).catch(() => [])).find((w) => w.workspace_id === s.at.workspaceId)?.tokens?.tower;
 			mainDuty.write(duty, `opened by tower ${tower ?? `of workspace ${s.at.workspaceId}`} as ${duty}`);
 		}
@@ -357,6 +357,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		}
 		mainDuty.migrate(pi.getSessionName()); // the promotion above may have just made this an `integ <project>` main whose migration had not run
 		// No plan gates a worker (docs/specs/2026-11-23-lite-main.md §1) and no count does: only an unattended device with a capacity budget holds one back, by its points (docs/specs/2026-11-24-capacity.md, The cap).
+		if (event.toolName === "subagent" && mainDuty.now() === "worker" && dutyOfAgent((event.input as { agent?: string } | undefined)?.agent) === "worker") return { block: true, reason: "sb: a worker dispatches no worker subagents: do the brief yourself (a scout or a reviewer may help)." };
 		if (event.toolName === "subagent") return cap.admit(event.toolCallId, event.input, () => ctx.sessionManager.getBranch()); // the todo its `name` owns weighs it
 	});
 

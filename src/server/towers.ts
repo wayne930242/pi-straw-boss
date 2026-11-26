@@ -37,6 +37,7 @@ import { resolvePi } from "./runchild.ts";
 import { digestOf, headLabel, openCards, type WaitDigest, type WaitList, waitList, waitRows } from "./waitlist.ts";
 import { claimGate, proofGate, seatGate, type SeatVerdict } from "./typegate.ts";
 import { forwardOpenedWait, raisedWait } from "./allywait.ts";
+import { workerDoor, workerPanes } from "./workerwire.ts";
 import { addAnswer, addRoute, answeredAsks, ALLY_LEDGER, dropAsk, dropOpened, type Peer, readAnswers, readRoutes, removeAnswer, openedFor, routedAsk, routeOf, setStop, spendRoute } from "./allyroute.ts";
 import { createRevoker, type OpenedMain } from "./revoke.ts";
 import { createDeadWatch } from "./deadwatch.ts";
@@ -489,7 +490,7 @@ export function createTowers(o: TowersOptions): Towers {
 					const openerFor = (file?: string) => opener({
 						run, sleep, workspaceId: l.record.workspace, cwd: l.record.cwd ?? slot.stateDir, sessions: () => (l.client ?? client).listSessions(), send: (to, message) => l.reach!.send(to, message),
 						tower: () => ({ id: l.record.id, name: l.record.name }), trustDir: trustDir(slot.stateDir), integrationOff: () => integrationOff(o.env, slot.stateDir), stateDir: slot.stateDir,
-						sessionsRoot: sessionsDir(o.env), recovering: () => now() < recoverUntil, waitsOf: (session) => waitsHeld(l.record.workspace, session),
+						sessionsRoot: sessionsDir(o.env), recovering: () => now() < recoverUntil, waitsOf: (session) => waitsHeld(l.record.workspace, session), workerPanes: () => workerPanes(slot, l.record.workspace, now()),
 						ledger: { entries: () => readLedger(slot, l.record.workspace, now(), file), put: (row) => { try { putLedger(slot, l.record.workspace, row, now(), file); } catch (cause) { error("ledger", (cause as Error).message); } } },
 					});
 					if (!isHeadL(l)) {
@@ -1220,7 +1221,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const route = (to: string, name: string, kind: "expect" | "opened", ask?: string, live?: ReadonlySet<string>, panes?: ReadonlySet<string>, pane?: string) => { try { addRoute(slot, ws, { ...peer!, to, name, kind, at: now(), ...(ask ? { ask } : {}), ...(pane ? { pane } : {}), ...(kind === "opened" && who.level ? { level: who.level } : {}) }, now(), live, panes); } catch (cause) { error("ally-route", (cause as Error).message); } };
 		const ev = runEvents({ slot, ws, who, label: l.record.label, read: () => l.reach!.read() }), { mainOf } = ev;
 		const host = {
-			reach: l.reach!, open: peer ? async (request: Parameters<NonNullable<Live["open"]>>[0]) => { const opened = await l.openAlly!(request); const net = await l.reach!.read().catch(() => undefined), live = net && new Set(net.sessions.map((x) => x.id)), panes = net && new Set(net.ps.map((p) => p.pane_id)); route(opened.main, "opened main", "opened", routedAsk(answered, who.id, who.asks ?? []), live, panes, opened.pane); return opened; } : l.open!, closeMain: (l.control ? async (query: string) => forgetClosed(ws, await l.control!.closeMain(query)) : undefined) as unknown as Control["closeMain"], now, boardDir: join(slot.stateDir, "board"), label: l.record.label, ...(l.control && !peer ? { closePane: (pane: string) => l.control!.closePane(pane), deadPanes: () => l.control!.deadPanes() } : {}), stateDir: slot.stateDir, // a local run's dead panes (deadpane.ts); an ally run is refused them (runtools.ts)
+			reach: l.reach!, open: peer ? async (request: Parameters<NonNullable<Live["open"]>>[0]) => { if (request.role === "worker") return workerDoor({ slot, ws, who, peer, request, answered, l, o, now, log, run }); const opened = await l.openAlly!(request); const net = await l.reach!.read().catch(() => undefined), live = net && new Set(net.sessions.map((x) => x.id)), panes = net && new Set(net.ps.map((p) => p.pane_id)); route(opened.main, "opened main", "opened", routedAsk(answered, who.id, who.asks ?? []), live, panes, opened.pane); return opened; } : l.open!, closeMain: (l.control ? async (query: string) => forgetClosed(ws, await l.control!.closeMain(query)) : undefined) as unknown as Control["closeMain"], now, boardDir: join(slot.stateDir, "board"), label: l.record.label, ...(l.control && !peer ? { closePane: (pane: string) => l.control!.closePane(pane), deadPanes: () => l.control!.deadPanes() } : {}), stateDir: slot.stateDir, // a local run's dead panes (deadpane.ts); an ally run is refused them (runtools.ts)
 			link: async (body: Record<string, unknown>) => ((await o.link?.(body, l.record.id, true)) ?? { ok: false, code: "no_holder", error: "The link holder is not running in the sb server" }) as { ok: boolean; error?: string },
 			server: o.server ?? { status: () => ({}), logs: () => [], restart: () => Promise.reject(new Error("The server cannot restart itself here")) },
 			expect: (to: string, name: string, text: string) => { if (peer) return route(to, phrase(name, 40), "expect"); try { addExpect(slot, ws, { to, name, at: now(), first: phrase(text, 80) }, now()); } catch (cause) { error("expects", (cause as Error).message); } },

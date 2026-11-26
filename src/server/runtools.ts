@@ -2,10 +2,11 @@ import { readBoard } from "../boardread.ts";
 import { type Control, refuseStanding } from "../closemain.ts";
 import { deadList } from "../deadpane.ts";
 import { ForwardAsBefore, INTEGRATOR } from "../integrator.ts";
-import type { Opened, OpenRequest, PeerSender, Revived, ReviveRequest } from "../opener.ts";
+import { type Opened, type OpenRequest, type PeerSender, type Revived, type ReviveRequest, WORKER } from "../opener.ts";
 import { type DeadRow, ReviveRefused, revivedText, rowLine } from "../revive.ts";
 import { bodyOf } from "../header.ts";
 import { headsIn, slipsInText } from "../train/cars.ts";
+import { parseWorker, type WorkerSpec } from "../workerslip.ts";
 import { remoteTowers } from "../link/remotelist.ts";
 import type { AllyBoard, AllyTeam } from "../link/holder.ts";
 import { clean } from "../board.ts";
@@ -234,6 +235,11 @@ async function allyTool(host: ToolHost, name: string, args: Record<string, unkno
 		if (args.role === INTEGRATOR) {
 			const slip = await slipOf(host, args, true);
 			if (gated) await askOpener(host, slip, true, true);
+		} else if (args.role === WORKER) {
+			// A worker (docs/specs/2026-11-26-ally-workers.md) runs the device's brief with every right of a main: only at `dispatch`, for the run's own sender, on a slip its device sent. Refused before the gate.
+			if (level !== "dispatch") throw new Error(`An ally run opens a worker only for a device this computer trusts at dispatch; this one has ${level}`);
+			if (!peerSender(who, str(args, "sender", 300))) throw new Error("An ally run opens a worker for its own sender only: give sender as the header's id=");
+			workerSlipOf(host, args);
 		} else if (args.role !== undefined) throw new Error("An ally run opens no train: a train is opened by the tower of this computer on an integrator's manifest");
 		else {
 			const sender = str(args, "sender", 300);
@@ -337,6 +343,16 @@ const sameText = (a: string, b: string) => ((n: (t: string) => string) => n(a) =
  * can reach a local run (it named another workspace's tower, its route aged out, or a local run's newer expectation outranked it), and its slip would then go on without `origin=remote` and without the gate; either witness, its pane
  * token or any workspace's route table, refuses it here. Below `dispatch` the boss's confirm shows the call's arguments, so the ally run's request has to be the slip's own text: what the boss allows is what is forwarded (R151-F004).
  */
+/** The worker slip among the run's own taken messages (never the model's words); `branch` picks one when several came. */
+function workerSlipOf(host: ToolHost, args: Record<string, unknown>): { spec: WorkerSpec; brief: string; ask?: string } {
+	const read = (host.allyMessages?.() ?? []).map((m) => ({ m, got: parseWorker(m.text) ?? parseWorker(bodyOf(m.text)) })).filter((x) => x.got !== undefined);
+	const branch = opt(args, "branch"), slips = read.flatMap(({ m, got }) => (got && "spec" in got && (branch === undefined || got.spec.branch === branch) ? [{ spec: got.spec, brief: got.brief, ...(m.ask ? { ask: m.ask } : {}) }] : []));
+	if (slips.length === 1) return slips[0]!;
+	if (slips.length > 1) throw new Error(`This run took ${slips.length} worker slips: give branch to name the one to open`);
+	const bad = read.find((x) => x.got && "error" in x.got)?.got as { error: string } | undefined;
+	throw new Error(bad ? `The worker slip cannot be opened: ${bad.error}` : `No message this run took carries a worker slip${branch ? ` for branch ${branch}` : ""} (its first line: worker: <label> | branch: <b> | …)`);
+}
+
 async function slipOf(host: ToolHost, args: Record<string, unknown>, ally: boolean): Promise<{ project?: string; event: SlipEvent }> {
 	const project = args.project === undefined || args.project === null ? undefined : String(args.project).slice(0, 200), sender = str(args, "sender", 300), request = str(args, "request"), heads = headsIn(request);
 	if (!heads.length) throw new Error("An integrator is opened on a car slip: pass the slip as it came as the request (its head: line names the car)");
@@ -522,6 +538,13 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 		}
 		case "boss_open_main": {
 			if (args.role === INTEGRATOR) return openIntegrator(host, args, ally);
+			if (args.role === WORKER) {
+				const peer = ally ? peerSender(host.who, str(args, "sender", 300)) : undefined;
+				if (!peer) throw new Error("A worker is opened for a teammate's device by its ally run; on this computer, dispatch a worker subagent instead");
+				const { spec, brief, ask } = workerSlipOf(host, args);
+				const opened = await host.open({ request: brief, sender: peer.id, peer, role: WORKER, slip: { spec, ...(ask ? { ask } : {}) } });
+				return { text: `Opened tab ${opened.tab} with worker ${spec.label} (session ${opened.main}) on branch ${spec.branch}. Its final report goes back to ${peer.label} by code, answering the device's ask; nothing more is yours to send for it. Close the message with tower_done.`, details: opened };
+			}
 			const sender = str(args, "sender", 300), peer = ally ? peerSender(host.who, sender) : undefined;
 			const opened = await host.open({ request: str(args, "request"), sender: peer?.id ?? sender, ...(peer ? { peer } : {}), ...(opt(args, "label") ? { label: opt(args, "label")! } : {}), ...(opt(args, "role") ? { role: opt(args, "role")! } : {}), ...(opt(args, "duty") ? { duty: opt(args, "duty")! } : {}) });
 			if (opened.train) return { text: opened.repeated ? `A train was already opened for this request (tab ${opened.tab}); nothing new opened.` : `Opened tab ${opened.tab} with ${trainLabel(opened.train.code)} (session ${opened.main}) and handed it the manifest. It reports to you; close it with boss_close_main after its milestone report.`, details: opened };

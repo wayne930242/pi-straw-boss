@@ -10,8 +10,8 @@ const snap = (tasks: unknown[]) => ({ tasks, nextId: tasks.length + 1 });
 const task = (id: number, status: string, metadata?: unknown) => ({ id, subject: `t${id}`, status, ...(metadata === undefined ? {} : { metadata }) });
 const entries = (tasks: unknown[]) => [{ type: "custom", customType: "rpiv-todo-state", data: snap(tasks) }];
 
-test("the three coordinator kinds and the three graphs, in the spec's words", () => {
-	assert.deepEqual([...COORDINATOR_DUTIES], ["coordinator", "integrator", "standing"]);
+test("the main kinds (the three coordinator kinds, and worker for a teammate's device: docs/specs/2026-11-26-ally-workers.md) and the three graphs, in the spec's words", () => {
+	assert.deepEqual([...COORDINATOR_DUTIES], ["coordinator", "integrator", "standing", "worker"]);
 	assert.deepEqual([...GRAPHS], ["single-loop", "fan-out/fan-in", "orchestrator-worker"]);
 });
 

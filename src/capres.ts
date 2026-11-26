@@ -12,7 +12,7 @@ export const RES_EXPIRE_MS = 10 * 60_000;
 const FOLDER = "_reserved", ID = /^[0-9a-z-]{8,64}$/;
 
 /** Whose launch it is: the main's session and the worker's name, case- and space-folded (empty for a nameless worker, which no row can show). */
-export interface Holder { session: string; worker: string }
+export interface Holder { session: string; worker: string; /** A worker main opened for a teammate's device (docs/specs/2026-11-26-ally-workers.md): its own points, shown once a row lists its session. */ self?: true }
 /** `at`: when it was made, then when its launch returned; `launched`: its tool call returned without error; `seen`: the sampling time of the first row that showed its worker. */
 export interface Reservation extends Holder { id: string; at: number; points: number; launched: boolean; seen?: number }
 export type Reservations = ReturnType<typeof createReservations>;
@@ -36,7 +36,7 @@ export function createReservations(dir: string, now: () => number) {
 			const r = JSON.parse(readFileSync(file(id), "utf8")) as Partial<Reservation>;
 			const time = (v: unknown) => typeof v === "number" && Number.isFinite(v);
 			if (!time(r.at) || typeof r.points !== "number" || r.points < 0 || r.points > 10 || typeof r.session !== "string" || typeof r.worker !== "string") return undefined;
-			return { id, at: r.at!, points: r.points, session: r.session, worker: r.worker, launched: r.launched === true, ...(time(r.seen) ? { seen: r.seen } : {}) };
+			return { id, at: r.at!, points: r.points, session: r.session, worker: r.worker, ...(r.self === true ? { self: true as const } : {}), launched: r.launched === true, ...(time(r.seen) ? { seen: r.seen } : {}) };
 		} catch {
 			return undefined;
 		}
@@ -63,13 +63,18 @@ export function createReservations(dir: string, now: () => number) {
 		/** A new reservation of `points` for `who`; its id. */
 		add(points: number, who: Holder): string {
 			const id = `${now().toString(36)}-${process.pid.toString(36)}-${randomBytes(4).toString("hex")}`;
-			write({ id, at: now(), points, session: who.session, worker: who.worker, launched: false });
+			write({ id, at: now(), points, session: who.session, worker: who.worker, ...(who.self ? { self: true as const } : {}), launched: false });
 			return id;
 		},
 		/** Its launch returned: it counts until a row sampled after now shows the worker. */
 		launched(id: string): void {
 			const r = read(id);
 			if (r) write({ ...r, at: now(), launched: true });
+		},
+		/** A worker main's open returned with its session: it counts until a row sampled after now lists that session. */
+		claim(id: string, session: string): void {
+			const r = read(id);
+			if (r) write({ ...r, session, at: now(), launched: true });
 		},
 		drop: (id: string) => void rmSync(file(id), { force: true }),
 	};

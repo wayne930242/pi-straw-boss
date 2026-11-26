@@ -7,7 +7,7 @@ import { type PromptSet, promptSet } from "./trainswitch.ts";
 
 const LABEL_GRACE_MS = 10_000;
 const LOCATION_LABELS = ["tab", "workspace"] as const;
-const PROMPTS = ["main", "tower", "member", "member-no-main", "train", "integrator", "standing"];
+const PROMPTS = ["main", "tower", "member", "member-no-main", "train", "integrator", "standing", "worker"];
 
 /** What a run was briefed with: the role and a main's kind. A plan's graph is no part of it (docs/specs/2026-11-23-lite-main.md §1): the dispatch rules are main.md's, for a coordinator and an integrator; a standing main has a prompt of its own. */
 interface Briefed { name: string | undefined; duty: string }
@@ -20,7 +20,7 @@ const sign = (text: string) => createHash("sha256").update(text).digest("hex").s
 export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty: MainDuty) {
 	let prompts: Record<string, string> = {}, files: PromptSet | undefined;
 	/** The files of a role's prompt, in order: a main's is `main.md`, then its kind's addendum; a standing main's is `standing.md` alone (docs/specs/2026-11-26-standing-prompt.md: main.md's dispatch and done rules are not its own). */
-	const partsOf = (name: string, duty: string): string[] => (name !== "main" ? [name] : duty === "standing" ? ["standing"] : ["main", ...(duty === "integrator" ? ["integrator"] : [])]);
+	const partsOf = (name: string, duty: string): string[] => (name !== "main" ? [name] : duty === "standing" || duty === "worker" ? [duty] : ["main", ...(duty === "integrator" ? ["integrator"] : [])]);
 	const stateOf = (): Briefed => {
 		const current = role();
 		return { name: current === "member" && !s.mainId ? "member-no-main" : current, duty: current === "main" ? mainDuty.now() : "" };

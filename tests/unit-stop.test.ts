@@ -263,10 +263,10 @@ test("the row caps never drop a row with a pending stop before rows without one,
 	const now = 1_000_000_000;
 	addRoute(world.slot, "wA", opened(DEV, "stopped", now), now);
 	setStop(world.slot, "wA", "stopped", STOP, now);
-	// Eight more rows of the same device, each newer: the per-device cap of 8 drops one, and it is not the stopped one.
-	for (let i = 0; i < 8; i++) addRoute(world.slot, "wA", opened(DEV, `m-${i}`, now + 1 + i), now + 1 + i, new Set(["m-0", "m-1", "m-2", "m-3", "m-4", "m-5", "m-6", "m-7"]));
-	const kept = readRoutes(world.slot, "wA", now + 20).map((r) => r.to);
-	assert.equal(kept.length, 8);
+	// 24 more rows of the same device, each newer, none listed by the broker (dead, within their grace): the per-device cap of 24 drops one, and it is not the stopped one. A live row is never dropped (ally workers, boss 2026-11-26).
+	for (let i = 0; i < 24; i++) addRoute(world.slot, "wA", opened(DEV, `m-${i}`, now + 1 + i), now + 1 + i, new Set(), new Set());
+	const kept = readRoutes(world.slot, "wA", now + 30).map((r) => r.to);
+	assert.equal(kept.length, 24);
 	assert.ok(kept.includes("stopped"), "the oldest row has a stop, so another row goes");
 	assert.ok(!kept.includes("m-0"), "the oldest row without one went");
 	// And among rows that are all dead, the one with a stop is last to go.

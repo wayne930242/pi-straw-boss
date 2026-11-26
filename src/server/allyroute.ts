@@ -13,8 +13,9 @@ import { ALLY_FILES, ensureDir, KEEP_MS, towerDir, writeDurable } from "./towers
 const ROUTES = ALLY_FILES[0], ANSWERS = ALLY_FILES[1];
 export const ALLY_LEDGER = ALLY_FILES[2];
 const MAX_ROUTES = 40, MAX_ANSWERS = 50, MAX_TEXT = 100_000;
-/** The `opened` rows kept per device and in all (the opener holds at most 2 live marked mains per workspace and one per sender), and how long a row of a main the broker no longer lists is kept in case the main is only restarting. */
-const MAX_OPENED_PER_DEVICE = 8, MAX_OPENED = 20, DEAD_GRACE_MS = 10 * 60_000;
+/** The `opened` rows kept per device and in all (the opener holds at most 2 live marked mains per workspace and one per sender; workers are bounded by the capacity budget, and an open at the cap is refused, `openedRoom`), and how long a row of a main the broker no longer lists is kept in case the main is only restarting. */
+export const MAX_OPENED_PER_DEVICE = 24, MAX_OPENED = 40;
+const DEAD_GRACE_MS = 10 * 60_000;
 
 /** The sender an ally run serves, as a route and an answer keep it (the ally brief and the header need these). */
 export interface Peer { device: string; label: string; short: string; team: string; teamName: string }
@@ -35,6 +36,10 @@ export interface Route extends Peer {
 	level?: string;
 	/** An `opened` route: a stop the box accepted. It stays through renewals and rewrites of the row, and the row caps drop a row with one last. */
 	stop?: Stop;
+	/** An `opened` route of a worker (docs/specs/2026-11-26-ally-workers.md): its points, branch, worktree, and base, written by the server. */
+	worker?: { points: number; branch: string; path: string; base: string; baseSha: string; label: string };
+	/** A worker's final report was relayed at this time: the tower closes it now (revoke.ts `done`). */
+	final?: number;
 }
 export interface Answer extends Peer {
 	id: string;
@@ -77,11 +82,23 @@ export function addRoute(slot: Slot, workspace: string, row: Route, now: number,
 	// Rows without a stop go before rows with one, whatever their age (a stop is a request nobody has seen carried out); then dead rows first, then the oldest; the row being added is never the one to go.
 	const order = (a: Route, b: Route) => Number(a.stop !== undefined) - Number(b.stop !== undefined) || Number(dead(b)) - Number(dead(a)) || a.at - b.at;
 	const gone = new Set<Route>(rest.filter((r) => r.kind === "opened" && r !== row && dead(r) && now - r.at > DEAD_GRACE_MS));
-	const trim = (rows: Route[], keep: number) => rows.filter((r) => r !== row).sort(order).slice(0, Math.max(0, rows.length - keep)).forEach((r) => gone.add(r));
+	const trim = (rows: Route[], keep: number) => rows.filter((r) => r !== row && dead(r)).sort(order).slice(0, Math.max(0, rows.length - keep)).forEach((r) => gone.add(r)); // a live row is never trimmed: an open at the cap is refused instead
 	const kept = () => rest.filter((r) => r.kind === "opened" && !gone.has(r));
 	for (const device of new Set(kept().map((r) => r.device))) trim(kept().filter((r) => r.device === device), MAX_OPENED_PER_DEVICE);
 	trim(kept(), MAX_OPENED);
 	write(slot, workspace, ROUTES, [...kept(), ...rest.filter((r) => r.kind !== "opened").slice(-MAX_ROUTES)]);
+}
+/** Why no more mains may be opened for `device`: its `opened` rows, or all of them, are at the cap (a dead row past its grace does not count). */
+export function openedRoom(slot: Slot, workspace: string, device: string, now: number, live?: ReadonlySet<string>): string | undefined {
+	const rows = readRoutes(slot, workspace, now).filter((r) => r.kind === "opened" && !(live !== undefined && !live.has(r.to) && now - r.at > DEAD_GRACE_MS));
+	if (rows.filter((r) => r.device === device).length >= MAX_OPENED_PER_DEVICE) return `this device already has ${MAX_OPENED_PER_DEVICE} mains and workers opened here for it; try again when one has closed`;
+	if (rows.length >= MAX_OPENED) return `this workspace already has ${MAX_OPENED} mains and workers opened for teammates' devices; try again when one has closed`;
+	return undefined;
+}
+/** Marks a worker's final report relayed. */
+export function markFinal(slot: Slot, workspace: string, session: string, now: number): void {
+	const rows = readRoutes(slot, workspace, now);
+	if (rows.some((r) => r.to === session && r.worker)) write(slot, workspace, ROUTES, rows.map((r) => (r.to === session && r.worker ? { ...r, final: now, at: now } : r)));
 }
 /** The route for a session, if an ally run waits on it or opened it: the `opened` route first, so another device's `expect` row never outranks it; else the newest. */
 export const routeOf = (slot: Slot, workspace: string, session: string, now: number): Route | undefined => {

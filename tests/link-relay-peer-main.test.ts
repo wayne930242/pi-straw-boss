@@ -5,7 +5,7 @@ import { type Running, sleep, until } from "./server-world.ts";
 import { callControl } from "../src/server/socket.ts";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { addRoute, answeredAsks, dropOpened, openedFor, readAnswers, readRoutes, routeOf } from "../src/server/allyroute.ts";
+import { addRoute, answeredAsks, dropOpened, MAX_OPENED, MAX_OPENED_PER_DEVICE, openedFor, openedRoom, readAnswers, readRoutes, routeOf } from "../src/server/allyroute.ts";
 import { ALLY_FILES, KEEP_MS, towerDir } from "../src/server/towerstore.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
 
@@ -333,23 +333,29 @@ test("opened rows are bounded per device and in all, and rows of mains that are 
 		addRoute(world.slot, "wA", opened(DEV1, `m-${i}`, now), now, new Set([`m-${i}`]));
 	}
 	assert.deepEqual(readRoutes(world.slot, "wA", now).map((r) => r.to), ["m-299"], "each gone main's row went with the next open");
-	// Mains the broker still lists, or lost for a moment, are bounded all the same: oldest first.
+	// Mains the broker no longer lists, still within their grace, are bounded all the same: oldest first.
 	for (let i = 0; i < 300; i++) addRoute(world.slot, "wA", opened(DEV1, `q-${i}`, now + i), now + i, new Set(["m-299"]));
-	assert.ok(readRoutes(world.slot, "wA", now + 300).filter((r) => r.device === DEV1).length <= 8, "per device");
-	for (let d = 0; d < 20; d++) for (let i = 0; i < 8; i++) addRoute(world.slot, "wA", opened(`d${d}`.padEnd(26, "x"), `z-${d}-${i}`, now + 400 + d * 8 + i), now + 400 + d * 8 + i);
+	assert.ok(readRoutes(world.slot, "wA", now + 300).filter((r) => r.device === DEV1).length <= MAX_OPENED_PER_DEVICE, "per device");
+	for (let d = 0; d < 20; d++) for (let i = 0; i < 8; i++) addRoute(world.slot, "wA", opened(`d${d}`.padEnd(26, "x"), `z-${d}-${i}`, now + 400 + d * 8 + i), now + 400 + d * 8 + i, new Set(), new Set());
 	const rows = readRoutes(world.slot, "wA", now + 1000);
-	assert.ok(rows.length <= 20, `in all: ${rows.length}`);
+	assert.ok(rows.length <= MAX_OPENED, `in all: ${rows.length}`);
 	assert.ok(rows.some((r) => r.to === "z-19-7"), "the newest is kept");
 	assert.ok(!rows.some((r) => r.to === "z-0-0"), "the oldest went first");
 });
 
 test("a dead main's row is evicted before a live one's when the cap is reached, and closing a main drops its row (RR2-F002)", () => {
 	const now = Date.now();
-	for (let i = 0; i < 8; i++) addRoute(world.slot, "wA", opened(DEV1, `s-${i}`, now + i), now + i);
-	addRoute(world.slot, "wA", opened(DEV1, "s-new", now + 9), now + 9, new Set(["s-0", "s-new"]));
-	const rows = readRoutes(world.slot, "wA", now + 10).map((r) => r.to);
+	for (let i = 0; i < MAX_OPENED_PER_DEVICE; i++) addRoute(world.slot, "wA", opened(DEV1, `s-${i}`, now + i), now + i);
+	addRoute(world.slot, "wA", opened(DEV1, "s-new", now + 30), now + 30, new Set(["s-0", "s-new"]));
+	const rows = readRoutes(world.slot, "wA", now + 31).map((r) => r.to);
 	assert.ok(rows.includes("s-0") && rows.includes("s-new"), "the oldest row is live, so it stays while a dead one goes");
-	assert.ok(rows.length <= 8);
+	assert.ok(rows.length <= MAX_OPENED_PER_DEVICE);
+	// A live row is never trimmed (boss 2026-11-26): past the cap with every main listed, every row stays, and the next open is refused instead.
+	const all = new Set(readRoutes(world.slot, "wA", now + 31).map((r) => r.to).concat("s-more"));
+	addRoute(world.slot, "wA", opened(DEV1, "s-more", now + 32), now + 32, all);
+	assert.equal(readRoutes(world.slot, "wA", now + 33).length, MAX_OPENED_PER_DEVICE + 1);
+	assert.match(openedRoom(world.slot, "wA", DEV1, now + 33, all)!, /already has 24 mains and workers/);
+	assert.equal(openedRoom(world.slot, "wA", "other".padEnd(26, "x"), now + 33, all), undefined, "another device has room");
 	dropOpened(world.slot, "wA", "s-0", now + 11);
 	assert.ok(!readRoutes(world.slot, "wA", now + 12).some((r) => r.to === "s-0"));
 	assert.equal(openedFor(world.slot, "wA", "s-new", now + 12), DEV1, "other rows stay");
