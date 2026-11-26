@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { parseArgs, run } from "../src/server/cli.ts";
-import { WATCH_EVERY } from "../src/server/traincmds.ts";
+import { WATCH_EVERY, WATCH_MAX } from "../src/server/traincmds.ts";
 import { type Board, writeBoard } from "../src/train/board.ts";
 import { SHA_A } from "./train-fixtures.ts";
 
@@ -62,4 +62,14 @@ test("--every goes with --watch and is 10 seconds or more; the default is a minu
 		assert.equal(await run(["train", "status", ...argv], { stateDir: join(dir, "none"), out: () => assert.fail("no output"), err: (t) => err.push(t) }), 2, argv.join(" "));
 		assert.match(err.join(""), /--every goes with --watch: the seconds between looks, 10 or more/);
 	}
+});
+
+test("kit2-F005: --every that is not finite, or longer than a timer can wait, is a usage error, never a 1 ms poll", async () => {
+	// An aborted signal: a watch that started anyway ends at once (exit 0) instead of polling.
+	for (const argv of [["--watch", "--every", "Infinity"], ["--watch", "--every", "1e400"], ["--watch", "--every", "2147484"]]) {
+		const err: string[] = [];
+		assert.equal(await run(["train", "status", ...argv], { stateDir: join(dir, "none"), out: () => assert.fail("no output"), err: (t) => err.push(t), train: { signal: AbortSignal.abort() } }), 2, argv.join(" "));
+		assert.match(err.join(""), /--every goes with --watch: the seconds between looks, 10 or more and 2147483 at most/);
+	}
+	assert.equal(WATCH_MAX, 2_147_483, "the longest wait a Node timer takes, in whole seconds");
 });

@@ -249,14 +249,15 @@ function render(s: Status): string {
 }
 
 const STATES: readonly TrainFacts["state"][] = ["live", "stale", "ended", "unreadable"];
-/** `status --watch`: the wait between looks by default, and the shortest one `--every` takes (seconds). */
-export const WATCH_EVERY = 60, WATCH_MIN = 10;
+/** `status --watch`: the wait between looks by default, the shortest one `--every` takes, and the longest (seconds; a Node timer waits 2147483647 ms at most and takes a longer wait, or Infinity, as 1 ms). */
+export const WATCH_EVERY = 60, WATCH_MIN = 10, WATCH_MAX = 2_147_483;
 
 function status(flags: Record<string, string | true>, io: TrainIo): number | Promise<number> {
 	if (flags.project !== undefined && typeof flags.project !== "string") return usage(io, "--project needs a name");
 	const wanted = typeof flags.state === "string" ? flags.state.split(",").map((x) => x.trim()).filter(Boolean) : [];
 	if (flags.state !== undefined && (!wanted.length || wanted.some((x) => !(STATES as readonly string[]).includes(x)))) return usage(io, `--state is a comma list of ${STATES.join(", ")}`);
-	if (flags.every !== undefined && (flags.watch !== true || !(Number(flags.every) >= WATCH_MIN))) return usage(io, `--every goes with --watch: the seconds between looks, ${WATCH_MIN} or more`);
+	const every = Number(flags.every);
+	if (flags.every !== undefined && (flags.watch !== true || !Number.isFinite(every) || every < WATCH_MIN || every > WATCH_MAX)) return usage(io, `--every goes with --watch: the seconds between looks, ${WATCH_MIN} or more and ${WATCH_MAX} at most`);
 	// The filter picks rows only: the load, the locks and whether the list was cut are the computer's, whatever is shown.
 	const look = () => ((all) => (wanted.length ? { ...all, trains: all.trains.filter((t) => wanted.includes(t.state)) } : all))(trainStatus(io, flags.project as string | undefined));
 	if (flags.watch === true) return watch(io, look, Number(flags.every ?? WATCH_EVERY) * 1000);
