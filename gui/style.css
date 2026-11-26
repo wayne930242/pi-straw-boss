@@ -25,7 +25,7 @@
 	--line: rgba(115, 122, 162, 0.26);
 	--hi: #ffffff; /* v1 compatibility for themes that still set --hi */
 	--tint: var(--hi);
-	--glow: 1;
+	--glow: 1; /* SVG drop shadows scale alpha too: even zero blur inks translucent edges. */
 	--scrim: color-mix(in srgb, var(--shadow) 60%, transparent);
 	--err-text: color-mix(in srgb, var(--err-soft) 45%, var(--tint));
 	--shadow: #08080d;
@@ -84,7 +84,7 @@ svg { display: block; }
 .hud { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); backdrop-filter: blur(10px); position: sticky; top: 8px; z-index: 5; }
 .brand { display: flex; align-items: center; gap: 12px; margin-right: 8px; }
 .logo { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; color: var(--accent); background: radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--bg-2) 90%, transparent)); border: 1px solid var(--line); }
-.logo svg { width: 24px; height: 24px; filter: drop-shadow(0 0 calc(5px * var(--glow)) color-mix(in srgb, var(--accent) 70%, transparent)); }
+.logo svg { width: 24px; height: 24px; filter: drop-shadow(0 0 calc(5px * var(--glow)) color-mix(in srgb, var(--accent) calc(70% * var(--glow)), transparent)); }
 .brand h1 { font-size: 17px; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; }
 /* The header keeps four fixed places on one row: the brand, the totals, the alerts, and the settings with the link's dot at the far end. What comes
    and goes (the finished list) takes the free room after the alerts, so nothing else moves; on a narrow window the alerts wrap to a row of their own. */
@@ -259,7 +259,7 @@ body:has(#remind[data-state="blocked"]) .prefs-btn { color: var(--err-soft); } /
 .deploy > * { grid-column: 1 / -1; margin: 0; }
 .deploy > .deploy-bar { grid-column: 1; } .deploy > .deploy-count { grid-column: 2; }
 .deploy-title { display: flex; align-items: center; gap: 8px; font: 600 15px var(--sans); letter-spacing: 0.04em; overflow-wrap: anywhere; }
-.deploy-title svg { width: 24px; height: 24px; flex: none; color: var(--gold); filter: drop-shadow(0 0 calc(5px * var(--glow)) color-mix(in srgb, var(--gold) 60%, transparent)); }
+.deploy-title svg { width: 24px; height: 24px; flex: none; color: var(--gold); filter: drop-shadow(0 0 calc(5px * var(--glow)) color-mix(in srgb, var(--gold) calc(60% * var(--glow)), transparent)); }
 .deploy-bar { position: relative; height: 14px; border-radius: 4px; border: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 70%, transparent); overflow: hidden; }
 .deploy-bar::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 calc(5% - 2px), var(--bg-2, var(--bg)) calc(5% - 2px) 5%); } /* twenty cells */
 .deploy-fill { display: block; height: 100%; width: calc(var(--done, 0) / var(--of, 1) * 100%); background: linear-gradient(90deg, var(--accent), var(--accent-hi), var(--accent)) 0 0 / 200% 100%; transition: width 0.7s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.4s; }
@@ -328,7 +328,7 @@ body:has(#remind[data-state="blocked"]) .prefs-btn { color: var(--err-soft); } /
 
 .tower { position: relative; flex: none; width: 64px; height: 64px; display: grid; place-items: center; color: var(--c); }
 .tower::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--c) 24%, var(--plate-hi)), var(--plate) 70%); border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); }
-.tower svg { position: relative; width: 38px; height: 38px; filter: drop-shadow(0 0 calc(5px * var(--glow)) color-mix(in srgb, var(--c) 55%, transparent)); }
+.tower svg { position: relative; width: 38px; height: 38px; filter: drop-shadow(0 0 calc(5px * var(--glow)) color-mix(in srgb, var(--c) calc(55% * var(--glow)), transparent)); }
 .tower.ghost { opacity: 0.45; }
 .tower.ghost::before { border-style: dashed; }
 .sweep, .pulse { position: absolute; inset: 0; border-radius: 50%; opacity: 0; pointer-events: none; }
@@ -1426,7 +1426,7 @@ body[data-route="settings"] :is(.bar-acts, .crumbs) { display: none; } /* the pa
 .head-node .head-crown, .tx.in.head .ava { color: var(--gold); fill: currentColor; } /* the head's mark is the crown, in the crown's colour */
 .comms-head[data-head] .logo { color: var(--gold); background: radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--gold) 30%, transparent), color-mix(in srgb, var(--bg-2) 90%, transparent)); } /* the head's plate is gold like its node and avatar, not the accent's blue */
 .comms-head[data-head]:not([data-mark="commanding"]) .logo { border-color: color-mix(in srgb, var(--gold) 45%, var(--line)); }
-.comms-head[data-head] .logo svg { fill: currentColor; filter: drop-shadow(0 0 calc(5px * var(--glow)) color-mix(in srgb, var(--gold) 70%, transparent)); }
+.comms-head[data-head] .logo svg { fill: currentColor; filter: drop-shadow(0 0 calc(5px * var(--glow)) color-mix(in srgb, var(--gold) calc(70% * var(--glow)), transparent)); }
 .tx.rule.chapter p { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0; padding: 5px 10px; color: var(--dim); font-size: 11px; letter-spacing: 0.08em; }
 .tx.rule.chapter p::before, .tx.rule.chapter p::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .drawer-head { flex: none; display: flex; align-items: center; gap: 10px; min-height: 48px; margin: 4px 10px 8px max(10px, env(safe-area-inset-left)); padding: 0 12px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--gold) 35%, var(--line)); color: var(--text); text-decoration: none; background: linear-gradient(180deg, color-mix(in srgb, var(--gold) 9%, transparent), transparent); }
