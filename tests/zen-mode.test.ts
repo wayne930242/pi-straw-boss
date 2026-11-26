@@ -27,7 +27,8 @@ function device(view: string | null, zen: string | null) {
 function page(d: ReturnType<typeof device>, o: { contrast?: boolean; server?: string; settings?: boolean } = {}) {
 	const route = { settings: o.settings ?? false, left: 0 }, mode = mountMode(d.storage);
 	const env: ViewEnv = { themes: manifests, root: { dataset: {} }, meta: { content: "#1a1b26" }, ...(o.server !== undefined ? { server: { content: o.server } } : {}), media: { matches: o.contrast ?? false, addEventListener: () => {} }, storage: d.storage };
-	const view = mountView(env, () => zenShows({ mode: mode.on(), settings: route.settings }));
+	// bootrun's device is at noon; its hydrated page must use the same phase.
+	const view = mountView(env, () => zenShows({ mode: mode.on(), settings: route.settings }), () => "day");
 	const face = mountFace({ view, mode, settings: () => route.settings, leaveSettings: () => ((route.left += 1), (route.settings = false), face.route(false)), draw: () => {} });
 	return { mode, view, face, route, shows: () => env.root.dataset.view, color: () => env.meta!.content };
 }
