@@ -1,4 +1,5 @@
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { type HerdrRun, type Pane, panes } from "../herdr.ts";
 import { subagents } from "../netdata.ts";
 import { sessionHeader } from "../revive.ts";
@@ -13,8 +14,8 @@ import type { Reply } from "./socket.ts";
 export const WARD = "ward:";
 /** How long a ward waits after a look that found nothing to tell, and how long a quiet worker must stay quiet to be finished (two looks this far apart). */
 export const WARD_LOOK_MS = 20_000, QUIET_MS = 60_000;
-/** A session file's tail read for its last message, and the most read from the ward's start for reports. */
-const TAIL = 256 * 1024, SPAN = 8 * 1024 * 1024;
+/** A session file's tail read before the ward's start for the turn the worker was in, and the most a ward reads of it in one look. */
+const TAIL = 256 * 1024, BUDGET = 2 * 1024 * 1024, PER_SERVER_WARDS = 64;
 /** The tools whose open call is a question to a person: the worker waits on a dialog. */
 const DIALOGS = new Set(["ask_user_question", "ask_user", "secret_drop", "robot_hand", "call_tower"]);
 const ITEM = /^[A-Za-z0-9][A-Za-z0-9._:#/-]{0,63}$/;
@@ -53,47 +54,69 @@ export function judgeWard(rec: WardRec, look: WardLook, told: WardTold, at: numb
 type Json = Record<string, any>;
 const blocksOf = (m: Json): Json[] => (Array.isArray(m?.content) ? m.content.filter((b: unknown) => b && typeof b === "object") : []);
 
-/** The worker's turn, and its first report to the main written at or after `offset`, from its session file. */
-export function readSession(file: string, offset: number, main: WardRec["main"]): { turn: Turn; reported?: string } {
-	let fd: number | undefined;
-	try {
-		const size = statSync(file).size, from = Math.max(0, Math.min(offset, size - TAIL), size - SPAN), buffer = Buffer.alloc(size - from);
-		fd = openSync(file, "r");
-		readSync(fd, buffer, 0, buffer.length, from);
-		const lines = buffer.toString("utf8").split("\n");
-		let at = from, turn: Turn = "unknown", reported: string | undefined;
-		const calls = new Map<string, string>();
-		for (const [i, line] of lines.entries()) {
-			const start = at;
-			at += Buffer.byteLength(line) + 1;
-			if (i === 0 && from > 0) continue; // a line cut by the read's start
-			let d: Json;
-			try { d = JSON.parse(line); } catch { continue; }
-			if (d?.type !== "message" || !d.message) continue;
-			const m = d.message as Json;
-			if (m.role === "assistant") {
-				const tools = blocksOf(m).filter((b) => b.type === "toolCall");
-				turn = m.stopReason === "toolUse" || tools.length ? (tools.some((b) => DIALOGS.has(String(b.name))) ? "dialog" : "working") : "ended";
-				if (start >= offset) for (const b of tools) {
-					const a: Json = b.arguments ?? {}, name = String(b.name);
-					// Only a recipient the result proves (ward-review F001): intercom resolves a full session id before any name or id prefix, so only the main's full id is the main; call_peer's result names the session it sent to.
-					if (name === "intercom" && (a.action === "send" || a.action === "ask") && typeof a.to === "string" && a.to.trim() === main.id) calls.set(String(b.id), `intercom ${a.action}`);
-					if (name === "call_peer") calls.set(String(b.id), "call_peer");
-				}
-			} else if (m.role === "toolResult") {
-				turn = "working";
-				const call = calls.get(String(m.toolCallId)), det: Json = m.details ?? {};
-				const took = call === "call_peer" ? det.id === main.id && det.status === "sent" : det.delivered === true;
-				if (call && took && !m.isError && start >= offset) reported ??= call;
-			} else if (m.role === "user") turn = "working";
+/**
+ * The worker's turn, and its first report to the main written at or after `offset`, read from its session file a part at a time (ward-review F008): each read goes on from where the last stopped, at most `budget` bytes, and a line
+ * not yet ended waits in `carry` for the rest. The first read starts TAIL before `offset` for the turn the worker was in, and drops that read's first line only when it starts before `offset` (a line cut by the start); a read that
+ * starts at `offset`, a line's start, drops nothing. While the reader is behind the file's end, the turn is `unknown`: an old line is not the worker's turn now.
+ */
+export function sessionReader(file: string, offset: number, main: WardRec["main"], budget = BUDGET) {
+	let pos = -1, carry = Buffer.alloc(0), turn: Turn = "unknown", reported: string | undefined;
+	const calls = new Map<string, string>();
+	const take = (line: string, start: number) => {
+		let d: Json;
+		try { d = JSON.parse(line); } catch { return; }
+		if (d?.type !== "message" || !d.message) return;
+		const m = d.message as Json;
+		if (m.role === "assistant") {
+			const tools = blocksOf(m).filter((b) => b.type === "toolCall");
+			turn = m.stopReason === "toolUse" || tools.length ? (tools.some((b) => DIALOGS.has(String(b.name))) ? "dialog" : "working") : "ended";
+			if (start >= offset) for (const b of tools) {
+				const a: Json = b.arguments ?? {}, name = String(b.name);
+				// Only a recipient the result proves (ward-review F001): intercom resolves a full session id before any name or id prefix, so only the main's full id is the main; call_peer's result names the session it sent to.
+				if (name === "intercom" && (a.action === "send" || a.action === "ask") && typeof a.to === "string" && a.to.trim() === main.id) calls.set(String(b.id), `intercom ${a.action}`);
+				if (name === "call_peer") calls.set(String(b.id), "call_peer");
+			}
+		} else if (m.role === "toolResult") {
+			turn = "working";
+			const call = calls.get(String(m.toolCallId)), det: Json = m.details ?? {};
+			const took = call === "call_peer" ? det.id === main.id && det.status === "sent" : det.delivered === true;
+			if (call && took && !m.isError && start >= offset) reported ??= call;
+		} else if (m.role === "user") turn = "working";
+	};
+	return async (): Promise<{ turn: Turn; reported?: string }> => {
+		let fh: Awaited<ReturnType<typeof open>> | undefined;
+		try {
+			fh = await open(file, "r");
+			const size = (await fh.stat()).size;
+			// A file shorter than what was read is not the file the ward started on: read it again from the start.
+			if (pos > size) (pos = -1), (carry = Buffer.alloc(0)), (turn = "unknown"), calls.clear();
+			let cut = false;
+			if (pos < 0) (pos = Math.max(0, Math.min(offset, size) - TAIL)), (cut = pos > 0);
+			const n = Math.min(budget, size - pos), buffer = Buffer.alloc(n);
+			if (n > 0) await fh.read(buffer, 0, n, pos);
+			let data = Buffer.concat([carry, buffer]), at = pos - carry.length;
+			pos += n;
+			if (cut) {
+				const nl = data.indexOf(10);
+				if (nl < 0) return (carry = data), { turn: "unknown" };
+				(at += nl + 1), (data = data.subarray(nl + 1));
+			}
+			const end = data.lastIndexOf(10);
+			carry = Buffer.from(data.subarray(end + 1));
+			for (const line of data.subarray(0, end + 1).toString("utf8").split("\n").slice(0, -1)) {
+				take(line, at);
+				at += Buffer.byteLength(line) + 1;
+			}
+			return { turn: pos < size ? "unknown" : turn, ...(reported ? { reported } : {}) };
+		} catch {
+			return { turn: "unknown", ...(reported ? { reported } : {}) };
+		} finally {
+			await fh?.close();
 		}
-		return { turn, ...(reported ? { reported } : {}) };
-	} catch {
-		return { turn: "unknown" };
-	} finally {
-		if (fd !== undefined) closeSync(fd);
-	}
+	};
 }
+/** One whole read of a session file (a test's, and a look with no reader kept). */
+export const readSession = (file: string, offset: number, main: WardRec["main"]) => sessionReader(file, offset, main, Infinity)();
 
 export interface WardDeps {
 	run: HerdrRun;
@@ -125,6 +148,8 @@ export const wardLine = (rec: WardRec, state: WardState, why: string) => `ward $
 
 export function createWardRead(d: WardDeps) {
 	/** One look at the worker, with what still runs for it: a monitor in its pane, an active loop of its session, a running subagent of its pane. */
+	/** A reader per ward, which goes on where its last look stopped (F008). */
+	const readers = new Map<string, ReturnType<typeof sessionReader>>();
 	const look = async (rec: WardRec): Promise<WardLook> => {
 		// The worker is the pi pane that holds its session file, wherever Herdr moved it; else its terminal, which a move keeps; else its pane id, unless that id now names another terminal (ward-review F006).
 		const all = await panes(d.run), other = (p: Pane) => Boolean(rec.terminal && p.terminal_id && p.terminal_id !== rec.terminal);
@@ -135,7 +160,13 @@ export function createWardRead(d: WardDeps) {
 		if (armedLoop(d.loopsDir, rec.worker, d.now())) runs.push("a loop of it is active");
 		const kids = subagents(pane, all, d.now()).filter((r) => !r.ended).length;
 		if (kids) runs.push(`${kids} subagent${kids > 1 ? "s" : ""} of it run${kids > 1 ? "" : "s"}`);
-		return { pane, ...readSession(rec.file, rec.offset, rec.main), runs };
+		const id = `${rec.file}\n${rec.offset}\n${rec.main.id}`;
+		let reader = readers.get(id);
+		if (!reader) {
+			readers.set(id, (reader = sessionReader(rec.file, rec.offset, rec.main)));
+			if (readers.size > 2 * PER_SERVER_WARDS) readers.delete(readers.keys().next().value!); // the oldest: a ward that ended
+		}
+		return { pane, ...(await reader()), runs };
 	};
 	return {
 		/** One look and its verdict, as watch-read answers: `since` carries what was told. A Herdr list that does not answer is no verdict. */

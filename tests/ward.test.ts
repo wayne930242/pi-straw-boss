@@ -6,7 +6,7 @@ import { after, test } from "node:test";
 import type { Net } from "../src/net.ts";
 import type { Pane } from "../src/herdr.ts";
 import { parseArgs } from "../src/server/cli.ts";
-import { judgeWard, QUIET_MS, readSession, WARD_LOOK_MS, type WardRec } from "../src/server/ward.ts";
+import { judgeWard, QUIET_MS, readSession, sessionReader, WARD_LOOK_MS, type WardRec } from "../src/server/ward.ts";
 import { runWard } from "../src/server/wardcli.ts";
 import type { WatchNet } from "../src/server/watchread.ts";
 import { startWatches, watchReply } from "../src/server/watchesops.ts";
@@ -183,19 +183,19 @@ test("a ward is refused on the caller's own pane, a pane that runs no pi, an unk
 	assert.match(String((await no({})).error), /runs no pi session/);
 });
 
-test("judgeWard and readSession: the turn from the session file, reports only from the ward's start", () => {
+test("judgeWard and readSession: the turn from the session file, reports only from the ward's start", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "sb-ward-unit-")), file = join(dir, "s.jsonl");
 	dirs.push(dir);
 	const main = { id: MAIN, names: ["boss-main"] };
 	writeFileSync(file, line({ type: "session", id: WORKER }) + user("go"));
-	assert.equal(readSession(file, 0, main).turn, "working");
+	assert.equal((await readSession(file, 0, main)).turn, "working");
 	appendFileSync(file, said("done"));
-	assert.equal(readSession(file, 0, main).turn, "ended");
+	assert.equal((await readSession(file, 0, main)).turn, "ended");
 	appendFileSync(file, line({ type: "custom_message", customType: "x", content: "note" }));
-	assert.equal(readSession(file, 0, main).turn, "ended", "a custom message after the turn is no turn");
+	assert.equal((await readSession(file, 0, main)).turn, "ended", "a custom message after the turn is no turn");
 	appendFileSync(file, calls("m", "MonitorCreate", { command: "sleep 60" }));
-	assert.equal(readSession(file, 0, main).turn, "working");
-	assert.equal(readSession(join(dir, "none.jsonl"), 0, main).turn, "unknown");
+	assert.equal((await readSession(file, 0, main)).turn, "working");
+	assert.equal((await readSession(join(dir, "none.jsonl"), 0, main)).turn, "unknown");
 	const rec: WardRec = { pane: "%7", file, worker: WORKER, offset: 0, main };
 	const pane = { agent: "pi", agent_status: "idle", agent_session: { value: file } };
 	assert.equal(judgeWard(rec, { pane, turn: "ended", runs: ["a monitor of it runs"] }, {}, 0).state, "unchanged");
@@ -335,4 +335,30 @@ test("ward-review F006: a moved worker whose old pane id now names another pane 
 	await g.looks(2);
 	assert.deepEqual(g.sent.map((x) => x.state), ["dead"]);
 	assert.match(g.sent[0]!.text, /its pane is gone/);
+});
+
+test("ward-review F008: the reader goes on where it stopped, keeps a line not yet ended, and reads the first line at the ward's start however much came after it", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "sb-ward-read-")), file = join(dir, "s.jsonl"), main = { id: MAIN, names: [] };
+	dirs.push(dir);
+	writeFileSync(file, line({ type: "session", id: WORKER }) + user("go"));
+	const offset = readFileSync(file).length;
+	// The report is the first line after the ward's start, and more than the tail came after it.
+	appendFileSync(file, calls("c1", "intercom", { action: "send", to: MAIN, message: "done" }) + result("c1", "intercom") + user("x".repeat(300 * 1024)) + said("next"));
+	assert.equal((await readSession(file, offset, main)).reported, "intercom send");
+
+	const g = join(dir, "g.jsonl");
+	writeFileSync(g, line({ type: "session", id: WORKER }));
+	const at = readFileSync(g).length, read = sessionReader(g, at, main, 64);
+	const half = said("done");
+	appendFileSync(g, user("go") + half.slice(0, 20));
+	let r = await read();
+	while (r.turn === "unknown") r = await read(); // 64 bytes a read: behind the file's end, the turn is unknown
+	assert.equal(r.turn, "working");
+	appendFileSync(g, half.slice(20));
+	r = await read();
+	while (r.turn === "unknown") r = await read();
+	assert.equal(r.turn, "ended", "the line cut between two reads is read whole once");
+	appendFileSync(g, calls("c2", "call_peer", { to: "main", message: "done" }) + result("c2", "call_peer"));
+	for (let i = 0; i < 20 && !r.reported; i++) r = await read();
+	assert.equal(r.reported, "call_peer");
 });
