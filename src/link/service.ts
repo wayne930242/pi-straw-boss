@@ -78,7 +78,7 @@ export interface ServiceOptions {
 	/** Told after a holder runs and after it is gone (the operate host's clock follows the holder: one that comes after a page is connected must start it). */
 	onHolder?: () => void;
 	/** The tower service of the same server (towers.ts), when it runs: the asks local towers made for their mains, and what to tell when messages wait for a tower identity it runs. */
-	tower?: Pick<HolderOptions, "asks" | "served" | "openTower" | "waits"> & {
+	tower?: Pick<HolderOptions, "asks" | "served" | "openTower" | "waits" | "workers"> & {
 		/** The wait router's holder ops (src/server/linkwaitsops.ts `WAIT_OPS`): a main's `linkWait` and `waitsOn`, and the `waits` section of `board_read`. */
 		waitOps?: (body: Record<string, unknown>, from: string) => Promise<unknown>;
 		/** An answer to a `forward` confirm for a tower identity the server runs (an ally run waits for it): true when the server took it, so it is not published on the channel. */
@@ -199,7 +199,7 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 				if (!tower?.confirmed?.(to, dialogId, allow)) void publish({ version: 1, type: "confirmed", to, id: dialogId, allow });
 			},
 			drainMs: opts.drainMs, presenceMs: opts.presenceMs, boardMinMs: opts.boardMs, offerAgainMs: opts.offerAgainMs, capsMs: opts.capsMs, capsMinMs: opts.capsMinMs,
-			...(tower?.asks ? { asks: tower.asks } : {}), ...(tower?.served ? { served: tower.served } : {}), ...(dialogAnswer ? { dialogAnswer } : {}), ...(unitStop ? { unitStop } : {}), ...operateSink(attended(), { operate, controller }), ...(operate && !attended() ? { operateOn: () => operateGranted(policy()), ...(operateWatch ? { operateChanged: operateWatch } : {}) } : {}), ...(onRoster ? { onRoster } : {}), ...(tower?.openTower ? { openTower: tower.openTower } : {}), ...(tower?.waits ? { waits: tower.waits } : {}),
+			...(tower?.asks ? { asks: tower.asks } : {}), ...(tower?.served ? { served: tower.served } : {}), ...(dialogAnswer ? { dialogAnswer } : {}), ...(unitStop ? { unitStop } : {}), ...operateSink(attended(), { operate, controller }), ...(operate && !attended() ? { operateOn: () => operateGranted(policy()), ...(operateWatch ? { operateChanged: operateWatch } : {}) } : {}), ...(onRoster ? { onRoster } : {}), ...(tower?.openTower ? { openTower: tower.openTower } : {}), ...(tower?.waits ? { waits: tower.waits } : {}), ...(tower?.workers ? { workers: tower.workers } : {}),
 		});
 		holder = fresh;
 		await fresh.start();

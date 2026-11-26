@@ -106,6 +106,8 @@ export interface HolderOptions {
 	onRoster?: (team: string) => void;
 	/** An unattended device: where a `unit-stop` goes once the holder's checks passed (docs/specs/2026-11-07-link-remote-stop.md §4: this device unattended, an attended sender at `dispatch` now, a request no older than 15 minutes, a known mode). The server's checks follow there. */
 	unitStop?: (a: UnitStopInput) => void | Promise<void>;
+	/** An unattended box that opens workers for its `dispatch` controllers (docs/specs/2026-11-26-ally-workers.md): `tower.worker` is in its caps while this says yes (a `capacity.budget` and `workers` in config.json). Read when caps are built. */
+	workers?: () => boolean;
 	/**
 	 * The wait router of the sb server (src/server/linkwaits.ts, docs/specs/2026-11-21-box-mac-waits.md): with it this device lists `tower.wait` in its caps. `take` gets every inbox message that carries a wait (an open one for this
 	 * computer, or a state of one either end holds) with the workspace delivery picks for its project, and answers whether it is taken (it then leaves the inbox) or waits there. `orphan` gets the reply to an ask whose main is gone
@@ -240,7 +242,7 @@ const BOARD_MIN_MS = 15_000, BOARD_REFRESH_MS = 3600_000, BOARD_OFF_MS = 3600_00
 /** A board that carries a capacity row is sent at least this often, so a teammate can tell a silent device (over 30 minutes) from a quiet one. */
 const CAP_REFRESH_MS = 10 * 60_000;
 /** What this build takes (docs/specs/2026-10-26-sb-backend.md, Replies for a main). A `caps` older than 2 hours counts as none. */
-export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval", "board.capacity", "tower.note"] as const;
+export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval", "board.capacity", "tower.note", "tower.worker"] as const;
 export const CAPS_STALE_MS = 2 * 3600_000;
 /** A live frame is worth nothing late: its post gives up after this, so a stalled relay does not hold the serial chain of sends (spec §11.1, task 5). */
 const LIVE_POST_MS = 5000;
@@ -1250,7 +1252,7 @@ export class LinkHolder {
 				sent.at = now; // a failed post is tried again after the spacing (`due` is set again by the catch), not at every tick
 				sent.due = false;
 				const hello = sent.hello;
-				const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device.keys, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: (CAPS_FEATURES as readonly string[]).filter((f) => (f !== "unit-stop" || this.o.unitStop) && (f !== "operate/1" || listed) && ((f !== "tower.wait" && f !== "tower.standing" && f !== "tower.approval" && f !== "tower.note") || this.o.waits)).concat(hello ? [HELLO] : []) }) });
+				const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device.keys, seq: 0, ts, kind: "caps", to: [], plaintext: encodePlaintext("caps", { features: (CAPS_FEATURES as readonly string[]).filter((f) => (f !== "unit-stop" || this.o.unitStop) && (f !== "operate/1" || listed) && ((f !== "tower.wait" && f !== "tower.standing" && f !== "tower.approval" && f !== "tower.note") || this.o.waits) && (f !== "tower.worker" || (!!this.o.waits && this.o.workers?.() === true))).concat(hello ? [HELLO] : []) }) });
 				await run.client.postEnvelope(run.teamId, envelope);
 				sent.ts = ts;
 				if (hello) sent.hello = false; // the word goes once: a post that failed carries it in the next

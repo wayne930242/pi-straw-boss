@@ -47,7 +47,7 @@ interface Rig {
 	/** What the router's take answers (true by default); `false` is a wait no tower here routes. */
 	takes: (ws: string | undefined) => boolean | "held";
 }
-function rig(name: "a" | "b", o: { entries?: ReturnType<typeof rosterOf>; capsMs?: number; waits?: boolean } = {}): Rig {
+function rig(name: "a" | "b", o: { entries?: ReturnType<typeof rosterOf>; capsMs?: number; waits?: boolean; workers?: boolean } = {}): Rig {
 	const keys = name === "a" ? alice : bob, entries = o.entries ?? rosterOf();
 	const dir = join(root, name, "link"), project = join(root, `${name}-project`);
 	mkdirSync(project, { recursive: true });
@@ -66,6 +66,7 @@ function rig(name: "a" | "b", o: { entries?: ReturnType<typeof rosterOf>; capsMs
 		capsMs: o.capsMs ?? 3600_000, capsMinMs: 5,
 		asks: { take: (q) => (r.taken.push(q), r.open) },
 		served: (identity) => void r.served.push(identity),
+		...(o.workers !== undefined ? { workers: () => o.workers === true } : {}),
 		...(o.waits ? { waits: { take: async (item: InboxItem, ws: string | undefined) => (r.waited.push({ item, ws }), r.takes(ws)), orphan: async (item: InboxItem, asker: string, ws: string | undefined) => (r.orphans.push({ item, asker, ws }), true) } } : {}),
 	});
 	cleanup.push(() => r.holder.stop());
@@ -81,8 +82,8 @@ const events = (r: Rig) => {
 };
 const sendTo = (r: Rig, text: string, over: Partial<Parameters<LinkHolder["send"]>[0]> = {}) => r.holder.send({ fromSession: r.net.sessions[0]!.id, device: r.name === "a" ? "bob-mac" : "alice-mac", text, reply: false, ...over });
 /** Both holders with a tower pane each, so either can send; `b` is a tower identity the server runs unless told otherwise. */
-async function pair(o: { served?: boolean; waits?: { a?: boolean; b?: boolean } } = {}) {
-	const [a, b] = [rig("a", { waits: o.waits?.a ?? false }), rig("b", { waits: o.waits?.b ?? false })];
+async function pair(o: { served?: boolean; waits?: { a?: boolean; b?: boolean }; workers?: { a?: boolean; b?: boolean } } = {}) {
+	const [a, b] = [rig("a", { waits: o.waits?.a ?? false, ...(o.workers?.a !== undefined ? { workers: o.workers.a } : {}) }), rig("b", { waits: o.waits?.b ?? false, ...(o.workers?.b !== undefined ? { workers: o.workers.b } : {}) })];
 	a.net = netOf([["tower-x", "w-a", "label-a", a.project]]);
 	b.net = netOf([[o.served === false ? "tower-b" : "sb-tower-wb", "w-b", "label-b", b.project]]);
 	await Promise.all([a.holder.start(), b.holder.start()]);
@@ -111,6 +112,12 @@ test("a holder with a wait router lists tower.wait; a wait to it goes as the six
 	await until(() => b.store.inboxIds().length === 0, 3000, "it leaves the inbox");
 	assert.equal(b.holder.servedFor("sb-tower-wb").length, 0, "no ally run is told of it");
 	assert.equal(b.offers.length, 0);
+});
+
+test("tower.worker is listed only by a holder with a wait router whose workers seam says yes (a budget and workers in config.json)", async () => {
+	const { a, b } = await pair({ waits: { a: true, b: true }, workers: { a: false, b: true } });
+	await until(() => capsOf(a, bob.id).includes("tower.worker") && capsOf(b, alice.id).includes("tower.wait"), 3000, "both caps");
+	assert.ok(!capsOf(b, alice.id).includes("tower.worker"), "a's seam says no");
 });
 
 test("a wait to a build that takes none goes as text whose first line says so, for its ally run; a state of a wait is not sent to it at all", async () => {
