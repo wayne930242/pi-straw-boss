@@ -81,3 +81,23 @@ test("the head page: the fold carries the device's numbers, each row its own, in
 	assert.match(rowCapText({ ...base, points: 0, paused: "quota", pausedUntil: NOW + 90 * MIN }, { locale: "zh-TW" }), /^0 點 · 額度停機 · 預計 \d\d:\d\d 恢復$/);
 	assert.equal(rowCapText(base), "");
 });
+
+test("device holds in the views (docs/specs/2026-11-26-device-hold.md): board_read's held and holds sections, /boss board's lines, and the head page's fold in both languages", async () => {
+	const { writeHold } = await import("../src/hold.ts");
+	const d = dir(), mac = "a".repeat(26), box = "c".repeat(25) + "a";
+	writeEntry(d, "m1", { now: "api", items: [] }, NOW - 5 * MIN);
+	writeDevice(capDir(d), device());
+	writeHold(capDir(d), { v: 1, at: NOW - MIN, held: { team: "0f".repeat(16), device: mac, label: "mac", short: "aaaaaa", by: "0123456789abcdef", byName: "work-on", since: NOW - 12 * MIN }, holds: [{ device: box, label: "box 2", short: "cccccc", main: "billing", since: NOW - 3 * MIN, honoured: true, boxBoardSecondsAgo: 40 }] });
+	const out = await readBoard({ dir: d, now: NOW, net, link: { boards: async () => [], remoteScope: () => undefined }, scope: "local" }) as Record<string, unknown>;
+	assert.deepEqual(out.held, { device: mac, label: "mac", short: "aaaaaa", main: "work-on", sinceSecondsAgo: 720 });
+	assert.deepEqual(out.holds, [{ device: box, label: "box 2", short: "cccccc", main: "billing", honoured: true, boxBoardSecondsAgo: 40, sinceSecondsAgo: 180 }]);
+	const text = boardCommand({ dir: d, now: NOW, net });
+	assert.match(text, /^held by main "work-on" on "mac" \(aaaaaa\) since 12 min$/m);
+	assert.match(text, /^holds "box 2" \(cccccc\) · billing · honoured$/m);
+	const cap = boardSeam({ dir: d, now: () => NOW }).capacity()!;
+	assert.deepEqual([cap.held, cap.holds], [{ label: "mac", short: "aaaaaa", main: "work-on" }, [{ label: "box 2", short: "cccccc", main: "billing", honoured: true }]]);
+	assert.match(capText(cap), / · held by work-on on mac · holds box 2 · billing · honoured$/);
+	assert.match(capText({ ...cap, holds: [{ ...cap.holds![0]!, honoured: false }] }, { locale: "zh-TW" }), / · 由 mac 的 work-on 接管中 · 接管 box 2 · billing · 未生效$/);
+	writeHold(capDir(d), { v: 1, at: NOW - 6 * MIN });
+	assert.deepEqual(Object.keys(await readBoard({ dir: d, now: NOW, net, link: { boards: async () => [], remoteScope: () => undefined }, scope: "local" })).filter((k) => k.startsWith("hold") || k === "held"), [], "a stale file shows nothing");
+});

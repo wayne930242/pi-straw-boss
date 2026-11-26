@@ -1,6 +1,7 @@
 import { allyLabel } from "./boardauto.ts";
 import { clean, forAllies, joinLocal, type LiveMain, purge, readEntries } from "./board.ts";
 import { capDir, capSection, readDevice, rowCap } from "./capacity.ts";
+import { holdSections } from "./hold.ts";
 import { commanding, sessionMark, subagents } from "./netdata.ts";
 import type { Pane, Session } from "./herdr.ts";
 import { inside } from "./link/routing.ts";
@@ -48,6 +49,7 @@ export async function readBoard(o: BoardReadInput): Promise<Record<string, unkno
 		const dev = readDevice(capDir(o.dir), o.now), cap = (s: string) => rowCap(dev, s, o.now);
 		out.local = rows.map((r) => ({ ...(r.role ? { role: r.role } : {}), workspace: r.workspace, tab: r.tab, main: r.main, kind: kinds.get(r.session) ?? null, state: r.state, ...(r.now ? { now: r.now } : {}), items: r.items, ...(r.updatedSecondsAgo !== undefined ? { updatedSecondsAgo: r.updatedSecondsAgo } : {}), ...((c) => ({ ...c, stale: c.stale ?? r.stale }))(cap(r.session)) })).map(({ stale, ...r }) => (stale ? { ...r, stale: true } : r));
 		if (dev) out.capacity = capSection(dev, o.now, new Set(rows.map((r) => r.session)));
+		Object.assign(out, holdSections(capDir(o.dir), o.now)); // device holds (docs/specs/2026-11-26-device-hold.md): `held` on a held box, `holds` on one that holds one
 	}
 	if (o.scope !== "local" || o.device !== undefined) {
 		// Senders of several teams get no ally rows and no waits (below), the same rule as for the local part.

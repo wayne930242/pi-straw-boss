@@ -48,7 +48,8 @@ export function ageText(ms: number, o?: Opts): string {
 /** The device's capacity for the fold (docs/specs/2026-11-24-capacity.md): `6 / 20 pts · load 0.24 / 32 cores · 5 ready · capacity idle 12 min · 1 paused`. */
 export function capText(c: CapView, o?: Opts): string {
 	return [c.budget !== undefined ? m.board_cap_budget({ points: String(c.points), budget: String(c.budget) }, o) : m.board_cap_points({ points: String(c.points) }, o), m.board_cap_load({ load: String(c.load1), cores: String(c.cores) }, o), m.board_cap_ready({ count: c.ready }, o),
-		...(c.underMinutes !== undefined ? [m.board_cap_under({ minutes: String(c.underMinutes) }, o)] : []), ...(c.paused ? [m.board_cap_paused({ count: c.paused }, o)] : [])].join(m.board_cap_sep({}, o));
+		...(c.underMinutes !== undefined ? [m.board_cap_under({ minutes: String(c.underMinutes) }, o)] : []), ...(c.paused ? [m.board_cap_paused({ count: c.paused }, o)] : []),
+		...(c.held ? [m.board_held({ main: c.held.main, device: c.held.label }, o)] : []), ...(c.holds ?? []).map((h) => m.board_holds({ device: h.label, main: h.main, state: h.honoured ? m.board_hold_on({}, o) : m.board_hold_off({}, o) }, o))].join(m.board_cap_sep({}, o)); // device holds (docs/specs/2026-11-26-device-hold.md)
 }
 const hm = (at: number) => new Date(at).toTimeString().slice(0, 5);
 /** A row's pause with the local time it resumes. */

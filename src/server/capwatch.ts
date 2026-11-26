@@ -107,7 +107,8 @@ export function createCapWatch(d: CapDeps) {
 			// Device hold (docs/specs/2026-11-26-device-hold.md): this box's judge and its file first, so a session's next look reads it; the holds this device has, for the ally notices' holding main.
 			const marks = Object.keys(sent).filter((k) => k.startsWith(HOLD_MARK)), prev = readHold(d.dir, now, true), ignored = readIgnored(d.dir, now), mine = d.holds?.() ?? { holds: [], ended: [] };
 			const verdict = holdOf(allies, { unattended: d.unattended(), now, ignored, ...(marks[0] ? { was: markHold(marks[0]) } : {}) }), held = verdict.held;
-			writeHold(d.dir, { v: 1, at: now, ...(held ? { held } : {}) });
+			const holding = mine.holds.map((h) => ((a) => ({ device: h.device, label: a?.label ?? shortOf(h.device), short: shortOf(h.device), main: facts.find((m) => m.session === h.session)?.name ?? h.session.slice(0, 8), since: h.since, ...(h.until !== undefined ? { until: h.until } : {}), honoured: a?.echo?.since === h.since, ...(a ? { boxBoardSecondsAgo: Math.round(a.boardAgeMs / 1000) } : {}) }))(allies.find((x) => x.device === h.device && x.team === h.team)));
+			writeHold(d.dir, { v: 1, at: now, ...(held ? { held } : {}), ...(holding.length ? { holds: holding } : {}) });
 			const holderOf = (a: AllySeen) => mine.holds.find((h) => h.device === a.device && h.team === a.team)?.session;
 			const ally = (kind: CapKind, a: AllySeen, since?: number): CapEvent => ((text, main) => ({ kind, key: a.key, text, ...(standing() ? { standing: standing()! } : {}), ...(main && kind === "silent" ? { main, mainText: `${text}${HOLDER_CAP_HINT}` } : {}) }))(capText(kind, dev, now, undefined, a, since), holderOf(a));
 			const of = (kind: CapKind, row: MainRow, since?: number): CapEvent => ({

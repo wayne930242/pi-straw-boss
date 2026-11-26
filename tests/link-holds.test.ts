@@ -88,6 +88,11 @@ test("a controller's hold reaches the box with the facts it judges by, and the b
 	assert.equal(seen.team, TEAM_HEX);
 	await until(() => a.holder.allySeen().some((x) => x.echo), 5000, "B's echo at A");
 	assert.deepEqual(a.holder.allySeen().find((x) => x.device === bob.id)!.echo, { by: wireId(alice.id, "main-1"), since });
+	// What a tower reads (board_read's remote rows): the box's row names who holds it, the controller's row what it holds, so a third device sees both.
+	const atA = (a.holder.boards() as { boards: { device: { id: string }; heldBy?: { label: string; short: string } }[] }).boards.find((x) => x.device.id === bob.id)!;
+	assert.deepEqual([atA.heldBy?.label, atA.heldBy?.short], ["alice-mac", alice.shortId]);
+	const atB = (b.holder.boards() as { boards: { device: { id: string }; holds?: { label: string }[] }[] }).boards.find((x) => x.device.id === alice.id)!;
+	assert.deepEqual(atB.holds?.map((h) => h.label), ["bob-mac"], "the roster's label");
 	assert.doesNotMatch(JSON.stringify(relay.stored.map((x) => x.envelope)), /main-1/, "no session id on the wire");
 });
 

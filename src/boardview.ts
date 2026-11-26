@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { type BoardItem, clean, type Count, type Entry, joinLocal, type LiveMain, readEntries, type Src } from "./board.ts";
 import { capDir, capLine, type DeviceCap, readDevice, rowCap, underFor } from "./capacity.ts";
 import { isCoordinatorDuty } from "./duty.ts";
+import { readHold, readHolding } from "./hold.ts";
 import type { Net } from "./net.ts";
 
 type Keyed = { key: string; subs: Keyed[] };
@@ -38,7 +39,8 @@ export interface BoardViewRow {
 	units?: { name: string; points: number }[];
 }
 /** The device row as the page shows it: numbers only. */
-export interface CapView { points: number; budget?: number; load1: number; cores: number; ready: number; underMinutes?: number; paused: number }
+/** `held` and `holds` (docs/specs/2026-11-26-device-hold.md): who holds this box, and the boxes this device holds with whether each honours it (hold.ts, the capacity watch's `_hold.json`). */
+export interface CapView { points: number; budget?: number; load1: number; cores: number; ready: number; underMinutes?: number; paused: number; held?: { label: string; short: string; main: string }; holds?: { label: string; short: string; main: string; honoured: boolean }[] }
 export const capView = (d: DeviceCap, now: number): CapView => ({ points: d.points, ...(d.budget !== undefined ? { budget: d.budget } : {}), load1: d.load1, cores: d.cores, ready: d.ready, ...(underFor(d, now) !== undefined ? { underMinutes: Math.floor(underFor(d, now)! / 60_000) } : {}), paused: d.mains.filter((r) => r.paused).length });
 
 /** A device row's units as the page draws them: a name and finite points each, at most 32 (the file is the server's, read as it is). */
@@ -109,8 +111,8 @@ export function boardSeam(o: { dir: string; now(): number; entries?: (dir: strin
 		},
 		/** The device row (capacity.ts) for the board's fold; none without a fresh one. */
 		capacity(): CapView | undefined {
-			const d = readDevice(capDir(o.dir), o.now());
-			return d && capView(d, o.now());
+			const d = readDevice(capDir(o.dir), o.now()), h = readHold(capDir(o.dir), o.now()), mine = readHolding(capDir(o.dir), o.now());
+			return d && { ...capView(d, o.now()), ...(h ? { held: { label: h.label, short: h.short, main: h.byName } } : {}), ...(mine.length ? { holds: mine.map((x) => ({ label: x.label, short: x.short, main: x.main, honoured: x.honoured })) } : {}) };
 		},
 	};
 }
@@ -129,8 +131,8 @@ export function doneCount(r: Pick<BoardViewRow, "items" | "count">): { done: num
 }
 
 /** `/boss board`: the rows as text, one line each: `workspace › tab · main · state · now · n/m · age`, with `stale` marked (an ended row says so as its state). */
-export function boardText(rows: BoardViewRow[], now: number, dev?: DeviceCap): string {
-	if (!rows.length) return "The work board is empty: no main has joined and no line is left.";
+export function boardText(rows: BoardViewRow[], now: number, dev?: DeviceCap, holds: readonly string[] = []): string {
+	if (!rows.length) return ["The work board is empty: no main has joined and no line is left.", ...holds].join("\n");
 	const stale = rows.filter((r) => r.stale).length, ended = rows.filter((r) => r.state === "ended").length, bare = rows.filter((r) => r.now === undefined && r.state !== "ended").length;
 	const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`, notes = [stale && `${stale} idle over 2 h`, ended && `${ended} ended`, bare && `${plural(bare, "main")} wrote none`].filter(Boolean);
 	const head = `Work board: ${plural(rows.length - bare, "line")}${notes.length ? ` (${notes.join(", ")})` : ""}`;
@@ -138,5 +140,5 @@ export function boardText(rows: BoardViewRow[], now: number, dev?: DeviceCap): s
 		const count = doneCount(r);
 		return [[r.workspace, r.tab].filter(Boolean).join(" › "), r.main || r.session.slice(0, 8), ...(r.role ? ["train"] : []), r.open ? "not a main" : r.state, r.now ?? "no line", ...(count ? [`${count.done}/${count.total}`] : []), ...(r.updated !== undefined ? [agoText(now - r.updated)] : []), ...(r.points !== undefined ? [`${r.points} pts`] : []), ...(r.ready ? [`${r.ready} ready`] : []), ...(r.paused ? [r.paused] : []), ...(r.stale ? ["stale"] : [])].filter(Boolean).join(" · ");
 	});
-	return [head, ...(dev ? [capLine(dev, now)] : []), ...lines].join("\n");
+	return [head, ...(dev ? [capLine(dev, now)] : []), ...holds, ...lines].join("\n"); // `holds`: a device hold's lines (hold.ts `holdLines`)
 }

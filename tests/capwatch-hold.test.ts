@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { capDir, type MainCap, type MainFacts, writeCap } from "../src/capacity.ts";
-import { addIgnored, readHold } from "../src/hold.ts";
+import { addIgnored, readHold, readHolding } from "../src/hold.ts";
 import type { EndedHold, Hold } from "../src/link/holds.ts";
 import { tellCap } from "../src/server/capops.ts";
 import { type AllySeen, type CapEvent, createCapWatch } from "../src/server/capwatch.ts";
@@ -109,6 +109,7 @@ test("the controller: held-room to the holding main alone after 10 minutes of ro
 	w.allies = [box()];
 	await run(watch, w.clock, 10);
 	assert.equal(w.told.filter((e) => e.kind === "held-room").length, 0, "held 10 minutes first");
+	assert.deepEqual(readHolding(w.dir, w.clock.now()).map((h) => [h.label, h.main, h.honoured]), [["box 2", "api", true]], "the views' file: the hold, its main's name, honoured");
 	await run(watch, w.clock, 1);
 	const room = w.told.filter((e) => e.kind === "held-room");
 	assert.deepEqual(room.map((e) => [e.main, e.mainOnly, e.text]), [["s-a", true, 'capacity held-room · device "box 2" (cccccc) · 6 / 16 pts · load 3.1 / 32 cores · you hold it: send worker slips or release it']]);

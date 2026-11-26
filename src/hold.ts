@@ -9,7 +9,10 @@ import type { AllySeen } from "./server/capwatch.ts";
 
 /** The hold this box honours: the team it is held in, the controller device (id, label, short id), its main (entry id and name), since when, and until when if set. */
 export interface HeldBy { team: string; device: string; label: string; short: string; by: string; byName: string; since: number; until?: number }
-export interface HoldFile { v: 1; at: number; held?: HeldBy }
+/** A hold this device has on a teammate's box, as the capacity watch saw it: the main that holds it, whether the box's board echoes it (`honoured`), and how old that board is. */
+export interface Holding { device: string; label: string; short: string; main: string; since: number; until?: number; honoured: boolean; boxBoardSecondsAgo?: number }
+/** `held`: the hold this box honours; `holds`: the holds this device has on teammates' boxes. */
+export interface HoldFile { v: 1; at: number; held?: HeldBy; holds?: Holding[] }
 const HOLD = "_hold.json";
 
 export const writeHold = (dir: string, f: HoldFile) => writeJson(dir, HOLD, f);
@@ -74,3 +77,25 @@ export function readIgnored(dir: string, now: number): (Ignored & { at: number }
 	} catch { return []; }
 }
 export const addIgnored = (dir: string, now: number, i: Ignored) => writeJson(dir, IGNORED, { ignored: [...readIgnored(dir, now), { ...i, at: now }].slice(-50) });
+
+/** This device's holds on teammates' boxes as the capacity watch last saw them, when the file is fresh. */
+export function readHolding(dir: string, now: number): Holding[] {
+	try {
+		const f = JSON.parse(readFileSync(join(dir, HOLD), "utf8")) as Partial<HoldFile>;
+		return f.v === 1 && typeof f.at === "number" && now - f.at <= DEVICE_FRESH_MS && Array.isArray(f.holds) ? f.holds.filter((h) => typeof h?.device === "string" && typeof h.label === "string" && typeof h.main === "string" && typeof h.since === "number").slice(0, 8) : [];
+	} catch { return []; }
+}
+const minutesAgo = (ms: number) => Math.max(0, Math.round(ms / 60_000));
+/** The view's words for both sides (`/boss board`, the head page's fold): `held by main "work-on" on "mac" (k3f9qa) since 12 min`, `holds "box 2" (k3f9qa) · work-on · honoured`. */
+export function holdLines(dir: string, now: number): string[] {
+	const h = readHold(dir, now);
+	return [...(h ? [`held by ${holderName(h)} since ${minutesAgo(now - h.since)} min`] : []), ...readHolding(dir, now).map((x) => `holds ${JSON.stringify(x.label)} (${x.short}) · ${x.main} · ${x.honoured ? "honoured" : "not honoured (its policy level or build, or its board has not echoed it yet)"}`)];
+}
+/** `board_read`'s sections (docs/specs/2026-11-26-device-hold.md, Box views and Controller): `held` on a held box, `holds` on a device that holds one. */
+export function holdSections(dir: string, now: number): { held?: { device: string; label: string; short: string; main: string; sinceSecondsAgo: number }; holds?: (Omit<Holding, "since" | "until"> & { sinceSecondsAgo: number; untilSeconds?: number })[] } {
+	const h = readHold(dir, now), mine = readHolding(dir, now), secs = (ms: number) => Math.max(0, Math.round(ms / 1000));
+	return {
+		...(h ? { held: { device: h.device, label: h.label, short: h.short, main: h.byName, sinceSecondsAgo: secs(now - h.since) } } : {}),
+		...(mine.length ? { holds: mine.map(({ since, until, ...x }) => ({ ...x, sinceSecondsAgo: secs(now - since), ...(until !== undefined ? { untilSeconds: secs(until - now) } : {}) })) } : {}),
+	};
+}

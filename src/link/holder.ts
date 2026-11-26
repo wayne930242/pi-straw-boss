@@ -237,7 +237,8 @@ export interface AllyTeam { team: string; name: string; devices: AllyDevice[] }
 export interface AllyBoardEntry { id: string; workspace: string; tab: string; main: string; now: string; items: { t: string; done: boolean }[]; updatedSecondsAgo?: number }
 /** An ally's capacity row as a tower reads it (docs/specs/2026-11-24-capacity.md): points and load in plain numbers, the paused mains by their entry ids with when they resume. */
 export interface AllyCapacity { points: number; budget?: number; load1: number; cores: number; ready: number; minReady?: number; open: number; paused: { id: string; until?: string }[] }
-export interface AllyBoard { origin: "remote"; team: string; teamId: string; device: { id: string; short: string; label: string }; online: boolean; boardSecondsAgo: number; entries: AllyBoardEntry[]; capacity?: AllyCapacity }
+/** `holds` and `heldBy` (docs/specs/2026-11-26-device-hold.md): the boxes its board says it holds, and the teammate whose hold its board says it honours. */
+export interface AllyBoard { origin: "remote"; team: string; teamId: string; device: { id: string; short: string; label: string }; online: boolean; boardSecondsAgo: number; entries: AllyBoardEntry[]; capacity?: AllyCapacity; holds?: { device: string; short: string; label: string; sinceSecondsAgo: number }[]; heldBy?: { device: string; short: string; label: string; sinceSecondsAgo: number } }
 /** A board from a device that has been offline longer than this, or is older than 7 days, is not shown (spec, Holding allies' boards). */
 const BOARD_OFFLINE_MS = 2 * 3600_000, BOARD_MAX_AGE_MS = 7 * 24 * 3600_000;
 /** The board is sent at most this often per team, and once an hour unchanged; a relay without the kind is left alone for an hour. */
@@ -1864,6 +1865,10 @@ export class LinkHolder {
 						id: clean(e.id, 16), workspace: clean(e.workspace, BOARD.label), tab: clean(e.tab, BOARD.label), main: clean(e.name, BOARD.label), ...cleanText(e),
 						...(e.updated > 0 ? { updatedSecondsAgo: Math.max(0, Math.round((now - e.updated) / 1000)) } : {}),
 					})),
+					...((hs) => {
+						const who = (d: string, since: number) => ({ device: d, short: shortId(d), label: restrictLabel(roster.members.get(d)?.label ?? shortId(d)), sinceSecondsAgo: Math.max(0, Math.round((now - since) / 1000)) }), echo = hs.find((x) => x.role === "held");
+						return { ...(hs.some((x) => x.role === "holds") ? { holds: hs.filter((x) => x.role === "holds").map((x) => who(x.device, x.since)) } : {}), ...(echo ? { heldBy: who(echo.device, echo.since) } : {}) };
+					})(seen.board.holds ?? []),
 					...((c) => (c ? { capacity: { points: c.points / 100, ...(c.budget !== undefined ? { budget: c.budget / 100 } : {}), load1: c.load1 / 100, cores: c.cores, ready: c.ready, ...(c.minReady !== undefined ? { minReady: c.minReady / 100 } : {}), open: c.open, paused: c.paused.map((p) => ({ id: clean(p.id, 16), ...(p.until !== undefined ? { until: new Date(Math.min(p.until, 8.64e15)).toISOString() } : {}) })) } } : {}))(seen.board.capacity),
 				});
 			}
