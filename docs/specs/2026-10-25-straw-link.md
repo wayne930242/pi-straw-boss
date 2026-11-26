@@ -628,6 +628,8 @@ Decided by the boss on 2026-10-28 (D20 in the sb-backend spec): "the work board 
   device offline for more than 2 hours, or older than 7 days, is not shown.
 - A board never starts a turn, never enters the inbox, never reaches a main, a member, or the GUI, and is never forwarded to another
   team or device by the code.
+- Amended 2026-11-26 ([device hold](2026-11-26-device-hold.md)): a board's holds (its third field) reach only code. The box's capacity
+  watch judges them against its own policy, and its mains get only texts that code writes (`src/moments.ts`), never the board's bytes.
 
 ### Reading: `board_read` (towers only)
 

@@ -771,6 +771,27 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 </details>
 
+#### 接管隊友的機器
+
+有人值守裝置上的主智慧體可以接管隊友的無人值守 box：接管生效期間，box 把空出的容量留給那個主智慧體送來的隊友工作者，自己不再接新工作，兩邊都看得到這件事（`src/hold.ts`、`src/link/holds.ts`、`src/link/holdops.ts`、`src/bosshold.ts`；設計是 `docs/specs/2026-11-26-device-hold.md`）。接管不授予任何權限：它只改變 box 發哪些通知，以及它的主智慧體收到哪些由程式寫的文字。
+
+<details>
+<summary>細節</summary>
+
+**設定。** 主智慧體以 `link_request` `hold`（`device`，可選的 `hours`）提出，老闆在對話框核准；自動模式下，這個請求和其他 `link_request` 一樣等老闆回來，所以要在離開前設好。老闆也可以直接打 `/boss link hold <box> [--main <name|key>] [--hours n]`，會先問過；接管的主智慧體是下指令的這個 session，除非 `--main` 指名另一個。沒有 `--hours` 就沒有期限。以下情況在詢問任何人之前就拒絕：這台裝置是無人值守、box 是有人值守、要接管的是塔台，或團隊名冊上有隊友最新的 `caps` 沒有列出 `board.holds`（拒絕訊息會點名這些裝置：舊版會丟掉這些看板）。接管寫在 `<state dir>/link/holds.json`，每台 box 一筆：新的會取代這台裝置先前對它的接管。
+
+**在線路上。** 只有每個隊友都列出 `board.holds` 時，控制者的 `board` 才把接管當第三個欄位帶上：`holds: [{device, by, since, until?, role}]`（至多 8 筆）。`role` `holds` 指出 box，`by` 是那個主智慧體的看板條目 id（session id 不離開這台電腦），`since` 是開始的時間。沒有產能列時，第二個欄位是空的。帶著接管的看板至少每 10 分鐘送一次，relay 不必改。box 在自己的看板以 `role` `held` 回應它認可的接管，控制者就是這樣知道接管已生效。
+
+**誰可以接管。** box 依自己的 policy 判斷，絕不依訊息本身，檢查和遠端停止相同：box 是無人值守，送出者是名冊上有人值守的成員，而且 box 的 policy 以 `dispatch` 信任它。只要該送出者最新的看板指名這台 box、看板自己的 `ts` 不超過 30 分鐘、`until` 還沒到，而且 box 的老闆沒有在那裡結束它，接管就生效。生效中的接管維持不變；否則最早的 `since` 勝出，第二個接管者被拒，也不會收到任何通知。sb server 的產能監看每分鐘把判定寫進 `capacity/_hold.json`，session 把它當作 5 分鐘內有效。
+
+**在 box 上。** box 對它的主塔台、值守主智慧體與每個協調者主智慧體各說一次（`sb: this device is held by main "work-on" on "mac" (k3f9qa) since 01:52; … start no new work of your own, pause loops/watches that pick tickets; sb tells you when it ends.`），之後才在那裡開始的協調者也一樣；結束時也只說一次，附上原因（`released`、`lapsed`、`revoked`、`ended here`）和恢復接工作的提醒。標記存在 `capacity/_sent.json`，所以重啟後兩者都不重發。接管期間，box 不為自己的主智慧體發 `under`，因為它的空間屬於接管者。`stale` 主智慧體收到的那份會說：做完手上那件或回報卡住、不開新工作，把不會開始的 todo 刪掉或設 `metadata.waitsOn`；值守主智慧體那份則說不要再派新工作到這裡。閒置提醒、值守主智慧體的喚醒、復活與塔台的簡報都帶上接管的說明。box 的工作者入口只接受接管者送來的工作者單（`held by <label>: its capacity is that device's`）。
+
+**結束。** 主智慧體以 `link_request` `release`（`device`）解除自己的接管，不經對話框，因為這只會縮小它接管的範圍。控制者的老闆以 `/boss link release <box>` 解除。接管的主智慧體從 pi-intercom 的清單消失 2 分鐘，它的接管就結束。換手時接管移給接班者（`src/rotclose.ts`）。控制者沉默時，接管在 30 分鐘後失效。從名冊移除，或信任降到 `dispatch` 以下，在下一次檢查時撤銷。box 的老闆以 `/boss link held end`（會先問過）在那裡結束它：box 從此不理會那筆接管，恢復接自己的工作，並送一則 `hold-ended` 通知給控制者，那裡接管的主智慧體會收到一次。
+
+**在哪裡看得到。** 在 box 上：`board_read` 的 `held` 區段（`device`、`label`、`short`、`main`、`sinceSecondsAgo`）、`/boss board` 標題下一行 `held by …`、主塔台頁面的看板摺疊行，以及 `/boss link held`。在控制者上：`board_read` 的 `holds` 區段（每台 box 與它的主智慧體、`honoured`、`boxBoardSecondsAgo`）、一行 `holds "box 2" (k3f9qa) · work-on · honoured`、摺疊行裡相同的內容，以及 `/boss link holds`。遠端列帶著 `holds` 與 `heldBy`，所以第三台裝置看得到兩邊。當它接管、而且看板回應了接管的 box，有 1 點空間且負載低於每核 0.7 達 10 分鐘，接管的主智慧體會收到 `capacity held-room · device "box 2" (k3f9qa) · 6 / 16 pts · load 3.1 / 32 cores · you hold it: send worker slips or release it`。它也會收到那台 box 的 `device-silent` 與 `quota` 通知。
+
+</details>
+
 ### 自動模式
 
 給老闆不在、而且沒有任何事可以等他的時候用（`src/auto.ts`、`autostate.ts`、`autotext.ts`、`autoscope.ts`、`bossauto.ts`、`declined.ts`、`server/automode.ts`、`autoops.ts`、`autoback.ts`、`autotower.ts`、`autoreturn.ts`、`gui/auto.ts`；設計見 `docs/specs/2026-11-09-auto-mode.md`，後由 `docs/specs/2026-11-21-auto-return.md` 修訂）。它涵蓋這台電腦和它上面的每個 Herdr slot；Straw Link 的隊友不會被告知，無人值守裝置也沒有它。

@@ -28,7 +28,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `board_set` | 分頁的主智慧體 | 覆寫它自己的工作看板項目（一行與最多 8 個清單項目）；`auto: true` 交還給自動填入，`clear: true` 刪除它。 |
 | `ledger_sweep` | 只限收到排程通知的主塔台 | 執行伺服器清理和設定好的 ledger janitor，回傳主塔台該轉交的項目。不接受參數。 |
 | `boss_server` | 已加入的 session | sb server 的 `status`（server 沒在跑時也可用）、它的 `logs`（最多 200 行），或附理由 `restart`。老闆停掉 server 或有火車在跑時會被拒絕，每分鐘最多一次，且在遠端 turn 中絕不可用。 |
-| `link_request` | 設好 Straw Link、有人看管的電腦上的每個 session，以及本機塔台 run | 附理由請求一個 Straw Link 動作（create、invite、join、trust、leave、remove、role、rotate）。它絕不會未經詢問就執行：老闆要在對話框裡核准。 |
+| `link_request` | 設好 Straw Link、有人看管的電腦上的每個 session，以及本機塔台 run | 附理由請求一個 Straw Link 動作（create、invite、join、trust、leave、remove、role、rotate、hold）。它絕不會未經詢問就執行：老闆要在對話框裡核准。解除自己對某台盒子的接管（`release`）不經對話框（[接管隊友的機器](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#接管隊友的機器)）。 |
 | `boss_open_main` | 塔台 | 為沒有 session 負責的請求，開一個帶新主智慧體的分頁。`role: "train"` 開一列火車；`role: "integrator"` 把車廂單送給專案唯一的整合員，沒有在跑的就開一個。`duty: "standing"` 開一個值守種類的主智慧體（預設為協調者）。在 `dispatch` 的隊友 run 裡，`role: "worker"` 依那個 run 的裝置送來的 `worker:` 單據開啟一個工作者（有好幾張時以 `branch` 指定）；不論成敗，sb 伺服器都會回覆那台裝置。見[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。 |
 | `boss_close_main` | 塔台 | 等它裡面沒有東西在跑，關掉這座塔台開的主智慧體，或交接過、接班者已活著的主智慧體；沒有交接的值守主智慧體與老闆開的主智慧體不會被關，只有老闆能關。帶 `pane` 時關掉死掉的智慧體窗格（pi 不在、停在空的 shell）；不帶參數時列出這些窗格。 |
 | `boss_revive_main` | 塔台（pi 塔台與本機塔台執行） | `list` 列出工作區裡死掉與已退出的主智慧體；`revive` 附理由把其中一個救回成它自己（同一個 session、新分頁，帶著它的角色、種類、名稱、看板、待辦與等待）。成員、塔台、隊友裝置開的主智慧體與活著的 session 會被拒絕。 |
@@ -153,6 +153,8 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 | `/boss link confirms`、`link confirm <id> allow\|deny` | 隊友的塔台正在等的 confirm，以及對它們的回答。 |
 | `/boss link asks`、`link answer <id> <number \| text>` | 無人值守裝置轉送來的問題，以及對它們的回答。 |
 | `/boss link units [box]`、`link stop <box> <main \| handle start> [--interrupt] [reason]` | 無人值守的盒子回報的單位，以及請盒子停掉一位主智慧體。 |
+| `/boss link hold <box> [--main <name\|key>] [--hours n]`、`link release <box>`、`link holds` | 為這裡的主智慧體接管隊友的無人值守盒子（先確認；除非 `--main` 指名另一個，否則是這個 session）、解除接管，以及列出這台電腦的接管與每台盒子是否認可。 |
+| `/boss link held`、`link held end` | 在被接管的盒子上：哪位隊友接管它，以及在這裡結束接管（先確認；會通知那部裝置）。 |
 | `/boss link operate`、`/boss link operate off` | 這台電腦為操作無人值守的盒子而開的 session；結束它們全部並保持操作關閉。 |
 
 ## 從 shell
