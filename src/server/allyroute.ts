@@ -130,6 +130,13 @@ export function answeredAsks(now: () => number) {
 	};
 }
 
+/** The ask an opened main's route takes: the run's one unanswered ask, if it has exactly one. The route holds it from then on, so it counts as answered by the run and the run's end sends no receipt for it. */
+export function routedAsk(answered: ReturnType<typeof answeredAsks>, run: string, asks: readonly string[]): string | undefined {
+	const open = asks.filter((a) => !answered.has(run, a)), ask = open.length === 1 ? open[0] : undefined;
+	if (ask) answered.add(run, ask);
+	return ask;
+}
+
 export const readAnswers = (slot: Slot, workspace: string, now: number) => read<Answer>(slot, workspace, ANSWERS, now).filter((a) => typeof a.id === "string" && typeof a.text === "string" && typeof a.device === "string");
 export function addAnswer(slot: Slot, workspace: string, row: Answer, now: number): void {
 	write(slot, workspace, ANSWERS, [...readAnswers(slot, workspace, now), { ...row, text: row.text.slice(0, MAX_TEXT) }].slice(-MAX_ANSWERS));

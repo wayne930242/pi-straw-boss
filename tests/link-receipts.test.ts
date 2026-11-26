@@ -6,6 +6,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { LinkHolder, STUCK_MS } from "../src/link/holder.ts";
 import { addEntry, createEntry, type RosterEntry } from "../src/link/roster.ts";
 import { LinkStore } from "../src/link/store.ts";
+import { answeredAsks, routedAsk } from "../src/server/allyroute.ts";
 import { allyReceipts } from "../src/server/linkreceipts.ts";
 import { slotOf } from "../src/server/record.ts";
 import { addNote } from "../src/server/towerrunstore.ts";
@@ -44,6 +45,17 @@ test("an ally run that ends without answering its ask answers it with code text,
 	box = false;
 	receipt({ run: "run3", workspace: "wA", device: "dev", outcome: "done", asks: [ASK] });
 	assert.equal(sent.length, 2, "an attended computer sends none");
+});
+
+test("the ask an opened main's route takes is the main's to answer: the run's end sends no receipt for it", () => {
+	const slot = slotOf(join(root, "state"), { HOME: join(root, "home"), PI_CODING_AGENT_DIR: join(root, "agent") });
+	const sent: string[] = [], answered = answeredAsks(() => 1);
+	const receipt = allyReceipts({ slot, now: () => 1, unattended: () => true, answered: (run, ask) => answered.has(run, ask), label: () => "box", log: () => {}, send: async (_ws, _device, _text, ask) => void sent.push(ask) });
+	assert.equal(routedAsk(answered, "run1", [ASK]), ASK, "the one open ask goes to the route");
+	assert.equal(routedAsk(answered, "run1", [ASK]), undefined, "and is taken: a second open does not carry it");
+	assert.equal(routedAsk(answered, "run2", [ASK, "d".repeat(32)]), undefined, "two open asks name none");
+	receipt({ run: "run1", workspace: "wA", device: "dev", outcome: "done", asks: [ASK] });
+	assert.deepEqual(sent, [], "no receipt answers the ask the main now holds");
 });
 
 // dave is the unattended box, alice the attended controller (founder).
