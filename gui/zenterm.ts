@@ -11,7 +11,8 @@ import { type Done, draw, type Layer, type Open } from "./zenhost.ts";
 import type { Term, TermKit } from "./zentypes.ts";
 
 // The terminal step inside Zen (docs/specs/2026-11-01-zen-view.md, A terminal in Zen; 2026-11-02-terminal-card.md): one layer over the screen that was there, holding the terminal card an accepted answer leaves or the full terminal (zenhost.ts); this file gives
-// them ink and a host. It is never closed by anything but the boss (Z-D20, 「永遠不要打斷」): the button, or Esc Esc with the focus outside the terminal. When its step is over by its rule (cardmodel.ts `stepRule`: a prompt's own Enter taken, a pane gone, an armed terminal's unit at work; a mark alone never ends a prompt's) the layer stays and says so in its bar.
+// them ink and a host. The boss closes it with the button, or Esc Esc with the focus outside the terminal. When its step is over by its rule (cardmodel.ts `stepRule`: a prompt's own Enter taken, a pane gone, an armed terminal's unit at work; a mark alone never ends a prompt's) the bar says so, and after
+// `DRIFT_MS` the layer fades for `FADE_MS` and Zen breathes again (boss 2026-11-26: 「輸入完指令，應該逐漸恢復到呼吸」). A tap, a key, or a wheel in the layer during that time keeps it until the boss goes back (Z-D20, 「永遠不要打斷」: never pulled from under his hands).
 
 export interface ZenTermDeps {
 	/** The page's terminals, behind the overlay chunk (fetched on the first call). */
@@ -24,18 +25,26 @@ export interface ZenTermDeps {
 	closed(): void;
 }
 const isPane = (key: string) => key.startsWith("grant:");
+/** How long the bar's line shows after the step is over, then how long the layer takes to fade back to Zen. */
+export const DRIFT_MS = 2500, FADE_MS = 1500;
 
 export function mountZenTerm(root: HTMLElement, deps: ZenTermDeps) {
 	let cur: Open | undefined, escAt: number | undefined, stopEsc = () => {};
 	const clearEsc = () => (stopEsc(), (stopEsc = () => {}), (escAt = undefined), cur && (delete cur.hint.dataset.on, (cur.hint.textContent = "")));
 	const SAID: Record<Done, () => string> = { taken: m.zen_term_sent, working: m.zen_term_working, gone: m.zen_term_gone };
-	/** The step is over: a quiet line in the bar, and a card in the layer is put out (its Enter would only send another); the layer stays for the boss to leave. */
+	/** The step is over: a quiet line in the bar, and a card in the layer is put out (its Enter would only send another); then the layer drifts back to Zen unless the boss touches it. */
 	function finish(c: Open, why: Done) {
 		if (c !== cur || c.done) return;
 		c.done = why;
 		c.note.textContent = SAID[why]();
 		c.layer.dataset.done = why;
 		if (c.card) (c.card.el.contains(document.activeElement) && c.back.focus(), c.card.el.setAttribute("inert", "")); // the keyboard is not left on a button that went inert
+		let stop = deps.later(() => {
+			if (c !== cur) return;
+			c.layer.dataset.leaving = "";
+			stop = deps.later(() => c === cur && close(), FADE_MS);
+		}, DRIFT_MS);
+		c.stay = () => (stop(), delete c.layer.dataset.leaving, (c.stay = undefined));
 	}
 	/** The layer goes and its terminal is let go; whether Zen is told is the caller's. */
 	let last: Net | undefined; // the newest snapshot, for the card's box fact
@@ -44,6 +53,7 @@ export function mountZenTerm(root: HTMLElement, deps: ZenTermDeps) {
 		const c = cur;
 		cur = undefined;
 		clearEsc();
+		c.stay?.();
 		c.off?.();
 		if (c.layer.contains(document.activeElement)) (document.activeElement as HTMLElement).blur(); // the button that was pressed goes with the layer: the focus is free for the card
 		c.layer.remove();
@@ -82,7 +92,9 @@ export function mountZenTerm(root: HTMLElement, deps: ZenTermDeps) {
 		const back = h("button", { type: "button", class: "zen-term-back" }, m.zen_back_title()), host = h("div", { class: "zen-term-host" }), hint = h("p", { class: "zen-term-esc", role: "status", "aria-live": "polite" });
 		const note = h("p", { class: "zen-term-note", role: "status", "aria-live": "polite" }); // the quiet line after the step is over
 		const layer = h("section", { class: "zen-term", "data-mode": mode, "aria-label": m.terminal_title({ name }) }, h("header", { class: "zen-term-bar" }, h("h2", { class: "zen-who" }, name), back, note), host, hint);
-		return { name, key, kind, mode, layer, host, hint, note, back, ...extra };
+		const c: Open = { name, key, kind, mode, layer, host, hint, note, back, ...extra };
+		for (const type of ["pointerdown", "keydown", "wheel"]) layer.addEventListener(type, () => c.stay?.(), { capture: true, passive: true }); // the boss is using the layer: it stays (Z-D20)
+		return c;
 	};
 	return {
 		isOpen: () => cur !== undefined,

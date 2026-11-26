@@ -220,8 +220,10 @@
 /* The terminal layer (zenterm.ts): the page's own terminal on ink, over the whole page, with the way back in the corner where the menu was. The mirror, the key pad, and the keyboard are Standard's; only the colours are the tokens above. */
 [data-view="zen"] .zen-term { position: fixed; inset: 0; z-index: 4; display: grid; grid-template: auto minmax(0, 1fr) / minmax(0, 1fr); gap: 8px; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); background: var(--zen-ground); color: var(--zen-paper); animation: zen-fade 0.5s var(--zen-ease) both; }
 [data-view="zen"] .zen-term-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; min-height: 44px; }
-[data-view="zen"] .zen-term-note { order: 3; flex: 1 0 100%; margin: 0; color: var(--zen-ash); font-size: 0.95rem; letter-spacing: 0.08em; } /* Z-D20: the step is over and the layer stays; the line says it is fine to go back, and asks for nothing */
+[data-view="zen"] .zen-term-note { order: 3; flex: 1 0 100%; margin: 0; color: var(--zen-ash); font-size: 0.95rem; letter-spacing: 0.08em; } /* the step is over: the line says so and asks for nothing, then the layer drifts back to the breath unless the boss touches it (zenterm.ts) */
 [data-view="zen"] .zen-term-note:empty { display: none; }
+[data-view="zen"] .zen-term[data-leaving] { animation: zen-fade-out 1.5s var(--zen-ease) both; } /* the step is over and nobody touched the layer: it fades back to the breath; a tap while it fades keeps it (zenterm.ts `FADE_MS`) */
+@keyframes zen-fade-out { to { opacity: 0; } }
 [data-view="zen"] .zen-term[data-done] .tcard { opacity: 0.55; }
 [data-view="zen"] .zen-term-bar .zen-who { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1.3rem; }
 [data-view="zen"] .zen-term-back { flex: none; min-width: 44px; min-height: 44px; padding: 0 20px; border: 1px solid var(--zen-line); border-radius: 22px; background: var(--zen-warm); color: var(--zen-paper); font: 400 1rem var(--serif); letter-spacing: 0.12em; cursor: pointer; transition: background-color 0.6s var(--zen-ease); }
@@ -246,7 +248,7 @@
 [data-view="zen"] .zen-term-esc { position: fixed; z-index: 5; left: 50%; bottom: max(28px, calc(env(safe-area-inset-bottom) + 16px)); translate: -50% 0; width: max-content; max-width: min(24rem, 90vw); margin: 0; padding: 6px 14px; border-radius: 18px; background: var(--zen-soft); text-align: center; font-size: 0.9rem; color: var(--zen-paper); opacity: 0; transition: opacity 0.4s var(--zen-ease); pointer-events: none; }
 [data-view="zen"] .zen-term-esc:empty { display: none; }
 [data-view="zen"] .zen-term-esc[data-on] { opacity: 1; }
-@media (prefers-reduced-motion: reduce) { [data-view="zen"] .zen-term { animation: none; } [data-view="zen"] :is(.zen-term-esc, .zen-term-back, .zen-term-host .pad-yes, .zen-term-host .pad-no) { transition: none; } }
+@media (prefers-reduced-motion: reduce) { [data-view="zen"] .zen-term { animation: none; } [data-view="zen"] .zen-term[data-leaving] { animation: none; } [data-view="zen"] :is(.zen-term-esc, .zen-term-back, .zen-term-host .pad-yes, .zen-term-host .pad-no) { transition: none; } }
 @media (max-height: 900px) { /* a page of an ordinary laptop or phone: the card spends less on air, so a question with five two-line choices still shows them all, and only a longer one scrolls */
 	[data-view="zen"] .zen-card:has(.zen-ask) .zen-card-in { gap: 10px; }
 	[data-view="zen"] .zen-card:has(.zen-ask) :is(.ask-q, .ask-title) { font-size: clamp(1.2rem, 3.2vw, 1.6rem); line-height: 1.4; }

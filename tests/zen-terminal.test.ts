@@ -14,6 +14,7 @@ import type { StepOpen } from "../gui/terminalthen.ts";
 const { mountZen, real } = await import("../gui/zen.ts");
 const { ESC_MS, termStep } = await import("../gui/zenkeys.ts");
 const { termHold } = await import("../gui/towerturns.ts");
+const { DRIFT_MS, FADE_MS } = await import("../gui/zenterm.ts");
 
 const unit = (key: string, mark: Mark, o: Partial<Unit> = {}): Unit => ({ id: key, key, control: true, name: key, role: "main", mark, subs: [], ...o });
 const net = (units: Unit[]): Net => ({ bases: [{ id: "w", label: "Harbor", mark: "idle", tower: { name: "tower", mark: "idle", key: "t", control: true, subs: [] }, tabs: [{ id: "t1", label: "t", units }], outposts: [], outside: [] }], trust: [] }) as Net;
@@ -124,7 +125,7 @@ const shown = async (n = item()) => {
 	return r;
 };
 const sinkOf = (r: ReturnType<typeof rig>) => r.calls.sinks.at(-1)!;
-/** The quiet line in the layer's bar after the step is over (Z-D20: the layer never closes itself). */
+/** The quiet line in the layer's bar after the step is over (before the layer drifts back to Zen). */
 const noteOf = (r: ReturnType<typeof rig>) => r.layer()?.all((el) => el.getAttribute("class") === "zen-term-note")[0]?.textContent;
 
 test("termStep: the terminal's keyboard keeps Esc for itself; outside it the first Esc shows the hint, a second within the window returns, a held key does nothing", () => {
@@ -228,7 +229,7 @@ test("Esc with the layer closed is Zen's own again: an item's Esc cancels or ski
 	assert.equal(r.text().includes(m.zen_term_esc_hint()), false, "the terminal's hint is not Zen's");
 });
 
-test("a pane that closes or whose grant ends does not return to Zen by itself: the layer stays and says in its bar that the boss can go back; a session's terminal that ends says nothing (Z-D20)", async () => {
+test("a pane that closes or whose grant ends does not return to Zen at once: the layer says so in its bar; a session's terminal that ends says nothing and stays (Z-D20)", async () => {
 	const r = await shown();
 	r.z.terminal({ key: "grant:g1" });
 	await r.settle();
@@ -236,7 +237,7 @@ test("a pane that closes or whose grant ends does not return to Zen by itself: t
 	await r.settle();
 	assert.deepEqual([Boolean(r.layer()), r.calls.off, r.calls.leave, noteOf(r)], [true, [], [], m.zen_term_gone()]);
 	r.back()!.click();
-	assert.deepEqual([r.layer(), r.calls.off], [undefined, ["grant:g1"]], "only the boss's Back to Zen ends it");
+	assert.deepEqual([r.layer(), r.calls.off], [undefined, ["grant:g1"]], "Back to Zen ends it before the drift");
 	const s = await shown();
 	s.z.terminal({ key: "a" });
 	await s.settle();
@@ -255,18 +256,18 @@ test("a terminal opened to look at (no step) is the boss's to end: no mark seque
 	assert.ok(r.layer(), "the tool's result, an intercom, a wake, even the boss's own Enter: this terminal was not opened for a step");
 });
 
-test("a terminal opened for a unit that waits at once (a blocked prompt) stays at its first working and says so in its bar: `armed` says the wait is the terminal step (Z-D20)", async () => {
+test("a terminal opened for a unit that waits at once (a blocked prompt) is over at its first working and says so in its bar: `armed` says the wait is the terminal step", async () => {
 	const r = await shown(net([unit("a", "waiting", { name: "ops-main", since: 5 })]));
 	r.z.terminal({ key: "a", armed: true });
 	await r.settle();
 	assert.equal(noteOf(r), "", "nothing to say while the unit still waits");
 	r.feed(net([unit("a", "working", { name: "ops-main" })]));
 	await r.settle();
-	assert.ok(r.layer(), "the layer is the boss's: it is not closed by the unit's work");
+	assert.ok(r.layer(), "the unit's work does not close it at once");
 	assert.equal(noteOf(r), m.zen_term_working());
 	r.feed(idle());
 	r.feed(net([unit("a", "waiting", { name: "ops-main", since: 9 })]));
-	assert.ok(r.layer(), "and no later mark closes it");
+	assert.ok(r.layer(), "and no later mark closes it: only the drift does");
 });
 
 test("the card under the layer is never replaced by a new card, and the keyboard stays with the terminal (Z-D20)", async () => {
@@ -417,7 +418,7 @@ test("a pane's step is named for the unit that asked, not 'Herdr pane', and a ne
 	assert.deepEqual([r.calls.stops, r.calls.watches.map((x) => x.key), r.root.all((e) => (e.getAttribute("class") ?? "").includes("zen-term")).filter((e) => e.tagName === "section").length], [["grant:g1"], ["grant:g1", "grant:g2"], 1], "one layer, the old connection let go");
 });
 
-test("a prompt's card is over when its own Enter is taken and by no mark sequence, and the layer stays with the line and the card put out; its mirror ending stays and says why; a pane's is over when the pane is gone (Z-D20: never closed by itself)", async () => {
+test("a prompt's card is over when its own Enter is taken and by no mark sequence: the line, the card put out; its mirror ending stays and says why; a pane's is over when the pane is gone", async () => {
 	const r = await shown();
 	r.z.step(step());
 	await r.settle();
@@ -428,7 +429,7 @@ test("a prompt's card is over when its own Enter is taken and by no mark sequenc
 	r.calls.watches[0]!.w.taken();
 	await r.settle();
 	assert.equal(noteOf(r), m.zen_term_sent(), "its own Enter, taken: the bar says so");
-	assert.deepEqual([Boolean(r.layer()), r.calls.stops, r.calls.leave], [true, [], []], "and the layer stays");
+	assert.deepEqual([Boolean(r.layer()), r.calls.stops, r.calls.leave], [true, [], []], "and the layer is still there until the drift");
 	assert.equal(cardOf(r)!.getAttribute("inert"), "", "the card is put out: another Run would only send another Enter");
 	r.back()!.click();
 	assert.deepEqual([r.layer(), r.calls.stops], [undefined, ["a"]], "the boss's Back to Zen ends it");
@@ -440,6 +441,66 @@ test("a prompt's card is over when its own Enter is taken and by no mark sequenc
 	p.calls.watches[0]!.w.end();
 	await p.settle();
 	assert.deepEqual([Boolean(p.layer()), p.calls.stops, noteOf(p)], [true, [], m.zen_term_gone()], "the pane closed: the layer stays and says so");
+});
+
+test("boss 2026-11-26 「輸入完指令，應該逐漸恢復到呼吸」: a step that is over drifts back to Zen: the line shows, the layer fades, the breath comes back; a terminal opened to look at never drifts", async () => {
+	const r = await shown();
+	r.z.step(step());
+	await r.settle();
+	r.calls.watches[0]!.w.taken();
+	await r.settle();
+	await r.advance(DRIFT_MS - 1);
+	assert.deepEqual([Boolean(r.layer()), r.layer()!.dataset.leaving, noteOf(r)], [true, undefined, m.zen_term_sent()], "the line shows first");
+	await r.advance(1);
+	assert.equal(r.layer()!.dataset.leaving, "", "then the layer fades");
+	await r.advance(FADE_MS);
+	assert.deepEqual([r.layer(), r.calls.stops, r.calls.leave], [undefined, ["a"], []], "and Zen has the page again: the terminal is let go, Zen is not left");
+	const p = await shown();
+	p.z.terminal({ key: "grant:g1" });
+	await p.settle();
+	p.calls.embeds[0]!.end!();
+	await p.advance(DRIFT_MS);
+	await p.advance(FADE_MS);
+	assert.deepEqual([p.layer(), p.calls.off], [undefined, ["grant:g1"]], "a pane gone drifts back too");
+	const a = await shown(net([unit("a", "waiting", { name: "ops-main", since: 5 })]));
+	a.z.terminal({ key: "a", armed: true });
+	await a.settle();
+	a.feed(net([unit("a", "working", { name: "ops-main" })]));
+	await a.advance(DRIFT_MS);
+	await a.advance(FADE_MS);
+	assert.equal(a.layer(), undefined, "an armed terminal's unit at work drifts back too");
+	const look = await shown();
+	look.z.terminal({ key: "a" });
+	await look.settle();
+	look.feed(net([unit("a", "working", { name: "ops-main" })]));
+	await look.advance(60_000);
+	assert.ok(look.layer(), "a terminal opened to look at has no step: it stays until the boss goes back");
+});
+
+test("the drift keeps the layer for a boss who uses it (Z-D20): a tap or a key in it before the fade, or during the fade, keeps it until Back to Zen", async () => {
+	for (const [when, type] of [[0, "pointerdown"], [DRIFT_MS, "keydown"], [DRIFT_MS, "wheel"]] as const) {
+		const r = await shown();
+		r.z.terminal({ key: "a", armed: true });
+		await r.settle();
+		r.feed(net([unit("a", "working", { name: "ops-main" })]));
+		await r.advance(when);
+		sinkOf(r).bubble(type, { key: "x" });
+		await r.advance(DRIFT_MS);
+		await r.advance(FADE_MS);
+		assert.deepEqual([Boolean(r.layer()), r.layer()?.dataset.leaving, noteOf(r)], [true, undefined, m.zen_term_working()], `${type} at ${when} ms keeps it, unfaded`);
+		r.back()!.click();
+		assert.equal(r.layer(), undefined, "Back to Zen still ends it");
+	}
+	const n = await shown();
+	n.z.step(step());
+	await n.settle();
+	n.calls.watches[0]!.w.taken();
+	await n.settle();
+	n.z.terminal({ key: "b" });
+	await n.settle();
+	await n.advance(DRIFT_MS);
+	await n.advance(FADE_MS);
+	assert.ok(n.layer(), "another terminal replaced the finished one: the old drift does not close the new layer");
 });
 
 test("ZNR-F003: the card of a step that is over no longer says the command waits: it says it was sent, as the bar does", async () => {
