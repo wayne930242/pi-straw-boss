@@ -46,6 +46,8 @@ function plainJson(kind: Kind): unknown {
 }
 
 const boardEntry = (n: number) => ({ id: `${n}`.padStart(16, "0"), workspace: "w", tab: "t", name: "n", now: "x", updated: NOW + n, items: [] as { t: string; done: boolean }[] });
+const HOLD_DEVICE = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
+const hold = (role: "holds" | "held", until?: number) => ({ device: HOLD_DEVICE, by: HANDLE, since: NOW, ...(until !== undefined ? { until } : {}), role });
 /** The limits of a board's plaintext, as another implementation has to cut them: plaintext in, what a decoder gives back out (null for a structure it refuses). */
 function boardCases() {
 	const long = (n: number, c = "あ") => c.repeat(n);
@@ -68,6 +70,10 @@ function boardCases() {
 		mk("an entry with a field too many", enc(list([entryFields(str("extra"))])), null),
 		mk("an entry with a field missing", enc(list([enc(str("0123456789abcdef"), str("w"), str("t"), str("n"), str("x"), int(NOW))])), null),
 		mk("an item whose done flag is 2", enc(list([enc(str("0123456789abcdef"), str("w"), str("t"), str("n"), str("x"), int(NOW), list([enc(str("a"), Buffer.from([2]))]))])), null),
+		// Holds (docs/specs/2026-11-26-device-hold.md): the third field, beside an empty second field (no capacity row); a hold of a role this build does not know is left out, and a fourth field is refused.
+		mk("holds beside an empty capacity field", encodePlaintext("board", { entries: [], holds: [hold("holds", NOW + 60_000), hold("held")] }), { entries: [], holds: [hold("holds", NOW + 60_000), hold("held")] }),
+		mk("a hold of an unknown role is left out", enc(list([]), enc(), list([enc(str(HOLD_DEVICE), str(HANDLE), int(NOW), list([]), str("owns"))])), { entries: [] }),
+		mk("a board of four fields", enc(list([]), enc(), list([]), enc()), null),
 	];
 }
 

@@ -3,6 +3,8 @@ import { basename } from "node:path";
 import { allyLabel } from "../boardauto.ts";
 import { cleanText, clean, BOARD, forAllies, purge, readEntries, wireId, type Entry } from "../board.ts";
 import { capDir, readDevice } from "../capacity.ts";
+import { readHold } from "../hold.ts";
+import { endHolds, readHolds } from "./holds.ts";
 import type { AllySeen } from "../server/capwatch.ts";
 import { MAX_BODY_BYTES } from "./wire.ts";
 import { restrictLabel, restrictOwner } from "./text.ts";
@@ -12,7 +14,7 @@ import { type Level, LEVELS, type LinkConfig, type Share } from "./config.ts";
 import { shortId, type DeviceKeys } from "./device.ts";
 import { buildEnvelope, openEnvelope, parseEnvelope, recordTaken, type Header, type ReceiveState } from "./envelope.ts";
 import { PayloadTooLargeError, ProtocolError, RelayError, UnauthorizedError } from "./errors.ts";
-import { askIdOk, type Board, type BoardWireEntry, type WireCap, type Caps, type ConfirmAnswer, type ConfirmRequest, type DialogAnswer, type DialogClose, type DialogOpen, encodePlaintext, handleOk, KINDS, kindOk, LIMITS, type MainStatus, type Notice, type OperateMessage, operateDirectionOk, type Presence, type TowerMessage, type TowerReply, type UnitStatus, type UnitStop, type WaitWire, type WorkspaceState } from "./kinds.ts";
+import { askIdOk, type Board, type BoardWireEntry, type WireCap, type Caps, type ConfirmAnswer, type ConfirmRequest, type DialogAnswer, type DialogClose, type DialogOpen, encodePlaintext, handleOk, KINDS, kindOk, LIMITS, type MainStatus, type Notice, type OperateMessage, operateDirectionOk, type Presence, type TowerMessage, type TowerReply, type UnitStatus, type UnitStop, type WaitWire, type WireHold, type WorkspaceState } from "./kinds.ts";
 import { type AdminRun, type InviteView, type JoinRequestView, type JoinView, type Prefill, TeamAdmin, type TeamView } from "./admin.ts";
 import { Outbox, type QueuedEnvelope } from "./outbox.ts";
 import { Requests } from "./request.ts";
@@ -241,8 +243,10 @@ const BOARD_OFFLINE_MS = 2 * 3600_000, BOARD_MAX_AGE_MS = 7 * 24 * 3600_000;
 const BOARD_MIN_MS = 15_000, BOARD_REFRESH_MS = 3600_000, BOARD_OFF_MS = 3600_000;
 /** A board that carries a capacity row is sent at least this often, so a teammate can tell a silent device (over 30 minutes) from a quiet one. */
 const CAP_REFRESH_MS = 10 * 60_000;
+/** A hold whose main is missing from pi-intercom's list this long is gone (a /reload or a reconnect is shorter). */
+const HOLD_GONE_MS = 2 * 60_000;
 /** What this build takes (docs/specs/2026-10-26-sb-backend.md, Replies for a main). A `caps` older than 2 hours counts as none. */
-export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval", "board.capacity", "tower.note", "tower.worker"] as const;
+export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval", "board.capacity", "tower.note", "tower.worker", "board.holds"] as const;
 export const CAPS_STALE_MS = 2 * 3600_000;
 /** A live frame is worth nothing late: its post gives up after this, so a stalled relay does not hold the serial chain of sends (spec §11.1, task 5). */
 const LIVE_POST_MS = 5000;
@@ -309,6 +313,8 @@ export class LinkHolder {
 	private readonly o: HolderOptions;
 	private readonly now: () => number;
 	private runs = new Map<string, TeamRun>();
+	/** A held main's session that pi-intercom's list lacks, since when (`HOLD_GONE_MS`). */
+	private holdMissing = new Map<string, number>();
 	private device: { keys: DeviceKeys; label: string } | undefined;
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private running = false;
@@ -1731,14 +1737,15 @@ export class LinkHolder {
 		const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch);
 		if (!key) return;
 		const capacity = policy.share === "status" ? this.capacityFor(run, state, new Set(wanted.map((e) => e.id)), net, device) : undefined;
-		// The hash leaves out the reading's time and the load, which move at every reading: a board goes when its entries or its counts change, and every 10 minutes while it carries capacity.
-		const hash = createHash("sha256").update(JSON.stringify([wanted, capacity && { ...capacity, at: 0, load1: 0 }])).digest("hex");
+		const holds = policy.share === "status" ? this.holdsFor(run, state, net, device, now) : undefined;
+		// The hash leaves out the reading's time and the load, which move at every reading: a board goes when its entries, its counts, or its holds change, and every 10 minutes while it carries capacity or a hold.
+		const hash = createHash("sha256").update(JSON.stringify([wanted, capacity && { ...capacity, at: 0, load1: 0 }, holds ?? null])).digest("hex");
 		const changed = hash !== sent.hash || state.epoch !== sent.epoch;
-		if (!(changed ? now - sent.at >= (this.o.boardMinMs ?? BOARD_MIN_MS) : now - sent.at >= (capacity ? CAP_REFRESH_MS : BOARD_REFRESH_MS))) return;
+		if (!(changed ? now - sent.at >= (this.o.boardMinMs ?? BOARD_MIN_MS) : now - sent.at >= (capacity || holds ? CAP_REFRESH_MS : BOARD_REFRESH_MS))) return;
 		// `ts` rises by at least 1 per board, so a receiver's per-sender guard never drops a board for an equal clock reading.
 		const ts = Math.max(now, sent.ts + 1);
 		sent.at = now; // a failed post is tried again after the spacing, not on every tick
-		const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq: 0, ts, kind: "board", to: [], plaintext: encodePlaintext("board", { entries: wanted, ...(capacity ? { capacity } : {}) }) });
+		const envelope = buildEnvelope({ team: run.teamId, epoch: state.epoch, teamKey: key, head: state.head, from: this.device!.keys, seq: 0, ts, kind: "board", to: [], plaintext: encodePlaintext("board", { entries: wanted, ...(capacity ? { capacity } : {}), ...(holds ? { holds } : {}) }) });
 		try {
 			await run.client.postEnvelope(run.teamId, envelope);
 		} catch (error) {
@@ -1767,6 +1774,26 @@ export class LinkHolder {
 	}
 
 	/**
+	 * This device's holds for a team's board (docs/specs/2026-11-26-device-hold.md): an attended device's `holds` of the boxes its live mains hold (link/holds.json; a hold whose main is gone for 2 minutes or whose hours ran out
+	 * ends here), an unattended box's `held` echo of the hold it honours (the capacity watch's `_hold.json`). None while a teammate on the roster has no fresh `caps` listing `board.holds` (an older build refuses a board of three fields).
+	 */
+	private holdsFor(run: TeamRun, state: RosterState, net: NetView, device: string, now: number): WireHold[] | undefined {
+		if (![...state.members.keys()].every((id) => id === device || this.capsOf(run, id).includes("board.holds"))) return undefined;
+		const out: WireHold[] = [];
+		if (this.o.attended?.() ?? true) {
+			const live = new Set(net.sessions.map((x) => x.id)), dir = this.o.store.dir;
+			for (const h of readHolds(dir, now).holds) if (live.has(h.session)) this.holdMissing.delete(h.session); else this.holdMissing.set(h.session, this.holdMissing.get(h.session) ?? now);
+			endHolds(dir, now, (h) => h.until !== undefined && h.until <= now, "lapsed");
+			endHolds(dir, now, (h) => now - (this.holdMissing.get(h.session) ?? now) >= HOLD_GONE_MS, "gone");
+			for (const h of readHolds(dir, now).holds) if (h.team === run.team && state.members.has(h.device)) out.push({ device: h.device, by: wireId(device, h.session), since: h.since, ...(h.until !== undefined ? { until: h.until } : {}), role: "holds" });
+		} else if (this.o.boardDir) {
+			const h = readHold(capDir(this.o.boardDir), now);
+			if (h && h.team === run.team) out.push({ device: h.device, by: h.by, since: h.since, role: "held" });
+		}
+		return out.length ? out.slice(0, LIMITS.boardHolds) : undefined;
+	}
+
+	/**
 	 * Every ally device whose board this holder holds, however old (up to 7 days), for the capacity watch's device-silent flag: its board's age, whether it is online, and whether that board had open work (its capacity
 	 * row's points, ready or open todos, or a paused main; without one, an item not done or an auto line's count short of its total). Kept on the receiving side: the sender may be the one that went silent.
 	 */
@@ -1783,7 +1810,10 @@ export class LinkHolder {
 				// A board without capacity comes once an hour unchanged, so its age says nothing under an hour: only going offline counts for it.
 				const age = now - seen.at, online = presence !== undefined && now - presence.at <= PRESENCE_ONLINE_MS;
 				const mains = seen.board.entries.map((e) => ({ id: clean(e.id, 16), name: restrictLabel(clean(e.name, BOARD.label)) })), paused = (c?.paused ?? []).map((p) => ({ id: clean(p.id, 16), ...(p.until !== undefined ? { until: Math.min(p.until, 8.64e15) } : {}) }));
-				out.push({ key: `${run.team}:${id}`, label: restrictLabel(roster.members.get(id)?.label ?? shortId(id)), short: shortId(id), online, boardAgeMs: age, timed: c !== undefined, open, mains, ...(paused.length ? { paused } : {}) });
+				// Its holds (docs/specs/2026-11-26-device-hold.md): its claim on this device with what the box judges it by (the sender's roster flag and this device's trust of it, the board's own `ts`), its echo of a hold this device has, and its row's numbers.
+				const mine = seen.board.holds?.find((h) => h.role === "holds" && h.device === self), echo = seen.board.holds?.find((h) => h.role === "held" && h.device === self), member = roster.members.get(id);
+				const holds = { ...(mine ? { claim: { by: mine.by, since: mine.since, ...(mine.until !== undefined ? { until: mine.until } : {}), ts: seen.ts, attended: Boolean(member?.attended), level: this.o.config().trust.get(id) ?? "none" } } : {}), ...(echo ? { echo: { by: echo.by, since: echo.since } } : {}), ...(c ? { cap: { points: c.points / 100, ...(c.budget !== undefined ? { budget: c.budget / 100 } : {}), load1: c.load1 / 100, cores: c.cores } } : {}) };
+				out.push({ key: `${run.team}:${id}`, label: restrictLabel(member?.label ?? shortId(id)), short: shortId(id), online, boardAgeMs: age, timed: c !== undefined, open, mains, ...(paused.length ? { paused } : {}), team: run.team, device: id, ...holds });
 			}
 		}
 		return out;

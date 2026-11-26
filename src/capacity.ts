@@ -61,7 +61,7 @@ export function readBudget(stateDir: string): number | undefined {
 	return typeof b === "number" && Number.isFinite(b) && b > 0 && b <= 1000 ? b : undefined;
 }
 const DEVICE = "_device.json", SENT = "_sent.json";
-function writeJson(dir: string, name: string, value: unknown): void {
+export function writeJson(dir: string, name: string, value: unknown): void {
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const file = join(dir, name), temp = `${file}.${process.pid}.tmp`;
 	try {

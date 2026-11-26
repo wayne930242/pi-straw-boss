@@ -1,4 +1,5 @@
 import { CanonError, bool, cutBytes, cutChars, dec, enc, int, list, readBool, readInt, readList, readStr, str } from "./canon.ts";
+import { idOk } from "./device.ts";
 
 // The message kinds of docs/specs/2026-10-25-straw-link.md (Message kinds): who may send each, whether it is ephemeral or goes to the
 // whole team, and its plaintext as a canonical structure. Every text field is cut to its limit, on the way out and on the way in, and a
@@ -53,6 +54,8 @@ export const LIMITS = {
 	boardNow: 120,
 	boardItems: 8,
 	boardItem: 80,
+	/** A board's holds (docs/specs/2026-11-26-device-hold.md): at most this many; the rest is cut when it is decoded. */
+	boardHolds: 8,
 	/** Not in the spec: a `caps` lists at most this many features; the rest is cut when it is decoded. */
 	capsFeatures: 16,
 	/** The spec's: a `unit-status` names at most this many mains, each by a name of at most `boardLabel` characters; a stop's reason is at most this many bytes. */
@@ -99,7 +102,14 @@ export interface BoardWireEntry { id: string; workspace: string; tab: string; na
  * the entry ids the board already carries. Sent as the board's second field only when every teammate's `caps` list `board.capacity` (an older build refuses a board of two fields).
  */
 export interface WireCap { at: number; points: number; budget?: number; load1: number; cores: number; ready: number; minReady?: number; open: number; paused: { id: string; until?: number }[] }
-export interface Board { entries: BoardWireEntry[]; capacity?: WireCap }
+/**
+ * One hold on a board (docs/specs/2026-11-26-device-hold.md): `holds`, the sender (a controller) holds `device` for its main whose entry id is `by`, since `since`, until `until` when set; `held`, the sender (a box) honours
+ * the hold of `device`'s main `by` since `since`. The board's third field, written only when it holds one and every teammate's `caps` list `board.holds` (an older build refuses a board of three fields); with it the second field
+ * may be an empty structure, which means no capacity reading.
+ */
+export interface WireHold { device: string; by: string; since: number; until?: number; role: "holds" | "held" }
+export const HOLD_ROLES = ["holds", "held"] as const;
+export interface Board { entries: BoardWireEntry[]; capacity?: WireCap; holds?: WireHold[] }
 export interface ConfirmRequest { dialogId: string; digest: string; tool: string; args: string; tower: string }
 export interface ConfirmAnswer { dialogId: string; digest: string; allow: boolean; answerId: string }
 export interface DialogOpen { dialogId: string; digest: string; owner: string; dialog: string }
@@ -207,6 +217,20 @@ function decodeCap(b: Buffer): WireCap {
 		paused: readList(paused!).slice(0, LIMITS.boardEntries).map((p) => { const [id, until] = dec(p, 2) as [Buffer, Buffer]; return { id: s(id), ...opt("until", readMaybe(until)) }; }) };
 }
 
+function encodeHold(h: WireHold): Buffer {
+	if (!idOk(h.device)) throw new RangeError("a hold's device is a 26-character device id");
+	if (!handleOk(h.by)) throw new RangeError("a hold's main is its 16-hex entry id");
+	if (!(HOLD_ROLES as readonly string[]).includes(h.role)) throw new RangeError("a hold's role is holds or held");
+	return enc(str(h.device), str(h.by), int(h.since), maybe(h.until), str(h.role));
+}
+/** A hold whose device, main, or role this build does not know is left out; a structure that is malformed throws. */
+function decodeHolds(b: Buffer): WireHold[] {
+	return readList(b).slice(0, LIMITS.boardHolds).flatMap((x) => {
+		const [device, by, since, until, role] = dec(x, 5) as Buffer[], h = { device: readStr(device!), by: readStr(by!), since: readInt(since!), role: readStr(role!) }, u = readMaybe(until!);
+		return idOk(h.device) && handleOk(h.by) && (HOLD_ROLES as readonly string[]).includes(h.role) ? [{ ...h, ...(u !== undefined ? { until: u } : {}) } as WireHold] : [];
+	});
+}
+
 // `toWorkspace` is empty when absent: a workspace label is never empty.
 const encoders: { [K in Kind]: (p: Plaintexts[K]) => Buffer } = {
 	tower: (p) => {
@@ -222,7 +246,7 @@ const encoders: { [K in Kind]: (p: Plaintexts[K]) => Buffer } = {
 	board: (p) => enc(list(p.entries.slice(0, LIMITS.boardEntries).map((e) => enc(
 		str(short(e.id)), str(cutChars(e.workspace, LIMITS.boardLabel)), str(cutChars(e.tab, LIMITS.boardLabel)), str(cutChars(e.name, LIMITS.boardLabel)), str(cutChars(e.now, LIMITS.boardNow)), int(e.updated),
 		list(e.items.slice(0, LIMITS.boardItems).map((i) => enc(str(cutChars(i.t, LIMITS.boardItem)), bool(i.done)))),
-	))), ...(p.capacity ? [encodeCap(p.capacity)] : [])),
+	))), ...(p.capacity || p.holds?.length ? [p.capacity ? encodeCap(p.capacity) : enc()] : []), ...(p.holds?.length ? [list(p.holds.slice(0, LIMITS.boardHolds).map(encodeHold))] : [])),
 	"confirm-request": (p) => enc(str(short(p.dialogId)), str(short(p.digest)), str(short(p.tool)), str(cutChars(p.args, LIMITS.toolArguments)), str(short(p.tower))),
 	"confirm-answer": (p) => enc(str(short(p.dialogId)), str(short(p.digest)), bool(p.allow), str(short(p.answerId))),
 	"dialog-open": (p) => enc(str(short(p.dialogId)), str(short(p.digest)), str(short(p.owner)), str(cutBytes(p.dialog, LIMITS.dialog))),
@@ -284,9 +308,11 @@ const decoders: { [K in Kind]: (b: Buffer) => Plaintexts[K] } = {
 	},
 	board: (b) => {
 		const fields = dec(b);
-		if (fields.length !== 1 && fields.length !== 2) throw new CanonError(`a board has 1 or 2 fields, got ${fields.length}`);
-		const [entries, cap] = fields as [Buffer, Buffer | undefined];
-		return { ...(cap ? { capacity: decodeCap(cap) } : {}), entries: readList(entries).slice(0, LIMITS.boardEntries).map((e) => {
+		if (fields.length < 1 || fields.length > 3) throw new CanonError(`a board has 1, 2, or 3 fields, got ${fields.length}`);
+		const [entries, cap, held] = fields as [Buffer, Buffer | undefined, Buffer | undefined];
+		// An empty second field beside a third is no capacity reading: a hold never waits on the capacity row.
+		const holds = held ? decodeHolds(held) : [];
+		return { ...(cap && !(held && dec(cap).length === 0) ? { capacity: decodeCap(cap) } : {}), ...(holds.length ? { holds } : {}), entries: readList(entries).slice(0, LIMITS.boardEntries).map((e) => {
 			const [id, workspace, tab, name, now, updated, items] = dec(e, 7) as [Buffer, Buffer, Buffer, Buffer, Buffer, Buffer, Buffer];
 			return {
 				id: s(id), workspace: cutChars(readStr(workspace), LIMITS.boardLabel), tab: cutChars(readStr(tab), LIMITS.boardLabel), name: cutChars(readStr(name), LIMITS.boardLabel), now: cutChars(readStr(now), LIMITS.boardNow), updated: readInt(updated),

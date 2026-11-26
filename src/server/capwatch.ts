@@ -9,7 +9,13 @@ const MIN = 60_000;
 /** An ally device as the link holder last heard of it: how old its last board is, whether it is online now, and whether that board had open work. */
 /** `timed`: its board carries a capacity row, so it comes at least every 10 minutes and its age counts; an older build's board comes once an hour unchanged, and only its going offline counts. */
 /** `mains` and `paused`: the board's entries by id with their main's name, and the paused ones of its capacity row (field 2026-11-25: box 2's mains ran out of Claude quota for 3 hours and this device's standing main heard nothing). */
-export interface AllySeen { key: string; label: string; short: string; online: boolean; boardAgeMs: number; timed: boolean; open: boolean; mains?: { id: string; name: string }[]; paused?: { id: string; until?: number }[] }
+/** `team`, `device`, `claim`, `echo`, `cap` (docs/specs/2026-11-26-device-hold.md): its team and full id; its board's hold of this device with the facts the box judges it by (the board's `ts`, the roster's attended flag, this device's trust
+ *  of it); its echo of the hold this device has on it; its capacity row's numbers. */
+export interface AllySeen {
+	key: string; label: string; short: string; online: boolean; boardAgeMs: number; timed: boolean; open: boolean; mains?: { id: string; name: string }[]; paused?: { id: string; until?: number }[];
+	team?: string; device?: string; claim?: HoldClaim; echo?: { by: string; since: number }; cap?: { points: number; budget?: number; load1: number; cores: number };
+}
+export interface HoldClaim { by: string; since: number; until?: number; ts: number; attended: boolean; level: string }
 export type CapKind = "under" | "under-30m" | "stale" | "quota" | "resumed" | "silent" | "silent-2h";
 /** A device still silent this long after its first notice is escalated once, for the boss (`silent-2h`): the 2 hours are sb's, not a tower's or a standing main's own timer. */
 export const SILENT_ESCALATE_MS = 2 * 3600_000;

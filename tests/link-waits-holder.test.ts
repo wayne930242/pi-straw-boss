@@ -122,7 +122,7 @@ test("tower.worker is listed only by a holder with a wait router whose workers s
 
 test("a wait to a build that takes none goes as text whose first line says so, for its ally run; a state of a wait is not sent to it at all", async () => {
 	const { a, b } = await pair({ waits: { a: true } });
-	await until(() => capsOf(b, alice.id).includes("tower.wait") && capsOf(a, bob.id).length === 6, 3000, "both caps");
+	await until(() => capsOf(b, alice.id).includes("tower.wait") && capsOf(a, bob.id).length === 7, 3000, "both caps"); // 7 with board.holds (docs/specs/2026-11-26-device-hold.md)
 	const plain = await sendTo(a, "please merge !13", { wait: WAIT });
 	assert.equal(plain.ok, true, textOf(plain));
 	assert.equal((details(plain) as { waited?: boolean }).waited, false, "the tool says it went plain");
