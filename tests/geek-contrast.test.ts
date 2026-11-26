@@ -89,6 +89,13 @@ test("the Geek view draws no coloured or one-sided border, and no motion, glow o
 	assert.match(text, /box-shadow:\s*none\s*!important/);
 });
 
+test("Geek's motion reset preserves the connect screen's delayed Reload link", () => {
+	const animation = (sheet: Rule[], selector: string) => declarations(sheet.find(r => r.selector === selector)?.body ?? "").find(([p]) => p === "animation")?.[1];
+	const reveal = animation(entryRules, ".connect-reload");
+	assert.equal(reveal, "connect-reveal 0s linear 10s forwards", "a visibility step after ten seconds, not motion");
+	assert.equal(animation(rules, `${GEEK} .connect a`), `${reveal} !important`, "the link must beat Geek's blanket animation: none !important");
+});
+
 test("each state has a text tag before the unit's name in the Geek view, so the state reads without colour", () => {
 	const tags = Object.fromEntries(
 		rules.filter((r) => geekOnly(r) && /^\[data-view="geek"\] \[data-mark="(\w+)"\]$/.test(r.selector)).map((r) => [/data-mark="(\w+)"/.exec(r.selector)![1]!, /--tag:\s*"([^"]*)"/.exec(r.body)?.[1]]),

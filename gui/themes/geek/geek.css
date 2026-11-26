@@ -69,6 +69,8 @@
 [data-view="geek"] [data-mark] { --c1: color-mix(in srgb, var(--c) 12%, transparent); --c4: var(--line); }
 /* No motion, glow, blur, or press-in: the calm still signs (above) are always on, and the rest stops here. */
 [data-view="geek"] *, [data-view="geek"] *::before, [data-view="geek"] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; box-shadow: none !important; text-shadow: none !important; }
+/* A visibility step, not motion: keep the way out of a stalled connection. */
+[data-view="geek"] .connect a { animation: connect-reveal 0s linear 10s forwards !important; }
 [data-view="geek"] :is(.logo svg, .deploy-title svg, .tower svg) { filter: none; }
 [data-view="geek"] .hud { backdrop-filter: none; }
 [data-view="geek"] .card:hover { transform: none !important; }
