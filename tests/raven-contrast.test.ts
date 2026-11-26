@@ -198,11 +198,16 @@ test("text on the head page's backing keeps 4.5 : 1 over the brightest unblurred
 	}
 });
 
-// Keep the CSS protections paired with the four rendered scenes in err/summary.md. The RGB bound above
+// Keep the CSS protections paired with the rendered scenes in err/summary.md and err/tower/. The RGB bound above
 // cannot account for an ancestor fading its text together with its glass, or for a missing message backing.
 const skin = `:where(html${RAVEN})`;
-const takes = (sheet: Rule[], selector: string, property: string, value: string) =>
-	assert.ok(sheet.some(r => r.parts.includes(selector) && declarations(r.body).some(([p, v]) => p === property && v === value)), `${selector} needs ${property}: ${value}`);
+// Compare declarations for the same selector within its layer: importance first, then source order.
+function takes(sheet: Rule[], selector: string, property: string, value: string) {
+	const values = sheet.filter(r => r.parts.includes(selector)).flatMap(r => declarations(r.body)).filter(([p]) => p === property).map(([, v]) => v);
+	const important = /\s*!important\s*$/i;
+	const winner = values.findLast(v => important.test(v)) ?? values.at(-1);
+	assert.equal(winner?.replace(important, ""), value, `${selector} needs ${property}: ${value}`);
+}
 
 test("desktop refusal over the bolt: only a nonempty toolbar reason gets the well", () => {
 	takes(rules, `${skin} .auto-sw-note:not(:empty)`, "background", "var(--rk-well)");
@@ -222,6 +227,14 @@ test("unreachable error card: role and monitor use soft crimson, neither the car
 	takes(rules, base, "opacity", "1");
 	takes(rules, `${skin} .unit[data-mark="error"] > .card .age`, "opacity", "1");
 	for (const label of ['.base [data-monitoring]', '.unit[data-mark="error"] > .card .role']) takes(rules, `${skin} ${label}`, "color", "var(--err-soft)");
+});
+
+test("unreachable base with a retained tower error but no errored or watching units: the notice stays readable", () => {
+	// fillNotices (gui/towernotes.ts) writes the row's severity even in a retained snapshot.
+	const base = `${skin} .base.remote[data-box="unreachable"]:has(.tower-notices > .error)`;
+	takes(rules, base, "opacity", "1");
+	takes(rules, base, "border-style", "dashed");
+	takes(entryRules, ".tower-notices .tnote.error span", "color", "var(--err-soft)");
 });
 
 test("head chat: the stop badge and failure reason keep their message panel over the thin glass", () => {

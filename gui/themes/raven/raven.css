@@ -417,6 +417,7 @@ html[data-view="raven"] .dialog, html[data-view="raven"] .tcard { background-ima
 html[data-view="raven"] { --rk-glass: rgba(10, 8, 14, 0.6); --rk-glass-sheet: rgba(10, 8, 14, 0.88); --rk-blur: 8px; --rk-map-veil: rgba(9, 7, 12, 0.18); --rk-backing: rgba(10, 8, 14, 0.86); }
 /* Offline wording, the stale mark and a dashed edge distinguish old errors without fading their text. */
 :where(html[data-view="raven"]) .base.ally.offline:has(.au-crash:not([hidden]), [data-tone="crashed"]),
+:where(html[data-view="raven"]) .base.remote[data-box="unreachable"]:has(.tower-notices > .error),
 :where(html[data-view="raven"]) .base.remote[data-box="unreachable"]:has(.unit[data-mark="error"], [data-monitoring]) { opacity: 1; border-style: dashed; }
 :where(html[data-view="raven"]) .ally-unit.stale:is([data-tone="crashed"], :has(.au-crash:not([hidden]))),
 :where(html[data-view="raven"]) .unit[data-mark="error"] > .card .age { opacity: 1; }
