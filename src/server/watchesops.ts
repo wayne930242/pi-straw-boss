@@ -89,7 +89,8 @@ export function startWatches(o: StartWatches): WatchRoutes {
 	const read = createWatchRead({ net: o.net, now: o.now, link, ...o.over });
 	const timer = o.over?.timer ?? ((ms: number, fn: () => void) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); });
 	const owner = (session: string) => ((f) => (f ? { live: f.live, workspace: f.base } : undefined))(o.net.lookup(session));
-	const ward = o.ward ? createWardRead({ ...o.ward, now: o.now }) : undefined;
+	// A worker's own watches on this server keep it from being finished (ward-review F007); `watches` is made below and only asked at a look.
+	const ward = o.ward ? createWardRead({ ...o.ward, now: o.now, watching: (session) => watches.has(session) }) : undefined;
 	// The trusted identity of a ward's main is the server's reading of the net: the session's pane carries `sb_role=main` (the net's role), and the unit is live; its workspace is the unit's base.
 	const mainOf = (session: string): { workspace: string; pane?: string } | string => ((f) => (!f || !f.live ? "your session is not a live unit of the net the server reads (a ward is a main's; join the net, or wait for the next reading)" : f.role !== "main" ? `only a tab's main wards a worker; your session is a ${f.role}` : { workspace: f.base, ...(f.pane ? { pane: f.pane } : {}) }))(o.net.lookup(session));
 	const watches = createWatches({ read: (q) => (q.ward && ward ? ward.read({ ...q, ward: q.ward }) : read.read(q)), now: o.now, timer, send: o.send, owner, file: join(slot.dir, "watches.json"), log: o.log });

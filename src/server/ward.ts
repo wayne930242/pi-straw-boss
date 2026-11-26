@@ -1,4 +1,5 @@
-import { statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { open } from "node:fs/promises";
 import { type HerdrRun, type Pane, panes } from "../herdr.ts";
 import { subagents } from "../netdata.ts";
@@ -125,6 +126,8 @@ export interface WardDeps {
 	monitorPanes(): ReadonlySet<string>;
 	/** pi-loop-monitor's folder (`~/.pi/loops`): a worker's active loop still runs. */
 	loopsDir: string;
+	/** Whether the server holds a watch of the session (its boss_watch or its own wards): a worker that waits on one still runs. */
+	watching?(session: string): boolean;
 }
 /** `workspace` and `here`: the main's workspace and pane as the server reads them, never as a request says (ward-review F003). */
 export interface WardAsk { pane: string; session: string; workspace: string; item?: string; names?: string[]; here?: string }
@@ -157,7 +160,11 @@ export function createWardRead(d: WardDeps) {
 		if (!pane) return { turn: "unknown", runs: [] };
 		const runs: string[] = [];
 		if (d.monitorPanes().has(pane.pane_id)) runs.push("a monitor of it runs");
+		// What cannot be read is not nothing (ward-review F007): a loops file that is there but does not read counts as running.
+		const loops = join(d.loopsDir, `loops-${rec.worker}.json`);
 		if (armedLoop(d.loopsDir, rec.worker, d.now())) runs.push("a loop of it is active");
+		else if (existsSync(loops) && !((): boolean => { try { return Array.isArray(JSON.parse(readFileSync(loops, "utf8"))?.loops); } catch { return false; } })()) runs.push("its loops file does not read");
+		if (d.watching?.(rec.worker)) runs.push("a boss_watch of it runs");
 		const kids = subagents(pane, all, d.now()).filter((r) => !r.ended).length;
 		if (kids) runs.push(`${kids} subagent${kids > 1 ? "s" : ""} of it run${kids > 1 ? "" : "s"}`);
 		const id = `${rec.file}\n${rec.offset}\n${rec.main.id}`;

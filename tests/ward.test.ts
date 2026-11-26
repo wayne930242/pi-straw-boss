@@ -362,3 +362,21 @@ test("ward-review F008: the reader goes on where it stopped, keeps a line not ye
 	for (let i = 0; i < 20 && !r.reported; i++) r = await read();
 	assert.equal(r.reported, "call_peer");
 });
+
+test("ward-review F007: a worker that waits on its own watch of the server, or whose loops file does not read, is not finished", async () => {
+	const w = world();
+	w.set({ agent_status: "idle" });
+	w.write(said("waiting on my watch"));
+	const own = await w.routes.watches.add({ session: WORKER, workspace: "w1", key: "ward:%1", ward: { pane: "%1", file: "/none.jsonl", worker: "0199ffff", offset: 0, main: { id: WORKER, names: [] } } });
+	assert.equal(own.ok, true, JSON.stringify(own));
+	assert.equal((await w.add()).ok, true);
+	await w.looks(12);
+	assert.deepEqual(w.sent.filter((x) => x.key === "ward:%7"), [], "its watch runs");
+	w.routes.watches.stop(WORKER, "ward:%1");
+	writeFileSync(join(w.loops, `loops-${WORKER}.json`), "{ not json");
+	await w.looks(12);
+	assert.deepEqual(w.sent.filter((x) => x.key === "ward:%7"), [], "a loops file that does not read is not none");
+	writeFileSync(join(w.loops, `loops-${WORKER}.json`), JSON.stringify({ loops: [] }));
+	await w.looks(6);
+	assert.deepEqual(w.sent.filter((x) => x.key === "ward:%7").map((x) => x.state), ["finished"]);
+});
