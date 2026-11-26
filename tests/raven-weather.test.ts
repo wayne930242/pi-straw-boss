@@ -3,7 +3,8 @@ import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { createWeather, FLASH, loadClips, loopEdges, RAIN, THUNDER, type Clip, type WeatherEnv } from "../gui/themes/raven/weather.ts";
+import { ambienceGain } from "../gui/ambience.ts";
+import { createWeather, FLASH, loadClips, loopEdges, THUNDER, type Clip, type WeatherEnv } from "../gui/themes/raven/weather.ts";
 import { declarations, rulesOf } from "./css-rules.ts";
 
 // Raven's weather (gui/themes/raven/weather.ts) on a fake audio core and fake timers: the recorded rain loop under the backdrop, the recorded thunder 1 to 2 s after each flash, and every condition that silences them. No sound is made.
@@ -26,6 +27,7 @@ function rig(o: { decoded?: boolean } = {}) {
 	const clips = { rain: clipOf("rain", 1000, 30, 20), thunder: clipOf("thunder", 1000, 0, 0, 3500) }, decoded = new Set<Clip>(o.decoded === false ? [] : ["rain", "thunder"]), waits: [Clip, () => void][] = [], wanted: Clip[] = [];
 	const timers: { fn: () => void; ms: number; live: boolean }[] = [];
 	const e: WeatherEnv = {
+		meanDbfs: -14.9,
 		audio: { out: (cls) => (asked.push(cls), { c: ac, g: master }) as never, running: () => env.running },
 		clip: (name, ready) => (wanted.push(name), decoded.has(name) ? (clips[name] as never) : void waits.push([name, ready])),
 		backdrop: () => env.backdrop, background: () => env.background, hidden: () => env.hidden, calm: () => env.calm, fine: () => env.fine, motion: () => env.motion, random: () => env.random,
@@ -48,7 +50,7 @@ test("rain starts when Background is on, the page is visible, the browser let it
 	assert.ok(s.loop && s.buffer?.name === "rain" && s.started.length === 1, "a looping buffer source of the rain clip: no gap at the seam, as an <audio> element's loop would leave");
 	const g = r.gains[0]!;
 	assert.equal(g.to, r.master, "into the page's background gain, which the Background volume and the square law govern");
-	assert.deepEqual(g.gain.ev, [["set", 0, 100], ["lin", RAIN.gain, 100 + RAIN.fadeIn]]);
+	assert.deepEqual(g.gain.ev, [["set", 0, 100], ["lin", ambienceGain(-14.9), 102.5]]);
 	r.w.refresh();
 	assert.equal(r.sources.length, 1, "a second refresh does not start a second loop");
 });
@@ -102,7 +104,7 @@ test("rain stops, with a short fade, when the view or the page leaves the backdr
 		Object.assign(r.env, off);
 		r.w.refresh();
 		const s = r.sources[0]!;
-		assert.deepEqual(s.stopped, [100 + RAIN.fadeOut], JSON.stringify(off));
+		assert.deepEqual(s.stopped, [100.8], JSON.stringify(off));
 		assert.ok(r.gains[0]!.gain.ev.some((e) => e[0] === "target" && e[1] === 0), "faded to 0 first");
 		Object.assign(r.env, { backdrop: true, background: true, hidden: false, calm: false });
 		r.w.refresh();
@@ -227,7 +229,7 @@ test("stop cancels a thunder that waits and stops the rain", () => {
 // Both quiet (boss, 2026-11-08: 「兩個都不要太大聲」). Measured on the shipped files (ffmpeg volumedetect): rain.mp3 mean -14.9 dBFS, thunder.mp3 peak -3.8 dBFS, mean -21.9.
 test("the rain and the thunder are quiet: the rain's level puts its -15 dBFS mean near -42 dBFS before the Background volume, the thunder's level keeps its -3.8 dBFS peak under -20 dBFS, and the thunder plays at that level from its start", () => {
 	const db = (g: number) => 20 * Math.log10(g);
-	assert.ok(-15 + db(RAIN.gain) <= -40, `rain at ${(-15 + db(RAIN.gain)).toFixed(1)} dBFS`);
+	assert.ok(-14.9 + db(ambienceGain(-14.9)) <= -40);
 	assert.ok(-3.8 + db(THUNDER.gain) <= -20, `thunder peak at ${(-3.8 + db(THUNDER.gain)).toFixed(1)} dBFS`);
 	const r = rig();
 	r.w.flash();

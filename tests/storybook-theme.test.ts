@@ -5,6 +5,8 @@ import { registerHooks } from "node:module";
 import { test } from "node:test";
 import { CHOICES, VIEWS } from "../src/views.ts";
 import { VIEW_ARGUMENTS } from "../src/bossviews.ts";
+import { badgeOf } from "../gui/tabicon.ts";
+import { manifests } from "./theme-fixture.ts";
 import { rulesOf } from "./css-rules.ts";
 
 // The Storybook view (繪本, docs/specs/2026-11-26-storybook-theme/spec.md §B1, §B2, §B3, SB-D4): one more name in src/views.ts and a folder under gui/themes/, with no words of its own; its waiting badge follows the phase; the
@@ -31,19 +33,16 @@ test("storybook is a view: in the one list, the server's completions, the settin
 
 test("the theme brings no nouns and no sentences (every word is Standard's), and its badge follows the phase", async () => {
 	const { theme } = await import("../gui/themes/storybook/index.ts");
-	assert.match(theme.sounds!.waiting!, /\/kalimba-thumb-pluck\.mp3$/);
+	assert.match(manifests.storybook.sounds!.waiting!, /\/kalimba-thumb-pluck\.mp3$/);
 	assert.equal(theme.nouns, undefined);
 	assert.equal(theme.sentences, undefined);
 	assert.equal(theme.sprite, at("gui/themes/storybook/sprite.svg"));
 	assert.ok(Buffer.byteLength(theme.sprite) <= 30_000);
 	assert.deepEqual([...theme.sprite.matchAll(/<symbol id="storybook-([^"]+)" viewBox="[^"]+" fill="currentColor">/g)].map(m => m[1]).sort(),
 		["brand", "comms", "coordinator", "crown", "doc", "integrator", "main", "member", "outpost", "outside", "planner", "reviewer", "scout", "standing", "subagent", "tower", "user", "worker"]);
-	assert.equal(typeof theme.badge, "function");
-	assert.deepEqual((theme.badge as () => unknown)(), { dot: "#e0902b", ring: "#fbf5e9", text: "#3a3150" }, "no page here: the day's");
-	assert.equal(typeof theme.onShift, "function");
-	assert.equal(typeof theme.recheck, "function");
-	const src = at("gui/themes/storybook/index.ts");
-	assert.match(src, /night: \{ dot: "#ffd37e", ring: "#111a35", text: "#111a35" \}/);
+	assert.deepEqual(badgeOf(manifests, "storybook", "day"), { dot: "#e0902b", ring: "#fbf5e9", text: "#3a3150" });
+	assert.deepEqual(badgeOf(manifests, "storybook", "night"), { dot: "#ffd37e", ring: "#111a35", text: "#111a35" });
+	assert.equal(typeof theme.mount, "function");
 });
 
 test("the favicon is a plum line drawing on a cream disc, small", () => {
@@ -89,6 +88,6 @@ test("forced colours draw no tape and no hand-drawn line", () => {
 	assert.match(forced, /::after \{ display: none; \}/);
 });
 
-test("the theme folder holds its entry, stylesheet, favicon, and phase clock", () => {
-	for (const file of ["index.ts", "storybook.css", "favicon.svg", "phase.ts"]) assert.ok(existsSync(new URL(`../gui/themes/storybook/${file}`, import.meta.url)), file);
+test("the theme folder holds its entry, stylesheet, favicon, and manifest", () => {
+	for (const file of ["index.ts", "storybook.css", "favicon.svg", "theme.json"]) assert.ok(existsSync(new URL(`../gui/themes/storybook/${file}`, import.meta.url)), file);
 });

@@ -3,6 +3,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { exclusive, themeMap } from "../scripts/vite-themes.ts";
+import type { ManifestMap } from "../gui/themes/manifest.ts";
+import { manifests } from "./theme-fixture.ts";
 import { MODES, VIEWS } from "../src/views.ts";
 
 // A page downloads only the files of the view it shows (docs/specs/2026-11-07-raven-view/spec.md §1.2, §6.10). No browser runs here: the built bundle (`npm run gui:build`, which `npm test` runs first) is read as files.
@@ -11,8 +13,8 @@ const dir = join(import.meta.dirname, "..", "dist", "gui");
 const files = readdirSync(dir, { recursive: true, encoding: "utf8" }).map((f) => f.split("\\").join("/")).filter((f) => statSync(join(dir, f)).isFile());
 const text = (f: string) => readFileSync(join(dir, f), "utf8");
 const html = text("index.html");
-const map = JSON.parse(text("themes.json")) as Record<string, { css?: string; module?: string; icon: string; mode?: true }>;
-const themeViews: string[] = [...VIEWS.filter((v) => v !== "standard"), ...MODES]; // the mode Zen is built as a theme of its own
+const map = JSON.parse(text("themes.json")) as ManifestMap;
+const themeViews = [...VIEWS.filter((v) => v !== "standard"), ...MODES]; // the mode Zen is built as a theme of its own
 /** What a file names through `src`/`href` attributes (the page's own tags, not the theme map's meta). */
 const tagged = [...html.matchAll(/<(?:script|link)\b[^>]*?\b(?:src|href)="([^"]+)"/g)].map((m) => m[1]!.replace(/^\.\//, ""));
 /** The files a script imports statically (`import "./x.js"`, `import … from "./x.js"`, `export … from "./x.js"`), resolved against its own folder. */
@@ -43,8 +45,18 @@ test("the built page names no theme file: index.html's tags, the entry's static 
 });
 
 test("each theme's files sit in themes/<view>/ and only that view's module (or the entry's import of it) reaches them; the map names them and matches index.html", () => {
-	assert.deepEqual(Object.keys(map).sort(), [...themeViews].sort(), "a theme per view but Standard, and one per mode");
-	assert.deepEqual(Object.keys(map).filter((v) => map[v]!.mode).sort(), [...MODES].sort(), "only a mode is marked one, so boot.js takes no mode for a view");
+	assert.deepEqual(Object.keys(map).sort(), ["standard", ...themeViews].sort(), "a manifest for every view and mode");
+	assert.deepEqual(Object.keys(map).filter((v) => map[v as keyof ManifestMap].mode).sort(), [...MODES].sort(), "only a mode is marked one, so boot.js takes no mode for a view");
+	for (const view of [...VIEWS, ...MODES]) {
+		const built = map[view], original = manifests[view];
+		const check = (url: string, source: string) => {
+			assert.match(url, /-[\w-]{8}\.mp3$/);
+			assert.ok(url.startsWith(view === "standard" ? "assets/" : `themes/${view}/`), url);
+			assert.deepEqual(readFileSync(join(dir, url)), readFileSync(join(import.meta.dirname, "../gui", source)));
+		};
+		for (const k of Object.keys(original.sounds ?? {}) as Array<keyof NonNullable<typeof original.sounds>>) check(built.sounds![k]!, original.sounds![k]!);
+		for (const k of Object.keys(original.ambience ?? {}) as Array<keyof NonNullable<typeof original.ambience>>) check(built.ambience![k]!.file, original.ambience![k]!.file);
+	}
 	assert.equal(html.match(/<meta name="sb-themes" content="([^"]*)"/)![1]!.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&amp;/g, "&"), JSON.stringify(map), "index.html carries the same map");
 	const entry = tagged.find((f) => /^assets\/index-.*\.js$/.test(f))!;
 	for (const view of themeViews) {

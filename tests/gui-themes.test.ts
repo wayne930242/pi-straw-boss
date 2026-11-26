@@ -16,7 +16,7 @@ mkdirSync(join(dir, "assets"), { recursive: true });
 const HEAD = '<!doctype html><html><head><meta charset="utf-8"><link rel="icon" type="image/svg+xml" href="./icon.svg"><link rel="stylesheet" href="./assets/app.css"><!--sb-theme--><script src="./assets/boot.js"></script></head><body></body></html>';
 writeFileSync(join(dir, "index.html"), HEAD);
 writeFileSync(join(dir, "assets", "app.css"), "body{}");
-writeFileSync(join(dir, "themes.json"), JSON.stringify({ geek: { css: "themes/geek/geek-ab12.css", module: "themes/geek/geek-cd34.js", icon: "themes/geek/favicon-ef56.svg" }, raven: { css: "themes/raven/raven-ab12.css", icon: "icon.svg" } }));
+writeFileSync(join(dir, "themes.json"), JSON.stringify({ standard: { contract: 1, color: "#1a1b26" }, geek: { contract: 1, color: "#000000", css: "themes/geek/geek-ab12.css", module: "themes/geek/geek-cd34.js", icon: "themes/geek/favicon-ef56.svg" }, raven: { css: "themes/raven/raven-ab12.css", icon: "icon.svg" } }));
 writeFileSync(join(dir, "themes", "geek", "geek-ab12.css"), "first");
 writeFileSync(join(dir, "themes", "geek", "pic-aa11.webp"), Buffer.from([0x52, 0x49, 0x46, 0x46]));
 writeFileSync(join(dir, "themes", "geek", "gone-bb22.css"), "soon gone");

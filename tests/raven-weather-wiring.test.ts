@@ -59,7 +59,7 @@ function page(over: { background?: boolean; running?: boolean } = {}) {
 	const c = core(); c.st.running = over.running ?? true;
 	let t = 100_000;
 	const frames: (() => void)[] = [];
-	const undo = mountWeather(root, c.a as never, () => t, (fn) => void frames.push(fn), c.clip);
+	const undo = mountWeather(c.a as never, c.clip, -14.9, root, () => t, (fn) => void frames.push(fn));
 	const [rootWatch, switchWatch] = FakeObserver.all;
 	const event = (type: string, e: Record<string, unknown> = {}) => listeners.get(type)?.forEach((f) => f({ type, timeStamp: t, ...e }));
 	const names = () => [...listeners].filter(([, s]) => s.size > 0).map(([k]) => k).sort();

@@ -3,7 +3,7 @@ import type { Alert } from "./alerts.ts";
 import { audio, type SoundClass } from "./audio.ts";
 import { prefs } from "./prefs.ts";
 import { soundOf } from "./themesounds.ts";
-import waitingUrl from "./sounds/marimba.mp3";
+import { pageThemes } from "./themes/manifest.ts";
 
 // Reminders and sounds for the alerts a snapshot raises: a unit waiting on an answer, one that finished, one that failed.
 // Each has a switch on the settings page (This device), kept per browser: reminders on, sounds off, so a page that opens makes no noise. The switch is a button that says its
@@ -21,7 +21,7 @@ export interface Notifier { signal(fresh: Alert[]): void; /** Zen: the system no
 export interface Switch { on(): boolean; volume(): number; set(on: boolean): void; setVolume(v: number): void; try(): void; onChange(fn: () => void): void }
 
 /** Mounts the settings page's reminder switch (`#remind`) and the two sound classes' switches with their volumes (`#effects`, `#effects-vol`, `#background`, `#background-vol`) and returns what plays a snapshot's new alerts. */
-export function mountNotify(open: (a: Alert) => void): Notifier {
+export function mountNotify(open: (a: Alert) => void, waitingUrl = pageThemes().standard.sounds!.waiting!): Notifier {
 	const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 	const remindBtn = $<HTMLButtonElement>("remind");
 	const can = typeof Notification !== "undefined";

@@ -1,4 +1,4 @@
-import { nextBoundary, type Phase, phaseAt } from "../../phase.ts";
+import { nextBoundary, type Phase, phaseAt } from "./phase.ts";
 
 // Storybook's live day and night (docs/specs/2026-11-26-storybook-theme/spec.md §B2): one timer to the next 06:00 or 18:00, and a look again when the page comes back (visibilitychange, pageshow) or has news
 // (a snapshot, at most once a minute), since a phone that slept skips timers and a time-zone or DST change moves the boundary. A change sets `data-phase` on <html> while the face is Storybook and tells the listeners
@@ -9,12 +9,13 @@ export interface PhaseClock {
 	setTimeout(fn: () => void, ms: number): unknown;
 	clearTimeout(handle: unknown): void;
 }
+interface Events { addEventListener(type: string, fn: () => void): void; removeEventListener(type: string, fn: () => void): void }
 export interface PhaseEnv {
 	clock?: PhaseClock;
 	root?: { dataset: Record<string, string | undefined> };
 	/** Where visibility and pageshow are heard (document and window in a page). */
-	doc?: { visibilityState?: string; addEventListener(type: string, fn: () => void): void };
-	win?: { addEventListener(type: string, fn: () => void): void };
+	doc?: Events & { visibilityState?: string };
+	win?: Events;
 	/** The demo's forced phase (phase.ts `forcePhase`): when it answers, the clock is not read. */
 	forced?: () => Phase | undefined;
 }
@@ -27,11 +28,12 @@ const realClock: PhaseClock = { now: () => Date.now(), setTimeout: (fn, ms) => s
 
 export function mountPhase(env: PhaseEnv = {}) {
 	const clock = env.clock ?? realClock, root = env.root ?? (typeof document !== "undefined" ? document.documentElement : undefined);
+	const face = root?.dataset.view;
 	const read = (): Phase => env.forced?.() ?? phaseAt(new Date(clock.now()));
 	const listeners: ((phase: Phase) => void)[] = [];
 	let phase = read(), timer: unknown, lastLook = clock.now();
 	const paint = () => {
-		if (root && root.dataset.view === "storybook") root.dataset.phase = phase;
+		if (root && root.dataset.view === face) root.dataset.phase = phase;
 	};
 	function arm() {
 		if (timer !== undefined) clock.clearTimeout(timer);
@@ -52,14 +54,19 @@ export function mountPhase(env: PhaseEnv = {}) {
 	}
 	paint();
 	arm();
-	env.doc?.addEventListener("visibilitychange", () => env.doc?.visibilityState !== "hidden" && check());
-	env.win?.addEventListener("pageshow", () => check());
+	const visible = () => env.doc?.visibilityState !== "hidden" && check();
+	env.doc?.addEventListener("visibilitychange", visible);
+	env.win?.addEventListener("pageshow", check);
 	return {
 		phase: () => phase,
 		check,
 		/** A snapshot arrived: look again when a minute has passed since the last look. */
 		recheck: () => void (clock.now() - lastLook >= RECHECK_MS && check()),
 		onShift: (fn: (phase: Phase) => void) => void listeners.push(fn),
-		stop: () => void (timer !== undefined && clock.clearTimeout(timer)),
+		stop() {
+			if (timer !== undefined) clock.clearTimeout(timer);
+			env.doc?.removeEventListener("visibilitychange", visible);
+			env.win?.removeEventListener("pageshow", check);
+		},
 	};
 }

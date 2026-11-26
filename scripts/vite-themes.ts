@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, posix } from "node:path";
+import { basename, join, posix } from "node:path";
 import type { Plugin } from "vite";
+import { themeData, metaTag } from "./theme-data.ts";
 import { MODES, VIEWS } from "../src/views.ts";
 
 // The theme build (docs/specs/2026-11-07-raven-view/spec.md §6.1 to §6.3). A view other than Standard is a theme: `gui/themes/<view>/index.ts` is its entry, reached only through `import()` in registry.ts, and every chunk and asset that only
@@ -52,12 +53,18 @@ export function themeMap(files: Iterable<string>, find: (view: string, file: str
 
 export function themes(root: string): Plugin {
 	let owned = new Map<string, string>(), boot = "";
+	const clips = new Map<string, string>();
 	const entries = new Map(THEME_VIEWS.map((view) => [join(root, "themes", view, "index.ts").replace(/\\/g, "/"), view]));
 	const dirOf = (view: string | undefined) => (view ? `${THEMES_DIR}/${view}/` : "assets/");
 	return {
 		name: "sb-themes",
 		apply: "build",
 		buildStart() {
+			clips.clear();
+			themeData(root, (file) => {
+				if (!clips.has(file)) clips.set(file, this.emitFile({ type: "asset", name: basename(file), originalFileName: file, source: readFileSync(join(root, file)) }));
+				return file;
+			});
 			boot = this.emitFile({ type: "asset", name: "boot.js", source: readFileSync(join(root, "boot.js")) });
 			for (const view of THEME_VIEWS) {
 				const favicon = join(root, "themes", view, "favicon.svg");
@@ -108,14 +115,15 @@ export function themes(root: string): Plugin {
 					const from = posix.dirname(file.fileName);
 					file.source = String(file.source).replace(/url\((["']?)(\.{1,2}\/[^)"']+)\1\)/g, (_all, quote: string, url: string) => `url(${quote}${posix.relative(from, posix.join("assets", url))}${quote})`);
 				}
-				const map = themeMap(Object.keys(bundle), (view, kind) => chunkOf(view, kind as "css" | "module"));
+				const files = themeMap(Object.keys(bundle), (view, kind) => chunkOf(view, kind as "css" | "module"));
+				const map = themeData(root, file => this.getFileName(clips.get(file)!));
+				for (const [view, paths] of Object.entries(files)) Object.assign(map[view as keyof typeof map], paths);
 				this.emitFile({ type: "asset", fileName: "themes.json", source: `${JSON.stringify(map, null, "\t")}\n` });
 				const page = bundle["index.html"];
 				if (page?.type !== "asset") return;
 				const source = String(page.source), sheet = /[ \t]*<link rel="stylesheet"[^>]*>\n?/.exec(source);
-				const attr = JSON.stringify(map).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 				const link = sheet ? sheet[0].trim() : "";
-				page.source = source.replace(sheet?.[0] ?? "", "").replace("</head>", `  <meta name="sb-themes" content="${attr}">\n  ${link ? `${link}\n  ` : ""}${MARKER}\n  <script src="./${this.getFileName(boot)}"></script>\n</head>`);
+				page.source = source.replace(sheet?.[0] ?? "", "").replace("</head>", `  ${metaTag(map)}\n  ${link ? `${link}\n  ` : ""}${MARKER}\n  <script src="./${this.getFileName(boot)}"></script>\n</head>`);
 			},
 		},
 	};

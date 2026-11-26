@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
+import { manifests } from "./theme-fixture.ts";
 import vm from "node:vm";
 
 // gui/boot.js run in a page of plain objects (tests/view.test.ts, tests/zen-mode.test.ts): what it did to <html>, the theme-color, the icon, and what it wrote.
 const BOOT = readFileSync(new URL("../gui/boot.js", import.meta.url), "utf8");
 /** The build's map as the build writes it: Zen is a mode (`mode: true`), built as a theme. */
-export const MAP = JSON.stringify({ geek: { css: "themes/geek/geek-x.css", icon: "icon.svg" }, raven: { css: "themes/raven/raven-x.css", icon: "themes/raven/favicon-x.svg" }, storybook: { css: "themes/storybook/storybook-x.css", icon: "themes/storybook/favicon-x.svg" }, zen: { css: "themes/zen/zen-x.css", icon: "themes/zen/favicon-x.svg", mode: true } });
+export const MAP = JSON.stringify({ standard: manifests.standard, geek: { ...manifests.geek, css: "themes/geek/geek-x.css", icon: "icon.svg" }, raven: { ...manifests.raven, css: "themes/raven/raven-x.css", icon: "themes/raven/favicon-x.svg" }, storybook: { ...manifests.storybook, css: "themes/storybook/storybook-x.css", icon: "themes/storybook/favicon-x.svg" }, zen: { ...manifests.zen, css: "themes/zen/zen-x.css", icon: "themes/zen/favicon-x.svg", mode: true } });
 
 export interface BootOptions { /** `sb.zen` as stored (none: null). */ zen?: string | null; linked?: boolean; refuse?: boolean; standardMark?: string; icon?: string; map?: string; /** The device clock's hour (default 12). */ hours?: number }
-export interface SbBoot { resolve(stored: unknown, contrast: boolean, server: unknown): string; face(stored: unknown, zen: unknown, contrast: boolean, server: unknown): string; colors: Record<string, string | Record<string, string>>; phase(hours: number): string }
+export interface SbBoot { resolve(stored: unknown, contrast: boolean, server: unknown): string; face(stored: unknown, zen: unknown, contrast: boolean, server: unknown): string; phase(hours: number): string }
 
 /** `stored` is `sb.view`, `server` the `<meta name="sb-view">` (none: null). */
 export function boot(stored: string | null, contrast: boolean, server: string | null, o: BootOptions = {}) {

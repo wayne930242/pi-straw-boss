@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { nextBoundary, phaseAt } from "../gui/phase.ts";
-import { mountPhase, RECHECK_MS } from "../gui/themes/storybook/phase.ts";
-import { colorOf, mountView, THEME } from "../gui/view.ts";
+import { mountPhase, RECHECK_MS } from "../gui/phaseclock.ts";
+import { manifests } from "./theme-fixture.ts";
+import { mountView } from "../gui/view.ts";
 import { boot } from "./bootrun.ts";
 import { fakeClock } from "./fake-clock.ts";
 
@@ -22,11 +23,10 @@ test("the phase is day from 06:00 to 17:59 and night from 18:00 to 05:59, by the
 test("boot.js's phase agrees with gui/phase.ts for all 24 hours, and its first frame takes the phase and its theme-color only for Storybook", () => {
 	const sb = boot(null, false, null).resolve;
 	for (let h = 0; h < 24; h++) assert.equal(sb.phase(h), phaseAt(at(h)), `hour ${h}`);
-	assert.deepEqual(JSON.parse(JSON.stringify(sb.colors.storybook)), THEME.storybook, "boot.js's colours are view.ts's");
 	for (let h = 0; h < 24; h++) {
 		const page = boot("storybook", false, null, { hours: h });
 		const phase = phaseAt(at(h));
-		assert.deepEqual([page.view, page.phase, page.color], ["storybook", phase, colorOf("storybook", phase)], `hour ${h}`);
+		assert.deepEqual([page.view, page.phase, page.color], ["storybook", phase, (manifests.storybook.color as Record<typeof phase, string>)[phase]], `hour ${h}`);
 	}
 	assert.equal(boot("storybook", false, null, { hours: 7 }).color, "#fbf5e9", "day: the cream page");
 	assert.equal(boot("storybook", false, null, { hours: 22 }).color, "#111a35", "night: the night sky");
@@ -68,7 +68,7 @@ function world(start: Date) {
 	/** Moves the clock with no timer running (a phone asleep). */
 	const sleep = (ms: number) => clock.advance(ms);
 	const heard = new Map<string, (() => void)[]>();
-	const on = { addEventListener: (type: string, fn: () => void) => void heard.set(type, [...(heard.get(type) ?? []), fn]) };
+	const on = { removeEventListener: (type: string, fn: () => void) => void heard.set(type, (heard.get(type) ?? []).filter(f => f !== fn)), addEventListener: (type: string, fn: () => void) => void heard.set(type, [...(heard.get(type) ?? []), fn]) };
 	const doc = { visibilityState: "visible", ...on };
 	const fire = (type: string) => heard.get(type)?.forEach((fn) => fn());
 	const root = { dataset: { view: "storybook" } as Record<string, string | undefined> };
@@ -91,7 +91,8 @@ test("the clock switches the phase at 18:00 on its timer, paints data-phase, and
 	assert.deepEqual([told, w.root.dataset.phase], [["night", "day"], "day"], "the next morning at 06:00");
 	assert.equal(w.timers.size, 1, "one timer armed at a time");
 	ph.stop();
-	assert.equal(w.timers.size, 0);
+	w.fire("pageshow"); w.fire("visibilitychange");
+	assert.equal(w.timers.size, 0, "a stopped clock cannot re-arm on return");
 });
 
 test("a phone that slept through 06:00 takes the day when it is shown again, before any timer fires; pageshow does the same", () => {
@@ -138,7 +139,7 @@ test("view.ts paints Storybook's theme-color and data-phase by the phase, and dr
 	let phase: "day" | "night" = "day";
 	const store = new Map<string, string>([["sb.view", "storybook"]]);
 	const root = { dataset: {} as Record<string, string | undefined> }, meta = { content: "#1a1b26", dataset: {} as Record<string, string | undefined> };
-	const view = mountView({ root, meta, media: { matches: false, addEventListener() {} }, storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => void store.set(k, v) } }, () => false, () => phase);
+	const view = mountView({ themes: manifests, root, meta, media: { matches: false, addEventListener() {} }, storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => void store.set(k, v) } }, () => false, () => phase);
 	assert.deepEqual([root.dataset.view, root.dataset.phase, meta.content], ["storybook", "day", "#fbf5e9"]);
 	phase = "night";
 	view.refresh();

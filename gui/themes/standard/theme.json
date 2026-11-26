@@ -1,0 +1,7 @@
+{
+  "contract": 1,
+  "color": "#1a1b26",
+  "badge": { "dot": "#e0af68", "ring": "#1a1b26", "text": "#16161e" },
+  "sounds": { "waiting": "../../sounds/marimba.mp3" },
+  "soundPeaks": { "waiting": 0 }
+}

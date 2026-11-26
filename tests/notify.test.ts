@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
-import { register } from "node:module";
+import { manifests } from "./theme-fixture.ts";
 import { test } from "node:test";
 import { El, page, stored } from "./fake-dom.ts";
 
 // gui/notify.ts on the fake document: the Sound switch and Volume follow another tab's write (the `storage` event), and the first read of the three switches comes from the store.
-// The sound clips are .mp3 imports the bundler turns into URLs; here a hook gives each one a string.
-register("data:text/javascript," + encodeURIComponent(`export const load = (url, ctx, next) => url.endsWith(".mp3") ? { format: "module", source: "export default " + JSON.stringify(url), shortCircuit: true } : next(url, ctx);`));
 const heard: ((e: { key: string | null }) => void)[] = [];
 Object.assign(globalThis, { addEventListener: (type: string, on: (e: { key: string | null }) => void) => type === "storage" && heard.push(on) });
 const { KEYS } = await import("../gui/prefs.ts");
@@ -26,7 +24,7 @@ function rig(seed: Record<string, string> = {}) {
 	for (const [k, v] of Object.entries(seed)) stored.set(k, v);
 	const els = Object.fromEntries(ids.map((id) => [id, new El(id.endsWith("-vol") ? "input" : id.endsWith("-vol-out") ? "output" : "button")]));
 	Object.assign(page, { getElementById: (id: string) => els[id] });
-	const n = mountNotify(() => {});
+	const n = mountNotify(() => {}, manifests.standard.sounds!.waiting);
 	// Another tab writes `key`: the store changes, then the event arrives (a tab's own write fires none in itself).
 	const other = (key: string, value: string) => (stored.set(key, value), heard.forEach((f) => f({ key })));
 	return { n, els, other };

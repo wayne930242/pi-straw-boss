@@ -17,7 +17,8 @@ const READ = {
 type Value<N extends Name> = ReturnType<(typeof READ)[N]>;
 
 export function createPrefs(store: Store) {
-	const heard: [string, () => void][] = [];
+	const heard = new Set<[string, () => void]>();
+	let listening = false;
 	return {
 		get<N extends Name>(name: N) {
 			let raw: Raw;
@@ -38,8 +39,10 @@ export function createPrefs(store: Store) {
 		},
 		/** Another tab of this device wrote `name`. */
 		on(name: Name, fn: () => void) {
-			if (!heard.length) addEventListener("storage", (e) => heard.forEach(([key, f]) => e.key === key && f()));
-			heard.push([KEYS[name], fn]);
+			if (!listening) { addEventListener("storage", (e) => heard.forEach(([key, f]) => e.key === key && f())); listening = true; }
+			const entry: [string, () => void] = [KEYS[name], fn];
+			heard.add(entry);
+			return () => heard.delete(entry);
 		},
 	};
 }

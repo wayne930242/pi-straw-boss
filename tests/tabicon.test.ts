@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { iconHref, plainOf } from "../gui/tabicon.ts";
+import { manifests } from "./theme-fixture.ts";
+import { badgeOf, iconHref, plainOf } from "../gui/tabicon.ts";
 
+const badge = badgeOf(manifests, "standard", "day");
 const SVG = "<svg xmlns='http://www.w3.org/2000/svg'><rect/></svg>";
 
 test("the plain icon is the data URL decoded, or the built file fetched; a failed fetch leaves the icon alone (Z3R-F003, D1)", async () => {
@@ -13,11 +15,11 @@ test("the plain icon is the data URL decoded, or the built file fetched; a faile
 });
 
 test("the icon is plain for none waiting and carries the dot with the count, 9+ above nine, otherwise", () => {
-	assert.equal(decodeURIComponent(iconHref(SVG, 0).split(",")[1]!), SVG);
-	const three = decodeURIComponent(iconHref(SVG, 3).split(",")[1]!);
+	assert.equal(decodeURIComponent(iconHref(SVG, 0, badge).split(",")[1]!), SVG);
+	const three = decodeURIComponent(iconHref(SVG, 3, badge).split(",")[1]!);
 	assert.ok(three.includes("<circle") && three.includes(">3</text>") && three.endsWith("</svg>"));
-	assert.ok(decodeURIComponent(iconHref(SVG, 12).split(",")[1]!).includes(">9+</text>"));
-	assert.ok(iconHref(SVG, 1).startsWith("data:image/svg+xml,"), "never the URL string glued behind the prefix");
+	assert.ok(decodeURIComponent(iconHref(SVG, 12, badge).split(",")[1]!).includes(">9+</text>"));
+	assert.ok(iconHref(SVG, 1, badge).startsWith("data:image/svg+xml,"), "never the URL string glued behind the prefix");
 });
 
 test("the link bar's chime stays quiet while Zen is on, and for a count of none (Z3RR-F003)", async () => {

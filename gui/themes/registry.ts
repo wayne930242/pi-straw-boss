@@ -1,4 +1,8 @@
 import type { Face } from "../../src/views.ts";
+import { audio } from "../audio.ts";
+import { forcedPhase } from "../phase.ts";
+import { mountPhase } from "../phaseclock.ts";
+import { pageThemes } from "./manifest.ts";
 import { retranslate } from "../i18n.ts";
 import { useIcons } from "../icons.ts";
 import { usePack } from "../nouns.ts";
@@ -22,20 +26,28 @@ export function loadTheme<V extends ThemeView>(view: V): Promise<Awaited<ReturnT
 	return hit as Promise<Awaited<ReturnType<(typeof LOADERS)[V]>>>;
 }
 
-const heard: ((view: Face, parts?: ThemeParts) => void)[] = [];
+const heard: ((view: Face) => void)[] = [];
 /** Told after a view's theme parts (nouns, sprite, badge) took effect, so the page draws its words and icons again and the tab takes the view's icon. */
-export const onTheme = (fn: (view: Face, parts?: ThemeParts) => void) => void heard.push(fn);
+export const onTheme = (fn: (view: Face) => void) => void heard.push(fn);
 
-let wanted: Face = "standard";
+let generation = 0, mounted: { stop(): void } | undefined, clock: ReturnType<typeof mountPhase> | undefined;
+export const recheckPhase = () => clock?.recheck();
 /** The page shows `view` now: load its theme and take its parts (nouns, sentences, sprite); Standard takes none. A view that changed while the theme was on its way is left alone. */
-export async function showTheme(view: Face): Promise<void> {
-	wanted = view;
+export async function showTheme(view: Face, shift: () => void): Promise<void> {
+	const ticket = ++generation, data = pageThemes()[view];
+	mounted?.stop(); mounted = undefined;
+	clock?.stop(); clock = undefined;
+	useSounds(data.sounds);
 	const parts = isTheme(view) ? (await loadTheme(view).catch(() => undefined))?.theme : undefined;
-	if (wanted !== view) return;
+	if (ticket !== generation) return;
+	if (data.phases === "day-night") {
+		clock = mountPhase({ doc: document, win: window, forced: forcedPhase });
+		clock.onShift(shift);
+	}
+	mounted = parts?.mount?.({ audio, phase: () => clock?.phase() });
 	usePack(parts?.nouns);
 	useSentences(parts?.sentences, getLocale);
-	useSounds(parts?.sounds);
-	useIcons(view, parts?.sprite, parts?.senders);
+	useIcons(view, parts?.sprite, data.senders);
 	retranslate();
-	for (const fn of heard) fn(view, parts);
+	for (const fn of heard) fn(view);
 }

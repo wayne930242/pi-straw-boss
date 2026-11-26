@@ -2,7 +2,7 @@ import "./style.css";
 import { domEnv, mountPick, mountView, mountZenEnter } from "./view.ts";
 import { mountMode } from "./mode.ts";
 import { KEYS } from "./prefs.ts";
-import { forcePhase } from "./phase.ts";
+import { forcePhase, phaseNow } from "./phase.ts";
 import type { Face } from "../src/views.ts";
 import { createPage } from "./pagecore.ts";
 import { localeNames, setLocale, startI18n } from "./i18n.ts";
@@ -32,9 +32,9 @@ import { CONNECTING, createStream, type Source, type Status } from "./stream.ts"
 import { onStep } from "./terminalthen.ts";
 import { mountTimeline } from "./timeline.ts";
 import type { mountFocus } from "./views.ts";
-import { iconHref, iconOf, plainOf } from "./tabicon.ts";
-import { isTheme, loadTheme, onTheme, showTheme } from "./themes/registry.ts";
-import type { ThemeParts } from "./themes/theme.ts";
+import { badgeOf, iconHref, plainOf } from "./tabicon.ts";
+import { isTheme, loadTheme, onTheme, recheckPhase, showTheme } from "./themes/registry.ts";
+import { pageThemes } from "./themes/manifest.ts";
 import type { mountZen } from "./zen.ts";
 import type { TermKit } from "./zentypes.ts";
 
@@ -130,18 +130,19 @@ const openSection = (section: Section) => (core.current.view === "settings" ? wi
 // when it comes back, so a background tab does no DOM work; the timeline follows on every route, the map is drawn only while in view.
 // The tab's icon carries the count of units waiting on an answer, a hidden tab's above all; a browser that keeps the first icon shows it plain.
 // Each view has its own icon (the build's theme map, boot.js leaves Standard's file name in data-standard); the waiting badge is drawn over the shown view's, in the theme's colours.
-const tabIcon = document.querySelector<HTMLLinkElement>('link[rel="icon"]'), homeIcon = tabIcon && (tabIcon.dataset.standard ?? tabIcon.getAttribute("href") ?? ""), themeMap = document.querySelector<HTMLMetaElement>('meta[name="sb-themes"]')?.content;
+const tabIcon = document.querySelector<HTMLLinkElement>('link[rel="icon"]'), homeIcon = tabIcon && (tabIcon.dataset.standard ?? tabIcon.getAttribute("href") ?? ""), themeMap = pageThemes();
 const plains = new Map<string, Promise<string | undefined>>();
 const plainFor = (shown: Face) => {
-	const href = new URL(iconOf(themeMap, shown) ?? homeIcon ?? "", document.baseURI).href;
+	const href = new URL(themeMap[shown].icon ?? homeIcon ?? "", document.baseURI).href;
 	if (!plains.has(href)) plains.set(href, plainOf(href));
 	return plains.get(href)!;
 };
-let plain = tabIcon ? plainFor(view.face()) : undefined, badge: ThemeParts["badge"], badged = 0, shownParts: ThemeParts | undefined;
+let plain = tabIcon ? plainFor(view.face()) : undefined, badged = 0;
 function icon(n: number, again = false) {
 	if (!tabIcon || !plain || (n === badged && !again)) return;
 	badged = n;
-	void plain.then((svg) => svg && n === badged && (tabIcon.href = iconHref(svg, n, typeof badge === "function" ? badge() : badge)));
+	const requested = plain;
+	void requested.then((svg) => svg && requested === plain && n === badged && (tabIcon.href = iconHref(svg, n, badgeOf(themeMap, view.face(), phaseNow()))));
 }
 /** A phone's `⋯` in the header shows only while something is behind it (Dismiss finished, Stashed); when both go, its panel closes. */
 function moreActs() {
@@ -152,7 +153,7 @@ function moreActs() {
 /** Standard's page for a snapshot while it is shown (pagecore.ts says when). */
 function draw(net: Net, fresh: Alert[], now: Map<string, Alert>) {
 	page.stats(net);
-	shownParts?.recheck?.(); // a phone that slept skipped the theme's timer (Storybook's phase)
+	recheckPhase(); // a phone that slept skipped the theme's timer (Storybook's phase)
 	autoSw.net(net);
 	showDismissAll(el("dismiss-all"), net);
 	showStashed(el("stashed"), el("stashed-list"), net);
@@ -202,21 +203,11 @@ function showFace() {
 	if (face === "zen" && isTheme(theme)) idle(() => void loadTheme(theme).catch(() => undefined)); // fetched once (registry.ts); its parts take effect on leaving
 	if (face === faceShown) return;
 	faceShown = face;
-	void showTheme(face);
+	void showTheme(face, () => { view.refresh(); icon(badged, true); });
 }
 // A theme that changes under the page (Storybook's day and night) says so: the theme-color and the tab's badge are painted again, nothing else moves (no reload, no route, no focus).
-const shifting = new WeakSet<ThemeParts>();
-onTheme((shown, parts) => {
-	badge = parts?.badge;
-	shownParts = parts;
-	if (parts?.onShift && !shifting.has(parts)) {
-		shifting.add(parts);
-		parts.onShift(() => {
-			if (shownParts !== parts) return;
-			view.refresh();
-			icon(badged, true);
-		});
-	}
+onTheme((shown) => {
+	view.refresh();
 	if (tabIcon) plain = plainFor(shown);
 	icon(badged, true);
 	if (core.latest) core.snapshot(core.latest); // the words and icons are drawn again in the shown view's, a switch back to Standard included (RRB2-F001)

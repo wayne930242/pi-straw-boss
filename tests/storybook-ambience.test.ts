@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ambience, audible, LEVEL } from "../gui/themes/storybook/ambience.ts";
-import { mountPhase } from "../gui/themes/storybook/phase.ts";
+import { ambience, audible, ambienceGain } from "../gui/ambience.ts";
+import { mountPhase } from "../gui/phaseclock.ts";
 import { fakeClock } from "./fake-clock.ts";
 
 test("only Storybook map/head, visible, Background on; calm rests on coarse pointers", () => {
-	for (const view of ["storybook", "zen", "raven"]) for (const stage of ["map", "head", "chat", "settings"]) {
-		assert.equal(audible(view, stage, true, false, false, false), view === "storybook" && ["map", "head"].includes(stage));
+	for (const stage of ["map", "head", "chat", "settings"]) {
+		assert.equal(audible(stage, true, false, false, false), ["map", "head"].includes(stage));
 	}
-	assert.equal(audible("storybook", "map", false, false, false, true), false);
-	assert.equal(audible("storybook", "map", true, true, false, true), false);
-	assert.equal(audible("storybook", "map", true, false, true, false), false);
-	assert.equal(audible("storybook", "map", true, false, true, true), true);
+	assert.equal(audible("map", false, false, false, true), false);
+	assert.equal(audible("map", true, true, false, true), false);
+	assert.equal(audible("map", true, false, true, false), false);
+	assert.equal(audible("map", true, false, true, true), true);
 });
 
 test("only current phase loads; 18:00 cross-fades, muting stops both voices", async () => {
@@ -33,5 +33,5 @@ test("only current phase loads; 18:00 cross-fades, muting stops both voices", as
 
 test("ambience sits near Raven's rain: about -42 dBFS mean before the Background volume", () => {
 	const mean = { day: -20.9, night: -17.9 };
-	for (const p of ["day", "night"] as const) assert.ok(Math.abs(mean[p] + 20 * Math.log10(LEVEL[p]) + 42) < 1, p);
+	for (const p of ["day", "night"] as const) assert.ok(Math.abs(mean[p] + 20 * Math.log10(ambienceGain(mean[p])) + 42) < 1, p);
 });

@@ -5,7 +5,8 @@ import { afterEach, test } from "node:test";
 import { VIEW_ARGUMENTS } from "../src/bossviews.ts";
 import { MODES, VIEWS } from "../src/views.ts";
 import { mountMode } from "../gui/mode.ts";
-import { choiceOf, mountView, resolve, THEME, type ViewEnv } from "../gui/view.ts";
+import { manifests, THEME } from "./theme-fixture.ts";
+import { choiceOf, mountView, resolve, type ViewEnv } from "../gui/view.ts";
 import { mountFace, zenShows } from "../gui/viewface.ts";
 import { boot } from "./bootrun.ts";
 import { World } from "./fakes.ts";
@@ -25,7 +26,7 @@ function device(view: string | null, zen: string | null) {
 /** A page of the device as main.ts builds it: the mode, the view whose face follows it, and the face's moves on a route that is settings or not. */
 function page(d: ReturnType<typeof device>, o: { contrast?: boolean; server?: string; settings?: boolean } = {}) {
 	const route = { settings: o.settings ?? false, left: 0 }, mode = mountMode(d.storage);
-	const env: ViewEnv = { root: { dataset: {} }, meta: { content: "#1a1b26" }, ...(o.server !== undefined ? { server: { content: o.server } } : {}), media: { matches: o.contrast ?? false, addEventListener: () => {} }, storage: d.storage };
+	const env: ViewEnv = { themes: manifests, root: { dataset: {} }, meta: { content: "#1a1b26" }, ...(o.server !== undefined ? { server: { content: o.server } } : {}), media: { matches: o.contrast ?? false, addEventListener: () => {} }, storage: d.storage };
 	const view = mountView(env, () => zenShows({ mode: mode.on(), settings: route.settings }));
 	const face = mountFace({ view, mode, settings: () => route.settings, leaveSettings: () => ((route.left += 1), (route.settings = false), face.route(false)), draw: () => {} });
 	return { mode, view, face, route, shows: () => env.root.dataset.view, color: () => env.meta!.content };

@@ -1,0 +1,8 @@
+{
+  "contract": 1,
+  "color": "#0d0a10",
+  "badge": { "dot": "#e3b04b", "ring": "#0d0a10", "text": "#0d0a10" },
+  "ambience": { "loop": { "file": "sounds/rain.mp3", "meanDbfs": -14.9 } },
+  "sounds": { "waiting": "sounds/bell.mp3", "thunder": "sounds/thunder.mp3" },
+  "soundPeaks": { "waiting": -1.6, "thunder": -3.8 }
+}

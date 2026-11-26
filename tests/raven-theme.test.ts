@@ -66,11 +66,8 @@ test("the backdrop is a WebP of at most 120 KB, and the three sounds (the bell, 
 
 // Only what waits on the boss rings (boss, 2026-11-24: 「我們應該只需要 需要使用者注意 的時候放音效（背景音）除外」, 「我甚至覺得 finished 的音效拿掉」): the bell for a question (boss, 2026-11-08: 「鐘聲比較像是需要回應」), no clip for a finish or a failure.
 test("the theme's one sound effect is the bell for a wait; a finish and a failure have none, and the caw and the door are gone", () => {
-	const index = at("gui/themes/raven/index.ts");
-	const imports = Object.fromEntries([...index.matchAll(/import (\w+) from "\.\/sounds\/([\w-]+)\.mp3"/g)].map((m) => [m[1]!, m[2]!]));
-	const map = /sounds:\s*\{([^}]*)\}/.exec(index)?.[1] ?? "";
-	assert.equal(imports[/\bwaiting\s*:\s*(\w+)/.exec(map)?.[1] ?? ""], "bell");
-	assert.doesNotMatch(map, /\b(done|error)\b/, "no clip for a finish or a failure");
+	const { sounds } = JSON.parse(at("gui/themes/raven/theme.json"));
+	assert.deepEqual(sounds, { waiting: "sounds/bell.mp3", thunder: "sounds/thunder.mp3" }, "only a wait and the flash have clips");
 	for (const name of ["ask", "done", "caw", "door"]) assert.ok(!existsSync(join(root, `gui/themes/raven/sounds/${name}.mp3`)), `${name}.mp3 is gone`);
 	for (const name of ["done", "error"]) assert.ok(!existsSync(join(root, `gui/sounds/${name}.mp3`)), `Standard's ${name}.mp3 is gone`);
 	const notice = at("NOTICE.md");

@@ -1,4 +1,5 @@
-import { audio, type Audio } from "../../audio.ts";
+import { playLoop } from "../../ambience.ts";
+import { type Audio } from "../../audio.ts";
 import { prefs } from "../../prefs.ts";
 
 // The keep's weather (boss, 2026-11-08: 「背景的雨聲和閃電的雷聲（兩個都不要太大聲），雷聲要比閃電慢一兩秒」): a quiet rain loop under the backdrop (the map and the head page) and a low thunder 1 to 2 s after each lightning flash.
@@ -8,10 +9,6 @@ import { prefs } from "../../prefs.ts";
 // Nothing sounds with Background off, on a hidden tab, before the browser let the page play (the first press), or off the backdrop; no thunder under prefers-reduced-motion either, where the lightning is off.
 // Calm (no input for 30 s) stops the rain, the lightning, and its thunder on a coarse pointer (a phone: battery). On a fine pointer (boss, 2026-11-09: a boss watching untouched never saw a flash; 2026-11-12: the rain stopped mid-play) the rain plays on and raven.css keeps the strike running, so the thunder sounds: the strike is
 // one animation of its own layer, first a few seconds after the backdrop shows and then every 61 s, so under calm nothing else moves.
-type Ctx = ReturnType<Audio["out"]>["c"];
-
-/** Rain: the level at the background gain and the fades in seconds. The clip's mean is -15 dBFS, so 0.045 puts the rain near -42 dBFS before the Background volume, where the synthesized rain it replaced sat. */
-export const RAIN = { gain: 0.045, fadeIn: 2.5, fadeOut: 0.8 };
 /** Thunder: the wait after the flash (ms, a random point of it each time) and the level at the background gain (the clip peaks at -3.8 dBFS: about -22 dBFS, a mean near -40, before the Background volume). */
 export const THUNDER = { delay: [1000, 2000] as const, gain: 0.12 };
 export const FLASH = "rk-clap";
@@ -23,6 +20,7 @@ export type ClipSource = (name: Clip, ready: () => void) => AudioBuffer | undefi
 export interface WeatherEnv {
 	audio: Pick<Audio, "out" | "running">;
 	clip: ClipSource;
+	meanDbfs: number;
 	/** Raven's backdrop is on the page: the view is Raven and the stage is the map or the head page. */
 	backdrop(): boolean;
 	/** The Background switch (the rain and the thunder are background sound). */
@@ -72,34 +70,17 @@ export function loopEdges(buf: Pick<AudioBuffer, "sampleRate"> & { getChannelDat
 
 /** The weather on `env`: `refresh` after anything that changes whether rain is due, `flash` at each lightning flash, `stop` for good. */
 export function createWeather(env: WeatherEnv) {
-	let rain: { src: AudioBufferSourceNode; gain: GainNode } | undefined, over = false;
-	const pending = new Set<unknown>();
+	let rain: ReturnType<typeof playLoop> | undefined, over = false;
+	const pending = new Set<unknown>(), rolls = new Set<AudioBufferSourceNode>();
 	const heard = () => !over && env.background() && !env.hidden() && env.backdrop() && env.audio.running();
 	const rainDue = () => heard() && (!env.calm() || env.fine());
 	const stopRain = () => {
-		if (!rain) return;
-		const { c } = env.audio.out("background"), { src, gain } = rain;
-		rain = undefined;
-		// A stop within the fade-in cancels its ramp, which would drop the level to 0 at once: hold the level reached, then fall from it.
-		const level = gain.gain.value;
-		gain.gain.cancelScheduledValues(c.currentTime);
-		gain.gain.setValueAtTime(level, c.currentTime);
-		gain.gain.setTargetAtTime(0, c.currentTime, RAIN.fadeOut / 4);
-		src.stop(c.currentTime + RAIN.fadeOut);
+		rain?.stop(); rain = undefined;
 	};
 	const startRain = () => {
 		const buf = env.clip("rain", refresh); // not decoded yet: the rain starts at the refresh its arrival makes, if it is still due
 		if (!buf) return;
-		const { c, g } = env.audio.out("background"), src = c.createBufferSource(), gain = c.createGain(), [from, to] = loopEdges(buf);
-		src.buffer = buf;
-		src.loop = true;
-		if (to > from) (src.loopStart = from), (src.loopEnd = to);
-		gain.gain.setValueAtTime(0, c.currentTime);
-		gain.gain.linearRampToValueAtTime(RAIN.gain, c.currentTime + RAIN.fadeIn);
-		src.connect(gain);
-		gain.connect(g);
-		src.start(c.currentTime, from);
-		rain = { src, gain };
+		rain = playLoop(env.audio, buf, env.meanDbfs, 2.5, loopEdges(buf));
 	};
 	function refresh() {
 		if (rainDue()) rain || startRain();
@@ -116,6 +97,8 @@ export function createWeather(env: WeatherEnv) {
 		gain.gain.setValueAtTime(THUNDER.gain, c.currentTime);
 		src.connect(gain);
 		gain.connect(g);
+		rolls.add(src);
+		src.onended = () => { rolls.delete(src); src.disconnect(); gain.disconnect(); };
 		src.start(c.currentTime);
 	};
 	return {
@@ -130,6 +113,8 @@ export function createWeather(env: WeatherEnv) {
 		stop() {
 			for (const h of pending) env.clear(h);
 			pending.clear();
+			for (const src of rolls) src.stop();
+			rolls.clear();
 			stopRain();
 			over = true; // a clip that arrives later starts nothing
 		},
@@ -141,10 +126,10 @@ export function createWeather(env: WeatherEnv) {
  * The press, key, and animation listeners are on the document only while the weather can sound (Background on, tab visible, backdrop shown): Raven's code stays loaded for the page's life, and the other views must not pay for it (a press would make the audio context, an animation listener makes the browser report every iteration of every animation).
  * `now` is the clock the late-event check reads; `clip` gives the rain and the thunder (index.ts passes `loadClips` over the theme's two files; with none the weather is silent).
  */
-export function mountWeather(root: HTMLElement = document.documentElement, a: Audio = audio, now: () => number = () => performance.now(), frame: (fn: () => void) => void = (fn) => void requestAnimationFrame(fn), clip: ClipSource = () => undefined): () => void {
+export function mountWeather(a: Audio, clip: ClipSource, meanDbfs: number, root: HTMLElement = document.documentElement, now: () => number = () => performance.now(), frame: (fn: () => void) => void = (fn) => void requestAnimationFrame(fn)): () => void {
 	const env: WeatherEnv = {
 		audio: a,
-		clip,
+		clip, meanDbfs,
 		backdrop: () => root.dataset.view === "raven" && ["map", "head"].includes(document.getElementById("stage")?.dataset.view ?? ""),
 		background: () => prefs.get("background"),
 		hidden: () => document.hidden,
@@ -170,7 +155,7 @@ export function mountWeather(root: HTMLElement = document.documentElement, a: Au
 		for (const type of ["animationstart", "animationiteration"]) document[on ? "addEventListener" : "removeEventListener"](type, flash, true);
 	};
 	function refresh() {
-		if (!live) return; // the Background pref's listener cannot be taken off
+		if (!live) return; // an unlock or observer callback may already be queued
 		hook(env.background() && !env.hidden() && env.backdrop());
 		w.refresh();
 	}
@@ -192,11 +177,11 @@ export function mountWeather(root: HTMLElement = document.documentElement, a: Au
 	// notify.ts redraws the Background switch (`data-state`) when it changes in this tab; another tab's change arrives as a storage event.
 	const sw = document.getElementById("background"), swatch = new MutationObserver(switched);
 	if (sw) swatch.observe(sw, { attributes: true, attributeFilter: ["data-state"] });
-	prefs.on("background", switched);
+	const off = prefs.on("background", switched);
 	document.addEventListener("visibilitychange", seen);
 	refresh();
 	return () => {
-		live = false;
+		live = false; off();
 		watch.disconnect();
 		swatch.disconnect();
 		document.removeEventListener("visibilitychange", seen);

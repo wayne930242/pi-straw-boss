@@ -1,0 +1,16 @@
+{
+  "contract": 1,
+  "color": { "day": "#fbf5e9", "night": "#111a35" },
+  "phases": "day-night",
+  "badge": {
+    "day": { "dot": "#e0902b", "ring": "#fbf5e9", "text": "#3a3150" },
+    "night": { "dot": "#ffd37e", "ring": "#111a35", "text": "#111a35" }
+  },
+  "senders": true,
+  "ambience": {
+    "day": { "file": "sounds/place-forest-birds-singing.mp3", "meanDbfs": -20.9 },
+    "night": { "file": "sounds/night-cricket-meadow.mp3", "meanDbfs": -17.9 }
+  },
+  "sounds": { "waiting": "sounds/kalimba-thumb-pluck.mp3" },
+  "soundPeaks": { "waiting": 0 }
+}

@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { followLabel } from "../gui/viewlabel.ts";
+import { manifests, THEME } from "./theme-fixture.ts";
 import { boot } from "./bootrun.ts";
-import { autoView, mountZenEnter, choiceOf, KEY, mountPick, mountView, resolve, THEME, type ViewEnv } from "../gui/view.ts";
+import { autoView, mountZenEnter, choiceOf, KEY, mountPick, mountView, resolve, type ViewEnv } from "../gui/view.ts";
 
 // The page's view (gui/view.ts): Auto, Standard, or Geek from the device's storage and the OS's contrast preference, set on <html> before the first render.
 
@@ -28,6 +29,7 @@ function world(stored: string | null, more: boolean, opts: { refuse?: boolean; s
 	const written: string[] = [];
 	const media = { matches: more, addEventListener: (_: "change", fn: () => void) => (listener = fn) };
 	const env: ViewEnv = {
+		themes: manifests,
 		root: { dataset: {} },
 		meta: { content: "#1a1b26" },
 		...(opts.server !== undefined ? { server: { content: opts.server } } : {}),
@@ -362,7 +364,8 @@ test("boot.js sets the theme-color view.ts names, links the theme's stylesheet o
 	assert.deepEqual(boot(null, true, null).wrote.length, 1, "Auto with more contrast is Geek");
 	assert.equal(boot(null, false, "geek", { refuse: true }).view, "geek", "storage refused: the server's default decides");
 	assert.equal(boot(null, false, "zen").view, "standard", "an older server's zen is no view (the map marks it a mode): Auto");
-	assert.deepEqual(JSON.parse(JSON.stringify(boot(null, false, null).resolve.colors)), THEME, "the colours are view.ts's");
+	const alternate = boot("geek", false, null, { map: JSON.stringify({ geek: { color: { day: "#abcdef", night: "#facade" }, phases: "day-night" } }), hours: 22 });
+	assert.deepEqual([alternate.phase, alternate.color], ["night", "#facade"], "a phase follows the declaration, not the face's name");
 });
 
 test("boot.js restores Standard's icon from data-standard when the server wrote a theme's icon and the device's view has none", () => {
@@ -379,7 +382,7 @@ test("leaving Zen on a Standard device paints Standard's theme-color, not Zen's 
 	assert.equal(boot("standard", false, null, { zen: "0" }).colorStandard, undefined, "Standard's first frame paints nothing and marks nothing");
 	let zen = true;
 	const root = { dataset: { view: first.view } as Record<string, string | undefined> }, meta = { content: first.color, dataset: { standard: first.colorStandard } as Record<string, string | undefined> };
-	const view = mountView({ root, meta, media: { matches: false, addEventListener() {} }, storage: { getItem: (k) => (k === "sb.view" ? "standard" : null), setItem() {} } }, () => zen);
+	const view = mountView({ themes: manifests, root, meta, media: { matches: false, addEventListener() {} }, storage: { getItem: (k) => (k === "sb.view" ? "standard" : null), setItem() {} } }, () => zen);
 	assert.equal(meta.content, THEME.zen);
 	zen = false;
 	view.refresh();

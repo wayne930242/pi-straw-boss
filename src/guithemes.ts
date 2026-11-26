@@ -21,7 +21,7 @@ export function listBundle(dir: string) {
 		/** The page for a default view: when it is a theme, its stylesheet link goes where the build left the marker (after the entry's own stylesheet, so the cascade is as it was) and the tab icon is its icon. Standard and Auto add nothing. */
 		page(html: string, view: string): string {
 			const theme = Object.hasOwn(map, view) ? map[view] : undefined;
-			if (!theme) return html;
+			if (!theme || view === "standard") return html;
 			return html.replace("<!--sb-theme-->", theme.css ? `<link rel="stylesheet" data-theme="${view}" href="${theme.css}">` : "").replace(/(<link rel="icon"[^>]*?) href="[^"]*"/, theme.icon ? `$1 href="${theme.icon}" data-standard="./icon.svg"` : "$&");
 		},
 	};

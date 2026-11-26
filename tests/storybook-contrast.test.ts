@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { THEME } from "../gui/view.ts";
+import { THEME } from "./theme-fixture.ts";
 import { contrast, declarations, mix, type Rule, rulesOf } from "./css-rules.ts";
 
 // Storybook's palette (gui/themes/storybook/storybook.css, docs/specs/2026-11-26-storybook-theme/spec.md §B3 and design.md *Palette*): the first light theme. Two token blocks, the day (`[data-view="storybook"]`) and the night
