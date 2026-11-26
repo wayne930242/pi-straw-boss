@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { childEnded } from "../src/server/childtie.ts";
 import type { Reply, Request } from "../src/server/socket.ts";
+import type { LedgerEvent } from "../src/server/ledger.ts";
 import { createThreads, IDLE_MS, TTL_MS } from "../src/server/threads.ts";
 import { threadReply } from "../src/server/threadsops.ts";
 import { fakeClock } from "./fake-clock.ts";
@@ -40,11 +41,12 @@ function sessions() {
 function server(s = sessions(), dir = join(root, `state-${++n}`, "threads")) {
 	const clock = fakeClock(1_700_000_000_000), timers = new Set<{ at: number; fn: () => void }>();
 	const timer = (ms: number, fn: () => void) => { const t = { at: clock.now() + ms, fn }; timers.add(t); return () => void timers.delete(t); };
-	const build = () => createThreads({ dir, now: clock.now, timer, ended: childEnded, holdMs: 45_000 });
+	const notes: LedgerEvent[] = [];
+	const build = () => createThreads({ dir, now: clock.now, timer, ended: childEnded, holdMs: 45_000, note: (e) => void notes.push(e) });
 	let threads = build(), stop = threads.start();
 	const ask = (request: Record<string, unknown>) => threadReply(threads, request as Request, s.dir)!;
 	return {
-		s, dir, clock,
+		s, dir, clock, notes,
 		/** Moves the clock, running the timers it passes in order. */
 		advance(ms: number) {
 			const end = clock.now() + ms;
@@ -230,4 +232,26 @@ test("a restart keeps the threads, their posts, the round count, and the close; 
 	sv.restart();
 	assert.equal((await sv.read(owner, "T2")).posts, 1);
 	assert.ok(readFileSync(file, "utf8").startsWith("{"));
+});
+
+test("the ledger hears each thread open and close: done, blocked by a member or by the round cap, abandoned by the server; T<n>.json keeps closed and closedAs through a restart", async () => {
+	const sv = server();
+	const done = await paired(undefined, sv);
+	await sv.post(done.w, done.thread, ["reviewer"], "review", "ready");
+	await sv.post(done.r, done.thread, ["worker", "main"], "done", "approved");
+	const gaveUp = await paired(undefined, sv);
+	await sv.post(gaveUp.w, gaveUp.thread, ["reviewer", "main"], "blocked", "cannot build");
+	const capped = await paired(1, sv);
+	await sv.post(capped.r, capped.thread, ["worker"], "fix", "f1");
+	await sv.post(capped.r, capped.thread, ["worker"], "fix", "f2");
+	const quiet = await paired(undefined, sv);
+	sv.advance(IDLE_MS);
+	const closes = sv.notes.filter((e) => e.kind === "thread_close").map((e) => [e.id, e.why, e.session]);
+	assert.deepEqual(closes, [[done.thread, "done", done.owner], [gaveUp.thread, "blocked", gaveUp.owner], [capped.thread, "blocked", capped.owner], [quiet.thread, "abandoned", quiet.owner]]);
+	assert.equal(sv.notes.filter((e) => e.kind === "thread_open").length, 4);
+	const meta = (o: { owner: string; thread: string }) => JSON.parse(readFileSync(join(sv.dir, o.owner.slice(0, 8), `${o.thread}.json`), "utf8")) as { closed?: number; closedAs?: string };
+	sv.restart();
+	assert.deepEqual([meta(done).closedAs, meta(gaveUp).closedAs, meta(capped).closedAs, meta(quiet).closedAs], ["done", "blocked", "blocked", "abandoned"]);
+	assert.equal(meta(done).closed, (await sv.read(done.owner, done.thread)).closed && ((await sv.read(done.owner, done.thread)).closed as { time: number }).time, "closed is the time the done post landed");
+	assert.equal(sv.notes.filter((e) => e.kind === "thread_close").length, 4, "a restart closes nothing again");
 });

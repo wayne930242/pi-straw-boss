@@ -28,7 +28,7 @@ import { todosOf } from "./items.ts";
 import { integrationOff } from "./trainswitch.ts";
 import { isRoleLabel, ownsBoard, trainLabel } from "./trainrole.ts";
 import { trustDir } from "./trust/files.ts";
-
+import { noteLedger } from "./server/ledger.ts";
 import { tabLabel } from "./tablabel.ts";
 export { tabLabel };
 const arg = (description: string) => Type.Optional(Type.String({ description }));
@@ -60,7 +60,7 @@ export const closeParameters = () => Type.Object({
 	pane: Type.Optional(Type.String({ description: "A dead agent pane's Herdr id (as the list shows it, e.g. w1:p3)." })),
 });
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, openTower, promote, digest, closeMain, closePane, deadPanes, listen, link, server, towerCall, boardFill, pair, waitAsk, bossAsk }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read" | "openTower"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; /** A tower's close of a dead agent pane and its list (closemain.ts, deadpane.ts). */ closePane: Control["closePane"]; deadPanes: Control["deadPanes"]; /** Registers the control channel: a main that handed over answers its tower's close (closemain.ts). */ listen: () => void; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill; /** A main's review threads for board_read (bosspair.ts); none in a tower run. */ pair?: Pick<BossPair, "read" | "list">; /** Registers `boss_wait_ask` for a joined session (waitask.ts `mainWaitAsk`); a tower run registers its own (runmode.ts). */ waitAsk?: () => void; /** Draws a `call_tower` boss question in this main's pane (bossask.ts); none in a tower run. */ bossAsk?: Parameters<typeof callTowerTool>[4] }) {
+export function createTools({ pi, cfg, s, guiDir, me, role, tell }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, openTower, promote, digest, closeMain, closePane, deadPanes, listen, link, server, towerCall, boardFill, pair, waitAsk, bossAsk }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read" | "openTower"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; /** A tower's close of a dead agent pane and its list (closemain.ts, deadpane.ts). */ closePane: Control["closePane"]; deadPanes: Control["deadPanes"]; /** Registers the control channel: a main that handed over answers its tower's close (closemain.ts). */ listen: () => void; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill; /** A main's review threads for board_read (bosspair.ts); none in a tower run. */ pair?: Pick<BossPair, "read" | "list">; /** Registers `boss_wait_ask` for a joined session (waitask.ts `mainWaitAsk`); a tower run registers its own (runmode.ts). */ waitAsk?: () => void; /** Draws a `call_tower` boss question in this main's pane (bossask.ts); none in a tower run. */ bossAsk?: Parameters<typeof callTowerTool>[4] }) {
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>, signal?: AbortSignal, ctx?: ToolCtx, id?: string) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
@@ -251,8 +251,8 @@ export function createTools({ pi, cfg, s, guiDir, me, role }: Kit, { mainDuty, p
 						try { todos = writeHandoverTodos(path, snapshotOfBranch(s.branch())); }
 						catch (error) { todos = { written: false, path: null, count: 0, reason: String(error) }; }
 						const next = await openSuccessor({ run: cfg.run, sleep: cfg.sleep, workspaceId: s.at.workspaceId, cwd, sessions: () => s.c.listSessions(), send: (to, message) => post(to, message, "handoff", "main", true), trustDir: trustDir(guiDir) }, { from: { id: me(), name }, handoff: path, ...(todos.written ? { todosPath: todos.path } : {}), reason: why, ...(s.duty ? { duty: s.duty } : {}), ...(s.openedBy ? { openedBy: s.openedBy } : {}) });
-						s.saved.successor = { pane: next.pane, tab: next.tab, at: cfg.now(), main: next.main };
-						pi.appendEntry(ENTRY, { successor: s.saved.successor });
+						pi.appendEntry(ENTRY, { successor: (s.saved.successor = { pane: next.pane, tab: next.tab, at: cfg.now(), main: next.main }) });
+						noteLedger(guiDir, { kind: "handover", id: next.main, session: me(), workspace: s.at.workspaceId }, cfg.now(), (text) => tell(text, "warning")); // the ledger's `handover` (server/ledger.ts): the successor's id
 						// RVR-F004: the successor took the handoff, so this main's record says so: a later Herdr close of this tab raises no main_died, and no tower revives it.
 						if (s.file) try { markHandedOver(guiDir, s.file, { at: s.saved.successor.at, to: next.main, tab: next.tab, pane: next.pane }); } catch { /* the entry above keeps it for the next record this session writes */ }
 						// The workspace's tower closes this main once its successor is live (docs/specs/2026-11-23-tower-close-panes.md §4): it listens for that ask now, and the tower hears of the handover as a milestone, so it need not poll.

@@ -7,7 +7,7 @@ import type { Kit } from "./state.ts";
 // server opens thread T<n> for this session (server/threads.ts); the two children talk on it (threadtools.ts) and the main is woken only by their two results when it closes. The tool is registered with the net tools at the join,
 // so the main has it from its session start; a role or a turn that may not pair is refused at the call. `board_read thread` reads a thread through `read` here.
 
-export const PAIR_DESCRIPTION = "A reviewed change: before dispatching, pair a worker and a reviewer on review thread T<n>. Then dispatch both with subagent under these names, each task with the line `Thread: T<n>`; you write both briefs. They post to each other (at most rounds repair rounds) and you are woken only by their two results when the thread closes; do not relay. board_read thread reads it.";
+export const PAIR_DESCRIPTION = "A reviewed change: pair a worker and a reviewer on thread T<n> first, then dispatch both with subagent under these names, each task with the line `Thread: T<n>`; you write both briefs. You are woken only by their two results when the thread closes; do not relay.";
 
 export function createBossPair({ pi, s, me, role }: Kit, d: { ask?: Ask; remote(): boolean }) {
 	const ask = async (request: Record<string, unknown>, start: "auto" | "never" = "auto") => {
@@ -28,13 +28,13 @@ export function createBossPair({ pi, s, me, role }: Kit, d: { ask?: Ask; remote(
 				parameters: Type.Object({
 					worker: Type.String({ minLength: 1, maxLength: 64, description: "Its subagent name." }),
 					reviewer: Type.String({ minLength: 1, maxLength: 64, description: "Its subagent name." }),
-					rounds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3, description: "Default 3." })),
+					rounds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3, description: "Repair rounds, default 3." })), item: Type.Optional(Type.String({ maxLength: 64, description: "Its todo: uid or <session8>#<id>." })),
 				}),
-				execute: async (_id, { worker, reviewer, rounds }) => {
+				execute: async (_id, { worker, reviewer, rounds, item }) => {
 					refuse("open");
-					const r = await ask({ cmd: "thread-pair", owner: me(), worker, reviewer, ...(rounds !== undefined ? { rounds } : {}) });
+					const r = await ask({ cmd: "thread-pair", owner: me(), worker, reviewer, ...(rounds !== undefined ? { rounds } : {}), ...(item !== undefined ? { item } : {}) });
 					const text = `Thread ${r.thread}: worker ${JSON.stringify(worker)}, reviewer ${JSON.stringify(reviewer)}, up to ${r.rounds} repair round${r.rounds === 1 ? "" : "s"}. Dispatch both now with subagent under these names, each task with the line "Thread: ${r.thread}". Their two results come when the thread closes; do not relay between them. board_read thread ${r.thread} shows the posts.`;
-					return { content: [{ type: "text" as const, text }], details: { thread: r.thread, worker: r.worker, reviewer: r.reviewer, rounds: r.rounds } };
+					return { content: [{ type: "text" as const, text }], details: { thread: r.thread, worker: r.worker, reviewer: r.reviewer, rounds: r.rounds, ...(r.item ? { item: r.item } : {}) } };
 				},
 			});
 		},

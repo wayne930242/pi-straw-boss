@@ -14,6 +14,7 @@ import type { Slot } from "./record.ts";
 import { addCardWait, cut, iso, MEM, readMemory, resolveWait, updateMemory } from "./towermemory.ts";
 import { ensureDir, towerDir, writeDurable } from "./towerstore.ts";
 import { handleOf } from "./unitstop.ts";
+import { noteLedger } from "./ledger.ts";
 import { type Card, CARD, type Delivery, type Raiser } from "./waitcard.ts";
 
 // The wait router (docs/specs/2026-11-21-box-mac-waits.md §2): one ledger per workspace (`tower/<ws>/linkwaits.json`) of the link waits between this computer and its teammates' devices, both ways. A wait is the record; a
@@ -174,15 +175,24 @@ const excerptOf = (text: string) => clean(text.replace(/^\[waits on you: [^\]\n]
 
 export function createLinkWaits(d: WaitsDeps) {
 	const words = () => WORDS[d.locale()];
-	/** One change of a workspace's ledger, read and written whole; the router is the only writer. A file it cannot read is never written over. */
+	/**
+	 * One change of a workspace's ledger, read and written whole; the router is the only writer. A file it cannot read is never written over. Every change goes through here, so here the event ledger (ledger.ts) hears a wait
+	 * opened (`link_wait_open`) and one that closed (`link_wait_done`), with the raiser of an out wait or the main that holds an in wait.
+	 */
 	const change = <T>(ws: string, fn: (l: Ledger) => T): T => {
 		const { ledger, problem } = loadWaits(d.slot, ws);
 		if (problem) {
 			d.log("link-wait-ledger-unreadable", { ws, problem });
 			throw new Error(problem);
 		}
+		const was = new Map(ledger.entries.map((w) => [w.n, isOpen(w)]));
 		const value = fn(ledger);
 		writeWaits(d.slot, ws, ledger);
+		for (const w of ledger.entries) {
+			const open = was.get(w.n), session = w.dir === "out" ? w.raiser?.id : (w.claimedBy ?? w.toldTo?.[0])?.id;
+			if (open === undefined) noteLedger(d.slot.stateDir, { kind: "link_wait_open", id: `L${w.n}`, session, workspace: ws }, d.now());
+			if (open !== false && !isOpen(w)) noteLedger(d.slot.stateDir, { kind: "link_wait_done", id: `L${w.n}`, session, workspace: ws }, d.now());
+		}
 		return value;
 	};
 	/**

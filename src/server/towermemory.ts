@@ -11,6 +11,7 @@ import { ageOf } from "./towerbrief.ts";
 import { ensureDir, towerDir, towersDir, writeDurable } from "./towerstore.ts";
 import { secretDir } from "./record.ts";
 import { BOSS_ONLY_KINDS } from "./delegate.ts";
+import { type AnsweredBy, noteLedger } from "./ledger.ts";
 
 // The tower's memory (docs/specs/2026-10-26-sb-backend.md, Tower memory): `tower/<workspace id>/memory.json`, mode 600, written by rename. It holds the boss's standing instructions and decisions and the waits the tower keeps.
 // Standing and decision text is the boss's: typed by the boss (the GUI, or `/boss memory` in pi), or a run's proposal that the boss confirmed there. A run can only PROPOSE one (or the retiring of one): a proposal
@@ -122,14 +123,15 @@ export function loadMemory(slot: Slot, workspace: string): { memory: Memory; pro
 
 /**
  * Reads, sweeps, applies `change`, and writes the file with the rev one higher, in one synchronous step (no other write can come between). A `rev` the file has moved past is refused (code `rev`, the current
- * memory on the error), and so is a change that throws: nothing is written then. An unreadable file is never written over.
+ * memory on the error), and so is a change that throws: nothing is written then. An unreadable file is never written over. Every write of the waits goes through here, so here the ledger (ledger.ts) hears what changed in
+ * them: `by` names the door of an answer (a press names its own; an answer with none is a message the tower took).
  */
-export function updateMemory<T>(slot: Slot, workspace: string, now: number, change: (memory: Memory) => T, rev?: number): { value: T; memory: Memory } {
+export function updateMemory<T>(slot: Slot, workspace: string, now: number, change: (memory: Memory) => T, rev?: number, by: AnsweredBy = "tower"): { value: T; memory: Memory } {
 	const { memory, problem } = loadMemory(slot, workspace);
 	if (problem) throw new Error(problem);
 	if (rev !== undefined && rev !== memory.rev) throw Object.assign(new Error("The memory changed since you read it"), { code: "rev", memory });
 	sweep(memory, now);
-	const before = JSON.stringify(memory);
+	const before = JSON.stringify(memory), was = marks(memory);
 	const value = change(memory);
 	// A change that left everything as it was (the same text kept twice, the same proposal made again) writes nothing.
 	if (JSON.stringify(memory) === before) return { value, memory };
@@ -137,7 +139,25 @@ export function updateMemory<T>(slot: Slot, workspace: string, now: number, chan
 	secretDir(towersDir(slot));
 	ensureDir(towerDir(slot, workspace));
 	writeDurable(fileOf(slot, workspace), memory);
+	noteWaits(slot, workspace, now, was, memory, by);
 	return { value, memory };
+}
+/** What the ledger compares across a write: each wait's state, last press, park, and return. */
+const marks = (m: Memory) => new Map(m.entries.filter((e) => e.kind === "wait").map((e) => [e.id, { state: e.state, press: e.press?.at, parked: e.parked === true, returned: e.returned }]));
+/**
+ * The ledger's wait events of one write: `wait_raised` for a new wait, `wait_parked` when auto mode parked it, `wait_answered` for a press (a secret card's first step is none) or an open wait that became answered, and
+ * `wait_returned` when auto mode's end gave it back. The session is a card's raiser (a teammate device's card names none), or the session an agent wait is on.
+ */
+function noteWaits(slot: Slot, workspace: string, now: number, was: ReturnType<typeof marks>, m: Memory, by: AnsweredBy): void {
+	for (const e of m.entries) {
+		if (e.kind !== "wait") continue;
+		const old = was.get(e.id), from = e.card?.from?.id, session = from && !from.startsWith("link:") ? from : (e.on?.id ?? null);
+		const note = (kind: "wait_raised" | "wait_parked" | "wait_answered" | "wait_returned") => noteLedger(slot.stateDir, { kind, id: e.id, session, workspace, ...(kind === "wait_answered" ? { by } : {}) }, now);
+		if (!old) note("wait_raised");
+		if (e.parked && !old?.parked) note("wait_parked");
+		if (old && ((e.press && e.press.at !== old.press && e.press.act !== "secret") || (old.state === "open" && e.state === "answered"))) note("wait_answered");
+		if (e.returned && !old?.returned) note("wait_returned");
+	}
 }
 
 // --- the rules ---------------------------------------------------------------------------------------------------------------------------------------------------------

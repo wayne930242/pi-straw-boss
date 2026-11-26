@@ -1,12 +1,13 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { childEnded, tieChild, tieQuery } from "./childtie.ts";
+import { ledgerSink, noteLedger } from "./ledger.ts";
 import type { Slot } from "./record.ts";
 import type { Reply, Request } from "./socket.ts";
 import { createThreads, type ThreadsDeps, type Threads } from "./threads.ts";
 
 // The server's side of the review threads (docs/specs/2026-11-23-lite-b2-d-e-f.md §2): the control-socket commands, their requests checked, and the threads built for the server. Kept out of main.ts, which carries a line budget.
-//   main side:  `thread-pair {owner, worker, reviewer, rounds?}`, `thread-read {owner, thread}`, `thread-list {owner}`
+//   main side:  `thread-pair {owner, worker, reviewer, rounds?, item?}`, `thread-read {owner, thread}`, `thread-list {owner}`
 //   child side: `thread-member`, `thread-post {thread, to, tag, text, refs?}`, `thread-wait {thread, since?}`, each with the child's tie {session, child, activityFile} (childtie.ts)
 // The owner a main sends is its own session id: the socket cannot check it, and a child's tie decides which threads it may speak on.
 
@@ -26,10 +27,11 @@ export function threadReply(threads: Threads | undefined, request: Request, sess
 			const thread = text(request.thread, 40);
 			return thread ? Promise.resolve(threads.read(owner, thread)) : no("thread is T<n> or <owner8>/T<n>");
 		}
-		const worker = text(request.worker, 200), reviewer = text(request.reviewer, 200), rounds = request.rounds;
+		const worker = text(request.worker, 200), reviewer = text(request.reviewer, 200), rounds = request.rounds, item = request.item;
 		if (!worker || !reviewer) return no("thread-pair needs worker and reviewer");
 		if (rounds !== undefined && typeof rounds !== "number") return no("rounds is 1 to 3");
-		return Promise.resolve(threads.pair({ owner, worker, reviewer, ...(rounds !== undefined ? { rounds } : {}) }));
+		if (item !== undefined && typeof item !== "string") return no("item is a todo uid or <session8>#<id>");
+		return Promise.resolve(threads.pair({ owner, worker, reviewer, ...(rounds !== undefined ? { rounds } : {}), ...(item !== undefined ? { item } : {}) }));
 	}
 	const q = tieQuery(request);
 	if (!q) return no(`${request.cmd} needs session, child, and activityFile`);
@@ -49,10 +51,14 @@ export interface StartThreads {
 	/** The seams of a test: the hold's length and the timer. */
 	over?: Partial<Pick<ThreadsDeps, "holdMs" | "timer">>;
 }
-/** The threads of this server, in `threads/` of its own folder, and pi's sessions folder the children's ties are read in. Its timers stop with the server. */
+/**
+ * The threads of this server, in `threads/` of its own folder, and pi's sessions folder the children's ties are read in. Its timers stop with the server. Their events go to the ledger of the state folder (ledger.ts), and so does
+ * every ledger write of this process that names no warning of its own: a write that fails is logged once.
+ */
 export function startThreads(o: StartThreads): { threads: Threads; sessionsDir: string } {
 	const timer = o.over?.timer ?? ((ms: number, fn: () => void) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); });
-	const threads = createThreads({ dir: join(o.slot.dir, "threads"), now: o.now, timer, ended: childEnded, log: o.log, ...(o.over?.holdMs !== undefined ? { holdMs: o.over.holdMs } : {}) });
+	ledgerSink.warn = (text) => o.log("ledger-unwritable", { text });
+	const threads = createThreads({ dir: join(o.slot.dir, "threads"), now: o.now, timer, ended: childEnded, log: o.log, note: (e) => noteLedger(o.slot.stateDir, e, o.now()), ...(o.over?.holdMs !== undefined ? { holdMs: o.over.holdMs } : {}) });
 	o.stops.push(threads.start());
 	return { threads, sessionsDir: join(o.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "sessions") };
 }

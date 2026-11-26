@@ -83,8 +83,8 @@ export function towerPanel(towers: () => Towers | undefined, run?: HerdrRun): { 
 			return { label: (await directLine(t, run, to, text, door)).label };
 		}),
 		conversation: (workspace, what) => asked((t) => (what === "leave" ? t.runs.leave(at(t, workspace)) : t.runs.fresh(at(t, workspace)))),
-		// The GUI's route is the one door that is the page; the control socket's `tower-memory` says which of pi's, the prompt's, or a run pane's it is (main.ts).
-		memory: (workspace, json) => towers()!.memory(workspace, json, "gui"),
+		// The GUI's route is the one door that is the page (a paired device's, `phone`); the control socket's `tower-memory` says which of pi's, the prompt's, or a run pane's it is (main.ts).
+		memory: (workspace, json, remote) => towers()!.memory(workspace, json, remote ? "phone" : "gui"),
 		act: (workspace, what, id) => asked((t) => ((ws) => (what === "retry" ? t.runs.retry(ws) : what === "deliver" ? t.runs.deliverAgain(ws, id!) : t.runs.dropParked(ws, id!), {}))(at(t, workspace))),
 	};
 }

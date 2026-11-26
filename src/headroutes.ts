@@ -56,7 +56,7 @@ export async function headRoutes(tower: TowerPanel | undefined, [scope, key = ""
 	}
 	if (key === "dialog" && !action) return runRoute(tower, HEAD_KEY, "dialog", json, far);
 	if (action) return no(404, "not_found", "No such action.");
-	if (key === "memory") return tower.memory ? tower.memory(HEAD_KEY, json) : no(404, "not_found", "No such action.");
+	if (key === "memory") return tower.memory ? tower.memory(HEAD_KEY, json, far) : no(404, "not_found", "No such action.");
 	if (key === "close") return tower.close ? done(await tower.close(HEAD_KEY), { status: 200, body: {} }) : no(404, "not_found", "No such action.");
 	if (key === "leave" || key === "new") {
 		if (!tower.conversation) return no(404, "not_found", "No such action.");

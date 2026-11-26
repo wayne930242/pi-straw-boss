@@ -5,17 +5,16 @@ import { armWake, idleClock as clockOf, idleWake, idleWakes } from "./idlewake.t
 import { todosOf } from "./items.ts";
 import { NUDGE_TEXT, WORKER_NUDGE, WRAP_DESCRIPTION } from "./moments.ts";
 import type { Reach } from "./reach.ts";
+import { noteLedger } from "./server/ledger.ts";
 import type { Kit } from "./state.ts";
 import { createProbe, type ProbeDeps } from "./stillruns.ts";
 import { snapshotOfBranch } from "./todo.ts";
 
 // Idle wrap-up (docs/specs/2026-11-25-idle-wrap-up.md, part 1; boss 2026-11-25): a coordinator or integrator main idle 30 minutes is asked once whether its work is done (the nudge, an idle wake of idlewake.ts),
 // and `boss_wrap` asks the boss in this pane before it reports, clears the board, and closes the session as /boss close does. No nudge and no wrap-up while auto mode is on: the boss is away.
-// A standing main has no end, so no nudge and no boss_wrap: its own wake (idlewake.ts `armWake`) tells it to re-arm what it minds.
+// A standing main has no end, so no nudge and no boss_wrap: its own wake (idlewake.ts `armWake`) tells it to re-arm what it minds. Each call is a `wrap` event of the ledger (server/ledger.ts): wrapped, auto, or refused.
 
-export const IDLE_MS = 30 * 60_000, WORKER_IDLE_MS = 15 * 60_000;
-const SUMMARY_MAX = 800;
-export const WRAP_MESSAGE = "straw-boss-wrap";
+export const IDLE_MS = 30 * 60_000, WORKER_IDLE_MS = 15 * 60_000, SUMMARY_MAX = 800, WRAP_MESSAGE = "straw-boss-wrap";
 
 /** The nudge's idle clock (idlewake.ts). */
 export const idleClock = (now: () => number, idleMs = IDLE_MS) => clockOf(now, idleMs);
@@ -31,8 +30,9 @@ export interface WrapDeps extends ProbeDeps {
 }
 
 export function createWrapUp(kit: Kit, d: WrapDeps) {
-	const { pi, cfg, s, me, role } = kit;
-	const name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
+	const { pi, cfg, s, me, role } = kit, name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
+	const note = (why: string) => noteLedger(kit.guiDir, { kind: "wrap", id: me(), session: me(), workspace: s.at?.workspaceId, why }, cfg.now(), (text) => kit.tell(text, "warning"));
+	const noted = <T extends { details: unknown }>(how: Promise<T>) => how.then((r) => { const o = r.details as { wrapped?: boolean; auto?: boolean }; note(o.wrapped ? "wrapped" : o.auto ? "auto" : "refused"); return r; }, (error: unknown) => { note(s.autoOn() ? "auto" : "refused"); throw error; });
 	const probe = createProbe({ cfg, s, me }, d); // what still runs for this session (stillruns.ts)
 	const nudge = idleWake(cfg.now, { idleMs: IDLE_MS, eligible: () => d.duty() === "coordinator" || d.duty() === "integrator", ready: async () => !(await probe.nudge()).length, customType: WRAP_MESSAGE, text: NUDGE_TEXT, underAuto: false });
 	const worker = idleWake(cfg.now, { idleMs: WORKER_IDLE_MS, eligible: () => d.duty() === "worker", ready: async () => !(await probe.strict()).length, customType: WRAP_MESSAGE, text: WORKER_NUDGE, underAuto: true, forLink: true });
@@ -80,7 +80,7 @@ export function createWrapUp(kit: Kit, d: WrapDeps) {
 			pi.registerTool({
 				name: "boss_wrap", label: "boss_wrap", description: WRAP_DESCRIPTION,
 				parameters: Type.Object({ summary: Type.String({ description: `What this session finished: one paragraph, at most ${SUMMARY_MAX} characters.` }) }),
-				execute: async (_id, { summary }, _signal, _update, c) => {
+				execute: (_id, { summary }, _signal, _update, c) => noted((async () => {
 					const text = summary.replace(/\s+/g, " ").trim(), refused = refusal(text, c);
 					if (refused) throw new Error(refused);
 					const why = await notReady(c);
@@ -91,7 +91,7 @@ export function createWrapUp(kit: Kit, d: WrapDeps) {
 					const since = await notReady(c);
 					if (since.length) return reply(`The boss said yes, but while he was asked: ${since.join("; ")}. Nothing closed and nothing was sent: handle them, then call boss_wrap again.`, { wrapped: false });
 					return finish(text);
-				},
+				})()),
 			});
 		},
 	};

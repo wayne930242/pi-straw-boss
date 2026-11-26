@@ -10,6 +10,7 @@ import type { Kit, Scope, SendResult } from "./state.ts";
 import { inside } from "./link/routing.ts";
 import { type Ctx, makeCtx } from "./server/client.ts";
 import { slotOf } from "./server/record.ts";
+import { noteLedger } from "./server/ledger.ts";
 import { ensureTowerVia, STOPPED, type TowerAnswer } from "./server/towerclient.ts";
 
 export { STOPPED };
@@ -18,9 +19,7 @@ import { serverCli, VERSION } from "./server/version.ts";
 import { ensureTower } from "./towertab.ts";
 import { trustDir } from "./trust/files.ts";
 
-const OUTBOX = "intercom:outbox-request";
-const OUTBOX_RESULT = "intercom:outbox-result";
-const SEND_MS = 30_000;
+const OUTBOX = "intercom:outbox-request", OUTBOX_RESULT = "intercom:outbox-result", SEND_MS = 30_000;
 /** When a failed send to a tower identity is tried again, counted from the first failure, and how often the identity is looked for meanwhile. */
 const TOWER_RETRY_AT = [2000, 5000, 10_000, 20_000], TOWER_POLL_MS = 500;
 
@@ -186,7 +185,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		return result!;
 	};
 	/**
-	 * `why` (D19) is milestone, shared, or blocked; a caller that gives none is sent as `unspecified`, which the tower wakes for as it does for `blocked`. A word outside the set is refused before anything is sent.
+	 * `why` (D19) is milestone, shared, or blocked; a caller that gives none is sent as `unspecified`, which the tower wakes for as it does for `blocked`. A word outside the set is refused before anything is sent. A call the tower took is a `call_tower` event of the ledger (server/ledger.ts), its id intercom's request id.
 	 */
 	const callTower = async (message: string, workspace: string | undefined, reply = true, why?: string, extra: Pick<Stamp, "waitsOn" | "wait"> = {}) => {
 		if (why !== undefined && !(WHYS as readonly string[]).includes(why)) throw new Error(`why is ${WHYS.join(", ")}, not ${JSON.stringify(why)}`);
@@ -194,6 +193,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 		const tower = await openTower(workspace);
 		const result = await post(tower.id, message, "call_tower", "tower", reply, undefined, reason, extra);
 		if (result.status !== "sent") throw new Error(`The tower of ${tower.target.label} did not take the message: ${result.status} ${result.code ?? ""} ${result.detail ?? ""}`.trim());
+		noteLedger(guiDir, { kind: "call_tower", id: result.requestId ?? tower.id, session: me(), workspace: s.at?.workspaceId, why: reason }, cfg.now(), (text) => tell(text, "warning"));
 		const via = tower.routed ? ` (${tower.routed.label} is a sub workspace)` : "";
 		const text = `Sent to the tower of ${tower.target.label}${via}${tower.opened ? " (opened it)" : ""}. ${reply ? "It replies through intercom." : "It is told no reply is expected."}`;
 		return { text, details: { workspace: tower.target.workspace_id, towerId: tower.id, opened: tower.opened, status: result.status } };

@@ -2,6 +2,7 @@ import { clean } from "../board.ts";
 import { ACT_ON_IT } from "../moments.ts";
 import type { Locale } from "../towerprompt/messages.ts";
 import { UNATTENDED } from "./autoops.ts";
+import type { AnsweredBy } from "./ledger.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
 import { cut, type Entry, findWait, hhmm, iso, MEM, type Memory, memoryView, Refused, updateMemory } from "./towermemory.ts";
@@ -19,8 +20,10 @@ export function deliveryOf(status: string | undefined): Delivery {
 	return status === "queued" ? "queued" : "failed";
 }
 
-/** The door a press came in by, as the log records it (never the text): pi's `/boss wait` or `/boss memory`, the tower prompt's picker, the pane of a tower run, the GUI, or the dialog sb drew for an agent's `boss_wait_ask` (waitask.ts). */
-export type PressDoor = "pi" | "prompt" | "run-pane" | "gui" | "ask";
+/** The door a press came in by, as the log records it (never the text): pi's `/boss wait` or `/boss memory`, the tower prompt's picker, the pane of a tower run, the GUI (a paired phone's, `phone`), or the dialog sb drew for an agent's `boss_wait_ask` (waitask.ts). */
+export type PressDoor = "pi" | "prompt" | "run-pane" | "gui" | "phone" | "ask";
+/** The door as the ledger's `wait_answered` names it: the page, a phone, or else a terminal. */
+const byOf = (via: PressDoor): AnsweredBy => (via === "gui" || via === "phone" ? via : "terminal");
 /** The doors a control request may name (main.ts): the GUI's is its own route's, never a client's word. */
 export const doorOf = (via: unknown): PressDoor => (via === "prompt" || via === "run-pane" || via === "ask" ? via : "pi");
 /**
@@ -184,7 +187,7 @@ export async function pressRequest(d: PressDeps, workspace: string, json: Record
 	let plan: Plan;
 	const now = d.now();
 	try {
-		plan = updateMemory(d.slot, workspace, now, (m) => pressWait(m, now, json, d.locale)).value;
+		plan = updateMemory(d.slot, workspace, now, (m) => pressWait(m, now, json, d.locale), undefined, byOf(via)).value;
 	} catch (cause) {
 		return failure(cause);
 	}

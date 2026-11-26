@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeName, type Tie } from "./childtie.ts";
+import { ITEM, type LedgerEvent } from "./ledger.ts";
 import type { Reply } from "./socket.ts";
 
 // Review threads (docs/specs/2026-11-23-lite-b2-d-e-f.md §2; boss decisions d_where=sb, d_attach=main_pairs, d_rounds=per_thread): a main pairs a worker and a reviewer with `boss_pair` before it dispatches them, and the two children talk on
@@ -11,8 +12,9 @@ import type { Reply } from "./socket.ts";
 // later post is refused. No post for 2 hours, a member whose run ended (its activity file says done or is gone), or 24 hours since the pair close it `blocked` with the reason. `main` may be named only with `done` or `blocked`. Mentions
 // route: a member's wait returns only the posts that name it.
 //
-// Storage: `<server folder>/threads/<owner8>/T<n>.jsonl` (the posts, append-only, mode 600) and `T<n>.json` (owner, members, rounds, the members' activity files). The posts are the truth: the round count, the last post and the close
-// are read back from them, so a server restart keeps every thread as it was. A closed thread's files go 7 days after its close.
+// Storage: `<server folder>/threads/<owner8>/T<n>.jsonl` (the posts, append-only, mode 600) and `T<n>.json` (owner, members, rounds, the members' activity files, the work item `boss_pair` named, and `closed` and `closedAs` once it
+// closed). The posts are the truth: the round count, the last post and the close are read back from them, so a server restart keeps every thread as it was. A closed thread's files go 7 days after its close.
+// The opening and the close are events of the ledger (ledger.ts: `thread_open`, `thread_close` with `done`, `blocked` (a member's, or the round cap), or `abandoned` (the server's close of a quiet, old, or orphaned thread)).
 
 export const ROUNDS = 3, IDLE_MS = 2 * 3_600_000, TTL_MS = 24 * 3_600_000, HOLD_MS = 45_000, SWEEP_MS = 60_000, KEEP_MS = 7 * 24 * 3_600_000, MAX_TEXT = 4000, MAX_POSTS = 200, PER_OWNER = 8, READ_BYTES = 16 * 1024;
 export const MEMBERS = ["worker", "reviewer"] as const;
@@ -22,7 +24,8 @@ export type Tag = (typeof TAGS)[number];
 export type To = Member | "main";
 export interface Post { n: number; at: number; from: Member | "sb"; to: To[]; tag: Tag; text: string; refs?: number[] }
 export interface Closed { by: Member | "sb"; tag: "done" | "blocked"; at: number; time: number; reason?: string }
-interface Meta { id: string; owner: string; worker: string; reviewer: string; rounds: number; created: number; seen: Partial<Record<Member, string>> }
+export type ClosedAs = "done" | "blocked" | "abandoned";
+interface Meta { id: string; owner: string; worker: string; reviewer: string; rounds: number; created: number; seen: Partial<Record<Member, string>>; item?: string; closed?: number; closedAs?: ClosedAs }
 interface Thread extends Meta { folder: string; posts: Post[]; waits: Set<Waiter> }
 interface Waiter { as: Member; since: number; done(reply: Reply): void }
 export interface PostQuery { thread: string; to: unknown; tag: unknown; text: unknown; refs?: unknown }
@@ -37,6 +40,8 @@ export interface ThreadsDeps {
 	ended(activityFile: string): boolean;
 	holdMs?: number;
 	log?(event: string, facts: Record<string, string | number | boolean>): void;
+	/** An event of the ledger (ledger.ts); threadsops.ts writes it. */
+	note?(e: LedgerEvent): void;
 }
 
 const no = (error: string): Reply => ({ ok: false, error });
@@ -55,10 +60,10 @@ export function createThreads(d: ThreadsDeps) {
 	};
 	const fixes = (t: Thread) => t.posts.filter((p) => p.tag === "fix").length;
 	const lastAt = (t: Thread) => t.posts.at(-1)?.at ?? t.created;
-	const summary = (t: Thread) => ({ thread: t.id, ref: key(t.folder, t.id), worker: t.worker, reviewer: t.reviewer, rounds: t.rounds, fixes: fixes(t), posts: t.posts.length, created: t.created, ...(closedOf(t) ? { closed: closedOf(t) } : { open: true }) });
+	const summary = (t: Thread) => ({ thread: t.id, ref: key(t.folder, t.id), worker: t.worker, reviewer: t.reviewer, rounds: t.rounds, fixes: fixes(t), posts: t.posts.length, created: t.created, ...(t.item ? { item: t.item } : {}), ...(closedOf(t) ? { closed: closedOf(t) } : { open: true }) });
 	const files = (t: Pick<Thread, "folder" | "id">) => ({ meta: join(d.dir, t.folder, `${t.id}.json`), posts: join(d.dir, t.folder, `${t.id}.jsonl`) });
 	const saveMeta = (t: Thread) => {
-		const { meta } = files(t), body: Meta = { id: t.id, owner: t.owner, worker: t.worker, reviewer: t.reviewer, rounds: t.rounds, created: t.created, seen: t.seen };
+		const { meta } = files(t), body: Meta = { id: t.id, owner: t.owner, worker: t.worker, reviewer: t.reviewer, rounds: t.rounds, created: t.created, seen: t.seen, ...(t.item ? { item: t.item } : {}), ...(t.closed !== undefined ? { closed: t.closed, closedAs: t.closedAs } : {}) };
 		mkdirSync(join(d.dir, t.folder), { recursive: true, mode: 0o700 });
 		writeFileSync(`${meta}.tmp`, JSON.stringify({ version: 1, ...body }), { mode: 0o600 });
 		renameSync(`${meta}.tmp`, meta);
@@ -85,11 +90,18 @@ export function createThreads(d: ThreadsDeps) {
 		t.posts.push(full);
 		return full;
 	};
-	/** The server's own close: one `blocked` post from sb with the reason, to both members (and the main's record). */
-	const close = (t: Thread, reason: string) => {
+	/** The close kept in `T<n>.json` and told to the ledger; the posts stay the truth when the write fails. */
+	const closing = (t: Thread, as: ClosedAs) => {
+		Object.assign(t, { closed: d.now(), closedAs: as });
+		try { saveMeta(t); } catch (error) { d.log?.("thread-save-failed", { thread: t.id, error: (error as Error).message }); }
+		d.note?.({ kind: "thread_close", id: t.id, session: t.owner, why: as, ...(t.item ? { item: t.item } : {}) });
+	};
+	/** The server's own close: one `blocked` post from sb with the reason, to both members (and the main's record). `blocked` for the round cap, else `abandoned`. */
+	const close = (t: Thread, reason: string, as: ClosedAs = "abandoned") => {
 		if (closedOf(t)) return;
 		append(t, { from: "sb", to: ["worker", "reviewer", "main"], tag: "blocked", text: reason });
 		d.log?.("thread-closed", { thread: t.id, owner: t.owner.slice(0, 8), by: "sb", reason });
+		closing(t, as);
 		wake(t);
 	};
 	/** Remembers the activity file a member speaks with, so its end is seen. */
@@ -134,9 +146,10 @@ export function createThreads(d: ThreadsDeps) {
 
 	const api = {
 		/** A main's `boss_pair`: thread T<n> of `owner` with the two names as pi-herdr-agents will write them. */
-		pair(q: { owner: string; worker: string; reviewer: string; rounds?: number }): Reply {
+		pair(q: { owner: string; worker: string; reviewer: string; rounds?: number; item?: string }): Reply {
 			const worker = safeName(q.worker), reviewer = safeName(q.reviewer), rounds = q.rounds ?? ROUNDS;
 			if (!worker || !reviewer) return no("worker and reviewer are the names you give subagent: letters, digits, spaces, or hyphens");
+			if (q.item !== undefined && !ITEM.test(q.item)) return no("item is a todo uid (t_ and 10 letters or digits) or <session8>#<id>");
 			if (worker === reviewer) return no(`worker and reviewer need two names (both read ${worker})`);
 			if (!Number.isInteger(rounds) || rounds < 1 || rounds > ROUNDS) return no(`rounds is 1 to ${ROUNDS}`);
 			const folder = folderOf(q.owner), mine = [...all.values()].filter((t) => t.owner === q.owner && !closedOf(t));
@@ -144,11 +157,12 @@ export function createThreads(d: ThreadsDeps) {
 			const taken = mine.find((t) => memberOf(t, worker) || memberOf(t, reviewer));
 			if (taken) return no(`${memberOf(taken, worker) ? worker : reviewer} is a member of open thread ${taken.id}: give each pair new names`);
 			const n = 1 + Math.max(0, ...[...all.values()].filter((t) => t.folder === folder).map((t) => Number(t.id.slice(1))));
-			const t: Thread = { id: `T${n}`, owner: q.owner, worker, reviewer, rounds, created: d.now(), seen: {}, folder, posts: [], waits: new Set() };
+			const t: Thread = { id: `T${n}`, owner: q.owner, worker, reviewer, rounds, created: d.now(), seen: {}, ...(q.item ? { item: q.item } : {}), folder, posts: [], waits: new Set() };
 			try { saveMeta(t); } catch (error) { return no(`the thread could not be written: ${(error as Error).message}`); }
 			all.set(key(folder, t.id), t);
 			d.log?.("thread-paired", { thread: t.id, owner: q.owner.slice(0, 8), rounds });
-			return { ok: true, thread: t.id, worker, reviewer, rounds };
+			d.note?.({ kind: "thread_open", id: t.id, session: q.owner, ...(q.item ? { item: q.item } : {}) });
+			return { ok: true, thread: t.id, worker, reviewer, rounds, ...(q.item ? { item: q.item } : {}) };
 		},
 		/** A child's first run: the open thread of its dispatcher that names it, if any. */
 		member(tie: Tie): Reply {
@@ -175,11 +189,11 @@ export function createThreads(d: ThreadsDeps) {
 			if (tag === "review" && as !== "worker") return no("only the worker posts review; the reviewer answers with fix or done");
 			if (t.posts.length >= MAX_POSTS - 1 && tag !== "done" && tag !== "blocked") return no(`${t.id} holds ${t.posts.length} posts: post done or blocked`);
 			if (tag === "fix" && fixes(t) >= t.rounds) {
-				close(t, `${t.rounds} repair round${t.rounds > 1 ? "s" : ""} used`);
+				close(t, `${t.rounds} repair round${t.rounds > 1 ? "s" : ""} used`, "blocked");
 				return no(`${t.id} allows ${t.rounds} repair round${t.rounds > 1 ? "s" : ""} and all are used: the fix is refused, and the thread is closed blocked. Write your final report with the open findings and end`);
 			}
 			const post = append(t, { from: as, to: to as To[], tag, text: q.text, ...(refs?.length ? { refs: refs as number[] } : {}) });
-			if (tag === "done" || tag === "blocked") d.log?.("thread-closed", { thread: t.id, owner: t.owner.slice(0, 8), by: as, tag });
+			if (tag === "done" || tag === "blocked") (d.log?.("thread-closed", { thread: t.id, owner: t.owner.slice(0, 8), by: as, tag }), closing(t, tag));
 			wake(t);
 			const after = closedOf(t);
 			return { ok: true, thread: t.id, n: post.n, ...(after ? { closed: after } : {}), ...(tag === "fix" ? { round: fixes(t), rounds: t.rounds } : {}) };
