@@ -430,7 +430,9 @@ html[data-view="raven"] { --rk-glass: rgba(10, 8, 14, 0.6); --rk-glass-sheet: rg
 /* The head page's comms glass is thinner (boss, round 2, 2026-11-09: the castle was not to be seen behind it); the timeline under it and the other panels keep the full glass. Its comms is one panel over the whole picture, so at 0.72 and 8 px the castle was mush; here the fill is 0.18 and the blur 2 px (a silhouette and the lit windows read). What stands bare on it takes its own darker backing instead (--rk-backing, 0.8, no blur: the divider and the times, a bubble, a notice, a tool card, the notes and the queue under the log); a message's block (--panel) and the header, the composer and the action row (--panel, 0.94) already had theirs. The 4.5 : 1 of the text on the backing and on the thin glass is in tests/raven-contrast.test.ts. */
 html[data-view="raven"]:has(#stage[data-view="head"]) .comms-in { --rk-glass: rgba(10, 8, 14, 0.18); --rk-blur: 2px; }
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
-	html[data-view="raven"] :is(.base, .comms-in, .panel, .set-group) { background: var(--rk-glass); -webkit-backdrop-filter: blur(var(--rk-blur)); backdrop-filter: blur(var(--rk-blur)); }
+	html[data-view="raven"] :is(.base, .comms-in, .panel, .set-group) { background: var(--rk-glass); }
+	/* A backdrop filter captures a fixed child. Keep the glass except while the picker needs the viewport. */
+	html[data-view="raven"] :is(.base, .panel, .set-group), html[data-view="raven"] .comms-in:where(:not(:has(> .target-veil:not([hidden])))) { -webkit-backdrop-filter: blur(var(--rk-blur)); backdrop-filter: blur(var(--rk-blur)); }
 	html[data-view="raven"]:has(#stage[data-view="session"] #session-view[data-role]) .comms-in { background: var(--rk-glass); }
 	html[data-view="raven"] .base.ally { background-image: linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 42%); }
 	html[data-view="raven"] dialog.sheet:not(.yard) { background-color: var(--rk-glass-sheet); -webkit-backdrop-filter: blur(var(--rk-blur)); backdrop-filter: blur(var(--rk-blur)); }
