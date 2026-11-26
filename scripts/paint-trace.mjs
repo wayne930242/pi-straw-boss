@@ -12,7 +12,9 @@ assert(['storybook', 'raven', 'geek'].includes(theme), 'expected a device theme'
 const url = new URL(base);
 url.searchParams.set('phase', 'day');
 const dir = resolve(output), session = `tc-paint-${process.pid}-${Date.now()}`;
-const flags = '--disable-gpu,--disable-skia-runtime-opts,--force-color-profile=srgb';
+// A moving layer on a page with links can wake Chrome's navigation predictor at
+// 60 Hz without painting. Exclude its link sampling for both faces (§9).
+const flags = '--disable-gpu,--disable-skia-runtime-opts,--force-color-profile=srgb,--disable-features=NavigationPredictor';
 const ab = (args, input) => execFileSync('agent-browser', ['--session', session, ...args], { encoding: 'utf8', input });
 const evaluate = code => JSON.parse(ab(['--json', 'eval', '--stdin'], code)).data.result;
 const json = (name, value) => writeFileSync(join(dir, `${name}.json`), JSON.stringify(value, null, 2));
@@ -103,6 +105,7 @@ function measure(view) {
 mkdirSync(resolve(dir, '..'), { recursive: true });
 mkdirSync(dir); // Don't overwrite an earlier pair.
 try {
+  console.log(`Chrome flags (both faces): ${flags}`);
   ab(['--args', flags, 'open', url.href]);
   ab(['set', 'viewport', '1440', '900', '1']);
   const standard = measure('standard'), candidate = measure(theme);
