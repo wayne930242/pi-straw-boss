@@ -263,7 +263,7 @@ test("ward-review F003: only a live main of the server's reading wards, only a p
 	assert.match(String((await watchReply(w.routes, { cmd: "watch-add", session: MAIN, workspace: "w1", key: "ward:%7" }, () => true)!).error), /set with sb_ward/);
 	assert.equal((await w.add()).ok, true);
 	w.units[MAIN]!.role = "member";
-	assert.deepEqual((await w.list()).map((x) => x.ward), [{ pane: "%7" }], "no file for a session that is no main now");
+	assert.deepEqual((await w.list()).map((x) => [x.ward, (x as { newest?: unknown }).newest]), [[{ pane: "%7" }, undefined]], "no file, nor the line that names it, for a session that is no main now");
 	assert.match(String((await watchReply(w.routes, { cmd: "watch-stop", session: MAIN, key: "ward:%7" }, () => true)!).error), /only a tab's main/);
 	w.units[MAIN]!.role = "main";
 	assert.deepEqual((await w.list()).map((x) => x.ward), [{ pane: "%7", file: w.file }]);

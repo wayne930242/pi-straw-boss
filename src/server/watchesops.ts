@@ -39,7 +39,7 @@ export function watchReply(routes: WatchRoutes | undefined, request: Request, en
 	const mainOf = () => (routes.ward ? routes.ward.main(session) : "this server keeps no wards");
 	if (request.cmd === "watch-list") {
 		const list = routes.watches.list(session), hide = (list.watches as { ward?: { pane: string } }[]).some((r) => r.ward) && typeof mainOf() === "string";
-		return Promise.resolve(hide ? { ...list, watches: (list.watches as { ward?: { pane: string } }[]).map((r) => (r.ward ? { ...r, ward: { pane: r.ward.pane } } : r)) } : list);
+		return Promise.resolve(hide ? { ...list, watches: (list.watches as { ward?: { pane: string } }[]).map((r) => (r.ward ? { ...r, ward: { pane: r.ward.pane }, newest: undefined } : r)) } : list); // a ward's line names its file too
 	}
 	const key = text(request.key, 200);
 	if (!key) return no("key is 1 to 200 characters");
