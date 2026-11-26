@@ -28,7 +28,11 @@ test("a main's always-on sb tools stay within their budget, and boss_status is g
 	const a = world.agent({ id: "main-1", pane: "wA:p1", tab: "wA:t1", deps: { server: {} as never } });
 	await a.start();
 	await a.promote();
-	const tools = [...a.tools.values()].filter((t) => t.name !== "ask_user_question");
+	await a.run();
+	// What the provider receives is the active set: call_peer (tests/call-peer.test.ts) is registered for every joined session and active for a member only, so a main's figure holds 0 bytes of it.
+	const active = (t: { name: string; defaultActive?: boolean }) => (a.active ? a.active.includes(t.name) : t.defaultActive !== false);
+	const tools = [...a.tools.values()].filter((t) => t.name !== "ask_user_question" && active(t as { name: string; defaultActive?: boolean }));
+	assert.ok(!a.active?.includes("call_peer"), "a main does not carry call_peer");
 	assert.ok(!a.tools.has("boss_status"), "folded into board_read");
 	const trimmed = tools.filter((t) => t.name !== "boss_server" && t.name !== "boss_watch" && t.name !== "boss_pair" && t.name !== "boss_wrap").reduce((n, t) => n + size(t), 0);
 	assert.ok(trimmed <= 7_473, `the trimmed tools hold ${trimmed} characters (10,634 before B2)`);
