@@ -1,4 +1,7 @@
-import { capLine, clock, type DeviceCap, joinCaps, type MainFacts, type MainRow, pauseText, purgeCaps, readCaps, readDevice, readSent, roomFor, SILENT_MS, THROTTLE_MS, underFor, writeDevice, writeSent } from "../capacity.ts";
+import { capLine, clock, type DeviceCap, joinCaps, LOAD_SHARE, type MainFacts, type MainRow, pauseText, purgeCaps, readCaps, readDevice, readSent, roomFor, SILENT_MS, THROTTLE_MS, UNDER_HOLD_MS, underFor, writeDevice, writeSent } from "../capacity.ts";
+import { endOf, type HeldBy, holderName, holdOf, readHold, readIgnored, shortOf, writeHold } from "../hold.ts";
+import type { EndedHold, Hold } from "../link/holds.ts";
+import { heldRoomText, heldText, holdEndedText, holdEndedThereText, HOLDER_CAP_HINT } from "../moments.ts";
 
 // The capacity watch (docs/specs/2026-11-24-capacity.md): once a minute the sb server, with no model, joins the mains' capacity files with what runs, writes the device row, and raises the flags. A flag
 // that is entered is one event to the tower of the main's workspace and to this device's standing main (`under` and `stale` to the main itself too, unless its Herdr pane is working); the same flag of the same main (or ally device) at
@@ -16,7 +19,7 @@ export interface AllySeen {
 	team?: string; device?: string; claim?: HoldClaim; echo?: { by: string; since: number }; cap?: { points: number; budget?: number; load1: number; cores: number };
 }
 export interface HoldClaim { by: string; since: number; until?: number; ts: number; attended: boolean; level: string }
-export type CapKind = "under" | "under-30m" | "stale" | "quota" | "resumed" | "silent" | "silent-2h";
+export type CapKind = "under" | "under-30m" | "stale" | "quota" | "resumed" | "silent" | "silent-2h" | "held" | "hold-ended" | "held-room";
 /** A device still silent this long after its first notice is escalated once, for the boss (`silent-2h`): the 2 hours are sb's, not a tower's or a standing main's own timer. */
 export const SILENT_ESCALATE_MS = 2 * 3600_000;
 /** The marks of a silence in `_sent.json`, kept while it lasts (not by the 30-minute throttle): when its first notice was told, and when its escalation was. */
@@ -27,7 +30,9 @@ const UFIRST = "under-first:", UESCALATED = "under-escalated:";
 /** One event: `subject` is the main's session (none for an ally device), `workspace` its workspace, `standing` this device's standing main other than the subject, when there is one. */
 /** `tag` is part of the flag's identity: a quota's resume time, so a new pause to another time is a new flag, told inside the 30 minutes. */
 /** `main`: the subject main's own session, told too for `under` and `stale` (field, box 2 2026-11-24: notices to the standing main and the tower alone started nothing for hours). */
-export interface CapEvent { kind: CapKind; key: string; text: string; subject?: string; workspace?: string; standing?: string; main?: string; tag?: string }
+/** Device hold (docs/specs/2026-11-26-device-hold.md): `also`, the coordinator mains told too (a box's `held` and `hold-ended`); `mainOnly`, told to `main` alone (the holder's `held-room` and `hold-ended`); `mainText`, the main's copy
+ *  when it is not `text` plus `MAIN_CAP_HINT`; `held`, a `stale` of a held box, whose copies end with the held hints. */
+export interface CapEvent { kind: CapKind; key: string; text: string; subject?: string; workspace?: string; standing?: string; main?: string; tag?: string; also?: string[]; mainOnly?: true; mainText?: string; held?: true }
 export interface CapDeps {
 	/** The capacity folder (`<state dir>/capacity`). */
 	dir: string;
@@ -42,7 +47,13 @@ export interface CapDeps {
 	allies(): AllySeen[];
 	/** Delivers an event; true when someone took it. */
 	tell(e: CapEvent): Promise<boolean>;
+	/** This device's own holds of teammates' boxes and the ones that ended within the hour (link/holds.json); none without Straw Link. */
+	holds?(): { holds: Hold[]; ended: EndedHold[] };
 }
+/** The mark in `_sent.json` of a box's hold its mains were told of, kept until they are told it ended (so a restart repeats neither). */
+const HOLD_MARK = "hold:";
+const holdMark = (h: Pick<HeldBy, "device" | "since">) => `${HOLD_MARK}${h.device}@${h.since}`;
+const markHold = (k: string) => ((at) => ({ device: k.slice(HOLD_MARK.length, at), since: Number(k.slice(at + 1)) }))(k.lastIndexOf("@"));
 
 const q = (name: string) => JSON.stringify(name);
 /** A teammate device's main is named with its device. */
@@ -58,6 +69,7 @@ export function capText(kind: CapKind, d: DeviceCap, now: number, row?: MainRow,
 		case "resumed": return `capacity quota resumed · main ${q(row!.name)}${on(ally)}`;
 		case "silent": return `capacity device-silent · device ${q(ally!.label)} (${ally!.short}) · last board ${Math.floor(ally!.boardAgeMs / MIN)} min ago · ${ally!.online ? "online" : "offline"} · its last board had open work`;
 		case "silent-2h": return `capacity device-silent-2h · device ${q(ally!.label)} (${ally!.short}) · still silent 2 h after the first notice at ${clock(since ?? now, now)} · last board ${Math.floor(ally!.boardAgeMs / MIN)} min ago · ${ally!.online ? "online" : "offline"} · needs the boss`;
+		default: return kind; // the hold's events carry their own words (moments.ts)
 	}
 }
 
@@ -65,6 +77,8 @@ export function createCapWatch(d: CapDeps) {
 	// `untold`: the flags whose last try nobody took, logged once per entry while they are tried again each minute.
 	// The hold is read back from a fresh device row, so a restart neither restarts the 10 minutes nor ends an `under-30m` episode.
 	let underSince: number | undefined = readDevice(d.dir, d.now())?.under, active = new Set<string>(), untold = new Set<string>(), last: Map<string, MainRow> = new Map(), sent = readSent(d.dir);
+	/** Since when each box this device holds has had room (`held-room`), by `<team>:<device>`. */
+	const roomSince = new Map<string, number>();
 	/** Told, or held by the throttle: true. False when nobody took it, so the next look tries again. */
 	const markOf = (e: CapEvent) => `${e.kind}:${e.key}${e.tag !== undefined ? `@${e.tag}` : ""}`;
 	const send = async (e: CapEvent, now: number): Promise<boolean> => {
@@ -90,7 +104,12 @@ export function createCapWatch(d: CapDeps) {
 			const working = new Set(facts.filter((m) => m.paneStatus === "working").map((m) => m.session));
 			const standing = (subject?: string) => dev.mains.find((r) => r.standing && r.session !== subject)?.session;
 			const allies = d.allies(), silent = allies.filter((a) => a.open && (!a.online || (a.timed && a.boardAgeMs > SILENT_MS))), silentKeys = new Set(silent.map((a) => a.key));
-			const ally = (kind: CapKind, a: AllySeen, since?: number): CapEvent => ({ kind, key: a.key, text: capText(kind, dev, now, undefined, a, since), ...(standing() ? { standing: standing()! } : {}) });
+			// Device hold (docs/specs/2026-11-26-device-hold.md): this box's judge and its file first, so a session's next look reads it; the holds this device has, for the ally notices' holding main.
+			const marks = Object.keys(sent).filter((k) => k.startsWith(HOLD_MARK)), prev = readHold(d.dir, now, true), ignored = readIgnored(d.dir, now), mine = d.holds?.() ?? { holds: [], ended: [] };
+			const verdict = holdOf(allies, { unattended: d.unattended(), now, ignored, ...(marks[0] ? { was: markHold(marks[0]) } : {}) }), held = verdict.held;
+			writeHold(d.dir, { v: 1, at: now, ...(held ? { held } : {}) });
+			const holderOf = (a: AllySeen) => mine.holds.find((h) => h.device === a.device && h.team === a.team)?.session;
+			const ally = (kind: CapKind, a: AllySeen, since?: number): CapEvent => ((text, main) => ({ kind, key: a.key, text, ...(standing() ? { standing: standing()! } : {}), ...(main && kind === "silent" ? { main, mainText: `${text}${HOLDER_CAP_HINT}` } : {}) }))(capText(kind, dev, now, undefined, a, since), holderOf(a));
 			const of = (kind: CapKind, row: MainRow, since?: number): CapEvent => ({
 				kind, key: row.session, text: capText(kind, dev, now, row, undefined, since, working.has(row.session)), subject: row.session, workspace: row.workspace, ...(standing(row.session) ? { standing: standing(row.session)! } : {}),
 				...((kind === "under" || kind === "stale") && !working.has(row.session) ? { main: row.session } : {}),
@@ -98,15 +117,19 @@ export function createCapWatch(d: CapDeps) {
 			// A teammate device's paused main (its board's capacity row) is told to this device's standing main and the head tower as a local one is, its key the device's and the entry id: not the team's, so a box in two
 			// teams is told of once (T4 review F003; `key` is `<team>:<device>`, and an entry id is the device's own).
 			const allyRow = (a: AllySeen, id: string, until?: number) => ({ session: `${a.key.slice(a.key.indexOf(":") + 1)}:${id}`, name: a.mains?.find((m) => m.id === id)?.name ?? id, workspace: "", points: 0, ready: 0, open: 0, paused: until !== undefined ? { until } : {} }) as MainRow;
-			const allyOf = (kind: CapKind, a: AllySeen, row: MainRow): CapEvent => ({ kind, key: row.session, text: capText(kind, dev, now, row, a), ...(standing() ? { standing: standing()! } : {}) });
+			const allyOf = (kind: CapKind, a: AllySeen, row: MainRow): CapEvent => ((text, main) => ({ kind, key: row.session, text, ...(standing() ? { standing: standing()! } : {}), ...(main && kind === "quota" ? { main, mainText: `${text}${HOLDER_CAP_HINT}` } : {}) }))(capText(kind, dev, now, row, a), holderOf(a));
 			const allyPaused = [...new Map(allies.flatMap((a) => (a.paused ?? []).map((p) => ({ a, row: allyRow(a, p.id, p.until) }))).map((x) => [x.row.session, x])).values()];
-			const under = underFor(dev, now) !== undefined ? dev.mains.filter((r) => r.minReady !== undefined && dev.points + r.minReady <= dev.budget!) : [], underKeys = new Set(under.map((r) => r.session));
+			// A held box raises no `under` for its own mains: its free room is the holder's, told there as `held-room` (D5).
+			const under = !held && underFor(dev, now) !== undefined ? dev.mains.filter((r) => r.minReady !== undefined && dev.points + r.minReady <= dev.budget!) : [], underKeys = new Set(under.map((r) => r.session));
 			const flagged: CapEvent[] = [
 				...under.map((r) => of("under", r)),
-				...dev.mains.filter((r) => r.stale && r.open > 0).map((r) => of("stale", r)),
+				...dev.mains.filter((r) => r.stale && r.open > 0).map((r) => (held ? { ...of("stale", r), held: true as const } : of("stale", r))),
 				...dev.mains.filter((r) => r.paused).map((r) => ({ ...of("quota", r), tag: String(r.paused!.until ?? "") })),
 				...silent.map((a) => ally("silent", a)),
 				...allyPaused.map(({ a, row }) => ({ ...allyOf("quota", a, row), tag: String(row.paused!.until ?? "") })),
+				...heldRoom(mine.holds, allies, now, roomSince),
+				// The box's boss ended a hold of this device's there: its main is told once (an ended entry lives an hour; the throttle covers half of it, and `active` the rest of one server's life).
+				...mine.ended.filter((e) => e.reason === "ended-there" && now - e.at < THROTTLE_MS).map((e): CapEvent => ((a) => ({ kind: "hold-ended", key: `${e.team}:${e.device}@${e.since}`, text: holdEndedThereText(a?.label ?? shortOf(e.device), a?.short ?? shortOf(e.device)), main: e.session, mainOnly: true }))(allies.find((x) => x.device === e.device))),
 			];
 			const next = new Set<string>();
 			for (const e of flagged) {
@@ -128,6 +151,15 @@ export function createCapWatch(d: CapDeps) {
 				const first = sent[UFIRST + r.session];
 				if (first !== undefined && sent[UESCALATED + r.session] === undefined && now - first >= UNDER_ESCALATE_MS && (await send(of("under-30m", r, first), now))) sent[UESCALATED + r.session] = now;
 			}
+			// A box's hold is told once to its head tower, standing main, and coordinators, and its end once, with the reason; the marks say what they were told, so a restart repeats neither.
+			const readers = { ...(standing() ? { standing: standing()! } : {}), also: facts.filter((m) => m.role === "main" && (m.duty === undefined || m.duty === "coordinator")).map((m) => m.session) };
+			if (held && sent[holdMark(held)] === undefined && (await send({ kind: "held", key: `${held.device}@${held.since}`, text: heldText(holderName(held), clock(held.since, now)), ...readers }, now))) sent[holdMark(held)] = now;
+			for (const k of marks) {
+				const h = markHold(k), was = prev?.device === h.device && prev.since === h.since ? prev : allies.find((a) => a.device === h.device);
+				if (held && holdMark(held) === k) continue;
+				const who = was ? holderName({ byName: "byName" in was ? was.byName : "its main", label: was.label, short: was.short }) : `device ${shortOf(h.device)}`;
+				if (await send({ kind: "hold-ended", key: `${h.device}@${h.since}`, text: holdEndedText(who, endOf(allies, h, now, ignored)), ...readers }, now)) delete sent[k];
+			}
 			// A quota that cleared while its main still runs is told once: the main is back at work.
 			const rows = new Map(dev.mains.map((r) => [r.session, r]));
 			// An ally's main is back when its board still has it and its pause is gone.
@@ -142,9 +174,23 @@ export function createCapWatch(d: CapDeps) {
 			untold = new Set(flagged.map(markOf).filter((m) => untold.has(m)));
 			last = rows;
 			const spell = (k: string) => [FIRST, ESCALATED].find((p) => k.startsWith(p)), episode = (k: string) => [UFIRST, UESCALATED].find((p) => k.startsWith(p));
-			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (k.startsWith("episode:stale:") ? next.has(k.slice("episode:".length)) : episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < THROTTLE_MS)));
+			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (k.startsWith(HOLD_MARK) ? true : k.startsWith("episode:stale:") ? next.has(k.slice("episode:".length)) : episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < THROTTLE_MS)));
 			try { writeSent(d.dir, sent); } catch (error) { d.log("capacity-error", { text: (error as Error).message.slice(0, 200) }); }
 			return dev;
 		},
 	};
+}
+
+/** `held-room` (the controller's side): a box this device holds, whose echo says the hold is honoured, with a point of room and load under 0.7 per core for 10 minutes, is told to the holding main alone. */
+function heldRoom(holds: readonly Hold[], allies: readonly AllySeen[], now: number, since: Map<string, number>): CapEvent[] {
+	const out: CapEvent[] = [], keys = new Set<string>();
+	for (const h of holds) {
+		const key = `${h.team}:${h.device}`, a = allies.find((x) => x.key === key), c = a?.cap;
+		keys.add(key);
+		if (!a?.online || a.echo?.since !== h.since || !c || c.budget === undefined || c.budget - c.points < 1 || c.load1 >= LOAD_SHARE * c.cores) { since.delete(key); continue; }
+		since.set(key, since.get(key) ?? now);
+		if (now - since.get(key)! >= UNDER_HOLD_MS) ((text) => out.push({ kind: "held-room", key, text, main: h.session, mainText: text, mainOnly: true }))(heldRoomText(a.label, a.short, c.points, c.budget, c.load1, c.cores));
+	}
+	for (const k of [...since.keys()]) if (!keys.has(k)) since.delete(k);
+	return out;
 }

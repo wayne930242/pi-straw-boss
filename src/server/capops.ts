@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { readEntries, safeSession } from "../board.ts";
 import { capDir, type MainFacts, readBudget } from "../capacity.ts";
 import { type HerdrRun, panes as herdrPanes, type Session, workspaces as herdrWorkspaces } from "../herdr.ts";
-import { MAIN_CAP_HINT } from "../moments.ts";
+import { readHolds } from "../link/holds.ts";
+import { HELD_CAP_HINT, HELD_STANDING_HINT, MAIN_CAP_HINT } from "../moments.ts";
 import { commanding, sessionMark, subagentsOfAll } from "../netdata.ts";
 import { nameOf, netMembers } from "../reach.ts";
 import { type AllySeen, type CapDeps, type CapEvent, createCapWatch } from "./capwatch.ts";
@@ -60,14 +61,17 @@ export interface StartCap {
 }
 
 /** Tells an event: as a notice to the tower that hears of the main's workspace (the head tower for an ally device), to this device's standing main, and to the event's own main (`under`, `stale`)
- *  unless it is that standing main; the own main's copy ends with `MAIN_CAP_HINT`. True when any took it. */
+ *  unless it is that standing main; the own main's copy ends with `MAIN_CAP_HINT`. A device hold's (docs/specs/2026-11-26-device-hold.md): the coordinators of `also` too, `mainOnly` to the main alone, and a held box's `stale` with the held hints. True when any took it. */
 export async function tellCap(e: CapEvent, o: Pick<StartCap, "run" | "towers" | "tellSession">, at: number): Promise<boolean> {
 	const towers = o.towers();
 	const to = towers ? stallTarget(e.workspace, await herdrWorkspaces(o.run).catch(() => []), towers.status().map((r) => r.workspace), towers.head.status()?.workspace) : undefined;
-	const tower = to !== undefined && towers!.runs.notice(to, e.text, `capacity:${e.kind}:${e.key}:${at}`);
-	const tell = (session: string | undefined) => (session ? o.tellSession(session, session === e.main ? `${e.text}${MAIN_CAP_HINT}` : e.text).then((r) => r === "delivered" || r === "queued", () => false) : Promise.resolve(false));
-	const told = await tell(e.standing), own = e.main !== e.standing ? await tell(e.main) : false;
-	return tower || told || own;
+	const tower = !e.mainOnly && to !== undefined && towers!.runs.notice(to, e.text, `capacity:${e.kind}:${e.key}:${at}`);
+	const textFor = (session: string) => (session === e.main ? (e.mainText ?? `${e.text}${e.held ? HELD_CAP_HINT : MAIN_CAP_HINT}`) : session === e.standing && e.held ? `${e.text}${HELD_STANDING_HINT}` : e.text);
+	const tell = (session: string | undefined) => (session ? o.tellSession(session, textFor(session)).then((r) => r === "delivered" || r === "queued", () => false) : Promise.resolve(false));
+	const told = !e.mainOnly && (await tell(e.standing)), own = e.main !== e.standing || e.mainOnly ? await tell(e.main) : false;
+	let also = false;
+	for (const session of new Set(e.mainOnly ? [] : (e.also ?? []).filter((x) => x !== e.standing && x !== e.main))) also = (await tell(session)) || also;
+	return tower || told || own || also;
 }
 
 /** The watch of this server, ticking once a minute; none in a test run without seams. Returns its stop. */
@@ -76,7 +80,7 @@ export function startCap(o: StartCap): (() => void) | undefined {
 	const boardDir = join(o.stateDir, "board");
 	const watch = createCapWatch({
 		dir: capDir(boardDir), now: o.now, log: o.log, budget: () => readBudget(o.stateDir), unattended: o.unattended, allies: o.allies,
-		load: () => ({ load1: loadavg()[0] ?? 0, cores: availableParallelism() }),
+		load: () => ({ load1: loadavg()[0] ?? 0, cores: availableParallelism() }), holds: () => readHolds(join(o.stateDir, "link"), o.now()),
 		mains: async () => {
 			const sessions = await o.sessions(), panes = await herdrPanes(o.run), monitors = o.monitorPanes(), now = o.now();
 			return mainFacts(sessions, panes, boardDir, now, (file) => { try { return statSync(file).mtimeMs; } catch { return undefined; } },

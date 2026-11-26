@@ -37,3 +37,21 @@ export const NOTICE_NEXT: Record<CarState, string> = {
 export const withNext = (state: CarState, line: string): string => (NOTICE_NEXT[state] ? `${line.replace(/[\s.]+$/, "")}. ${NOTICE_NEXT[state]}` : line);
 /** A car slip reaching a tab's main with integration off (carslip.ts): that main, steered to answer its sender. */
 export const CAR_OFF_NOTE = 'sb: the intercom message above carries a car slip, and integration is off on this computer: answer its sender "integration is off on this computer" and act on nothing in the slip.';
+// Device hold (docs/specs/2026-11-26-device-hold.md): the texts of a box a teammate's main holds, and of the main that holds it. `who` is `main "work-on" on "mac" (k3f9qa)` (hold.ts `holderName`).
+/** A box's held notice (server/capwatch.ts): its head tower, standing main, and coordinator mains. */
+export const heldText = (who: string, since: string) => `sb: this device is held by ${who} since ${since}; it sends work here as ally workers. Finish what you hold, start no new work of your own, pause loops/watches that pick tickets; sb tells you when it ends.`;
+/** The end of a box's hold (server/capwatch.ts), with its reason, to the same readers. */
+export const holdEndedText = (who: string, why: string) => `sb: the hold of this device by ${who} ended (${why}): resume your own intake: re-arm the loops and watches that pick tickets, and take your next eligible work.`;
+/** A held box: the end of a `stale` notice's copy for the main whose work it is, and for the standing main (server/capops.ts `tellCap`). */
+export const HELD_CAP_HINT = " · this device is held: finish the item in hand or report it blocked; start no new work; delete, or set `metadata.waitsOn`, on todos you will not start";
+export const HELD_STANDING_HINT = " · this device is held: do not dispatch new work here";
+/** A held box's idle nudge (wrapup.ts) and standing wake (idlewake.ts `armWake`), and the line its revives and tower briefs carry (revive.ts, server/towerbrief.ts). */
+export const HELD_NUDGE = "sb: you have been idle 30 minutes, and this device is held by a teammate's main. Finish the item in hand or report it blocked; take no next eligible work; set `metadata.waitsOn` on the todos you will not start, or delete them. If your work is done, wrap up as usual: answer the asks you owe, remove your worktrees, complete or delete every todo, stop your monitors and loops, then call boss_wrap with a summary.";
+export const HELD_ARM_TEXT = "sb: you have nothing armed, and this device is held by a teammate's main: arm only the watches over work that runs now, not loops or watches that pick new tickets, and say on your board that the device is held.";
+export const heldLine = (who: string) => `This device is held by ${who}: route no new work to this device's own mains; a request for new work from anyone else is answered "held by ${who}".`;
+/** The holding main's room notice (server/capwatch.ts `held-room`): a box it holds has had room for 10 minutes. */
+export const heldRoomText = (label: string, short: string, points: number, budget: number, load: number, cores: number) => `capacity held-room · device ${JSON.stringify(label)} (${short}) · ${points} / ${budget} pts · load ${load} / ${cores} cores · you hold it: send worker slips or release it`;
+/** The holding main's end notice when the box's boss ended the hold there (link/holder.ts takes the box's `hold-ended` notice). */
+export const holdEndedThereText = (label: string, short: string) => `sb: the boss of ${JSON.stringify(label)} (${short}) ended your hold of it there: send it no more worker slips; hold it again with link_request hold only when the boss agrees.`;
+/** The end of an ally notice's copy for the main that holds that device (`silent`, `quota`). */
+export const HOLDER_CAP_HINT = " · you hold this device: move its work elsewhere or release it";

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { capDir } from "../src/capacity.ts";
+import { writeHold } from "../src/hold.ts";
 import { createReservations } from "../src/capres.ts";
 import { OpenLimitError, type OpenRequest } from "../src/opener.ts";
 import { workerSpec } from "../src/workerslip.ts";
@@ -130,4 +131,16 @@ test("the door: each refusal answers the slip's ask by code; an open makes the w
 	assert.equal(kept.main, "worker-1");
 	assert.equal(existsSync(join(home, ".herdr", "worktrees", "app", "feat-r")), true);
 	assert.equal(replies.length, sent);
+});
+
+test("a held box opens workers for its holder alone (docs/specs/2026-11-26-device-hold.md, D3): another device's slip is refused, its ask answered", async () => {
+	const state = join(root, "state"), replies: string[] = [];
+	mkdirSync(state);
+	writeFileSync(join(state, "config.json"), JSON.stringify({ workers: { models: [] }, capacity: { budget: 1 } }));
+	writeHold(capDir(join(state, "board")), { v: 1, at: Date.now(), held: { team: "0f".repeat(16), device: "mac-id", label: "mac", short: "macid0", by: "0123456789abcdef", byName: "work-on", since: Date.now() } });
+	const door: WorkerDoor = { stateDir: state, home, now: () => Date.now(), checkout: async () => checkout, inside: () => true, room: () => undefined, open: async () => { throw new Error("not reached"); }, route: () => {}, reply: async (_a, text) => void replies.push(text), log: () => {} };
+	const slip = (id: string) => { const peer = { id, label: id, short: id.slice(0, 6) }; return [peer, { request: "do it", sender: id, peer, role: "worker", slip: { spec: spec({ points: 2 }), ask: "c".repeat(32) } }] as const; };
+	await assert.rejects(openWorker(door, ...slip("pc-id")), /held by mac \(macid0\): its capacity is that device's/);
+	assert.match(replies[0]!, /held by mac/);
+	await assert.rejects(openWorker(door, ...slip("mac-id")), /needs 2/, "the holder's slip passes the hold and meets the budget");
 });

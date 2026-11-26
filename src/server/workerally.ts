@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { capDir, readBudget, readDevice } from "../capacity.ts";
 import { createReservations } from "../capres.ts";
+import { readHold } from "../hold.ts";
 import { type Opened, type OpenRequest, OpenLimitError, type PeerSender } from "../opener.ts";
 import { admitPoints } from "../workercap.ts";
 import type { WorkerSpec } from "../workerslip.ts";
@@ -66,6 +67,9 @@ export function openWorker(d: WorkerDoor, peer: PeerSender, request: OpenRequest
 		try {
 			const config = readWorkers(d.stateDir), budget = readBudget(d.stateDir);
 			if (!config) throw new OpenLimitError("this box opens no workers: config.json has no workers section");
+			// A held box opens workers for its holder alone (docs/specs/2026-11-26-device-hold.md, D3): its room is that device's.
+			const hold = readHold(capDir(join(d.stateDir, "board")), d.now());
+			if (hold && peer.id !== hold.device) throw new OpenLimitError(`held by ${hold.label} (${hold.short}): its capacity is that device's`);
 			if (budget === undefined) throw new OpenLimitError("this box opens no workers: config.json sets no capacity.budget");
 			const model = modelRefusal(config.models, spec.model);
 			if (model) throw new OpenLimitError(model);
