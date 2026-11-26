@@ -7,9 +7,9 @@
   },
   "raven": {
     "ceiling": 512000,
-    "raw": 448020,
-    "gz": 39878,
-    "sha": "674e9537c2347fcdfe041116d195ee6fa12b1662"
+    "raw": 454575,
+    "gz": 42512,
+    "sha": "6a035596965a191ea14204b69d971f2c0305cd24"
   },
   "storybook": {
     "ceiling": 512000,
