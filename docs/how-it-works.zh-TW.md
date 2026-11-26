@@ -4104,7 +4104,7 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 
 **它讀什麼。** 每個角色預期 settings 所列套件的工具：main、member、train 和尚未加入的 session 預期六個 `subagent*` 工具、`intercom`、`todo` 和 `MonitorCreate`；塔台預期後三個（它不執行 subagent）；子代理預期以上全部再加 `caller_ping` 和 `subagent_done`，扣掉啟動時被拒絕的（`PI_DENY_TOOLS`）。工具沒有註冊，或註冊為 `direct` 卻沒有啟用，就算缺少；`deferred` 工具不必啟用也能取用。pi-herdr-agents 每次載入都寫一個載入戳記（`globalThis[Symbol.for("pi-herdr-agents/load-stamp")]`：它的版本、根目錄和 HEAD、Maestro 的 build、時間、世代，以及載入拋錯時的 `failed`），doctor 拿它和 settings 的 pin 及安裝目錄的 HEAD 比對。
 
-**在 session 裡。** `sb_doctor`（已加入的 session 和塔台，與其他網路工具相同）和 `/boss doctor`（窗格裡每個不是子代理的 session）回報結論、缺少的工具及其狀態、戳記、pi 版本和模型。每次 session 開始（啟動、`/reload`、new、resume、fork）後的第一個回合，窗格裡每個 session（子代理也是）都做一次同樣的檢查：缺少預期的工具時，它顯示警告，並在那個回合加入一則訊息，說不要用一般窗格繞過它，要執行 `sb_doctor` 並交接。
+**在 session 裡。** `sb_doctor`（已加入的 session 和塔台，與其他網路工具相同）和 `/boss doctor`（窗格裡每個不是子代理的 session）回報結論、缺少的工具及其狀態、戳記、pi 版本和模型。每次 session 開始（啟動、`/reload`、new、resume、fork）後的第一個回合，窗格裡每個不是子代理的 session 都做一次同樣的檢查：缺少預期的工具時，它顯示警告，並在那個回合加入一則訊息，說不要用一般窗格繞過它，要執行 `sb_doctor` 並交接。子代理不會收到這則訊息：它的工具由啟動方式決定（角色的工具清單會略去 `intercom`、`todo` 或 `subagent`；自動結束的啟動沒有 `subagent_done`），由父代理監看，而被叫去交接的子代理還沒開工就停了（2026-11-26）。
 
 **從 shell。** `cli.mjs doctor --session <id|prefix|pane> [--json]` 檢查另一個 session，例如工具不見的那一個。它讀不到那個程序，所以讀得到的都讀：用 pi 自己的 loader 對同一個資料夾和 settings 做一次新的載入（在一個沒有該 session 的 Herdr、subagent 和 intercom 環境變數的子 `node` 裡），錯誤就是 pi 的錯誤；session 檔，找出 pi 程序啟動後 provider 回答「No such tool available」的預期工具；以及 Herdr 裡的窗格，拿它的 pi 啟動時間對照 pi-herdr-agents 的安裝時間。新的載入有、session 卻被拒絕的工具就是 `H1-or-H3`：故障在那個程序裡，在它裡面執行 `sb_doctor` 就分得出是哪一種。健康時結束碼是 0，有故障或無法查看時是 1。
 
