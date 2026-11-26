@@ -61,7 +61,7 @@ interface Rig {
 	notices: string[];
 	offers: string[];
 }
-function rig(name: "a" | "b", o: { entries?: RosterEntry[]; teams?: (r: Rig) => Teams } = {}): Rig {
+function rig(name: "a" | "b", o: { entries?: RosterEntry[]; teams?: (r: Rig) => Teams; now?: () => number } = {}): Rig {
 	const keys = name === "a" ? alice : bob, entries = o.entries ?? rosterOf();
 	const dir = join(root, name, "link"), project = join(root, `${name}-project`), other = join(root, `${name}-elsewhere`);
 	mkdirSync(project, { recursive: true });
@@ -74,7 +74,7 @@ function rig(name: "a" | "b", o: { entries?: RosterEntry[]; teams?: (r: Rig) => 
 	const config = (): LinkConfig => ({ teams: o.teams?.(r) ?? new Map([[TEAM_HEX, { project, share: r.share, name: "moldplan" }]]), trust: new Map(), problems: [] });
 	r.holder = new LinkHolder({
 		store, isHolder: () => true, config, net: async () => (r.netDelayMs ? await new Promise((done) => setTimeout(done, r.netDelayMs)) : undefined, r.net), relay: clientFor(relay), offer: (tower) => void r.offers.push(tower.id), notify: (t) => void r.notices.push(t),
-		boardDir: r.boardDir, now: () => Date.now() + r.skew, backoff: () => 5, drainMs: 20, presenceMs: 40, offerAgainMs: 60_000,
+		boardDir: r.boardDir, now: () => (o.now?.() ?? Date.now()) + r.skew, backoff: () => 5, drainMs: 20, presenceMs: 40, offerAgainMs: 60_000,
 	});
 	stops.push(() => r.holder.stop());
 	relay.addTeam(TEAM, [alice.id, bob.id, ...(entries.length > 2 ? [carol.id] : [])], entries);
@@ -280,7 +280,10 @@ test("two teams: each gets its own board, by project and share; a device in both
 	const v2 = () => { const r = replayRoster(TEAM2, log2, { self: alice, keys: new Map([[1, teamKey(1)]]) }); if (!r.ok) throw new Error(r.reason); return r.value; };
 	log2.push(addEntry({ state: v2(), signer: alice, record: bob, label: LABELS.bob, attended: true, ...det("add2-bob") }));
 	const projects = (r: Rig): Teams => new Map([[TEAM_HEX, { project: r.project, share: "status", name: "alpha" }], [hex2, { project: r.other, share: "status", name: "beta" }]]);
-	const [a, b] = [rig("a", { teams: projects }), rig("b", { teams: projects })];
+	// Alice's clock stands still, so her two teams' boards leave with the same `ts`, as two boards sent within one millisecond do: the relay keeps an
+	// ephemeral per team, so the second is not stale (a fake that kept one per sender and kind dropped it, and B waited for a board that never came).
+	const at = Date.now();
+	const [a, b] = [rig("a", { teams: projects, now: () => at }), rig("b", { teams: projects })];
 	for (const [r, keys] of [[a, alice], [b, bob]] as const) {
 		const state = replayRoster(TEAM2, log2, { self: keys, keys: keys === alice ? new Map([[1, teamKey(1)]]) : undefined });
 		if (!state.ok) throw new Error(state.reason);
