@@ -146,12 +146,18 @@ test("R13-F003: a state folder that belongs to another account is not looked at:
 });
 
 test("a session on a newer package asks the live server to upgrade, which starts it from the session's package", async () => {
+	sw.connectMs = 100; // a new server that takes a while to start, as one on a loaded CI runner does
 	const s = await sw.start({ version: "0.43.0" });
 	await s.handle.ready;
 	const a = session("a1", { version: "0.44.0" });
 	await a.start();
-	await until(() => sw.record()?.version === "0.44.0", "the upgrade");
-	assert.equal(sw.record()?.restarting, undefined);
+	// The new server's record names 0.44.0 from its first write, while it still starts and `restarting` is still there: the upgrade is over when that server is ready.
+	await until(() => sw.running.length === 2, "the upgraded server");
+	const upgraded = sw.running[1]!;
+	assert.equal(await upgraded.handle.ready, true);
+	assert.equal(sw.record()?.pid, upgraded.pid);
+	assert.equal(sw.record()?.version, "0.44.0");
+	assert.equal(sw.record()?.restarting, undefined, "ready clears the upgrade's mark");
 	assert.match(readFileSync(fileOf(sw.slot, "log"), "utf8"), /restart reason=upgrade by="session \\?"a1\\?" \(a1\)"/);
 });
 
