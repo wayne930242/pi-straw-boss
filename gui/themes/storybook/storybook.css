@@ -173,7 +173,7 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 /* The discs keep a paper face: no glow behind an icon on a light page. */
 [data-view="storybook"] :is(.tower svg, .logo svg) { filter: none; }
 [data-view="storybook"] .tower::before { background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--c) 16%, var(--plate-hi)), var(--plate) 75%); }
-[data-view="storybook"] .logo { background: var(--plate); color: var(--text); border-color: var(--line); }
+[data-view="storybook"] .logo:not([data-head] > .logo) { background: var(--plate); color: var(--text); border-color: var(--line); }
 
 /* The header's tallies and chips: paper, not white glass. */
 [data-view="storybook"] :is(.stats, .stats div, .tally div, .alerts) { background: none; border-color: transparent; }
@@ -181,7 +181,7 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 
 /* Buttons: an outline drawn by hand; the ones that act (Go, Send) a filled stamp. */
 [data-view="storybook"] :is(.pair-btn, .later, .cmp-alt, .quit-btn, .tab-add, .modes button, .ask-cancel, .tx-copy) { border: 1.2px solid transparent; border-image: var(--sb-frame) 14 / 10px round; background: color-mix(in srgb, var(--surface-0) 80%, transparent); color: var(--text); }
-[data-view="storybook"] .pair-btn { letter-spacing: 0.04em; text-transform: none; }
+[data-view="storybook"] .pair-btn:not(#lan-wait) { letter-spacing: 0.04em; text-transform: none; }
 @media (hover: hover) and (pointer: fine) { [data-view="storybook"] .pair-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 10%, var(--surface-0)); } }
 [data-view="storybook"] .view-pick button[aria-pressed="true"], [data-view="storybook"] .pair-tabs :is(.later.on, .later[aria-selected="true"]) { background: color-mix(in srgb, var(--accent) 16%, var(--surface-0)); }
 [data-view="storybook"] :is(.cmp-send, .ask-send) { border: 0; border-radius: 10px; background: var(--send); color: var(--ink); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ink) 25%, transparent), 0 2px 0 color-mix(in srgb, var(--shadow) 25%, transparent); }
@@ -221,7 +221,8 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 [data-view="storybook"] .tx .ava { width: 42px; height: 42px; transform: rotate(-6deg); color: var(--working); background: var(--sb-page); border: 1.6px dashed currentColor; box-shadow: inset 0 0 0 3px var(--sb-page), inset 0 0 0 3.6px color-mix(in srgb, currentColor 55%, transparent); }
 [data-view="storybook"] .tx .ava svg { width: 72%; height: 72%; }
 [data-view="storybook"] :is(.tx.in + .tx.in > .ava, .tx.you + .tx.you .ava) { visibility: visible; }
-[data-view="storybook"] .tx.you .ava { width: 34px; height: 34px; transform: rotate(6deg); color: var(--gold); }
+[data-view="storybook"] .tx.you .ava { width: 34px; height: 34px; transform: rotate(6deg); }
+[data-view="storybook"] :is(.tx.you, .tx.in.head) .ava { color: var(--gold); }
 [data-view="storybook"] .tx-body { border: 0; border-image: none; background: none; padding-inline: 0; }
 [data-view="storybook"] .bubble { border: 0; border-image: none; border-radius: 10px; background: var(--sb-you); color: var(--text); }
 /* a message that came in is a violet slip; its stamp sits in the margin like a speaker's */
