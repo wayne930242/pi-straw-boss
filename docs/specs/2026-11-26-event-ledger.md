@@ -15,7 +15,7 @@ pi-evals 0.4.0 builds a record per work item: when it started, when and how it c
 
 1. **One file a UTC day, one line an event.** `<state folder>/ledger/<YYYY-MM-DD>.jsonl`, mode 600, appended with one write per event. sb never prunes or rewrites it; the boss or pi-evals removes old days.
 2. **The owner of the event writes it.** The sb server writes the waits, the link waits, and the review threads. A session's extension writes `call_tower`, `wrap`, and `handover`, since those happen in the session and the server never sees them as such.
-3. **Ids, kinds, and times only.** A line is `{ v: 1, at, kind, id, session, workspace }` with `why`, `item`, and `by` where the kind has them. No message, question, card, note, or summary text: an id that is not id-shaped (letters, digits, `_.:#@+=|-`, at most 160) is written as `null`, and a `why` or `by` outside its kind's set is left out.
+3. **Ids, kinds, and times only.** A line is `{ v: 1, at, kind, id, session, workspace }` with `why`, `item`, and `by` where the kind has them. No message, question, card, note, or summary text: a session or workspace that is not id-shaped (letters, digits, `_.:#@+=|-`, at most 160) is written as `null`, an event whose own id is not is not written, and a `why` or `by` outside its kind's set is left out.
 4. **A failed write never fails the act.** The act goes on; the failure is told once per state folder and process: in the server's log, or as a warning in the session.
 5. **One choke point per store.** Wait events come from the one function that writes the tower's memory (`updateMemory`), by comparing each wait before and after the write; link wait events come from the router's one ledger change. A new door that changes a wait is covered without a new call.
 6. **A thread names its item.** `boss_pair` takes an optional `item` (a todo uid, `t_` and 10 base32 characters, or `<session8>#<id>`). The thread keeps it, and when the thread closes `T<n>.json` gets `closed` (ms) and `closedAs`.
@@ -32,7 +32,7 @@ pi-evals 0.4.0 builds a record per work item: when it started, when and how it c
 | `link_wait_done` | server | `L<n>` | as above | any close: done, declined, cancelled, expired, escalated |
 | `thread_open` | server | `T<n>` | the owner main | `item` when `boss_pair` named one |
 | `thread_close` | server | `T<n>` | the owner main | `why`: `done` (the reviewer's), `blocked` (a member's, or the round cap), `abandoned` (the server's close of a quiet, old, or orphaned thread); `item` |
-| `call_tower` | extension | intercom's request id | the caller | `why`: `milestone`, `shared`, or `blocked`; none for a call that named none |
+| `call_tower` | extension | intercom's request id (a retry's `~r<n>` cut off) | the caller | `why`: `milestone`, `shared`, or `blocked`; none for a call that named none |
 | `wrap` | extension | the session id | the session | `why`: `wrapped`, `auto` (auto mode, before or during the boss's dialog), or `refused` (the boss's no, or a check) |
 | `handover` | extension | the successor's session id | the main that handed over | |
 

@@ -41,6 +41,7 @@ test("a row is v, at, kind, id, session, workspace and the optional why, item, b
 	assert.deepEqual(ledgerRow({ kind: "wait_answered", id: "W1", session: "has spaces in it", by: "gui", why: "done" }, 5), { v: 1, at: 5, kind: "wait_answered", id: "W1", session: null, workspace: null, by: "gui" });
 	assert.deepEqual(ledgerRow({ kind: "call_tower", id: "r1", why: "unspecified", by: "gui", item: "not an item" }, 5), { v: 1, at: 5, kind: "call_tower", id: "r1", session: null, workspace: null });
 	assert.equal(ledgerRow({ kind: "wrap", id: PLANT }, 5), undefined, "no id, no row");
+	assert.equal(ledgerRow({ kind: "call_tower", id: "straw-boss-1a2b-3~r1" }, 5), undefined, "a retried request id is cut by its sender (reach.ts), never written as it is");
 	assert.equal(ledgerRow({ kind: "nonsense" as never, id: "x" }, 5), undefined);
 });
 
