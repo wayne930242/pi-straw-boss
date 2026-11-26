@@ -4,7 +4,7 @@ import { notBare, refusal, revivingAt } from "../deadpane.ts";
 import { herdrSocket } from "../endpoint.ts";
 import { type HerdrRun, type Pane, panes, result } from "../herdr.ts";
 import { type Cwd, readCwds } from "../procs/cwd.ts";
-import { type KillReport, probeStart, reap as realReap } from "../procs/kill.ts";
+import { type KillReport, reap as realReap } from "../procs/kill.ts";
 import { killSet, type Protect } from "../procs/killset.ts";
 import { baseName, descendants, named, programOf, type Proc, readTable, type Ref, refOf, sameProc } from "../procs/table.ts";
 import { type Checkout, checkoutOf, physical, under } from "../procs/worktree.ts";
@@ -16,7 +16,7 @@ import { askProcs, type Asked } from "./procscli.ts";
 // runs no session_shutdown, so what its pi started (a monitor, a poll loop) goes on, adopted by init, and holds the checkout. Kept out of cli.ts, which carries a line budget.
 // Before anything is closed: the close is authorized by the table of deadpane.ts (the pane is in the caller's workspace, an agent's, at a bare shell, not opening or reviving) unless the operator says `--force`;
 // `--checkout` must be the root of a linked worktree; and the pane's tree is read from its shell, whose identity (pid and start time) is read between two process-info answers that name the same shell. The target is
-// bound to the Herdr socket, its workspace, its terminal and that shell, and checked again before each retry. Once the pane is gone, its tree goes through the kill sequence one verified pid at a time (no group
+// bound to the Herdr socket, its workspace, its terminal and that shell, and read again before each retry: the same target, and without `--force` still allowed by the table. Once the pane is gone, its tree goes through the kill sequence one verified pid at a time (no group
 // signal), and the checkout through the sb server's bounded `procs reap --checkout`, which spares this command and what it runs under; what survives either reap, a process of the tree, or one that works in the checkout is `left`.
 // Exit codes: 0 the pane is gone and nothing is left; 1 the pane is still listed, something is left, or a step failed (the JSON on stdout says which, or one line on stderr when nothing was closed); 2 usage.
 
@@ -31,8 +31,6 @@ export interface PaneDeps {
 	/** The account's processes now; undefined where there is no table (Windows). A failed read throws. */
 	read(): Promise<Proc[] | undefined>;
 	cwds(pids: readonly number[]): Promise<Map<number, Cwd>>;
-	/** The start time of a pid now, undefined when it is gone. */
-	probe(pid: number): string | undefined;
 	/** What is never signalled: the Herdr server, live panes' shells and foregrounds, sb servers, the intercom broker (procs.ts `protectedSet`). */
 	protect(table: readonly Proc[]): Promise<Protect[]>;
 	/** The kill sequence (src/procs/kill.ts), with no group signal. */
@@ -85,18 +83,19 @@ export async function closePane(pane: string, { checkout, force = false }: { che
 	// The close is the deadpane.ts table's to allow (kit2-F001): only the operator's --force closes a pane of another workspace, one whose pi or program runs, or one a tower is opening or reviving.
 	const own = d.here ? all.find((p) => p.pane_id === d.here) : undefined;
 	if (!force && !own?.workspace_id) throw refused("this command runs in no pane Herdr lists, so the workspace it may close panes in is not known (the boss closes it with --force)");
-	const why = force ? undefined : refusal({ pane: target, query: pane, workspace: own!.workspace_id!, tower: { pane: own!.pane_id }, reviving: d.reviving(target) });
-	if (why) throw refused(`${why} (--force, the boss's, closes it anyway)`);
+	// Why the pane may not be closed now: the table's rows, then the foreground and the shell's program. Asked before the first close and again before each retry (kit2-F001: a pi can start in it meanwhile).
+	const denied = (p: Pane, now: Info | undefined, row: Proc) => refusal({ pane: p, query: pane, workspace: own!.workspace_id!, tower: { pane: own!.pane_id }, reviving: d.reviving(p) }) ?? notBare(pane, now)
+		?? (SHELLS.has(baseName(row.comm).replace(/^-/, "")) ? undefined : `${pane} runs ${programOf(named(row, { platform: d.platform }))} in place of a shell`);
+	const early = force ? undefined : refusal({ pane: target, query: pane, workspace: own!.workspace_id!, tower: { pane: own!.pane_id }, reviving: d.reviving(target) });
+	if (early) throw refused(`${early} (--force, the boss's, closes it anyway)`);
 	const info = async () => (await result(d.run, ["pane", "process-info", "--pane", pane]))?.process_info as Info | undefined;
 	// The tree is read from the pane's shell, never from a bare foreground pid (kit2-F002): the shell is the same in the process-info answers before and after the table, so the row the table has for it is that shell.
 	const first = await info().catch(() => undefined), table = await d.read(), second = await info().catch(() => undefined);
 	if (!table) throw refused("the process table could not be read");
 	const shellPid = first?.shell_pid, shell = table.find((p) => p.pid === shellPid && !p.zombie);
 	if (typeof shellPid !== "number" || second?.shell_pid !== shellPid || !shell) throw refused(`the shell of pane ${pane} could not be verified (Herdr named ${typeof shellPid === "number" ? `pid ${shellPid}, ${shell ? "then another" : "which the process table does not have"}` : "none"}), so what it leaves could not be known`);
-	if (!force) {
-		const busy = notBare(pane, second) ?? (SHELLS.has(baseName(shell.comm).replace(/^-/, "")) ? undefined : `${pane} runs ${programOf(named(shell, { platform: d.platform }))} in place of a shell`);
-		if (busy) throw refused(`${busy} (--force, the boss's, closes it anyway)`);
-	}
+	const busy = force ? undefined : denied(target, second, shell);
+	if (busy) throw refused(`${busy} (--force, the boss's, closes it anyway)`);
 	const mine = lineage(table, d.self), self = table.find((p) => p.pid === d.self);
 	if (root !== undefined && !self) throw refused("this command is not in the process table, so the server could not spare it in the checkout's reap");
 	const tree = [shell, ...descendants(table, [shell.pid])].filter((p) => !p.zombie && !mine.has(p.pid)).map(refOf);
@@ -106,14 +105,22 @@ export async function closePane(pane: string, { checkout, force = false }: { che
 		const p = (await panes(d.run)).find((x) => x.pane_id === pane);
 		return !p ? "gone" : p.workspace_id !== target.workspace_id || p.terminal_id !== target.terminal_id ? "other" : "ours";
 	};
+	// Before a retry the target is read again: the same terminal in the same workspace (else it is gone), running the same shell (pid and start time), and, without --force, still closable. What cannot be read stops the retries.
+	const again = async (): Promise<string | undefined> => {
+		const listed = await panes(d.run).catch(() => undefined), now = listed?.find((x) => x.pane_id === pane);
+		if (!listed) return `Herdr's pane list could not be read before a retry, so pane ${pane} was not closed again`;
+		if (!now || now.workspace_id !== target.workspace_id || now.terminal_id !== target.terminal_id) return "gone";
+		const fg = await info().catch(() => undefined), row = (await d.read().catch(() => undefined))?.find((p) => p.pid === shell.pid && !p.zombie);
+		if (fg?.shell_pid !== shell.pid || row?.started !== shell.started) return `pane ${pane} no longer runs the shell it ran (pid ${shell.pid}), so it was not closed again`;
+		const why = force ? undefined : denied(now, fg, row);
+		return why && `${why}, so it was not closed again (--force, the boss's, closes it anyway)`;
+	};
 	while (!out.closed && out.attempts < ATTEMPTS) {
 		if (out.attempts > 0) {
-			// Before a retry the target is checked again: the same terminal in the same workspace, running the same shell (pid and start time).
-			const now = await info().catch(() => undefined);
-			if (now?.shell_pid !== shell.pid || d.probe(shell.pid) !== shell.started) {
-				out.error = `pane ${pane} no longer runs the shell it ran (pid ${shell.pid}), so it was not closed again`;
-				break;
-			}
+			const stop = await again();
+			if (stop === "gone") out.closed = true;
+			else if (stop) out.error = stop;
+			if (stop) break;
 		}
 		out.attempts++;
 		// An error here may be a pane that went meanwhile: the list says.
@@ -192,7 +199,7 @@ export interface PaneIo { out(text: string): void; err(text: string): void; env:
 export async function runPane(ctx: Ctx, flags: Record<string, string | true>, { out, err, env, run, over }: PaneIo): Promise<number> {
 	const checkout = typeof flags.checkout === "string" ? resolve(flags.checkout) : undefined;
 	const d: PaneDeps = {
-		run, sleep: (ms) => ctx.sleep(ms), now: ctx.now, read: () => readTable(), cwds: (pids) => readCwds(pids), probe: probeStart, reap: (refs) => realReap(refs, { groups: false }), real: physical, checkout: (path) => checkoutOf(path),
+		run, sleep: (ms) => ctx.sleep(ms), now: ctx.now, read: () => readTable(), cwds: (pids) => readCwds(pids), reap: (refs) => realReap(refs, { groups: false }), real: physical, checkout: (path) => checkoutOf(path),
 		reviving: (p) => revivingAt(ctx.slot.stateDir, ctx.now(), p), socket: herdrSocket(env), self: process.pid, platform: ctx.platform,
 		protect: (table) => protectedSet(table, { run: (args) => run(args), stateDir: ctx.slot.stateDir, agentDir: env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), self: process.pid }),
 		reapCheckout: (root, caller) => askBounded((request) => askProcs(ctx, request), root, caller), oldServer: () => serverLacksBounded((request) => askProcs(ctx, request)), ...(env.HERDR_PANE_ID ? { here: env.HERDR_PANE_ID } : {}), ...(process.getuid ? { uid: process.getuid() } : {}), ...over,

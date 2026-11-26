@@ -93,7 +93,7 @@ test("pane close --checkout asks the running server's registry for its bounded r
 	let closed = false;
 	const herdr = async (args: string[]) => (args[1] === "list" ? JSON.stringify({ result: { panes: closed ? [] : [{ pane_id: "w9:p2", tab_id: "w9:t2", workspace_id: "w9", terminal_id: "term-2" }] } }) : args[1] === "close" ? ((closed = true), "{}") : JSON.stringify({ result: { process_info: { shell_pid: 100, foreground_processes: [{ pid: 100 }] } } }));
 	// The pane's shell (100) goes with the close; the tree's reap is a fake here, so no real kill sequence runs.
-	const pane = { read: async () => [...(closed ? [] : [P(100, 1)]), ...table], cwds: async () => new Map(), sleep: async () => {}, protect: async () => [], platform: "darwin" as const, real: (path: string) => path, checkout: procs.checkout, probe: () => undefined, reap: async () => ({ termed: 0, killed: 0, skipped: 0, groups: 0, left: [] }) };
+	const pane = { read: async () => [...(closed ? [] : [P(100, 1)]), ...table], cwds: async () => new Map(), sleep: async () => {}, protect: async () => [], platform: "darwin" as const, real: (path: string) => path, checkout: procs.checkout, reap: async () => ({ termed: 0, killed: 0, skipped: 0, groups: 0, left: [] }) };
 	const done = await cli(["pane", "close", "w9:p2", "--checkout", "/wt", "--force"], { herdrCli: herdr, pane });
 	assert.equal(done.code, 0, done.err || done.out);
 	assert.deepEqual(reaped, [[300]], "the orphan in the checkout went through the server's kill sequence; not the caller or the shell it runs under");

@@ -35,6 +35,8 @@ function world({ closesNeeded = 1, stubborn = [] as number[], cwds = {} as Recor
 		/** What Herdr lists at the target's id once it is gone (another terminal under a reused id), if anything. */
 		after: undefined as Listed | undefined,
 		onClose: () => {},
+		/** Whether a tower holds the revive lock of the pane's session now. */
+		revive: false,
 	};
 	const listed = () => closes < closesNeeded;
 	const herdr = async (args: string[]) => {
@@ -60,7 +62,7 @@ function world({ closesNeeded = 1, stubborn = [] as number[], cwds = {} as Recor
 	};
 	const pane: Partial<PaneDeps> = {
 		read: async () => table.map((p) => ({ ...p })), sleep: async () => {}, now: () => Date.parse("2026-11-27T01:00:00Z"), self: SELF, platform: "darwin", real: (path) => path, protect: async () => [{ pid: 50, why: "herdr" }],
-		probe: (pid) => table.find((p) => p.pid === pid)?.started, reviving: () => false, socket: "/fake/herdr.sock", oldServer: async () => false,
+		reviving: () => w.revive, socket: "/fake/herdr.sock", oldServer: async () => false,
 		checkout: (path) => (path === "/wt" ? { kind: "linked", root: "/wt", gitdir: "/repo/.git/worktrees/wt" } : path.startsWith("/wt/") ? { kind: "linked", root: "/wt", gitdir: "/repo/.git/worktrees/wt" } : path === "/repo" ? { kind: "main", root: "/repo" } : { kind: "none" }),
 		cwds: async (pids) => new Map(pids.filter((pid) => cwds[pid] !== undefined).map((pid) => [pid, { path: cwds[pid]! }])),
 		reap: async (refs) => {
@@ -298,4 +300,39 @@ test("kit2-F003: --checkout with a server too old for the bounded reap is refuse
 	assert.deepEqual(sent, [{ cmd: "procs-reap-bounded" }, { cmd: "procs-reap-bounded", checkout: "/wt", caller: { pid: SELF, started: "t400" } }]);
 	const current = async () => ({ ok: false as const, error: "procs-reap-bounded needs a checkout and its caller { pid, started }" });
 	assert.equal(await serverLacksBounded(current), false, "a server that has it refuses the empty probe and runs nothing");
+});
+
+test("kit2-F001: before each retry the pane is read again and must still be closable: a pi that started in it, a revive that took it, or a list that cannot be read stops the retries", async () => {
+	const cases: [string, (w: ReturnType<typeof world>) => void, RegExp][] = [
+		["a pi started", (w) => {
+			// The first close did nothing; meanwhile a pi starts in the pane's shell.
+			w.onClose = () => void (w.closes() === 1 && w.table.push(P(220, 100, "node")));
+			w.info = (n) => ({ shell_pid: 100, foreground_processes: n < 2 ? [{ pid: 100, name: "zsh" }] : [{ pid: 100, name: "zsh" }, { pid: 220, name: "pi" }] });
+		}, /is not at a bare shell: pi runs in it, so it was not closed again/],
+		["a revive", (w) => void (w.onClose = () => void (w.revive = true)), /is being revived right now .*, so it was not closed again/],
+		["an open", (w) => void (w.onClose = () => void (w.target = { ...w.target, tokens: { ...w.target.tokens, sb_open_main: "1" } })), /is being opened right now .*, so it was not closed again/],
+		["the shell turned into a program", (w) => void (w.onClose = () => void (w.table.find((p) => p.pid === 100)!.comm = "node")), /runs node in place of a shell, so it was not closed again/],
+		["no list", (w) => {
+			const herdr = w.herdr;
+			let lists = 0;
+			w.herdr = async (args) => (args[1] === "list" && w.closes() === 1 && ++lists > 4 ? Promise.reject(new Error("socket gone")) : herdr(args));
+		}, /pane list could not be read before a retry/],
+	];
+	for (const [name, setup, why] of cases) {
+		const w = world({ closesNeeded: 3 });
+		setup(w);
+		const r = await close(w, [PANE]);
+		assert.equal(r.code, 1, name);
+		assert.equal(w.closes(), 1, `${name}: no second close`);
+		assert.equal(r.result!.closed, false, name);
+		assert.match(r.result!.error!, why, name);
+		assert.deepEqual(w.reaped, [], name);
+	}
+	// With --force the table is not asked again: a pi that started is the boss's to close.
+	const forced = world({ closesNeeded: 2 });
+	forced.onClose = () => void (forced.closes() === 1 && forced.table.push(P(220, 100, "node")));
+	forced.info = (n) => ({ shell_pid: 100, foreground_processes: n < 2 ? [{ pid: 100, name: "zsh" }] : [{ pid: 220, name: "pi" }] });
+	const f = await close(forced, [PANE, "--force"]);
+	assert.equal(forced.closes(), 2);
+	assert.equal(f.result!.closed, true);
 });
