@@ -156,7 +156,7 @@ All pictures are drawn with Codex image generation in one watercolour picture-bo
 |---|---|---|---|
 | `backdrop-day.webp` | head page and map, by day: a meadow with a winding path to a treehouse, clouds, distant hills | 1280 × 721 | 100 KB |
 | `backdrop-night.webp` | the same scene at night: deep blue sky, crescent moon, stars, warm lamplight in the treehouse windows | 1280 × 721 | 100 KB |
-| `nook-day.webp`, `nook-night.webp` (O7) | the chat page: a small corner vignette under the comms (a picnic blanket by day, a reading lamp and a sleeping cat at night) | ≤ 480 × 300 | 20 KB each |
+| `nook-day.webp`, `nook-night.webp` (O7) | the chat page (§B11): a bunny reading under an apple tree by day; the same bunny dozing against the tree by a lantern at night | ≤ 480 × 300 | 20 KB each |
 
 - **Placement as in Raven.**
   - The head page and the map show the backdrop. The workspace and settings pages stay plain paper or sky. The chat page shows its nook, faint, in a corner.
@@ -205,6 +205,17 @@ There is no noun pack and no sentence pack (SB-D4): English and zh-TW keep every
 - Per-role chat rooms like Raven's (one nook per phase instead).
 - A new hotkey for Zen.
 - Theme packages outside this repository. The boss asked (2026-11-26) whether themes should ship separately, downloaded or installed by whoever wants them, and chose 「先內建，條件到了再拆」: Storybook ships built in like Raven. Revisit when someone else wants to make a theme, when the theme folders make the package noticeably heavy, or when the non-MIT assets (Casper's clips) should leave the public repository. The first external format then is data only (CSS, pictures, sounds, a manifest, no JavaScript), since a theme's code runs in a page that answers agents' dialogs, and the themes' CSS overrides Standard's markup (`.sweep`, `.ring`), so an external theme needs a versioned markup contract first.
+
+## B11. Chat page
+
+**Design pick (boss, 2026-11-26).** After a 比稿 of two chat directions (frames and review in `scratch/design-chat/`, gitignored), the boss accepted all eight frames and chose **A, one notebook page**: the whole log is written on a single ruled page, not a card per message (the frames `01-a-chat-day.svg`, `02-a-chat-night.svg`, `05-a-phone-day.svg`, `06-working-motion.svg`). It is numbered B11 so that §B8, which tests and the size budgets cite as the budget, keeps its number.
+
+- **The page.** `.chat-root` is the page (`--sb-page`, `#fffefa` by day, `#34365a` at night): ruled lines and a red double margin line scroll with the log, binding holes run down the left, and washi tape holds it at the top twice (once on a phone). The column is written on the page, not boxed, and is at most 800 px wide.
+- **Stamps.** Every message's `.ava` is a woodcut stamp in the margin, on every message of a run; the boss's is beside the YOU line. On a phone the stamps are small and inline before a message's header.
+- **Sender animals.** A notice is stamped with its sender's animal: `chat.ts` looks the sender (`from`, or the `name (id)` of an intercom header) up in the net (`gui/senders.ts`, by key, else by name) and gives its kind or role to the icon as `data-sender`. Only a theme that declares `senders` (Storybook) draws it (`icons.ts` `senderRef`); a sender the net does not list, and every other view, keep the comms bird, so Standard does not change.
+- **Slips and stickers.** The boss's message is a sky-blue note (`--sb-you`), a notice a violet slip (`--sb-slip`), and a closed tool call a small label sticker in its state's colour (open, it is the framed slip it was). At night the error sticker uses `--err-soft`. Text keeps 4.5 : 1 on the page, the note, the slip, and each sticker in both phases (`tests/storybook-chat.test.ts`).
+- **The nook.** Where the chat is at least 980 px wide (`container: comms` on `.chat-root`) the phase's picture is the log's corner (`background-attachment: scroll`), at most 250 px wide and never wider than the room right of the column; narrower, it closes the log after the last message (`.chat-list::after`, so the end sentinel chat.ts reads stays where it was). Each picture is named only under its phase, so a page fetches one.
+- **The working bee.** While the unit works (`.composer[data-activity="working"]`) a bee, the sprite's subagent drawn as a mask, flies along the composer's top edge and back (14.4 s, a bob every 2.4 s, turning round at each end), with a breathing lamp glow at night (3.2 s); Standard's ring sweep is off there. Transform and opacity only; calm and reduced motion keep it still in place, forced colours draw none of the page's pictures, holes, tape, or bee.
 
 ---
 
