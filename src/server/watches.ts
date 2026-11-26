@@ -37,7 +37,7 @@ export interface WatchesDeps {
 	log?(event: string, facts: Record<string, string | number | boolean>): void;
 }
 interface Told { state: string; facts: string; at: number }
-interface Watch extends WatchAdd { deadline: number; added: number; since?: string; told?: Told; sentAt: number; pending?: Told & { line: string; id: string; heldBy?: Bucket }; newest?: { state: string; line: string; at: number }; away?: number; fails: number; ended: boolean; sending?: boolean; timer?: () => void; restarted?: boolean }
+interface Watch extends WatchAdd { deadline: number; added: number; since?: string; told?: Told; sentAt: number; pending?: Told & { line: string; id: string; heldBy?: Bucket }; newest?: { state: string; line: string; at: number }; away?: number; fails: number; ended: boolean; sending?: boolean; timer?: () => void; restarted?: boolean; recheck?: boolean }
 interface Bucket { from: number; count: number; held: number; keys: Map<string, string>; timer?: () => void }
 
 const no = (error: string): Reply => ({ ok: false, error });
@@ -127,7 +127,7 @@ export function createWatches(d: WatchesDeps) {
 		save();
 	};
 	const flush = (w: Watch): void => {
-		if (w.ended || !w.pending || w.sending || stopped) return;
+		if (w.ended || !w.pending || w.sending || stopped || w.recheck) return;
 		const at = d.now(), wait = w.sentAt + RATE_MS - at;
 		if (wait > 0) return void (w.timer ??= d.timer(wait, () => ((w.timer = undefined), flush(w))));
 		const b = bucketOf(w.session, at);
@@ -148,7 +148,12 @@ export function createWatches(d: WatchesDeps) {
 		if (!sent) {
 			b.count--;
 			d.log?.("watch-undelivered", { session: w.session.slice(0, 8), key: plain(w.key, 80), state: p.state });
-			if (ENDS.has(p.state) && ++w.fails >= 3) return end(w, `${p.state}, undelivered`);
+			// An ending is sent again, with its own id, until the session takes it (ward-review F004): it ends untold only when the session has been off the net for the grace, or after UNTIL_MS of tries.
+			if (ENDS.has(p.state)) {
+				owned(w);
+				if (w.ended) return;
+				if (d.now() - p.at >= UNTIL_MS) return end(w, `${p.state}, undelivered`);
+			}
 			return flush(w);
 		}
 		w.fails = 0;
@@ -160,6 +165,8 @@ export function createWatches(d: WatchesDeps) {
 	};
 	/** A verdict other than `unchanged`: the newest state, sent when the rate allows unless it is what was told last. */
 	const note = (w: Watch, r: Reply) => {
+		// An ending found is the watch's last word: no later verdict (an `expired` past the deadline, the same ending found again) replaces it or gives it another id.
+		if (w.pending && ENDS.has(w.pending.state)) return;
 		const state = String(r.state), facts = factsOf(r), line = lineOf(w.key, r, w), at = d.now();
 		w.newest = { state, line, at };
 		// A `changed` that carries the facts told last is no change (a state that came and went, or a restarted server's first verdict); after a restart a repeat of the last state is none either.
@@ -176,7 +183,7 @@ export function createWatches(d: WatchesDeps) {
 		if (at - w.away >= OWNER_GRACE_MS) end(w, "session left the net");
 	};
 	const loop = async (w: Watch) => {
-		while (!w.ended && !stopped) {
+		while (!w.ended && !stopped && !(w.pending && ENDS.has(w.pending.state))) {
 			const began = d.now();
 			const r = await d.read({ key: w.key, ...(w.since ? { since: w.since } : {}), ...(w.quietMs ? { quietMs: w.quietMs } : {}), ...(w.idleMs ? { idleMs: w.idleMs } : {}), deadline: w.deadline, ...(w.ward ? { ward: w.ward } : {}) }).catch((error: Error): Reply => no(error.message));
 			if (w.ended || stopped) return;
@@ -190,8 +197,13 @@ export function createWatches(d: WatchesDeps) {
 			// The new `since` and the change it found are saved together (note saves), so a restart between them loses no change.
 			const moved = typeof r.since === "string" && r.since !== w.since;
 			if (moved) w.since = r.since as string;
+			// A change a restart found waiting is checked against this first reading before it goes out: still so (an `unchanged` that kept the stamp), it is sent; moved on, it is dropped; another verdict replaces it.
+			const recheck = w.recheck;
+			w.recheck = false;
 			if (r.state !== "unchanged") note(w, r);
+			else if (recheck && moved) (w.pending = undefined), save();
 			else if (moved) save();
+			if (recheck) flush(w);
 			if (ENDS.has(String(r.state))) return;
 			if (r.state === "unchanged" && (w.ward || d.now() - began < 1000)) await pause(w.ward ? WARD_LOOK_MS : 2000); // a hold that answers at once is not asked in a tight loop; a ward looks every 20 s
 		}
@@ -244,6 +256,8 @@ export function createWatches(d: WatchesDeps) {
 				if (row.key.startsWith("ward:") && !ward) continue;
 				const p = row.pending, pending = p && typeof p.state === "string" && typeof p.facts === "string" && typeof p.line === "string" && typeof p.id === "string" && typeof p.at === "number" ? { state: p.state, facts: p.facts, line: p.line, id: p.id, at: p.at } : undefined;
 				const w: Watch = { session: row.session, workspace: row.workspace, key: row.key, ...(ward ? { ward } : {}), ...(pending ? { pending } : {}), ...(typeof row.quietMs === "number" ? { quietMs: row.quietMs } : {}), ...(typeof row.idleMs === "number" ? { idleMs: row.idleMs } : {}), deadline: row.deadline, added: typeof row.added === "number" ? row.added : d.now(), ...(typeof row.since === "string" ? { since: row.since } : {}), ...(told ? { told } : {}), sentAt: typeof row.sentAt === "number" ? row.sentAt : 0, fails: 0, ended: false, restarted: true };
+				// A pending ending goes out as it was found; any other pending change waits for the first reading (`recheck`).
+				if (pending && !ENDS.has(pending.state)) w.recheck = true;
 				watches.set(idOf(w.session, w.key), w);
 				void loop(w);
 				flush(w);

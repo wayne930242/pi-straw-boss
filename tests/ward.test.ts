@@ -46,8 +46,9 @@ function world() {
 	const timer = (ms: number, fn: () => void) => { let live = true; clock.at(clock.elapsed() + ms, () => live && fn()); return () => void (live = false); };
 	const sent: { session: string; text: string; key: string; state: string; id?: string }[] = [];
 	const stops: (() => void)[] = [];
-	const takes = { now: true };
-	const start = () => startWatches({ net, now: clock.now, send: async (to, text, facts) => (takes.now ? (sent.push({ session: to.session, text, ...facts }), true) : false), log: () => {}, stops, slot: { dir } as never, over: { timer }, ward: { run, monitorPanes: () => monitors, loopsDir: loops, ready: async (workspace, session) => listening.now && workspace === units[session]?.base } });
+	// `lost`: the main takes the line, but its answer never reaches the server.
+	const takes = { now: true, lost: false };
+	const start = () => startWatches({ net, now: clock.now, send: async (to, text, facts) => (takes.lost ? (sent.push({ session: to.session, text, ...facts }), false) : takes.now ? (sent.push({ session: to.session, text, ...facts }), true) : false), log: () => {}, stops, slot: { dir } as never, over: { timer }, ward: { run, monitorPanes: () => monitors, loopsDir: loops, ready: async (workspace, session) => listening.now && workspace === units[session]?.base } });
 	let routes = start();
 	after(() => stops.forEach((s) => s()));
 	return {
@@ -388,4 +389,34 @@ test("ward-review F009: the first ward on a server with no page and no watch rea
 	const r = await w.add({ cli: true });
 	assert.equal(r.ok, true, JSON.stringify(r));
 	assert.ok(w.reading.done >= 1);
+});
+
+test("ward-review F004: an ending found before a restart goes out after it as it was, with its own id, past the deadline too; a change a restart found waiting is checked first", async () => {
+	const w = world();
+	assert.equal((await w.add({}, MAIN, "ward:%7")).ok, true);
+	w.takes.lost = true; // the main takes it, the answer is lost
+	w.drop();
+	await w.looks(1);
+	assert.deepEqual(w.sent.map((x) => x.state), ["dead"]);
+	const id = w.sent[0]!.id;
+	const kept = (JSON.parse(readFileSync(join(w.dir, "wards.json"), "utf8")) as { watches: { pending?: { id: string; state: string } }[] }).watches[0]!.pending;
+	assert.deepEqual([kept?.state, kept?.id], ["dead", id]);
+	w.restart();
+	w.back(); // the pane is listed again: no new verdict replaces the ending
+	w.clock.advance(7 * 3_600_000); // past the ward's 6 h: no `expired` replaces it either
+	w.takes.lost = false;
+	await w.looks(4);
+	assert.deepEqual(w.sent.map((x) => [x.state, x.id]), [["dead", id], ["dead", id]], "sent again as it was, so the main drops the second");
+	assert.deepEqual(await w.list(), []);
+
+	const v = world();
+	assert.equal((await v.add()).ok, true);
+	v.takes.now = false;
+	v.set({ agent_status: "blocked" });
+	await v.looks(2);
+	v.set({ agent_status: "working" }); // it goes on, and the server restarts before its next look
+	v.restart();
+	v.takes.now = true;
+	await v.looks(6);
+	assert.deepEqual(v.sent.map((x) => x.text), [], "a blocked spell that ended before the first reading is not told");
 });
