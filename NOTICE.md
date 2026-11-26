@@ -69,6 +69,16 @@ The short lines under the Zen view's idle circle (`gui/zenlines.ts`) are one sen
 
 The Raven Keep (鴉閣) view's art is original to this project. Its ten role icons and its crest favicon were drawn as an ink-engraving sheet with an image generator (Codex image generation) and traced to single-colour SVG with [potrace](https://potrace.sourceforge.net/) (`sprite.svg`, `favicon.svg`); the backdrop illustration (`backdrop.webp`) was made with the same generator and resized; so was the perched raven (`perch.webp`, one strip of two frames, profile and head turned: the head of the second frame is blended onto the body of the first). The chat page's four rooms (`room-study.webp`, `room-hall.webp`, `room-crypt.webp`, `room-library.webp`) are the same generator's pictures, resized to 1280 by 800; the blood goblet (`raven-main`) and the keep's front (`raven-crown`) in the sprite were redrawn by hand as bold single paths after their traced designs, so they read at 16 px. The Zen ensō and Geek `>_` tab icons (`gui/themes/zen/favicon.svg`, `gui/themes/geek/favicon.svg`) are drawn for this project. The Storybook apple-tree house illustrations (`gui/themes/storybook/backdrop-day.webp` and `backdrop-night.webp`) are original Codex image generation artwork, resized to 1280 by 721. The Storybook animals were drawn with Codex image generation and traced with [potrace](https://potrace.sourceforge.net/) for `sprite.svg`; the bluebird and its letter were redrawn by hand for legibility at 16 px. The favicon uses the bunny from the same sheet. The seven kind icons in each of the Storybook and Raven Keep sprites were drawn with Codex image generation and traced with potrace. Nothing in them is copied from a published setting.
 
+### Storybook sounds (`gui/themes/storybook/sounds/`): not MIT
+
+These mono MP3 clips come from [Casper's free sound effects](https://www.casper.tw/sound-effects/zh-tw/) and are not MIT or CC0. [Casper's licence](https://www.casper.tw/sound-effects/zh-tw/license/) permits free use but prohibits AI training, repackaging as a sound pack, and Content ID registration.
+
+- [拇指琴單音 (`kalimba-thumb-pluck`)](https://sound-effects.casper.tw/audio/kalimba-thumb-pluck.d0a056ae.mp3): trimmed to 1.7 seconds with a fade-out for the question cue.
+- [森林鳥鳴 (`place-forest-birds-singing`)](https://sound-effects.casper.tw/audio/place-forest-birds-singing.f4919cfe.mp3): the daytime loop, with its ends cross-faded.
+- [草地蟋蟀 (`night-cricket-meadow`)](https://sound-effects.casper.tw/audio/night-cricket-meadow.ab7dbe24.mp3): the nighttime loop, with its ends cross-faded.
+
+Powered by Stability AI — This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved.
+
 ### Raven Keep sounds (`gui/themes/raven/sounds/`): not MIT
 
 These three clips are not covered by the MIT licence of this project's code, and they are not CC0. They come from [Casper's free sound effects](https://www.casper.tw/sound-effects/zh-tw/) and are used under its licence, https://www.casper.tw/sound-effects/zh-tw/license/: free use, with no AI training, no repackaging as a sound pack, and no Content ID registration. Each was converted to mono MP3 at a lower bitrate and sample rate, with nothing else changed:

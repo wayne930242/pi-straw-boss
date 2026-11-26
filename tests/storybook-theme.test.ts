@@ -11,6 +11,7 @@ import { rulesOf } from "./css-rules.ts";
 // look is the boss's pick B (washi tape, paper grain, a hand-drawn line, ruled lines on the question card), drawn by static pictures and never by a moving filter.
 // The theme's entry imports its stylesheet: a stylesheet is an empty module here (no browser runs), so the entry's exports can be read.
 registerHooks({ load(url, context, next) {
+	if (url.endsWith(".mp3")) return { format: "module", source: `export default ${JSON.stringify(url)}`, shortCircuit: true };
 	if (url.endsWith(".css")) return { format: "module", source: "", shortCircuit: true };
 	if (url.endsWith(".svg?raw")) return { format: "module", source: `export default ${JSON.stringify(readFileSync(new URL(url), "utf8"))}`, shortCircuit: true };
 	return next(url, context);
@@ -30,6 +31,7 @@ test("storybook is a view: in the one list, the server's completions, the settin
 
 test("the theme brings no nouns and no sentences (every word is Standard's), and its badge follows the phase", async () => {
 	const { theme } = await import("../gui/themes/storybook/index.ts");
+	assert.match(theme.sounds!.waiting!, /\/kalimba-thumb-pluck\.mp3$/);
 	assert.equal(theme.nouns, undefined);
 	assert.equal(theme.sentences, undefined);
 	assert.equal(theme.sprite, at("gui/themes/storybook/sprite.svg"));

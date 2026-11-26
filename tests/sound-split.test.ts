@@ -21,6 +21,7 @@ const SOURCES: [file: string, what: string, cls: "effects" | "background"][] = [
 	["zensound.ts", "Zen's duck node, the way the music reaches the core", "background"],
 	["audiobus.ts", "Zen's music bus", "background"],
 	["zenmusic.ts", "Zen's music files", "background"],
+	["themes/storybook/ambience.ts", "Storybook's birds and cricket loops", "background"],
 	["themes/raven/weather.ts", "Raven's recorded rain loop and its thunder", "background"],
 ];
 

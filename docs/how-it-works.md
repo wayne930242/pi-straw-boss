@@ -1835,7 +1835,7 @@ Sound has a volume from 0 to 100 (60 by default, kept in `localStorage` as `sb.v
 
 #### Sound effects and background sound
 
-The settings page's one Sound switch and Volume became two, each with its own switch and volume under *This device*: **Sound effects** (the cues of events: the question clip of Standard and of a theme, the chime for new link notices that need you, Zen's bowl and knock) and **Background sound** (what plays under the page: Zen's music, Raven's rain and thunder; the thunder belongs to the weather). Both are off by default and work in Standard, Geek, Zen, and Raven Keep; Zen's corner menu and its palette carry both too (a switch and two volume steps each).
+The settings page's one Sound switch and Volume became two, each with its own switch and volume under *This device*: **Sound effects** (the cues of events: the question clip of Standard and of a theme, the chime for new link notices that need you, Zen's bowl and knock) and **Background sound** (what plays under the page: Zen's music, Raven's rain and thunder, and Storybook's birds by day or crickets by night on the map and head page). Both are off by default. Storybook's question cue is a single kalimba note; Zen's corner menu and its palette carry both too (a switch and two volume steps each).
 
 <details>
 <summary>Details</summary>
