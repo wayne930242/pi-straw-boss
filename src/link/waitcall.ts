@@ -49,7 +49,8 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 			boss: bossParameter(),
 			...(workers ? { worker: Type.Optional(Type.Object({
 				device: Type.String(),
-				branch: Type.String({ description: "New, or on origin (rework)." }),
+				branch: Type.Optional(Type.String({ description: "New, or on origin (rework). Optional with resume (a cross-check)." })),
+				resume: Type.Optional(Type.String({ description: "A worker that ended: the full session id its receipt's Session line names; message is the follow-up. No base with it." })),
 				base: Type.Optional(Type.String({ description: "origin branch or 40-hex; default origin's default." })),
 				model: Type.Optional(Type.String({ description: "On that box's workers.models." })),
 				points: Type.Optional(Type.Number({ description: "0.25-10, default 1." })),
@@ -73,7 +74,7 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 interface Modes { callTower: Reach["callTower"]; link: Pick<Link, "waitOp">; bossAsk?: BossAsk }
 interface Call { message: string; why?: "milestone" | "shared" | "blocked"; workspace?: string; reply?: boolean }
 interface WaitsOn { device: string; owner?: string; what?: string; cancel?: boolean }
-interface WorkerArg { device: string; branch: string; base?: string; model?: string; points?: number; label?: string }
+interface WorkerArg { device: string; branch?: string; resume?: string; base?: string; model?: string; points?: number; label?: string }
 
 /** A call with none of them: to the tower, with the note its moment needs. */
 const plainMode = async ({ callTower }: Modes, { message, why, workspace, reply }: Call) => withMoment(await callTower(message, workspace, reply ?? true, why), message, why);

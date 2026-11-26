@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { restrictLabel } from "../link/text.ts";
-import { type WorkerSpec, workerMessage } from "../workerslip.ts";
+import { type Slip, workerMessage } from "../workerslip.ts";
 import { ASK_KEEP_MS, type Asks } from "./asks.ts";
 
 // A controller main's `call_tower` `worker` (docs/specs/2026-11-26-ally-workers.md, Controller side): the code writes the slip's line over the brief and sends it to the teammate's box as the workspace's tower identity, a plain
@@ -21,15 +21,17 @@ export interface WorkerSendDeps {
 }
 type Sent = { ok: boolean; error?: string; details?: { team?: string; device?: string; id?: string; asked?: boolean } };
 
-export async function sendWorker(d: WorkerSendDeps, target: { id: string; short: string; label: string; team: string }, spec: WorkerSpec, brief: string, asker: { id: string; name: string }): Promise<{ text: string; details: Record<string, unknown> }> {
+export async function sendWorker(d: WorkerSendDeps, target: { id: string; short: string; label: string; team: string }, spec: Slip, brief: string, asker: { id: string; name: string }): Promise<{ text: string; details: Record<string, unknown> }> {
 	const label = `${restrictLabel(target.label)} (${target.short})`;
 	if (!d.caps(target.team, target.id).includes("tower.worker")) throw new Error(`${label} opens no workers: its build or config lists no tower.worker (a capacity budget and a workers section), or it has not been heard from for 2 hours. Nothing was sent.`);
+	if (spec.resume !== undefined && !d.caps(target.team, target.id).includes("tower.worker.resume")) throw new Error(`${label} resumes no workers: its build lists no tower.worker.resume (an older pi-straw-boss there), so it would refuse the slip without a cause. Nothing was sent; send a new worker instead.`);
 	const text = workerMessage(spec, brief), ask = randomBytes(16).toString("hex");
 	const sent = (await d.link({ op: "send", device: target.id, text, reply: true, awaitsReply: ask }).catch((e: Error) => ({ ok: false, error: e.message }))) as Sent;
 	if (!sent.ok) throw new Error(`Not sent to ${label}: ${String(sent.error ?? "no reason").slice(0, 300)}`);
 	const x = sent.details ?? {};
 	if (x.asked !== true || !x.id || !x.device || !x.team) throw new Error(`Sent to ${label}, but its build took no ask id: no answer can reach you, so do not wait for one`);
 	d.asks.open({ ask, envelope: x.id, device: x.device, team: x.team, for: asker.id, forName: asker.name, workspace: d.ws, tower: d.identity, at: d.now(), expires: d.now() + WORKER_ASK_KEEP_MS });
-	d.log("worker-sent", { workspace: d.ws, device: target.short, branch: spec.branch });
+	d.log("worker-sent", { workspace: d.ws, device: target.short, ...(spec.branch ? { branch: spec.branch } : {}), ...(spec.resume ? { resume: spec.resume } : {}) });
+	if (spec.resume !== undefined) return { text: `The follow-up to worker session ${spec.resume.slice(0, 8)} went to ${label}. Its answer comes to you as a link_reply: a refusal with its cause, or the worker's next final report. Do not wait in your turn; carry on.`, details: { ...x, resume: spec.resume } };
 	return { text: `Worker ${spec.label} (branch ${spec.branch}, ${spec.points} point${spec.points === 1 ? "" : "s"}) went to ${label}. Its answer comes to you as a link_reply: a refusal, or the worker's final report (branch, head, pushed or not). Do not wait in your turn; carry on.`, details: { ...x, worker: spec.branch } };
 }

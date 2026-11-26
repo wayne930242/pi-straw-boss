@@ -54,3 +54,19 @@ test("refused, with nothing sent: a box with no tower.worker, a member, a worker
 	assert.match(String((await hub.op(op({ branch: "fix/a" }, " "), "main-1")).error), /needs a brief/);
 	assert.equal(off.requests.length + requests.length, 0);
 });
+
+test("a resume goes only to a box whose caps list tower.worker.resume, with its full session id, no base, and a follow-up; the slip carries resume and the ask opens", async () => {
+	const SID = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+	const old = rig(["tower.worker"]);
+	assert.match(String((await old.hub.op(op({ resume: SID, label: "MP-1" }), "main-1")).error), /resumes no workers: its build lists no tower.worker.resume/);
+	const { hub, requests, asks } = rig(["tower.worker", "tower.worker.resume"]);
+	assert.match(String((await hub.op(op({ resume: SID.slice(0, 8) }), "main-1")).error), /full session id/);
+	assert.match(String((await hub.op(op({ resume: SID, base: "develop" }), "main-1")).error), /base goes with a new worker/);
+	assert.match(String((await hub.op(op({ resume: SID }, ""), "main-1")).error), /needs a brief/);
+	assert.equal(old.requests.length + requests.length, 0, "nothing was sent for a refusal");
+	const sent = await hub.op(op({ resume: SID, label: "MP-1" }, "Fix the P1."), "main-1");
+	assert.equal(sent.ok, true, JSON.stringify(sent));
+	assert.deepEqual(parseWorker(String(requests[0]!.body.text)), { spec: { label: "MP-1", resume: SID }, brief: "Fix the P1." });
+	assert.equal(asks.openOf("wA")[0]!.ask, requests[0]!.body.awaitsReply);
+	assert.match(String(sent.text), /The follow-up to worker session 0199a1b2 went to box/);
+});

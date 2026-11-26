@@ -59,6 +59,16 @@ Every outcome is a `tower-reply` to that ask and reaches the main by session id 
 
 Points are server-held and clamped to 0.25–10. A controller can still under-declare them; by the boss's decision there is no minimum beyond the clamp.
 
+## Resume
+
+Added 2026-11-26 (design approved by the boss: the full session id only, `tower.worker.resume`, refuse a live worker, 7 days, refuse an off-list recorded model unless one is given, no cap beyond capacity).
+
+- **Controller.** The final report, the gone receipt, and the idle receipt end with a code-written `Session: <uuid> · resume: …` line. `call_tower` `worker {device, resume: "<uuid>", branch?, model?, points?}` writes `worker: <label> | resume: <uuid> [| branch: <b>] [| model: <id>] [| points: <n>]` over the follow-up. Nothing goes when the target's caps lack `tower.worker.resume` (an older box would refuse the unknown key without a cause), the id is no full lowercase uuid, `base` is given, or the message is empty.
+- **Caps.** `hello` goes first in a `caps`, and new decoders keep 32 features: a decoder that keeps 16 still sees `hello` and every feature it knows.
+- **Book.** `workers-opened.json` keeps one entry per session: the ask (earlier asks in `prior`), the device it is bound to, team, workspace, branch, label, path, base, base sha, points, model, the session file (Herdr's `agent_session`, read at the open and at each sweep look), the last head, and how and when it ended. Kept 7 days after its last mark; each end and each resume renews it. It authorises nothing alone.
+- **Door** (`server/workerresume.ts`, on the opens' queue): the config, hold, budget, and route cap; the entry of (the run's own device, session), else the unknown-id text, which lists up to 5 of that device's resumable sessions; no live route of the session (`still runs`) and none final or listed by the broker (`closing`); the worktree derived again from the repository and branch, which must equal the file header's `cwd` and must be held by no other live worker; the model (an override on the allowlist, else the recorded one still on it); admission with the slip's or the recorded points; an existing worktree must be this repository's on that branch and is reused, a gone one is made again by `prepareWorktree` from `origin/<branch>` or the recorded base; then `fileRefusal` with the worktree as checkout. The opener starts `pi --session <file>` (no `--name`, `--model` only when given) after `assertSettingsSafe`, waits for that session id, refuses a twin pane on the file, and hands over `workerResumeHandoff`. A new route row answers the new ask. On failure the tab closes, a worktree this resume made goes, and the reservation is freed; every refusal answers the ask as `The box did not resume worker <label> (session <id8>, branch <b>): <cause>`.
+- Departure: the door checks the model and the budget before it makes the worktree, so a refusal there leaves no worktree to drop.
+
 ## Departures from the design
 
 - The `done` close and the crash and idle receipts live in `createWorkerEnds` (`workerrelay.ts`) beside the revoker, not as new reasons inside `revoke.ts`; `revoke.ts` only gained `interrupt` for workers. That keeps the revoker's notices and its two-sweep rule unchanged.

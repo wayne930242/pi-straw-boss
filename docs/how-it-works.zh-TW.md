@@ -3985,7 +3985,9 @@ server 把執行限制在它被認領的等級與裝置現在的等級兩者較�
 
 **分頁。** 開啟器在 `assertSettingsSafe` 之後於 worktree 裡啟動 `pi --model <id>`，並帶 `sb_open_duty=worker`：這個主智慧體的種類是 `worker`，它的提示只有 `prompts/worker.md`，交接內容帶著這個時刻的規則與逐字的任務說明。工作者不佔工作區兩個開啟主智慧體的名額，也不佔它的發送者那一個（見證是它的路由，而不是窗格 token），它自己的點數算在它那一列的裝置產能上（`joinCaps`），它自己的 todo 也不是裝置的就緒工作。它不能改種類、不能呼叫 `boss_wrap`，也不能啟動 `worker` 子智慧體；scout 與 reviewer 可以幫忙。拒絕或開啟失敗會以原因回答 ask、移除 worktree 與這次開啟建立的分支，且不留帳本列，所以同一張單據可以再送一次。
 
-**結束。** 工作者的第一個 `call_tower` `why: milestone` 就是它的最終報告：伺服器以程式把它當作 `tower-reply` 送給那個 ask（沒有隊友 run 經手；送不出去時退回隊友回答的路徑），下一次巡查關掉分頁，並在 worktree 乾淨且 HEAD 已在 `origin/<branch>` 上、或仍停在基底時移除它；否則保留 worktree 並告知塔台。閒置 15 分鐘，工作者在每段閒置期被提醒一次；閒置 60 分鐘仍沒有報告，box 中斷它，以程式寫的收據回答 ask，並保留 worktree。pi 已經不在的工作者（連續兩次巡查）會收到一張收據，寫明它的分支、head，以及它的 worktree 的下落。
+**結束。** 工作者的第一個 `call_tower` `why: milestone` 就是它的最終報告：伺服器以程式把它當作 `tower-reply` 送給那個 ask（沒有隊友 run 經手；送不出去時退回隊友回答的路徑），下一次巡查關掉分頁，並在 worktree 乾淨且 HEAD 已在 `origin/<branch>` 上、或仍停在基底時移除它；否則保留 worktree 並告知塔台。閒置 15 分鐘，工作者在每段閒置期被提醒一次；閒置 60 分鐘仍沒有報告，box 中斷它，以程式寫的收據回答 ask，並保留 worktree。pi 已經不在的工作者（連續兩次巡查）會收到一張收據，寫明它的分支、head，以及它的 worktree 的下落。最終報告與兩種收據的最後都有一行由程式寫的 `Session: <uuid> · resume: call_tower worker {device, resume: "<uuid>"} (kept 7 days)`；被拒的開啟沒有這一行，因為什麼都沒有執行。
+
+**續接。** 後續工作以 `call_tower` `worker {device, resume: "<uuid>", branch?, model?, points?}` 送到同一個 pi session，訊息就是後續工作：單據的那一行是 `worker: <label> | resume: <uuid> [| branch: <b>] [| model: <id>] [| points: <n>]`；box 的 `caps` 沒有列出 `tower.worker.resume`、id 不是完整的 uuid、帶了 `base`，或訊息是空的，就什麼都不送。box 的帳本（`workers-opened.json`）在每個工作者最後一次結束後保留它 7 天，綁定開啟它的裝置：另一個裝置的 id 讀起來就像不認得的 id。這道門會帶著原因拒絕：仍在執行或報告後正在關閉的工作者；已不存在、在 pi 的 sessions 資料夾外、屬於子智慧體或 id 不符的 session 檔；資料夾不是依儲存庫與分支重新推得之 worktree 的 session；在別的分支上或被另一個執行中的工作者佔用的 worktree；記錄的模型已不在 `workers.models` 上（除非給了 `model`）；以及和開啟一樣的預算、保留與路由上限。保留下來的 worktree 直接沿用；已移除的會從 `origin/<branch>` 重建，分支從未推送時則從記錄的基底重建。接著 pi 在新分頁以 `--session <file>` 啟動（不帶 `--name`；只有給了 model 才帶 `--model`），必須以那個 session 回來，並收到逐字的後續工作與 worktree 如何回來的說明；新的路由列回答新的 ask，15 與 60 分鐘的計時重新開始。
 
 </details>
 
