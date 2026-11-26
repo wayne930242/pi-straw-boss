@@ -11,7 +11,7 @@ import type { ThemeParts } from "./theme.ts";
 // `import()` here. A theme loads the first time the page shows its view and stays loaded, so switching back costs no request. Standard is the base the page entry carries.
 
 export type ThemeView = Exclude<Face, "standard">;
-const LOADERS = { geek: () => import("./geek/index.ts"), zen: () => import("./zen/index.ts"), raven: () => import("./raven/index.ts") } satisfies Record<ThemeView, () => Promise<{ theme: ThemeParts }>>;
+const LOADERS = { geek: () => import("./geek/index.ts"), zen: () => import("./zen/index.ts"), raven: () => import("./raven/index.ts"), storybook: () => import("./storybook/index.ts") } satisfies Record<ThemeView, () => Promise<{ theme: ThemeParts }>>;
 export const isTheme = (view: Face): view is ThemeView => view in LOADERS;
 
 const loaded = new Map<ThemeView, Promise<unknown>>();

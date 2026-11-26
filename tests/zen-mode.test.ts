@@ -37,7 +37,8 @@ test("A2: the storage table: sb.zen says, a legacy sb.view zen with none means o
 		["zen", null, "auto", true], // a device that was on the Zen view
 		["zen", "0", "auto", false], // it left Zen on the new build
 		["raven", "1", "raven", true], // leaving shows Raven Keep
-		["storybook", null, "auto", false], // a theme this build does not know (an older build reading a newer one's)
+		["storybook", null, "storybook", false], // a theme of this build
+		["meadow", null, "auto", false], // a theme this build does not know (an older build reading a newer one's)
 		[null, null, "auto", false],
 		["geek", "0", "geek", false],
 		["1", null, "auto", false], // only zen means on: any other legacy value is off
@@ -143,7 +144,7 @@ test("the lists: Zen is a mode, not a view; the completions and the build's them
 	assert.ok(!(VIEWS as readonly string[]).includes("zen"));
 	assert.deepEqual([...MODES], ["zen"]);
 	assert.ok(!("gui view zen" in VIEW_ARGUMENTS), "no completion for gui view zen");
-	assert.deepEqual(Object.keys(VIEW_ARGUMENTS), ["gui view auto", "gui view standard", "gui view geek", "gui view raven"]);
+	assert.deepEqual(Object.keys(VIEW_ARGUMENTS), ["gui view auto", "gui view standard", "gui view geek", "gui view raven", "gui view storybook"]);
 });
 
 test("the Zen button's look: the word beside the gear, the ensō alone on a 44 px target on a phone, and [Zen] in Geek", () => {
@@ -168,14 +169,14 @@ test("the server cannot put a page into Zen: gui-view zen is refused with the wa
 	const h = await startHosted(world);
 	await h.ask("gui-view", { view: "raven" });
 	const reply = await h.ask("gui-view", { view: "zen" });
-	assert.deepEqual(reply, { ok: false, error: "Zen is a mode now: enter it with the Zen button in the page's header. The default view is auto, standard, geek, or raven" });
+	assert.deepEqual(reply, { ok: false, error: "Zen is a mode now: enter it with the Zen button in the page's header. The default view is auto, standard, geek, raven, or storybook" });
 	assert.deepEqual(JSON.parse(readFileSync(prefs(h.slot.dir), "utf8")), { v: 1, view: "raven" }, "the file is untouched");
 	assert.equal(h.gui().view, "raven", "gui.json keeps the theme");
 	const viewer = world.agent({ id: "viewer", pane: "wA:p1", tab: "wA:t1", deps: { openUrl: async () => {} } });
 	await viewer.start();
 	await viewer.command("gui view zen");
 	assert.equal(viewer.notices.at(-1)!.level, "error");
-	assert.equal(viewer.notices.at(-1)!.text, "Straw net GUI: Zen is a mode now: enter it with the Zen button in the page's header. The default view is auto, standard, geek, or raven");
+	assert.equal(viewer.notices.at(-1)!.text, "Straw net GUI: Zen is a mode now: enter it with the Zen button in the page's header. The default view is auto, standard, geek, raven, or storybook");
 });
 
 test("a gui-prefs.json that still says zen reads as auto, the tell adds one line, and nothing rewrites the file until the boss sets a default", async () => {

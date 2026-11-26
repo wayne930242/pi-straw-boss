@@ -6,5 +6,6 @@ const VIEW_ABOUT: Record<Choice, string> = {
 	standard: "Default view: Standard for devices that follow the server",
 	geek: "Default view: Geek (black, monospace, no motion) for devices that follow the server",
 	raven: "Default view: Raven Keep (a gothic skin of Standard: castle palette, fog, bats, ravens) for devices that follow the server",
+	storybook: "Default view: Storybook (a picture-book skin of Standard: watercolour by day, a starry night after dark) for devices that follow the server",
 };
 export const VIEW_ARGUMENTS = Object.fromEntries(CHOICES.map((view) => [`gui view ${view}`, VIEW_ABOUT[view]]));

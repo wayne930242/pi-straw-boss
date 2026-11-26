@@ -100,11 +100,11 @@ test("an invalid stored value is Auto and is left as it is until the person choo
 	assert.deepEqual(w.written, []);
 });
 
-test("the settings' control is four words (Auto, Standard, Geek, Raven Keep; no Zen, which is a mode) in a group, one of them pressed, each a pair-btn so a phone gives it 44 px", () => {
+test("the settings' control is five words (Auto, Standard, Geek, Raven Keep, Storybook; no Zen, which is a mode) in a group, one of them pressed, each a pair-btn so a phone gives it 44 px", () => {
 	const html = readFileSync(new URL("../gui/index.html", import.meta.url), "utf8");
 	const group = /<div class="view-pick" id="view-pick"[^>]*>([\s\S]*?)<\/div><\/div>/.exec(html)?.[1] ?? "";
 	const buttons = [...group.matchAll(/<button class="pair-btn" type="button" data-choice="(\w+)" aria-pressed="(\w+)" data-m="(\w+)">/g)].map((x) => x.slice(1));
-	assert.deepEqual(buttons, [["auto", "true", "view_auto"], ["standard", "false", "view_standard"], ["geek", "false", "view_geek"], ["raven", "false", "view_raven"]]);
+	assert.deepEqual(buttons, [["auto", "true", "view_auto"], ["standard", "false", "view_standard"], ["geek", "false", "view_geek"], ["raven", "false", "view_raven"], ["storybook", "false", "view_storybook"]]);
 	assert.match(html, /role="group" aria-labelledby="view-label"/);
 });
 
@@ -362,11 +362,26 @@ test("boot.js sets the theme-color view.ts names, links the theme's stylesheet o
 	assert.deepEqual(boot(null, true, null).wrote.length, 1, "Auto with more contrast is Geek");
 	assert.equal(boot(null, false, "geek", { refuse: true }).view, "geek", "storage refused: the server's default decides");
 	assert.equal(boot(null, false, "zen").view, "standard", "an older server's zen is no view (the map marks it a mode): Auto");
-	assert.deepEqual(Object.fromEntries(Object.entries(boot(null, false, null).resolve.colors)), THEME, "the colours are view.ts's");
+	assert.deepEqual(JSON.parse(JSON.stringify(boot(null, false, null).resolve.colors)), THEME, "the colours are view.ts's");
 });
 
 test("boot.js restores Standard's icon from data-standard when the server wrote a theme's icon and the device's view has none", () => {
 	const run = boot("standard", false, "geek", { standardMark: "./icon.svg", icon: "themes/geek/favicon-x.svg" });
 	assert.equal(run.icon, "./icon.svg");
 	assert.equal(boot("geek", false, null, { standardMark: "./icon.svg", icon: "themes/geek/favicon-x.svg" }).icon, "icon.svg", "a themed view still takes its own");
+});
+
+// RV-F002: boot.js paints Zen's ink (or a theme's colour) over the theme-color before view.ts reads Standard's, so leaving Zen on a Standard device kept Zen's ink. boot.js keeps the page's own colour in the meta's data-standard,
+// and view.ts reads Standard's colour there.
+test("leaving Zen on a Standard device paints Standard's theme-color, not Zen's ink that boot.js put on the first frame (RV-F002)", () => {
+	const first = boot("standard", false, null, { zen: "1" });
+	assert.deepEqual([first.view, first.color, first.colorStandard], ["zen", THEME.zen, "#1a1b26"], "boot.js keeps the page's own colour before it paints Zen's");
+	assert.equal(boot("standard", false, null, { zen: "0" }).colorStandard, undefined, "Standard's first frame paints nothing and marks nothing");
+	let zen = true;
+	const root = { dataset: { view: first.view } as Record<string, string | undefined> }, meta = { content: first.color, dataset: { standard: first.colorStandard } as Record<string, string | undefined> };
+	const view = mountView({ root, meta, media: { matches: false, addEventListener() {} }, storage: { getItem: (k) => (k === "sb.view" ? "standard" : null), setItem() {} } }, () => zen);
+	assert.equal(meta.content, THEME.zen);
+	zen = false;
+	view.refresh();
+	assert.deepEqual([root.dataset.view, meta.content], ["standard", "#1a1b26"]);
 });

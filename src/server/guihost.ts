@@ -56,7 +56,7 @@ import { createBoardPanel, type Told } from "./boardpanel.ts";
 //   gui-remote {on}       turns remote access on (answers the lines of the pairing QR) or off; the boss's own, so it starts a stopped GUI
 //   gui-pair              a new one-time pairing link while remote access is on
 //   gui-rotate            a new token and CSRF secret, every paired device unpaired; the boss's own, so it starts a stopped GUI (answers like `gui`)
-//   gui-view {view?}      the server's default view (`/boss gui view`): tells it, or stores `auto`, `standard`, `geek`, or `raven` in gui-prefs.json (`zen` is a mode and refused) and tells the open pages; it does not start a stopped GUI. Only this request writes it (the page has no route for it)
+//   gui-view {view?}      the server's default view (`/boss gui view`): tells it, or stores `auto`, `standard`, `geek`, `raven`, or `storybook` in gui-prefs.json (`zen` is a mode and refused) and tells the open pages; it does not start a stopped GUI. Only this request writes it (the page has no route for it)
 // and what the page asks of the server panel (this computer's page only): status, restart, and the log (control.ts `server`).
 
 /** Binding the recorded ports: a restart's old server is still letting go of them for a moment. */
