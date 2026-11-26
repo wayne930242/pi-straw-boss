@@ -420,3 +420,23 @@ test("ward-review F004: an ending found before a restart goes out after it as it
 	await v.looks(6);
 	assert.deepEqual(v.sent.map((x) => x.text), [], "a blocked spell that ended before the first reading is not told");
 });
+
+test("ward-review F006, F008: another session's file at the worker's path is not read as its; a line longer than the cap is dropped, not kept, and the reader goes on at the next line", async () => {
+	const w = world();
+	w.set({ agent_status: "idle" });
+	assert.equal((await w.add()).ok, true);
+	writeFileSync(w.file, line({ type: "session", id: "0199eeee-other" }) + said("done")); // the path now holds another session, whose turn ended
+	await w.looks(12);
+	assert.deepEqual(w.sent, [], "nothing is judged from another session's file");
+
+	const dir = mkdtempSync(join(tmpdir(), "sb-ward-cap-")), file = join(dir, "s.jsonl"), main = { id: MAIN, names: [] };
+	dirs.push(dir);
+	writeFileSync(file, line({ type: "session", id: WORKER }));
+	const read = sessionReader(file, readFileSync(file).length, main, 64, 256);
+	appendFileSync(file, "x".repeat(1000));
+	for (let i = 0; i < 20; i++) assert.equal((await read()).turn, "unknown", "a long line not yet ended");
+	appendFileSync(file, "\n" + said("done"));
+	let r = await read();
+	for (let i = 0; i < 20 && r.turn === "unknown"; i++) r = await read();
+	assert.equal(r.turn, "ended");
+});

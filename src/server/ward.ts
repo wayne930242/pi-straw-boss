@@ -16,7 +16,9 @@ export const WARD = "ward:";
 /** How long a ward waits after a look that found nothing to tell, and how long a quiet worker must stay quiet to be finished (two looks this far apart). */
 export const WARD_LOOK_MS = 20_000, QUIET_MS = 60_000;
 /** A session file's tail read before the ward's start for the turn the worker was in, and the most a ward reads of it in one look. */
-const TAIL = 256 * 1024, BUDGET = 2 * 1024 * 1024, PER_SERVER_WARDS = 64;
+const TAIL = 256 * 1024, BUDGET = 2 * 1024 * 1024;
+/** The longest line a ward keeps while it waits for the line's end. */
+const LINE_MAX = 8 * 1024 * 1024;
 /** The tools whose open call is a question to a person: the worker waits on a dialog. */
 const DIALOGS = new Set(["ask_user_question", "ask_user", "secret_drop", "robot_hand", "call_tower"]);
 const ITEM = /^[A-Za-z0-9][A-Za-z0-9._:#/-]{0,63}$/;
@@ -28,7 +30,8 @@ export type WardState = "finished" | "blocked" | "dead" | "unchanged";
 /** The worker's turn as its session file says: `ended` (the last message is the assistant's and called no tool), `dialog` (it waits on a question tool), `working`, or `unknown` (no message yet, or the file cannot be read). */
 export type Turn = "ended" | "dialog" | "working" | "unknown";
 /** One look: the pane in Herdr's list, the turn, whether a report to the main came after the ward's start, and what still runs for the worker. */
-export interface WardLook { pane?: Pick<Pane, "agent" | "agent_status" | "agent_session">; turn: Turn; reported?: string; runs: string[] }
+/** `foreign`: the file at the worker's path holds another session now. */
+export interface WardLook { pane?: Pick<Pane, "agent" | "agent_status" | "agent_session">; turn: Turn; reported?: string; runs: string[]; foreign?: true }
 /** What a ward already told, carried from look to look (watches.ts keeps it as the watch's `since`): when the worker was first seen quiet, and whether its blocked spell was told. */
 export interface WardTold { quiet?: number; blocked?: boolean }
 
@@ -40,6 +43,7 @@ export function judgeWard(rec: WardRec, look: WardLook, told: WardTold, at: numb
 	if (file !== undefined && file !== rec.file) return { state: "dead", why: "the pane now runs another session", told };
 	// Whose pi it is cannot be told while Herdr names no session file: nothing is judged finished or blocked on a pane that may be another worker's (ward-review F006).
 	if (file === undefined) return { state: "unchanged", why: "Herdr names no session file of its pane now", told };
+	if (look.foreign) return { state: "unchanged", why: "its session file now holds another session", told };
 	if (look.reported) return { state: "finished", why: `it reported to you (${look.reported})`, told };
 	if (look.pane.agent_status === "blocked" || look.turn === "dialog") {
 		const why = look.turn === "dialog" ? "it waits on a dialog" : "Herdr shows its pane blocked";
@@ -60,8 +64,8 @@ const blocksOf = (m: Json): Json[] => (Array.isArray(m?.content) ? m.content.fil
  * not yet ended waits in `carry` for the rest. The first read starts TAIL before `offset` for the turn the worker was in, and drops that read's first line only when it starts before `offset` (a line cut by the start); a read that
  * starts at `offset`, a line's start, drops nothing. While the reader is behind the file's end, the turn is `unknown`: an old line is not the worker's turn now.
  */
-export function sessionReader(file: string, offset: number, main: WardRec["main"], budget = BUDGET) {
-	let pos = -1, carry = Buffer.alloc(0), turn: Turn = "unknown", reported: string | undefined;
+export function sessionReader(file: string, offset: number, main: WardRec["main"], budget = BUDGET, lineMax = LINE_MAX) {
+	let pos = -1, carry = Buffer.alloc(0), skip = false, turn: Turn = "unknown", reported: string | undefined;
 	const calls = new Set<string>();
 	const take = (line: string, start: number) => {
 		let d: Json;
@@ -95,16 +99,19 @@ export function sessionReader(file: string, offset: number, main: WardRec["main"
 			pos += n;
 			if (cut) {
 				const nl = data.indexOf(10);
-				if (nl < 0) return (carry = data), { turn: "unknown" };
+				if (nl < 0) return (skip = true), { turn: "unknown" }; // the cut line goes on past this read: the next read drops the rest of it
 				(at += nl + 1), (data = data.subarray(nl + 1));
 			}
 			const end = data.lastIndexOf(10);
 			carry = Buffer.from(data.subarray(end + 1));
+			// A line longer than LINE_MAX is no message the ward reads (a pasted file, a tool's output): it is dropped up to its end, and the reader skips to the next line (ward-review F008).
+			if (carry.length > lineMax) (carry = Buffer.alloc(0)), (skip = true);
 			for (const line of data.subarray(0, end + 1).toString("utf8").split("\n").slice(0, -1)) {
-				take(line, at);
+				if (skip) skip = false; // the end of a line that was dropped
+				else take(line, at);
 				at += Buffer.byteLength(line) + 1;
 			}
-			return { turn: pos < size ? "unknown" : turn, ...(reported ? { reported } : {}) };
+			return { turn: pos < size || skip ? "unknown" : turn, ...(reported ? { reported } : {}) };
 		} catch {
 			return { turn: "unknown", ...(reported ? { reported } : {}) };
 		} finally {
@@ -148,7 +155,8 @@ export const wardLine = (rec: WardRec, state: WardState, why: string) => `ward $
 export function createWardRead(d: WardDeps) {
 	/** One look at the worker, with what still runs for it: a monitor in its pane, an active loop of its session, a running subagent of its pane. */
 	/** A reader per ward, which goes on where its last look stopped (F008). */
-	const readers = new Map<string, ReturnType<typeof sessionReader>>();
+	const readers = new Map<string, { read: ReturnType<typeof sessionReader>; used: number }>();
+	const idOf = (rec: WardRec) => `${rec.file}\n${rec.offset}\n${rec.main.id}`;
 	const look = async (rec: WardRec): Promise<WardLook> => {
 		// The worker is the pi pane that holds its session file, wherever Herdr moved it; else its terminal, which a move keeps; else its pane id, unless that id now names another terminal (ward-review F006).
 		const all = await panes(d.run), other = (p: Pane) => Boolean(rec.terminal && p.terminal_id && p.terminal_id !== rec.terminal);
@@ -163,13 +171,15 @@ export function createWardRead(d: WardDeps) {
 		if (d.watching?.(rec.worker)) runs.push("a boss_watch of it runs");
 		const kids = subagents(pane, all, d.now()).filter((r) => !r.ended).length;
 		if (kids) runs.push(`${kids} subagent${kids > 1 ? "s" : ""} of it run${kids > 1 ? "" : "s"}`);
-		const id = `${rec.file}\n${rec.offset}\n${rec.main.id}`;
+		// The file at the path must still be the worker's: another session's file there is not read as its (ward-review F006).
+		if (sessionHeader(rec.file)?.id !== rec.worker) return { pane, turn: "unknown", runs, foreign: true };
+		const id = idOf(rec), now = d.now();
+		// A reader not used for an hour is a ward that was stopped or ended; one whose ward ended goes at once (read below).
+		for (const [k, r] of readers) if (now - r.used > 3_600_000) readers.delete(k);
 		let reader = readers.get(id);
-		if (!reader) {
-			readers.set(id, (reader = sessionReader(rec.file, rec.offset, rec.main)));
-			if (readers.size > 2 * PER_SERVER_WARDS) readers.delete(readers.keys().next().value!); // the oldest: a ward that ended
-		}
-		return { pane, ...(await reader()), runs };
+		if (!reader) readers.set(id, (reader = { read: sessionReader(rec.file, rec.offset, rec.main), used: now }));
+		reader.used = now;
+		return { pane, ...(await reader.read()), runs };
 	};
 	return {
 		/** One look and its verdict, as watch-read answers: `since` carries what was told. A Herdr list that does not answer is no verdict. */
@@ -179,6 +189,7 @@ export function createWardRead(d: WardDeps) {
 			let seen: WardLook;
 			try { seen = await look(q.ward); } catch (error) { return { ok: false, error: `Herdr's pane list did not answer: ${(error as Error).message}` }; }
 			const v = judgeWard(q.ward, seen, was, at);
+			if (v.state === "finished" || v.state === "dead") readers.delete(idOf(q.ward));
 			return { ok: true, state: v.state, since: stampOf(v.told), now: at, unit: { pane: q.ward.pane, state: v.state, why: v.why, ...(q.ward.item ? { item: q.ward.item } : {}) }, ward: wardLine(q.ward, v.state, v.why) };
 		},
 		/** The record of a new ward: the pane runs pi with a session file, it is not the caller's own pane or session, and the item (if any) is a plain key. */
