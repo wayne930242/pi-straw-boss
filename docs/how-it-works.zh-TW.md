@@ -103,7 +103,7 @@ stateDiagram-v2
 2. 成員透過升任成為所在分頁的**主智慧體**。工作變大時（步驟變多、要派工作者、涉及不只一個 app），智慧體會呼叫 `boss_promote`；成員的 prompt 會這樣告訴它。成員如果沒有升任就呼叫 pi-herdr-agents 的 `subagent` 或 `subagent_resume` 工具，會在子智慧體啟動或恢復之前自動升任。啟動時加入失敗、等到 session 的 pane 搬到另一個分頁後才重試的，會登記在它現在所在的分頁，所以那裡不會冒出第二個主智慧體。
 3. 一個分頁只有一個主智慧體。智慧體絕不會接手既有的主智慧體：分頁的主智慧體還活著時，`boss_promote` 會被拒絕並附上訊息，自動升任也會跳過。成員仍然可以派自己的子智慧體，但它的 prompt 要它先透過 intercom 通知主智慧體：它要做什麼、會用到哪些資源。
 4. 主智慧體不會降級。它的 session 結束後，分頁就沒有主智慧體，直到有成員升任為止（這時成員的 prompt 會提議升任）。`/boss` 是使用者手動接手：即使已經有別的主智慧體，它也會讓這個 session 成為分頁的主智慧體。
-5. 主智慧體有一種**類型**：`coordinator`（預設：規劃並派工）、`integrator`（專案的合併火車）、`standing`（負責一個系統或一台機器，沒有結束的時候）。類型就是這個主智慧體執行的 prompt：`main.md`，integrator 再加上 `integrator.md`；值守主智慧體只執行 `standing.md`，裡面是每一輪值守都需要的規則，沒有 `main.md` 的派工與收工規則（2026-11-26，[值守規格](specs/2026-11-26-standing-prompt.md)）。coordinator 與 integrator 帶著 `main.md` 裡的派工規則：按負責的 app 拆分工作、每個工作者出發前先開 todo、相依的任務用 `blockedBy`、平行寫入的工作者各用一個 worktree、工作者平行出發（在無人值守的裝置上受它的產能預算限制）。計畫在 `metadata.graph` 裡的協調圖（`single-loop`、`fan-out/fan-in`、`orchestrator-worker`；由 `planGraph` 讀取，取最新的未完成者）只是頁面上的標示，沒有 prompt 會隨它改變（0.83.0，[lite-main 規格](specs/2026-11-23-lite-main.md)）。
+5. 主智慧體有一種**類型**：`coordinator`（預設：規劃並派工）、`integrator`（專案的合併火車）、`standing`（負責一個系統或一台機器，沒有結束的時候）。類型就是這個主智慧體執行的 prompt：`main.md`，integrator 再加上 `integrator.md`；值守主智慧體只執行 `standing.md`，裡面是每一輪值守都需要的規則，沒有 `main.md` 的派工與收工規則（2026-11-26，[值守規格](specs/2026-11-26-standing-prompt.md)）。coordinator 與 integrator 帶著 `main.md` 裡的派工規則：按負責的 app 拆分工作、每個工作者出發前先開 todo、相依的任務用 `blockedBy`、平行寫入的工作者各用一個 worktree、工作者平行出發（在無人值守的裝置上受它的產能預算限制）。計畫在待辦的 `graph` 欄位裡的協調圖（pi-todo-ledger 0.4.0；舊的 `metadata.graph` 仍算數）（`single-loop`、`fan-out/fan-in`、`orchestrator-worker`；由 `planGraph` 讀取，取最新的未完成者）是頁面上的標示，沒有 prompt 會隨它改變（0.83.0，[lite-main 規格](specs/2026-11-23-lite-main.md)）。coordinator 或值守主智慧體用 `todo` 建立待辦後，若未完成的待辦都沒有協調圖，那次結果會附上濃縮的 planning.md 第 1、2 節（0.101.0，[協調圖規格](specs/2026-11-26-plan-graph-jit.md)）。
 
    派工不需要計畫，也沒有數量上限：有人值守的裝置由老闆自己盯，那裡不擋任何 `worker`。在設了 `capacity.budget` 的無人值守裝置上，由裝置的點數決定 `worker` 能否出發（[裝置產能](#裝置產能)的「放行」）；scout、planner、reviewer、其他角色和 `subagent_resume` 一律不擋。主智慧體用 `boss_duty` 改變類型（附一行理由；新類型的 prompt 以 steer 送達，段落保持不變；它會寫下一筆 `straw-boss` 條目 `{ duty, dutyFrom, dutyWhy, dutyAt }`，記進塔台的摘要，並顯示在頁面上）。
    在本機輪次裡，呼叫 `boss_duty` 宣告 `standing`，或由值守主智慧體呼叫 `boss_rename` 時，如果同一個工作區已有同名且仍在運作的值守主智慧體（比對方式與等待事項路由相同：不計大小寫，連續空白視為一個），工具會警告：指名這個 session 為負責人的 Straw Link 等待事項會同時符合兩位，因此不會只送給其中一位，而會送給每一位值守主智慧體。
@@ -135,7 +135,7 @@ stateDiagram-v2
 這個段落保留當時的分頁和工作區標籤；要查目前的標籤、塔台或各分頁的主智慧體，用 `board_read`（`towers` 區段）。
 同一個 session 裡，沒有任何事會改寫這個段落，連透過 `boss_duty` 切換類型也不會（0.82.x 以前會）。
 
-協調圖不在任何 prompt 裡；設定、更換或清除協調圖都不會送出任何東西。
+協調圖不在任何 prompt 裡；設定、更換或清除協調圖都不會送出任何東西；只有沒有協調圖的計畫會在它的 `todo` 結果上收到 planning.md 的規則（`src/planhint.ts`），送一次，等未完成的待辦有了協調圖、之後又都沒有時再送一次。
 角色改變、類型改變（`boss_duty`）或類型自動遷移時，Straw Boss 會用 steer 送出完整的新角色 prompt。
 排進佇列的 steer 要等 pi 送達才算說過；若 pi 把它丟掉，下一次執行會再送。
 pi 閒置時會直接存入 steer，這種情況在送出時就算說過。
