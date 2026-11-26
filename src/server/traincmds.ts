@@ -14,7 +14,7 @@ import { plain } from "./operatesanitize.ts";
 import { heldLocks, lockDirOf } from "./trainlock.ts";
 
 // The `train` commands of cli.mjs (docs/specs/2026-11-07-train-workers.md §9.2): `gate` (traingate.ts), `check`, `status`, `clear`, `end`. Kept out of cli.ts, which carries a line budget (procscli.ts is the model). Exit codes: `gate` as the wrapper
-// says (0, 1, 3, 143); `check` 0 when nothing is refused and 2 when something is (a usage error is 2 too); `status` 0 (`--watch` runs until it is killed); `clear` and `end` 0 done, 1 refused (the train's state does not allow it), 2 usage.
+// says (0, 1, 3, 143); `check` 0 when nothing is refused and 2 when something is (a usage error is 2 too); `status` 0 (`--watch` runs until it is killed, and ends with 1 when its stdout closes or fails); `clear` and `end` 0 done, 1 refused (the train's state does not allow it), 2 usage.
 
 export interface TrainIo {
 	out(text: string): void;
@@ -37,6 +37,8 @@ export interface TrainIo {
 	/** The wait between the looks of `status --watch`, and what ends it (a kill ends it otherwise). */
 	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 	signal?: AbortSignal;
+	/** Where `status --watch` writes its lines when given (cli.ts gives stdout): a write it holds back is waited for (`drain`), and a pipe that closes or fails ends the watch. */
+	stream?: Pick<NodeJS.EventEmitter, "once" | "off"> & { write(text: string): boolean };
 }
 
 const MAX_INPUT = 256 * 1024;
@@ -269,23 +271,46 @@ function status(flags: Record<string, string | true>, io: TrainIo): number | Pro
 /**
  * `status --watch` (troubleshoot kit §5 item 5): a look every `--every` seconds, and one JSONL line for every look, changed or not, so a monitor's inactivity timeout (pi-loop-monitor renews it on a `progress` line)
  * is renewed by each look and not only by a change. The line is `{"progress":{"message":…}}`, with `status` (the `--json` object) on the first look and on each look whose trains or locks changed; the load figure alone (the
- * machine's, or the one a step waits on) is no change. A look that throws is a line that says so, and the next look comes as planned.
+ * machine's, or the one a step waits on) is no change. A look that throws is a line that says so, and the next look comes as planned. A line the stream holds back is waited for before the next look, so a reader
+ * that stopped reading piles up no lines; a stream that closes or fails (its reader is gone) ends the watch with 1.
  */
 async function watch(io: TrainIo, look: () => Status, everyMs: number): Promise<number> {
 	const sleep = io.sleep ?? ((ms: number, signal?: AbortSignal) => new Promise<void>((done) => { const timer = setTimeout(done, ms); signal?.addEventListener("abort", () => (clearTimeout(timer), done()), { once: true }); }));
-	let last: string | undefined;
+	let last: string | undefined, line: string, gone = false;
 	const unloaded = (key: string, value: unknown) => (key === "load" && typeof value === "object" && value !== null ? { ...value, now: undefined } : value);
-	while (!io.signal?.aborted) {
+	// One signal for both ends: the caller's stop, and the reader that went away.
+	const stop = new AbortController(), stream = io.stream, end = () => (gone = true, stop.abort());
+	const halt = () => stop.abort();
+	io.signal?.addEventListener("abort", halt, { once: true });
+	stream?.once("close", end);
+	stream?.once("error", end);
+	const send = async (text: string) => {
+		if (!stream) return io.out(text);
+		let flowing: boolean;
+		try { flowing = stream.write(text); } catch { return end(); }
+		if (flowing || stop.signal.aborted) return;
+		await new Promise<void>((done) => {
+			const on = () => (stream.off("drain", on), stop.signal.removeEventListener("abort", on), done());
+			stream.once("drain", on);
+			stop.signal.addEventListener("abort", on, { once: true });
+		});
+	};
+	if (io.signal?.aborted) halt();
+	while (!stop.signal.aborted) {
 		try {
 			const status = look(), seen = JSON.stringify(status, unloaded), changed = seen !== last;
 			last = seen;
-			io.out(`${JSON.stringify({ progress: { message: watchText(status, changed) }, ...(changed ? { status } : {}) })}\n`);
+			line = `${JSON.stringify({ progress: { message: watchText(status, changed) }, ...(changed ? { status } : {}) })}\n`;
 		} catch (error) {
-			io.out(`${JSON.stringify({ progress: { message: `the look failed: ${String((error as Error)?.message ?? error).slice(0, 200)}` } })}\n`);
+			line = `${JSON.stringify({ progress: { message: `the look failed: ${String((error as Error)?.message ?? error).slice(0, 200)}` } })}\n`;
 		}
-		await sleep(everyMs, io.signal);
+		await send(line);
+		if (!stop.signal.aborted) await sleep(everyMs, stop.signal);
 	}
-	return 0;
+	io.signal?.removeEventListener("abort", halt);
+	stream?.off("close", end);
+	stream?.off("error", end);
+	return gone ? 1 : 0;
 }
 
 /** The progress message of one look: whether anything changed since the last look, the trains by state, and the steps that run (cut at 300 characters). */

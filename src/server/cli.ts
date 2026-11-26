@@ -203,7 +203,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			case "procs": return await runProcs(ctx, flags, { out: json, err });
 			case "pane": return await runPane(ctx, flags, { out, err, env, run: deps.herdrCli ?? herdrRun, ...(deps.pane ? { over: deps.pane } : {}) });
 			case "doctor": return await runDoctor(flags, { env, run: deps.herdrCli ?? herdrRun }, { out, err });
-			case "train": return await runTrain(flags, { out, err, env, stateDir: slot.stateDir, ...deps.train });
+			case "train": return await runTrain(flags, { out, err, env, stateDir: slot.stateDir, ...(deps.out ? {} : { stream: process.stdout }), ...deps.train });
 		}
 	} catch (error) {
 		if (error instanceof ServerError) return fail(error);

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -72,4 +73,35 @@ test("kit2-F005: --every that is not finite, or longer than a timer can wait, is
 		assert.match(err.join(""), /--every goes with --watch: the seconds between looks, 10 or more and 2147483 at most/);
 	}
 	assert.equal(WATCH_MAX, 2_147_483, "the longest wait a Node timer takes, in whole seconds");
+});
+
+/** A stdout whose reader is slow: every `write` answers false, the test emits `drain`, and the pipe can close or fail. */
+class Pipe extends EventEmitter {
+	lines: string[] = [];
+	write(text: string) {
+		this.lines.push(text);
+		return false;
+	}
+}
+
+test("kit2-F006: the watch waits for stdout to drain before the next look, and ends when the pipe closes or fails", async () => {
+	for (const end of ["close", "error"] as const) {
+		const pipe = new Pipe(), waits: number[] = [], out: string[] = [], cap = new AbortController();
+		// The cap only ends a watch that ignores the pipe (a hundred looks), so such a watch fails here instead of spinning.
+		const sleep = async (ms: number) => void (waits.push(ms) >= 100 && cap.abort());
+		const watching = run(["train", "status", "--watch"], { stateDir: join(dir, "drain"), out: (t) => out.push(t), err: () => undefined, train: { now: () => NOW, load: () => ({ now: 1, cores: 8 }), sleep, signal: cap.signal, stream: pipe } });
+		await new Promise((done) => setImmediate(done));
+		assert.equal(pipe.lines.length, 1, `${end}: the first look is written`);
+		assert.deepEqual(waits, [], `${end}: no wait and no next look while the write waits for 'drain'`);
+		pipe.emit("drain");
+		await new Promise((done) => setImmediate(done));
+		assert.equal(pipe.lines.length, 2, `${end}: one drain lets one more look through`);
+		assert.deepEqual(waits, [WATCH_EVERY * 1000], `${end}: and the wait before it`);
+		const written = pipe.lines.length;
+		if (end === "close") pipe.emit("close");
+		else pipe.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+		assert.equal(await watching, 1, `${end}: the reader is gone, the watch ends`);
+		assert.equal(pipe.lines.length, written, `${end}: nothing is written after the pipe went`);
+		assert.deepEqual(out, [], `${end}: the lines go to the stream`);
+	}
 });
