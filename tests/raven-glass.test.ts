@@ -8,7 +8,7 @@ const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.ur
 const raven = read("gui/themes/raven/raven.css"), rules = rulesOf(raven);
 
 test("every selector of raven.css names the raven view, so its glass, frame, and animations reach no other view even once the file is loaded", () => {
-	for (const rule of rules) for (const part of rule.parts) assert.match(part, /^(?:html)?\[data-view="raven"\]/, `${part} is scoped to the raven view`);
+	for (const rule of rules) for (const part of rule.parts) assert.match(part, /^(?:(?:html)?\[data-view="raven"\]|:where\(html\[data-view="raven"\]\))/, `${part} is scoped to the raven view`);
 });
 
 test("the glass is inside @supports and the phone frame inside a 600 px query, so a browser without backdrop-filter keeps the opaque fills and a wide screen the frame it had", () => {

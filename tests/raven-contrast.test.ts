@@ -148,15 +148,12 @@ test("under the lightest veil, the candle light at its peak, and the comms' or c
 	}
 });
 
-// Frosted glass (gui/themes/raven/raven.css, "Frosted glass"): a large panel is --rk-glass over the picture blurred by --rk-blur. The brightest pixel of the picture at the lightning's peak, as the map's layers paint it (the sampled layers above, the lights at their peak 0.7125, rest veil gone, the mask included),
-// then blurred with a Gaussian of the blur's standard deviation (CSS blur(8px) is a sigma of 8 px) at the widest frame (1600 px, a desktop; a phone's cover frame is 1498 px), below the header strip: rgb(165 121 72), sampled with PIL on the shipped picture (the blur only lowers the peak of a small lit window; a large light region stays as bright).
-// Round 3 (todo #138): the fill went from 0.72 to 0.6 so the castle reads through the bases, and the strike drew a bolt, whose layer is in the picture. So the sample is now taken from the page itself: Chrome's render of the picture's layers alone (every panel hidden, the bolt layer shown) at the first peak of the strike (the lights at their brightest candle, the rest veil gone), blurred by 8 px, and the largest value of each channel over everything from 30 percent of the frame's height down, which is where a base can be (the strike runs only while the head band is shown, and the bases start under it: 295 px of 811 at 1440, 255 of 844 on a phone;
-// the bolt's layer fades out between 16 and 42 percent of the frame for this reason: above the line a bolt may be as bright as it likes, since only the bar's text stands bare there and its ground is --rk-well, below the pure white of the bolt's core, see the next test). At 1600 x 901 it was rgb(100 82 105) and on a 390 x 844 phone rgb(99 81 103); the historical test uses the larger of those two samples.
-// A change to the layers, the bolt's layer (its CSS is hashed below), the picture, or the blur makes this test ask for a new sample instead of passing on old arithmetic. The hashes and the blur are asserted; the fill's alpha is then checked on the sample.
-// Slot migration: same declarations on the bolt except how its box is generated. At full candle and bolt, with the rest veil clear, a paired capture with the UI hidden found no brightening: below 30%, after an 8 px Gaussian blur,
-// desktop RGB maxima (154,114,104) → (153,113,104); phone (150,111,102) unchanged. These conservative independent-channel maxima do not reproduce the historical sample; whether --err reaches 4.5 on actual text at the flash is a separate check.
-const GLASS_SAMPLE = { sha: "65a27813b776dc77", blur: 8, worst: "#645269", bolt: "95bb6d83a03b8ee6" };
-test("the glass fill keeps --text, --dim, and every state colour at 4.5 : 1 over the brightest blurred pixel of the picture at the lightning's peak, for a panel and for a sheet; the blur is no narrower than the one sampled", () => {
+// scratch/theme-contract/err/summary.md and history.py: Chrome 157, DPR 1, bolt and candle at full opacity, rest veil clear.
+// Hide the UI, not the art: leave [data-slot=backdrop], its children (including the candle), and [data-slot=map] visible.
+// PIL GaussianBlur(8), then max per channel from floor(0.3 * height) to the bottom: 153/113/104 at 1600×901, 150/111/102 at 390×844.
+// The previous capture hid the candle along with .shell. These maxima bound the glass; they are not a pixel sampled under a label.
+const GLASS_SAMPLE = { sha: "65a27813b776dc77", blur: 8, worst: "#997168", bolt: "95bb6d83a03b8ee6" };
+test("text on glass, including soft crimson for card errors, keeps 4.5 : 1 at the bolt and candle peak", () => {
 	const sheet = rulesOf(ravenCss), body = (selector: string) => sheet.filter((r) => r.parts.includes(selector)).map((r) => r.body).join(";");
 	const picture = body('html[data-view="raven"]:has(#stage[data-view="map"]) [data-slot="backdrop"] > :nth-child(1)');
 	for (const layer of SAMPLED_LAYERS) assert.ok(picture.includes(layer), `the sampled layer is still there: ${layer}`);
@@ -173,7 +170,8 @@ test("the glass fill keeps --text, --dim, and every state colour at 4.5 : 1 over
 		const m = new RegExp(`--${token}:\\s*rgba\\((\\d+),\\s*(\\d+),\\s*(\\d+),\\s*([\\d.]+)\\)`).exec(ravenCss);
 		assert.ok(m, `--${token} is set`);
 		const ground = mix(`#${hex(m[1]!)}${hex(m[2]!)}${hex(m[3]!)}`, Number(m[4]), GLASS_SAMPLE.worst);
-		for (const text of [...TEXT]) assert.ok(contrast(raven[text]!, ground) >= MIN, `--${text} on --${token} over the brightest blurred pixel (${ground}): ${contrast(raven[text]!, ground).toFixed(2)}`);
+		// Blood crimson is badge fill, not bare card ink. The more opaque sheet still supports it as text.
+		for (const text of TEXT.filter(t => token !== "rk-glass" || t !== "err")) assert.ok(contrast(raven[text]!, ground) >= MIN, `--${text} on --${token} over the brightest blurred pixel (${ground}): ${contrast(raven[text]!, ground).toFixed(2)}`);
 	}
 	// who takes the glass: the large panels, inside @supports, with a blur; the rows inside them take no blur (a backdrop-filter box is its children's backdrop root)
 	const supports = /@supports \(backdrop-filter: blur\(1px\)\) or \(-webkit-backdrop-filter: blur\(1px\)\) \{((?:[^{}]|\{[^{}]*\})*)\}/.exec(ravenCss)?.[1] ?? "";
@@ -198,6 +196,48 @@ test("text on the head page's backing keeps 4.5 : 1 over the brightest unblurred
 		const under = mix(raven[tint]!, share / 100, backing);
 		for (const text of ["text", "dim"]) assert.ok(contrast(raven[text]!, under) >= MIN, `--${text} on ${share}% ${tint} over the backing (${under}): ${contrast(raven[text]!, under).toFixed(2)}`);
 	}
+});
+
+// Keep the CSS protections paired with the four rendered scenes in err/summary.md. The RGB bound above
+// cannot account for an ancestor fading its text together with its glass, or for a missing message backing.
+const skin = `:where(html${RAVEN})`;
+const takes = (sheet: Rule[], selector: string, property: string, value: string) =>
+	assert.ok(sheet.some(r => r.parts.includes(selector) && declarations(r.body).some(([p, v]) => p === property && v === value)), `${selector} needs ${property}: ${value}`);
+
+test("desktop refusal over the bolt: only a nonempty toolbar reason gets the well", () => {
+	takes(rules, `${skin} .auto-sw-note:not(:empty)`, "background", "var(--rk-well)");
+});
+
+test("phone offline + stale: keep crash details and status readable through both ancestors", () => {
+	const offline = `${skin} .base.ally.offline:has(.au-crash:not([hidden]), [data-tone="crashed"])`;
+	takes(rules, offline, "border-style", "dashed");
+	takes(rules, offline, "opacity", "1");
+	takes(rules, `${skin} .ally-unit.stale:is([data-tone="crashed"], :has(.au-crash:not([hidden])))`, "opacity", "1");
+	for (const label of ['.ally-unit[data-tone="crashed"] .au-word', '.au-crash:not([data-trust]) summary b']) takes(rules, `${skin} ${label}`, "color", "var(--err-soft)");
+});
+
+test("unreachable error card: role and monitor use soft crimson, neither the card nor its age fades", () => {
+	const base = `${skin} .base.remote[data-box="unreachable"]:has(.unit[data-mark="error"], [data-monitoring])`;
+	takes(rules, base, "border-style", "dashed");
+	takes(rules, base, "opacity", "1");
+	takes(rules, `${skin} .unit[data-mark="error"] > .card .age`, "opacity", "1");
+	for (const label of ['.base [data-monitoring]', '.unit[data-mark="error"] > .card .role']) takes(rules, `${skin} ${label}`, "color", "var(--err-soft)");
+});
+
+test("head chat: the stop badge and failure reason keep their message panel over the thin glass", () => {
+	takes(entryRules, ".tx-body", "background", "var(--panel)");
+	takes(entryRules, ".stop", "color", "var(--c)");
+	takes(entryRules, ".stop", "background", "var(--c1)");
+	takes(entryRules, '[data-mark="error"]', "--c", "var(--err)");
+	takes(entryRules, ".fault", "color", "var(--err-soft)");
+	takes(rules, `${RAVEN} [data-mark]`, "--c1", "color-mix(in srgb, var(--c) 13%, transparent)");
+	// Use the message panel over the lit wall (the unblurred sample above), then the badge's state tint.
+	const panel = /--panel:\s*rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/.exec(block.body);
+	assert.ok(panel, "the message has Raven's translucent panel");
+	const fill = `#${panel.slice(1, 4).map(n => Number(n).toString(16).padStart(2, "0")).join("")}`;
+	const ground = mix(fill, Number(panel[4]), "#b39a81");
+	assert.ok(contrast(raven.err!, mix(raven.err!, 0.13, ground)) >= MIN);
+	assert.ok(contrast(raven["err-soft"]!, ground) >= MIN);
 });
 
 // What stands bare on the picture (the crumbs, the bar's buttons, the legend, the new-base button, and the head page's rows over the thin glass) has an unblurred ground, and the bolt's core is pure white: nothing about it is sampled, the arithmetic is the bound. Every text colour keeps 4.5 : 1 on each ground over a pure white pixel, and the bare rows were walked in a browser at the strike's peak
