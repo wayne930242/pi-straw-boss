@@ -99,25 +99,24 @@ test("an active loop of the worker's session keeps it from being finished", asyn
 	assert.equal(w.sent.length, 0);
 });
 
-test("a report to the main over intercom or call_peer is finished at the next look; one written before the ward does not count", async () => {
+test("a report to the main over call_peer is finished at the next look; one written before the ward does not count; an intercom send is no report", async () => {
 	const w = world();
-	w.write(calls("c0", "intercom", { action: "send", to: MAIN, message: "early" }) + result("c0", "intercom"));
+	w.write(calls("c0", "call_peer", { to: "main", message: "early" }) + result("c0", "call_peer"));
 	assert.equal((await w.add()).ok, true);
 	await w.looks(2);
 	assert.equal(w.sent.length, 0, "the report before the ward is old");
-	w.write(calls("c1", "intercom", { action: "send", to: "someone-else", message: "x" }) + result("c1", "intercom"));
-	// ward-review F001: a name or an id prefix may resolve to another session (intercom matches a full name before an id prefix), and a result that says not delivered reached nobody.
+	// ward-review F001: intercom's result names no recipient (a full id, a name, a prefix, or a `cwd` may resolve to another session), so no intercom send is a report, delivered or not.
+	w.write(calls("c1", "intercom", { action: "send", to: MAIN, message: "done" }) + result("c1", "intercom"));
+	w.write(calls("c2", "intercom", { action: "send", to: MAIN, cwd: "/elsewhere", message: "done" }) + result("c2", "intercom"));
 	w.write(calls("c3", "intercom", { action: "send", to: "boss-main", message: "done" }) + result("c3", "intercom"));
-	w.write(calls("c4", "intercom", { action: "send", to: MAIN.slice(0, 8), message: "done" }) + result("c4", "intercom"));
-	w.write(calls("c5", "intercom", { action: "send", to: MAIN, message: "done" }) + result("c5", "intercom", { messageId: "m5", delivered: false, reason: "offline" }));
-	w.write(calls("c2", "intercom", { action: "send", to: MAIN, message: "done" }));
+	w.write(calls("c4", "call_peer", { to: "main", message: "done" }));
 	await w.looks(1);
-	assert.equal(w.sent.length, 0, "a call without its result has not reached the main yet; another target, a name, a prefix, or an undelivered send is no report");
-	w.write(result("c2", "intercom"));
+	assert.equal(w.sent.length, 0, "an intercom send is no report; a call without its result has not reached the main yet");
+	w.write(result("c4", "call_peer"));
 	await w.looks(1);
 	assert.equal(w.sent.length, 1);
 	assert.equal(w.sent[0]!.state, "finished");
-	assert.match(w.sent[0]!.text, /finished: it reported to you \(intercom send\)/);
+	assert.match(w.sent[0]!.text, /finished: it reported to you \(call_peer\)/);
 	await w.looks(5);
 	assert.equal(w.sent.length, 1);
 
@@ -345,8 +344,8 @@ test("ward-review F008: the reader goes on where it stopped, keeps a line not ye
 	writeFileSync(file, line({ type: "session", id: WORKER }) + user("go"));
 	const offset = readFileSync(file).length;
 	// The report is the first line after the ward's start, and more than the tail came after it.
-	appendFileSync(file, calls("c1", "intercom", { action: "send", to: MAIN, message: "done" }) + result("c1", "intercom") + user("x".repeat(300 * 1024)) + said("next"));
-	assert.equal((await readSession(file, offset, main)).reported, "intercom send");
+	appendFileSync(file, calls("c1", "call_peer", { to: "main", message: "done" }) + result("c1", "call_peer") + user("x".repeat(300 * 1024)) + said("next"));
+	assert.equal((await readSession(file, offset, main)).reported, "call_peer");
 
 	const g = join(dir, "g.jsonl");
 	writeFileSync(g, line({ type: "session", id: WORKER }));

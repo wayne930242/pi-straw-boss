@@ -8,7 +8,7 @@ import { armedLoop } from "./capops.ts";
 import type { Reply } from "./socket.ts";
 
 // `sb ward <pane>` and `sb_ward` (docs/how-it-works.md#ward-a-plain-pane): a main hands the sb server a worker that runs in a plain pane (no subagent row, so no completion of its own), and the server wakes the main only when the worker
-// really ended: finished (it reported to the main over intercom or call_peer, or its last turn ended and nothing of its runs, for two looks 60 s apart), blocked (Herdr shows the pane blocked, or the worker waits on a dialog), or dead
+// really ended: finished (it reported to the main over call_peer, or its last turn ended and nothing of its runs, for two looks 60 s apart), blocked (Herdr shows the pane blocked, or the worker waits on a dialog), or dead
 // (the pane is gone, or pi left it). A worker that is idle while its own monitor, loop, or subagent runs is not finished. The ward is one of the server's watches (watches.ts): its key is `ward:<pane>`, it is kept in `watches.json`, its
 // line goes out on the same tower identity as boss_watch's lines, and the main's boss_watch listener takes it. The ward is read only: it never closes the pane, sends it keys, or signals a process.
 
@@ -62,7 +62,7 @@ const blocksOf = (m: Json): Json[] => (Array.isArray(m?.content) ? m.content.fil
  */
 export function sessionReader(file: string, offset: number, main: WardRec["main"], budget = BUDGET) {
 	let pos = -1, carry = Buffer.alloc(0), turn: Turn = "unknown", reported: string | undefined;
-	const calls = new Map<string, string>();
+	const calls = new Set<string>();
 	const take = (line: string, start: number) => {
 		let d: Json;
 		try { d = JSON.parse(line); } catch { return; }
@@ -71,17 +71,13 @@ export function sessionReader(file: string, offset: number, main: WardRec["main"
 		if (m.role === "assistant") {
 			const tools = blocksOf(m).filter((b) => b.type === "toolCall");
 			turn = m.stopReason === "toolUse" || tools.length ? (tools.some((b) => DIALOGS.has(String(b.name))) ? "dialog" : "working") : "ended";
-			if (start >= offset) for (const b of tools) {
-				const a: Json = b.arguments ?? {}, name = String(b.name);
-				// Only a recipient the result proves (ward-review F001): intercom resolves a full session id before any name or id prefix, so only the main's full id is the main; call_peer's result names the session it sent to.
-				if (name === "intercom" && (a.action === "send" || a.action === "ask") && typeof a.to === "string" && a.to.trim() === main.id) calls.set(String(b.id), `intercom ${a.action}`);
-				if (name === "call_peer") calls.set(String(b.id), "call_peer");
-			}
+			// Only a recipient the result proves (ward-review F001): call_peer's result names the session it sent to. intercom's names none (`to` may resolve by name, prefix, or `cwd` to another session), so a send over
+			// intercom is no report; the worker is finished by its quiet turn instead.
+			if (start >= offset) for (const b of tools) if (String(b.name) === "call_peer") calls.add(String(b.id));
 		} else if (m.role === "toolResult") {
 			turn = "working";
-			const call = calls.get(String(m.toolCallId)), det: Json = m.details ?? {};
-			const took = call === "call_peer" ? det.id === main.id && det.status === "sent" : det.delivered === true;
-			if (call && took && !m.isError && start >= offset) reported ??= call;
+			const id = String(m.toolCallId), det: Json = m.details ?? {};
+			if (calls.delete(id) && det.id === main.id && det.status === "sent" && !m.isError && start >= offset) reported ??= "call_peer";
 		} else if (m.role === "user") turn = "working";
 	};
 	return async (): Promise<{ turn: Turn; reported?: string }> => {
