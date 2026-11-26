@@ -31,9 +31,8 @@ export interface WrapDeps extends ProbeDeps {
 }
 
 export function createWrapUp(kit: Kit, d: WrapDeps) {
-	const { pi, cfg, s, me, role, guiDir } = kit, held = () => heldHere(guiDir, cfg.now()) !== undefined; // a held box words the nudge and the wake apart (docs/specs/2026-11-26-device-hold.md)
-	const name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
-	const note = (why: string) => noteLedger(kit.guiDir, { kind: "wrap", id: me(), session: me(), workspace: s.at?.workspaceId, why }, cfg.now(), (text) => kit.tell(text, "warning"));
+	const { pi, cfg, s, me, role, guiDir } = kit, name = () => pi.getSessionName() || s.ownName || me().slice(0, 8), held = () => heldHere(guiDir, cfg.now()) !== undefined; // a held box words the nudge and the wake apart (docs/specs/2026-11-26-device-hold.md)
+	const note = (why: string) => noteLedger(guiDir, { kind: "wrap", id: me(), session: me(), workspace: s.at?.workspaceId, why }, cfg.now(), (text) => kit.tell(text, "warning"));
 	const noted = <T extends { details: unknown }>(how: Promise<T>) => how.then((r) => { const o = r.details as { wrapped?: boolean; auto?: boolean }; note(o.wrapped ? "wrapped" : o.auto ? "auto" : "refused"); return r; }, (error: unknown) => { note(s.autoOn() ? "auto" : "refused"); throw error; });
 	const probe = createProbe({ cfg, s, me }, d); // what still runs for this session (stillruns.ts)
 	const nudge = idleWake(cfg.now, { idleMs: IDLE_MS, eligible: () => d.duty() === "coordinator" || d.duty() === "integrator", ready: async () => !(await probe.nudge()).length, customType: WRAP_MESSAGE, text: () => (held() ? HELD_NUDGE : NUDGE_TEXT), underAuto: false });
