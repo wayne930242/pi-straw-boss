@@ -29,6 +29,8 @@ export interface KillInput {
 	held?: readonly string[];
 	/** Only this account's processes can be targets; the table is already limited to it, this is the second check. */
 	ownUid?: number;
+	/** `placed`: a target's child is a target only when it works in the owner's roots itself, and the walk stops at one that does not (a pane close's checkout reap, which takes only what shows that root). Default `all`. */
+	children?: "all" | "placed";
 }
 export type Why = "snapshot" | "marker" | "cwd" | "child";
 export interface Target { proc: Proc; why: Why }
@@ -37,7 +39,7 @@ export interface Decision { targets: Target[]; spared: Spared[] }
 
 const overlaps = (a: string, b: string) => under(a, b) || under(b, a);
 
-export function killSet({ owner, live, table, places, markers, protect, reapers, self, held = [], ownUid }: KillInput): Decision {
+export function killSet({ owner, live, table, places, markers, protect, reapers, self, held = [], ownUid, children = "all" }: KillInput): Decision {
 	const byPid = new Map(table.map((p) => [p.pid, p]));
 	// The protected set first: what it holds is never reached, neither as a candidate nor through a parent link.
 	const spare = new Map<number, string>();
@@ -96,6 +98,7 @@ export function killSet({ owner, live, table, places, markers, protect, reapers,
 	const walk = (pid: number) => {
 		for (const kid of kids.get(pid) ?? []) {
 			if (walked.has(kid.pid) || spare.has(kid.pid)) continue;
+			if (children === "placed" && !((place) => place && inRoot(place))(places.get(kid.pid))) continue;
 			walked.add(kid.pid);
 			add(kid, "child");
 			walk(kid.pid);

@@ -78,8 +78,11 @@ export interface Procs {
 	paneEvent(event: PaneEvent): Promise<void>;
 	list(): OwnerRow[];
 	reapOwner(id: string): Promise<ReapResult>;
-	/** Reaps what is left in a checkout; refuses while a live owner works there. */
-	reapCheckout(path: string): Promise<ReapResult>;
+	/**
+	 * Reaps what is left in a checkout; refuses while a live owner works there. `bounded` is a pane close's (docs/how-it-works.md#a-checked-pane-close): the path must be the root of a linked worktree, the caller
+	 * is verified by its start time and spared with what it runs under, no owner record's snapshot is taken, and a target's child is one only when it works in the root itself.
+	 */
+	reapCheckout(path: string, bounded?: { caller: Ref }): Promise<ReapResult>;
 	/** How long the next tick should wait: 10 s, or 30 s after a first tick that cost more than a second. */
 	tickMs(): number;
 	/** Resolves once every reap started so far has finished. */
@@ -190,7 +193,7 @@ export function createProcs(d: ProcsDeps): Procs {
 		if (named.some((p) => (server(p) || p.why === "pane") && below.has(p.pid))) throw no("above Herdr or a pane's shell");
 	}
 	/** The kill set of one owner on a fresh table, and the kill sequence over it. */
-	async function reapSet(subject: OwnerRecord, reason: string, explicit = false): Promise<ReapResult> {
+	async function reapSet(subject: OwnerRecord, reason: string, explicit = false, bounded?: { spare: number[] }): Promise<ReapResult> {
 		const table = await read();
 		if (!table) throw new Error("the process table could not be read; nothing was signalled");
 		// By record, not by id: a new hello under the id of the ended owner is a live owner this reap must spare.
@@ -204,9 +207,12 @@ export function createProcs(d: ProcsDeps): Procs {
 		const found = await cwdsOf(orphans.map((p) => p.pid));
 		const places = new Map<number, Place>();
 		for (const [pid, cwd] of found) places.set(pid, { path: cwd.path, removed: classifyCwd(cwd, inode(cwd.path)) === "removed" });
+		// A bounded reap walks to a child only where the child works in the root: so the folders of what the orphans in the root started are read too.
+		const placed = bounded ? descendants(table, [...places].filter(([, at]) => !at.removed && owner.roots.some((root) => under(at.path, root))).map(([pid]) => pid)) : [];
+		for (const [pid, cwd] of placed.length ? await cwdsOf(placed.filter((p) => !p.zombie).map((p) => p.pid)) : []) places.set(pid, { path: cwd.path, removed: classifyCwd(cwd, inode(cwd.path)) === "removed" });
 		const markers = await markersOf(table.filter((p) => !p.zombie).map((p) => p.pid));
 		const protect = (await d.protect?.(table)) ?? [];
-		const { targets, spared } = killSet({ owner, live, table, places, markers, protect, reapers: reapersOf(table), self, held, ...(d.ownUid !== undefined ? { ownUid: d.ownUid } : {}) });
+		const { targets, spared } = killSet({ owner, live, table, places, markers, protect, reapers: reapersOf(table), self: [...self, ...(bounded?.spare ?? [])], held, ...(d.ownUid !== undefined ? { ownUid: d.ownUid } : {}), ...(bounded ? { children: "placed" as const } : {}) });
 		const report: KillReport = targets.length ? await reap(targets.map((t) => refOf(t.proc))) : { termed: 0, killed: 0, skipped: 0, groups: 0, left: [] };
 		const result: ReapResult = { owner: subject.id, reason, targets: targets.length, termed: report.termed, killed: report.killed, skipped: report.skipped, left: report.left, spared: spared.length, ...(unknown ? { deferred: true } : {}) };
 		d.log("procs-reaped", { owner: subject.id, reason, targets: targets.length, termed: report.termed, killed: report.killed, left: report.left.length, protected: spared.length, ...(unknown ? { deferred: true } : {}) });
@@ -408,12 +414,21 @@ export function createProcs(d: ProcsDeps): Procs {
 			if (!result.left.length && !result.deferred && owners.get(id) === r) (owners.delete(id), save());
 			return result;
 		},
-		async reapCheckout(path) {
+		async reapCheckout(path, bounded) {
 			// Only a linked worktree, or a checkout that is gone and was a known owner's, is reaped: never `/`, a home folder, a main checkout, or a folder above checkouts.
 			const physicalPath = real(path), table = await read();
 			const holders = (where: string) => [...owners.values()].filter((r) => !r.ended && table && alive(table, r) && r.roots.some((root) => overlap(where, root)));
+			const spare: number[] = [];
 			let root: string | undefined;
-			if (exists(physicalPath)) {
+			if (bounded) {
+				// A pane close names the root it worked in, which is there; and the caller, with what it runs under, is never a target (kit2-F003).
+				const c = exists(physicalPath) ? checkout(physicalPath) : undefined;
+				if (c?.kind !== "linked" || c.root !== physicalPath) throw new ProcsRefusal(`${path} is not the root of a linked worktree: a pane close reaps a checkout by its root only`);
+				const at = (pid: number) => table?.find((p) => p.pid === pid && !p.zombie);
+				if (!table || at(bounded.caller.pid)?.started !== bounded.caller.started) throw new ProcsRefusal(`the caller (pid ${bounded.caller.pid}) is not in the process table with the start time it gave; nothing was signalled`);
+				for (let p = at(bounded.caller.pid); p && p.pid > 1 && !spare.includes(p.pid); p = at(p.ppid)) spare.push(p.pid);
+				root = c.root;
+			} else if (exists(physicalPath)) {
 				const c = checkout(physicalPath);
 				if (c.kind !== "linked") throw new ProcsRefusal(`${path} is ${c.kind === "none" ? "in no checkout" : `in a ${c.kind} checkout`}: reap --checkout takes a linked worktree (or a removed one a worker was known to work in)`);
 				root = c.root;
@@ -423,9 +438,10 @@ export function createProcs(d: ProcsDeps): Procs {
 			}
 			const live = [...holders(physicalPath), ...holders(root)];
 			if (live.length) throw new ProcsRefusal(`a live owner works in ${path}: ${[...new Set(live)].map((h) => `${h.id} (pid ${h.pid})`).join(", ")}`);
-			const known = [...owners.values()].find((r) => r.roots.some((r2) => r2 === root));
+			// A bounded reap takes no owner record: its snapshot may name what never worked in the root.
+			const known = bounded ? undefined : [...owners.values()].find((r) => r.roots.some((r2) => r2 === root));
 			const subject: OwnerRecord = known ?? { id: "(checkout)", pid: -1, started: "", roots: [root], snapshot: [], helloAt: d.now(), seenAt: d.now() };
-			const result = await reapSet(subject, "reap", true);
+			const result = await reapSet(subject, bounded ? "pane-close" : "reap", true, bounded ? { spare } : undefined);
 			if (known && !result.left.length && owners.get(known.id) === known) (owners.delete(known.id), save());
 			return result;
 		},

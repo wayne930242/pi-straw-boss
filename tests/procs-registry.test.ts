@@ -3,7 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { createProcs, DEFER_MAX, ProcsRefusal, type ProcsDeps } from "../src/server/procs.ts";
+import { createProcs, DEFER_MAX, type Procs, ProcsRefusal, type ProcsDeps } from "../src/server/procs.ts";
+import { procsReply } from "../src/server/procsops.ts";
 import type { KillReport } from "../src/procs/kill.ts";
 import type { Proc, Ref } from "../src/procs/table.ts";
 import { fakeClock } from "./fake-clock.ts";
@@ -609,4 +610,57 @@ test("RR-F008: reap --checkout takes an owner record only when its root is the o
 	const result = await procs.reapCheckout(`${wt}/inner`);
 	assert.equal(result.targets, 1, "only the orphan in the nested worktree");
 	assert.ok(w.table.some((p) => p.pid === 300), "the orphan in the outer root is not the nested worktree's");
+});
+
+test("kit2-F003: a pane close's checkout reap takes only what works in the root, never the caller, what it runs under, or an ended owner's old snapshot", async () => {
+	const wt = "/tmp/psb-k2/wt";
+	const cwdOf: Record<number, string> = { 101: "/else", 102: "/else", 500: wt, 501: wt, 502: wt, 503: "/else", 600: `${wt}/app`, 601: "/tmp", 602: wt };
+	let failing = true;
+	const { w, procs } = world({
+		cwds: async (asked) => new Map(asked.filter((pid) => cwdOf[pid] !== undefined).map((pid) => [pid, { path: cwdOf[pid]! }])),
+		reap: async (refs): Promise<KillReport> => {
+			if (failing) throw new Error("the process table could not be read; nothing was signalled");
+			w.reaped.push([...refs]);
+			w.table = w.table.filter((p) => !refs.some((r) => r.pid === p.pid && r.started === p.started));
+			return { termed: refs.length, killed: 0, skipped: 0, groups: 0, left: [] };
+		},
+	});
+	w.roots.set(wt, "linked");
+	// 500 is a shell init adopted that works in the checkout, 501 a monitor under it, 502 the caller (the pane close's CLI), 503 another child of 500 that works elsewhere; 600 is the loop the pane left, with
+	// a child 601 that works outside the checkout and 602 that works in it.
+	w.table.push(P(500, 1), P(501, 500), P(502, 501), P(503, 500), P(600, 1), P(601, 600), P(602, 600));
+	await procs.hello({ pid: 100, id: "w1", cwd: wt });
+	await procs.tick();
+	procs.bye("w1");
+	await procs.settled();
+	assert.equal(procs.list()[0]?.snapshot, 2, "the ended owner's reap failed: its record keeps a snapshot of 101 and 102, which work elsewhere");
+	failing = false;
+	const result = await procs.reapCheckout(wt, { caller: { pid: 502, started: "t502" } });
+	assert.deepEqual(pids(w.reaped), [[600, 602]], "the orphan in the root and its child in the root; not 601 (elsewhere), not the caller or what it runs under, not the old snapshot");
+	assert.equal(result.owner, "(checkout)");
+	assert.ok(procs.list().some((o) => o.id === "w1"), "the ended owner's record is not the pane close's to drop");
+});
+
+test("kit2-F003: a pane close's checkout reap refuses a folder that is not a linked worktree's root, and a caller it cannot verify", async () => {
+	const wt = "/tmp/psb-k2b/wt";
+	const { w, procs } = world({ cwds: async (asked) => new Map(asked.map((pid) => [pid, { path: wt }])) });
+	w.roots.set(wt, "linked");
+	w.mains.add("/tmp/psb-k2b/main");
+	w.gone.add("/tmp/psb-k2b/gone");
+	w.table.push(P(502, 1), P(600, 1));
+	const caller = { pid: 502, started: "t502" };
+	for (const path of [`${wt}/sub`, "/tmp/psb-k2b/main", "/tmp/psb-k2b/gone", "/tmp/psb-k2b"]) await assert.rejects(procs.reapCheckout(path, { caller }), (error: Error) => error instanceof ProcsRefusal && /the root of a linked worktree/.test(error.message), path);
+	await assert.rejects(procs.reapCheckout(wt, { caller: { pid: 502, started: "t999" } }), (error: Error) => error instanceof ProcsRefusal && /caller \(pid 502\) is not in the process table with the start time it gave/.test(error.message));
+	assert.deepEqual(w.reaped, []);
+});
+
+test("kit2-F003: procs-reap takes a caller only as { pid, started } beside a checkout, and passes it to the bounded reap", async () => {
+	const asked: unknown[] = [];
+	const done = { owner: "(checkout)", reason: "pane-close", targets: 0, termed: 0, killed: 0, skipped: 0, left: [], spared: 0 };
+	const reg = { reapCheckout: async (path: string, bounded?: unknown) => (asked.push([path, bounded]), done), reapOwner: async () => done } as unknown as Procs;
+	assert.deepEqual(await procsReply(reg, { cmd: "procs-reap", checkout: "/wt", caller: { pid: 502, started: "t502" } }), { ok: true, ...done });
+	assert.deepEqual(await procsReply(reg, { cmd: "procs-reap", checkout: "/wt" }), { ok: true, ...done });
+	assert.deepEqual(asked, [["/wt", { caller: { pid: 502, started: "t502" } }], ["/wt", undefined]]);
+	for (const caller of [{ pid: 1, started: "t1" }, { pid: 502 }, { pid: "502", started: "t502" }, "502"]) assert.deepEqual(await procsReply(reg, { cmd: "procs-reap", checkout: "/wt", caller }), { ok: false, error: "procs-reap's caller is { pid, started } and goes with a checkout" }, JSON.stringify(caller));
+	assert.equal(asked.length, 2);
 });
