@@ -34,7 +34,7 @@ test("a member whose tab already has a main is not promoted by a subagent call, 
 	await a.promote();
 	await b.toolCall("subagent");
 	assert.deepEqual([a.tokens, b.tokens], [{ sb_role: "main" }, { sb_role: "member" }]);
-	await assert.rejects(b.tool("boss_promote"), /already has a main agent, a\..*tell a through intercom first/);
+	await assert.rejects(b.tool("boss_promote"), /already has a main agent, a\..*tell a first with call_peer \(to: main\)/);
 	assert.deepEqual(b.notices, [], "a refusal is silent for the automatic path");
 });
 

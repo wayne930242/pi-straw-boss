@@ -51,7 +51,7 @@ test("a main's handover opens one successor tab in its workspace with its name a
 	assert.equal(existsSync(handoff.replace(/\.md$/, ".todos.json")), false);
 	assert.match(prompt[0]!.message, /main box watch \(session main-1\) opened this tab for you with boss_handover .* its reason: pi-session-doctor measured repeated stalls\./s);
 	assert.match(prompt[0]!.message, new RegExp(`Read the handoff file ${handoff.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} now`));
-	assert.match(prompt[0]!.message, /tell box watch by intercom \(send, to "main-1"\) that you took over/);
+	assert.match(prompt[0]!.message, /tell box watch with call_peer \(to: caller\) that you took over/);
 	assert.match(textOf(result), /Opened your successor in tab wA:t100 .* give up your role as your rule says: boss_duty coordinator .* boss_rename to "old box watch \(handed over to opened-w\)"/s);
 	assert.deepEqual(world.herdr.commands("tab", "focus"), [], "the boss's focus stays where it is");
 });

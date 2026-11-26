@@ -102,7 +102,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const cars = carLink(kit);
 		pi.on("session_start", () => void (kit.s.toolSet ??= { link: link.inUse() && link.attended(), cars: cars.enabled(), carApp: hasIntegrationApp(cfg.cwd()) }));
 		let trainGuard: TrainGuard | undefined;
-		const addPeer = createPeerTool(kit, { post: reach.post, sync: () => membership.sync() }); // a member's call_peer (callpeer.ts)
+		const addPeer = createPeerTool(kit, { post: reach.post, read: reach.read, openTower: reach.openTower, sync: () => membership.sync() }); // call_peer (callpeer.ts)
 		const addTrainCar = trainCarTool(kit, () => trainGuard, cars, (text) => reach.callTower(text, undefined, false, "blocked"));
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), s.isTower || (watch.addTool(), pair.addTool(), wrap.addTool()), tools.addPromote(), tools.addDuty(), tools.addHandover(), addTrainCar(), addPeer()), onMain: link.look, control: () => control });
 		// `look` (above) starts and upgrades the sb server (src/server/) and is the way to it; a session that is no part of that has none.

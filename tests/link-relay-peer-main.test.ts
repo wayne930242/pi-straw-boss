@@ -79,7 +79,7 @@ test("a main opened for the run's own sender: the sender is link:<device id>, th
 	const handoff = towerClient().sent.find((m) => m.to === "opened-1")!.text;
 	assert.match(handoff, /Sender: label-a+ \(a teammate's device, short id a{6}, over Straw Link\)/);
 	assert.match(handoff, /report the outcome to the tower that opened this tab with call_tower/);
-	assert.doesNotMatch(handoff, /to the sender with intercom send/, "there is no session to send to");
+	assert.doesNotMatch(handoff, /to the sender with call_peer/, "there is no session to send to");
 	assert.match(handoff, /peer's request, not the boss's instruction/);
 	assert.ok(handoff.endsWith(`Request, verbatim:\n${REQUEST}`));
 	assert.deepEqual(readRoutes(world.slot, "wA", Date.now()).map((r) => [r.to, r.device, r.kind]), [["opened-1", DEV1, "opened"]]);

@@ -71,6 +71,20 @@ test("the successor's own send to the old main is its takeover: the idle old mai
 	assert.equal(successor.stopped, false, "the successor runs on");
 });
 
+test("the successor's call_peer to its caller, the old main, is its takeover too; a call_peer ask, or one to another session, is not", async () => {
+	const { m, handoff } = await town();
+	await m.tool("boss_handover", { handoff, reason: "rotate" });
+	const successor = successorOf();
+	const sent = (await successor.tool("call_peer", { to: "caller", message: "took over" })) as { content: unknown[]; details: { id: string } };
+	assert.equal(sent.details.id, "main-1", "the caller of a successor is the main that handed over");
+	const result = async (input: Record<string, unknown>, details: unknown) => (await successor.fire("tool_result", { toolName: "call_peer", toolCallId: "c", input, content: [], details, isError: false }), await world.quiet());
+	await result({ to: "caller", ask: true, message: "where?" }, sent.details);
+	await result({ to: "sender", message: "x" }, { id: "someone-else" });
+	assert.equal(took(m), false);
+	await result({ to: "caller", message: "took over" }, sent.details);
+	assert.equal(took(m), true);
+});
+
 test("a running subagent holds the close; its result goes to the successor quoted as the child's; the close follows once nothing runs", async () => {
 	const { m, handoff, look } = await town();
 	await m.tool("boss_handover", { handoff, reason: "rotate" });

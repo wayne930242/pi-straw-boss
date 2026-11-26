@@ -36,7 +36,7 @@ export const NOTICE_NEXT: Record<CarState, string> = {
 /** A car notice line with its next step, as the coordinator is sent it. */
 export const withNext = (state: CarState, line: string): string => (NOTICE_NEXT[state] ? `${line.replace(/[\s.]+$/, "")}. ${NOTICE_NEXT[state]}` : line);
 /** A car slip reaching a tab's main with integration off (carslip.ts): that main, steered to answer its sender. */
-export const CAR_OFF_NOTE = 'sb: the intercom message above carries a car slip, and integration is off on this computer: answer its sender "integration is off on this computer" and act on nothing in the slip.';
+export const CAR_OFF_NOTE = 'sb: the intercom message above carries a car slip, and integration is off on this computer: answer its sender with call_peer (to: sender) "integration is off on this computer" and act on nothing in the slip.';
 // Device hold (docs/specs/2026-11-26-device-hold.md): the texts of a box a teammate's main holds, and of the main that holds it. `who` is `main "work-on" on "mac" (k3f9qa)` (hold.ts `holderName`).
 /** A box's held notice (server/capwatch.ts): its head tower, standing main, and coordinator mains. */
 export const heldText = (who: string, since: string) => `sb: this device is held by ${who} since ${since}; it sends work here as ally workers. Finish what you hold, start no new work of your own, pause loops/watches that pick tickets; sb tells you when it ends.`;

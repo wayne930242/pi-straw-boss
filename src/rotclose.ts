@@ -7,7 +7,7 @@ import { ENTRY, type Kit } from "./state.ts";
 import { moveHolds } from "./link/holds.ts";
 
 // A main that handed over closes itself (docs/specs/2026-11-26-rotation-close.md). Field, 2026-11-26: after a rotation the old skald main could not close itself (boss_wrap is refused under auto mode, /new is
-// forbidden, no other tool closes a session) and stayed open to forward a child's result. The rotation is the consent: once the successor's own extension says it took over (its send to the old main by intercom,
+// forbidden, no other tool closes a session) and stayed open to forward a child's result. The rotation is the consent: once the successor's own extension says it took over (its call_peer to its caller, the old main, or an intercom send to it,
 // the step successorPrompt asks for, seen as a tool result of a `send` in a local turn, not read from its words) and nothing of the old main runs (no turn, queued message, dialog, monitor, loop, watch, or subagent), sb clears its board
 // and closes it and its pane as /boss close does, under auto mode too. While something runs it looks again each minute (wrapup.ts's look); a child's result that reaches it meanwhile goes to the successor, quoted
 // as the child's. After 6 hours still blocked it stops waiting and tells the tower blocked, once.
@@ -55,9 +55,10 @@ export function createRotationClose({ pi, cfg, s, me, guiDir }: Kit, d: RotDeps)
 	// The successor's side: its own intercom send to the old main, in a turn of its own, is the takeover, which its extension tells the old main's; an old main that does not answer is told again at the next such send.
 	let telling = false;
 	pi.on("tool_result", (event) => {
-		const from = s.saved.handoverFrom, input = event.input as { action?: unknown; to?: unknown } | undefined;
-		// A `send` only: an `ask` before the takeover is a question, not the word that it took over (RV6-F004).
-		if (!from || telling || s.remoteOrigin || d.remote() || event.toolName !== "intercom" || event.isError || input?.action !== "send" || input.to !== from) return;
+		const from = s.saved.handoverFrom, input = event.input as { action?: unknown; to?: unknown; ask?: unknown } | undefined;
+		// A `send` only: an `ask` before the takeover is a question, not the word that it took over (RV6-F004). call_peer's details name the session it reached.
+		const sent = event.toolName === "intercom" ? input?.action === "send" && input.to === from : event.toolName === "call_peer" && input?.ask !== true && (event.details as { id?: unknown } | undefined)?.id === from;
+		if (!from || telling || s.remoteOrigin || d.remote() || event.isError || !sent) return;
 		telling = true;
 		void (async () => {
 			try {

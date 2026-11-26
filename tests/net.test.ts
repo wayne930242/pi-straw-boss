@@ -70,7 +70,7 @@ test("boss_promote makes the first caller the main agent; a second caller is ref
 	await Promise.all([a.start(), b.start()]);
 	assert.deepEqual([a.tokens, b.tokens], [{ sb_role: "member" }, { sb_role: "member" }]);
 	assert.match(await a.promote(), /now the main agent of tab work/);
-	assert.match(await b.promote(), /Tab work already has a main agent, a\..*tell a through intercom first/);
+	assert.match(await b.promote(), /Tab work already has a main agent, a\..*tell a first with call_peer \(to: main\)/);
 	assert.match(await a.promote(), /already the main agent/);
 	assert.deepEqual([a.tokens, b.tokens], [{ sb_role: "main" }, { sb_role: "member" }]);
 	assert.equal(state()?.main, "a");

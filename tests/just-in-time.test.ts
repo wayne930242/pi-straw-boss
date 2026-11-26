@@ -58,7 +58,7 @@ test("waits: call_tower's blocked result names the wait_card answer and boss_wai
 test("a main a tower opened reads its report and close in the brief that opens it", () => {
 	gone("If a tower opened your tab", "wait to be closed");
 	const brief = handoff("Alpha", { id: "s-1", name: "asker" }, "do x", { id: "t-1", name: "tower" });
-	assert.ok(brief.includes("report the outcome to the sender with intercom send and to the tower that opened this tab with call_tower (why: milestone, reply: false). Then wait; the tower closes this tab"));
+	assert.ok(brief.includes("report the outcome to the sender with call_peer (to: caller) and to the tower that opened this tab with call_tower (why: milestone, reply: false). Then wait; the tower closes this tab"));
 });
 
 test("integration: main.md keeps the base rule and the slip's route; the slip's result, the car notices, and the slip that reaches a main with integration off say the rest", () => {
@@ -82,7 +82,7 @@ test("integration: main.md keeps the base rule and the slip's route; the slip's 
 	handlers[0]!(msg("m2", "no slip here"), ctx);
 	handlers[0]!({ message: { role: "user", content: slip } }, ctx);
 	assert.deepEqual(sent, [[{ customType: CAR_OFF_MESSAGE, content: CAR_OFF_NOTE, display: true }, { deliverAs: "steer" }]]);
-	assert.ok(CAR_OFF_NOTE.includes('answer its sender "integration is off on this computer"'));
+	assert.ok(CAR_OFF_NOTE.includes('answer its sender with call_peer (to: sender) "integration is off on this computer"'));
 	off = false;
 	handlers[0]!(msg("m3", slip), ctx);
 	assert.equal(sent.length, 1, "integration on: no note");

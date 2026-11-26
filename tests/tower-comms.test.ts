@@ -190,7 +190,7 @@ test("the handoff carries a header, tells the main to report to the sender and t
 	const { towerA } = await opened();
 	const [handoff] = heard().filter((h) => h.to === NEW.main);
 	assert.match(handoff!.line, /^\[straw net from="tower · tower-wA" id=tower-wA role=tower workspace=Alpha kind=handoff scope=main to="main · wA \(main of Alpha\)" reply=expected\]/);
-	assert.match(handoff!.body, /report the outcome to the sender with intercom send and to the tower that opened this tab with call_tower \(why: milestone, reply: false\)\. Then wait; the tower closes this tab after your done report/);
+	assert.match(handoff!.body, /report the outcome to the sender with call_peer \(to: caller\) and to the tower that opened this tab with call_tower \(why: milestone, reply: false\)\. Then wait; the tower closes this tab after your done report/);
 	assert.match(handoff!.body, /Sender: api-main \(session id a1\)\nTower: tower · tower-wA \(session id tower-wA\)\nRequest, verbatim:\nFix the export button\.$/);
 	assert.match(towerA.sent.length ? "" : "ok", /ok/);
 });
@@ -283,7 +283,7 @@ test("the tower prompt teaches tower_list, tower_send without a second send, rep
 	for (const term of ["tower_list", "tower_send", "already names", "report back once", "boss_close_main", "awaits a boss decision"]) assert.ok(tower.includes(term), `tower.md names ${term}`);
 	// 0.92.0 (docs/specs/2026-11-26-just-in-time-prompts.md): the opened main reads it in the brief that opens it (opener.ts `handoff`), not in main.md.
 	assert.doesNotMatch(main, /If a tower opened your tab/);
-	assert.match(handoff("Alpha", { id: "s-1", name: "asker" }, "do x", { id: "t-1", name: "tower" }), /report the outcome to the sender with intercom send and to the tower that opened this tab with call_tower \(why: milestone, reply: false\)/);
+	assert.match(handoff("Alpha", { id: "s-1", name: "asker" }, "do x", { id: "t-1", name: "tower" }), /report the outcome to the sender with call_peer \(to: caller\) and to the tower that opened this tab with call_tower \(why: milestone, reply: false\)/);
 });
 
 const asks = () => world.broker.published.filter((p) => (p.payload as { type?: string }).type === "close-main").length;

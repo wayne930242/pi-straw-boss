@@ -150,7 +150,7 @@ export const successorPrompt = (r: SuccessorRequest) => [
 	...(r.todosPath ? [`First call todo with ${JSON.stringify({ action: "import", path: r.todosPath })} to restore the old main's list with its ids, anchors and evidence. If the import is refused or the todo tool has no import action (older pi-todo-ledger), recreate the todos from the handoff text. Otherwise, do not recreate them.`] : []),
 	`Read the handoff file ${r.handoff} now and follow it as your session-rotation rule describes: take up the handoff todo and file it names, recreate the monitors and loops it lists, and keep its replies owed.`,
 	...(r.duty === "standing" ? [REARM_TEXT] : []),
-	`Your kind is already ${r.duty ?? "coordinator"} and your name is the old main's. Then tell ${r.from.name} by intercom (send, to "${r.from.id}") that you took over; it gives up its role after that.`,
+	`Your kind is already ${r.duty ?? "coordinator"} and your name is the old main's. Then tell ${r.from.name} with call_peer (to: caller) that you took over; it gives up its role after that.`,
 ].join("\n");
 
 /**
