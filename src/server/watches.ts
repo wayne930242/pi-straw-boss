@@ -27,8 +27,8 @@ export interface WatchesDeps {
 	now(): number;
 	/** Runs `fn` after `ms` and returns its cancel; a test gives one on a clock it moves. */
 	timer(ms: number, fn: () => void): () => void;
-	/** Sends one line to the session as its workspace's tower identity: true when the session took it, false when it did not answer or refused (tried again a minute later). */
-	send(to: { session: string; workspace: string }, text: string, facts: { key: string; state: string }): Promise<boolean>;
+	/** Sends one line to the session as its workspace's tower identity: true when the session took it, false when it did not answer or refused (tried again a minute later). `id`: the change's own id, the same on every send of it, so a session drops one it took already (a send whose answer a restart lost). */
+	send(to: { session: string; workspace: string }, text: string, facts: { key: string; state: string; id?: string }): Promise<boolean>;
 	/** Whether the session is on the net now, and its workspace; none while the server has not read it. */
 	owner(session: string): { live: boolean; workspace?: string } | undefined;
 	/** `watches.json`; none keeps the watches in memory only. */
@@ -36,7 +36,7 @@ export interface WatchesDeps {
 	log?(event: string, facts: Record<string, string | number | boolean>): void;
 }
 interface Told { state: string; facts: string; at: number }
-interface Watch extends WatchAdd { deadline: number; added: number; since?: string; told?: Told; sentAt: number; pending?: Told & { line: string; heldBy?: Bucket }; newest?: { state: string; line: string; at: number }; away?: number; fails: number; ended: boolean; sending?: boolean; timer?: () => void; restarted?: boolean }
+interface Watch extends WatchAdd { deadline: number; added: number; since?: string; told?: Told; sentAt: number; pending?: Told & { line: string; id: string; heldBy?: Bucket }; newest?: { state: string; line: string; at: number }; away?: number; fails: number; ended: boolean; sending?: boolean; timer?: () => void; restarted?: boolean }
 interface Bucket { from: number; count: number; held: number; keys: Map<string, string>; timer?: () => void }
 
 const no = (error: string): Reply => ({ ok: false, error });
@@ -76,7 +76,8 @@ export function createWatches(d: WatchesDeps) {
 	const pause = (ms: number) => new Promise<void>((resolve) => void d.timer(ms, resolve));
 	const save = () => {
 		if (!d.file) return;
-		const rows = [...watches.values()].map(({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt, ward }) => ({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt, ward }));
+		// A change not taken yet is kept with the `since` that found it (ward-review F004): a restart sends it, where the read's next verdict would say `unchanged`.
+		const rows = [...watches.values()].map(({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt, ward, pending }) => ({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt, ward, ...(pending ? { pending: { state: pending.state, facts: pending.facts, at: pending.at, line: pending.line, id: pending.id } } : {}) }));
 		try {
 			writeFileSync(`${d.file}.tmp`, JSON.stringify({ version: 1, watches: rows }), { mode: 0o600 });
 			renameSync(`${d.file}.tmp`, d.file);
@@ -135,7 +136,7 @@ export function createWatches(d: WatchesDeps) {
 		const p = w.pending!;
 		[w.sending, w.sentAt] = [true, d.now()];
 		b.count++;
-		const sent = await d.send({ session: w.session, workspace: w.workspace }, p.line, { key: w.key, state: p.state }).catch(() => false);
+		const sent = await d.send({ session: w.session, workspace: w.workspace }, p.line, { key: w.key, state: p.state, id: p.id }).catch(() => false);
 		w.sending = false;
 		if (!sent) {
 			b.count--;
@@ -155,9 +156,10 @@ export function createWatches(d: WatchesDeps) {
 		const state = String(r.state), facts = factsOf(r), line = lineOf(w.key, r, w), at = d.now();
 		w.newest = { state, line, at };
 		// A `changed` that carries the facts told last is no change (a state that came and went, or a restarted server's first verdict); after a restart a repeat of the last state is none either.
-		if (w.told && w.told.facts === facts && (state === "changed" || (w.restarted && w.told.state === state))) return void (w.pending = undefined);
+		if (w.told && w.told.facts === facts && (state === "changed" || (w.restarted && w.told.state === state))) return void ((w.pending = undefined), save());
 		w.restarted = false;
-		w.pending = { state, facts, line, at };
+		w.pending = { state, facts, line, at, id: hash(`${w.session}\n${w.key}\n${state}\n${facts}\n${at}`) };
+		save();
 		flush(w);
 	};
 	const owned = (w: Watch) => {
@@ -178,8 +180,11 @@ export function createWatches(d: WatchesDeps) {
 				await pause(RETRY_MS);
 				continue;
 			}
-			if (typeof r.since === "string" && r.since !== w.since) (w.since = r.since), save();
+			// The new `since` and the change it found are saved together (note saves), so a restart between them loses no change.
+			const moved = typeof r.since === "string" && r.since !== w.since;
+			if (moved) w.since = r.since as string;
 			if (r.state !== "unchanged") note(w, r);
+			else if (moved) save();
 			if (ENDS.has(String(r.state))) return;
 			if (r.state === "unchanged" && (w.ward || d.now() - began < 1000)) await pause(w.ward ? WARD_LOOK_MS : 2000); // a hold that answers at once is not asked in a tight loop; a ward looks every 20 s
 		}
@@ -231,9 +236,11 @@ export function createWatches(d: WatchesDeps) {
 				const told = row.told && typeof row.told.facts === "string" && typeof row.told.state === "string" ? row.told : undefined;
 				const ward = wardOf(row.ward);
 				if (row.key.startsWith("ward:") && !ward) continue;
-				const w: Watch = { session: row.session, workspace: row.workspace, key: row.key, ...(ward ? { ward } : {}), ...(typeof row.quietMs === "number" ? { quietMs: row.quietMs } : {}), ...(typeof row.idleMs === "number" ? { idleMs: row.idleMs } : {}), deadline: row.deadline, added: typeof row.added === "number" ? row.added : d.now(), ...(typeof row.since === "string" ? { since: row.since } : {}), ...(told ? { told } : {}), sentAt: typeof row.sentAt === "number" ? row.sentAt : 0, fails: 0, ended: false, restarted: true };
+				const p = row.pending, pending = p && typeof p.state === "string" && typeof p.facts === "string" && typeof p.line === "string" && typeof p.id === "string" && typeof p.at === "number" ? { state: p.state, facts: p.facts, line: p.line, id: p.id, at: p.at } : undefined;
+				const w: Watch = { session: row.session, workspace: row.workspace, key: row.key, ...(ward ? { ward } : {}), ...(pending ? { pending } : {}), ...(typeof row.quietMs === "number" ? { quietMs: row.quietMs } : {}), ...(typeof row.idleMs === "number" ? { idleMs: row.idleMs } : {}), deadline: row.deadline, added: typeof row.added === "number" ? row.added : d.now(), ...(typeof row.since === "string" ? { since: row.since } : {}), ...(told ? { told } : {}), sentAt: typeof row.sentAt === "number" ? row.sentAt : 0, fails: 0, ended: false, restarted: true };
 				watches.set(idOf(w.session, w.key), w);
 				void loop(w);
+				flush(w);
 			}
 		},
 		/** The server leaves: the loops and timers stop, and the file keeps the watches for the next one. */

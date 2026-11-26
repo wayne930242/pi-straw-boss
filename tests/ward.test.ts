@@ -42,19 +42,21 @@ function world() {
 	const net: WatchNet = { onRead: () => () => {}, last: () => ({ bases: [] }) as Net, lookup: (key) => (units[key] ? { key, name: key.slice(0, 8), ...units[key]! } : undefined), read: async () => ({ bases: [] }) as Net };
 	const listening = { now: true };
 	const timer = (ms: number, fn: () => void) => { let live = true; clock.at(clock.elapsed() + ms, () => live && fn()); return () => void (live = false); };
-	const sent: { session: string; text: string; key: string; state: string }[] = [];
+	const sent: { session: string; text: string; key: string; state: string; id?: string }[] = [];
 	const stops: (() => void)[] = [];
-	const start = () => startWatches({ net, now: clock.now, send: async (to, text, facts) => (sent.push({ session: to.session, text, ...facts }), true), log: () => {}, stops, slot: { dir } as never, over: { timer }, ward: { run, monitorPanes: () => monitors, loopsDir: loops, ready: async (workspace, session) => listening.now && workspace === units[session]?.base } });
+	const takes = { now: true };
+	const start = () => startWatches({ net, now: clock.now, send: async (to, text, facts) => (takes.now ? (sent.push({ session: to.session, text, ...facts }), true) : false), log: () => {}, stops, slot: { dir } as never, over: { timer }, ward: { run, monitorPanes: () => monitors, loopsDir: loops, ready: async (workspace, session) => listening.now && workspace === units[session]?.base } });
 	let routes = start();
 	after(() => stops.forEach((s) => s()));
 	return {
-		clock, file, pane, sent, monitors, loops, units, listening, get routes() { return routes; },
+		clock, file, pane, sent, monitors, loops, units, listening, takes, get routes() { return routes; },
 		/** Another pane in another workspace that runs pi. */
 		other: () => void list.push({ pane_id: "%9", tab_id: "t9", workspace_id: "w2", agent: "pi", agent_status: "working", agent_session: { value: file } }),
 		/** The server stops and a new one starts from `watches.json`. */
 		restart: () => void (stops.splice(0).forEach((s) => s()), (routes = start())),
 		set: (over: Partial<Pane>) => Object.assign(pane, over),
 		drop: () => void (list = list.filter((p) => p !== pane)),
+		back: () => void (list.includes(pane) || list.push(pane)),
 		write: (text: string) => appendFileSync(file, text),
 		add: (ward: Record<string, unknown> = {}, session = MAIN, key = "ward:%7") => watchReply(routes, { cmd: "ward-add", session, key, ward }, () => true)!,
 		/** `n` looks of the ward, one WARD_LOOK_MS apart. */
@@ -265,4 +267,33 @@ test("ward-review F003: only a live main of the server's reading wards, only a p
 	w.units[MAIN]!.role = "main";
 	assert.deepEqual((await w.list()).map((x) => x.ward), [{ pane: "%7", file: w.file }]);
 	assert.equal((await watchReply(w.routes, { cmd: "watch-stop", session: MAIN, key: "ward:%7" }, () => true)!).ok, true);
+});
+
+test("ward-review F004: a change found but not taken before a restart is sent after it, with the same id; one taken is not sent again", async () => {
+	const w = world();
+	assert.equal((await w.add()).ok, true);
+	w.takes.now = false; // the main does not answer
+	w.set({ agent_status: "blocked" });
+	await w.looks(4);
+	assert.equal(w.sent.length, 0);
+	w.restart();
+	w.takes.now = true;
+	await w.looks(4);
+	assert.deepEqual(w.sent.map((x) => x.state), ["blocked"], "the blocked spell found before the restart is told after it");
+	const id = w.sent[0]!.id;
+	assert.ok(id);
+	w.restart();
+	await w.looks(4);
+	assert.equal(w.sent.length, 1, "told once");
+
+	const v = world();
+	assert.equal((await v.add()).ok, true);
+	v.takes.now = false;
+	v.drop();
+	await v.looks(1);
+	v.restart();
+	v.back(); // a pane list that lacked it for a moment
+	v.takes.now = true;
+	await v.looks(4);
+	assert.deepEqual(v.sent.map((x) => x.state), ["dead"], "a dead found before the restart is told though the read after it is a fresh look");
 });

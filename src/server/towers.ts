@@ -173,7 +173,7 @@ export interface Towers extends Returns {
 	owns(id: string): boolean; // the session id is the identity of one of the services: it has no pi and no bridge, so it is ended, not asked to quit
 	/** The wait router's seams (linkwaits.ts): a workspace's tower identity, and a code-written line from it to local sessions. */
 	/** A watch line to a session (watches.ts), on the control channel as the workspace's tower identity: whether the session took it. */
-	watchSend(workspace: string, session: string, text: string, facts: { key: string; state: string }): Promise<boolean>;
+	watchSend(workspace: string, session: string, text: string, facts: { key: string; state: string; id?: string }): Promise<boolean>;
 	/** Whether the session takes watch lines from the workspace's tower identity now (a `watch-ping` on the control channel): a ward from the shell asks it first. */
 	watchPing(workspace: string, session: string): Promise<boolean>;
 	identityOf(workspace: string): string | undefined; post(workspace: string, to: string[], text: string, kind: "link_wait" | "link_wait_state" | "link_notice", extra: Pick<import("../header.ts").Stamp, "wait" | "peer">): Promise<boolean>;

@@ -87,3 +87,14 @@ test("a ward from the shell asks first (watch-ping): the main answers its own to
 	assert.deepEqual([result("p1")!.accepted, result("p2")!.accepted], [true, false]);
 	assert.equal(m.sent.filter((x) => x.customType === WATCH_MESSAGE).length, 0, "a ping is no line");
 });
+
+test("a change sent again with the same id (a restart lost the answer) is taken and not shown twice", async () => {
+	const { m } = await town();
+	const send = (reqId: string, id: string) => m.regs.get(CONTROL)!.onEvent({ type: "message", fromSessionId: "tower-wA", payload: { version: 1, type: "watch", to: m.id, reqId, key: "ward:%7", state: "blocked", id, text: "ward %7: blocked: it waits on a dialog." } });
+	send("d1", "e1");
+	send("d2", "e1");
+	send("d3", "e2");
+	await until(() => ["d1", "d2", "d3"].every((r) => result(r) !== undefined), "the answers");
+	assert.deepEqual(["d1", "d2", "d3"].map((r) => result(r)!.accepted), [true, true, true]);
+	assert.equal(m.sent.filter((x) => x.customType === WATCH_MESSAGE).length, 2);
+});
