@@ -1,12 +1,17 @@
 // node scripts/style-diff.mjs before.json after.json. Exit 0 only for identical snapshots;
 // added nodes list their display so a new Standard slot can be checked without shifting siblings.
+// The preview origin (http://127.0.0.1:PORT) inside url()s is replaced by <origin>, so captures on
+// different ports compare equal; the rest of every value is compared exactly.
 import { readFileSync } from 'node:fs';
+
+const ORIGIN = /https?:\/\/(?:127\.0\.0\.1|localhost):\d+/g;
 
 function load(file) {
 	const { format, defaults, rows, nodes } = JSON.parse(readFileSync(file, 'utf8'));
 	if (format !== 1 || !Object.hasOwn(nodes, 'html') || !Object.keys(defaults).length) throw Error(`Invalid snapshot: ${file}`);
 	const styles = rows.map(row => {
 		const style = { ...defaults, ...row };
+		for (const prop in style) if (typeof style[prop] === 'string') style[prop] = style[prop].replace(ORIGIN, '<origin>');
 		for (const prop in row) if (row[prop] === null) delete style[prop];
 		return style;
 	});

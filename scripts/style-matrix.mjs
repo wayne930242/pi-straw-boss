@@ -1,5 +1,6 @@
-// node scripts/style-matrix.mjs OUTDIR [PORT=4810]. Serve the default gui:demo build with
-// vite preview gui --outDir ../dist/demo --base /pi-straw-boss/ --port 4810 --strictPort.
+// node scripts/style-matrix.mjs OUTDIR [PORT=4810] [SESSION_PREFIX=tc]. Serve the default gui:demo build with
+// vite preview gui --outDir ../dist/demo --base /pi-straw-boss/ --host 127.0.0.1 --port PORT --strictPort.
+// Any port works: style-diff ignores the origin inside CSS url()s, so parallel workers use their own ports.
 // Requires agent-browser and a fresh, empty output directory. No CSS overrides or diff exclusions.
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -7,9 +8,9 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const [dir, port = '4810'] = process.argv.slice(2);
-if (!dir || !/^481[0-9]$/.test(port)) throw Error('Usage: node scripts/style-matrix.mjs OUTDIR [4810..4819]');
-const out = resolve(dir), session = `tc-p0-${randomUUID()}`;
+const [dir, port = '4810', prefix = 'tc'] = process.argv.slice(2);
+if (!dir || !/^\d{4,5}$/.test(port) || !/^[a-z0-9-]+$/.test(prefix)) throw Error('Usage: node scripts/style-matrix.mjs OUTDIR [PORT] [SESSION_PREFIX]');
+const out = resolve(dir), session = `${prefix}-${randomUUID()}`;
 mkdirSync(out, { recursive: true });
 if (readdirSync(out).length) throw Error(`Not empty: ${out}`);
 const source = readFileSync(new URL('./style-snapshot.js', import.meta.url), 'utf8');
