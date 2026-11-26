@@ -20,7 +20,8 @@ const DIALOGS = new Set(["ask_user_question", "ask_user", "secret_drop", "robot_
 const ITEM = /^[A-Za-z0-9][A-Za-z0-9._:#/-]{0,63}$/;
 
 /** What a ward watches: the pane, the session file pi held there at the ward's start, the worker's session id, where that file ended then, and the main the worker reports to. */
-export interface WardRec { pane: string; file: string; worker: string; offset: number; item?: string; main: { id: string; names: string[] } }
+/** `terminal`: Herdr's terminal id of the pane at the start, which stays with the terminal when Herdr moves the pane, while a pane id may be given to another pane. */
+export interface WardRec { pane: string; file: string; worker: string; offset: number; terminal?: string; item?: string; main: { id: string; names: string[] } }
 export type WardState = "finished" | "blocked" | "dead" | "unchanged";
 /** The worker's turn as its session file says: `ended` (the last message is the assistant's and called no tool), `dialog` (it waits on a question tool), `working`, or `unknown` (no message yet, or the file cannot be read). */
 export type Turn = "ended" | "dialog" | "working" | "unknown";
@@ -35,6 +36,8 @@ export function judgeWard(rec: WardRec, look: WardLook, told: WardTold, at: numb
 	if (look.pane.agent !== "pi") return { state: "dead", why: "pi left the pane", told };
 	const file = look.pane.agent_session?.value;
 	if (file !== undefined && file !== rec.file) return { state: "dead", why: "the pane now runs another session", told };
+	// Whose pi it is cannot be told while Herdr names no session file: nothing is judged finished or blocked on a pane that may be another worker's (ward-review F006).
+	if (file === undefined) return { state: "unchanged", why: "Herdr names no session file of its pane now", told };
 	if (look.reported) return { state: "finished", why: `it reported to you (${look.reported})`, told };
 	if (look.pane.agent_status === "blocked" || look.turn === "dialog") {
 		const why = look.turn === "dialog" ? "it waits on a dialog" : "Herdr shows its pane blocked";
@@ -123,8 +126,9 @@ export const wardLine = (rec: WardRec, state: WardState, why: string) => `ward $
 export function createWardRead(d: WardDeps) {
 	/** One look at the worker, with what still runs for it: a monitor in its pane, an active loop of its session, a running subagent of its pane. */
 	const look = async (rec: WardRec): Promise<WardLook> => {
-		// Herdr can give a pane a new id when it moves it: the pi pane that holds the ward's session file is the same worker.
-		const all = await panes(d.run), pane = all.find((p) => p.pane_id === rec.pane) ?? all.find((p) => p.agent === "pi" && p.agent_session?.value === rec.file);
+		// The worker is the pi pane that holds its session file, wherever Herdr moved it; else its terminal, which a move keeps; else its pane id, unless that id now names another terminal (ward-review F006).
+		const all = await panes(d.run), other = (p: Pane) => Boolean(rec.terminal && p.terminal_id && p.terminal_id !== rec.terminal);
+		const pane = all.find((p) => p.agent === "pi" && p.agent_session?.value === rec.file) ?? (rec.terminal ? all.find((p) => p.terminal_id === rec.terminal) : undefined) ?? all.find((p) => p.pane_id === rec.pane && !other(p));
 		if (!pane) return { turn: "unknown", runs: [] };
 		const runs: string[] = [];
 		if (d.monitorPanes().has(pane.pane_id)) runs.push("a monitor of it runs");
@@ -157,7 +161,7 @@ export function createWardRead(d: WardDeps) {
 			if (worker === a.session) return `${a.pane} runs your own session`;
 			let offset = 0;
 			try { offset = statSync(file).size; } catch { return `the session file of ${a.pane} cannot be read: ${file}`; }
-			return { pane: a.pane, file, worker, offset, ...(a.item ? { item: a.item } : {}), main: { id: a.session, names: (a.names ?? []).filter((n) => typeof n === "string" && n.trim()).map((n) => n.trim()).slice(0, 4) } };
+			return { pane: a.pane, file, worker, offset, ...(pane.terminal_id ? { terminal: pane.terminal_id } : {}), ...(a.item ? { item: a.item } : {}), main: { id: a.session, names: (a.names ?? []).filter((n) => typeof n === "string" && n.trim()).map((n) => n.trim()).slice(0, 4) } };
 		},
 	};
 }
@@ -166,5 +170,5 @@ export type WardRead = ReturnType<typeof createWardRead>;
 export function wardOf(v: unknown): WardRec | undefined {
 	const r = v as Partial<WardRec> | undefined;
 	if (!r || typeof r.pane !== "string" || typeof r.file !== "string" || typeof r.worker !== "string" || typeof r.offset !== "number" || typeof r.main?.id !== "string" || !Array.isArray(r.main.names)) return undefined;
-	return { pane: r.pane, file: r.file, worker: r.worker, offset: r.offset, ...(typeof r.item === "string" ? { item: r.item } : {}), main: { id: r.main.id, names: r.main.names.filter((n): n is string => typeof n === "string") } };
+	return { pane: r.pane, file: r.file, worker: r.worker, offset: r.offset, ...(typeof r.terminal === "string" ? { terminal: r.terminal } : {}), ...(typeof r.item === "string" ? { item: r.item } : {}), main: { id: r.main.id, names: r.main.names.filter((n): n is string => typeof n === "string") } };
 }

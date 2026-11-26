@@ -31,7 +31,7 @@ function world() {
 	mkdirSync(loops);
 	writeFileSync(file, line({ type: "session", id: WORKER, cwd: dir }) + user("do the work") + said("working on it"));
 	const clock = fakeClock(1_700_000_000_000);
-	const pane: Pane = { pane_id: "%7", tab_id: "t2", workspace_id: "w1", agent: "pi", agent_status: "working", agent_session: { value: file } };
+	const pane: Pane = { pane_id: "%7", tab_id: "t2", workspace_id: "w1", terminal_id: "T7", agent: "pi", agent_status: "working", agent_session: { value: file } };
 	let list: Pane[] = [{ pane_id: "%1", tab_id: "t1", workspace_id: "w1", agent: "pi", agent_status: "working" }, pane];
 	const monitors = new Set<string>();
 	const run = async (args: string[]) => {
@@ -57,6 +57,7 @@ function world() {
 		set: (over: Partial<Pane>) => Object.assign(pane, over),
 		drop: () => void (list = list.filter((p) => p !== pane)),
 		back: () => void (list.includes(pane) || list.push(pane)),
+		push: (p: Pane) => void list.push(p),
 		write: (text: string) => appendFileSync(file, text),
 		add: (ward: Record<string, unknown> = {}, session = MAIN, key = "ward:%7") => watchReply(routes, { cmd: "ward-add", session, key, ward }, () => true)!,
 		/** `n` looks of the ward, one WARD_LOOK_MS apart. */
@@ -307,4 +308,31 @@ test("ward-review F005: wards are kept in wards.json, apart from watches.json, s
 	writeFileSync(join(w.dir, "watches.json"), JSON.stringify({ version: 1, watches: [] })); // an older server's save: the plain watches it knows
 	w.restart();
 	assert.deepEqual((await w.list()).map((x) => x.key), ["ward:%7"]);
+});
+
+test("ward-review F006: a moved worker whose old pane id now names another pane is found by its session file; a pane whose session Herdr does not name is judged nothing; a pane id on another terminal is a gone pane", async () => {
+	const w = world();
+	assert.equal((await w.add()).ok, true);
+	w.set({ pane_id: "%8" });
+	w.push({ pane_id: "%7", tab_id: "t2", workspace_id: "w1", terminal_id: "T9", agent: "pi", agent_status: "idle", agent_session: { value: "/other.jsonl" } });
+	await w.looks(4);
+	assert.equal(w.sent.length, 0, "the old id on another pane is not the worker");
+
+	const u = world();
+	assert.equal((await u.add()).ok, true);
+	u.set({ agent_session: undefined, agent_status: "blocked" });
+	u.write(said("done"));
+	await u.looks(8);
+	assert.equal(u.sent.length, 0, "no session named: neither blocked nor finished");
+	u.set({ agent_session: { value: u.file } });
+	await u.looks(2);
+	assert.deepEqual(u.sent.map((x) => x.state), ["blocked"]);
+
+	const g = world();
+	assert.equal((await g.add()).ok, true);
+	g.drop();
+	g.push({ pane_id: "%7", tab_id: "t2", workspace_id: "w1", terminal_id: "T9", agent: "pi", agent_status: "idle" });
+	await g.looks(2);
+	assert.deepEqual(g.sent.map((x) => x.state), ["dead"]);
+	assert.match(g.sent[0]!.text, /its pane is gone/);
 });
