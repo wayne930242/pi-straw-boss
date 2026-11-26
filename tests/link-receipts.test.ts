@@ -98,6 +98,7 @@ test("a message with an ask that waits 10 minutes on the box with no run started
 	assert.equal(told(), 0, "not before 10 minutes");
 	skew = STUCK_MS + 1000;
 	await d.holder.drain();
+	await until(() => told() >= 1, 3000, "the stuck notice in the box's log");
 	assert.equal(told(), 1);
 	await until(() => seen.length === 1, 3000, "the notice at the controller's main");
 	assert.deepEqual(seen[0], { ref: ASK, kind: "inbox-stuck" });
