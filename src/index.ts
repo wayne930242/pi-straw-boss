@@ -51,6 +51,7 @@ import { registerRunTrust } from "./trust/runtrust.ts";
 import { registerThreadTools } from "./threadtools.ts";
 import { createWrapUp } from "./wrapup.ts";
 import { createRotationClose } from "./rotclose.ts";
+import { registerDoctor } from "./doctorlive.ts";
 
 export type { Deps } from "./state.ts";
 
@@ -83,12 +84,15 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		s.autoOn = auto.on;
 		registerTrust(pi, kit, undefined, auto.trust); // pi's startup trust question reaches the GUI too, before any session has joined the net (trust/ask.ts), subagents included
 		interceptUi(pi, auto); // any extension's select and confirm reach the same bridge, subagents included
-		if (env.PI_SUBAGENT_ID) return void (registerChildKind(pi, env), auto.attach()); // a child records its role for the net (childkind.ts)
+		// The doctor (doctorlive.ts): every session in a pane checks its own tools at each session start; /boss doctor goes to the ones that are no child, sb_doctor to the joined ones and the tower.
+		const doctorDeps = { env, role: () => (env.PI_SUBAGENT_ID ? "child" as const : (kit.role() ?? "none")), tell: kit.tell };
+		if (env.PI_SUBAGENT_ID) return void (registerDoctor(pi, doctorDeps), registerChildKind(pi, env), auto.attach()); // a child records its role for the net (childkind.ts)
 		// A pi the sb server started for a tower run (runmode.ts) decides first, at session_start: when it is a run, nothing of the net starts.
 		warmStart(); // Windows tells a process's start time through PowerShell, 2 to 3 s: read this one's now, in the background, so the records written later carry it
 		const roles = createRoles(kit);
 		registerTrainSigns(kit, roles); // first of the session_start handlers: the sign of a train is held before any of them awaits
 		auto.attach(); // the follow of auto.json and its transition come after it
+		const doctor = registerDoctor(pi, doctorDeps); // after the train's sign, which no session_start handler may come before
 		const mainDuty = createMainDuty(kit), link = createLink(kit), briefing = createBriefing(kit, mainDuty), look = cfg.server ? createServerLook(kit, cfg.server) : undefined, runMode = createRunMode(kit, look, cfg.runSide, link), reach = createReach(kit, look), election = createElection(kit), presence = createPresence(kit, mainDuty), digest = createDigest(run, now);
 		lookAsk = look?.ask;
 		auto.running(() => runMode.active());
@@ -104,22 +108,23 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		let trainGuard: TrainGuard | undefined;
 		const addPeer = createPeerTool(kit, { post: reach.post, read: reach.read, openTower: reach.openTower, sync: () => membership.sync() }); // call_peer (callpeer.ts)
 		const addTrainCar = trainCarTool(kit, () => trainGuard, cars, (text) => reach.callTower(text, undefined, false, "blocked"));
-		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (tools.addNetTools(), s.isTower || (watch.addTool(), pair.addTool(), wrap.addTool()), tools.addPromote(), tools.addDuty(), tools.addHandover(), addTrainCar(), addPeer()), onMain: link.look, control: () => control });
+		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (netTools(), s.isTower || (watch.addTool(), pair.addTool(), wrap.addTool()), tools.addPromote(), tools.addDuty(), tools.addHandover(), addTrainCar(), addPeer()), onMain: link.look, control: () => control });
 		// `look` (above) starts and upgrades the sb server (src/server/) and is the way to it; a session that is no part of that has none.
 		const pair = createBossPair(kit, { ask: cfg.ask ?? look?.ask, remote: () => Boolean(link.remoteScope()) }); // boss_pair and board_read's review threads (bosspair.ts)
 		createCapFill(kit); // a main's capacity facts for the board (capfill.ts)
 		const boardFill = createBoardFill(kit);
 		const tools = createTools(kit, { ...reach, mainDuty, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), closePane: (pane) => control.closePane(pane), deadPanes: () => control.deadPanes(), listen: () => control.register(), link, server: look, boardFill, pair, waitAsk: () => mainWaitAsk(kit, { ask: cfg.ask ?? look?.ask, here: (fn) => host.here(fn), auto }), bossAsk: createBossAsk(kit, { attended: () => link.attended(), remote: () => Boolean(link.remoteScope()) }) });
+		const netTools = () => (tools.addNetTools(), doctor.addTool()); // sb_doctor comes with the net tools: at the join, and to a tower
 		const host = createHost(kit, { connected: membership.connected, ask: cfg.ask ?? look?.ask });
 		closeSelf = createClosing(kit);
 		const control = createCloseMain(kit, { closeSelf, check: bridge.stashCheck, turn: bridge.turn });
 		const wrap = createWrapUp(kit, { reach, boardFill, closeSelf, blockers: () => bridge.turn?.blockers(), duty: () => mainDuty.now(), remote: () => Boolean(link.remoteScope()), ask: cfg.ask ?? look?.ask, first: (c) => rot.look(c) }); // idle wrap-up and boss_wrap (wrapup.ts)
 		const rot = createRotationClose(kit, { control, running: () => wrap.running(), reach, boardFill, closeSelf, remote: () => Boolean(link.remoteScope()) }); // an old main closes itself once its successor took over (rotclose.ts)
 		const watch = createBossWatch(kit, { ask: cfg.ask ?? look?.ask, control, openTower: reach.openTower, remote: () => Boolean(link.remoteScope()) });
-		registerSession(kit, { mainDuty, attended: () => link.attended(), integration: createIntegrationWatch(kit), runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools, control, digest, roles, reach }) });
+		registerSession(kit, { mainDuty, attended: () => link.attended(), integration: createIntegrationWatch(kit), runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools: { ...tools, addNetTools: netTools }, control, digest, roles, reach }) });
 		trainGuard = registerTrainGuard(kit, cars.client, mainDuty);
 		mainDuty.trainOn(() => Boolean(trainGuard)); // a train's todo and MonitorCreate calls, and the integrator's train todos (nothing loads with the merge train off)
-		registerBoss(kit, { runMode, host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look, paths: createBossPaths(kit, { host, server: look, closeSelf, here: host.here }) });
+		registerBoss(kit, { runMode, host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look, paths: createBossPaths(kit, { host, server: look, closeSelf, here: host.here }), doctor });
 	};
 }
 

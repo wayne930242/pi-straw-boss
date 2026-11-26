@@ -15,6 +15,7 @@ import { baseFolder, type DeskRecord, deskLockFor, ensureIntegration, makeBase, 
 import { ensureTowerVia } from "./towerclient.ts";
 import { onFatal } from "./fatal.ts";
 import { runProcs } from "./procscli.ts";
+import { runDoctor } from "./doctorcli.ts";
 import { runTrain, type TrainIo } from "./traincmds.ts";
 import { runningTrains, trainsRefusal } from "./restartguard.ts";
 import { callControl, ControlError } from "./socket.ts";
@@ -39,6 +40,7 @@ const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS]
        cli.mjs logs [--lines N] [--follow]
        cli.mjs prune --dry-run   (count stale server state without changing it)
        cli.mjs procs [list]
+       cli.mjs doctor --session ID|PREFIX|PANE [--json]   (another session's tools and loads: a fresh load, its session file, its pane; exit 1 on a fault)
        cli.mjs procs reap (--owner ID | --checkout PATH)   (kill what an ended worker left; refused while a live worker works in the checkout)
        cli.mjs train gate --spec FILE   (the wrapper of a train's run step; its monitor runs it)
        cli.mjs train check (--step FILE | --accept FILE|none [--app NAME] [--app-accept K,K] [--slip FILE])   (from the project or any folder in it; the app's integration.accept in apps.json is required, --app-accept only adds)
@@ -52,7 +54,7 @@ export class UsageError extends Error {}
 export const WATCH_RETIRED = "`watch` is retired in 0.83.0: a main or a train watches with the boss_watch tool (key, quiet, idle, until), and the sb server wakes it with one message per change. Stop this monitor.";
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout", "dir", "label", "reason"], switch: ["exact", "force"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] }, prune: { value: [], switch: ["dry-run"] },
+	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, doctor: { value: ["session"], switch: ["json"] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] }, prune: { value: [], switch: ["dry-run"] },
 };
 // `train` has a word of its own, and each word its flags.
 const TRAIN: Record<string, { value: string[]; switch: string[] }> = {
@@ -90,6 +92,7 @@ export function parseArgs(argv: string[]): Args {
 	if ((flags.dir === undefined) !== (flags.label === undefined)) throw new UsageError(`--dir and --label go together: the desk steps need both\n${USAGE}`);
 	if (flags.dir !== undefined && (!String(flags.dir).trim() || !String(flags.label).trim())) throw new UsageError("--dir and --label are not empty");
 	if (command === "procs" && (flags.sub === "reap" ? (flags.owner === undefined) === (flags.checkout === undefined) : flags.owner !== undefined || flags.checkout !== undefined)) throw new UsageError(`procs reap needs --owner or --checkout, one of them; list takes neither\n${USAGE}`);
+	if (command === "doctor" && typeof flags.session !== "string") throw new UsageError(`doctor needs --session: a session id, its prefix, or a pane\n${USAGE}`);
 	if (flags.timeout !== undefined && !(Number(flags.timeout) > 0)) throw new UsageError("--timeout is a number of seconds");
 	if (flags.force === true && (typeof flags.reason !== "string" || !flags.reason.trim())) throw new UsageError("--force needs --reason: why the restart cannot wait for the train");
 	if (command === "prune" && flags["dry-run"] !== true) throw new UsageError("prune requires --dry-run; only the running server prunes state");
@@ -192,6 +195,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			case "run": return await runDetached();
 			case "prompt": return await promptCommand();
 			case "procs": return await runProcs(ctx, flags, { out: json, err });
+			case "doctor": return await runDoctor(flags, { env, run: deps.herdrCli ?? herdrRun }, { out, err });
 			case "train": return await runTrain(flags, { out, err, env, stateDir: slot.stateDir, ...deps.train });
 		}
 	} catch (error) {

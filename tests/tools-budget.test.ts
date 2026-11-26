@@ -31,14 +31,16 @@ test("a main's always-on sb tools stay within their budget, and boss_status is g
 	await a.run();
 	// What the provider receives is the active set. call_peer targets (2026-11-26; tests/call-peer.test.ts; measured): call_peer is active for a main now (sender, caller, another main by of, the integrator), 435 characters by this count:
 	// trimmed 7,473 to 7,908 and all 10,798 to 11,233 (+435; the old cap was 10,801).
+	// The doctor (2026-11-26, docs/how-it-works.md#the-doctor; measured): sb_doctor is new and registered at the join, as the other net tools (260 characters: its description, no parameters),
+	// kept out of the trimmed set as the other new ones are: all 11,233 to 11,493 (+260).
 	const active = (t: { name: string; defaultActive?: boolean }) => (a.active ? a.active.includes(t.name) : t.defaultActive !== false);
 	const tools = [...a.tools.values()].filter((t) => t.name !== "ask_user_question" && active(t as { name: string; defaultActive?: boolean }));
 	assert.ok(a.active?.includes("call_peer"), "a main carries call_peer");
 	assert.ok(!a.tools.has("boss_status"), "folded into board_read");
-	const trimmed = tools.filter((t) => t.name !== "boss_server" && t.name !== "boss_watch" && t.name !== "boss_pair" && t.name !== "boss_wrap").reduce((n, t) => n + size(t), 0);
+	const trimmed = tools.filter((t) => t.name !== "boss_server" && t.name !== "boss_watch" && t.name !== "boss_pair" && t.name !== "boss_wrap" && t.name !== "sb_doctor").reduce((n, t) => n + size(t), 0);
 	assert.ok(trimmed <= 7_908, `the trimmed tools hold ${trimmed} characters (10,634 before B2)`);
 	const all = tools.reduce((n, t) => n + size(t), 0);
-	assert.ok(all <= 11_233, `all of sb's tools hold ${all} characters (11,594 before B2 and E; 8,753 before D; 9,601 before boss_wrap; 10,161 before call_tower boss; 10,328 before 0.92.0; 10,664 before standing.md; 10,771 before note; 10,798 before call_peer)`);
+	assert.ok(all <= 11_493, `all of sb's tools hold ${all} characters (11,594 before B2 and E; 8,753 before D; 9,601 before boss_wrap; 10,161 before call_tower boss; 10,328 before 0.92.0; 10,664 before standing.md; 10,771 before note; 10,798 before call_peer; 11,233 before sb_doctor)`);
 });
 
 test("the trimmed descriptions keep the sentences that carry a rule: board_set's privacy line, call_tower's three points, boss_wait_ask over ask_user_question", async () => {

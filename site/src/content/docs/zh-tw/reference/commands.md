@@ -29,6 +29,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | `board_set` | 分頁的主智慧體 | 覆寫它自己的工作看板項目（一行與最多 8 個清單項目）；`auto: true` 交還給自動填入，`clear: true` 刪除它。 |
 | `ledger_sweep` | 只限收到排程通知的主塔台 | 執行伺服器清理和設定好的 ledger janitor，回傳主塔台該轉交的項目。不接受參數。 |
 | `boss_server` | 已加入的 session | sb server 的 `status`（server 沒在跑時也可用）、它的 `logs`（最多 200 行），或附理由 `restart`。老闆停掉 server 或有火車在跑時會被拒絕，每分鐘最多一次，且在遠端 turn 中絕不可用。 |
+| `sb_doctor` | 已加入的 session 和塔台 | 這個 session 自己的工具和載入：預期的工具（`subagent*`、`intercom`、`todo`、`MonitorCreate`）有沒有註冊和啟用、pi-herdr-agents 有沒有載入且是最新版，以及該做什麼：H1（什麼都沒載入：交接）、H2（未啟用：`/boss doctor fix`）、過期（reload 或交接）。斷定工具不見之前先呼叫它；見[診斷（doctor）](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-doctor/)。 |
 | `link_request` | 設好 Straw Link、有人看管的電腦上的每個 session，以及本機塔台 run | 附理由請求一個 Straw Link 動作（create、invite、join、trust、leave、remove、role、rotate、hold）。它絕不會未經詢問就執行：老闆要在對話框裡核准。解除自己對某台盒子的接管（`release`）不經對話框（[接管隊友的機器](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#接管隊友的機器)）。 |
 | `boss_open_main` | 塔台 | 為沒有 session 負責的請求，開一個帶新主智慧體的分頁。`role: "train"` 開一列火車；`role: "integrator"` 把車廂單送給專案唯一的整合員，沒有在跑的就開一個。`duty: "standing"` 開一個值守種類的主智慧體（預設為協調者）。在 `dispatch` 的隊友 run 裡，`role: "worker"` 依那個 run 的裝置送來的 `worker:` 單據開啟一個工作者，續接單據也一樣（有好幾張時以 `branch` 指定）；不論成敗，sb 伺服器都會回覆那台裝置。見[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。 |
 | `boss_close_main` | 塔台 | 等它裡面沒有東西在跑，關掉這座塔台開的主智慧體，或交接過、接班者已活著的主智慧體；沒有交接的值守主智慧體與老闆開的主智慧體不會被關，只有老闆能關。帶 `pane` 時關掉死掉的智慧體窗格（pi 不在、停在空的 shell）；不帶參數時列出這些窗格。 |
@@ -120,6 +121,7 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 | 指令 | 做什麼 |
 | --- | --- |
 | `/boss roles-check [資料夾]` | 把每個角色 `tools:` 列的名稱，和這個 session 的工具、以及只有子智慧體才有的名稱（`caller_ping`、`subagent_done`、`thread_post`、`thread_wait`）比對。這個 session 沒有的名稱，或只有上層才有的名稱（sb 自己的工具、pi-herdr-agents 的 worktree 工具），都算失敗。不給資料夾時讀 sb 自己的 `roles/`；發版前請指名 checkout 裡的 `roles/`。它不啟動任何東西；以 `--tools` 或 `--exclude-tools` 啟動的 session 會拒絕執行。 |
+| `/boss doctor`、`/boss doctor fix` | 這個 session 的 doctor 報告；`fix` 讓已註冊但未啟用的預期工具重新啟用。每次 session 開始也會檢查一次，缺少預期工具時發出警告。 |
 
 見[角色包](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-role-pack/)。
 
@@ -171,6 +173,7 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 | `cli.mjs up --dir <folder> --label <name>` | 桌面模式，給自己顯示頁面的 shell 用：需要 `STRAW_BOSS_DESK=1`。見[桌面模式](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#桌面模式up---dir)。 |
 | `cli.mjs watch <key> [--idle 20m] [--quiet 30m] [--deadline <ms>]` | 單位、主智慧體或隊友裝置 `link:` 鍵每有變化就印一行 JSON，給 `MonitorCreate` 用；遇到 `gone` 或 `expired` 結束。 |
 | `cli.mjs procs`、`cli.mjs procs reap --checkout <path>` | server 知道的工作者；停掉持有某個 checkout 的程序。 |
+| `cli.mjs doctor --session <id\|prefix\|pane> [--json]` | 從外部替另一個 session 診斷：用 pi 的 loader 重新載入一次、它的 session 檔被拒絕的工具、它的 pi 啟動時間對照安裝時間。有故障時結束碼為 1。 |
 | `cli.mjs train status\|check\|gate\|clear\|end\|notices` | [合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)的火車、車廂單、關卡與車廂通知。`status --state live,stale,ended,unreadable` 只留下這些狀態的列。`check` 可以在專案或其中任何資料夾執行，沒有 `--app-accept` 時要求 app 的 `integration.accept`，並檢查車廂單的 `head:` 是認得的 commit、且是它的分支在 origin 上的頂端。`end --project P --train CODE --outcome landed --commit SHA`（或 `--outcome none`）`--reason TEXT --evidence TEXT` 結束一列過時的火車（仍持有部署目標的，先清掉那個目標）。 |
 
 見 [sb server](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/)，以及從一般 shell 讀網的 [從 shell](/pi-straw-boss/docs/zh-tw/reference/how-it-works/from-a-shell/)。

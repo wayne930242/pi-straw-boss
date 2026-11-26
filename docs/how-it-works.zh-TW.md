@@ -4073,6 +4073,16 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 
 **開關打開後還沒有的：** `/to` 和 `/runs` 還沒做，主塔台的 viewer 關掉時主塔台會像分頁關掉一樣結束，Windows VM 和 box 也還沒跑過。
 
+## 診斷（doctor）
+
+智慧體需要的工具看似不見了（`subagent`、`intercom`、`todo`、`MonitorCreate`）時，doctor 先說出是哪一種故障，免得有人繞過它：**H1**，它的套件在這個程序裡什麼都沒載入（`/reload` 治不好程序自己保留的狀態：交接給新的 session）；**H2**，套件註冊了工具，但某個擴充套件的 `setActiveTools` 把它排除了（`/boss doctor fix` 會讓它重新啟用）；**H3**，pi 裡它是啟用的，但 provider 沒有把它呈現出來，這只有直接呼叫那個工具才分得出來。**過期**的載入，也就是程序執行的 pi-herdr-agents 或 pi 比已安裝的舊，會一併回報。
+
+**它讀什麼。** 每個角色預期 settings 所列套件的工具：main、member、train 和尚未加入的 session 預期六個 `subagent*` 工具、`intercom`、`todo` 和 `MonitorCreate`；塔台預期後三個（它不執行 subagent）；子代理預期以上全部再加 `caller_ping` 和 `subagent_done`，扣掉啟動時被拒絕的（`PI_DENY_TOOLS`）。工具沒有註冊，或註冊為 `direct` 卻沒有啟用，就算缺少；`deferred` 工具不必啟用也能取用。pi-herdr-agents 每次載入都寫一個載入戳記（`globalThis[Symbol.for("pi-herdr-agents/load-stamp")]`：它的版本、根目錄和 HEAD、Maestro 的 build、時間、世代，以及載入拋錯時的 `failed`），doctor 拿它和 settings 的 pin 及安裝目錄的 HEAD 比對。
+
+**在 session 裡。** `sb_doctor`（已加入的 session 和塔台，與其他網路工具相同）和 `/boss doctor`（窗格裡每個不是子代理的 session）回報結論、缺少的工具及其狀態、戳記、pi 版本和模型。每次 session 開始（啟動、`/reload`、new、resume、fork）後的第一個回合，窗格裡每個 session（子代理也是）都做一次同樣的檢查：缺少預期的工具時，它顯示警告，並在那個回合加入一則訊息，說不要用一般窗格繞過它，要執行 `sb_doctor` 並交接。
+
+**從 shell。** `cli.mjs doctor --session <id|prefix|pane> [--json]` 檢查另一個 session，例如工具不見的那一個。它讀不到那個程序，所以讀得到的都讀：用 pi 自己的 loader 對同一個資料夾和 settings 做一次新的載入（在一個沒有該 session 的 Herdr、subagent 和 intercom 環境變數的子 `node` 裡），錯誤就是 pi 的錯誤；session 檔，找出 pi 程序啟動後 provider 回答「No such tool available」的預期工具；以及 Herdr 裡的窗格，拿它的 pi 啟動時間對照 pi-herdr-agents 的安裝時間。新的載入有、session 卻被拒絕的工具就是 `H1-or-H3`：故障在那個程序裡，在它裡面執行 `sb_doctor` 就分得出是哪一種。健康時結束碼是 0，有故障或無法查看時是 1。
+
 ## 工具
 
 Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`board_*`），也給老闆 `/boss` 斜線指令。哪個 session 可以呼叫哪個工具，取決於它的角色。表格列出每個工具適用於誰、做什麼，再列出每個 `/boss` 指令。
@@ -4103,6 +4113,7 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 | `boss_rename` | 已加入的 session，不含塔台 | 把 session 的名稱（`pi.setSessionName`）設成描述它目前工作的短語，去除空白，至多 40 字元（分頁標籤放得下 16 個）。網與 GUI 依名稱顯示 session，而主智慧體用它來標示它的 Herdr 分頁（和 pi-auto-tab-name 一樣截成 16 字元，所以那個擴充在載入時，會把標籤當成自己的，並在壓縮之間把它當成選定的名稱保留）。主智慧體自己重新命名分頁，是因為 pi-auto-tab-name 不動別人標示過的分頁，例如老闆命名的分頁，或塔台帶著標籤開啟的分頁；成員不動它的主智慧體的分頁。主智慧體的 prompt 讓它在工作轉向另一個任務時呼叫這個。塔台沒有這樣的工具：網依它的名稱認出它。名稱若是塔台或列車分頁的標籤（塔台圖示、主塔台圖示、`train <MMDDx>`）會被拒絕：還原之後，證明角色的就是這個標籤。 |
 | `boss_broadcast` | 已加入的 session 與塔台 | 在標頭（指名每個收件者）之下，送一則訊息給某個範圍內的每個其他 session。`tab`、`workspace` 與 `towers` 只觸及加入網的 session（Herdr 裡幾乎每個 pi，不含子工作區的 session；`towers` 透過主智慧體觸及沒有塔台的工作區，否則透過它的成員）；`all` 觸及這台機器上每個 pi session，不論有沒有加入（用於像是要去睡覺之類的通知）。預設 `workspace`。塔台對其他塔台用 `tower_send`。 |
 | `boss_server` | Herdr 裡每個有畫面且已加入的 session | sb server 的 `status`（它關著時也可以）、`logs`，或附理由的 `restart`（見 [sb server](#sb-server)）。遠端輪次裡不可用。 |
+| `sb_doctor` | 已加入的 session 和塔台 | 這個 session 自己的工具和載入：它的角色預期的工具、各自有沒有註冊和啟用、pi-herdr-agents 的載入戳記對照安裝的版本，以及結論（H1、H2、過期、健康）和該做什麼；見[診斷（doctor）](#診斷doctor)。 |
 | `thread_post`、`thread_wait` | 主智慧體配成對的子智慧體（從第一次執行起啟用；其他子智慧體會拿掉） | 在審查串上貼文（`to`、`tag` 為 review、fix、done、blocked 或 note、`text`、`refs`），以及等待點名你的貼文或串的關閉（見[審查串](#審查串)）。 |
 | `tower_memory` | 僅本機塔台 run | 保存比執行活得更久的東西：長期指示或決定，須是執行取走的某則老闆訊息的逐字引用（server 會檢查），撤銷一條用同樣的證明，以及塔台自己的等待事項（add、resolve、drop；給老闆的等待事項是一張有欄位的卡片，見[塔台記憶](#塔台記憶)）。隊友 run 會被拒絕。見[塔台記憶](#塔台記憶)。 |
 
@@ -4132,6 +4143,7 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 | `/boss gui devices`, `/boss gui unpair <id\|all>` | 列出已配對的裝置（`remote/devices`）並解除其中一個或全部的配對（`remote/unpair`、`remote/unpair-all`；全部要經確認）；位址不變。 |
 | `/boss server logs [n]` | server 記錄的最後 `n` 行（至多 200），如同 `boss_server logs`。 |
 | `/boss pop [name]` | 再次開啟一個收起的基地（任何 session；沒有名稱時，是唯一的收起項目，或從清單裡挑一個）。 |
+| `/boss doctor`、`/boss doctor fix` | 這個 session 的 doctor 報告；`fix` 讓已註冊但未啟用的預期工具重新啟用（H2）；見[診斷（doctor）](#診斷doctor)。 |
 
 `/boss` 與 `boss_promote` 在子工作區裡不可用。
 

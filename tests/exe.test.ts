@@ -232,7 +232,7 @@ test("todo #155: a program run synchronously with a time limit is killed at it: 
 	walk("src");
 	const timed = files.flatMap((file) => readFileSync(join(root, file), "utf8").split("\n").filter((line) => /\bexecFileSyncExe\(/.test(line) && /\btimeout:/.test(line)).map((line) => ({ file, line })));
 	assert.deepEqual(timed.filter(({ line }) => !/killSignal: "SIGKILL"/.test(line)).map(({ file, line }) => `${file}: ${line.trim().slice(0, 120)}`), []);
-	assert.deepEqual(timed.map(({ file }) => file).sort(), ["src/lan/ca.ts", "src/lan/ca.ts", "src/link/allow.ts", "src/procs/killguard.ts", "src/server/traincmds.ts", "src/server/traincmds.ts", "src/server/traincmds.ts", "src/startof.ts", "src/trainguard.ts"]);
+	assert.deepEqual(timed.map(({ file }) => file).sort(), ["src/doctorlive.ts", "src/lan/ca.ts", "src/lan/ca.ts", "src/link/allow.ts", "src/procs/killguard.ts", "src/server/traincmds.ts", "src/server/traincmds.ts", "src/server/traincmds.ts", "src/startof.ts", "src/trainguard.ts"]);
 });
 
 test("todo #155: a `ps` that ignores SIGTERM does not hold the start-time reading past its 2 s: execFileSync's timeout sends its signal and waits for the program to end, and the signal is SIGKILL", { skip: process.platform === "win32" }, () => {
