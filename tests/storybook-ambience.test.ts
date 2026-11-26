@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ambience, audible } from "../gui/themes/storybook/ambience.ts";
+import { ambience, audible, LEVEL } from "../gui/themes/storybook/ambience.ts";
 import { mountPhase } from "../gui/themes/storybook/phase.ts";
 import { fakeClock } from "./fake-clock.ts";
 
@@ -29,4 +29,9 @@ test("only current phase loads; 18:00 cross-fades, muting stops both voices", as
 	on = false; refresh(); assert.deepEqual(log.splice(0), ["stop night", "stop day"]);
 	on = true; refresh(); on = false; refresh(); await Promise.resolve();
 	assert.deepEqual(log, ["load night"], "late decode after mute cannot start playback");
+});
+
+test("ambience sits near Raven's rain: about -42 dBFS mean before the Background volume", () => {
+	const mean = { day: -20.9, night: -17.9 };
+	for (const p of ["day", "night"] as const) assert.ok(Math.abs(mean[p] + 20 * Math.log10(LEVEL[p]) + 42) < 1, p);
 });
