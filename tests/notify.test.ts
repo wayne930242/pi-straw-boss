@@ -126,7 +126,7 @@ test("a batch rings the question clip only when it holds an alert that waits on 
 	const r = rig({ [KEYS.effects]: "1" });
 	r.n.signal([alert("done"), alert("waiting"), alert("error")]);
 	assert.equal(played.length, 1);
-	assert.match(played[0]!, /waiting\.mp3$/);
+	assert.match(played[0]!, /marimba\.mp3$/);
 	r.n.signal([alert("done"), alert("error")]);
 	r.n.signal([alert("done")]);
 	r.n.signal([alert("error")]);
@@ -134,7 +134,7 @@ test("a batch rings the question clip only when it holds an alert that waits on 
 	r.n.signal([alert("working", { pending: { id: "d1" } })]);
 	r.n.signal([alert("waiting", { trust: { folder: "/p" } })]);
 	assert.equal(played.length, 3, "a pending dialog and a trust prompt ring");
-	assert.ok(played.every((u) => /waiting\.mp3$/.test(u)));
+	assert.ok(played.every((u) => /marimba\.mp3$/.test(u)));
 });
 
 test("a finish and a failure keep their silent system notification while the page is hidden; only a question's may sound", () => {
@@ -176,7 +176,7 @@ test("chime (a new link notice that needs the boss) plays the question clip with
 	const r = rig({ [KEYS.effects]: "1" });
 	r.n.chime();
 	assert.equal(played.length, 1);
-	assert.match(played[0]!, /waiting\.mp3$/);
+	assert.match(played[0]!, /marimba\.mp3$/);
 	r.other(KEYS.effects, "0");
 	r.n.chime();
 	assert.equal(played.length, 1, "another tab's Off silences it");
@@ -185,7 +185,7 @@ test("chime (a new link notice that needs the boss) plays the question clip with
 test("Try and turning Sound effects on play the question clip, the one sound the effects make; Background has no clip to try or to say it is on", () => {
 	const r = rig();
 	r.n.sound.effects.try();
-	assert.match(played.at(-1)!, /waiting\.mp3$/);
+	assert.match(played.at(-1)!, /marimba\.mp3$/);
 	played.length = 0;
 	r.n.sound.effects.set(true);
 	assert.equal(played.length, 1, "on: one clip to say so");
@@ -215,7 +215,7 @@ test("a theme's question clip replaces the base one while it is the view, the se
 	}
 	played.length = 0;
 	r.n.chime();
-	assert.match(played[0]!, /waiting\.mp3$/);
+	assert.match(played[0]!, /marimba\.mp3$/);
 	assert.ok(!played[0]!.includes("themes/"), "Standard's own clip again");
 });
 
@@ -225,7 +225,7 @@ test("a theme's clip is played with Standard's question clip as its fallback", (
 	useSounds({ waiting: "/themes/raven/ask-1.mp3" });
 	try {
 		r.n.chime();
-		assert.match(fallbacks[0]!, /waiting\.mp3$/);
+		assert.match(fallbacks[0]!, /marimba\.mp3$/);
 		assert.ok(!fallbacks[0]!.includes("themes/"));
 	} finally {
 		useSounds(undefined);

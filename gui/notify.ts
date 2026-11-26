@@ -3,7 +3,7 @@ import type { Alert } from "./alerts.ts";
 import { audio, type SoundClass } from "./audio.ts";
 import { prefs } from "./prefs.ts";
 import { soundOf } from "./themesounds.ts";
-import waitingUrl from "./sounds/waiting.mp3";
+import waitingUrl from "./sounds/marimba.mp3";
 
 // Reminders and sounds for the alerts a snapshot raises: a unit waiting on an answer, one that finished, one that failed.
 // Each has a switch on the settings page (This device), kept per browser: reminders on, sounds off, so a page that opens makes no noise. The switch is a button that says its

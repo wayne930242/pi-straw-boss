@@ -55,7 +55,7 @@ SOFTWARE.
 
 ## Sounds (`gui/sounds/`)
 
-The GUI's one sound effect, `waiting.mp3`, comes from [Kenney](https://kenney.nl) (www.kenney.nl), released under Creative Commons Zero (CC0 1.0), converted to mono MP3: it is `question_002` from Interface Sounds 1.0.
+The GUI's one sound effect, `marimba.mp3` (the question clip), is not covered by the MIT licence of this project's code, and it is not CC0. It comes from [Casper's free sound effects](https://www.casper.tw/sound-effects/zh-tw/) and is used under its licence, https://www.casper.tw/sound-effects/zh-tw/license/: free use, with no AI training, no repackaging as a sound pack, and no Content ID registration. It is 馬林巴短音 (ui-message-marimba), https://www.casper.tw/sound-effects/zh-tw/search/?q=ui-message-marimba, trimmed to its first 0.6 s with a 0.2 s fade-out and converted to mono MP3.
 
 ## BIP-39 English word list (`src/link/bip39-english.ts`)
 
