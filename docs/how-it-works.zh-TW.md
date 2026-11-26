@@ -2599,7 +2599,7 @@ server 還會再回答 `watch-read` 一個版本（舊版的監控者子智慧�
 <details>
 <summary>Details</summary>
 
-**`boss_pair({ worker, reviewer, rounds? })`**。名稱就是主智慧體接著交給 `subagent` 的名稱；`rounds` 是這個串允許幾輪修正，1 到 3（預設 3）。server 開出 `T<n>`，每個主智慧體各自編號，主智慧體派出兩個子智慧體，各自的任務裡都有一行 `Thread: T<n>`；兩個可以並行，誰先都行。成員與塔台、隊友的輪次、已是同一個主智慧體某個未關閉串成員的名稱，以及每個主智慧體超過 8 個未關閉的串，都會被拒絕。這個工具在加入時和網的工具一起註冊，所以主智慧體從 session 開始就有它。
+**`boss_pair({ worker, reviewer, rounds?, item? })`**。名稱就是主智慧體接著交給 `subagent` 的名稱；`rounds` 是這個串允許幾輪修正，1 到 3（預設 3）；`item` 指明這一對負責的工作項目，是 todo 的 uid 或 `<session8>#<id>`，[事件帳本](#事件帳本)與 pi-evals 靠它把串對到項目上。server 開出 `T<n>`，每個主智慧體各自編號，主智慧體派出兩個子智慧體，各自的任務裡都有一行 `Thread: T<n>`；兩個可以並行，誰先都行。成員與塔台、隊友的輪次、已是同一個主智慧體某個未關閉串成員的名稱，以及每個主智慧體超過 8 個未關閉的串，都會被拒絕。這個工具在加入時和網的工具一起註冊，所以主智慧體從 session 開始就有它。
 
 **成員資格**。子智慧體證明是哪個主智慧體派它出來的方式，和 0.80.0 的監控者相同（`src/server/childtie.ts`）：它的 `PI_SUBAGENT_SESSION`、`PI_SUBAGENT_ID` 與 `PI_SUBAGENT_ACTIVITY_FILE` 必須對得上那個主智慧體 artifacts 資料夾裡的一個啟動或接續腳本，而腳本的名稱（pi-herdr-agents 對交給 `subagent` 的 `name` 做的 `safeName`）必須是這個串的 worker 或 reviewer。同一個主智慧體的其他子智慧體、別的主智慧體的子智慧體，以及執行已結束的子智慧體都會被拒絕。控制 socket 不帶對方的身分憑證，所以同一個使用者的程序仍能對這一個串貼出假訊息。
 
@@ -2611,7 +2611,22 @@ server 還會再回答 `watch-read` 一個版本（舊版的監控者子智慧�
 
 **閱讀**。`board_read` 在 `threads` 區段列出主智慧體的串（未關閉的在前，最多 10 個），`board_read({ thread: "T<n>" })` 給出一個串的貼文，最新的在最後、16 KB 以內，裝在一個每行都以 `| ` 開頭的框裡，所以子智慧體的文字不會被當成 sb 的；`<owner8>/T<n>` 讀這台電腦上另一個主智慧體的串（接手者讀前任的）。隊友的輪次不能讀。
 
-**儲存**。server 資料夾裡的 `threads/<owner8>/T<n>.jsonl` 存放貼文（只附加，權限 600），`T<n>.json` 存放擁有者、成員、輪數與成員的活動檔。輪數、最後一則貼文與關閉都從貼文讀回，所以 server 重啟後每個串都還在；已關閉的串在關閉 7 天後刪除檔案。
+**儲存**。server 資料夾裡的 `threads/<owner8>/T<n>.jsonl` 存放貼文（只附加，權限 600），`T<n>.json` 存放擁有者、成員、輪數、成員的活動檔與 `item`，關閉之後再加上 `closed`（毫秒）與 `closedAs`（`done`、`blocked` 或 `abandoned`）。輪數、最後一則貼文與關閉都從貼文讀回，所以 server 重啟後每個串都還在；已關閉的串在關閉 7 天後刪除檔案。
+
+</details>
+
+### 事件帳本
+
+sb 把工作項目的等待與審查串上發生的事，附加到一本它從不清除的帳本（2026-11-26，[規格](specs/2026-11-26-event-ledger.md)），讓 pi-evals 事後還說得出一個項目卡在哪裡、在等誰。等待卡、塔台的佇列與看板都只留最近的狀態；帳本把每個事件記成一行，只有 id、種類與時間。
+
+<details>
+<summary>Details</summary>
+
+**檔案**。狀態資料夾裡的 `ledger/<YYYY-MM-DD>.jsonl`（事件發生的 UTC 日期，權限 600），一個事件一行：`{ v: 1, at, kind, id, session, workspace }`，種類有的話再加 `why`、`item` 或 `by`。它從不存訊息、問題、卡片、備註或摘要的文字：不像 id 的 id 寫成 `null`，不在該種類允許範圍內的 `why` 或 `by` 直接省略。sb 從不清除或改寫它。
+
+**誰來寫**。擁有該事件的程序。sb server 寫等待（每次寫入塔台記憶時比對每個等待的前後）、連結等待（路由器唯一的那個帳本變更）與審查串。session 的擴充寫 `call_tower`（塔台收下之後，id 是 intercom 的 request id）、`wrap`（每一次 `boss_wrap` 呼叫）與 `handover`（接手者的 session id）。寫入失敗絕不讓那個動作失敗：只告知一次，寫在 server 的 log，或在 session 裡顯示警告。
+
+**種類**。`wait_raised`、`wait_parked`、帶 `by`（`terminal`、`gui`、`phone` 或 `tower`：塔台收到一則點名該等待的訊息）的 `wait_answered`，以及 `wait_returned`，對象是等待 `W<n>`，session 是提出者；`link_wait_open` 與 `link_wait_done` 對象是 `L<n>`，session 是外送等待的提出者或持有內送等待的主智慧體；`thread_open` 與 `thread_close`（`why` 為 `done`、`blocked` 或 `abandoned`）對象是 `T<n>`，帶擁有它的主智慧體與 `item`；還有 `call_tower`（`why` 為 `milestone`、`shared` 或 `blocked`）、`wrap`（`why` 為 `wrapped`、`auto` 或 `refused`）與 `handover`。祕密卡的第一步不算回答；之後的完成才算。
 
 </details>
 
@@ -4031,7 +4046,7 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 |---|---|---|
 | `boss_promote` | 已加入且不是塔台的 session | 成為這個分頁的主智慧體；分頁已有存活的主智慧體時會被拒絕。 |
 | `boss_watch` | 分頁的主智慧體與火車（成員、塔台、隊友的輪次，以及塔台執行關閉時都不行） | 請 sb server 盯著網裡的一個單位（`key`、`quiet`、`idle`、`until`、`stop`；不給鍵就列出盯守），每有變化就用一行字叫醒你：每個盯守每分鐘最多一則、只送最新狀態、每小時 12 則，你在工作時等這一輪結束再送（見[盯守](#盯守)）。 |
-| `boss_pair` | 分頁的主智慧體與火車（成員、塔台與隊友的輪次都不行） | 派工前把一個 worker 和一個 reviewer 配到審查串 `T<n>` 上（`worker`、`reviewer`、`rounds` 1 到 3，預設 3）；兩者在串上對話，主智慧體只在串關閉時被兩份結果叫醒（見[審查串](#審查串)）。 |
+| `boss_pair` | 分頁的主智慧體與火車（成員、塔台與隊友的輪次都不行） | 派工前把一個 worker 和一個 reviewer 配到審查串 `T<n>` 上（`worker`、`reviewer`、`rounds` 1 到 3，預設 3，以及可選的工作項目 `item`：todo 的 uid 或 `<session8>#<id>`）；兩者在串上對話，主智慧體只在串關閉時被兩份結果叫醒（見[審查串](#審查串)）。 |
 | `boss_open_main` | 僅塔台 | 在塔台的工作區開一個新分頁，以新的 pi 作為它的主智慧體，交給它一個沒有任何 session 擁有的請求，每個請求一次（見[開啟主智慧體](#開啟主智慧體)）。帶 `role: "train"` 時開啟火車；在 sb server 的執行裡帶 `role: "integrator"` 時，把車廂單送給專案唯一的整合員，沒有在跑的就開一個，當成塔台自己的主智慧體。 |
 | `boss_close_main` | 僅塔台 | 要求這個工作區的主智慧體（依 intercom 名稱或 session id）像 `/boss close` 那樣 quit：這個塔台開啟的，或交接過、接班者已活著的。帶 `pane` 時關掉一個死掉的智慧體窗格（pi 不在、停在空的 shell、沒有 session），它是唯一的窗格時連分頁一起關；兩者都不帶時列出這些窗格。對老闆開啟又沒有交接的主智慧體、另一個工作區的主智慧體、Herdr 回報在工作中的，以及正在進行一輪、有排隊訊息、有對話框、有 monitor 或有子智慧體在跑的，以及沒有交接的值守主智慧體（只有老闆能關），都會被拒絕；有活著的 pi、塔台的、另一個工作區的，或正在開啟或救回的窗格也會被拒絕（見[關閉開啟的主智慧體](#關閉開啟的主智慧體)與[關閉交接過的主智慧體與死掉的智慧體窗格](#關閉交接過的主智慧體與死掉的智慧體窗格)）。 |
 | `boss_revive_main` | pi 塔台與本機塔台執行（盟友執行與總塔台沒有） | `list` 列出工作區裡有角色紀錄的 main 與火車及其狀態（`dead`、`quit`、`live`、`stale` 等）；`revive` 依 session id、8 個字元以上的 id 前綴或名稱，附一行理由救回其中一個：同一個 session 開在新分頁，回來的是它自己。成員、塔台、替隊友裝置開的 main、活著的 session、沒通過檢查的檔案、別的工作區的 session、寄件者或工作區已達上限、整合關閉或專案已有整合者時的整合者、已試過一次的死亡、最近 24 小時內救回失敗過的 session、交接過的 main，以及 24 小時內的第三次救回，都會被拒絕（見[救回死掉的主智慧體](#救回死掉的主智慧體)）。 |
