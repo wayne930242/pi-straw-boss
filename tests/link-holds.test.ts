@@ -59,7 +59,7 @@ test("the controller's store: a hold per box, ended with a reason and kept an ho
 	assert.deepEqual(readHolds(dir, now + 2 + 3600_000).ended, [], "an ended hold is kept an hour");
 });
 
-function rig(name: "a" | "b", o: { members?: ("bob" | "carol")[]; attended?: boolean; trust?: Map<string, string> } = {}) {
+function rig(name: "a" | "b", o: { members?: ("bob" | "carol")[]; attended?: boolean; trust?: Map<string, string>; skew?: { ms: number } } = {}) {
 	const keys = name === "a" ? alice : bob, members = o.members ?? ["bob"], entries = rosterOf(members, ["bob"]), dir = join(root, name, "link"), project = join(root, `${name}-project`), boardDir = join(root, name, "board");
 	mkdirSync(project, { recursive: true });
 	const store = new LinkStore(dir, { alive: () => true });
@@ -68,7 +68,7 @@ function rig(name: "a" | "b", o: { members?: ("bob" | "carol")[]; attended?: boo
 	writeTeam(store, entries, keys);
 	const net: NetView = netOf([["tower-a", "w-a", "label-a", project]]);
 	const config = (): LinkConfig => ({ teams: new Map([[TEAM_HEX, { project, share: "status", name: "moldplan" }]]), trust: (o.trust ?? new Map()) as LinkConfig["trust"], problems: [] });
-	const holder = new LinkHolder({ store, isHolder: () => true, config, attended: () => o.attended ?? true, net: async () => net, relay: clientFor(relay), offer: () => {}, notify: () => {}, boardDir, now: () => Date.now(), backoff: () => 5, drainMs: 20, presenceMs: 40, boardMinMs: 20, offerAgainMs: 60_000 } as never);
+	const holder = new LinkHolder({ store, isHolder: () => true, config, attended: () => o.attended ?? true, net: async () => net, relay: clientFor(relay), offer: () => {}, notify: () => {}, boardDir, now: () => Date.now() + (o.skew?.ms ?? 0), backoff: () => 5, drainMs: 20, presenceMs: 40, boardMinMs: 20, offerAgainMs: 60_000 } as never);
 	stops.push(() => holder.stop());
 	relay.addTeam(TEAM, [alice.id, bob.id, ...(members.includes("carol") ? [carol.id] : [])], entries);
 	return { holder, net, project, boardDir, dir };
@@ -96,13 +96,15 @@ test("a controller's hold reaches the box with the facts it judges by, and the b
 	assert.doesNotMatch(JSON.stringify(relay.stored.map((x) => x.envelope)), /main-1/, "no session id on the wire");
 });
 
-test("no holds go while a teammate's caps do not list board.holds (an older build would refuse the board)", async () => {
-	const a = rig("a", { members: ["bob", "carol"] }), b = rig("b", { members: ["bob", "carol"], attended: false, trust: new Map([[alice.id, "dispatch"]]) }); // carol never says caps
+test("no holds go while a teammate's caps do not list board.holds (an older build would refuse the board); a controller just started sends no board for 90 s while a member's caps are not back", async () => {
+	const skew = { ms: 0 }, a = rig("a", { members: ["bob", "carol"], skew }), b = rig("b", { members: ["bob", "carol"], attended: false, trust: new Map([[alice.id, "dispatch"]]) }); // carol never says caps
 	live(a, "main-1");
 	setHold(a.dir, Date.now(), { team: TEAM_HEX, device: bob.id, session: "main-1", since: Date.now() });
 	await Promise.all([a.holder.start(), b.holder.start()]);
 	const capsOf = (a.holder as unknown as { runs: Map<string, { caps: Map<string, { features: string[] }> }> }).runs.get(TEAM_HEX)!.caps;
 	await until(() => capsOf.get(bob.id)?.features.includes("board.holds") ?? false, 5000, "bob's caps at A");
+	assert.equal(relay.stored.some((x) => x.envelope.header.kind === "board" && x.envelope.header.from === alice.id), false, "no board yet: carol's caps are not back");
+	skew.ms = 91_000; // the 90 seconds are over
 	await until(() => b.holder.allySeen().some((x) => x.device === alice.id), 5000, "A's board at B");
 	assert.equal(b.holder.allySeen().find((x) => x.device === alice.id)!.claim, undefined);
 });

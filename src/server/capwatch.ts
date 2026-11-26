@@ -1,4 +1,4 @@
-import { capLine, clock, type DeviceCap, joinCaps, LOAD_SHARE, type MainFacts, type MainRow, pauseText, purgeCaps, readCaps, readDevice, readSent, roomFor, SILENT_MS, THROTTLE_MS, UNDER_HOLD_MS, underFor, writeDevice, writeSent } from "../capacity.ts";
+import { capLine, clock, DEVICE_FRESH_MS, type DeviceCap, joinCaps, LOAD_SHARE, type MainFacts, type MainRow, pauseText, purgeCaps, readCaps, readDevice, readSent, roomFor, SILENT_MS, THROTTLE_MS, UNDER_HOLD_MS, underFor, writeDevice, writeSent } from "../capacity.ts";
 import { endOf, type HeldBy, holderName, holdOf, readHold, readIgnored, shortOf, writeHold } from "../hold.ts";
 import type { EndedHold, Hold } from "../link/holds.ts";
 import { heldRoomText, heldText, holdEndedText, holdEndedThereText, HOLDER_CAP_HINT } from "../moments.ts";
@@ -77,8 +77,8 @@ export function createCapWatch(d: CapDeps) {
 	// `untold`: the flags whose last try nobody took, logged once per entry while they are tried again each minute.
 	// The hold is read back from a fresh device row, so a restart neither restarts the 10 minutes nor ends an `under-30m` episode.
 	let underSince: number | undefined = readDevice(d.dir, d.now())?.under, active = new Set<string>(), untold = new Set<string>(), last: Map<string, MainRow> = new Map(), sent = readSent(d.dir);
-	/** Since when each box this device holds has had room (`held-room`), by `<team>:<device>`. */
-	const roomSince = new Map<string, number>();
+	/** Since when each box this device holds has had room (`held-room`), by `<team>:<device>`; when each teammate device was last among the allies, and when this watch started (R-F001). */
+	const roomSince = new Map<string, number>(), seenAt = new Map<string, number>(), started = d.now();
 	/** Told, or held by the throttle: true. False when nobody took it, so the next look tries again. */
 	const markOf = (e: CapEvent) => `${e.kind}:${e.key}${e.tag !== undefined ? `@${e.tag}` : ""}`;
 	const send = async (e: CapEvent, now: number): Promise<boolean> => {
@@ -106,7 +106,11 @@ export function createCapWatch(d: CapDeps) {
 			const allies = d.allies(), silent = allies.filter((a) => a.open && (!a.online || (a.timed && a.boardAgeMs > SILENT_MS))), silentKeys = new Set(silent.map((a) => a.key));
 			// Device hold (docs/specs/2026-11-26-device-hold.md): this box's judge and its file first, so a session's next look reads it; the holds this device has, for the ally notices' holding main.
 			const marks = Object.keys(sent).filter((k) => k.startsWith(HOLD_MARK)), prev = readHold(d.dir, now, true), ignored = readIgnored(d.dir, now), mine = d.holds?.() ?? { holds: [], ended: [] };
-			const verdict = holdOf(allies, { unattended: d.unattended(), now, ignored, ...(marks[0] ? { was: markHold(marks[0]) } : {}) }), held = verdict.held;
+			const was = marks[0] ? markHold(marks[0]) : undefined, verdict = holdOf(allies, { unattended: d.unattended(), now, ignored, ...(was ? { was } : {}) });
+			// After a restart the link holder gets its boards back from the relay only later: a holder absent from the allies keeps its hold for 5 minutes since it was last seen, so no false end is told (R-F001).
+			for (const a of allies) if (a.device) seenAt.set(a.device, now);
+			const unknown = !verdict.held && was !== undefined && prev?.device === was.device && prev.since === was.since && d.unattended() && !allies.some((a) => a.device === was.device) && now - (seenAt.get(was.device) ?? started) < DEVICE_FRESH_MS;
+			const held = verdict.held ?? (unknown ? prev : undefined);
 			const holding = mine.holds.map((h) => ((a) => ({ device: h.device, label: a?.label ?? shortOf(h.device), short: shortOf(h.device), main: facts.find((m) => m.session === h.session)?.name ?? h.session.slice(0, 8), since: h.since, ...(h.until !== undefined ? { until: h.until } : {}), honoured: a?.echo?.since === h.since, ...(a ? { boxBoardSecondsAgo: Math.round(a.boardAgeMs / 1000) } : {}) }))(allies.find((x) => x.device === h.device && x.team === h.team)));
 			writeHold(d.dir, { v: 1, at: now, ...(held ? { held } : {}), ...(holding.length ? { holds: holding } : {}) });
 			const holderOf = (a: AllySeen) => mine.holds.find((h) => h.device === a.device && h.team === a.team)?.session;
@@ -153,16 +157,19 @@ export function createCapWatch(d: CapDeps) {
 				if (first !== undefined && sent[UESCALATED + r.session] === undefined && now - first >= UNDER_ESCALATE_MS && (await send(of("under-30m", r, first), now))) sent[UESCALATED + r.session] = now;
 			}
 			// A box's hold is told once to its head tower, standing main, and coordinators, and its end once, with the reason; the marks say what they were told, so a restart repeats neither.
+			// Ends first, so a new holder's notice follows the old one's end (R-F003); an end clears the marks and throttles of its own hold only, so a hold that comes back is told again (R-F001).
 			const readers = { ...(standing() ? { standing: standing()! } : {}), also: facts.filter((m) => m.role === "main" && (m.duty === undefined || m.duty === "coordinator")).map((m) => m.session) };
-			if (held && sent[holdMark(held)] === undefined && (await send({ kind: "held", key: `${held.device}@${held.since}`, text: heldText(holderName(held), clock(held.since, now)), ...readers }, now))) for (const m of [holdMark(held), ...readers.also.map((x) => `${HOLD_MAIN}${x}`)]) sent[m] = now;
-			// A coordinator that starts on the held box (opened here later, or one that missed it) is told once too.
-			if (held && sent[holdMark(held)] !== undefined) for (const x of readers.also) if (sent[`${HOLD_MAIN}${x}`] === undefined && (await send({ kind: "held", key: `${held.device}@${held.since}:${x}`, text: heldText(holderName(held), clock(held.since, now)), main: x, mainText: heldText(holderName(held), clock(held.since, now)), mainOnly: true }, now))) sent[`${HOLD_MAIN}${x}`] = now;
+			const tag = (h: Pick<HeldBy, "device" | "since">) => `${h.device}@${h.since}`, ofHold = (h: Pick<HeldBy, "device" | "since">) => [holdMark(h), `${HOLD_MAIN}${tag(h)}:`, `held:${tag(h)}`];
 			for (const k of marks) {
-				const h = markHold(k), was = prev?.device === h.device && prev.since === h.since ? prev : allies.find((a) => a.device === h.device);
+				const h = markHold(k), gone = prev?.device === h.device && prev.since === h.since ? prev : allies.find((a) => a.device === h.device);
 				if (held && holdMark(held) === k) continue;
-				const who = was ? holderName({ byName: "byName" in was ? was.byName : "its main", label: was.label, short: was.short }) : `device ${shortOf(h.device)}`;
-				if (await send({ kind: "hold-ended", key: `${h.device}@${h.since}`, text: holdEndedText(who, endOf(allies, h, now, ignored)), ...readers }, now)) for (const m of Object.keys(sent)) if (m === k || m.startsWith(HOLD_MAIN)) delete sent[m];
+				const who = gone ? holderName({ byName: "byName" in gone ? gone.byName : "its main", label: gone.label, short: gone.short }) : `device ${shortOf(h.device)}`;
+				if (await send({ kind: "hold-ended", key: tag(h), text: holdEndedText(who, endOf(allies, h, now, ignored)), ...readers }, now)) for (const m of Object.keys(sent)) if (ofHold(h).some((p) => m.startsWith(p))) delete sent[m];
 			}
+			const told = () => { for (const m of Object.keys(sent)) if (m.startsWith(`hold-ended:${tag(held!)}`)) delete sent[m]; return true; };
+			if (held && sent[holdMark(held)] === undefined && (await send({ kind: "held", key: tag(held), text: heldText(holderName(held), clock(held.since, now)), ...readers }, now)) && told()) for (const m of [holdMark(held), ...readers.also.map((x) => `${HOLD_MAIN}${tag(held)}:${x}`)]) sent[m] = now;
+			// A coordinator that starts on the held box (opened here later, or one that missed it) is told once too.
+			if (held && sent[holdMark(held)] !== undefined) for (const x of readers.also) if (sent[`${HOLD_MAIN}${tag(held)}:${x}`] === undefined && (await send({ kind: "held", key: `${tag(held)}:${x}`, text: heldText(holderName(held), clock(held.since, now)), main: x, mainText: heldText(holderName(held), clock(held.since, now)), mainOnly: true }, now))) sent[`${HOLD_MAIN}${tag(held)}:${x}`] = now;
 			// A quota that cleared while its main still runs is told once: the main is back at work.
 			const rows = new Map(dev.mains.map((r) => [r.session, r]));
 			// An ally's main is back when its board still has it and its pause is gone.

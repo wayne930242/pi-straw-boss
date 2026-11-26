@@ -55,6 +55,8 @@ The hold in force stays. Otherwise the first `since` wins, and other claims are 
 - The worker door (`server/workerally.ts`) refuses a slip from another device: `held by <label> (<short>): its capacity is that device's`.
 - The texts sent at moments are worded differently while held. These are the idle nudge (`HELD_NUDGE`), the standing wake (`HELD_ARM_TEXT`), a revive's handoff, and the local, ally, and head tower briefs (`heldLine`).
 - The box echoes the hold it honours in its own board as `held`.
+- After a restart the link holder gets its boards back from the relay a little later, so a holder missing from the allies keeps its hold for 5 minutes since it was last seen, and no false end is told. An end clears its own marks and throttles, so a hold that comes back is told again (review R-F001). Ends are told before a new hold (R-F003).
+- On the controller, the gate on `board.holds` reads each member's last caps however old, so a teammate offline for 2 hours drops no hold (R-F002). A controller just started sends no board for 90 seconds while a member's caps are not back, rather than one without its hold.
 
 ## Controller
 

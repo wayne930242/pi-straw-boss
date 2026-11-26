@@ -782,7 +782,7 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 **在線路上。** 只有每個隊友都列出 `board.holds` 時，控制者的 `board` 才把接管當第三個欄位帶上：`holds: [{device, by, since, until?, role}]`（至多 8 筆）。`role` `holds` 指出 box，`by` 是那個主智慧體的看板條目 id（session id 不離開這台電腦），`since` 是開始的時間。沒有產能列時，第二個欄位是空的。帶著接管的看板至少每 10 分鐘送一次，relay 不必改。box 在自己的看板以 `role` `held` 回應它認可的接管，控制者就是這樣知道接管已生效。
 
-**誰可以接管。** box 依自己的 policy 判斷，絕不依訊息本身，檢查和遠端停止相同：box 是無人值守，送出者是名冊上有人值守的成員，而且 box 的 policy 以 `dispatch` 信任它。只要該送出者最新的看板指名這台 box、看板自己的 `ts` 不超過 30 分鐘、`until` 還沒到，而且 box 的老闆沒有在那裡結束它，接管就生效。生效中的接管維持不變；否則最早的 `since` 勝出，第二個接管者被拒，也不會收到任何通知。sb server 的產能監看每分鐘把判定寫進 `capacity/_hold.json`，session 把它當作 5 分鐘內有效。
+**誰可以接管。** box 依自己的 policy 判斷，絕不依訊息本身，檢查和遠端停止相同：box 是無人值守，送出者是名冊上有人值守的成員，而且 box 的 policy 以 `dispatch` 信任它。只要該送出者最新的看板指名這台 box、看板自己的 `ts` 不超過 30 分鐘、`until` 還沒到，而且 box 的老闆沒有在那裡結束它，接管就生效。生效中的接管維持不變；否則最早的 `since` 勝出，第二個接管者被拒，也不會收到任何通知。sb server 的產能監看每分鐘把判定寫進 `capacity/_hold.json`，session 把它當作 5 分鐘內有效。重啟後，link holder 要稍晚才從 relay 拿回看板，所以看板裡暫時找不到的接管者保有它的接管 5 分鐘，不會誤報結束；剛啟動的控制者在隊友的 `caps` 回來之前，90 秒內不送看板。
 
 **在 box 上。** box 對它的主塔台、值守主智慧體與每個協調者主智慧體各說一次（`sb: this device is held by main "work-on" on "mac" (k3f9qa) since 01:52; … start no new work of your own, pause loops/watches that pick tickets; sb tells you when it ends.`），之後才在那裡開始的協調者也一樣；結束時也只說一次，附上原因（`released`、`lapsed`、`revoked`、`ended here`）和恢復接工作的提醒。標記存在 `capacity/_sent.json`，所以重啟後兩者都不重發。接管期間，box 不為自己的主智慧體發 `under`，因為它的空間屬於接管者。`stale` 主智慧體收到的那份會說：做完手上那件或回報卡住、不開新工作，把不會開始的 todo 刪掉或設 `metadata.waitsOn`；值守主智慧體那份則說不要再派新工作到這裡。閒置提醒、值守主智慧體的喚醒、復活與塔台的簡報都帶上接管的說明。box 的工作者入口只接受接管者送來的工作者單（`held by <label>: its capacity is that device's`）。
 

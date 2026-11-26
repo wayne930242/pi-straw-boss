@@ -122,3 +122,41 @@ test("the controller: held-room to the holding main alone after 10 minutes of ro
 	await run(watch, w.clock, 2);
 	assert.deepEqual(w.told.filter((e) => e.kind === "hold-ended").map((e) => [e.main, e.mainOnly]), [["s-a", true]], "the box's boss ended it there: told once");
 });
+
+test("R-F001: a restart whose first looks have no boards yet tells nothing and keeps the hold; a hold that ends and comes back with the same since is told again", async () => {
+	const { w, make } = world({ unattended: true });
+	const since = w.clock.now() - MIN;
+	w.allies = [mac(w.clock.now(), { since })];
+	let watch = make();
+	await run(watch, w.clock, 3);
+	assert.deepEqual(w.told.map((e) => e.kind), ["held"]);
+	w.allies = []; // the link holder has not had its boards replayed yet
+	watch = make();
+	await run(watch, w.clock, 4);
+	assert.deepEqual(w.told.map((e) => e.kind), ["held"], "no false end while the boards are not back");
+	assert.equal(readHold(w.dir, w.clock.now())?.device, MAC, "the hold stays in force meanwhile");
+	w.allies = [mac(w.clock.now(), { since })];
+	await run(watch, w.clock, 2);
+	assert.deepEqual(w.told.map((e) => e.kind), ["held"], "back: nothing to tell");
+	w.allies = [mac(w.clock.now())];
+	await run(watch, w.clock, 1);
+	w.allies = [mac(w.clock.now(), { since })];
+	await run(watch, w.clock, 1);
+	assert.deepEqual(w.told.map((e) => e.kind), ["held", "hold-ended", "held"], "ended, then held again with the same since: told again");
+	w.allies = [];
+	await run(watch, w.clock, 6);
+	assert.match(w.told.at(-1)!.text, /ended \(revoked\)/, "a device gone from the allies for 5 minutes is revoked");
+});
+
+test("R-F003: a switch from one holder to another tells the end before the new hold, and the coordinators hear the new one once", async () => {
+	const { w, make } = world({ unattended: true });
+	const PC = "e".repeat(25) + "a", t = w.clock.now();
+	const pc = (claim?: Partial<NonNullable<AllySeen["claim"]>>): AllySeen => ({ ...mac(w.clock.now(), claim), key: `${TEAM}:${PC}`, label: "pc", short: PC.slice(0, 6), device: PC });
+	w.allies = [mac(t, { since: t - 2 * MIN }), pc({ since: t - MIN })];
+	const watch = make();
+	await run(watch, w.clock, 2);
+	w.allies = [mac(w.clock.now()), pc({ since: t - MIN, ts: w.clock.now() })];
+	await run(watch, w.clock, 3);
+	assert.deepEqual(w.told.map((e) => [e.kind, e.mainOnly ?? false]), [["held", false], ["hold-ended", false], ["held", false]]);
+	assert.match(w.told[2]!.text, /held by main "work-on" on "pc"/);
+});

@@ -246,7 +246,7 @@ const BOARD_MIN_MS = 15_000, BOARD_REFRESH_MS = 3600_000, BOARD_OFF_MS = 3600_00
 /** A board that carries a capacity row is sent at least this often, so a teammate can tell a silent device (over 30 minutes) from a quiet one. */
 const CAP_REFRESH_MS = 10 * 60_000;
 /** A hold whose main is missing from pi-intercom's list this long is gone (a /reload or a reconnect is shorter). */
-const HOLD_GONE_MS = 2 * 60_000;
+const HOLD_GONE_MS = 2 * 60_000, HOLD_CAPS_WAIT_MS = 90_000;
 /** What this build takes (docs/specs/2026-10-26-sb-backend.md, Replies for a main). A `caps` older than 2 hours counts as none. */
 export const CAPS_FEATURES = ["tower.awaitsReply", "tower-reply", "unit-stop", "unit-status.mains", "unit-status.kind", "operate/1", "tower.wait", "notice.ref", "tower.standing", "tower.approval", "board.capacity", "tower.note", "tower.worker", "board.holds"] as const;
 export const CAPS_STALE_MS = 2 * 3600_000;
@@ -315,8 +315,9 @@ export class LinkHolder {
 	private readonly o: HolderOptions;
 	private readonly now: () => number;
 	private runs = new Map<string, TeamRun>();
-	/** A held main's session that pi-intercom's list lacks, since when (`HOLD_GONE_MS`). */
+	/** A held main's session that pi-intercom's list lacks, since when (`HOLD_GONE_MS`); and when this holder was made (`HOLD_CAPS_WAIT_MS`). */
 	private holdMissing = new Map<string, number>();
+	private readonly bornAt: number;
 	private device: { keys: DeviceKeys; label: string } | undefined;
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private running = false;
@@ -361,6 +362,7 @@ export class LinkHolder {
 	constructor(o: HolderOptions) {
 		this.o = o;
 		this.now = o.now ?? Date.now;
+		this.bornAt = this.now();
 		const stateDir = o.stateDir ?? "", me = this;
 		this.admin = new TeamAdmin({
 			store: o.store, stateDir, home: o.home ?? "", agentDir: o.agentDir ?? "", now: () => this.now(),
@@ -1747,7 +1749,9 @@ export class LinkHolder {
 		const { state } = this.loadTeam(run.team), key = state.keys.get(state.epoch);
 		if (!key) return;
 		const capacity = policy.share === "status" ? this.capacityFor(run, state, new Set(wanted.map((e) => e.id)), net, device) : undefined;
-		const holds = policy.share === "status" ? this.holdsFor(run, state, net, device, now) : undefined;
+		const held = policy.share === "status" ? this.holdsFor(run, state, net, device, now) : undefined;
+		if (held === null) return; // the caps of a teammate are not back yet (holdsFor)
+		const holds = held;
 		// The hash leaves out the reading's time and the load, which move at every reading: a board goes when its entries, its counts, or its holds change, and every 10 minutes while it carries capacity or a hold.
 		const hash = createHash("sha256").update(JSON.stringify([wanted, capacity && { ...capacity, at: 0, load1: 0 }, holds ?? null])).digest("hex");
 		const changed = hash !== sent.hash || state.epoch !== sent.epoch;
@@ -1785,10 +1789,16 @@ export class LinkHolder {
 
 	/**
 	 * This device's holds for a team's board (docs/specs/2026-11-26-device-hold.md): an attended device's `holds` of the boxes its live mains hold (link/holds.json; a hold whose main is gone for 2 minutes or whose hours ran out
-	 * ends here), an unattended box's `held` echo of the hold it honours (the capacity watch's `_hold.json`). None while a teammate on the roster has no fresh `caps` listing `board.holds` (an older build refuses a board of three fields).
+	 * ends here), an unattended box's `held` echo of the hold it honours (the capacity watch's `_hold.json`). None while a teammate on the roster has sent no `caps` listing `board.holds` (an older build refuses a board of three fields).
 	 */
-	private holdsFor(run: TeamRun, state: RosterState, net: NetView, device: string, now: number): WireHold[] | undefined {
-		if (![...state.members.keys()].every((id) => id === device || this.capsOf(run, id).includes("board.holds"))) return undefined;
+	private holdsFor(run: TeamRun, state: RosterState, net: NetView, device: string, now: number): WireHold[] | undefined | null {
+		// The last caps each member sent, however old: a teammate offline for 2 hours whose build took holds still takes them, so its silence drops no hold (R-F002). A hold is set only against fresh caps (holdops.ts).
+		const takes = (id: string) => id === device || (run.caps.get(id)?.features ?? []).includes("board.holds");
+		if (![...state.members.keys()].every(takes)) {
+			// Just after a start the members' caps are not back yet: a controller that holds a box of this team sends no board for 90 seconds rather than one without its hold, which the box would take as a release.
+			const unheard = [...state.members.keys()].some((id) => id !== device && !run.caps.has(id));
+			return unheard && this.now() - this.bornAt < HOLD_CAPS_WAIT_MS && (this.o.attended?.() ?? true) && readHolds(this.o.store.dir, now).holds.some((h) => h.team === run.team) ? null : undefined;
+		}
 		const out: WireHold[] = [];
 		if (this.o.attended?.() ?? true) {
 			const live = new Set(net.sessions.map((x) => x.id)), dir = this.o.store.dir;
