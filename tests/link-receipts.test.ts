@@ -88,9 +88,11 @@ test("a message with an ask that waits 10 minutes on the box with no run started
 	const seen: { ref: string; kind: string }[] = [];
 	const [a, d] = [rig("alice", seen), rig("dave")];
 	await Promise.all([a.holder.start(), d.holder.start()]);
-	await until(() => d.holder.capsFor(TEAM_HEX, alice.id).includes("notice.ref"), 3000, "the box to know alice takes a ref");
+	// Caps both ways: alice writes the ask id only to a box whose caps she holds (else the message goes plain and no notice can name it), and the box writes the ref only to a controller whose caps it holds.
+	await until(() => a.holder.capsFor(TEAM_HEX, dave.id).includes("tower.awaitsReply") && d.holder.capsFor(TEAM_HEX, alice.id).includes("notice.ref"), 3000, "caps both ways");
 	const sent = await a.holder.send({ fromSession: "tower-alice", device: LABELS.dave, text: "run trial 7", reply: true, awaitsReply: ASK });
 	assert.equal(sent.ok, true, JSON.stringify(sent));
+	assert.equal(sent.ok && (sent.details as { asked?: boolean }).asked, true, "the message carries the ask");
 	await until(() => d.store.inboxIds().length === 1, 3000, "the message in the box's inbox");
 	const told = () => readFileSync(join(d.store.dir, "link.log"), "utf8").trim().split("\n").filter((l) => JSON.parse(l).event === "stuck-notice").length;
 	skew = STUCK_MS - 60_000;
