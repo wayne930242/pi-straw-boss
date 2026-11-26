@@ -75,7 +75,7 @@ test("a final row is closed and forgotten; a worker gone two sweeps in a row get
 	idle.clock.advance(1);
 	await idle.e.sweep();
 	assert.deepEqual(idle.calls.slice(0, 2), ["close w-1 interrupt", "stopped w-1"]);
-	assert.match(idle.calls[2]!, /idle 60 minutes without a final report: the box stopped it and keeps its worktree \/nowhere\/feat-x\.$/);
+	assert.match(idle.calls[2]!, /idle 60 minutes without a final report: the box stopped it; its worktree \/nowhere\/feat-x stays unless it is clean and pushed\.$/);
 });
 
 test("a revoke ends a worker with interrupt", async () => {

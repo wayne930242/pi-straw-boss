@@ -94,6 +94,7 @@ export function createWorkerEnds(d: EndDeps) {
 			return d.forget(row.workspace, main);
 		}
 		goneSeen.delete(main);
+		if (seen.pane === undefined) return; // a read that failed tells nothing of its state: the idle clock neither starts nor runs on it
 		if (seen.working) return void idleFrom.delete(main);
 		const since = idleFrom.get(main) ?? (idleFrom.set(main, d.now()), d.now());
 		if (d.now() - since < WORKER_STOP_MS) return;
@@ -101,7 +102,7 @@ export function createWorkerEnds(d: EndDeps) {
 		d.stopped(row.workspace, main);
 		idleFrom.delete(main);
 		const ask = route.ask;
-		if (ask) await d.send(row.workspace, route.device, `Worker ${route.worker!.label} (branch ${route.worker!.branch}) was idle ${WORKER_STOP_MS / 60_000} minutes without a final report: the box stopped it and keeps its worktree ${route.worker!.path}.`, ask).catch((e: Error) => d.log("worker-receipt-failed", { error: e.message.slice(0, 160) }));
+		if (ask) await d.send(row.workspace, route.device, `Worker ${route.worker!.label} (branch ${route.worker!.branch}) was idle ${WORKER_STOP_MS / 60_000} minutes without a final report: the box stopped it; its worktree ${route.worker!.path} stays unless it is clean and pushed.`, ask).catch((e: Error) => d.log("worker-receipt-failed", { error: e.message.slice(0, 160) }));
 		d.log("worker-stopped", { main });
 	};
 	return {
