@@ -22,7 +22,7 @@ pi-straw-boss lets them find each other and coordinate, without a scheduler or a
 - **Everyone joins.** Each pi in Herdr joins its tab's net at start. An agent whose work grows (several steps, dispatching workers, more than one app) promotes itself to the tab's **main agent**; you, the boss, can take over with `/boss`.
 - **A tower per workspace**, an agent in a tab of its own, opens when agents start to collide: a member dispatches a subagent, or an agent promotes itself. It coordinates the mains and the other towers, and opens a tab with a new main for work no session owns. You don't need to talk to it.
 - **A head tower of your own** takes your instructions in one long conversation and hands each to the workspace that owns it.
-- **The browser view**, `/boss gui`: every workspace, agent, and subagent live, and the questions they wait on, answered in place from a desktop or a paired phone. Its Zen view shows one thing at a time.
+- **The browser view**, `/boss gui`: every workspace, agent, and subagent live, and the questions they wait on, answered in place from a desktop or a paired phone. Its Zen mode, one press away in the header, shows one thing at a time.
 - **Merge trains**: a project can batch its reviewed branches, so the heavy gates (lint, build, full suites) run once per train instead of once per branch.
 - **Straw Link** connects the towers of teammates' computers, and an unattended build box can take work from them.
 - **Auto mode**: tell the head tower you are going to sleep, and no agent waits on you until you are back. Agents keep working, and what needed you goes back to the agent that asked, to ask you again when you are back.

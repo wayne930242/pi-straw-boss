@@ -79,17 +79,21 @@ The same operations are typed commands too: `/boss open`, `/boss close`, `/boss 
 
 ## Views
 
-Each device picks its view on the settings page: Auto, Standard, Geek, Zen, or Raven Keep.
+Each device picks its view on the settings page: Auto, Standard, Geek, or Raven Keep. Zen is not a view but a mode you enter from any of them (below).
 `/boss gui view <name>` sets the default for devices on Auto; no page, paired phones included, can change it.
 
 - **Standard** is the map above.
 - **Geek** is a terminal: black, monospace, high contrast, no motion, and each state also as a text tag such as `[WORK]`, `[WAIT?]`, or `[ERR!]`.
-- **Zen** is for the hours when you are answering the net rather than steering it (below).
 - **Raven Keep** is a gothic skin of Standard: the same layout, its own icons, role names, and sounds. The kinds' icons are Standard's in it.
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-geek.png" width="70%" alt="The Geek view of the map: black, monospace, high contrast, with each unit's state as a tag"></p>
 
 ## Zen
+
+Zen is for the hours when you are answering the net rather than steering it.
+The **Zen** button in the header, beside the gear, enters it from any view (on a phone it is an ensō; in Geek it reads `[Zen]`).
+This device stays in Zen across reloads until you leave it; another open tab is never switched.
+Leaving shows your own view again: Standard, Geek, or Raven Keep. The settings page sets Zen aside while it is open.
 
 When something waits for you, Zen shows that one thing alone: no map.
 A card never takes the screen by itself: one quiet line says how many wait, and **Enter**, or a tap on the line, takes the next, blocking questions first.
@@ -106,7 +110,7 @@ A companion session shows its live log and composer.
 | --- | --- |
 | Enter | Takes the next card; then presses its main button (Allow, Trust, the first choice, Run), never inside a text field. On a card that waits for you, it picks the first row and moves on to **Send**. |
 | Enter or Space | Ends the breathing pause early |
-| Esc | Answers or skips the card; a second Esc within 600 ms goes back to Standard |
+| Esc | Answers or skips the card; a second Esc within 600 ms leaves Zen for your view |
 | `[` or `]` | Steps to a session to keep you company |
 | H | Opens *Context* on a card: the unit's session log inside the card, read-only, while you can still answer |
 | ⌘K (Ctrl+K off a Mac) | Opens a command palette for the page's actions |
