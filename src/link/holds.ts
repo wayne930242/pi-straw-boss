@@ -1,6 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { safeSession } from "../board.ts";
 import { idOk } from "./device.ts";
 
 // The holds this device keeps on teammates' boxes (docs/specs/2026-11-26-device-hold.md, the controller's side): `<link dir>/holds.json`. A hold names the box, the team it is held in, the main of this device that holds it
@@ -15,7 +14,8 @@ export interface HoldsFile { v: 1; holds: Hold[]; ended: EndedHold[] }
 export const HOLDS_FILE = "holds.json", HOLDS_MAX = 8, ENDED_KEEP_MS = 3600_000;
 const ENDS: readonly string[] = ["released", "lapsed", "gone", "ended-there"];
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 8.64e15 ? v : undefined);
-const sessionOk = (v: unknown): v is string => typeof v === "string" && safeSession(v);
+/** A session id as pi-intercom names one (it never names a file here). */
+const sessionOk = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(v);
 const holdOf = (x: Record<string, unknown> | null): Hold | undefined => {
 	if (!x || typeof x.team !== "string" || !/^[0-9a-f]{32}$/.test(x.team) || !idOk(x.device) || !sessionOk(x.session) || num(x.since) === undefined) return undefined;
 	return { team: x.team, device: x.device, session: x.session, since: x.since as number, ...(num(x.until) !== undefined ? { until: x.until as number } : {}) };

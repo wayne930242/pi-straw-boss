@@ -343,7 +343,8 @@ export function createLink({ pi, cfg, s, guiDir, me, tell }: Kit) {
 			const opened = await ask({ op: "request-open", action: r.action, args: r.args, reason: r.reason });
 			if (!opened.ok) throw new Error(opened.error);
 			const id = String(opened.id), lines = [...(opened.lines as string[]), `Asked by session: ${r.asker} (${sid().slice(0, 8)})`, `Reason: ${String(opened.reason)}`];
-			const verdict = await approval.approve({ hereOnly: (HERE_ONLY as readonly string[]).includes(r.action), toolCallId: r.toolCallId, lines, asker: r.asker, ui: r.ui, signal: r.signal });
+			// A main's release of its own device hold only narrows what it holds: the holder said so, and it runs without the dialog (docs/specs/2026-11-26-device-hold.md, D4).
+			const verdict = opened.noAsk === true ? { approved: true, reason: "" } : await approval.approve({ hereOnly: (HERE_ONLY as readonly string[]).includes(r.action), toolCallId: r.toolCallId, lines, asker: r.asker, ui: r.ui, signal: r.signal });
 			if (!verdict.approved) {
 				await ask({ op: "request-drop", id }).catch(() => undefined);
 				throw new Error(verdict.reason);

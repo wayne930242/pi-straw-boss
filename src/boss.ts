@@ -16,7 +16,7 @@ import type { Kit } from "./state.ts";
 import type { createStashing } from "./stashing.ts";
 import { type createBossPaths, parseStash } from "./bosspaths.ts";
 import { parseAnswer } from "./bossanswer.ts";
-import { LINK_ARGUMENTS } from "./bosslink.ts"; import { VIEW_ARGUMENTS } from "./bossviews.ts";
+import { LINK_ARGUMENTS } from "./bosslink.ts"; import { VIEW_ARGUMENTS } from "./bossviews.ts"; import { HOLD_ARGUMENTS } from "./bosshold.ts";
 import { parseSend, parseStop } from "./bosssend.ts";
 import { createBossAuto } from "./bossauto.ts";
 import { asBoss } from "./autoscope.ts";
@@ -82,7 +82,7 @@ export function registerBoss(kit: Kit, { runMode, host, membership, reach, close
 		// pi passes the whole argument text and replaces it with the chosen value, so each value is a full argument line.
 		getArgumentCompletions: (prefix) => {
 			const stashed = stashing.names().map((name) => ({ value: `pop ${name}`, label: `pop ${name}`, description: "Open this stashed base again" }));
-			const items = [...BOSS_ARGUMENTS, ...LINK_ARGUMENTS, ...stashed].filter((item) => item.value.startsWith(prefix.trimStart()));
+			const items = [...BOSS_ARGUMENTS, ...LINK_ARGUMENTS, ...HOLD_ARGUMENTS, ...stashed].filter((item) => item.value.startsWith(prefix.trimStart()));
 			return items.length ? items : null;
 		},
 		// Under the boss's own mark (autoscope.ts): auto mode answers a dialog opened inside a running tool call as Escape, but never one of these commands' confirms, mid-turn too.

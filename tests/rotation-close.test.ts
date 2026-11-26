@@ -59,8 +59,11 @@ test("the successor's own send to the old main is its takeover: the idle old mai
 	assert.equal(took(m), false, "a send to another session, one that failed, or an ask (a question before the takeover; RV6-F004) is no takeover");
 	await m.tool("board_set", { now: "minding the box", items: [{ t: "watch", done: false }] });
 	assert.equal(readEntries(join(world.stateDir, "board")).some((e) => e.session === "main-1"), true);
+	const { readHolds, setHold } = await import("../src/link/holds.ts"), linkDir = join(world.stateDir, "link");
+	setHold(linkDir, Date.now(), { team: "0f".repeat(16), device: "a".repeat(26), session: "main-1", since: 5 });
 	await tellOld(successor);
 	assert.equal(took(m), true);
+	assert.deepEqual(readHolds(linkDir, Date.now()).holds.map((h) => [h.session, h.since]), [[successor.id, 5]], "the boxes it held are the successor's (docs/specs/2026-11-26-device-hold.md)");
 	assert.equal(successor.entries.some((e) => e.customType === ENTRY && (e.data as { handoverFrom?: unknown }).handoverFrom === null), true, "told once: the successor forgets it");
 	await look();
 	await until(() => closed(m), "the old main quit and its pane closed");

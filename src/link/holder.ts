@@ -5,6 +5,7 @@ import { cleanText, clean, BOARD, forAllies, purge, readEntries, wireId, type En
 import { capDir, readDevice } from "../capacity.ts";
 import { readHold } from "../hold.ts";
 import { endHolds, readHolds } from "./holds.ts";
+import { createHoldOps, type HoldOps } from "./holdops.ts";
 import type { AllySeen } from "../server/capwatch.ts";
 import { MAX_BODY_BYTES } from "./wire.ts";
 import { restrictLabel, restrictOwner } from "./text.ts";
@@ -353,6 +354,8 @@ export class LinkHolder {
 	readonly admin: TeamAdmin;
 	/** The link actions agents ask for, waiting for the boss (request.ts). */
 	readonly requests: Requests;
+	/** Device holds (holdops.ts, docs/specs/2026-11-26-device-hold.md). */
+	readonly holds: HoldOps;
 
 	constructor(o: HolderOptions) {
 		this.o = o;
@@ -371,7 +374,11 @@ export class LinkHolder {
 			},
 			notify: (text, level) => o.notify(text, level), log: (entry) => o.store.log(entry),
 		});
-		this.requests = new Requests({ admin: this.admin, teams: () => this.admin.teamViews(), now: () => this.now(), attended: o.attended ?? (() => true), home: o.home ?? "", agentDir: o.agentDir ?? "" });
+		this.holds = createHoldOps({
+			teams: () => this.admin.teamViews(), caps: (team, device) => this.capsFor(team, device), now: () => this.now(), attended: o.attended ?? (() => true), linkDir: o.store.dir, ...(o.boardDir ? { boardDir: o.boardDir } : {}),
+			net: () => o.net(), allies: () => this.allySeen(), notice: (team, device, n) => this.sendDialog(team, device, "notice", n),
+		});
+		this.requests = new Requests({ admin: this.admin, teams: () => this.admin.teamViews(), now: () => this.now(), attended: o.attended ?? (() => true), home: o.home ?? "", agentDir: o.agentDir ?? "", holds: this.holds });
 	}
 
 	get active(): boolean {
@@ -1516,6 +1523,8 @@ export class LinkHolder {
 		const id = createHash("sha256").update(`${header.from}\n${Buffer.from(header.id).toString("hex")}`).digest("hex").slice(0, 16);
 		if (this.notices.some((n) => n.id === id)) return;
 		this.notices.push({ id, team: run.team, device: header.from, at: this.now(), kind: p.kind, unit: p.unit, text: p.text });
+		// The box's boss ended a hold of this device's there (holdops.ts `endHeld`): it ends here too, and the capacity watch tells its main.
+		if (p.kind === "hold-ended") try { endHolds(this.o.store.dir, this.now(), (h) => h.team === run.team && h.device === header.from, "ended-there"); } catch (error) { this.o.store.log({ event: "hold-end-failed", error: (error as Error)?.name ?? "Error" }); }
 		while (this.notices.length > NOTICES_KEPT) this.notices.shift();
 		// A notice about an ask this computer made goes to the main that asked too (C4), in a line the server writes.
 		if (p.ref) try { this.o.waits?.notice?.({ team: run.team, device: header.from, label: sender.label ?? shortId(header.from), kind: p.kind, text: p.text, ref: p.ref }); } catch (error) { this.o.store.log({ event: "notice-ref-failed", error: (error as Error)?.name ?? "Error" }); }

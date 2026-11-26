@@ -3,6 +3,7 @@ import { type GuiRecord, postServer } from "./handover.ts";
 import { workspaces } from "./herdr.ts";
 import { createBossAnswer } from "./bossanswer.ts";
 import { createBossLink } from "./bosslink.ts";
+import { createBossHold } from "./bosshold.ts";
 import { createBossOpen } from "./bossopen.ts";
 import type { Here } from "./heremark.ts";
 import { hereOnlyOpts } from "./intercept.ts";
@@ -190,14 +191,14 @@ export function createBossPaths(kit: Kit, { host, server, closeSelf, post = post
 		const reply = await post1(found.key, `${found.name} (in ${found.base}) [${found.key}]`);
 		reply.status === 200 ? tell(said(found.name)) : tell(why(reply), "error");
 	}
-	const more = createBossLink(kit, { record, post, why, confirm, lang, here });
+	const more = createBossLink(kit, { record, post, why, confirm, lang, here }), hold = createBossHold(kit, { record, post, why, confirm, lang });
 	const answer = createBossAnswer(kit, { record, post, why, confirm, lang, build: more.build, ...(stream ? { net: stream } : {}) });
 	const open = createBossOpen(kit, { record, post, why, confirm, here, noScreen: () => t().noScreen, lang, baseName: async (id) => (await workspaces(cfg.run).catch(() => [])).find((w) => w.workspace_id === id)?.label, pollMs, extra: more.status });
 
 	return {
 		...open,
 		/** `/boss link …`: confirms, questions, invites, join, create, and leave are bosslink.ts's; status and decide are bossopen.ts's. */
-		link: (rest: string | undefined, cwd = process.cwd()) => (more.handles(rest) ? more.run(rest!, cwd) : open.link(rest)),
+		link: (rest: string | undefined, cwd = process.cwd()) => (hold.handles(rest) ? hold.run(rest!) : more.handles(rest) ? more.run(rest!, cwd) : open.link(rest)),
 		/** `/boss answer [<name|key> [--cancel | <choice number | text>]]`: lists the dialogs other sessions wait on, or answers one as the page does (bossanswer.ts). */
 		answer,
 		/** The refusal for `/boss stash --workspace` with no value. */

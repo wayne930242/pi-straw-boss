@@ -5,6 +5,7 @@ import { LEVELS, type Level, type Share } from "./config.ts";
 import { idOk, labelOk, shortId } from "./device.ts";
 import { decodeInvite, originOf } from "./join.ts";
 import { projectProblem } from "./routing.ts";
+import type { HoldOps } from "./holdops.ts";
 
 // `link_request` (docs/specs/2026-10-25-straw-link.md, GUI, Link actions an agent asks for): an agent may ask for a link action, and the boss approves
 // each request. This module is the link holder's half: it checks a request, says in words what it would do (the approval dialog shows these lines, never
@@ -12,14 +13,14 @@ import { projectProblem } from "./routing.ts";
 // holder alone does the action; the requesting session never touches the keys or the team files. There is no path that runs an action without the
 // session's request id, and an id is used once.
 
-export const ACTIONS = ["create", "invite", "invite-unattended", "join", "trust", "leave", "remove", "role", "rotate"] as const;
+export const ACTIONS = ["create", "invite", "invite-unattended", "join", "trust", "leave", "remove", "role", "rotate", "hold", "release"] as const;
 export type Action = (typeof ACTIONS)[number];
 /** The arguments an agent may pass; each action takes the ones it names and refuses the rest. */
 /** C0 and C1 control characters, the Unicode line and paragraph separators, and the bidi marks and overrides: a line break, an escape, or a reordering in an argument could add lines to the approval dialog or disguise them. */
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 /** The agent's reason as one line: every run of whitespace, control characters, and bidi marks becomes one space. */
 const oneLine = (s: string) => s.replace(/[\s\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").trim();
-export interface RequestArgs { team?: string; relay?: string; project?: string; share?: string; device?: string; level?: string; role?: string; text?: string; label?: string }
+export interface RequestArgs { team?: string; relay?: string; project?: string; share?: string; device?: string; level?: string; role?: string; text?: string; label?: string; hours?: string }
 const FIELDS: Record<Action, (keyof RequestArgs)[]> = {
 	create: ["relay", "project", "share", "label"],
 	invite: ["team"],
@@ -30,9 +31,11 @@ const FIELDS: Record<Action, (keyof RequestArgs)[]> = {
 	remove: ["team", "device"],
 	role: ["team", "device", "role"],
 	rotate: ["team"],
+	hold: ["device", "hours"],
+	release: ["device"],
 };
 const REQUIRED: Record<Action, (keyof RequestArgs)[]> = {
-	create: ["relay", "project"], invite: ["team"], "invite-unattended": ["team", "device"], join: ["text"], trust: ["device", "level"], leave: ["team"], remove: ["team", "device"], role: ["team", "device", "role"], rotate: ["team"],
+	create: ["relay", "project"], invite: ["team"], "invite-unattended": ["team", "device"], join: ["text"], trust: ["device", "level"], leave: ["team"], remove: ["team", "device"], role: ["team", "device", "role"], rotate: ["team"], hold: ["device"], release: ["device"],
 };
 /** Actions whose approval only this computer may give (the boss: "高風險動作只能在本機核准"): a paired device sees the dialog and can deny, not approve. Every other action is approvable from a paired device. */
 export const HERE_ONLY: readonly Action[] = ["trust", "remove", "role", "rotate", "leave"];
@@ -68,6 +71,8 @@ export interface RequestDeps {
 	attended(): boolean;
 	home: string;
 	agentDir: string;
+	/** Device holds (holdops.ts): `hold` for the session that asks, approved by the boss; `release` of its own hold, which needs no approval (docs/specs/2026-11-26-device-hold.md, D4). */
+	holds?: Pick<HoldOps, "check" | "set" | "owns" | "release">;
 }
 
 export class Requests {
@@ -92,7 +97,7 @@ export class Requests {
 	}
 
 	/** Checks a request and remembers it; the lines are what the boss is shown. */
-	open(session: string, action: unknown, raw: unknown, reason: string): Done<{ id: string; lines: string[]; reason: string }> {
+	open(session: string, action: unknown, raw: unknown, reason: string): Done<{ id: string; lines: string[]; reason: string; noAsk?: true }> {
 		if (!this.d.attended()) return no("link_request is refused on an unattended device: its teams and trust come from its infra's policy file and join.txt only");
 		const bad = shapeProblem(action, raw);
 		if (bad) return no(bad);
@@ -104,6 +109,19 @@ export class Requests {
 		const lines: string[] = [`Action: ${act}`];
 		const p: Pending = { id: randomUUID(), session, action: act, args, reason: clip(oneLine(reason) || "(none given)", 400), at: now };
 		switch (act) {
+			case "hold": case "release": {
+				if (!this.d.holds) return no("This build keeps no device holds");
+				if (act === "release") {
+					if (!this.d.holds.owns(session, args.device!)) return no("This session holds no hold of that device; the boss releases another main's with /boss link release");
+					this.pending.set(p.id, p);
+					return { ok: true, id: p.id, lines: [`Action: release`, `Box: ${args.device}`], reason: p.reason, noAsk: true };
+				}
+				const c = this.d.holds.check(session, args.device!, args.hours);
+				if (!c.ok) return c;
+				p.device = c.device;
+				lines.push(...c.lines, "Held by: this session");
+				break;
+			}
 			case "create": {
 				const share = args.share;
 				const origin = originOf(args.relay!.trim());
@@ -210,6 +228,8 @@ export class Requests {
 				const done = await admin.rotate({ team: p.team! });
 				return fail(done) ? done as Fail : { ok: true, text: "The team key was rotated." };
 			}
+			case "hold": return this.d.holds ? this.d.holds.set(p.session, p.device!, { ...(a.hours ? { hours: a.hours } : {}) }) : no("This build keeps no device holds");
+			case "release": return this.d.holds ? this.d.holds.release(a.device!, p.session) : no("This build keeps no device holds");
 		}
 	}
 

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { wireId } from "../src/board.ts";
 import { capDir } from "../src/capacity.ts";
-import { writeHold } from "../src/hold.ts";
+import { readIgnored, writeHold } from "../src/hold.ts";
 import type { LinkConfig } from "../src/link/config.ts";
 import { LinkHolder } from "../src/link/holder.ts";
 import { endHolds, moveHolds, readHolds, setHold } from "../src/link/holds.ts";
@@ -60,7 +60,7 @@ test("the controller's store: a hold per box, ended with a reason and kept an ho
 });
 
 function rig(name: "a" | "b", o: { members?: ("bob" | "carol")[]; attended?: boolean; trust?: Map<string, string> } = {}) {
-	const keys = name === "a" ? alice : bob, members = o.members ?? ["bob"], entries = rosterOf(members), dir = join(root, name, "link"), project = join(root, `${name}-project`), boardDir = join(root, name, "board");
+	const keys = name === "a" ? alice : bob, members = o.members ?? ["bob"], entries = rosterOf(members, ["bob"]), dir = join(root, name, "link"), project = join(root, `${name}-project`), boardDir = join(root, name, "board");
 	mkdirSync(project, { recursive: true });
 	const store = new LinkStore(dir, { alive: () => true });
 	store.ensure();
@@ -100,4 +100,49 @@ test("no holds go while a teammate's caps do not list board.holds (an older buil
 	await until(() => capsOf.get(bob.id)?.features.includes("board.holds") ?? false, 5000, "bob's caps at A");
 	await until(() => b.holder.allySeen().some((x) => x.device === alice.id), 5000, "A's board at B");
 	assert.equal(b.holder.allySeen().find((x) => x.device === alice.id)!.claim, undefined);
+});
+
+test("the box's boss ends the hold there: it drops from the box's file at once, is ignored from then on, and the controller's hold ends `ended-there`", async () => {
+	const a = rig("a"), b = rig("b", { attended: false, trust: new Map([[alice.id, "dispatch"]]) });
+	live(a, "main-1");
+	const since = Date.now();
+	setHold(a.dir, since, { team: TEAM_HEX, device: bob.id, session: "main-1", since });
+	writeHold(capDir(b.boardDir), { v: 1, at: Date.now(), held: { team: TEAM_HEX, device: alice.id, label: "alice-mac", short: alice.shortId, by: wireId(alice.id, "main-1"), byName: "work-on", since } });
+	await Promise.all([a.holder.start(), b.holder.start()]);
+	assert.equal((b.holder.holds.held() as { held?: unknown }).held !== undefined, true);
+	const done = await b.holder.holds.endHeld();
+	assert.equal(done.ok, true);
+	assert.match((done as { text: string }).text, /Ended the hold of alice-mac .* That device is told\./);
+	assert.deepEqual(b.holder.holds.held(), {});
+	assert.deepEqual(readIgnored(capDir(b.boardDir), Date.now()).map((i) => [i.device, i.since]), [[alice.id, since]]);
+	await until(() => readHolds(a.dir, Date.now()).ended.some((e) => e.reason === "ended-there"), 5000, "the controller's hold ended there");
+	assert.deepEqual(readHolds(a.dir, Date.now()).holds, []);
+});
+
+test("holdops: a hold needs an attended asker, an unattended box, every teammate on board.holds, and hours over 0; the holding main is the asker or the live session --main names", async () => {
+	const { createHoldOps } = await import("../src/link/holdops.ts");
+	const dir = join(root, "ops"), now = 1_800_000_000_000;
+	const m = (id: string, label: string, o: Record<string, unknown> = {}) => ({ id, short: id.slice(0, 6), label, labelKnown: true, duplicate: false, role: "member", attended: true, self: false, online: true, seenAgoMs: 0, headSeq: 1, trust: "dispatch", ...o });
+	let caps = ["board.holds"], attended = true;
+	const ops = createHoldOps({
+		teams: () => [{ team: TEAM_HEX, name: "moldplan", project: "/p", share: "status", relay: "r", epoch: 1, headSeq: 1, self: { role: "admin", attended: true }, members: [m(alice.id, "mac", { self: true }), m(bob.id, "box 2", { attended: false }), m(carol.id, "pc")], status: "running", relayDown: false }] as never,
+		caps: () => caps, now: () => now, attended: () => attended, linkDir: dir, net: async () => ({ sessions: [{ id: "main-1", name: "work-on" }, { id: "main-2abcdefgh", name: "other" }] }) as never, allies: () => [], notice: async () => {},
+	});
+	assert.match((ops.check("main-1", "pc") as { error: string }).error, /Only an unattended box is held: pc/);
+	assert.match((ops.check("main-1", "zzz") as { error: string }).error, /No device "zzz"/);
+	assert.match((ops.check("main-1", "box 2", "0") as { error: string }).error, /hours is a number over 0/);
+	assert.match((ops.check("sb-tower-wa", "box 2") as { error: string }).error, /A tower holds no box/);
+	caps = [];
+	assert.match((ops.check("main-1", "box 2") as { error: string }).error, /these do not yet: box 2 \(.{6}\), pc \(.{6}\)/, "fail fast, naming the old builds");
+	caps = ["board.holds"];
+	attended = false;
+	assert.match((ops.check("main-1", "box 2") as { error: string }).error, /An unattended device holds no other device/);
+	attended = true;
+	assert.equal((await ops.set("main-1", "box 2", { hours: "2", main: "main-2abc" })).ok, true);
+	assert.deepEqual(readHolds(dir, now).holds, [{ team: TEAM_HEX, device: bob.id, session: "main-2abcdefgh", since: now, until: now + 2 * 3600_000 }]);
+	assert.equal(ops.owns("main-2abcdefgh", "box 2"), true);
+	assert.equal(ops.owns("main-1", "box 2"), false);
+	assert.match((ops.release("box 2", "main-1") as { error: string }).error, /not held by this session/);
+	assert.equal(ops.release("box 2").ok, true);
+	assert.deepEqual((await ops.list()).holds, []);
 });

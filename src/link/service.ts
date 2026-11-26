@@ -291,8 +291,14 @@ export function createLinkService({ kit, stateDir, version, started, pid = proce
 		if (name === "state") return { ok: true, view: h.view() };
 		if (name === "summary") return { ok: true, summary: h.summary() };
 		if (name === "operate") return { ok: true, sessions: controller?.status() ?? [], ...(controller?.offSince() !== undefined ? { off: controller.offSince() } : {}) };
+		// Device holds (holdops.ts): the controller's list, the box's view and its boss's end of it (an unattended box's own act, so before the attended check), the controller's hold and release.
+		if (name === "holds") return { ok: true, ...(await h.holds.list()) };
+		if (name === "held") return { ok: true, ...h.holds.held() };
+		if (name === "held-end") return h.holds.endHeld();
 		if (!attended()) return { ok: false, error: "This computer is unattended: its teams and trust come from its infra's policy file" };
 		switch (name) {
+			case "hold": return h.holds.set(text("session"), text("device"), { ...maybe("main"), ...maybe("hours") });
+			case "release": return h.holds.release(text("device"));
 			case "operate-off": return { ok: true, ...(controller?.off() ?? { saved: true }) };
 			case "operate-on": return { ok: true, ...(controller?.on() ?? { saved: true }) };
 			case "create": return h.admin.createTeam({ relay: text("relay"), token: text("token"), project: text("project"), ...(a.share === "presence" || a.share === "status" ? { share: a.share } : {}), ...maybe("label") });

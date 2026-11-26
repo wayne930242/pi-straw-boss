@@ -54,7 +54,7 @@ test("an action and its arguments are checked for shape before anything is asked
 	assert.match(shapeProblem("invite", {}) ?? "", /needs team/);
 	assert.match(shapeProblem("invite", { team: "x", token: "y" }) ?? "", /takes team, not token/);
 	assert.match(shapeProblem("trust", { device: "d", level: 3 }) ?? "", /level has to be text/);
-	assert.deepEqual([...ACTIONS], ["create", "invite", "invite-unattended", "join", "trust", "leave", "remove", "role", "rotate"]);
+	assert.deepEqual([...ACTIONS], ["create", "invite", "invite-unattended", "join", "trust", "leave", "remove", "role", "rotate", "hold", "release"]);
 });
 
 test("RC-F002: a label is tested whole, so a leading or trailing line break, a Unicode line separator, or a bidi control is refused, and the screen is prefilled only with a label create or join would accept", async () => {
@@ -288,4 +288,16 @@ test("a cancel from a page refuses the request, as Escape on the terminal's conf
 		assert.deepEqual([v.approved, v.by], [false, "remote"]);
 		assert.deepEqual(told.at(-1), { channel: "straw-link:request:closed", version: 1, id: p.id, by: "remote", allow: false, answerId });
 	}
+});
+
+test("device holds (docs/specs/2026-11-26-device-hold.md, D4): a main's release of its own hold runs with no dialog; another's is refused; a hold of an attended device is refused before anything is asked", async () => {
+	const { c, pending, ask } = await rig();
+	const { readHolds, setHold } = await import("../src/link/holds.ts"), { TEAM_HEX } = await import("./link/holder-world.ts");
+	await assert.rejects(ask({ action: "hold", args: { device: "bob-mac" }, reason: "box work" }), /Only an unattended box is held: bob-mac/);
+	await assert.rejects(ask({ action: "release", args: { device: "bob-mac" }, reason: "done" }), /holds no hold of that device/);
+	setHold(c.dir, Date.now(), { team: TEAM_HEX, device: bob.id, session: "tower-a", since: Date.now() });
+	const done = await ask({ action: "release", args: { device: "bob-mac" }, reason: "done" });
+	assert.match(text(done), /^Released bob-mac/);
+	assert.equal(pending.length, 0, "no dialog");
+	assert.deepEqual(readHolds(c.dir, Date.now()).ended.map((e) => e.reason), ["released"]);
 });

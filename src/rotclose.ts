@@ -1,8 +1,10 @@
+import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BoardFill } from "./boardfill.ts";
 import type { Control } from "./closemain.ts";
 import type { Reach } from "./reach.ts";
 import { ENTRY, type Kit } from "./state.ts";
+import { moveHolds } from "./link/holds.ts";
 
 // A main that handed over closes itself (docs/specs/2026-11-26-rotation-close.md). Field, 2026-11-26: after a rotation the old skald main could not close itself (boss_wrap is refused under auto mode, /new is
 // forbidden, no other tool closes a session) and stayed open to forward a child's result. The rotation is the consent: once the successor's own extension says it took over (its send to the old main by intercom,
@@ -27,7 +29,7 @@ export interface RotDeps {
 
 const textOf = (content: unknown) => (typeof content === "string" ? content : Array.isArray(content) ? content.map((c) => (typeof c?.text === "string" ? c.text : "")).join("") : "");
 
-export function createRotationClose({ pi, cfg, s, me }: Kit, d: RotDeps) {
+export function createRotationClose({ pi, cfg, s, me, guiDir }: Kit, d: RotDeps) {
 	const name = () => pi.getSessionName() || s.ownName || me().slice(0, 8);
 	const save = (data: Record<string, unknown>) => pi.appendEntry(ENTRY, data);
 	/** The successor that took over, once its extension said so. */
@@ -39,6 +41,7 @@ export function createRotationClose({ pi, cfg, s, me }: Kit, d: RotDeps) {
 		const h = s.saved.successor;
 		if (s.isTower || !h?.main || h.main !== from) return false;
 		if (h.took === undefined) (h.took = cfg.now(), save({ successor: h }));
+		try { moveHolds(join(guiDir, "link"), cfg.now(), me(), from); } catch { /* no holds file: nothing held */ } // the boxes this main held are its successor's (docs/specs/2026-11-26-device-hold.md)
 		heard = true;
 		return true;
 	});
