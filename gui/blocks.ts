@@ -7,8 +7,11 @@ import { keepFocus } from "./focusback.ts";
 import { mount, parse as markdown } from "./markdown.ts";
 import { m } from "./sentences.ts";
 
-// The lazy block host (docs/specs/2026-11-07-better-show-host.md): prose uses the page's Markdown, valid blocks their elements, invalid blocks their source.
-// The host resolves review images, previews outgoing text that wasn't visible, and locks every drawing of a block while sending. On acceptance the lock keeps the fields; refusal reopens the block.
+// The page's drawing of pi-better-show's blocks (docs/specs/2026-11-07-better-show-host.md), a lazy chunk (blockschunk.ts): the text is split by the package's parser, prose is the page's own Markdown (markdown.ts), each block is the
+// element of its kind fed with the block's data (never markup: the elements build text nodes), and a block that does not parse shows its source in code. An element's answer is handed to the host, which delivers it and only then locks the
+// element with the fields that went (`answered`); a refusal leaves it open with the reason under it. While an answer is on its way every drawing of the block is locked (inert, "Sending…"): a redraw does not find it open. What a block can name is the host's to
+// resolve: an image only through `image`, and a page, a diagram, or a link target never. What goes out under the boss's name is what the boss saw: a chip is drawn as its text, and a form, checklist, or review whose names are not its labels (a choice's value, a question's or an
+// item's name, a picked item's name in any pick mode) shows the exact outgoing text first, in a confirm step of its own, and sends that very text only when the boss presses Send. A review's group name is drawn as a text node and goes out as drawn. A `tree` is a display block of text only: a name is a text node, and a note's links are shown as their text, since a snapshot an agent wrote offers the page no link and no route.
 
 export interface BlockHost {
 	density: "compact" | "comfortable";
