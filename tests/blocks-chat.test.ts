@@ -91,6 +91,22 @@ test("a block's answer is the boss's message to that unit: the composer's input 
 	assert.deepEqual(form!.answered, [["when", "now"], ["note", "watch refunds"]]);
 });
 
+test("a multi review previews a Markdown item's outgoing name, then sends and locks both picks", async () => {
+	const { show, sent } = mount("S1");
+	const root = await show(reply('```review\npickMode: multi\nitems: [{name: A}, {name: B, label: "[docs](https://example.org/runbook)"}]\n```'));
+	const [review] = find(root, "pbs-review");
+	const fields = [["picked", "A"], ["picked", "B ([docs](https://example.org/runbook))"]];
+	fire(review!, { kind: "review", fields });
+	await settle();
+	assert.equal(sent.length, 0, "the heading shows docs but the reply also contains its URL");
+	const text = 'User reviewed "":\nPicked: A\nPicked: B ([docs](https://example.org/runbook))';
+	assert.equal(root.find((el) => el.className === "pbs-confirm-text")[0]?.textContent, text);
+	for (const on of root.find((el) => el.className === "pbs-confirm-send")[0]!.handlers.click ?? []) on({ type: "click" });
+	await settle();
+	assert.deepEqual(sent, [["input", { text, as: "send", guarded: true, block: { entry: "a1", index: 0, fields } }]]);
+	assert.deepEqual(review!.answered, fields);
+});
+
 test("the lock survives a reload and shows on every device: the server's record is read when the log is drawn, per session, entry, and block", async () => {
 	const first = mount("S1");
 	const root = await first.show(reply(DEMO_CHAT_BLOCKS));

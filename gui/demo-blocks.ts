@@ -3,6 +3,25 @@
 
 const fence = (text: string) => text.replace(/^~~~/gm, "```");
 
+export const DEMO_REVIEW_PICKS = fence(`~~~review
+title: Choose the release layout
+pickMode: grouped
+items:
+  - {name: Compact, group: Header}
+  - {name: Spacious, group: Header}
+  - {name: List, group: Changelog}
+  - {name: Timeline, group: Changelog}
+~~~
+
+~~~review
+title: Which previews should we publish?
+pickMode: multi
+items:
+  - {name: Desktop}
+  - {name: Tablet}
+  - {name: Phone}
+~~~`);
+
 export const DEMO_BLOCKS_DOC = fence(`# Release plan
 
 Every kind of block, as an agent would write it. 這一頁同時有中文與英文內容。
@@ -163,6 +182,8 @@ release/
   \u2026 12 more
   README.md {changed}
 ~~~
+
+${DEMO_REVIEW_PICKS}
 `);
 
 /** A reply in the comms log: a form, quick replies, and a table. */

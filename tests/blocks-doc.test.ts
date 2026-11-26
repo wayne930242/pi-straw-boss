@@ -45,7 +45,7 @@ const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve()
 
 test("a Markdown document draws every block kind with its element, in the page, at the comfortable density, and with no frame", async () => {
 	const root = await open(card("docs/plan.md"));
-	assert.deepEqual(root.find((el) => el.tagName.startsWith("pbs-")).map((el) => el.tagName), ["pbs-callout", "pbs-callout", "pbs-cards", "pbs-options", "pbs-form", "pbs-review", "pbs-mindmap", "pbs-suggest", "pbs-checklist", "pbs-table", "pbs-steps", "pbs-stats", "pbs-diff", "pbs-diagram", "pbs-tree"]);
+	assert.deepEqual(root.find((el) => el.tagName.startsWith("pbs-")).map((el) => el.tagName), ["pbs-callout", "pbs-callout", "pbs-cards", "pbs-options", "pbs-form", "pbs-review", "pbs-mindmap", "pbs-suggest", "pbs-checklist", "pbs-table", "pbs-steps", "pbs-stats", "pbs-diff", "pbs-diagram", "pbs-tree", "pbs-review", "pbs-review"]);
 	for (const el of root.find((el) => el.tagName.startsWith("pbs-"))) assert.equal(el.getAttribute("density"), "comfortable", el.tagName);
 	assert.equal(root.find((el) => el.tagName === "iframe").length, 0);
 });
@@ -85,6 +85,19 @@ test("an answer from a block goes to the document's answer route as the Answer w
 	fire(review, { kind: "review", fields: [["title", "Landing page"], ["picked", "A"], ["item", "A"], ["comment", "ok"]], ref: { block: 5 } });
 	await settle();
 	assert.equal((posts[1]![1].answer as { kind: string }).kind, "review");
+});
+
+test("grouped and multi reviews send ordered fields to the document and lock with every pick", async () => {
+	const root = await open(card("docs/plan.md"));
+	const reviews = root.find((el) => el.tagName === "pbs-review").slice(1) as Locked[];
+	const choices = [[["picked:Header", "Compact"], ["picked:Changelog", "Timeline"]], [["picked", "Desktop"], ["picked", "Phone"]]];
+	for (const [i, fields] of choices.entries()) {
+		const review = reviews[i]!;
+		fire(review, { kind: "review", fields });
+		await settle();
+		assert.deepEqual(posts[i]![1].answer, { kind: "review", fields, ref: { block: 15 + i } });
+		assert.deepEqual(review.answered, fields);
+	}
 });
 
 test("what the server recorded comes with the text: an answered block opens locked with the fields that went, a pending one locked, in any tile of that document; an edited text (another hash) opens them again", async () => {
