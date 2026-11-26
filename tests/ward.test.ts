@@ -18,7 +18,7 @@ import { fakeClock } from "./fake-clock.ts";
 const dirs: string[] = [];
 after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
 const settle = async () => { for (let i = 0; i < 10; i++) await new Promise<void>((r) => setImmediate(r)); };
-const MAIN = "0199aaaa-main-0000-0000-000000000001", WORKER = "0199bbbb-work-0000-0000-000000000002";
+const MAIN = "0199aaaa-main-0000-0000-000000000001", WORKER = "0199bbbb-work-0000-0000-000000000002", MEMBER = "0199dddd-memb-0000-0000-000000000003";
 const line = (o: unknown) => `${JSON.stringify(o)}\n`;
 const user = (text: string) => line({ type: "message", id: "u", timestamp: "2026-11-27T00:00:00Z", message: { role: "user", content: [{ type: "text", text }] } });
 const said = (text: string) => line({ type: "message", id: "a", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text }] } });
@@ -38,24 +38,28 @@ function world() {
 		if (args[0] === "pane" && args[1] === "list") return JSON.stringify({ result: { panes: list } });
 		throw new Error(`unexpected herdr ${args.join(" ")}`);
 	};
-	const net: WatchNet = { onRead: () => () => {}, last: () => ({ bases: [] }) as Net, lookup: (key) => (key === MAIN ? { key, base: "w1", name: "main", role: "main", live: true } : undefined), read: async () => ({ bases: [] }) as Net };
+	const units: Record<string, { role: string; base: string; pane?: string; live: boolean }> = { [MAIN]: { role: "main", base: "w1", pane: "%1", live: true }, [MEMBER]: { role: "member", base: "w1", pane: "%3", live: true } };
+	const net: WatchNet = { onRead: () => () => {}, last: () => ({ bases: [] }) as Net, lookup: (key) => (units[key] ? { key, name: key.slice(0, 8), ...units[key]! } : undefined), read: async () => ({ bases: [] }) as Net };
+	const listening = { now: true };
 	const timer = (ms: number, fn: () => void) => { let live = true; clock.at(clock.elapsed() + ms, () => live && fn()); return () => void (live = false); };
 	const sent: { session: string; text: string; key: string; state: string }[] = [];
 	const stops: (() => void)[] = [];
-	const start = () => startWatches({ net, now: clock.now, send: async (to, text, facts) => (sent.push({ session: to.session, text, ...facts }), true), log: () => {}, stops, slot: { dir } as never, over: { timer }, ward: { run, monitorPanes: () => monitors, loopsDir: loops } });
+	const start = () => startWatches({ net, now: clock.now, send: async (to, text, facts) => (sent.push({ session: to.session, text, ...facts }), true), log: () => {}, stops, slot: { dir } as never, over: { timer }, ward: { run, monitorPanes: () => monitors, loopsDir: loops, ready: async (workspace, session) => listening.now && workspace === units[session]?.base } });
 	let routes = start();
 	after(() => stops.forEach((s) => s()));
 	return {
-		clock, file, pane, sent, monitors, loops, get routes() { return routes; },
+		clock, file, pane, sent, monitors, loops, units, listening, get routes() { return routes; },
+		/** Another pane in another workspace that runs pi. */
+		other: () => void list.push({ pane_id: "%9", tab_id: "t9", workspace_id: "w2", agent: "pi", agent_status: "working", agent_session: { value: file } }),
 		/** The server stops and a new one starts from `watches.json`. */
 		restart: () => void (stops.splice(0).forEach((s) => s()), (routes = start())),
 		set: (over: Partial<Pane>) => Object.assign(pane, over),
 		drop: () => void (list = list.filter((p) => p !== pane)),
 		write: (text: string) => appendFileSync(file, text),
-		add: (ward: Record<string, unknown> = {}) => watchReply(routes, { cmd: "watch-add", session: MAIN, workspace: "w1", key: "ward:%7", ward: { names: ["boss-main"], here: "%1", ...ward } }, () => true)!,
+		add: (ward: Record<string, unknown> = {}, session = MAIN, key = "ward:%7") => watchReply(routes, { cmd: "ward-add", session, key, ward }, () => true)!,
 		/** `n` looks of the ward, one WARD_LOOK_MS apart. */
 		async looks(n: number) { for (let i = 0; i < n; i++) { await settle(); clock.advance(WARD_LOOK_MS); await settle(); } },
-		list: () => routes.watches.list(MAIN).watches as { key: string; ward?: unknown }[],
+		list: async () => (await watchReply(routes, { cmd: "watch-list", session: MAIN }, () => true)!).watches as { key: string; ward?: unknown }[],
 	};
 }
 
@@ -78,7 +82,7 @@ test("a worker idle while its own monitor runs is not finished: no wake for as l
 	assert.match(w.sent[0]!.text, /^ward %7 \(MP-5102\): finished: its last turn ended and nothing of it has run for a minute\./);
 	await w.looks(20);
 	assert.equal(w.sent.length, 1, "one wake per ending: the ward ended with it");
-	assert.deepEqual(w.list(), []);
+	assert.deepEqual((await w.list()), []);
 });
 
 test("an active loop of the worker's session keeps it from being finished", async () => {
@@ -131,7 +135,7 @@ test("a pane that is gone, or one pi left, is dead: one wake, and the ward ends;
 	await w.looks(3);
 	assert.deepEqual(w.sent.map((s) => s.state), ["dead"]);
 	assert.ok(w.sent[0]!.text.startsWith(`ward %7: dead: its pane is gone. Read its session file (${w.file})`), w.sent[0]!.text);
-	assert.deepEqual(w.list(), []);
+	assert.deepEqual((await w.list()), []);
 
 	const moved = world();
 	assert.equal((await moved.add()).ok, true);
@@ -168,7 +172,7 @@ test("a dialog or a pane Herdr shows blocked is blocked: one wake per blocked sp
 
 test("a ward is refused on the caller's own pane, a pane that runs no pi, an unknown pane, and a bad item", async () => {
 	const w = world();
-	const no = async (over: Record<string, unknown>, key = "ward:%7") => (await watchReply(w.routes, { cmd: "watch-add", session: MAIN, workspace: "w1", key, ward: { here: "%1", ...over } }, () => true)!);
+	const no = async (over: Record<string, unknown>, key = "ward:%7") => (await watchReply(w.routes, { cmd: "ward-add", session: MAIN, key, ward: over }, () => true)!);
 	assert.match(String((await no({}, "ward:%1")).error), /your own pane/);
 	assert.match(String((await no({}, "ward:%99")).error), /no pane %99/);
 	assert.match(String((await no({ item: "bad item!" })).error), /item is a plain key/);
@@ -205,10 +209,10 @@ test("cli.mjs ward: parsed, and sent as the session's ward in the workspace of i
 	assert.throws(() => parseArgs(["ward", "--item", "MP-1"]), /ward needs the pane/);
 	const asked: Record<string, unknown>[] = [];
 	let out = "", err = "";
-	const run = async () => JSON.stringify({ result: { panes: [{ pane_id: "%1", tab_id: "t1", workspace_id: "w1" }] } });
-	const io = { out: (t: string) => void (out += t), err: (t: string) => void (err += t), run, env: { PI_INTERCOM_SESSION_ID: MAIN, HERDR_PANE_ID: "%1" }, ask: async (r: Record<string, unknown>) => (asked.push(r), { ok: true as const, reply: { ward: { pane: "%7", file: "/f" }, watch: { until: 5, line: "ward %7: unchanged: it works." } } }) };
+	const run = async () => { throw new Error("the CLI reads no Herdr: the server takes the workspace from its own reading"); };
+	const io = { out: (t: string) => void (out += t), err: (t: string) => void (err += t), run, env: { PI_INTERCOM_SESSION_ID: MAIN }, ask: async (r: Record<string, unknown>) => (asked.push(r), { ok: true as const, reply: { ward: { pane: "%7", file: "/f" }, watch: { until: 5, line: "ward %7: unchanged: it works." } } }) };
 	assert.equal(await runWard({} as never, { pane: "%7", item: "MP-1", until: "2h" }, io), 0, err);
-	assert.deepEqual(asked[0], { cmd: "watch-add", session: MAIN, workspace: "w1", key: "ward:%7", untilMs: 7_200_000, ward: { item: "MP-1", here: "%1" } });
+	assert.deepEqual(asked[0], { cmd: "ward-add", session: MAIN, key: "ward:%7", untilMs: 7_200_000, ward: { item: "MP-1", cli: true } });
 	assert.match(out, /"pane":"%7"/);
 	assert.equal(await runWard({} as never, { pane: "%7", stop: true }, io), 0);
 	assert.deepEqual(asked[1], { cmd: "watch-stop", session: MAIN, key: "ward:%7" });
@@ -223,10 +227,42 @@ test("a ward is kept in watches.json: a restarted server keeps it, does not tell
 	assert.deepEqual(w.sent.map((s) => s.state), ["blocked"]);
 	w.restart();
 	await w.looks(1);
-	assert.deepEqual(w.list().map((x) => [x.key, x.ward]), [["ward:%7", { pane: "%7", file: w.file, item: "MP-9" }]]);
+	assert.deepEqual((await w.list()).map((x) => [x.key, x.ward]), [["ward:%7", { pane: "%7", file: w.file, item: "MP-9" }]]);
 	await w.looks(4);
 	assert.deepEqual(w.sent.map((s) => s.state), ["blocked"], "the spell was told before the restart");
 	w.drop();
 	await w.looks(4);
 	assert.deepEqual(w.sent.map((s) => s.state), ["blocked", "dead"]);
+});
+
+test("ward-review F002: a ward from the shell is refused while the main does not answer on the control channel, and set once it does", async () => {
+	const w = world();
+	w.listening.now = false;
+	const r = await w.add({ cli: true });
+	assert.equal(r.ok, false);
+	assert.match(String(r.error), /does not answer on the control channel.*sb_ward/);
+	assert.deepEqual((await w.list()), []);
+	w.listening.now = true;
+	assert.equal((await w.add({ cli: true })).ok, true);
+});
+
+test("ward-review F003: only a live main of the server's reading wards, only a pane of its own workspace, and only it lists the ward's file or stops it", async () => {
+	const w = world();
+	assert.match(String((await w.add({}, MEMBER)).error), /only a tab's main wards a worker; your session is a member/);
+	assert.match(String((await w.add({}, "0199eeee-none")).error), /not a live unit of the net/);
+	w.units[MAIN]!.live = false;
+	assert.match(String((await w.add()).error), /not a live unit of the net/);
+	w.units[MAIN]!.live = true;
+	w.other();
+	assert.match(String((await w.add({}, MAIN, "ward:%9")).error), /not in your workspace/);
+	// The workspace and the main's own pane are the server's reading, whatever the request says.
+	assert.match(String((await watchReply(w.routes, { cmd: "ward-add", session: MAIN, workspace: "w2", key: "ward:%1", ward: { here: "%5" } }, () => true)!).error), /your own pane/);
+	assert.match(String((await watchReply(w.routes, { cmd: "watch-add", session: MAIN, workspace: "w1", key: "ward:%7" }, () => true)!).error), /set with sb_ward/);
+	assert.equal((await w.add()).ok, true);
+	w.units[MAIN]!.role = "member";
+	assert.deepEqual((await w.list()).map((x) => x.ward), [{ pane: "%7" }], "no file for a session that is no main now");
+	assert.match(String((await watchReply(w.routes, { cmd: "watch-stop", session: MAIN, key: "ward:%7" }, () => true)!).error), /only a tab's main/);
+	w.units[MAIN]!.role = "main";
+	assert.deepEqual((await w.list()).map((x) => x.ward), [{ pane: "%7", file: w.file }]);
+	assert.equal((await watchReply(w.routes, { cmd: "watch-stop", session: MAIN, key: "ward:%7" }, () => true)!).ok, true);
 });

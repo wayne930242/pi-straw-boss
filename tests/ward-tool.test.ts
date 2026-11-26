@@ -21,7 +21,7 @@ test("sb_ward: active for a main only; it listens, asks the server for the ward,
 	world.ask = async (request) => {
 		asked.push(request);
 		if (request.cmd === "watch-list") return { ok: true, watches: [] };
-		if (request.cmd === "watch-add") return { ok: true, watch: { key: request.key, until: 0, line: "ward %7: unchanged: it works." }, ward: { pane: "%7", file: "/s/w.jsonl", item: "MP-1" } };
+		if (request.cmd === "ward-add") return { ok: true, watch: { key: request.key, until: 0, line: "ward %7: unchanged: it works." }, ward: { pane: "%7", file: "/s/w.jsonl", item: "MP-1" } };
 		if (request.cmd === "watch-stop") return { ok: true };
 		return { ok: false, error: "no server" };
 	};
@@ -41,9 +41,8 @@ test("sb_ward: active for a main only; it listens, asks the server for the ward,
 	await assert.rejects(m.tool("sb_ward", { pane: "%7", until: "30s" }), /until is 1m to 48h/);
 	const done = await m.tool("sb_ward", { pane: "%7", item: "MP-1", until: "2h" });
 	assert.match(textOf(done), /Warding %7 \(session \/s\/w\.jsonl\)/);
-	const add = asked.find((r) => r.cmd === "watch-add")!;
-	assert.deepEqual([add.session, add.workspace, add.key, add.untilMs], ["main-1", "wA", "ward:%7", 7_200_000]);
-	assert.equal((add.ward as { item: string }).item, "MP-1");
+	const add = asked.find((r) => r.cmd === "ward-add")!;
+	assert.deepEqual([add.session, add.workspace, add.key, add.untilMs, add.ward], ["main-1", undefined, "ward:%7", 7_200_000, { item: "MP-1" }], "the server takes the workspace and the main's pane from its own reading");
 	assert.ok(m.regs.get(CONTROL), "listens for the wake");
 	assert.deepEqual(m.entries.filter((e) => e.customType === WARD_ENTRY).map((e) => e.data), [{ ward: "%7", sessionFile: "/s/w.jsonl", item: "MP-1" }]);
 	await m.tool("sb_ward", { pane: "%7", stop: true });

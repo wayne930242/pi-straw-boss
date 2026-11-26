@@ -77,3 +77,13 @@ test("a main with no watch on the server does not listen; boss_watch registers t
 	assert.ok(m.regs.get(CONTROL), "registered at the first boss_watch");
 	await assert.rejects(m.tool("boss_watch", { key: "u1", quiet: "30s" }), /quiet is at least 1m/);
 });
+
+test("a ward from the shell asks first (watch-ping): the main answers its own tower identity that it listens, and nobody else; no message lands", async () => {
+	const { m } = await town();
+	const ping = (from: string, reqId: string) => m.regs.get(CONTROL)!.onEvent({ type: "message", fromSessionId: from, payload: { version: 1, type: "watch-ping", to: m.id, reqId } });
+	ping("tower-wA", "p1");
+	ping("tower-wB", "p2");
+	await until(() => result("p1") !== undefined && result("p2") !== undefined, "the answers");
+	assert.deepEqual([result("p1")!.accepted, result("p2")!.accepted], [true, false]);
+	assert.equal(m.sent.filter((x) => x.customType === WATCH_MESSAGE).length, 0, "a ping is no line");
+});

@@ -31,7 +31,9 @@ const span = (name: string, text: string | undefined): number | undefined => {
 export function createBossWatch({ pi, cfg, s, guiDir, me, role }: Kit, d: { ask?: Ask; control: Pick<Control, "register" | "onWatch">; openTower: Reach["openTower"]; remote(): boolean }) {
 	d.control.onWatch(async (from, p) => {
 		const mine = (await workspaces(cfg.run)).find((w) => w.workspace_id === s.at.workspaceId);
-		if (!mine?.tokens?.tower || mine.tokens.tower !== from || typeof p.text !== "string") return false;
+		if (!mine?.tokens?.tower || mine.tokens.tower !== from) return false;
+		if (p.type === "watch-ping") return true; // a ward from the shell asks whether this main listens (server/watchesops.ts)
+		if (typeof p.text !== "string") return false;
 		pi.sendMessage({ customType: WATCH_MESSAGE, content: p.text.slice(0, 1000), display: true, details: { key: p.key, state: p.state } }, { triggerTurn: true, deliverAs: "followUp" });
 		return true;
 	});

@@ -49,8 +49,7 @@ export function createWard({ pi, cfg, s, guiDir, me, role }: Kit, d: { ask?: Ask
 					if (ms !== undefined && !(ms >= 60_000 && ms <= 48 * 3_600_000)) throw new Error("until is 1m to 48h: 90m, 2h");
 					await d.openTower(undefined, true); // the workspace's tower identity sends the wake, as it does boss_watch's lines
 					try { d.control.register(); } catch (error) { throw new Error(`sb_ward cannot listen for the server's wake: ${(error as Error).message}`); }
-					const names = [pi.getSessionName(), s.ownName].filter((n): n is string => typeof n === "string" && n.trim().length > 0);
-					const added = await ask({ cmd: "watch-add", session: me(), workspace: s.at.workspaceId, key, ...(ms ? { untilMs: ms } : {}), ward: { ...(item ? { item: item.trim() } : {}), names, ...(cfg.env.HERDR_PANE_ID ? { here: cfg.env.HERDR_PANE_ID } : {}) } });
+					const added = await ask({ cmd: "ward-add", session: me(), key, ...(ms ? { untilMs: ms } : {}), ward: { ...(item ? { item: item.trim() } : {}) } });
 					const watch = added.watch as { until: number; line: string }, ward = added.ward as { pane: string; file: string; item?: string };
 					try { pi.appendEntry(WARD_ENTRY, { ward: ward.pane, sessionFile: ward.file, ...(ward.item ? { item: ward.item } : {}) }); } catch { /* a replaced session's pi throws */ }
 					return reply(`Warding ${ward.pane} (session ${ward.file}) until ${new Date(watch.until).toTimeString().slice(0, 5)}. Now: ${watch.line} You get one message when it finishes, blocks, or dies, after your turn while you work; do not poll it in your own turns. sb_ward with stop ends it.`, { ...ward, until: watch.until });

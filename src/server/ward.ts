@@ -100,7 +100,8 @@ export interface WardDeps {
 	/** pi-loop-monitor's folder (`~/.pi/loops`): a worker's active loop still runs. */
 	loopsDir: string;
 }
-export interface WardAsk { pane: string; session: string; item?: string; names?: string[]; here?: string }
+/** `workspace` and `here`: the main's workspace and pane as the server reads them, never as a request says (ward-review F003). */
+export interface WardAsk { pane: string; session: string; workspace: string; item?: string; names?: string[]; here?: string }
 
 const stampOf = (t: WardTold) => Buffer.from(JSON.stringify(t)).toString("base64url");
 const toldOf = (since: string | undefined): WardTold => {
@@ -148,6 +149,7 @@ export function createWardRead(d: WardDeps) {
 			if (a.here && a.pane === a.here) return `${a.pane} is your own pane`;
 			const pane = (await panes(d.run)).find((p) => p.pane_id === a.pane);
 			if (!pane) return `no pane ${a.pane} in Herdr's list`;
+			if (pane.workspace_id !== a.workspace) return `${a.pane} is not in your workspace; a main wards only a pane of its own workspace`;
 			const file = pane.agent === "pi" ? pane.agent_session?.value : undefined;
 			if (!file) return `${a.pane} runs no pi session Herdr can name, so there is nothing to ward`;
 			const worker = sessionHeader(file)?.id;
