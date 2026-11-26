@@ -87,7 +87,7 @@ test("tower-reply: sending refuses an inReplyTo that is not an ask id, receiving
 test("caps and tower-reply: rules, round trips, limits, and refusals", () => {
 	assert.deepEqual(KINDS.caps, { ephemeral: true, wholeTeam: true, sender: "any", live: false });
 	assert.deepEqual(KINDS["tower-reply"], { ephemeral: false, wholeTeam: false, sender: "any", live: false });
-	const many = decodePlaintext("caps", encodePlaintext("caps", { features: Array.from({ length: 20 }, (_, i) => `f${i}`) }))!;
+	const many = decodePlaintext("caps", encodePlaintext("caps", { features: Array.from({ length: LIMITS.capsFeatures + 4 }, (_, i) => `f${i}`) }))!;
 	assert.equal(many.features.length, LIMITS.capsFeatures);
 	const long = decodePlaintext("tower-reply", encodePlaintext("tower-reply", { ...SAMPLE["tower-reply"], text: "é".repeat(200_000) }))!;
 	assert.ok(Buffer.byteLength(long.text) <= LIMITS.towerText && !long.text.includes("\ufffd"));
