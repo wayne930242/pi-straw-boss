@@ -274,14 +274,15 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const css = readFileSync(join(root, "gui/themes/raven/raven.css"), "utf8");
 const rules = rulesOf(css);
 
-test("raven.css clocks the weather on the strike: rk-clap (61 s, delayed 7 s) runs on the layers of rk-bolt and of rk-rest, whose cycles start 50.584 s in, so the first flash and its event come 7 s after the layer shows, and rk-clap changes only `scale`", () => {
+test("raven.css clocks the weather on the strike: rk-clap (61 s, delayed 7 s) runs on the head and map rest layers, whose cycles start 50.584 s in, so the first flash and its event come 7 s after the layer shows, and rk-clap changes only `scale`", () => {
 	assert.equal(FLASH, "rk-clap");
 	const anims = rules.flatMap((r) => declarations(r.body).filter(([p]) => p === "animation").map(([, v]) => ({ selector: r.selector, v })));
 	const FLASH_AT = 61 * 0.944;
 	assert.ok(Math.abs(FLASH_AT - 57.584) < 1e-9, "57.584 s is 94.4 % of 61 s");
-	for (const host of ["rk-bolt", "rk-rest"]) {
-		const layers = anims.filter((x) => x.v.includes(`${host} 61s`));
-		assert.equal(layers.length, 2, `${host} runs under motion and under calm on a fine pointer`);
+	for (const route of ["head", "map"]) {
+		const host = "rk-rest";
+		const layers = anims.filter((x) => x.v.includes(`${host} 61s`) && x.selector.includes(`#stage[data-view="${route}"]`));
+		assert.equal(layers.length, 2, `${route}: strike runs under motion and under calm on a fine pointer`);
 		for (const a of layers) {
 			const start = Number(new RegExp(`${host} 61s linear (-[\\d.]+)s infinite`).exec(a.v)?.[1]), clap = Number(/rk-clap 61s linear ([\d.]+)s infinite/.exec(a.v)?.[1]);
 			assert.ok(start < 0, `${host}'s layer starts partway into its cycle: ${a.v}`);
@@ -298,7 +299,7 @@ test("raven.css clocks the weather on the strike: rk-clap (61 s, delayed 7 s) ru
 		const turnedAt = Number(frames.find((f) => f[3] === "1")![1]) / 100 * 17 + start;
 		assert.ok(turnedAt >= 2 && turnedAt <= 6, `the head is turned ${turnedAt.toFixed(1)} s after the raven shows`);
 	}
-	for (const name of ["rk-bolt", "rk-rest"]) assert.match(css, new RegExp(`@keyframes ${name} \\{ 0%, 94\\.3% \\{`), `${name} flashes at 94.3 to 94.4 % (a tenth of a second's rise, round 3)`);
+	for (const name of ["rk-strike", "rk-rest"]) assert.match(css, new RegExp(`@keyframes ${name} \\{ 0%, 94\\.3% \\{`), `${name} flashes at 94.3 to 94.4 % (a tenth of a second's rise, round 3)`);
 	assert.match(css, /@keyframes rk-clap \{ from, to \{ scale: 1; \} \}/);
 	// the clock sits inside the no-preference blocks: not under calm unless the pointer is fine (the strike's own block), never under reduced motion
 	const start = css.indexOf("@media (prefers-reduced-motion: no-preference)");

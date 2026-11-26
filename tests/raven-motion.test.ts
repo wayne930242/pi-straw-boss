@@ -23,6 +23,22 @@ const keyframes = (css: string) => {
 	return out;
 };
 const frames = keyframes(raven);
+
+test("head, map and room motion only transform or fade; the weather clock holds scale at one", () => {
+	for (const [name, body] of frames) {
+		if (name === "rk-clap") {
+			assert.match(body.trim(), /^from, to \{ scale: 1; \}$/);
+			continue;
+		}
+		const properties = [...body.matchAll(/\{([^{}]*)\}/g)].flatMap(m => declarations(m[1]!).map(([p]) => p));
+		assert.ok(properties.length, `no stops for ${name}`);
+		for (const prop of properties) assert.ok(["transform", "translate", "opacity"].includes(prop), `${name} animates ${prop}`);
+	}
+	const head = ravenRules.filter(r => r.selector.includes('#stage[data-view="head"]') && r.selector.includes('[data-slot="backdrop"]'));
+	for (const name of ["rk-lit-a", "rk-lit-b", "rk-rest", "rk-strike", "rk-mist-a", "rk-mist-b", "rk-bat-first", "rk-bat-last", "rk-flap-a", "rk-flap-b", "rk-raven-map", "rk-raven-glide", "rk-clap"]) {
+		assert.ok(frames.has(name) && head.some(r => declarations(r.body).some(([p,v]) => p === "animation" && v.split(",").some(a => a.trim().split(/\s+/)[0] === name))), `${name} runs on the head page`);
+	}
+});
 /** The animation names and cycle lengths (seconds) of one `animation` shorthand: a comma list of `name duration ...`. */
 const shorthand = (value: string) => value.split(",").map((one) => one.trim()).filter(Boolean).map((one) => ({ name: /^[a-z][\w-]*/.exec(one)?.[0] ?? one, seconds: Number(/(?:^|\s)(\d*\.?\d+)s\b/.exec(one)?.[1] ?? NaN) }));
 const animationOf = (body: string) => declarations(body).filter(([p]) => p === "animation").map(([, v]) => v);

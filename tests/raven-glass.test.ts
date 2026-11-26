@@ -113,7 +113,7 @@ test("the bolt is a double pulse 0.3 s long at most, on the picture's own instan
 	assert.ok(sec(end.at) - sec(peaks[0]!.at) <= 0.3, `the pair lasts ${(sec(end.at) - sec(peaks[0]!.at)).toFixed(2)} s from its first peak`);
 	assert.ok(bolt.some((f) => f.at > peaks[0]!.at && f.at < peaks[1]!.at && f.v > 0 && f.v < 0.5), "it dips between the pulses");
 	// the picture's own light and the raven's go to the same two peaks and fade over 1 to 2 s: nothing else flashes in a strike (at most 2 flashes, one strike per 61 s)
-	for (const name of ["rk-bolt", "rk-rest", "rk-perch-dark"]) {
+	for (const name of ["rk-rest", "rk-perch-dark"]) {
 		const other = frames(name).filter((f) => f.at >= 94 && f.at <= 94.7).map((f) => f.at);
 		assert.deepEqual(other.slice(0, 4), [94.3, 94.4, 94.5, 94.6], `${name} peaks where the bolt's do`);
 	}

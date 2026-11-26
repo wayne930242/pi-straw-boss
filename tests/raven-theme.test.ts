@@ -137,7 +137,7 @@ test("calm on a fine pointer keeps the strike and the perched raven only: the bl
 	assert.ok(FINE_BLOCK.length > 0, "the fine-pointer block exists");
 	const rules = rulesOf(FINE_BLOCK);
 	assert.equal(rules.length, 10, "the head page's strike, bolt, raven light, turn and profile swap, then the map's");
-	const allowed = new Set(["rk-bolt", "rk-rest", "rk-clap", "rk-strike", "rk-perch-dark", "rk-perch-turn", "rk-perch-profile"]);
+	const allowed = new Set(["rk-rest", "rk-clap", "rk-strike", "rk-perch-dark", "rk-perch-turn", "rk-perch-profile"]);
 	for (const rule of rules) {
 		assert.match(rule.selector, /^html\[data-view="raven"\]\[data-calm\]/, `${rule.selector} applies under calm only`);
 		for (const [prop, value] of declarations(rule.body)) {
@@ -157,25 +157,20 @@ test("calm on a fine pointer keeps the strike and the perched raven only: the bl
 });
 
 test("the lightning comes at most once a minute and never washes the screen: its cycle is 60 s or longer and its peak alpha is low", () => {
-	const bolt = /animation:[^;]*\brk-bolt\s+(\d+)s/.exec(raw);
-	assert.ok(bolt && Number(bolt[1]) >= 60, `rk-bolt cycle ${bolt?.[1]} s`);
-	const keyframes = /@keyframes rk-bolt \{([\s\S]*?)\n\}/.exec(raw)?.[1] ?? "";
-	const peaks = [...keyframes.matchAll(/--rk-bolt:\s*([\d.]+)/g)].map((x) => Number(x[1]));
-	assert.ok(peaks.length >= 2 && Math.max(...peaks) <= 1, "the bolt variable stays within 0..1");
+	const cycle = /animation:\s*rk-rest\s+(\d+)s/.exec(raw);
+	assert.ok(cycle && Number(cycle[1]) >= 60, `light cycle ${cycle?.[1]} s`);
+	assert.match(raw, /--rk-bolt: 1;/, "bright painting at full strength");
+	assert.match(raw, /:nth-child\(1\)::before \{[^}]*--rk-bolt: 0;/, "dark endpoint has no violet wash");
 	assert.match(raw, /rgb\([^)]*\/\s*calc\(var\(--rk-bolt\)\s*\*\s*0?\.(1|2)\d*\)\)/, "its gradient scales the variable to at most 0.29 alpha");
 	assert.ok(!/(#fff\b|#ffffff|white)[^;]*var\(--rk-bolt\)/i.test(raw), "never a white flash");
 });
 
 // The lightning (boss, 2026-11-07): at rest the picture is near black; a strike lights it with a double flicker and it fades back to dark in one to two seconds. Photosensitivity: at most 3 flashes in any second, strikes at least 60 s apart.
 /** The frames of `@keyframes name` that set `prop` (a number): [{ at: percent, v }] in time order. */
-const framesOf = (name: string, prop: string) => {
-	const body = new RegExp(`@keyframes ${name} \\{([\\s\\S]*?)\\n\\}`).exec(raw)?.[1] ?? "";
-	return [...body.matchAll(new RegExp(`([\\d.%,\\s]+?)\\{\\s*${prop}:\\s*([\\d.]+)\\s*;?\\s*\\}`, "g"))].flatMap((m) => m[1]!.split(",").map((t) => ({ at: parseFloat(t), v: Number(m[2]) }))).filter((f) => !Number.isNaN(f.at)).sort((a, b) => a.at - b.at);
-};
-const boltFrames = () => framesOf("rk-bolt", "--rk-bolt");
+const lightFrames = () => framesBalanced("rk-rest", "opacity").map(f => ({ at: f.at, v: 1 - f.v }));
 test("the lightning lights the picture with at most 3 flashes in any second, strikes 60 s or more apart, and a fade of 1 to 2 s", () => {
-	const cycle = Number(/animation:[^;]*\brk-bolt\s+(\d+)s/.exec(raw)?.[1]), frames = boltFrames();
-	assert.ok(cycle >= 60, `rk-bolt cycle ${cycle} s`);
+	const cycle = Number(/animation:\s*rk-rest\s+(\d+)s/.exec(raw)?.[1]), frames = lightFrames();
+	assert.ok(cycle >= 60, `picture light cycle ${cycle} s`);
 	assert.ok(frames.length >= 5, "the keyframes were read");
 	const sec = (f: { at: number }) => (f.at / 100) * cycle;
 	// a flash is a local peak of at least 0.6
@@ -201,7 +196,7 @@ test("the perched raven sits on the head page only, in two frames of one strip, 
 	assert.ok(perch.some((r) => /::after/.test(r.selector) && /filter:\s*brightness\(0\.34\)/.test(r.body)), "dark at rest through a fixed brightness filter on the top layer");
 	assert.ok(perch.some((r) => /::before/.test(r.selector) && /filter:\s*brightness\(0\.85\)/.test(r.body)), "the lit layer under it");
 	for (const name of ["rk-perch-dark", "rk-perch-turn"]) assert.match(raw, new RegExp(`@keyframes ${name}\\b`), name);
-	const cycle = Number(/rk-perch-turn\s+(\d+)s/.exec(raw)?.[1]), t = framesOf("rk-perch-turn", "opacity");
+	const cycle = Number(/rk-perch-turn\s+(\d+)s/.exec(raw)?.[1]), t = framesBalanced("rk-perch-turn", "opacity");
 	assert.ok(t.length >= 4 && t.some((f) => f.v === 1) && t.some((f) => f.v === 0), "the keyframes were read");
 	const first = t.find((f) => f.v === 1)!, last = [...t].reverse().find((f) => f.v === 1)!;
 	const from = [...t].reverse().find((f) => f.at < first.at && f.v === 0)!, to = t.find((f) => f.at > last.at && f.v === 0)!;
@@ -222,7 +217,7 @@ test("the perched raven sits on the head page only, in two frames of one strip, 
 
 test("the backdrop belongs to the head page only, and fog, flicker, bats, and the raven are all in the stylesheet", () => {
 	assert.match(raw, /html\[data-view="raven"\]:has\(#stage\[data-view="head"\]\) \[data-slot="backdrop"\] > :nth-child\(1\)/);
-	for (const name of ["rk-fog", "rk-bat", "rk-raven", "rk-lit-a", "rk-lit-b", "rk-bolt"]) assert.match(raw, new RegExp(`@keyframes ${name}\\b`), name);
+	for (const name of ["rk-mist-a", "rk-mist-b", "rk-bat-first", "rk-bat-last", "rk-raven-map", "rk-lit-a", "rk-lit-b", "rk-rest"]) assert.match(raw, new RegExp(`@keyframes ${name}\\b`), name);
 });
 
 // The map's backdrop (boss, 2026-11-08, spec §1.5 "On the map"): the same picture, strike, mist, bats, flying raven, and a perched raven on the head band. The map is open for hours, so every layer there only fades or moves (opacity, transform, translate; the compositor runs them without repainting a layer).
@@ -230,7 +225,7 @@ const MAP = 'html[data-view="raven"]:has(#stage[data-view="map"])';
 const mapRules = css.filter((r) => r.parts.some((p) => /data-view="map"/.test(p)));
 const rulesFor = (...needles: string[]) => css.filter((r) => needles.every((n) => r.selector.includes(n)));
 const zOf = (selector: string) => Number([...css.filter((r) => r.parts.includes(selector)).map((r) => r.body).join(";").matchAll(/z-index:\s*(-?\d+)/g)].at(-1)?.[1]); // the last rule wins
-/** The frames of `@keyframes name` that set `prop`, the body read with its braces balanced (framesOf above reads to the next line that starts with a brace, which is not enough for one-line sets that follow each other). */
+/** The frames of `@keyframes name` that set `prop`, with balanced braces so adjacent one-line keyframe sets never bleed into the sample. */
 const framesBalanced = (name: string, prop: string) => {
 	const at = raw.indexOf(`@keyframes ${name} {`);
 	if (at < 0) return [];
@@ -279,10 +274,10 @@ test("the map's layers animate nothing but opacity, transform, translate, no fil
 	for (const r of mapRules.filter((x) => !/animation/.test(x.body))) assert.ok(!/var\(--rk-(a|b|bolt)\)/.test(r.body), `${r.selector} reads no animated number`);
 });
 
-test("the map's lightning is the head page's, as opacity: the rest veil fades on rk-bolt's own instants, at most 3 flashes in a second, 60 s apart, and the picture fades back to dark in 1 to 2 s", () => {
-	const cycle = Number(/animation:\s*rk-rest\s+(\d+)s/.exec(raw)?.[1]), bolt = boltFrames(), rest = framesBalanced("rk-rest", "opacity").map((f) => ({ at: f.at, v: 1 - f.v }));
+test("the map's lightning is the head page's, as opacity: the rest veil fades on the original strike instants, at most 3 flashes in a second, 60 s apart, and the picture fades back to dark in 1 to 2 s", () => {
+	const cycle = Number(/animation:\s*rk-rest\s+(\d+)s/.exec(raw)?.[1]), rest = lightFrames();
 	assert.ok(cycle >= 60, `rk-rest cycle ${cycle} s`);
-	assert.deepEqual(rest.filter((f) => f.at > 0 && f.at < 100).map((f) => [f.at, Math.round(f.v * 100) / 100]), bolt.filter((f) => f.at > 0 && f.at < 100).map((f) => [f.at, f.v]), "the same instants and strengths as rk-bolt (opacity = 1 - bolt)");
+	assert.deepEqual(rest.filter((f) => f.at > 0 && f.at < 100).map((f) => [f.at, Math.round(f.v * 100) / 100]), [[94.3, 0], [94.4, 1], [94.5, .2], [94.6, 1], [96.4, 0]], "original light strengths and strike instants");
 	const peaks = rest.filter((f, i) => f.v >= 0.6 && (rest[i - 1]?.v ?? 0) <= f.v && (rest[i + 1]?.v ?? 0) < f.v);
 	assert.ok(peaks.length >= 2 && peaks.length <= 3, `${peaks.length} flashes`);
 	const sec = (f: { at: number }) => (f.at / 100) * cycle;
@@ -337,7 +332,7 @@ test("no selector of the theme puts a pseudo-element inside :is() (it matches no
 	for (const query of ["(max-width: 600px)"]) {
 		const block = new RegExp(`@media ${query.replace(/[()]/g, "\\$&")} \\{([^\\n]*)\\}`).exec(raw)?.[1] ?? "";
 		assert.match(block, /:nth-child\(7\)/, `${query} hides the flyer`);
-		assert.ok(!/:is\(/.test(block), `${query} writes its selectors out`);
+		assert.match(block, /:nth-child\(8\)/, `${query} hides the other wing frame too`);
 	}
 });
 
