@@ -1,7 +1,8 @@
 import { homedir } from "node:os";
 import { inside } from "../link/routing.ts";
 import type { Opened, OpenRequest, PeerSender as OpenerPeer } from "../opener.ts";
-import { workspaces, type HerdrRun } from "../herdr.ts";
+import { workspaces, type HerdrRun, type Pane } from "../herdr.ts";
+import { subagentsOfAll } from "../netdata.ts";
 import { readApps } from "../train/appsconfig.ts";
 import { addRoute, type answeredAsks, markFinal, openedRoom, type Peer, readRoutes } from "./allyroute.ts";
 import { createWorkerEnds } from "./workerrelay.ts";
@@ -73,7 +74,9 @@ export function workerEndsOf(o: { slot: Slot; now(): number; log: Deps["log"]; l
 		rows: () => o.live().flatMap((l) => readRoutes(o.slot, l.record.workspace, o.now()).filter((r) => r.kind === "opened" && r.worker).map((route) => ({ workspace: l.record.workspace, route }))),
 		look: async ({ workspace, route }) => {
 			const net = await of(workspace)?.reach?.read().catch(() => undefined), pane = net?.ps.find((p) => p.pane_id === route.pane);
-			return { listed: net ? net.sessions.some((s) => s.id === route.to) : true, pane: net ? pane !== undefined : undefined, working: pane?.agent_status === "working" };
+			// A subagent of its pane that runs (a scout, a reviewer) is work too, whatever the pane shows (RV-F002).
+			const kids = net && pane ? subagentsOfAll(net.ps as Pane[], o.now(), Infinity)(pane as Pane).filter((r) => !r.ended).length : 0;
+			return { listed: net ? net.sessions.some((s) => s.id === route.to) : true, pane: net ? pane !== undefined : undefined, working: pane?.agent_status === "working" || kids > 0 };
 		},
 		close: async (ws, main, mode) => void (await of(ws)!.control!.closeMain(main, mode === "interrupt" ? { interrupt: true } : undefined)),
 		send: (ws, device, text, ask) => (o.link ? o.link({ op: "send", device, text, reply: false, inReplyTo: ask }, of(ws)?.record.id ?? "", true) : Promise.reject(new Error("no link holder"))),

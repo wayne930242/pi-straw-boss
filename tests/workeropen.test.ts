@@ -68,6 +68,14 @@ test("the worktree goes at close only when clean and pushed, or untouched; other
 	assert.equal(existsSync(p.dir), false);
 	const q = await prepareWorktree({ checkout, spec: workerSpec({ branch: "feat/q" }), home });
 	assert.equal((await closeWorktree({ checkout, dir: q.dir, branch: q.branch, baseSha: q.baseSha })).removed, true, "a worktree left at its base goes");
+	// RV-F005: HEAD back at the base with the branch ahead of it: the worktree goes, the branch and its commits stay.
+	const v = await prepareWorktree({ checkout, spec: workerSpec({ branch: "feat/v" }), home });
+	writeFileSync(join(v.dir, "v.txt"), "v\n");
+	git(v.dir, "add", "v.txt");
+	git(v.dir, "commit", "--quiet", "-m", "v");
+	git(v.dir, "checkout", "--quiet", "--detach", v.baseSha);
+	assert.equal((await closeWorktree({ checkout, dir: v.dir, branch: v.branch, baseSha: v.baseSha })).removed, true);
+	assert.notEqual(git(checkout, "branch", "--list", "feat/v"), "", "the branch with its commit is kept");
 });
 
 test("config: workers.models is the allowlist; an omitted model is pi's default", () => {
@@ -110,4 +118,16 @@ test("the door: each refusal answers the slip's ask by code; an open makes the w
 	assert.deepEqual(routes, [{ w: { points: 2, branch: "feat/x", path: join(home, ".herdr", "worktrees", "app", "feat-x"), base: "origin/main", baseSha: git(checkout, "rev-parse", "origin/main"), label: "feat/x" }, ask: "a".repeat(32) }]);
 	const held = createReservations(capDir(join(state, "board")), Date.now).live(-Infinity, () => false);
 	assert.deepEqual(held.map((r) => [r.session, r.points, r.self, r.launched]), [["worker-1", 2, true, true]], "the reservation names the worker's session");
+	// RV-F001: the same slip again (a run that failed before tower_done leaves its messages) opens nothing and answers nothing, so the ask stays the worker's.
+	const sent = replies.length;
+	await assert.rejects(openWorker(door(), peer, request()), /already opened for this slip/);
+	assert.equal(replies.length, sent, "no false refusal on the worker's ask");
+	assert.equal(routes.length, 1);
+	// RV-F004: once the open returned, a route that cannot be written leaves the running worker its worktree and its ask.
+	const other = request(workerSpec({ branch: "feat/r" }));
+	other.slip.ask = "b".repeat(32);
+	const kept = await openWorker(door({ route: () => { throw new Error("disk full"); } }), peer, other);
+	assert.equal(kept.main, "worker-1");
+	assert.equal(existsSync(join(home, ".herdr", "worktrees", "app", "feat-r")), true);
+	assert.equal(replies.length, sent);
 });

@@ -92,7 +92,8 @@ export async function closeWorktree(o: { checkout?: string; dir: string; branch:
 	const common = resolve(o.dir, await git(["rev-parse", "--git-common-dir"], o.dir).catch(() => ".git")), checkout = o.checkout ?? (basename(common) === ".git" ? dirname(common) : common);
 	await git(["worktree", "remove", "--", o.dir], checkout).catch(() => undefined);
 	if (existsSync(o.dir)) return { removed: false, reason: "git worktree remove failed", head };
-	await git(["branch", "-D", "--", o.branch], checkout).catch(() => undefined);
+	// The branch goes only when it points at the HEAD just checked: a branch moved past it in the worktree keeps its commits (RV-F005).
+	if ((await git(["rev-parse", "--verify", "--quiet", `refs/heads/${o.branch}`], checkout).catch(() => "")) === head) await git(["branch", "-D", "--", o.branch], checkout).catch(() => undefined);
 	return { removed: true, head };
 }
 
