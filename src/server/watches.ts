@@ -190,7 +190,8 @@ export function createWatches(d: WatchesDeps) {
 			owned(w);
 			if (w.ended) return;
 			if (!r.ok) {
-				if (String(r.error).startsWith("unknown key")) return note(w, { ok: true, state: "gone" });
+				// A unit gone is the reading a waiting change is checked against: the ending replaces it and goes out (ward-review F010).
+				if (String(r.error).startsWith("unknown key")) return (w.recheck = false), (w.pending = undefined), note(w, { ok: true, state: "gone" });
 				await pause(RETRY_MS);
 				continue;
 			}

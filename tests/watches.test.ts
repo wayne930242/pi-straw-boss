@@ -249,3 +249,21 @@ test("a message the session did not take is tried again a minute later", async (
 	assert.equal(w.sent.length, 1);
 	assert.match(w.sent[0]!.text, /mark waiting/);
 });
+
+test("ward-review F010: a change a restart found waiting, on a unit gone by the first reading, ends the watch with gone", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "sb-watches-f010-")), file = join(dir, "watches.json");
+	dirs.push(dir);
+	const a = world({ file });
+	await a.add();
+	a.accept(false);
+	await a.beat(netOf([unit({ mark: "waiting" })]));
+	assert.equal(a.sent.length, 0, "the change waits: the session does not take it");
+	a.watches.stopAll();
+	a.read.stop();
+	const b = world({ file, clock: a.clock, net: netOf([]) });
+	b.watches.start();
+	await b.beat(netOf([]));
+	await b.pass(RATE_MS);
+	assert.deepEqual(b.sent.map((x) => x.state), ["gone"]);
+	assert.deepEqual(b.watches.list("s1").watches, []);
+});
