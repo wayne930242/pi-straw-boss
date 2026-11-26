@@ -118,7 +118,7 @@ test("an unknown value is refused and changes nothing", async () => {
 	for (const view of ["sparkly", "GEEK", "", 1, null, ["geek"], { view: "geek" }]) {
 		const reply = await h.ask("gui-view", { view });
 		assert.equal(reply.ok, false, JSON.stringify(view));
-		assert.match(String(reply.error), /auto, standard, geek, or raven/);
+		assert.match(String(reply.error), /auto, standard, geek, raven, or storybook/);
 	}
 	assert.deepEqual(JSON.parse(readFileSync(prefs(h), "utf8")), { v: 1, view: "geek" });
 	assert.equal(metaOf(await pageOf(h)), "geek");
@@ -200,7 +200,7 @@ test("/boss gui view <auto|standard|geek> in a pi session sets the server's defa
 	assert.match(viewer.notices.at(-1)!.text, /now Standard/);
 	await viewer.command("gui view sparkly");
 	assert.equal(viewer.notices.at(-1)!.level, "error");
-	assert.match(viewer.notices.at(-1)!.text, /auto, standard, geek, or raven/);
+	assert.match(viewer.notices.at(-1)!.text, /auto, standard, geek, raven, or storybook/);
 	assert.equal(metaOf(await pageOf(h)), "standard", "a wrong value changed nothing");
 	await viewer.command("gui view auto");
 	assert.equal(metaOf(await pageOf(h)), "auto");
