@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { EventEmitter, getEventListeners } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { parseArgs, run } from "../src/server/cli.ts";
-import { WATCH_EVERY, WATCH_MAX } from "../src/server/traincmds.ts";
+import { WATCH_EVERY, WATCH_MAX, watchSleep } from "../src/server/traincmds.ts";
 import { type Board, writeBoard } from "../src/train/board.ts";
 import { SHA_A } from "./train-fixtures.ts";
 
@@ -104,4 +104,26 @@ test("kit2-F006: the watch waits for stdout to drain before the next look, and e
 		assert.equal(pipe.lines.length, written, `${end}: nothing is written after the pipe went`);
 		assert.deepEqual(out, [], `${end}: the lines go to the stream`);
 	}
+});
+
+test("kit2-r2-F001: the watch's wait leaves no abort listener and no timer behind, whether its timer ran out or the watch was stopped", async () => {
+	const stop = new AbortController(), pending = new Map<number, () => void>();
+	let next = 0;
+	const timers = { set: (done: () => void) => { pending.set(++next, done); return next; }, clear: (id: number) => void pending.delete(id) };
+	for (let i = 0; i < 50; i++) {
+		const waiting = watchSleep(60_000, stop.signal, timers);
+		assert.equal(getEventListeners(stop.signal, "abort").length, 1, "one listener while it waits");
+		const [id, done] = [...pending][0]!;
+		pending.delete(id);
+		done();
+		await waiting;
+		assert.equal(getEventListeners(stop.signal, "abort").length, 0, `look ${i}: the listener went with the timer`);
+	}
+	const waiting = watchSleep(60_000, stop.signal, timers);
+	stop.abort();
+	await waiting;
+	assert.equal(pending.size, 0, "a stopped wait clears its timer");
+	assert.equal(getEventListeners(stop.signal, "abort").length, 0);
+	await watchSleep(60_000, stop.signal, timers);
+	assert.equal(pending.size, 0, "a wait on a stopped watch sets no timer");
 });

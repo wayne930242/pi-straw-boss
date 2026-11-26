@@ -275,7 +275,7 @@ function status(flags: Record<string, string | true>, io: TrainIo): number | Pro
  * that stopped reading piles up no lines; a stream that closes or fails (its reader is gone) ends the watch with 1.
  */
 async function watch(io: TrainIo, look: () => Status, everyMs: number): Promise<number> {
-	const sleep = io.sleep ?? ((ms: number, signal?: AbortSignal) => new Promise<void>((done) => { const timer = setTimeout(done, ms); signal?.addEventListener("abort", () => (clearTimeout(timer), done()), { once: true }); }));
+	const sleep = io.sleep ?? watchSleep;
 	let last: string | undefined, line: string, gone = false;
 	const unloaded = (key: string, value: unknown) => (key === "load" && typeof value === "object" && value !== null ? { ...value, now: undefined } : value);
 	// One signal for both ends: the caller's stop, and the reader that went away.
@@ -311,6 +311,16 @@ async function watch(io: TrainIo, look: () => Status, everyMs: number): Promise<
 	stream?.off("close", end);
 	stream?.off("error", end);
 	return gone ? 1 : 0;
+}
+
+/** The wait between looks: the timer and the abort listener go together, whichever ends the wait first (kit2-r2-F001: a listener left per look piled up over a long watch). */
+export function watchSleep(ms: number, signal?: AbortSignal, timers: { set(done: () => void, ms: number): unknown; clear(id: unknown): void } = { set: (done, wait) => setTimeout(done, wait), clear: (id) => clearTimeout(id as NodeJS.Timeout) }): Promise<void> {
+	if (signal?.aborted) return Promise.resolve();
+	return new Promise<void>((done) => {
+		const end = () => (timers.clear(timer), signal?.removeEventListener("abort", end), done());
+		const timer = timers.set(end, ms);
+		signal?.addEventListener("abort", end, { once: true });
+	});
 }
 
 /** The progress message of one look: whether anything changed since the last look, the trains by state, and the steps that run (cut at 300 characters). */
