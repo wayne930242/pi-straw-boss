@@ -616,9 +616,11 @@ test("kit2-F003: a pane close's checkout reap takes only what works in the root,
 	const wt = "/tmp/psb-k2/wt";
 	const cwdOf: Record<number, string> = { 101: "/else", 102: "/else", 500: wt, 501: wt, 502: wt, 503: "/else", 600: `${wt}/app`, 601: "/tmp", 602: wt };
 	let failing = true;
+	const options: unknown[] = [];
 	const { w, procs } = world({
 		cwds: async (asked) => new Map(asked.filter((pid) => cwdOf[pid] !== undefined).map((pid) => [pid, { path: cwdOf[pid]! }])),
-		reap: async (refs): Promise<KillReport> => {
+		reap: async (refs, opts): Promise<KillReport> => {
+			if (!failing) options.push(opts);
 			if (failing) throw new Error("the process table could not be read; nothing was signalled");
 			w.reaped.push([...refs]);
 			w.table = w.table.filter((p) => !refs.some((r) => r.pid === p.pid && r.started === p.started));
@@ -636,6 +638,7 @@ test("kit2-F003: a pane close's checkout reap takes only what works in the root,
 	assert.equal(procs.list()[0]?.snapshot, 2, "the ended owner's reap failed: its record keeps a snapshot of 101 and 102, which work elsewhere");
 	failing = false;
 	const result = await procs.reapCheckout(wt, { caller: { pid: 502, started: "t502" } });
+	assert.deepEqual(options, [{ groups: false }], "the bounded reap signals one verified pid at a time, never a group");
 	assert.deepEqual(pids(w.reaped), [[600, 602]], "the orphan in the root and its child in the root; not 601 (elsewhere), not the caller or what it runs under, not the old snapshot");
 	assert.equal(result.owner, "(checkout)");
 	assert.ok(procs.list().some((o) => o.id === "w1"), "the ended owner's record is not the pane close's to drop");
@@ -654,13 +657,25 @@ test("kit2-F003: a pane close's checkout reap refuses a folder that is not a lin
 	assert.deepEqual(w.reaped, []);
 });
 
-test("kit2-F003: procs-reap takes a caller only as { pid, started } beside a checkout, and passes it to the bounded reap", async () => {
+test("kit2-F003: the bounded reap is a command of its own, procs-reap-bounded, with a checkout and its caller { pid, started }; procs-reap takes no caller", async () => {
 	const asked: unknown[] = [];
 	const done = { owner: "(checkout)", reason: "pane-close", targets: 0, termed: 0, killed: 0, skipped: 0, left: [], spared: 0 };
 	const reg = { reapCheckout: async (path: string, bounded?: unknown) => (asked.push([path, bounded]), done), reapOwner: async () => done } as unknown as Procs;
-	assert.deepEqual(await procsReply(reg, { cmd: "procs-reap", checkout: "/wt", caller: { pid: 502, started: "t502" } }), { ok: true, ...done });
+	assert.deepEqual(await procsReply(reg, { cmd: "procs-reap-bounded", checkout: "/wt", caller: { pid: 502, started: "t502" } }), { ok: true, ...done });
 	assert.deepEqual(await procsReply(reg, { cmd: "procs-reap", checkout: "/wt" }), { ok: true, ...done });
 	assert.deepEqual(asked, [["/wt", { caller: { pid: 502, started: "t502" } }], ["/wt", undefined]]);
-	for (const caller of [{ pid: 1, started: "t1" }, { pid: 502 }, { pid: "502", started: "t502" }, "502"]) assert.deepEqual(await procsReply(reg, { cmd: "procs-reap", checkout: "/wt", caller }), { ok: false, error: "procs-reap's caller is { pid, started } and goes with a checkout" }, JSON.stringify(caller));
+	assert.deepEqual(await procsReply(reg, { cmd: "procs-reap", checkout: "/wt", caller: { pid: 502, started: "t502" } }), { ok: false, error: "procs-reap needs an owner or a checkout, not both, and no caller (a pane close's reap is procs-reap-bounded)" });
+	for (const bad of [{ checkout: "/wt", caller: { pid: 1, started: "t1" } }, { checkout: "/wt", caller: { pid: 502 } }, { checkout: "/wt", caller: { pid: "502", started: "t502" } }, { checkout: "/wt", caller: "502" }, { checkout: "/wt" }, { caller: { pid: 502, started: "t502" } }, {}, { owner: "w1", checkout: "/wt", caller: { pid: 502, started: "t502" } }]) {
+		assert.deepEqual(await procsReply(reg, { cmd: "procs-reap-bounded", ...bad }), { ok: false, error: "procs-reap-bounded needs a checkout and its caller { pid, started }" }, JSON.stringify(bad));
+	}
 	assert.equal(asked.length, 2);
+});
+
+test("kit2-F003: a plain reap --checkout keeps the kill sequence's group signal", async () => {
+	const wt = "/tmp/psb-k2c/wt", options: unknown[] = [];
+	const { w, procs } = world({ cwds: async (asked) => new Map(asked.map((pid) => [pid, { path: wt }])), reap: async (refs, opts) => (options.push(opts), { termed: refs.length, killed: 0, skipped: 0, groups: 0, left: [] }) });
+	w.roots.set(wt, "linked");
+	w.table.push(P(600, 1));
+	await procs.reapCheckout(wt);
+	assert.deepEqual(options, [undefined]);
 });

@@ -27,12 +27,15 @@ export function procsReply(reg: Procs | undefined, request: Request): Promise<Re
 		case "procs-list":
 			return Promise.resolve({ ok: true, owners: reg.list() });
 		case "procs-reap": {
-			const owner = str(request.owner, 64), checkout = str(request.checkout), caller = request.caller as { pid?: unknown; started?: unknown } | undefined;
-			if ((owner === undefined) === (checkout === undefined)) return Promise.resolve({ ok: false, error: "procs-reap needs an owner or a checkout, not both" });
-			// `caller`: a pane close's bounded checkout reap (procs.ts `reapCheckout`), which spares the caller it names.
-			const bounded = caller === undefined ? undefined : typeof caller?.pid === "number" && Number.isSafeInteger(caller.pid) && caller.pid > 1 && str(caller.started, 64) && !owner ? { caller: { pid: caller.pid, started: str(caller.started, 64)! } } : null;
-			if (bounded === null) return Promise.resolve({ ok: false, error: "procs-reap's caller is { pid, started } and goes with a checkout" });
-			return (owner ? reg.reapOwner(owner) : reg.reapCheckout(checkout!, bounded)).then((r) => ({ ok: true, ...r }), (error: unknown) => (error instanceof ProcsRefusal ? { ok: false, error: error.message, refused: true } : refusal(error)));
+			const owner = str(request.owner, 64), checkout = str(request.checkout);
+			if ((owner === undefined) === (checkout === undefined) || request.caller !== undefined) return Promise.resolve({ ok: false, error: "procs-reap needs an owner or a checkout, not both, and no caller (a pane close's reap is procs-reap-bounded)" });
+			return (owner ? reg.reapOwner(owner) : reg.reapCheckout(checkout!)).then((r) => ({ ok: true, ...r }), (error: unknown) => (error instanceof ProcsRefusal ? { ok: false, error: error.message, refused: true } : refusal(error)));
+		}
+		case "procs-reap-bounded": {
+			// A pane close's bounded checkout reap (procs.ts `reapCheckout`), which spares the caller it names. A command of its own: a server older than it answers `unknown command` and never runs the unbounded reap in its place (kit2-F003).
+			const checkout = str(request.checkout), caller = request.caller as { pid?: unknown; started?: unknown } | undefined, started = str(caller?.started, 64);
+			if (!checkout || typeof caller?.pid !== "number" || !Number.isSafeInteger(caller.pid) || caller.pid <= 1 || !started || request.owner !== undefined) return Promise.resolve({ ok: false, error: "procs-reap-bounded needs a checkout and its caller { pid, started }" });
+			return reg.reapCheckout(checkout, { caller: { pid: caller.pid, started } }).then((r) => ({ ok: true, ...r }), (error: unknown) => (error instanceof ProcsRefusal ? { ok: false, error: error.message, refused: true } : refusal(error)));
 		}
 		default:
 			return Promise.resolve({ ok: false, error: `unknown command ${request.cmd}` });

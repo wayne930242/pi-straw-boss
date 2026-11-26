@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { parseArgs, run, UsageError } from "../src/server/cli.ts";
-import { ATTEMPTS, type PaneClosed, type PaneDeps } from "../src/server/panecli.ts";
+import { askBounded, ATTEMPTS, OLD_SERVER_TEXT, type PaneClosed, type PaneDeps, serverLacksBounded } from "../src/server/panecli.ts";
 import type { Proc, Ref } from "../src/procs/table.ts";
 
 // `cli.mjs pane close` (docs/how-it-works.md#a-checked-pane-close; troubleshoot kit §4): a close the deadpane.ts table allows (or the boss's --force), looked for in Herdr's list and tried again on the same
@@ -60,7 +60,7 @@ function world({ closesNeeded = 1, stubborn = [] as number[], cwds = {} as Recor
 	};
 	const pane: Partial<PaneDeps> = {
 		read: async () => table.map((p) => ({ ...p })), sleep: async () => {}, now: () => Date.parse("2026-11-27T01:00:00Z"), self: SELF, platform: "darwin", real: (path) => path, protect: async () => [{ pid: 50, why: "herdr" }],
-		probe: (pid) => table.find((p) => p.pid === pid)?.started, reviving: () => false, socket: "/fake/herdr.sock",
+		probe: (pid) => table.find((p) => p.pid === pid)?.started, reviving: () => false, socket: "/fake/herdr.sock", oldServer: async () => false,
 		checkout: (path) => (path === "/wt" ? { kind: "linked", root: "/wt", gitdir: "/repo/.git/worktrees/wt" } : path.startsWith("/wt/") ? { kind: "linked", root: "/wt", gitdir: "/repo/.git/worktrees/wt" } : path === "/repo" ? { kind: "main", root: "/repo" } : { kind: "none" }),
 		cwds: async (pids) => new Map(pids.filter((pid) => cwds[pid] !== undefined).map((pid) => [pid, { path: cwds[pid]! }])),
 		reap: async (refs) => {
@@ -280,4 +280,22 @@ test("kit2-F004: what a reap says it left is left while that pid still runs, whe
 	const b = await close(server, [PANE, "--checkout", "/wt"]);
 	assert.equal(b.code, 1);
 	assert.deepEqual(b.result!.left, [{ pid: 300, program: "node", where: "checkout" }], "300 still runs; 999 is gone");
+});
+
+test("kit2-F003: --checkout with a server too old for the bounded reap is refused before the close, and a server that went old meanwhile reaps nothing in its place", async () => {
+	const w = world();
+	w.pane.oldServer = async () => true;
+	const r = await close(w, [PANE, "--checkout", "/wt"]);
+	assert.equal(r.code, 1);
+	assert.equal(r.err, `${OLD_SERVER_TEXT}; nothing was closed\n`);
+	noClose(w);
+	assert.deepEqual(w.checkouts, []);
+	// The wire: the bounded reap is its own command, which an old server answers `unknown command` (and runs nothing), never `procs-reap`.
+	const sent: unknown[] = [];
+	const old = async (request: { cmd: string }) => (sent.push(request), { ok: false as const, error: `unknown command ${request.cmd}` });
+	assert.equal(await serverLacksBounded(old), true);
+	assert.deepEqual(await askBounded(old, "/wt", { pid: SELF, started: "t400" }), { ok: false, error: `${OLD_SERVER_TEXT}; nothing in the checkout was signalled` });
+	assert.deepEqual(sent, [{ cmd: "procs-reap-bounded" }, { cmd: "procs-reap-bounded", checkout: "/wt", caller: { pid: SELF, started: "t400" } }]);
+	const current = async () => ({ ok: false as const, error: "procs-reap-bounded needs a checkout and its caller { pid, started }" });
+	assert.equal(await serverLacksBounded(current), false, "a server that has it refuses the empty probe and runs nothing");
 });

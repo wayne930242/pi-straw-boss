@@ -37,8 +37,10 @@ export interface PaneDeps {
 	protect(table: readonly Proc[]): Promise<Protect[]>;
 	/** The kill sequence (src/procs/kill.ts), with no group signal. */
 	reap(refs: readonly Ref[]): Promise<KillReport>;
-	/** The sb server's bounded `procs reap --checkout`, which spares `caller` and what it runs under. */
+	/** The sb server's bounded checkout reap (`procs-reap-bounded`), which spares `caller` and what it runs under. */
 	reapCheckout(root: string, caller: Ref): Promise<Asked>;
+	/** Whether the running sb server is too old for that reap (asked before the close, with `--checkout`). */
+	oldServer(): Promise<boolean>;
 	/** The physical path of a folder, as lsof reports a working folder. */
 	real(path: string): string;
 	/** Which checkout a folder is in (procs/worktree.ts). */
@@ -79,6 +81,7 @@ export async function closePane(pane: string, { checkout, force = false }: { che
 	// The checkout is checked before the close: a reap of `/`, a home folder or a main checkout is refused by the server too, but only after the pane is gone (kit2-F003).
 	const root = checkout === undefined ? undefined : d.real(checkout);
 	if (root !== undefined && ((c) => c.kind !== "linked" || c.root !== root)(d.checkout(root))) throw refused(`${checkout} is not the root of a linked worktree: --checkout takes the root of the worktree the pane worked in`);
+	if (root !== undefined && (await d.oldServer())) throw refused(OLD_SERVER_TEXT);
 	// The close is the deadpane.ts table's to allow (kit2-F001): only the operator's --force closes a pane of another workspace, one whose pi or program runs, or one a tower is opening or reviving.
 	const own = d.here ? all.find((p) => p.pane_id === d.here) : undefined;
 	if (!force && !own?.workspace_id) throw refused("this command runs in no pane Herdr lists, so the workspace it may close panes in is not known (the boss closes it with --force)");
@@ -173,6 +176,18 @@ async function afterClose(out: PaneClosed, tree: readonly Ref[], checkout: { roo
 	return out;
 }
 
+type Ask = (request: { cmd: string } & Record<string, unknown>) => Promise<Asked>;
+/** What a server older than the bounded reap answers: it runs nothing then, and never the unbounded `procs-reap` in its place (kit2-F003). */
+const OLD_SERVER = "unknown command procs-reap-bounded";
+export const OLD_SERVER_TEXT = "the running sb server has no bounded checkout reap (procs-reap-bounded), so it cannot reap the checkout for pane close: restart it with cli.mjs restart";
+/** The server's bounded reap of a checkout; an old server's answer is said plainly. */
+export async function askBounded(ask: Ask, root: string, caller: Ref): Promise<Asked> {
+	const asked = await ask({ cmd: "procs-reap-bounded", checkout: root, caller });
+	return !asked.ok && asked.error === OLD_SERVER ? { ok: false, error: `${OLD_SERVER_TEXT}; nothing in the checkout was signalled` } : asked;
+}
+/** Before the close: whether the running server lacks the bounded reap. The request carries no checkout, so a server that has it refuses it and runs nothing; no server at all is the reap's error later. */
+export const serverLacksBounded = async (ask: Ask) => ((asked) => !asked.ok && asked.error === OLD_SERVER)(await ask({ cmd: "procs-reap-bounded" }));
+
 export interface PaneIo { out(text: string): void; err(text: string): void; env: NodeJS.ProcessEnv; run: HerdrRun; over?: Partial<PaneDeps> }
 export async function runPane(ctx: Ctx, flags: Record<string, string | true>, { out, err, env, run, over }: PaneIo): Promise<number> {
 	const checkout = typeof flags.checkout === "string" ? resolve(flags.checkout) : undefined;
@@ -180,7 +195,7 @@ export async function runPane(ctx: Ctx, flags: Record<string, string | true>, { 
 		run, sleep: (ms) => ctx.sleep(ms), now: ctx.now, read: () => readTable(), cwds: (pids) => readCwds(pids), probe: probeStart, reap: (refs) => realReap(refs, { groups: false }), real: physical, checkout: (path) => checkoutOf(path),
 		reviving: (p) => revivingAt(ctx.slot.stateDir, ctx.now(), p), socket: herdrSocket(env), self: process.pid, platform: ctx.platform,
 		protect: (table) => protectedSet(table, { run: (args) => run(args), stateDir: ctx.slot.stateDir, agentDir: env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), self: process.pid }),
-		reapCheckout: (root, caller) => askProcs(ctx, { cmd: "procs-reap", checkout: root, caller }), ...(env.HERDR_PANE_ID ? { here: env.HERDR_PANE_ID } : {}), ...(process.getuid ? { uid: process.getuid() } : {}), ...over,
+		reapCheckout: (root, caller) => askBounded((request) => askProcs(ctx, request), root, caller), oldServer: () => serverLacksBounded((request) => askProcs(ctx, request)), ...(env.HERDR_PANE_ID ? { here: env.HERDR_PANE_ID } : {}), ...(process.getuid ? { uid: process.getuid() } : {}), ...over,
 	};
 	let closed: PaneClosed;
 	try {

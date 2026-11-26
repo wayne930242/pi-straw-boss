@@ -55,8 +55,8 @@ export interface ProcsDeps {
 	/** The physical path of a folder (symlinks resolved), and whether it is there. */
 	real?: (path: string) => string;
 	exists?: (path: string) => boolean;
-	/** The kill sequence. */
-	reap?: (refs: readonly Ref[]) => Promise<KillReport>;
+	/** The kill sequence; `groups: false` for a bounded reap (no group signal, each pid verified before its own signal). */
+	reap?: (refs: readonly Ref[], options?: { groups?: boolean }) => Promise<KillReport>;
 	/** Pids that must outlive any reap: this server. */
 	self?: number[];
 	/** Gets the table of each tick (the stall watch, stallwatch.ts): it runs behind the tick, which never waits for it. */
@@ -94,7 +94,7 @@ export class ProcsRefusal extends Error {}
 export function createProcs(d: ProcsDeps): Procs {
 	const folder = join(d.dir, "procs"), file = join(folder, OWNERS_FILE);
 	const read = d.read ?? (() => readTable()), cwdsOf = d.cwds ?? ((pids) => readCwds(pids)), markersOf = d.markers ?? ((pids) => readOwners(pids));
-	const inode = d.inode ?? inodeOnDisk, checkout = d.checkout ?? checkoutOf, probe = d.startOf ?? startOf, reap = d.reap ?? ((refs) => realReap(refs));
+	const inode = d.inode ?? inodeOnDisk, checkout = d.checkout ?? checkoutOf, probe = d.startOf ?? startOf, reap = d.reap ?? ((refs, options) => realReap(refs, options));
 	const platform = d.platform ?? process.platform, self = d.self ?? [process.pid], real = d.real ?? physical, exists = d.exists ?? existsSync;
 	const owners = new Map<string, OwnerRecord>();
 	const pending = new Set<Promise<unknown>>();
@@ -213,7 +213,7 @@ export function createProcs(d: ProcsDeps): Procs {
 		const markers = await markersOf(table.filter((p) => !p.zombie).map((p) => p.pid));
 		const protect = (await d.protect?.(table)) ?? [];
 		const { targets, spared } = killSet({ owner, live, table, places, markers, protect, reapers: reapersOf(table), self: [...self, ...(bounded?.spare ?? [])], held, ...(d.ownUid !== undefined ? { ownUid: d.ownUid } : {}), ...(bounded ? { children: "placed" as const } : {}) });
-		const report: KillReport = targets.length ? await reap(targets.map((t) => refOf(t.proc))) : { termed: 0, killed: 0, skipped: 0, groups: 0, left: [] };
+		const report: KillReport = targets.length ? await reap(targets.map((t) => refOf(t.proc)), ...(bounded ? [{ groups: false }] : [])) : { termed: 0, killed: 0, skipped: 0, groups: 0, left: [] };
 		const result: ReapResult = { owner: subject.id, reason, targets: targets.length, termed: report.termed, killed: report.killed, skipped: report.skipped, left: report.left, spared: spared.length, ...(unknown ? { deferred: true } : {}) };
 		d.log("procs-reaped", { owner: subject.id, reason, targets: targets.length, termed: report.termed, killed: report.killed, left: report.left.length, protected: spared.length, ...(unknown ? { deferred: true } : {}) });
 		return result;
