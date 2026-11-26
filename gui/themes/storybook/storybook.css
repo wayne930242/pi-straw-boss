@@ -24,6 +24,10 @@
 	--line-c: #84799a;
 	--line: rgba(122, 111, 140, 0.32);
 	--hi: #3a3150;
+	--tint: var(--hi);
+	--glow: 0;
+	--scrim: color-mix(in srgb, var(--shadow) 40%, transparent);
+	--err-text: var(--err);
 	--shadow: #6b5a44;
 	--text: #3a3150;
 	--dim: #564d69;
@@ -83,6 +87,7 @@
 	--line-c: #8e8bb2;
 	--line: rgba(162, 157, 194, 0.3);
 	--hi: #ffffff;
+	--tint: var(--hi);
 	--shadow: #04060e;
 	--text: #f4ecd8;
 	--dim: #d6d1e7;
@@ -170,8 +175,6 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 [data-view="storybook"] .unit[data-mark="commanding"] > .card, [data-view="storybook"] .token[data-mark="commanding"] { background: color-mix(in srgb, var(--accent) 13%, var(--surface-0)); }
 [data-view="storybook"] .unit[data-mark="idle"] > .card { background: color-mix(in srgb, var(--idle) 10%, var(--surface-0)); opacity: 1; }
 @media (hover: hover) and (pointer: fine) { [data-view="storybook"] .card:hover { box-shadow: 0 6px 14px -8px color-mix(in srgb, var(--shadow) 45%, transparent); } }
-/* The discs keep a paper face: no glow behind an icon on a light page. */
-[data-view="storybook"] :is(.tower svg, .logo svg) { filter: none; }
 [data-view="storybook"] .tower::before { background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--c) 16%, var(--plate-hi)), var(--plate) 75%); }
 [data-view="storybook"] .logo:not([data-head] > .logo) { background: var(--plate); color: var(--text); border-color: var(--line); }
 
@@ -186,13 +189,6 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 [data-view="storybook"] .view-pick button[aria-pressed="true"], [data-view="storybook"] .pair-tabs :is(.later.on, .later[aria-selected="true"]) { background: color-mix(in srgb, var(--accent) 16%, var(--surface-0)); }
 [data-view="storybook"] :is(.cmp-send, .ask-send) { border: 0; border-radius: 10px; background: var(--send); color: var(--ink); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ink) 25%, transparent), 0 2px 0 color-mix(in srgb, var(--shadow) 25%, transparent); }
 [data-view="storybook"] .new-base { border-style: solid; background: color-mix(in srgb, var(--surface-0) 70%, transparent); color: var(--text); }
-/* The light-ground audit: Standard mixes these with white (--hi) or makes them glow, which reads wrong on paper. */
-[data-view="storybook"] .tog[data-state="error"] { color: var(--err); }
-[data-view="storybook"] :is(.tog[data-state="on"], .tog[data-state="done"], .tog[data-state="error"])::before { box-shadow: none; }
-[data-view="storybook"] .comms-head[data-mark="commanding"] h2 span { text-shadow: none; }
-[data-view="storybook"] .tl-lanes::after { box-shadow: none; }
-[data-view="storybook"] :is(.link-alert[data-level="error"], .link-team[data-status="stopped"]) { background: color-mix(in srgb, var(--err) 10%, transparent); }
-[data-view="storybook"] .sheet::backdrop { background: color-mix(in srgb, var(--shadow) 40%, transparent); }
 [data-view="storybook"] .sheet-yes { background: var(--err); color: var(--ink); }
 
 /* The question card: a ruled page (a line every 24 px) with the honey wash of what waits, held by tape. */

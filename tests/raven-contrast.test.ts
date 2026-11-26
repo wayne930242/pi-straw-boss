@@ -23,7 +23,8 @@ const MIN = 4.5;
 const TINT_MAX = 22;
 
 test("the raven block gives every colour token of the palette its own value, and is dark", () => {
-	for (const name of Object.keys(colours(root))) assert.ok(raven[name], `--${name} is set in the raven block`);
+	// The optional terminal palette is inherited (§4.1).
+	for (const name of Object.keys(colours(root)).filter(n => !/^ansi-(?:\d|1[0-5])$/.test(n))) assert.ok(raven[name], `--${name} is set in the raven block`);
 	for (const name of ["panel", "well", "line"]) assert.ok(declarations(block.body).some(([p]) => p === `--${name}`), `--${name} is set`);
 	assert.ok(declarations(block.body).some(([p, v]) => p === "color-scheme" && v === "dark"), "color-scheme: dark");
 	assert.equal(raven.bg, "#0d0a10", "the ground is the theme-color (gui/view.ts THEME.raven)");

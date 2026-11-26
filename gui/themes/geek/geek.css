@@ -35,6 +35,7 @@
 	--line-c: #8a8a8a;
 	--line: #8a8a8a;
 	--hi: #ffffff;
+	--tint: var(--hi);
 	--shadow: #000000;
 	--text: #f2f2f2;
 	--dim: #bdbdbd;

@@ -47,7 +47,8 @@ for (const phase of ["day", "night"] as const) {
 	const grounds = () => [...SURFACES.map((s) => c[s]!), panel()];
 
 	test(`${phase}: the block gives every colour token of Standard's palette a value, color-scheme ${phase === "day" ? "light" : "dark"}, and its ground is the theme-color`, () => {
-		for (const name of Object.keys(root)) assert.ok(c[name], `--${name} is set in the ${phase} block`);
+		// The dark terminal well keeps Standard's optional ANSI palette in both phases (§4.1).
+		for (const name of Object.keys(root).filter(n => !/^ansi-(?:\d|1[0-5])$/.test(n))) assert.ok(c[name], `--${name} is set in the ${phase} block`);
 		for (const name of ["panel", "well", "line"]) assert.ok(declarations(block.body).some(([p]) => p === `--${name}`), `--${name} is set`);
 		assert.ok(declarations(block.body).some(([p, v]) => p === "color-scheme" && v === (phase === "day" ? "light" : "dark")));
 		assert.equal(c.bg, (THEME.storybook as Record<string, string>)[phase], "gui/view.ts THEME.storybook");

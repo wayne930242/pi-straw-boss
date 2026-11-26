@@ -164,6 +164,31 @@ for (const dir of ["gui", "dist/gui"]) test(`${dir}: rules stay in their sheet's
 	}
 });
 
+// §4.3: inspect declaration values (including keyframes), never selectors, comments or URL fragments.
+// System colours, transparent and currentColor are intentional: none pins a hue.
+const namedColours = new Set(`aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow yellowgreen`.split(" "));
+function* paintedLiterals(css: string): Generator<string> {
+	for (const { prelude, body } of sheetRules(css)) {
+		if (body === undefined || prelude === ":root") continue;
+		if (body.includes("{")) { yield* paintedLiterals(body); continue; }
+		for (const [prop, value] of declarations(body)) {
+			const tokens = value.replace(/url\([^)]*\)|"[^"]*"|'[^']*'/gi, "").match(/#[\da-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|(?:ok)?l(?:ab|ch)|color|device-cmyk)\([^)]*\)|[\w-]+/gi) ?? [];
+			for (const t of tokens) if (t.startsWith("#") || t.includes("(") || namedColours.has(t.toLowerCase())) yield `${prelude} | ${prop} | ${t}`;
+		}
+	}
+}
+
+test("only the Zen first paint, alpha masks and document canvas may use colour literals outside the palette", () => {
+	const zen = readFileSync(join(root, "gui/zen.css"), "utf8"), palette = Object.fromEntries(declarations(rulesOf(zen).find(r => r.parts.includes('[data-view="zen"] :is(#zen, .connect)'))!.body));
+	const wash = rulesOf(zen).find(r => r.selector === '[data-view="zen"] .zen-circle i')!.body.match(/rgba\([^)]+\)/)![0];
+	const frame = 'html[data-view="zen"], html[data-view="zen"] body', ring = 'html[data-view="zen"] #zen:empty:not([hidden])::after';
+	assert.deepEqual([...paintedLiterals(readFileSync(join(root, "gui/style.css"), "utf8"))].sort(), [
+		`${frame} | background | ${palette["--zen-ground"]}`, `${frame} | color | ${palette["--zen-paper"]}`,
+		`${ring} | border | ${palette["--zen-line"]}`, `${ring} | background | ${wash}`,
+		...Array<string>(2).fill(".composer[data-activity] .cmp-row::before | mask | #000"), ".doc-frame | background | #fff",
+	].sort());
+});
+
 test("a layer order statement does not swallow the next selector", () => {
 	assert.deepEqual(rulesOf('@layer standard, theme; :root { --a: 1 }').map(r => r.selector), [":root"]);
 });

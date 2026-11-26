@@ -19,7 +19,7 @@ const STATES = ["accent", "working", "gold", "amber", "ok", "err", "err-soft", "
 const TEXT = ["text", "dim", "accent-hi", "term-fg", ...STATES];
 /** The share a state tint may take: the contrast below holds at it, so it holds under it. A white veil (--hi) is a lighter tint: 8. */
 const TINT_MAX = 12;
-const capOf = (tint: string) => (tint === "hi" ? 8 : TINT_MAX);
+const capOf = (tint: string) => (tint === "hi" || tint === "tint" ? 8 : TINT_MAX);
 const geekOnly = (r: Rule) => r.parts.every((p) => p.includes(GEEK));
 /** A selector part with each `:is(a, b)` written out as the parts it stands for, so `[data-view="geek"] :is(.x, .y)` is found as `[data-view="geek"] .x`. */
 const expand = (part: string): string[] => {
@@ -31,7 +31,8 @@ const expand = (part: string): string[] => {
 };
 
 test("the Geek block gives every colour token of the palette its own value", () => {
-	for (const name of Object.keys(colours(root))) assert.ok(geek[name], `--${name} is set in the Geek block`);
+	// The optional terminal palette is shared unless a theme retints an ANSI index (§4.1).
+	for (const name of Object.keys(colours(root)).filter(n => !/^ansi-(?:\d|1[0-5])$/.test(n))) assert.ok(geek[name], `--${name} is set in the Geek block`);
 	for (const name of ["panel", "well", "line"]) assert.ok(declarations(block.body).some(([p]) => p === `--${name}`), `--${name} is set (a translucent value is solid here)`);
 });
 
@@ -65,7 +66,7 @@ test("a background tint above TINT_MAX in the sheet is replaced by a Geek rule o
 	for (const rule of rules.filter((r) => !geekOnly(r) && !r.parts.every((p) => NO_TEXT.has(p)))) {
 		for (const [prop, value] of declarations(rule.body)) {
 			if (!/^background(-color|-image)?$/.test(prop) && prop !== "--c1") continue;
-			const big = [...value.matchAll(/color-mix\(in srgb,\s*var\(--([\w-]+)\)\s+([\d.]+)%/g)].filter(([, name, p]) => [...STATES, "hi", "c"].includes(name!) && Number(p) > capOf(name!));
+			const big = [...value.matchAll(/color-mix\(in srgb,\s*var\(--([\w-]+)\)\s+([\d.]+)%/g)].filter(([, name, p]) => [...STATES, "hi", "tint", "c"].includes(name!) && Number(p) > capOf(name!));
 			if (!big.length) continue;
 			const replaced = rule.parts.every((part) => rules.some((g) => geekOnly(g) && g.parts.flatMap(expand).some((gp) => gp.endsWith(` ${part}`) || gp === `${GEEK} ${part}`) && declarations(g.body).some(([p]) => p === prop || p === "background")));
 			if (!replaced) over.push(`${rule.selector} { ${prop}: ${big.map((b) => b[0]).join(", ")} }`);

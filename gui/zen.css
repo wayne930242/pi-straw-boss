@@ -9,8 +9,10 @@
 	--zen-paper: #ebe3d3; --zen-ash: #bdb3a2; --zen-line: #857a6b; --zen-seal: #c4553a; --zen-moss: #8fa58a; --zen-clay: #e8a58f; --zen-ochre: #c2a66c; --zen-ochre-hi: #d1bb8a;
 	/* The page's own tokens, in ink: the answer panels, the composer, and the log are Standard's, and follow. */
 	--bg: var(--zen-ground); --bg-2: var(--zen-ground-2); --surface-0: var(--zen-soft); --surface-1: var(--zen-soft); --raised: var(--zen-soft); --sunken: var(--zen-sunken); --well: var(--zen-sunken); --panel: var(--zen-soft); --plate: var(--zen-soft); --plate-hi: var(--zen-soft); --term-bg: var(--zen-sunken); --term-fg: var(--zen-paper);
-	--line: var(--zen-line); --line-c: var(--zen-line); --hi: var(--zen-paper); --shadow: transparent; --text: var(--zen-paper); --dim: var(--zen-ash); --ink: var(--zen-ground);
+	--line: var(--zen-line); --line-c: var(--zen-line); --hi: var(--zen-paper); --tint: var(--hi); --shadow: transparent; --text: var(--zen-paper); --dim: var(--zen-ash); --ink: var(--zen-ground);
 	--accent: var(--zen-paper); --accent-hi: var(--zen-paper); --working: var(--zen-ash); --gold: var(--zen-paper); --amber: var(--zen-paper); --ok: var(--zen-moss); --err: var(--zen-clay); --err-soft: var(--zen-clay); --violet: var(--zen-ash); --idle: var(--zen-ash); --unknown: var(--zen-ash);
+	--ansi-3: var(--zen-ochre); --ansi-11: var(--zen-ochre-hi);
+	--scrim: color-mix(in srgb, var(--shadow) 60%, transparent); --err-text: color-mix(in srgb, var(--err-soft) 45%, var(--tint));
 	--paper: var(--zen-ash); --paper-hi: var(--zen-paper); --paper-ink: var(--zen-ground); --paper-edge: var(--zen-line);
 	--sans: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; --serif: ui-serif, "Iowan Old Style", "Songti TC", "Noto Serif TC", PMingLiU, serif; --soft: var(--zen-ash);
 	--zen-ease: cubic-bezier(0.4, 0, 0.2, 1);
@@ -237,8 +239,6 @@
 [data-view="zen"] .zen-term-host .term-scroll { border-color: var(--zen-line); background: var(--zen-sunken); }
 /* The pane's colours, muted: the mirror's rows lose most of their saturation (luminance, so contrast, stays), which reaches the inline 256-colour and truecolor spans, and ANSI yellow is the ochre tokens (tests/zen-contrast.test.ts). */
 [data-view="zen"] .zen-term-host .term { filter: saturate(0.4); }
-[data-view="zen"] .zen-term-host .c3 { color: var(--zen-ochre); } [data-view="zen"] .zen-term-host .c11 { color: var(--zen-ochre-hi); }
-[data-view="zen"] .zen-term-host .k3 { background: var(--zen-ochre); } [data-view="zen"] .zen-term-host .k11 { background: var(--zen-ochre-hi); }
 [data-view="zen"] .zen-term-host :is(.pad-key, .term-bar button, .cmp-link) { min-height: 44px; min-width: 44px; }
 [data-view="zen"] .zen-term-host :is(.pad-yes, .pad-no, .tcard-mask, .tcard-go) { min-height: 44px; min-width: 44px; padding: 0 22px; border: 1px solid var(--zen-line); border-radius: 22px; background: transparent; color: var(--zen-paper); font-size: 1rem; font-weight: 400; letter-spacing: 0.12em; transition: background-color 0.6s var(--zen-ease); }
 [data-view="zen"] .zen-term-host :is(.pad-yes, .pad-no, .tcard-mask, .tcard-go):hover:not(:disabled) { background: var(--zen-warm-hi); }

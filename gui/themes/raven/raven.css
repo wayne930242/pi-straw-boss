@@ -23,6 +23,7 @@
 	--line-c: #8d809c;
 	--line: rgba(141, 128, 156, 0.32);
 	--hi: #ffffff;
+	--tint: var(--hi);
 	--shadow: #030204;
 	--text: #e6dcc2;
 	--dim: #b0a6bc;

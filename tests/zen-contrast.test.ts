@@ -67,16 +67,16 @@ test("no colour literal in the Zen sheet is a bright yellow, and the first frame
 
 test("the terminal's yellows in Zen are the ochre pair, readable (7 : 1 on the sunken ground), and the mirror's rows are muted as a whole", () => {
 	const host = '[data-view="zen"] .zen-term-host';
-	const colour = (cls: string, prop: string) => {
-		const rule = rulesOf(css).find((r) => r.parts.includes(`${host} ${cls}`));
-		assert.ok(rule, `${cls} has a Zen rule`);
-		return declarations(rule.body).find(([p]) => p === prop)?.[1];
-	};
-	for (const [cls, token] of [[".c3", "ochre"], [".c11", "ochre-hi"]] as const) {
+	const palette = Object.fromEntries(declarations(block.body));
+	for (const [n, token] of [[3, "ochre"], [11, "ochre-hi"]] as const) {
+		const cls = `.c${n}`, ansi = `--ansi-${n}`;
 		const ochre = tokens[token];
 		assert.ok(ochre, `--zen-${token} is a token`);
-		assert.equal(colour(cls, "color"), `var(--zen-${token})`, `${cls} is the ochre`);
-		assert.equal(colour(cls.replace("c", "k"), "background"), `var(--zen-${token})`, `${cls.replace("c", "k")} is the same ochre as a fill`);
+		assert.equal(palette[ansi], `var(--zen-${token})`);
+		for (const [selector, prop] of [[cls, "color"], [`.k${n}`, "background"]]) {
+			const rule = rulesOf(first).find(r => r.selector === selector);
+			assert.ok(rule && declarations(rule.body).some(([p, v]) => p === prop && v === `var(${ansi})`), `${selector} takes Zen's ochre`);
+		}
 		assert.ok(hsv(ochre).s <= MUTED, `${ochre} is muted`);
 		assert.ok(contrast(ochre, tokens.sunken!) >= 7, `${cls} on --zen-sunken: ${contrast(ochre, tokens.sunken!).toFixed(2)}`);
 		assert.ok(contrast(tokens.sunken!, ochre) >= 7, `the sunken ground as text on the ${cls} fill`);
