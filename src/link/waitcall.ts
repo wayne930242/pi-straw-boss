@@ -21,7 +21,8 @@ export const withMoment = <R extends { text: string }>(r: R, message: string, wh
 };
 
 /** `bossAsk` (bossask.ts) draws a `boss` question in a local main's pane; without it (a tower run) the question goes to the tower in the message. */
-export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["callTower"], link: Pick<Link, "waitOp">, bossAsk?: BossAsk): void {
+/** `workers`: Straw Link is set up here (`s.toolSet.link`), so `worker` is offered; elsewhere the parameter is left out of the always-on schema. */
+export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["callTower"], link: Pick<Link, "waitOp">, bossAsk?: BossAsk, workers = false): void {
 	// A main says why it calls (required); a tower's call is a blocked one, so it may leave it out and the header says unspecified.
 	const whyType = Type.Union([Type.Literal("milestone"), Type.Literal("shared"), Type.Literal("blocked")], { description: "milestone, shared, or blocked." });
 	const whyField = towerCall ? Type.Optional(whyType) : whyType;
@@ -46,16 +47,17 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 				what: Type.Optional(Type.String({ description: "One line of at most 200 bytes; default the message's first line." })),
 			}, { description: "Instead of your tower: that device's standing main, a question (why blocked) or a notice (why milestone). A notice on a wait you hold from that device: linkWait note." })),
 			boss: bossParameter(),
-			worker: Type.Optional(Type.Object({
-				device: Type.String({ description: "Label, short id, or id of a box that lists tower.worker and trusts you at dispatch." }),
-				branch: Type.String({ description: "The worker's branch: new, or one origin has (a rework); never an integration or train branch." }),
-				base: Type.Optional(Type.String({ description: "A branch of origin or a 40-hex commit to start from; default origin's default branch." })),
-				model: Type.Optional(Type.String({ description: "A model id on that box's workers.models; default pi's." })),
-				points: Type.Optional(Type.Number({ description: "Its weight in that box's capacity, 0.25 to 10; default 1." })),
-				label: Type.Optional(Type.String({ description: "A short name (a ticket id); default the branch." })),
-			}, { description: "Instead of your tower: a worker on that teammate's box, with message as its whole brief (anchor, authorizations). Its final report, or the box's refusal, comes back to you as a link_reply." })),
+			...(workers ? { worker: Type.Optional(Type.Object({
+				device: Type.String(),
+				branch: Type.String({ description: "New, or on origin (rework)." }),
+				base: Type.Optional(Type.String({ description: "origin branch or 40-hex; default origin's default." })),
+				model: Type.Optional(Type.String({ description: "On that box's workers.models." })),
+				points: Type.Optional(Type.Number({ description: "0.25-10, default 1." })),
+				label: Type.Optional(Type.String()),
+			}, { description: "Instead of your tower: a worker on that teammate's box; message is its whole brief. Its final report or refusal comes back as a link_reply." })) } : {}),
 		}),
-		async ({ waitsOn, linkWait, standing, boss, worker, ...call }, signal, ctx, id) => {
+		async ({ waitsOn, linkWait, standing, boss, ...rest }, signal, ctx, id) => {
+			const { worker, ...call } = rest as typeof rest & { worker?: WorkerArg };
 			if ([waitsOn, linkWait, standing, boss, worker].filter(Boolean).length > 1) throw new Error("waitsOn, linkWait, standing, boss, and worker do not go together");
 			const m: Modes = { callTower, link, bossAsk };
 			if (boss) return bossMode(m, call, boss, signal, ctx, id);
@@ -71,6 +73,7 @@ export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["
 interface Modes { callTower: Reach["callTower"]; link: Pick<Link, "waitOp">; bossAsk?: BossAsk }
 interface Call { message: string; why?: "milestone" | "shared" | "blocked"; workspace?: string; reply?: boolean }
 interface WaitsOn { device: string; owner?: string; what?: string; cancel?: boolean }
+interface WorkerArg { device: string; branch: string; base?: string; model?: string; points?: number; label?: string }
 
 /** A call with none of them: to the tower, with the note its moment needs. */
 const plainMode = async ({ callTower }: Modes, { message, why, workspace, reply }: Call) => withMoment(await callTower(message, workspace, reply ?? true, why), message, why);
@@ -92,7 +95,7 @@ async function standingMode({ link }: Modes, { message, why }: Call, standing: {
 }
 
 /** A worker on a teammate's box (docs/specs/2026-11-26-ally-workers.md): the code checks the slip here, and the sb server sends it with an ask for this main. */
-async function workerMode({ link }: Modes, { message }: Call, worker: { device: string; branch: string; base?: string; model?: string; points?: number; label?: string }) {
+async function workerMode({ link }: Modes, { message }: Call, worker: WorkerArg) {
 	const { device, ...spec } = worker;
 	workerMessage(workerSpec(spec), message); // refused here, before anything goes, when the slip or the brief is
 	const sent = await link.waitOp({ op: "worker-send", device, worker: spec, message });

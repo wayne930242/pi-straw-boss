@@ -3,7 +3,7 @@ import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, rea
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { classify, type DeadState, type DeadVerdict } from "./dead.ts";
-import { type CoordinatorDuty, isCoordinatorDuty } from "./duty.ts";
+import { type CoordinatorDuty, isCoordinatorDuty, type MainKind } from "./duty.ts";
 import { type HerdrRun, type Pane, panes, type Session } from "./herdr.ts";
 import { integratorOf } from "./integrator.ts";
 import { REARM_TEXT } from "./moments.ts";
@@ -217,7 +217,7 @@ export interface DeadRow {
 	record: RoleRecord & { file: string };
 	verdict: DeadVerdict;
 	name?: string;
-	kind?: CoordinatorDuty;
+	kind?: MainKind;
 	/** The record's opener as the main's caps and close read it (`sb_opened_by`): a sender's session id, `link:<device>`, an integrator's mark, or none (the boss opened it). */
 	openedBy?: string;
 	train?: TrainId;

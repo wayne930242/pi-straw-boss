@@ -12,7 +12,7 @@ function rig(answers: Record<string, (op: Record<string, unknown>) => Record<str
 	let body: Body | undefined;
 	callTowerTool(((_name: string, _d: string, _p: unknown, b: Body) => void (body = b)) as never, false,
 		(async (message: string, _ws: string | undefined, _reply: boolean, why?: string, extra?: unknown) => (calls.push({ message, ...(why ? { why } : {}), ...(extra ? { extra } : {}) }), { text: "Sent to the tower of Alpha.", details: { towerId: "sb-tower-wa" } })) as never,
-		{ waitOp: async (op: Record<string, unknown>) => { ops.push(op); const a = answers[String(op.op)]?.(op); if (!a || a.ok === false) throw new Error(String(a?.error ?? "refused")); return a; } });
+		{ waitOp: async (op: Record<string, unknown>) => { ops.push(op); const a = answers[String(op.op)]?.(op); if (!a || a.ok === false) throw new Error(String(a?.error ?? "refused")); return a; } }, undefined, true);
 	return { calls, ops, call: (p: Record<string, unknown>) => body!(p) };
 }
 const MAC = { ok: true, id: "ibzkd5ijmtravej475kmrykvye", short: "ibzkd5", label: "mac", team: "t1" };

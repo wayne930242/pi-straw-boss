@@ -1,6 +1,6 @@
 // What a main agent is for (docs/specs/2026-11-09-agent-kinds.md §1): its duty, the kind of work it is given, and the graph of the plan it runs. No pi imports: the server and the page load this file.
 
-export const COORDINATOR_DUTIES = ["coordinator", "integrator", "standing", "worker"] as const; // a main of kind `worker` is opened for a teammate's device (docs/specs/2026-11-26-ally-workers.md); its kind is fixed
+export const COORDINATOR_DUTIES = ["coordinator", "integrator", "standing"] as const;
 export const WORKER_DUTIES = ["worker", "scout", "planner", "reviewer"] as const; // "train" stays the Role; `watchdog` was retired in 0.83.0 (boss_watch)
 export type Duty = (typeof COORDINATOR_DUTIES)[number] | (typeof WORKER_DUTIES)[number];
 export type CoordinatorDuty = (typeof COORDINATOR_DUTIES)[number];
@@ -8,6 +8,9 @@ const AGENT_DUTY: Record<string, Duty> = { worker: "worker", scout: "scout", pla
 export const GRAPHS = ["single-loop", "fan-out/fan-in", "orchestrator-worker"] as const; // planning.md §1; a graph is not a duty (D10)
 export type Graph = (typeof GRAPHS)[number];
 export const isCoordinatorDuty = (v: unknown): v is CoordinatorDuty => typeof v === "string" && (COORDINATOR_DUTIES as readonly string[]).includes(v);
+/** A main's kind: a coordinator kind, or `worker`, a main opened for a teammate's device (docs/specs/2026-11-26-ally-workers.md), whose kind is fixed and which draws as a plain main (a worker kind draws on a subagent only). */
+export type MainKind = CoordinatorDuty | "worker";
+export const isMainKind = (v: unknown): v is MainKind => isCoordinatorDuty(v) || v === "worker";
 export const isWorkerDuty = (v: unknown): v is Exclude<Duty, CoordinatorDuty> => typeof v === "string" && (WORKER_DUTIES as readonly string[]).includes(v);
 export const isGraph = (v: unknown): v is Graph => typeof v === "string" && (GRAPHS as readonly string[]).includes(v);
 /** A todo's `metadata.graph` as mains write it (review 6's live values) → a graph; anything else has none. */

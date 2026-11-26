@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { allyLabel } from "./boardauto.ts";
-import { isCoordinatorDuty } from "./duty.ts";
+import { isMainKind } from "./duty.ts";
 import { autoSummary } from "./autostate.ts";
 import { sessionMark } from "./netdata.ts";
 import { createHeadReach, headIdOf, headInfo } from "./reachhead.ts";
@@ -30,7 +30,7 @@ export function netMembers(sessions: Session[], ps: Pane[]) {
 		const { workspace, tab, paneId } = s.herdrLocation ?? {};
 		const tokens = ps.find((p) => p.pane_id === paneId)?.tokens, role = tokens?.sb_role;
 		// A main's kind is its pane's `sb_duty` (presence.ts); an unknown value, or a main of an older sb that publishes none, has none.
-		const duty = role === "main" && isCoordinatorDuty(tokens?.sb_duty) ? tokens.sb_duty : undefined;
+		const duty = role === "main" && isMainKind(tokens?.sb_duty) ? tokens.sb_duty : undefined;
 		return workspace && tab && role ? [{ s, role, tab, workspace, ...(duty ? { duty } : {}) }] : [];
 	});
 }

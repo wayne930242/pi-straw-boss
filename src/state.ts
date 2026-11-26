@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { startDashboard } from "./dashboard.ts";
-import type { CoordinatorDuty } from "./duty.ts";
+import type { MainKind } from "./duty.ts";
 import type { StartRead } from "./handover.ts";
 import type { Ask } from "./host.ts";
 import type { HerdrApi, HerdrCall, HerdrRun, HerdrWorld, Place, Session, Sleep } from "./herdr.ts";
@@ -31,7 +31,7 @@ export interface Channel {
 }
 export interface SendResult { requestId?: string; status: string; code?: string; detail?: string }
 /** `duty*`: the main's kind and why it has it, written whole at each switch (docs/specs/2026-11-09-agent-kinds.md §2: entries merge field by field, so every entry carries all four). */
-export interface Saved { tower?: boolean; openedBy?: string | null; openedPane?: string; train?: TrainId; duty?: CoordinatorDuty; dutyFrom?: CoordinatorDuty | null; dutyWhy?: string; dutyAt?: number; /** When a tower revived this session (docs/specs/2026-11-23-tower-revive.md §6): its inherited subagents are looked at from every start after. */ revived?: number; /** The successor this main opened with boss_handover (handover.ts): its pane, while it lives, refuses a second one. */ successor?: { pane: string; tab: string; at: number; /** Its session id: the role record's `handedOver` mark (roles.ts). */ main?: string; /** When the successor's own extension said it took over (rotclose.ts): this main closes itself once nothing of it runs. */ took?: number; /** When the tower was told this main still could not close 6 hours after (rotclose.ts): it waits no longer. */ blockedTold?: number }; /** A successor: the main that handed over to it (its pane's `sb_handover_from`), until that main heard it took over (rotclose.ts). */ handoverFrom?: string | null }
+export interface Saved { tower?: boolean; openedBy?: string | null; openedPane?: string; train?: TrainId; duty?: MainKind; dutyFrom?: MainKind | null; dutyWhy?: string; dutyAt?: number; /** When a tower revived this session (docs/specs/2026-11-23-tower-revive.md §6): its inherited subagents are looked at from every start after. */ revived?: number; /** The successor this main opened with boss_handover (handover.ts): its pane, while it lives, refuses a second one. */ successor?: { pane: string; tab: string; at: number; /** Its session id: the role record's `handedOver` mark (roles.ts). */ main?: string; /** When the successor's own extension said it took over (rotclose.ts): this main closes itself once nothing of it runs. */ took?: number; /** When the tower was told this main still could not close 6 hours after (rotclose.ts): it waits no longer. */ blockedTold?: number }; /** A successor: the main that handed over to it (its pane's `sb_handover_from`), until that main heard it took over (rotclose.ts). */ handoverFrom?: string | null }
 export type Role = "tower" | "main" | "member" | "train";
 export type Scope = "tab" | "workspace" | "towers" | "all";
 /**
@@ -79,7 +79,7 @@ export interface State {
 	hasUI: boolean;
 	saved: Saved;
 	/** The kind this main declared or was migrated to (mainduty.ts); `dutyNow()` is what it runs as. Set from the session's entries at each start. */
-	duty: CoordinatorDuty | undefined;
+	duty: MainKind | undefined;
 	/** The session's branch of entries now (set at each start), for the todo list a plan and a train sign are read from. */
 	branch: () => readonly unknown[];
 	/** The pi session file, the key of this session's role record (roles.ts), and whether the role being taken is one a Herdr restore gave back. */

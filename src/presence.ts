@@ -38,7 +38,7 @@ export function createPresence(kit: Kit, mainDuty: MainDuty) {
 		});
 	};
 	// Whether this session is an integrator is its own duty (mainduty.ts); a train's code, project and step come from its record and board (trainsign.ts). A member's place beside its tab's integrator comes from the `sb_duty` token of its tab's main (order.ts): display only, any session can write a token (docs/specs/2026-11-09-agent-kinds.md §2).
-	const whoAmI = (sbRole: string): Who & { step?: string } => (sbRole === "train" && s.train ? { code: s.train.code, project: s.train.project, step: stepOf(guiDir, s.train) } : sbRole === "main" ? { integrator: mainDuty.now() === "integrator", duty: mainDuty.now() } : {});
+	const whoAmI = (sbRole: string): Who & { step?: string } => (sbRole === "train" && s.train ? { code: s.train.code, project: s.train.project, step: stepOf(guiDir, s.train) } : sbRole === "main" ? { integrator: mainDuty.now() === "integrator", ...((d) => (d !== "worker" ? { duty: d } : {}))(mainDuty.now()) } : {});
 	let stepSoon: ReturnType<typeof setTimeout> | undefined;
 	/** A train's current step changed: its token is written 5 s after the first of a burst of changes (the 4 minute refresh stays as the safety net). */
 	const stepChanged = () => {

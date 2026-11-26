@@ -3,7 +3,7 @@ import { alive } from "./remote.ts";
 import { boardState, readTrainboards } from "./train/board.ts";
 import { createTab, type Pane, panes, report, type HerdrRun, type Session, type Sleep, startPi, workspaces } from "./herdr.ts";
 import { integratorOf } from "./integrator.ts";
-import type { CoordinatorDuty } from "./duty.ts";
+import type { MainKind } from "./duty.ts";
 import { assertSettingsSafe } from "./trust/settings.ts";
 import { isRoleLabel, TRAIN, trainFromToken, trainLabel, trainToken } from "./trainrole.ts";
 import { waitPastTrust } from "./trust/wait.ts";
@@ -139,7 +139,7 @@ export interface SuccessorEnv {
 	send(to: string, message: string): Promise<{ status: string; code?: string; detail?: string }>;
 	trustDir?: string;
 }
-export interface SuccessorRequest { from: { id: string; name: string }; handoff: string; todosPath?: string; reason: string; duty?: CoordinatorDuty; openedBy?: string }
+export interface SuccessorRequest { from: { id: string; name: string }; handoff: string; todosPath?: string; reason: string; duty?: MainKind; openedBy?: string }
 export interface Successor { tab: string; pane: string; main: string; name: string }
 
 /** The successor's first prompt: the handoff file to read, and who handed over. Facts only; the session-rotation rule says the rest. */

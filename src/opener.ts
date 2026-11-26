@@ -5,7 +5,7 @@ import { alive } from "./remote.ts";
 import { boardState, readTrainboards, trainboardDir } from "./train/board.ts";
 import { createTab, report, panes, startPi, type HerdrRun, type Pane, type Session, type Sleep, workspaces } from "./herdr.ts";
 import { ForwardAsBefore, INTEGRATOR, integMark, integratorHandoff, integratorOf, keptIntegrators, ledgerProjects, liveIntegrator, MAX_OPENED_INTEGRATORS } from "./integrator.ts";
-import { type CoordinatorDuty, isCoordinatorDuty } from "./duty.ts";
+import { type CoordinatorDuty, isCoordinatorDuty, type MainKind } from "./duty.ts";
 import { assertSettingsSafe, SettingsRefused } from "./trust/settings.ts";
 import { inside } from "./link/routing.ts";
 import { checkoutProject, noTrainRefusal, openRefusal, repoRoot } from "./train/appsconfig.ts";
@@ -70,7 +70,7 @@ export interface OpenerEnv {
 }
 /** `boss_revive_main revive` (docs/specs/2026-11-23-tower-revive.md §4): the session by id, prefix, or name; the run's reason; `by` is the tower that asks. */
 export interface ReviveRequest { session: string; reason: string; /** The remote turn a pi tower was asked in (`s.remoteOrigin`): the handoff frames the reason as a peer's words (RVR-F011). */ origin?: string }
-export interface Revived { tab: string; pane: string; main: string; file: string; name?: string; kind?: CoordinatorDuty; train?: TrainId; openedBy?: string; /** The old tab was the tower's and held only the dead pane at a bare shell, so it was closed (D3). */ closedOld?: string }
+export interface Revived { tab: string; pane: string; main: string; file: string; name?: string; kind?: MainKind; train?: TrainId; openedBy?: string; /** The old tab was the tower's and held only the dead pane at a bare shell, so it was closed (D3). */ closedOld?: string }
 /** A request's outcome as the ledger keeps it: the key is the hash of the sender and the request. */
 export interface LedgerRow { key: string; sender: string; outcome: "opened" | "failed"; at: number; opened?: Opened; error?: string }
 /** A teammate's device that is the sender (an ally run opens a main for the device it serves): not a session of this computer, so it is not looked up among them, and the main reports to the tower alone. Only the server sets it, from the run's own claim. */
@@ -146,10 +146,10 @@ export function opener(env: OpenerEnv) {
 		if (role === WORKER && (!peer || !worker || duty !== undefined)) throw new OpenLimitError("A worker is opened for a teammate's device by the sb server's ally door, with no duty");
 		if (role !== undefined && role !== TRAIN && role !== INTEGRATOR && role !== WORKER) throw new OpenLimitError(`role must be "train" or "integrator" when given, not ${JSON.stringify(role).slice(0, 40)}`);
 		// The kind the new main starts with (§6): it reaches the pi as `sb_open_duty`, consumed with `sb_open_main` (session.ts). A project's integrator is opened by the door alone, which keeps one per project.
-		if (duty !== undefined && (!isCoordinatorDuty(duty) || duty === WORKER)) throw new OpenLimitError(`duty must be "coordinator" or "standing" when given, not ${JSON.stringify(duty).slice(0, 40)}`);
+		if (duty !== undefined && !isCoordinatorDuty(duty)) throw new OpenLimitError(`duty must be "coordinator" or "standing" when given, not ${JSON.stringify(duty).slice(0, 40)}`);
 		if (duty !== undefined && role === TRAIN) throw new OpenLimitError("A train's kind is fixed: train; open it with no duty");
 		if (duty === INTEGRATOR && role !== INTEGRATOR) throw new OpenLimitError("An integrator is opened with role \"integrator\" on a car slip, which keeps one per project; duty takes coordinator or standing");
-		const openDuty: CoordinatorDuty | undefined = role === INTEGRATOR ? INTEGRATOR : role === WORKER ? WORKER : (duty as CoordinatorDuty | undefined);
+		const openDuty: MainKind | undefined = role === INTEGRATOR ? INTEGRATOR : role === WORKER ? WORKER : (duty as CoordinatorDuty | undefined);
 		// A train is opened on the tower's own reading of an integrator's manifest, and only while the merge train is on; its name is its code, whatever label the caller sent.
 		let train: TrainId | undefined, label = asked_label;
 		if (role === TRAIN) {

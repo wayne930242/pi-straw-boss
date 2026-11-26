@@ -9,7 +9,7 @@ import { isHead, isSub, type Place, panes, place, report, tabs, TOWER_LABEL, wai
 import type { createHost } from "./host.ts";
 import type { IntegrationWatch } from "./integration.ts";
 import { CONNECT_MS, type Membership } from "./membership.ts";
-import { type CoordinatorDuty, dutyOfAgent, isCoordinatorDuty } from "./duty.ts";
+import { dutyOfAgent, isMainKind, type MainKind } from "./duty.ts";
 import type { MainDuty } from "./mainduty.ts";
 import { orphans } from "./orphan.ts";
 import { createWorkerCap, deviceRoom } from "./workercap.ts";
@@ -118,7 +118,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		pi.appendEntry(ENTRY, { openedBy: s.openedBy ?? null, openedPane: s.at.paneId }); // null, not undefined: a later claim (a pop) overrides an earlier opener
 		// The kind the tower opened it with (docs/specs/2026-11-09-agent-kinds.md §6) is consumed with the claim: the entry, `s.duty`, and, at the promotion below, the role record, which a restore before the first message reads.
 		const duty = mine.tokens.sb_open_duty;
-		if (isCoordinatorDuty(duty) && s.duty !== duty && (duty !== "integrator" || mainDuty.integrationOn()) && (duty !== "worker" || s.openedBy?.startsWith("link:") === true)) { // `integrator` only while integration is on, as the door (opener.ts) requires: a token written by anything else gets no hidden integrator entry (R0790-F003).
+		if (isMainKind(duty) && s.duty !== duty && (duty !== "integrator" || mainDuty.integrationOn()) && (duty !== "worker" || s.openedBy?.startsWith("link:") === true)) { // `integrator` only while integration is on, as the door (opener.ts) requires: a token written by anything else gets no hidden integrator entry (R0790-F003).
 			const tower = (await workspaces(run).catch(() => [])).find((w) => w.workspace_id === s.at.workspaceId)?.tokens?.tower;
 			mainDuty.write(duty, `opened by tower ${tower ?? `of workspace ${s.at.workspaceId}`} as ${duty}`);
 		}
@@ -139,7 +139,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		s.quit = () => ctx.shutdown();
 		briefing.load(() => { try { return ctx.isIdle(); } catch { return false; } }); // a replaced session's context throws
 		s.saved = Object.assign({}, ...ctx.sessionManager.getBranch().flatMap((e) => (e.type === "custom" && e.customType === ENTRY ? [e.data] : [])));
-		s.duty = isCoordinatorDuty(s.saved.duty) ? s.saved.duty : undefined; // the migration's guard is this live value (docs/specs/2026-11-09-agent-kinds.md §2)
+		s.duty = isMainKind(s.saved.duty) ? s.saved.duty : undefined; // the migration's guard is this live value (docs/specs/2026-11-09-agent-kinds.md §2)
 		s.branch = () => ctx.sessionManager.getBranch();
 		s.file = ctx.sessionManager.getSessionFile();
 		armSignals(); // pi has its signal handlers by now; a SIGHUP or SIGTERM is told apart from a typed /quit at the shutdown (signalseen.ts)
@@ -172,7 +172,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		// connects only after this handler returns. Until the answer comes the session counts as barred: a join waits for the answer first (`s.recheck`, membership.ts), and a promotion needs the join, so nothing joins or promotes early.
 		s.barred = CHECKING;
 		const once = onceOf();
-		let keepRestored = false, failed = false, retries = 0, decided: { resumed: boolean; opener: string | undefined; duty: CoordinatorDuty | undefined } | undefined, proceeding: Promise<void> | undefined, asking: Promise<boolean> | undefined;
+		let keepRestored = false, failed = false, retries = 0, decided: { resumed: boolean; opener: string | undefined; duty: MainKind | undefined } | undefined, proceeding: Promise<void> | undefined, asking: Promise<boolean> | undefined;
 		// This start is the one in progress: a newer start or a shutdown ends it, and what it still has in flight must neither tell, retry, nor join.
 		const live = () => start === started && !s.stopped;
 		// A step that failed for want of Herdr or intercom is asked again after 1 s, 2 s, 5 s, then every 15 s; no timer outlives a shutdown or a newer start.

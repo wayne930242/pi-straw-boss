@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CoordinatorDuty } from "./duty.ts";
+import type { MainKind } from "./duty.ts";
 
 // The work board (docs/specs/2026-10-25-straw-link.md, Work board): each main writes one small entry about its own work, and towers read them all.
 // This file holds the entry rules, the files under `<state dir>/board/`, and the reader's join with the live net. It knows nothing of Straw Link: the
@@ -151,7 +151,7 @@ export function forAllies(e: { now: string; items: BoardItem[]; src: Src; count?
 export const wireId = (device: string, session: string): string => createHash("sha256").update(device).update(session).digest().subarray(0, 8).toString("hex");
 
 /** A live main as the join needs it (the net reading `tower_list` already does). `role`: "train" for a train, whose line fills from its todos as a main's does. */
-export interface LiveMain { role?: "train"; session: string; name: string; workspaceId: string; workspace: string; tab: string; state: string; cwd?: string; /** It commands work (a subagent of it runs): its entry is not stale. */ commanding?: boolean; /** Its kind (`sb_duty`): a standing main minds one system with no end, so its entry is never stale (docs/specs/2026-11-09-agent-kinds.md Phase 2). */ duty?: CoordinatorDuty; /** Its Herdr pane shows `agent_status` working: its entry is not stale, whatever the broker says (boss 2026-11-26 「herdr state 還在 working 的 agent 不必被詢問」). */ paneWorking?: boolean }
+export interface LiveMain { role?: "train"; session: string; name: string; workspaceId: string; workspace: string; tab: string; state: string; cwd?: string; /** It commands work (a subagent of it runs): its entry is not stale. */ commanding?: boolean; /** Its kind (`sb_duty`): a standing main minds one system with no end, so its entry is never stale (docs/specs/2026-11-09-agent-kinds.md Phase 2). */ duty?: MainKind; /** Its Herdr pane shows `agent_status` working: its entry is not stale, whatever the broker says (boss 2026-11-26 「herdr state 還在 working 的 agent 不必被詢問」). */ paneWorking?: boolean }
 export interface LocalRow {
 	role?: "train";
 	session: string;

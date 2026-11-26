@@ -589,8 +589,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The boss question drawn by code (0.91.0; measured) 4520 to 4521 (+1): index.ts imports bossask.ts and hands its ask to the tools. bossask.ts has its own figure.
 	// Its review F002 (measured) 4521 to 4524 (+3): auto.ts leaves the boss question out of the transition's cancel texts and its result, which says it went to the tower.
 	// Rotation close (measured) 4524 to 4526 (+2): index.ts imports rotclose.ts and wires it beside the wrap-up. rotclose.ts has its own figure.
-	// Ally workers (2026-11-26; measured): 4526 to 4538, workercap.ts's `admitPoints`, the admission the worker door shares; workerslip.ts and workerhandoff.ts have figures of their own.
-	assert.ok(rest <= 4538, `the rest of src has ${rest} lines`);
+	// Ally workers (2026-11-26; measured): 4526 to 4541, workercap.ts's `admitPoints`, the admission the worker door shares, and duty.ts's `MainKind` (worker, a main kind that draws as a plain main); workerslip.ts and workerhandoff.ts have figures of their own.
+	assert.ok(rest <= 4541, `the rest of src has ${rest} lines`);
 	// Unreleased (settings check, probe): settings.ts is the lstat gate, the child's program (refuses a link it cannot follow, stats before opening; review SR5), and its runner (160); it no longer walks links. settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
 	// Unreleased raised trust/ask.ts from 182 to 183 (RC3-F001): the recorded server's start time is read when the handler registers.
 	// Unreleased raised trust/ask.ts from 183 to 201 (RC4-F001, F002): `warmServerStart` (the early read only for a live server that reads trust requests) and `guiUp` (what the handler's `up` asks) are exported for their tests, and `registerTrust` takes the terminal it answers on.

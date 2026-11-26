@@ -1,6 +1,6 @@
-import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { execFileExe } from "../exe.mjs";
 import { OpenLimitError } from "../opener.ts";
 import { branchProblem, type WorkerSpec } from "../workerslip.ts";
 import type { WorkerOpen } from "../workerhandoff.ts";
@@ -24,7 +24,7 @@ export const modelRefusal = (models: readonly string[], model: string | undefine
 export type Git = (args: string[], cwd: string, timeoutMs?: number) => Promise<string>;
 /** git with no shell and no prompt; rejects with git's own words. */
 export const runGit: Git = (args, cwd, timeoutMs = GIT_MS) => new Promise((done, fail) => {
-	execFile("git", args, { cwd, timeout: timeoutMs, maxBuffer: 4 << 20, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: "" } }, (error, stdout, stderr) => {
+	execFileExe("git", args, { cwd, deadline: timeoutMs, maxBuffer: 4 << 20, encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: "" } }, (error, stdout, stderr) => {
 		if (error) fail(new Error(`git ${args[0]} failed: ${(stderr || error.message).toString().trim().slice(0, 300)}`));
 		else done(stdout.toString().trim());
 	});

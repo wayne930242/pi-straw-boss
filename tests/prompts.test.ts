@@ -79,9 +79,10 @@ test("prompts use only known placeholders and are plain English", () => {
 	}
 });
 
-test("the worker and apps-config prompts moved: apps-config ships unchanged and there is no worker prompt", () => {
+// worker.md came back in 2026-11-26 as the prompt of a main of kind worker opened for a teammate's device (docs/specs/2026-11-26-ally-workers.md), not the old dispatch rules.
+test("the old worker prompt and apps-config moved: apps-config ships unchanged, and worker.md is the worker main's own", () => {
 	assert.ok(readdirSync(PROMPT_DIR).includes("apps-config.md"));
-	assert.ok(!readdirSync(PROMPT_DIR).includes("worker.md"));
+	assert.match(readFileSync(`${PROMPT_DIR}/worker.md`, "utf8"), /## Kind: worker/);
 	assert.match(readFileSync(`${PROMPT_DIR}/apps-config.md`, "utf8"), /^# Apps configuration/);
 });
 
