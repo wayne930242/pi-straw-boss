@@ -1223,7 +1223,7 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 ##### 指令
 
-`cli.mjs train gate|check|status|clear|end|notices`。`status` 顯示每列火車、它的步驟、等待、鎖和車廂（`--state live,stale,ended,unreadable` 只留下處於這些狀態的列，文字和 `--json` 都一樣；被 `train end` 結束的火車會顯示它的結果、commit、原因和證據）；`clear` 釋放 session 已經消失的火車仍然持有的東西（在讀取目標的版本之後）；`end` 結束一列不會再有 land 步驟來結束的過時火車，因為它的車廂都離開了，或它的 session 在合併之後死掉：`--outcome landed --commit <sha>` 或 `--outcome none`，加上 `--reason` 和 `--evidence`，對存活、已結束或讀不到的火車會像 `clear` 一樣拒絕，對仍持有部署目標的火車也是（先讀目標跑的版本，再 `clear --target`；車道隨結束一起釋放）；結束寫進 `board.json` 旁的 `end.json`，`board.json` 的 schema 維持舊版讀得懂的樣子，從此火車讀成已結束，不持有任何東西，監看也不再回報它（回來的 session 會重寫它的看板，比結束還新，結束就被忽略）；`notices` 從磁碟上的 journal 列出每個車廂的狀態（`--project`、`--pending`、`--json`）。
+`cli.mjs train gate|check|status|clear|end|notices`。`status` 顯示每列火車、它的步驟、等待、鎖和車廂（`--state live,stale,ended,unreadable` 只留下處於這些狀態的列，文字和 `--json` 都一樣；被 `train end` 結束的火車會顯示它的結果、commit、原因和證據；`--watch [--every <seconds>]` 預設 60、至少 10，每隔這段時間再看一次，直到被停止，每看一次印一行 JSONL，不論有沒有變化：`{"progress":{"message":…}}`，第一次以及火車或鎖有變化的那幾次再加上 `--json` 的狀態，所以開在它上面的 `MonitorCreate` 每看一次就續期一次，而不是只在有變化時，因為 pi-loop-monitor 一看到 `progress` 行就重算閒置逾時；某次查看失敗時，也印一行說明，監看照樣繼續）；`clear` 釋放 session 已經消失的火車仍然持有的東西（在讀取目標的版本之後）；`end` 結束一列不會再有 land 步驟來結束的過時火車，因為它的車廂都離開了，或它的 session 在合併之後死掉：`--outcome landed --commit <sha>` 或 `--outcome none`，加上 `--reason` 和 `--evidence`，對存活、已結束或讀不到的火車會像 `clear` 一樣拒絕，對仍持有部署目標的火車也是（先讀目標跑的版本，再 `clear --target`；車道隨結束一起釋放）；結束寫進 `board.json` 旁的 `end.json`，`board.json` 的 schema 維持舊版讀得懂的樣子，從此火車讀成已結束，不持有任何東西，監看也不再回報它（回來的 session 會重寫它的看板，比結束還新，結束就被忽略）；`notices` 從磁碟上的 journal 列出每個車廂的狀態（`--project`、`--pending`、`--json`）。
 
 ##### 檔案
 
@@ -3101,6 +3101,14 @@ flowchart TD
 ### 時間
 
 清理在讀完行程表、孤兒的工作資料夾、標記與受保護集合之後（負載 25 到 35 時約 3 秒，負載更高時更久）立刻送出 SIGTERM，10 秒後送 SIGKILL。在重放中，每個逃脫的行程都在 worker 結束後 12 到 14 秒消失，有一次在機器負載 60 以上時是 22 秒。Herdr 關閉的 pane 會透過 pane 事件立刻結束一般行程（Herdr 在線路上拼成 `pane_closed` 與 `pane_exited`），而真正的 pi 則透過它自己關閉時送出的 `procs-bye`。
+
+### 確認過的 pane 關閉
+
+`herdr pane close` 可能回答成功，pane 卻還列在清單上；而它關掉的 pane 不會跑 `session_shutdown`，所以 pi 啟動的東西（監看、輪詢迴圈的 `sh` 和 `sleep`）會在 init 底下繼續跑，佔住 checkout：11/26 有一個 pane 要關第二次，另一個要關、kill、再關，再跑 `procs reap --checkout`，`git worktree remove` 才過得去。`cli.mjs pane close <pane> [--checkout <path>]` 走完這些步驟，每一步都確認。
+
+在關閉任何東西之前，它拒絕關掉自己所在的 pane（`HERDR_PANE_ID`）和 Herdr 沒有列出的 pane，也不在 Windows 上執行（這裡沒有行程表）。它先讀 pane 的行程樹（`pane process-info` 列出的 shell 和前景行程，以及它們底下的一切），關掉 pane，再到 `herdr pane list` 找它四次、每次間隔 500 ms，還列著就再關一次，最多關三次；每次關了卻還列著，就記一筆 `noops`，帶時間和當時前景在跑什麼，這是向 Herdr 回報問題要的證據。第三次關閉後仍列著的 pane 不做清理：撐住它的正是它的行程，這些行程就是它的 `left`。pane 消失後，行程樹裡仍以同一個啟動時間存活的行程走[程序衛生](#程序衛生與-slot)的擊殺順序，受保護的集合不動；有 `--checkout` 時，接著跑 sb server 的 `procs reap --checkout`（有存活的 worker 在那裡工作時會被拒絕）。然後再看一次：行程樹裡還在跑的行程，或工作資料夾在 checkout 裡的任何行程（這個指令本身和它所在的上層行程除外），都算 `left`。
+
+它印出一行 JSON：`{pane, closed, attempts, noops, reaped: {tree, checkout}, left: [{pid, program, where}]}`；pane 已消失且什麼都沒留下時結束碼是 0，pane 仍列著、有東西留下，或有一步失敗（`error`，或沒有 server 接下清理時的 `reaped.checkout.error`）時是 1；被拒絕時在 stderr 印一行，結束碼同樣是 1。塔台帶 `pane` 的 `boss_close_main` 仍由 `deadpane.ts` 的表決定；這個指令是給老闆或主智慧體關掉自己工作的 pane 用的。
 
 ## sb server
 

@@ -16,6 +16,7 @@ import { ensureTowerVia } from "./towerclient.ts";
 import { onFatal } from "./fatal.ts";
 import { runProcs } from "./procscli.ts";
 import { runDoctor } from "./doctorcli.ts";
+import { type PaneDeps, runPane } from "./panecli.ts";
 import { runTrain, type TrainIo } from "./traincmds.ts";
 import { runningTrains, trainsRefusal } from "./restartguard.ts";
 import { callControl, ControlError } from "./socket.ts";
@@ -42,9 +43,10 @@ const USAGE = `usage: cli.mjs up [--dir FOLDER --label NAME] [--timeout SECONDS]
        cli.mjs procs [list]
        cli.mjs doctor --session ID|PREFIX|PANE [--json]   (another session's tools and loads: a fresh load, its session file, its pane; exit 1 on a fault)
        cli.mjs procs reap (--owner ID | --checkout PATH)   (kill what an ended worker left; refused while a live worker works in the checkout)
+       cli.mjs pane close PANE [--checkout PATH]   (close a pane, check it is gone (3 closes at most), stop what it left; exit 1 with what is left)
        cli.mjs train gate --spec FILE   (the wrapper of a train's run step; its monitor runs it)
        cli.mjs train check (--step FILE | --accept FILE|none [--app NAME] [--app-accept K,K] [--slip FILE])   (from the project or any folder in it; the app's integration.accept in apps.json is required, --app-accept only adds)
-       cli.mjs train status [--project P] [--state live,stale,ended,unreadable] [--json]
+       cli.mjs train status [--project P] [--state live,stale,ended,unreadable] [--json] [--watch [--every SECONDS]]   (--watch: one JSONL progress line per look, changed or not)
        cli.mjs train notices [--project P] [--pending] [--json]   (the journal on disk, which a train could also have written; not the server's own record)
        cli.mjs train clear --project P --train CODE (--lane APP | --target NAME) --reason TEXT
        cli.mjs train end --project P --train CODE --outcome landed|none --reason TEXT --evidence TEXT [--commit SHA]   (a stale train; --commit with landed)
@@ -54,11 +56,11 @@ export class UsageError extends Error {}
 export const WATCH_RETIRED = "`watch` is retired in 0.83.0: a main or a train watches with the boss_watch tool (key, quiet, idle, until), and the sb server wakes it with one message per change. Stop this monitor.";
 const FLAGS: Record<string, { value: string[]; switch: string[] }> = {
 	up: { value: ["timeout", "dir", "label", "reason"], switch: ["exact", "force"] }, serve: { value: [], switch: [] }, stop: { value: [], switch: [] }, status: { value: [], switch: [] },
-	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, doctor: { value: ["session"], switch: ["json"] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] }, prune: { value: [], switch: ["dry-run"] },
+	restart: { value: ["reason", "by"], switch: ["downgrade", "force"] }, logs: { value: ["lines"], switch: ["follow"] }, prompt: { value: ["workspace", "state-dir"], switch: [] }, procs: { value: ["owner", "checkout"], switch: [] }, pane: { value: ["checkout"], switch: [] }, doctor: { value: ["session"], switch: ["json"] }, train: { value: [], switch: [] }, run: { value: ["by", "detach", "detach-reason", "acl-token"], switch: ["detached"] }, prune: { value: [], switch: ["dry-run"] },
 };
 // `train` has a word of its own, and each word its flags.
 const TRAIN: Record<string, { value: string[]; switch: string[] }> = {
-	gate: { value: ["spec"], switch: [] }, check: { value: ["step", "accept", "app", "app-accept", "slip"], switch: [] }, status: { value: ["project", "state"], switch: ["json"] }, clear: { value: ["project", "train", "lane", "target", "reason"], switch: [] }, end: { value: ["project", "train", "outcome", "reason", "evidence", "commit"], switch: [] }, notices: { value: ["project"], switch: ["pending", "json"] },
+	gate: { value: ["spec"], switch: [] }, check: { value: ["step", "accept", "app", "app-accept", "slip"], switch: [] }, status: { value: ["project", "state", "every"], switch: ["json", "watch"] }, clear: { value: ["project", "train", "lane", "target", "reason"], switch: [] }, end: { value: ["project", "train", "outcome", "reason", "evidence", "commit"], switch: [] }, notices: { value: ["project"], switch: ["pending", "json"] },
 };
 export interface Args { command: string; flags: Record<string, string | true> }
 export function parseArgs(argv: string[]): Args {
@@ -80,6 +82,9 @@ export function parseArgs(argv: string[]): Args {
 		if (sub !== "list" && sub !== "reap") throw new UsageError(`unknown procs command ${sub}\n${USAGE}`);
 		flags.sub = sub;
 	}
+	// `pane` has the word `close` and the pane after it.
+	if (command === "pane" && (rest.shift() !== "close" || rest[0] === undefined || rest[0].startsWith("--"))) throw new UsageError(`pane close needs the pane: pane close PANE [--checkout PATH]\n${USAGE}`);
+	if (command === "pane") flags.pane = rest.shift()!;
 	for (let i = 0; i < rest.length; i++) {
 		const flag = rest[i]!.replace(/^--/, "");
 		if (!rest[i]!.startsWith("--")) throw new UsageError(`unexpected argument ${rest[i]}\n${USAGE}`);
@@ -125,6 +130,7 @@ export interface CliDeps {
 	/** Herdr's CLI, which the desk steps ask (the integration, the home base). */
 	herdrCli?: HerdrRun;
 	pruneSessions?: () => Promise<Session[]>;
+	/** Replaces parts of what `pane close` works with (the process table, the kill sequence, the waits). */ pane?: Partial<PaneDeps>;
 	/** Whether the GUI's page answers 200, which `up` waits for. */
 	pageAnswers?: (gui: { port: number; token: string }) => Promise<boolean>;
 }
@@ -195,6 +201,7 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 			case "run": return await runDetached();
 			case "prompt": return await promptCommand();
 			case "procs": return await runProcs(ctx, flags, { out: json, err });
+			case "pane": return await runPane(ctx, flags, { out, err, env, run: deps.herdrCli ?? herdrRun, ...(deps.pane ? { over: deps.pane } : {}) });
 			case "doctor": return await runDoctor(flags, { env, run: deps.herdrCli ?? herdrRun }, { out, err });
 			case "train": return await runTrain(flags, { out, err, env, stateDir: slot.stateDir, ...deps.train });
 		}

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { parseArgs, run, UsageError } from "../src/server/cli.ts";
+import { type CliDeps, parseArgs, run, UsageError } from "../src/server/cli.ts";
 import { protectedSet, serverPids } from "../src/server/procs.ts";
 import { callControl } from "../src/server/socket.ts";
 import type { Proc } from "../src/procs/table.ts";
@@ -51,10 +51,10 @@ test("cli: procs takes list (default) or reap with exactly one of --owner and --
 	for (const bad of [["procs", "reap"], ["procs", "reap", "--owner", "a", "--checkout", "/b"], ["procs", "list", "--owner", "a"], ["procs", "kill"], ["procs", "--owner", "a", "--checkout", "/b"], ["procs", "list", "--checkout", "/b"], ["procs", "list", "--owner", "a", "--checkout", "/b"]]) assert.throws(() => parseArgs(bad), UsageError, bad.join(" "));
 });
 
-async function cli(argv: string[]) {
+async function cli(argv: string[], over: Partial<CliDeps> = {}) {
 	const { by: _by, ...requester } = world.ctx({ version: "0.44.0" });
 	let out = "", err = "";
-	const code = await run(argv, { env: world.env, stateDir: world.stateDir, version: "0.44.0", cli: "/fake/cli.mjs", ctx: { ...requester, env: world.env }, herdrListens: async () => true, out: (t) => void (out += t), err: (t) => void (err += t) });
+	const code = await run(argv, { env: world.env, stateDir: world.stateDir, version: "0.44.0", cli: "/fake/cli.mjs", ctx: { ...requester, env: world.env }, herdrListens: async () => true, out: (t) => void (out += t), err: (t) => void (err += t), ...over });
 	return { code, out, err };
 }
 
@@ -78,6 +78,23 @@ test("T2R-F010 and F001: cli procs exits 1 when a reap leaves a process alive or
 	assert.equal(root.code, 1);
 	assert.match(root.err, /in no checkout: reap --checkout takes a linked worktree/);
 	assert.equal(root.out, "");
+});
+
+test("pane close --checkout asks the running server's registry to reap the checkout once the pane is gone", async () => {
+	const table = [P(300, 1)], reaped: number[][] = [];
+	const procs = {
+		read: async () => table, startOf: (pid: number) => table.find((p) => p.pid === pid)?.started, markers: async () => new Map(), protect: async () => [], real: (path: string) => path, exists: () => true, inode: () => "1",
+		checkout: () => ({ kind: "linked" as const, root: "/wt", gitdir: "/repo/.git/worktrees/wt" }), cwds: async (pids: readonly number[]) => new Map(pids.filter((pid) => pid === 300).map((pid) => [pid, { path: "/wt/app" }])),
+		reap: async (refs: readonly { pid: number }[]) => (reaped.push(refs.map((r) => r.pid)), { termed: refs.length, killed: 0, skipped: 0, groups: 0, left: [] }),
+	};
+	const running = await world.start({ procs });
+	await running.handle.ready;
+	let closed = false;
+	const herdr = async (args: string[]) => (args[1] === "list" ? JSON.stringify({ result: { panes: closed ? [] : [{ pane_id: "w9:p2", tab_id: "w9:t2" }] } }) : args[1] === "close" ? ((closed = true), "{}") : JSON.stringify({ result: { process_info: { shell_pid: 100 } } }));
+	const done = await cli(["pane", "close", "w9:p2", "--checkout", "/wt"], { herdrCli: herdr, pane: { read: async () => [], cwds: async () => new Map(), sleep: async () => {}, protect: async () => [], platform: "darwin" } });
+	assert.equal(done.code, 0, done.err || done.out);
+	assert.deepEqual(reaped, [[300]], "the orphan in the checkout went through the server's kill sequence");
+	assert.deepEqual((JSON.parse(done.out) as { reaped: { checkout: unknown } }).reaped.checkout, { owner: "(checkout)", reason: "reap", targets: 1, termed: 1, killed: 0, skipped: 0, left: [], spared: 0 });
 });
 
 test("T2R-F007: an sb server's record protects the process with its start time only; a reused pid is not spared", async () => {

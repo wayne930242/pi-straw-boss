@@ -14,7 +14,7 @@ import { plain } from "./operatesanitize.ts";
 import { heldLocks, lockDirOf } from "./trainlock.ts";
 
 // The `train` commands of cli.mjs (docs/specs/2026-11-07-train-workers.md §9.2): `gate` (traingate.ts), `check`, `status`, `clear`, `end`. Kept out of cli.ts, which carries a line budget (procscli.ts is the model). Exit codes: `gate` as the wrapper
-// says (0, 1, 3, 143); `check` 0 when nothing is refused and 2 when something is (a usage error is 2 too); `status` 0; `clear` and `end` 0 done, 1 refused (the train's state does not allow it), 2 usage.
+// says (0, 1, 3, 143); `check` 0 when nothing is refused and 2 when something is (a usage error is 2 too); `status` 0 (`--watch` runs until it is killed); `clear` and `end` 0 done, 1 refused (the train's state does not allow it), 2 usage.
 
 export interface TrainIo {
 	out(text: string): void;
@@ -34,6 +34,9 @@ export interface TrainIo {
 	exists?: (path: string) => boolean;
 	load?: () => { now: number; cores: number } | undefined;
 	gate?: Partial<GateDeps>;
+	/** The wait between the looks of `status --watch`, and what ends it (a kill ends it otherwise). */
+	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+	signal?: AbortSignal;
 }
 
 const MAX_INPUT = 256 * 1024;
@@ -246,17 +249,50 @@ function render(s: Status): string {
 }
 
 const STATES: readonly TrainFacts["state"][] = ["live", "stale", "ended", "unreadable"];
+/** `status --watch`: the wait between looks by default, and the shortest one `--every` takes (seconds). */
+export const WATCH_EVERY = 60, WATCH_MIN = 10;
 
-function status(flags: Record<string, string | true>, io: TrainIo): number {
+function status(flags: Record<string, string | true>, io: TrainIo): number | Promise<number> {
 	if (flags.project !== undefined && typeof flags.project !== "string") return usage(io, "--project needs a name");
 	const wanted = typeof flags.state === "string" ? flags.state.split(",").map((x) => x.trim()).filter(Boolean) : [];
 	if (flags.state !== undefined && (!wanted.length || wanted.some((x) => !(STATES as readonly string[]).includes(x)))) return usage(io, `--state is a comma list of ${STATES.join(", ")}`);
-	const all = trainStatus(io, flags.project as string | undefined);
+	if (flags.every !== undefined && (flags.watch !== true || !(Number(flags.every) >= WATCH_MIN))) return usage(io, `--every goes with --watch: the seconds between looks, ${WATCH_MIN} or more`);
 	// The filter picks rows only: the load, the locks and whether the list was cut are the computer's, whatever is shown.
-	const result = wanted.length ? { ...all, trains: all.trains.filter((t) => wanted.includes(t.state)) } : all;
+	const look = () => ((all) => (wanted.length ? { ...all, trains: all.trains.filter((t) => wanted.includes(t.state)) } : all))(trainStatus(io, flags.project as string | undefined));
+	if (flags.watch === true) return watch(io, look, Number(flags.every ?? WATCH_EVERY) * 1000);
+	const result = look();
 	io.out(flags.json === true ? `${JSON.stringify(result)}\n` : render(result));
 	return 0;
 }
+
+/**
+ * `status --watch` (troubleshoot kit §5 item 5): a look every `--every` seconds, and one JSONL line for every look, changed or not, so a monitor's inactivity timeout (pi-loop-monitor renews it on a `progress` line)
+ * is renewed by each look and not only by a change. The line is `{"progress":{"message":…}}`, with `status` (the `--json` object) on the first look and on each look whose trains or locks changed; the load figure alone (the
+ * machine's, or the one a step waits on) is no change. A look that throws is a line that says so, and the next look comes as planned.
+ */
+async function watch(io: TrainIo, look: () => Status, everyMs: number): Promise<number> {
+	const sleep = io.sleep ?? ((ms: number, signal?: AbortSignal) => new Promise<void>((done) => { const timer = setTimeout(done, ms); signal?.addEventListener("abort", () => (clearTimeout(timer), done()), { once: true }); }));
+	let last: string | undefined;
+	const unloaded = (key: string, value: unknown) => (key === "load" && typeof value === "object" && value !== null ? { ...value, now: undefined } : value);
+	while (!io.signal?.aborted) {
+		try {
+			const status = look(), seen = JSON.stringify(status, unloaded), changed = seen !== last;
+			last = seen;
+			io.out(`${JSON.stringify({ progress: { message: watchText(status, changed) }, ...(changed ? { status } : {}) })}\n`);
+		} catch (error) {
+			io.out(`${JSON.stringify({ progress: { message: `the look failed: ${String((error as Error)?.message ?? error).slice(0, 200)}` } })}\n`);
+		}
+		await sleep(everyMs, io.signal);
+	}
+	return 0;
+}
+
+/** The progress message of one look: whether anything changed since the last look, the trains by state, and the steps that run (cut at 300 characters). */
+const watchText = (s: Status, changed: boolean) => {
+	const counts = STATES.map((state) => [state, s.trains.filter((t) => t.state === state).length] as const).filter(([, n]) => n > 0).map(([state, n]) => `${n} ${state}`).join(", ") || "no trains";
+	const running = s.trains.flatMap((t) => t.steps.filter((st) => st.status === "in_progress").map((st) => `${t.code} #${st.id} ${st.name}${st.waits.length ? " (waits)" : ""}`));
+	return `${changed ? "changed" : "unchanged"}: ${counts}${running.length ? `; ${running.join(", ")}` : ""}`.slice(0, 300);
+};
 
 // ---- clear
 
