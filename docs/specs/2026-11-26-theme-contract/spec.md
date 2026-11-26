@@ -59,6 +59,7 @@ Related: [2026-11-07-raven-view/spec.md](../2026-11-07-raven-view/spec.md) (the 
 - `@layer` is in Chrome and Edge 99, Firefox 97, and Safari 15.4. All are below the build's target (§1) and below what `popover` already requires. No fallback is needed.
 - CSP: layers are CSS syntax only, and `style-src` does not change.
 - Lightning CSS keeps `@layer` for these targets. Phase 1 checks this on the built files, not by assumption (§10).
+- Each sheet wraps its statement and its layer block in `@media all { … }`. Without it Lightning CSS folds the statement into `@layer standard;@layer theme{…}` (the same order, but no literal statement for contract test item 7). The minifier drops the `@media all` itself. Keep the wrapper when editing a sheet.
 - `tests/css-rules.ts` has to learn the statement form. `@layer standard, theme;` has no block, so today the reader would read `@layer standard, theme;\n:root` as one prelude, walk the `:root` block as a layer, find no rules inside it, and drop `:root` (`css-rules.ts:36-38`). Every test that reads the token block would then fail. Phase 1 splits top-level statements at `;` before it looks for a block.
 
 ## 4. Tokens
