@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { THEME } from "../gui/view.ts";
@@ -34,6 +35,15 @@ for (const phase of ["day", "night"] as const) {
 		const p = rgba(block.body, "panel");
 		return mix(p.colour, p.alpha, c.bg!);
 	};
+	// PIL, RGB extrema by WCAG luminance over all 1280 × 721 shipped pixels. Pin the sample to its file.
+	test(`${phase}: notebook text keeps 4.5 : 1 over both extremes of the illustration`, () => {
+		const [hash, dark, light] = phase === "day" ? ["68401246086bf79f", "#150600", "#ffffe6"] as const : ["cff03671de253b73", "#140a00", "#fff6a1"] as const;
+		const file = readFileSync(new URL(`../gui/themes/storybook/backdrop-${phase}.webp`, import.meta.url));
+		assert.ok(file.length <= 100_000);
+		assert.equal(createHash("sha256").update(file).digest("hex").slice(0, 16), hash, "resample the shipped picture");
+		const veil = rgba(block.body, "panel");
+		for (const pixel of [dark, light]) for (const text of TEXT) assert.ok(contrast(c[text]!, mix(veil.colour, veil.alpha, pixel)) >= MIN, `--${text} on veiled ${pixel}`);
+	});
 	const grounds = () => [...SURFACES.map((s) => c[s]!), panel()];
 
 	test(`${phase}: the block gives every colour token of Standard's palette a value, color-scheme ${phase === "day" ? "light" : "dark"}, and its ground is the theme-color`, () => {

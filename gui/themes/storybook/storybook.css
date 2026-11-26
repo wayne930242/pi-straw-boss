@@ -110,7 +110,19 @@
 html[data-view="storybook"] { color-scheme: light; scrollbar-color: color-mix(in srgb, var(--line-c) 55%, transparent) transparent; }
 html[data-view="storybook"][data-phase="night"] { color-scheme: dark; }
 [data-view="storybook"] ::selection { background: color-mix(in srgb, var(--accent) 24%, transparent); color: var(--text); }
-/* The ground: plain paper by day, a plain sky at night (the pictures come in B-3), soft washes at two corners, and the grain over all. */
+/* Wait for the routed stage: the HTML placeholder is always the map, even on a direct settings link. */
+@media (forced-colors: none) {
+	html[data-view="storybook"][data-phase="day"] { --sb-scene: url("./backdrop-day.webp"); }
+	html[data-view="storybook"][data-phase="night"] { --sb-scene: url("./backdrop-night.webp"); }
+	html[data-view="storybook"]:has(#stage[data-stale]:is([data-view="head"], [data-view="map"])) body { background: var(--bg) var(--sb-scene) center top / cover no-repeat fixed; }
+	html[data-view="storybook"]:has(#stage:is([data-view="head"], [data-view="map"])) :is(.legend, .crumbs, .new-base, .bar-acts .pair-btn) { background: var(--panel); }
+	@media (max-width: 600px) {
+		html[data-view="storybook"]:has(#stage:is([data-view="head"], [data-view="map"])) body { background-position: 18% top; }
+		/* The mobile comms cover the viewport. Give their header a text-free strip of the tree. */
+		html[data-view="storybook"] #stage[data-view="head"] .comms-head::after { content: ""; grid-column: 1 / -1; height: clamp(0px, calc(100dvh - 520px), 108px); background: var(--sb-scene) left 45% / 100% auto; }
+	}
+}
+/* The plain ground has two corner washes and a fine grain. */
 html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(1100px 640px at 8% -10%, var(--aura-1), transparent 62%), radial-gradient(900px 600px at 98% 4%, var(--aura-2), transparent 60%), linear-gradient(var(--bg), var(--bg-2)); background-attachment: fixed; }
 [data-view="storybook"] :is(.brand h1, h2, h3) { font-family: var(--sb-round); }
 [data-view="storybook"] .brand h1 { letter-spacing: 0.06em; text-transform: none; font-size: 19px; font-weight: 800; }
