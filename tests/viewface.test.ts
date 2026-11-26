@@ -1,192 +1,115 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type Choice, mountView, resolve, type View, type ViewEnv } from "../gui/view.ts";
-import { type Face, faceAfter, mountFace } from "../gui/viewface.ts";
+import { type Choice, mountView, resolve, type ViewEnv } from "../gui/view.ts";
+import { mountMode } from "../gui/mode.ts";
+import { type At, faceAfter, type Move, mountFace, zenShows } from "../gui/viewface.ts";
 
-// The page's face when the view moves (gui/viewface.ts): every control that moves it (the settings page's picks, Zen's menu, the header's Zen button, Esc and the corner control, the settings route,
-// a new server default, the OS) walked from every start, against a plain statement of what the person should see.
+// The page's face when something moves it (gui/viewface.ts, docs/specs/2026-11-26-storybook-theme/spec.md Part A): every control that moves it (the header's Zen button, Esc Esc and the exits, the settings page's picks,
+// another tab's pick, the settings route, a new server default, the OS) walked from every start (mode × route × theme), against a plain statement of what the person should see.
 
-const CHOICES: Choice[] = ["auto", "standard", "geek", "zen"];
-const SERVERS: Choice[] = ["auto", "standard", "geek", "zen"];
+const CHOICES: Choice[] = ["auto", "standard", "geek", "raven"];
+const SERVERS: Choice[] = ["auto", "standard", "geek", "raven"];
 
-/** The page as the main module wires it: a real view on a fake storage and root, the face coordinator, and a route that is settings or not. */
-function page(stored: Choice, server: Choice, start: Face, contrast = false) {
-	const root: ViewEnv["root"] = { dataset: start.away ? { zenAway: "" } : {} };
-	let listener: (() => void) | undefined, store: string = stored;
-	const env: ViewEnv = {
-		root, meta: { content: "#1a1b26" }, server: { content: server },
-		media: { matches: contrast, addEventListener: (_: "change", fn: () => void) => (listener = fn) },
-		storage: { getItem: () => store, setItem: (_k: string, v: string) => void (store = v) },
-	};
-	const view = mountView(env), world = { settings: start.settings, draws: 0, left: 0 };
+/** The page as the main module wires it: a real view and mode on a fake storage and root, the face coordinator, and a route that is settings or not. */
+function page(stored: Choice, server: Choice, start: At, contrast = false) {
+	const root: ViewEnv["root"] = { dataset: {} };
+	let listener: (() => void) | undefined;
+	const kept = new Map([["sb.view", stored as string], ["sb.zen", start.mode ? "1" : "0"]]);
+	const storage = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v) };
+	const world = { settings: start.settings, draws: 0, left: 0 };
+	const mode = mountMode(storage), shows = () => zenShows({ mode: mode.on(), settings: world.settings });
+	const env: ViewEnv = { root, meta: { content: "#1a1b26" }, server: { content: server }, media: { matches: contrast, addEventListener: (_: "change", fn: () => void) => (listener = fn) }, storage };
+	const view = mountView(env, shows);
 	const face = mountFace({
-		view, root, settings: () => world.settings,
+		view, mode, settings: () => world.settings,
 		leaveSettings: () => ((world.left += 1), (world.settings = false), face.route(false)), // the page's Back, then the router's navigate
 		draw: () => void (world.draws += 1),
 	});
-	const away = () => root.dataset.zenAway !== undefined;
-	return {
-		view, face, world, away, root, stored: () => store, flip: (v: boolean) => ((env.media.matches = v), listener?.()),
-		/** What the page shows: the Zen layer only while the device's view is Zen, this page has not left it, and it is not on the settings route (main.ts `zenOn`). */
-		zenOn: () => view.view() === "zen" && !away() && !world.settings,
-		/** The settings page's pick, or Zen's menu: both call `view.set`. */
-		pick: (c: Choice) => view.set(c),
-	};
+	return { view, mode, face, world, root, kept, shows, flip: (v: boolean) => ((env.media.matches = v), listener?.()), pick: (c: Choice) => view.set(c) };
 }
 
-const starts = (): { stored: Choice; server: Choice; away: boolean; settings: boolean }[] =>
-	CHOICES.flatMap((stored) => SERVERS.flatMap((server) => [false, true].flatMap((away) => [false, true].map((settings) => ({ stored, server, away, settings })))));
-const label = (s: { stored: Choice; server: Choice; away: boolean; settings: boolean }) => `choice ${s.stored}, server ${s.server}, ${s.away ? "away" : "here"}, ${s.settings ? "on settings" : "on a page"}`;
-/** A start the page can be in: a page that is away or on settings only means something for a device whose view is Zen, and a Zen device on the settings page is away (it was put there on entering). */
-const reachable = (s: { stored: Choice; server: Choice; away: boolean; settings: boolean }) => resolve(s.stored, false, s.server) === "zen" ? !(s.settings && !s.away) : !s.away;
+const starts = () => CHOICES.flatMap((stored) => SERVERS.flatMap((server) => [false, true].flatMap((mode) => [false, true].map((settings) => ({ stored, server, mode, settings })))));
+const label = (s: { stored: Choice; server: Choice; mode: boolean; settings: boolean }) => `theme ${s.stored}, server ${s.server}, mode ${s.mode ? "on" : "off"}, ${s.settings ? "on settings" : "on a page"}`;
+/** What the person should see: Zen while the mode is on off the settings page, else the device's theme. */
+const want = (theme: string, at: At) => (at.mode && !at.settings ? "zen" : theme);
 
-test("a pick shows that view at once, from anywhere: away is cleared, a Zen pick leaves the settings page, and the other views show at once", () => {
+test("every move from every start: the mode and the theme are two axes, and the face is Zen exactly while the mode is on off the settings page", () => {
+	const moves: [string, (p: ReturnType<typeof page>) => void, (s: At) => At][] = [
+		["enter", (p) => p.face.enter(), () => ({ mode: true, settings: false })], // from the settings page the page leaves it first
+		["leave", (p) => p.face.leave(), (s) => ({ mode: false, settings: s.settings })],
+		["route on", (p) => ((p.world.settings = true), p.face.route(true)), (s) => ({ mode: s.mode, settings: true })],
+		["route off", (p) => ((p.world.settings = false), p.face.route(false)), (s) => ({ mode: s.mode, settings: false })],
+		...CHOICES.map((c): [string, (p: ReturnType<typeof page>) => void, (s: At) => At] => [`pick ${c}`, (p) => p.pick(c), (s) => s]),
+		["follow (contrast)", (p) => p.flip(true), (s) => s],
+		["follow (server geek)", (p) => p.view.setServer("geek"), (s) => s],
+	];
 	let cells = 0;
-	for (const s of starts().filter(reachable)) {
-		for (const c of CHOICES) {
-			const p = page(s.stored, s.server, s);
-			p.pick(c);
-			const want: View = resolve(c, false, s.server), at = `${label(s)} → pick ${c}`;
-			cells++;
-			assert.equal(p.root.dataset.view, want, `${at}: the page shows ${want}`);
-			assert.equal(p.away(), false, `${at}: no away mark`);
-			assert.equal(p.zenOn(), want === "zen", `${at}: the Zen layer shows exactly for Zen`);
-			assert.equal(p.world.settings, want === "zen" ? false : s.settings, `${at}: the settings page is left for Zen only`);
-			assert.equal(p.stored(), c, `${at}: the choice is the device's`);
-		}
+	for (const s of starts()) for (const [name, run, after] of moves) {
+		const p = page(s.stored, s.server, s);
+		run(p);
+		const at = `${label(s)} → ${name}`, now = after(s), theme = p.view.view();
+		cells++;
+		assert.deepEqual([p.mode.on(), p.world.settings], [now.mode, now.settings], `${at}: mode and route`);
+		assert.equal(p.root.dataset.view, want(theme, now), `${at}: the face`);
+		assert.equal(p.kept.get("sb.zen"), now.mode !== s.mode ? (now.mode ? "1" : "0") : s.mode ? "1" : "0", `${at}: sb.zen is written only when the mode moved`);
+		if (!name.startsWith("pick")) assert.equal(p.kept.get("sb.view"), s.stored, `${at}: the theme's choice is untouched`);
+		if (name === "enter") assert.equal(p.world.left, s.settings ? 1 : 0, `${at}: the settings page is left by its Back`);
 	}
-	assert.ok(cells > 100, `${cells} cells walked`);
+	assert.ok(cells > 500, `${cells} cells walked`);
 });
 
-test("choosing the view already chosen still applies it: a Zen page that was left comes back, from Zen's menu or the settings page", () => {
-	const p = page("zen", "auto", { away: true, settings: false });
-	assert.equal(p.root.dataset.view, "standard");
-	p.pick("zen");
-	assert.deepEqual([p.root.dataset.view, p.away(), p.zenOn()], ["zen", false, true]);
-	const s = page("zen", "auto", { away: true, settings: true });
-	s.pick("zen");
-	assert.deepEqual([s.root.dataset.view, s.away(), s.world.settings, s.world.left, s.zenOn()], ["zen", false, false, 1, true], "and the settings page is left");
-	const geek = page("geek", "auto", { away: false, settings: true });
-	geek.pick("geek");
-	assert.deepEqual([geek.root.dataset.view, geek.world.settings], ["geek", true], "a pick of the view shown changes nothing else");
-});
-
-test("Auto follows the server's default at once from Zen's menu and the settings page, a followed default that arrives on the settings page waits there", () => {
-	for (const server of SERVERS) {
-		for (const settings of [false, true]) {
-			// Zen's menu (the page is on a page, and shows Zen): Auto means the server's default now.
-			const menu = page("zen", server, { away: false, settings: false });
-			menu.pick("auto");
-			const want = resolve("auto", false, server);
-			assert.equal(menu.root.dataset.view, want, `Zen's menu → Auto with server ${server}`);
-			assert.equal(menu.zenOn(), want === "zen");
-			// The settings page picking Auto from a Zen or Standard device.
-			const set = page("standard", server, { away: false, settings });
-			set.pick("auto");
-			assert.equal(set.root.dataset.view, want, `settings → Auto with server ${server}`);
-			assert.equal(set.zenOn(), want === "zen");
-			assert.equal(set.world.settings, want === "zen" ? false : settings);
-		}
-	}
-	// A server default that changes while the settings page is open: Zen waits (away) until the page is left; the others show. One that changes under a page showing Zen never moves it out (R3).
-	const open = page("auto", "standard", { away: false, settings: true });
-	open.view.setServer("zen");
-	assert.deepEqual([open.away(), open.root.dataset.view, open.world.settings, open.zenOn()], [true, "standard", true, false], "a followed Zen does not cover the settings page");
-	open.world.settings = false;
-	open.face.route(false);
-	assert.deepEqual([open.away(), open.root.dataset.view, open.zenOn()], [false, "zen", true], "leaving it shows Zen");
-	open.view.setServer("geek");
-	assert.deepEqual([open.root.dataset.view, open.away(), open.zenOn()], ["zen", false, true], "a page that is showing Zen stays in it when the server's default moves (Z-D20, never interrupted): it applies at the next load");
-	const own = page("standard", "auto", { away: false, settings: true });
-	own.view.setServer("zen");
-	assert.deepEqual([own.root.dataset.view, own.away()], ["standard", false], "a device with a choice of its own ignores the server");
-});
-
-test("Esc and the corner control leave this page for Standard and keep the device's choice; the header's Zen button and the next pick bring Zen back", () => {
-	for (const server of SERVERS) {
-		const p = page("auto", server, { away: false, settings: false });
-		if (resolve("auto", false, server) !== "zen") continue;
+test("leaving Zen shows the device's theme, Raven Keep or Geek included, never Standard by itself", () => {
+	for (const [stored, server, contrast, expected] of [["raven", "auto", false, "raven"], ["auto", "auto", true, "geek"], ["auto", "raven", false, "raven"], ["geek", "standard", false, "geek"], ["auto", "auto", false, "standard"]] as const) {
+		const p = page(stored, server, { mode: true, settings: false }, contrast);
+		assert.equal(p.root.dataset.view, "zen");
 		p.face.leave();
-		assert.deepEqual([p.root.dataset.view, p.away(), p.zenOn(), p.view.choice(), p.view.view()], ["standard", true, false, "auto", "zen"]);
-		p.face.back();
-		assert.deepEqual([p.root.dataset.view, p.away(), p.zenOn()], ["zen", false, true]);
-		p.face.leave();
-		p.pick("zen");
-		assert.deepEqual([p.root.dataset.view, p.zenOn()], ["zen", true], "a pick of Zen shows it");
-		p.face.leave();
-		p.pick("geek");
-		assert.deepEqual([p.root.dataset.view, p.away(), p.zenOn()], ["geek", false, false], "a pick of Geek from a page that left Zen shows Geek");
+		assert.equal(p.root.dataset.view, expected, `${stored}/${server}/${contrast}`);
+		assert.equal(resolve(stored, contrast, server), expected);
 	}
 });
 
-test("the settings route: a Zen device's page is Standard on it, and shows Zen on leaving; a device of another view is not touched", () => {
-	const z = page("zen", "auto", { away: false, settings: false });
-	z.world.settings = true;
-	z.face.route(true);
-	assert.deepEqual([z.root.dataset.view, z.away(), z.zenOn()], ["standard", true, false]);
-	z.world.settings = false;
-	z.face.route(false);
-	assert.deepEqual([z.root.dataset.view, z.away(), z.zenOn()], ["zen", false, true]);
-	const g = page("geek", "auto", { away: false, settings: false });
-	g.world.settings = true;
-	g.face.route(true);
-	assert.deepEqual([g.root.dataset.view, g.away()], ["geek", false]);
-	g.world.settings = false;
-	g.face.route(false);
-	assert.deepEqual([g.root.dataset.view, g.away()], ["geek", false]);
-});
-
-test("ZNR-F004: a page held in Zen (the server's default moved away under it) that opens the settings page shows Zen again on leaving it; leaving Zen itself, or picking a view, still lets Auto follow the server", () => {
-	const held = () => {
-		const p = page("auto", "zen", { away: false, settings: false });
-		p.view.setServer("standard"); // held: the page shows Zen, the default is Standard
-		assert.deepEqual([p.view.view(), p.zenOn()], ["zen", true]);
-		return p;
-	};
-	const p = held();
+test("the settings route suspends Zen and does not end it; a theme picked there stays on the page and the mode stays on", () => {
+	const p = page("standard", "auto", { mode: true, settings: false });
 	p.world.settings = true;
 	p.face.route(true);
-	assert.deepEqual([p.root.dataset.view, p.away(), p.zenOn()], ["standard", true, false], "the settings page is Standard");
+	assert.deepEqual([p.root.dataset.view, p.mode.on()], ["standard", true]);
+	p.pick("raven");
+	assert.deepEqual([p.root.dataset.view, p.world.settings, p.mode.on(), p.world.left], ["raven", true, true, 0], "the pick shows its theme on the settings page");
 	p.world.settings = false;
 	p.face.route(false);
-	assert.deepEqual([p.root.dataset.view, p.away(), p.zenOn()], ["zen", false, true], "leaving it shows Zen, as the route row says");
+	assert.equal(p.root.dataset.view, "zen", "leaving the settings page shows Zen again");
 	p.face.leave();
-	assert.deepEqual([p.view.view(), p.root.dataset.view], ["standard", "standard"], "leaving Zen lets Auto follow the server again");
-	const q = held();
-	q.pick("auto");
-	assert.deepEqual([q.view.view(), q.root.dataset.view], ["standard", "standard"], "a pick lets it follow, too");
-	const r = held();
-	r.world.settings = true;
-	r.face.route(true);
-	r.pick("auto");
-	assert.deepEqual([r.view.view(), r.root.dataset.view], ["standard", "standard"], "a pick on the settings page too");
+	assert.equal(p.root.dataset.view, "raven", "and leaving Zen the theme picked there");
 });
 
-test("another page of this device choosing (a storage event) is a pick; the OS's contrast follows only a page whose choice is Auto", () => {
-	const p = page("standard", "auto", { away: false, settings: false });
+test("the Zen button on the settings page leaves the page and shows Zen", () => {
+	const p = page("geek", "auto", { mode: false, settings: true });
+	p.face.enter();
+	assert.deepEqual([p.world.left, p.world.settings, p.mode.on(), p.root.dataset.view], [1, false, true, "zen"]);
+});
+
+test("a theme change under a page in Zen never touches its face (Z-D20): a pick, another tab's pick, the server's default, the screen", () => {
+	const p = page("auto", "auto", { mode: true, settings: false });
+	p.pick("geek");
+	p.kept.set("sb.view", "raven");
 	p.view.reread();
-	assert.equal(p.root.dataset.view, "standard");
-	const other = page("zen", "auto", { away: true, settings: false });
-	other.view.reread();
-	assert.deepEqual([other.root.dataset.view, other.away()], ["zen", false], "the device's Zen is the page's again: another page picked it");
-	const auto = page("auto", "auto", { away: false, settings: false });
-	auto.flip(true);
-	assert.equal(auto.root.dataset.view, "geek");
-	const settings = page("auto", "auto", { away: false, settings: true });
-	settings.flip(true);
-	assert.deepEqual([settings.root.dataset.view, settings.world.settings], ["geek", true]);
+	p.view.setServer("standard");
+	p.flip(true);
+	assert.deepEqual([p.root.dataset.view, p.mode.on(), p.view.view()], ["zen", true, "raven"]);
 });
 
-test("the table itself: every move from every face, stated", () => {
-	const at: Face = { away: false, settings: true };
-	assert.deepEqual(faceAfter({ on: "pick" }, "zen", at), { away: false, settings: true, leaveSettings: true });
-	assert.deepEqual(faceAfter({ on: "pick" }, "geek", { away: true, settings: true }), { away: false, settings: true, leaveSettings: false });
-	assert.deepEqual(faceAfter({ on: "follow" }, "zen", at), { away: true, settings: true, leaveSettings: false });
-	assert.deepEqual(faceAfter({ on: "follow" }, "zen", { away: true, settings: false }).away, true, "a followed Zen keeps a page that left it away");
-	assert.deepEqual(faceAfter({ on: "follow" }, "standard", { away: true, settings: false }).away, false);
-	assert.deepEqual(faceAfter({ on: "leave" }, "zen", { away: false, settings: false }).away, true);
-	assert.deepEqual(faceAfter({ on: "back" }, "zen", { away: true, settings: false }).away, false);
-	assert.deepEqual(faceAfter({ on: "route", settings: true }, "zen", { away: false, settings: false }), { away: true, settings: true, leaveSettings: false });
-	assert.deepEqual(faceAfter({ on: "route", settings: false }, "zen", { away: true, settings: true }), { away: false, settings: false, leaveSettings: false });
-	assert.deepEqual(faceAfter({ on: "route", settings: true }, "geek", { away: false, settings: false }).away, false);
+test("the table itself, stated", () => {
+	const at = (mode: boolean, settings: boolean): At => ({ mode, settings });
+	const rows: [Move, At, ReturnType<typeof faceAfter>][] = [
+		[{ on: "enter" }, at(false, false), { mode: true, settings: false, leaveSettings: false }],
+		[{ on: "enter" }, at(false, true), { mode: true, settings: true, leaveSettings: true }],
+		[{ on: "enter" }, at(true, true), { mode: true, settings: true, leaveSettings: true }],
+		[{ on: "leave" }, at(true, false), { mode: false, settings: false, leaveSettings: false }],
+		[{ on: "pick" }, at(true, false), { mode: true, settings: false, leaveSettings: false }],
+		[{ on: "follow" }, at(true, true), { mode: true, settings: true, leaveSettings: false }],
+		[{ on: "route", settings: true }, at(true, false), { mode: true, settings: true, leaveSettings: false }],
+		[{ on: "route", settings: false }, at(true, true), { mode: true, settings: false, leaveSettings: false }],
+	];
+	for (const [move, from, to] of rows) assert.deepEqual(faceAfter(move, from), to, `${JSON.stringify(move)} from ${JSON.stringify(from)}`);
+	assert.deepEqual([zenShows(at(true, false)), zenShows(at(true, true)), zenShows(at(false, false))], [true, false, false]);
 });

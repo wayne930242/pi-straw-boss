@@ -107,7 +107,7 @@ test("Zen's first frame in style.css is scoped to the Zen view, so Standard and 
 	assert.match(css, /#zen:empty:not\(\[hidden\]\)::after \{[^}]*animation: zen-breath 10s infinite/);
 	assert.match(css, /\[data-view="zen"\]\[data-calm\] #zen:empty:not\(\[hidden\]\)::after \{ animation: none; \}/);
 	assert.match(css, /40% \{ transform: scale\(1\)/, "4 s in of the 10 s breath");
-	assert.ok(!/zen/.test(geekCss), "nothing of Zen's in the Geek theme");
+	assert.ok(!/zen(?!-enter)/.test(geekCss), "nothing of Zen's in the Geek theme but the header's Zen button, which reads [Zen] there");
 });
 
 test("zen.css: the visual language (Z-D15): no boxes, selection is light with a dot, the seal marks only the keys and never as a ring around a box, overlays let the page recede", () => {

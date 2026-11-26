@@ -669,11 +669,11 @@ test("the history is not a step of [ and ]: the ring still wraps at the circle",
 
 test("the palette gains talk, the whole conversation, and the Standard page on the circle; they act through the layer", () => {
 	const calls: string[] = [];
-	const entries = entriesOf({ standard() {}, head: { talk: () => calls.push("talk"), history: () => calls.push("history"), page: () => calls.push("page") } }, {});
-	assert.deepEqual(entries.filter((e) => e.id.startsWith("head")).map((e) => [e.id, e.label]), [["head-talk", "Talk to the head tower"], ["head-history", "The head tower's whole conversation"], ["head-page", "Open the head tower in Standard"]]);
+	const entries = entriesOf({ leave() {}, head: { talk: () => calls.push("talk"), history: () => calls.push("history"), page: () => calls.push("page") } }, {});
+	assert.deepEqual(entries.filter((e) => e.id.startsWith("head")).map((e) => [e.id, e.label]), [["head-talk", "Talk to the head tower"], ["head-history", "The head tower's whole conversation"], ["head-page", "Open the head tower's page"]]);
 	for (const e of entries.filter((x) => x.id.startsWith("head"))) e.run();
 	assert.deepEqual(calls, ["talk", "history", "page"]);
-	assert.equal(entriesOf({ standard() {} }, {}).some((e) => e.id.startsWith("head")), false, "no head, no entries");
+	assert.equal(entriesOf({ leave() {} }, {}).some((e) => e.id.startsWith("head")), false, "no head, no entries");
 });
 
 test("the head page is one palette step away: its entry leaves Zen for the head route", async () => {
@@ -681,7 +681,7 @@ test("the head page is one palette step away: its entry leaves Zen for the head 
 	await r.start();
 	r.z.palette();
 	const items = r.by("palette-item");
-	const page = items.find((el) => el.textContent.includes("Open the head tower in Standard"));
+	const page = items.find((el) => el.textContent.includes("Open the head tower's page"));
 	assert.ok(page, "listed");
 	page!.click();
 	assert.deepEqual(r.calls.leave.at(-1), { route: { view: "head" } });
@@ -753,7 +753,7 @@ test("after the rest, the Esc rows are as they were: the first says \"press agai
 	const r = await ready();
 	r.esc();
 	r.esc();
-	assert.equal(r.by("zen-esc")[0]!.textContent, "Press Esc again for Standard");
+	assert.equal(r.by("zen-esc")[0]!.textContent, "Press Esc again to leave Zen");
 	assert.equal(r.calls.leave.length, 0);
 	r.esc();
 	assert.equal(r.calls.leave.length, 1);
@@ -762,12 +762,12 @@ test("after the rest, the Esc rows are as they were: the first says \"press agai
 test("a strip with nothing to rest (no lines, or every line already at its rest level) does not take Esc: the hint comes first", async () => {
 	const empty = await ready([]);
 	empty.esc();
-	assert.equal(empty.by("zen-esc")[0]!.textContent, "Press Esc again for Standard");
+	assert.equal(empty.by("zen-esc")[0]!.textContent, "Press Esc again to leave Zen");
 	const faded = await ready();
 	await faded.advance(CLEAR_MS + FADE_MS + 20);
 	faded.esc();
 	assert.equal(hushed(faded), false, "already at rest on its own: nothing to send away");
-	assert.equal(faded.by("zen-esc")[0]!.textContent, "Press Esc again for Standard");
+	assert.equal(faded.by("zen-esc")[0]!.textContent, "Press Esc again to leave Zen");
 });
 
 test("Esc folds an open input first (its draft kept); the next Esc rests the strip", async () => {

@@ -4,7 +4,7 @@ import type { Net, Unit } from "../src/net.ts";
 import type { Mark } from "../src/netdata.ts";
 import { RULES, rulesOf } from "../gui/faces.ts";
 import { activityOf } from "../gui/zenunits.ts";
-import type { View } from "../gui/view.ts";
+import { type Face, MODES, VIEWS } from "../src/views.ts";
 
 // The rules table (gui/faces.ts) is the one place that says what a view does beyond its skin, as typegate.test.ts is for the server's typing rule: each row is written out in full, so a changed cell fails here and nowhere else.
 const STANDARD = { count: true, signal: true, announce: "arrivals", keys: "dialogs", drawer: true, calm: true, chime: true, escape: "stay" } as const;
@@ -30,17 +30,13 @@ test("Zen shows no count anywhere: every rule that could carry one is off", () =
 	assert.equal(z.announce, "current", "one item at a time, not every arrival");
 });
 
-test("rulesOf: a page that left Zen (or sits on the settings page) follows Standard's rules; the other views ignore `away`", () => {
-	for (const away of [false, true]) {
-		assert.equal(rulesOf("standard", away), RULES.standard);
-		assert.equal(rulesOf("geek", away), RULES.geek);
-	}
-	assert.equal(rulesOf("zen", false), RULES.zen);
-	assert.equal(rulesOf("zen", true), RULES.standard);
+test("rulesOf reads the face's row: Zen's while it shows, the theme's otherwise (a page that left Zen, or sits on the settings page, shows its theme)", () => {
+	for (const face of ["standard", "geek", "raven", "zen"] as const) assert.equal(rulesOf(face), RULES[face]);
+	assert.equal(RULES.raven, RULES.standard, "Raven Keep is a skin of Standard");
 });
 
-test("every view has a row, and no row has a field another lacks", () => {
-	const views: View[] = ["standard", "geek", "zen", "raven"];
+test("every face (each theme and the mode Zen) has a row, and no row has a field another lacks", () => {
+	const views: Face[] = [...VIEWS, ...MODES];
 	assert.deepEqual(Object.keys(RULES).sort(), [...views].sort());
 	for (const v of views) assert.deepEqual(Object.keys(RULES[v]).sort(), Object.keys(STANDARD).sort(), v);
 });

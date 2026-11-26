@@ -1,17 +1,18 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { Plugin } from "vite";
-import { VIEWS } from "../src/views.ts";
+import { MODES, VIEWS } from "../src/views.ts";
 
 // The theme build (docs/specs/2026-11-07-raven-view/spec.md §6.1 to §6.3). A view other than Standard is a theme: `gui/themes/<view>/index.ts` is its entry, reached only through `import()` in registry.ts, and every chunk and asset that only
 // that entry reaches is written under `themes/<view>/` with a hashed name, so the sb server can leave the folder unread until a page asks for it (src/gui.ts) and a page on another view never requests it.
+// Zen is a mode, not a view (docs/specs/2026-11-26-storybook-theme/spec.md Part A), but its code is built as a theme all the same, under `themes/zen/`; its entry in the map says `mode: true`, so boot.js never takes it for a view name.
 // The same pass writes `themes.json` (per view: its stylesheet, entry module, and tab icon) and the same map into index.html as <meta name="sb-themes">, and emits `gui/boot.js` hashed with its script tag after the entry's stylesheet.
 
 /** One theme in the map: paths relative to the bundle's root, as the page's `<base>` resolves them. */
-export interface ThemeFiles { css?: string; module?: string; icon: string }
+export interface ThemeFiles { css?: string; module?: string; icon: string; /** A mode (Zen), which no device or server picks as its view. */ mode?: true }
 export type ThemeMap = Record<string, ThemeFiles>;
 
-export const THEME_VIEWS = VIEWS.filter((view) => view !== "standard");
+export const THEME_VIEWS: string[] = [...VIEWS.filter((view) => view !== "standard"), ...MODES];
 export const THEMES_DIR = "themes";
 /** The marker the server replaces with the default view's stylesheet link (src/gui.ts); it sits after the entry's own stylesheet, so the theme's rules come later in the cascade, as the Geek block always did. */
 export const MARKER = "<!--sb-theme-->";
@@ -44,7 +45,7 @@ export function themeMap(files: Iterable<string>, find: (view: string, file: str
 	for (const view of THEME_VIEWS) {
 		const own = (re: RegExp) => list.find((f) => f.startsWith(`${THEMES_DIR}/${view}/`) && re.test(f));
 		const css = find(view, "css") ?? own(/\.css$/), module = find(view, "module") ?? own(/\.js$/), icon = own(/favicon.*\.svg$/);
-		map[view] = { ...(css ? { css } : {}), ...(module ? { module } : {}), icon: icon ?? "icon.svg" };
+		map[view] = { ...(css ? { css } : {}), ...(module ? { module } : {}), icon: icon ?? "icon.svg", ...((MODES as readonly string[]).includes(view) ? { mode: true as const } : {}) };
 	}
 	return map;
 }

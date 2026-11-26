@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { exclusive, themeMap } from "../scripts/vite-themes.ts";
-import { VIEWS } from "../src/views.ts";
+import { MODES, VIEWS } from "../src/views.ts";
 
 // A page downloads only the files of the view it shows (docs/specs/2026-11-07-raven-view/spec.md §1.2, §6.10). No browser runs here: the built bundle (`npm run gui:build`, which `npm test` runs first) is read as files.
 
@@ -11,8 +11,8 @@ const dir = join(import.meta.dirname, "..", "dist", "gui");
 const files = readdirSync(dir, { recursive: true, encoding: "utf8" }).map((f) => f.split("\\").join("/")).filter((f) => statSync(join(dir, f)).isFile());
 const text = (f: string) => readFileSync(join(dir, f), "utf8");
 const html = text("index.html");
-const map = JSON.parse(text("themes.json")) as Record<string, { css?: string; module?: string; icon: string }>;
-const themeViews = VIEWS.filter((v) => v !== "standard");
+const map = JSON.parse(text("themes.json")) as Record<string, { css?: string; module?: string; icon: string; mode?: true }>;
+const themeViews: string[] = [...VIEWS.filter((v) => v !== "standard"), ...MODES]; // the mode Zen is built as a theme of its own
 /** What a file names through `src`/`href` attributes (the page's own tags, not the theme map's meta). */
 const tagged = [...html.matchAll(/<(?:script|link)\b[^>]*?\b(?:src|href)="([^"]+)"/g)].map((m) => m[1]!.replace(/^\.\//, ""));
 /** The files a script imports statically (`import "./x.js"`, `import … from "./x.js"`, `export … from "./x.js"`), resolved against its own folder. */
@@ -43,7 +43,8 @@ test("the built page names no theme file: index.html's tags, the entry's static 
 });
 
 test("each theme's files sit in themes/<view>/ and only that view's module (or the entry's import of it) reaches them; the map names them and matches index.html", () => {
-	assert.deepEqual(Object.keys(map).sort(), [...themeViews].sort(), "a theme per view but Standard");
+	assert.deepEqual(Object.keys(map).sort(), [...themeViews].sort(), "a theme per view but Standard, and one per mode");
+	assert.deepEqual(Object.keys(map).filter((v) => map[v]!.mode).sort(), [...MODES].sort(), "only a mode is marked one, so boot.js takes no mode for a view");
 	assert.equal(html.match(/<meta name="sb-themes" content="([^"]*)"/)![1]!.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&amp;/g, "&"), JSON.stringify(map), "index.html carries the same map");
 	const entry = tagged.find((f) => /^assets\/index-.*\.js$/.test(f))!;
 	for (const view of themeViews) {
@@ -81,9 +82,9 @@ test("the build's ownership rule: a module belongs to a theme only when everythi
 	assert.deepEqual([...owned].sort(), [["g/index", "geek"], ["z/a", "zen"], ["z/b", "zen"], ["z/css", "zen"], ["z/index", "zen"]], "a cycle inside the theme stays; what the entry or another theme also imports goes");
 });
 
-test("the theme map names each theme's own files and falls back to Standard's icon", () => {
+test("the theme map names each theme's own files and falls back to Standard's icon; the mode Zen is built as a theme and marked a mode", () => {
 	const list = ["assets/index-a.js", "themes/geek/geek-1.js", "themes/geek/geek-1.css", "themes/zen/zen-2.js", "themes/zen/zen-2.css", "themes/zen/favicon-zen-3.svg", "themes/raven/raven-4.js", "themes/raven/raven-4.css", "themes/raven/favicon-raven-5.svg", "themes/raven/backdrop-6.webp"];
-	assert.deepEqual(themeMap(list, () => undefined), { geek: { css: "themes/geek/geek-1.css", module: "themes/geek/geek-1.js", icon: "icon.svg" }, zen: { css: "themes/zen/zen-2.css", module: "themes/zen/zen-2.js", icon: "themes/zen/favicon-zen-3.svg" }, raven: { css: "themes/raven/raven-4.css", module: "themes/raven/raven-4.js", icon: "themes/raven/favicon-raven-5.svg" } });
+	assert.deepEqual(themeMap(list, () => undefined), { geek: { css: "themes/geek/geek-1.css", module: "themes/geek/geek-1.js", icon: "icon.svg" }, zen: { css: "themes/zen/zen-2.css", module: "themes/zen/zen-2.js", icon: "themes/zen/favicon-zen-3.svg", mode: true }, raven: { css: "themes/raven/raven-4.css", module: "themes/raven/raven-4.js", icon: "themes/raven/favicon-raven-5.svg" } });
 });
 
 // A stylesheet that names a file (the raven backdrop) names it relative to the stylesheet itself: the page loads a theme's stylesheet from themes/<view>/, so a URL that Vite wrote for a sheet in assets/ (`../themes/raven/x.webp`) would 404 there.

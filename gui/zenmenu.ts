@@ -1,18 +1,14 @@
-import { VIEWS } from "../src/views.ts";
 import { h } from "./dom.ts";
 import { m } from "./sentences.ts";
 import type { Switch } from "./notify.ts";
-import type { Choice } from "./view.ts";
-import { NAME } from "./viewlabel.ts";
 
-// Zen's corner menu: one quiet button that opens a small panel of the settings a page in Zen would otherwise have to leave for (language, view, sound effects, background sound, the way back to Standard). Every row
-// calls what the settings page calls, so the two never disagree. It opens only on a press of its button (a click, a tap, Enter, or Space), never on hover, and takes the focus inside. It closes on Esc,
-// a second press of the button, a press outside, and a choice of language, view, or the way back (the sound switches and volumes stay, so a volume can be set after its switch).
+// Zen's corner menu: one quiet button that opens a small panel of the settings a page in Zen would otherwise have to leave for (language, sound effects, background sound, the way out of Zen). Every row
+// calls what the settings page calls, so the two never disagree. The theme is the settings page's alone: one picked here would show only after leaving, which reads as a broken pick (docs/specs/2026-11-26-storybook-theme/spec.md O4).
+// It opens only on a press of its button (a click, a tap, Enter, or Space), never on hover, and takes the focus inside. It closes on Esc,
+// a second press of the button, a press outside, and a choice of language or the way out (the sound switches and volumes stay, so a volume can be set after its switch).
 
 export interface MenuDeps {
 	language?: { get(): string; names(): { id: string; name: string }[]; set(id: string): void };
-	/** `choice` is the device's (Auto, Standard, Geek, Zen); `auto` words the Auto row (Auto, or Follow server with the default's name). */
-	view?: { choice(): Choice; set(c: Choice): void; auto(): string };
 	/** The two sound classes as the settings page has them (notify.ts). `all` is the effects' Try button: Zen's three effects in turn. */
 	sound?: { effects: Switch & { all?(): void }; background: Switch };
 }
@@ -27,15 +23,8 @@ export function mountMenu(deps: MenuDeps, leave: () => void) {
 		redraw.push(() => b.setAttribute("aria-pressed", String(pressed())));
 		return b;
 	};
-	const { language, view, sound } = deps;
+	const { language, sound } = deps;
 	if (language) panel.append(row(m.language(), ...language.names().map((l) => pick(l.name, () => language.get() === l.id, () => language.set(l.id)))));
-	if (view) {
-		// A pick shows at once (viewface.ts): Standard and Geek leave Zen, Auto follows the server's default or the screen, and the pressed marks redraw (the panel goes with the layer when the view leaves Zen).
-		const choose = (c: Choice) => (view.set(c), redraw.forEach((r) => r()));
-		const auto = pick(view.auto(), () => view.choice() === "auto", () => choose("auto"));
-		redraw.push(() => (auto.textContent = view.auto()));
-		panel.append(row(m.view_label(), auto, ...VIEWS.map((c) => pick(NAME[c](), () => view.choice() === c, () => choose(c)))));
-	}
 	if (sound) {
 		// One class: its switch, then its volume. A volume's release plays the class's sample (the effects' bowl; Background has none), the switch of another tab redraws an open panel.
 		const strip = (label: string, cls: Switch, extra: HTMLElement[] = []) => {

@@ -10,7 +10,8 @@ const refusing = { getItem: () => { throw new Error("refused"); }, setItem: () =
 
 // name, default, a value to set, what it is stored as
 const TABLE: [Name, unknown, unknown, string][] = [
-	["view", "auto", "zen", "zen"],
+	["view", "auto", "raven", "raven"],
+	["zen", false, true, "1"],
 	["locale", null, "zh-TW", "zh-TW"],
 	["effects", false, true, "1"],
 	["effectsVolume", 60, 35, "35"],
@@ -24,7 +25,7 @@ const TABLE: [Name, unknown, unknown, string][] = [
 ];
 
 test("every key has its own storage key (the old single Sound and Volume are the legacy of the two classes, sound-split.test.ts)", () => {
-	assert.deepEqual(Object.values(KEYS), ["sb.view", "sb-locale", "sb.effects", "sb.effects.volume", "sb.background", "sb.background.volume", "sb.remind", "sb.dialog-wide", "sb.zen.homehint", "sb.zen.music", "sb.zen.track"]);
+	assert.deepEqual(Object.values(KEYS), ["sb.view", "sb.zen", "sb-locale", "sb.effects", "sb.effects.volume", "sb.background", "sb.background.volume", "sb.remind", "sb.dialog-wide", "sb.zen.homehint", "sb.zen.music", "sb.zen.track"]);
 	assert.deepEqual(TABLE.map((r) => r[0]), Object.keys(KEYS));
 });
 

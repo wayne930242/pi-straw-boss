@@ -20,7 +20,7 @@ test("the sprite draws the ten roles, the brand mark, and the supply board's mar
 	const ids = [...sprite.matchAll(/<symbol id="([^"]+)" viewBox="([^"]+)"/g)];
 	assert.deepEqual(ids.map((x) => x[1]), [...ICONS, ...SUPPLY].map((r) => `raven-${r}`));
 	for (const x of ids) assert.equal(x[2], "0 0 256 256");
-	const standard = [...at("gui/index.html").matchAll(/<symbol id="i-(\w+)"/g)].map((x) => x[1]).filter((x) => !["train", "coordinator", "integrator", "standing", "worker", "scout", "planner", "reviewer"].includes(x!)).sort(); // the train (task 7 of the train workers) and the kinds (todo #152) have no Raven twin: iconRef falls back to Standard's symbol
+	const standard = [...at("gui/index.html").matchAll(/<symbol id="i-(\w+)"/g)].map((x) => x[1]).filter((x) => !["train", "coordinator", "integrator", "standing", "worker", "scout", "planner", "reviewer", "zen"].includes(x!)).sort(); // the train (task 7 of the train workers), the kinds (todo #152), and the Zen button's ensō (the header's Zen button) have no Raven twin: iconRef falls back to Standard's symbol
 	assert.deepEqual([...ICONS, ...SUPPLY].sort(), standard, "the same role keys as Standard's inline sprite");
 	assert.ok(!/fill="#|stroke=|<style|<script/.test(sprite), "single colour: currentColor only");
 	assert.equal([...sprite.matchAll(/fill="currentColor"/g)].length, ICONS.length + SUPPLY.length);

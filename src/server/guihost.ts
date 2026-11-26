@@ -32,7 +32,7 @@ import { createAnswered } from "../answered.ts";
 import { answeredFileDeps } from "./answeredfile.ts";
 import { createLanHost, type LanHost, type LanSeams } from "./lanhost.ts";
 import { CHOICES, said } from "../views.ts";
-import { isView, readView, type ServerView, storedIs, writeView } from "./guiprefs.ts";
+import { isView, readView, type ServerView, storedIs, storedZen, writeView, ZEN_REFUSED, ZEN_STORED } from "./guiprefs.ts";
 import { dropSecrets, keepSecrets, type Lost, readSecrets } from "./guisecrets.ts";
 import { fileOf, readRecord, type ServerRecord, type Slot, updateRecord, writeJson } from "./record.ts";
 import type { Reply, Request } from "./socket.ts";
@@ -56,7 +56,7 @@ import { createBoardPanel, type Told } from "./boardpanel.ts";
 //   gui-remote {on}       turns remote access on (answers the lines of the pairing QR) or off; the boss's own, so it starts a stopped GUI
 //   gui-pair              a new one-time pairing link while remote access is on
 //   gui-rotate            a new token and CSRF secret, every paired device unpaired; the boss's own, so it starts a stopped GUI (answers like `gui`)
-//   gui-view {view?}      the server's default view (`/boss gui view`): tells it, or stores `auto`, `standard`, `geek`, or `zen` in gui-prefs.json and tells the open pages; it does not start a stopped GUI. Only this request writes it (the page has no route for it)
+//   gui-view {view?}      the server's default view (`/boss gui view`): tells it, or stores `auto`, `standard`, `geek`, or `raven` in gui-prefs.json (`zen` is a mode and refused) and tells the open pages; it does not start a stopped GUI. Only this request writes it (the page has no route for it)
 // and what the page asks of the server panel (this computer's page only): status, restart, and the log (control.ts `server`).
 
 /** Binding the recorded ports: a restart's old server is still letting go of them for a moment. */
@@ -462,7 +462,8 @@ export function createGuiHost(o: GuiHostOptions) {
 				await rotating.catch(() => {});
 			}
 			if (request.cmd === "gui-view") {
-				if (request.view === undefined) return { ok: true, view };
+				if (request.view === undefined) return { ok: true, view, ...(storedZen(dir) ? { note: ZEN_STORED } : {}) };
+				if (request.view === "zen") return { ok: false, error: ZEN_REFUSED };
 				if (!isView(request.view)) return { ok: false, error: `The default view is ${said(CHOICES)}` };
 				if (request.view === view && storedIs(dir, view)) return { ok: true, view, changed: false };
 				// The file first: a default that could not be stored changes nothing, in the page or in the record.

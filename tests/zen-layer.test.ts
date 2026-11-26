@@ -799,7 +799,7 @@ test("on the companion, the empty state, and the pause one Esc does nothing but 
 	assert.equal(hint().textContent, "");
 	esc(idle);
 	assert.deepEqual(idle.calls.leave, [], "one Esc does not leave");
-	assert.equal(hint().textContent, "Press Esc again for Standard");
+	assert.equal(hint().textContent, "Press Esc again to leave Zen");
 	assert.notEqual(hint().dataset.on, undefined);
 	await idle.advance(599);
 	esc(idle);
@@ -1658,7 +1658,7 @@ test("the palette opens over Zen with the page's actions and the menu's preferen
 	const palette = r.by((el) => el.getAttribute("role") === "dialog")[0]!, box = r.by((el) => el.getAttribute("role") === "combobox")[0]!;
 	assert.equal(page.focused, box);
 	const labels = r.by((el) => el.getAttribute("role") === "option").map((o) => o.textContent);
-	for (const want of ["Open tower's session", "Open tower's terminal", "Previous companion", "Next companion", "Settings", "Back to the Standard view", "Sound effects", "Sound effects volume up", "Background sound", "Background volume up"]) assert.ok(labels.some((l) => l.startsWith(want)), want);
+	for (const want of ["Open tower's session", "Open tower's terminal", "Previous companion", "Next companion", "Settings", "Leave Zen (Esc Esc)", "Sound effects", "Sound effects volume up", "Background sound", "Background volume up"]) assert.ok(labels.some((l) => l.startsWith(want)), want);
 	assert.ok(r.by((el) => el.getAttribute("class") === "zen-stage")[0]!.getAttribute("inert") !== null, "the stage is inert");
 	assert.equal(palette.hidden, false);
 	r.feed(net([unit("a", "working"), unit("q", "waiting", { since: 5, pending: select() })]));
@@ -1669,7 +1669,7 @@ test("the palette opens over Zen with the page's actions and the menu's preferen
 	assert.equal(r.by((el) => el.getAttribute("class") === "zen-stage")[0]!.getAttribute("inert"), null);
 });
 
-test("palette entries act through the page: settings, Standard (the way back), the companion's session (the same exit as Esc Esc), and its terminal", async () => {
+test("palette entries act through the page: settings, Leave Zen (the way out), the companion's session (the same exit as Esc Esc), and its terminal", async () => {
 	const r = rig({ z4b: true });
 	r.feed(net([unit("a", "working")]));
 	r.z.show();
@@ -1677,7 +1677,7 @@ test("palette entries act through the page: settings, Standard (the way back), t
 	const pick = (label: string) => (r.z.palette(), r.by((el) => el.getAttribute("role") === "option" && el.textContent.startsWith(label))[0]!.click());
 	pick("Settings");
 	assert.equal(r.calls.settings, 1);
-	pick("Back to the Standard view");
+	pick("Leave Zen (Esc Esc)");
 	pick("Open tower's session");
 	assert.deepEqual(r.calls.leave, [{}, { route: { view: "session", ws: "w", key: "t" } }]);
 	pick("Open tower's terminal");

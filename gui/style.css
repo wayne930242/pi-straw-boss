@@ -93,8 +93,7 @@ a.pair-btn { display: inline-flex; align-items: center; justify-content: center;
 .tog[data-state="done"] { color: var(--text); } .tog[data-state="done"]::before { background: var(--ok); box-shadow: 0 0 6px var(--ok); } .tog[data-state="error"] { color: color-mix(in srgb, var(--err-soft) 45%, var(--hi)); } .tog[data-state="error"]::before { background: var(--err); box-shadow: 0 0 6px var(--err); }
 .alert-row { display: flex; align-items: center; gap: 10px; min-width: 0; } .done-btn { flex: none; white-space: nowrap; }
 .prefs-btn { margin-left: auto; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; text-decoration: none; } .prefs-btn svg { width: 18px; height: 18px; fill: currentColor; }
-.zen-back { display: none; } html[data-zen-away][data-view="standard"] .zen-back:not([hidden]) { display: inline-block; } /* the header's way back into Zen: only while this page is away from it (main.ts) */
-body[data-route="settings"] .zen-back { display: none !important; } /* the settings page is never covered: choosing Zen there leaves the page on it, away */
+.zen-enter { display: inline-flex; align-items: center; justify-content: center; } .zen-enter svg { display: none; width: 20px; height: 20px; } /* the header's Zen button, in every theme: the word, and on a phone the ensō alone (below) */
 /* The Zen view's first frame (view.ts sets data-view="zen" on <html> before anything is drawn): ink and the breathing ring from the first paint, Standard's page hidden; the layer's own sheet is zen.css, loaded with its chunk, whose first child replaces the ring (:empty). */
 html[data-view="zen"], html[data-view="zen"] body { background: #14110e; color: #ebe3d3; color-scheme: dark; overscroll-behavior: none; } html[data-view="zen"] :is(.shell, .dock) { display: none; } #zen[hidden] { display: none; }
 html[data-view="zen"] #zen:empty:not([hidden]) { position: fixed; inset: 0; display: grid; place-items: center; } html[data-view="zen"] #zen:empty:not([hidden])::after { content: ""; width: min(48vmin, 320px); aspect-ratio: 1; box-sizing: border-box; border: 1px solid #857a6b; border-radius: 50%; background: radial-gradient(circle, rgba(150, 136, 116, 0.14), transparent 70%); transform: scale(0.72); opacity: 0.55; animation: zen-breath 10s infinite; }
@@ -985,6 +984,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 @media (max-width: 640px) {
 	/* The HUD, the settings, and the location bar. */
 	.brand { min-height: 44px; } .prefs-btn { width: 44px; height: 44px; }
+	.zen-enter { width: 44px; height: 44px; padding: 0; } .zen-enter svg { display: block; } .zen-enter span { display: none; }
 	.crumbs { align-items: center; } .crumbs > * { padding-block: 14px; line-height: 16px; }
 	:is(.pair-btn, .alerts, .done-btn, .quit-btn, .later, .go, .x, .d-doc, .ask-send, .ask-cancel, .ask-opt, .sheet-yes, .cmp-yes, .chat-pill) { min-height: 44px; }
 	:is(.pair-btn, .quit-btn, .later, .go, .x, .tab-add, .ask-send, .ask-cancel, .sheet-yes, .cmp-yes) { min-width: 44px; }

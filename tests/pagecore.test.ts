@@ -12,6 +12,7 @@ import type { StepOpen } from "../gui/terminalthen.ts";
 import type { Route } from "../gui/router.ts";
 import type { Status } from "../gui/stream.ts";
 import { type Choice, mountView, type ViewEnv } from "../gui/view.ts";
+import { mountMode } from "../gui/mode.ts";
 
 // The page's wiring (gui/pagecore.ts) run with plain fakes for its parts: which presenter a snapshot reaches in each face, the tab icon, the clips, a hidden page, the stream's watch, and the way the face moves (Z3R-F006).
 
@@ -19,15 +20,17 @@ const unit = (key: string, mark: Mark = "idle", o: Partial<Unit> = {}): Unit => 
 const net = (...units: Unit[]): Net => ({ bases: [{ id: "w", label: "w", mark: "idle" as Mark, outposts: [], outside: [], tower: null, tabs: [{ id: "t", label: "t", units }] }] });
 const live: Status = { state: "live", attempt: 0 };
 
-/** The page as main.ts builds it, with every part a recorder. `zenLoaded: false` is a Zen chunk that is not fetched yet (`load()` fetches it). */
-function world(o: { stored?: Choice; away?: boolean; route?: Route; hidden?: boolean; zenLoaded?: boolean; modal?: boolean; dialogOpen?: boolean; zenTakesEscape?: boolean; tapTakes?: boolean; hotkeyTakes?: boolean; cycleTakes?: boolean; paletteTakes?: boolean } = {}) {
-	const root = { dataset: (o.away ? { zenAway: "" } : {}) as Record<string, string | undefined> }, store = o.stored ?? "standard";
-	const env: ViewEnv = { root, meta: null, server: null, media: { matches: false, addEventListener: () => {} }, storage: { getItem: () => store, setItem: () => {} } };
-	const view = mountView(env);
+/** The page as main.ts builds it, with every part a recorder. `stored: "zen"` is a Standard device with the Zen mode on (`away`: it was left, so the mode is off). `zenLoaded: false` is a Zen chunk that is not fetched yet (`load()` fetches it). */
+function world(o: { stored?: Choice | "zen"; away?: boolean; route?: Route; hidden?: boolean; zenLoaded?: boolean; modal?: boolean; dialogOpen?: boolean; zenTakesEscape?: boolean; tapTakes?: boolean; hotkeyTakes?: boolean; cycleTakes?: boolean; paletteTakes?: boolean } = {}) {
+	const root = { dataset: {} as Record<string, string | undefined> }, kept = new Map([["sb.view", !o.stored || o.stored === "zen" ? "standard" : o.stored], ["sb.zen", o.stored === "zen" && !o.away ? "1" : "0"]]);
+	const storage = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v) };
+	const env: ViewEnv = { root, meta: null, server: null, media: { matches: false, addEventListener: () => {} }, storage }, mode = mountMode(storage);
+	let shows = () => mode.on();
+	const view = mountView(env, () => shows());
 	const w = {
 		view, root, hidden: o.hidden ?? false, zenEl: { hidden: true }, held: undefined as (() => void) | undefined, zenLoaded: o.zenLoaded ?? true, waiting: [] as ((z: ZenFace) => void)[],
 		nets: [] as [Map<string, Alert>, Net][], pairLists: [] as string[], shows: 0, hides: 0, refreshes: 0, icons: [] as number[], signals: [] as string[][], draws: [] as { net: Net; fresh: string[]; now: number }[], maps: [] as Net[],
-		navigations: [] as [Route, Route][], layouts: 0, restarts: 0, backs: 0, links: 0, leftSettings: 0, modal: o.modal ?? false, dialogOpen: o.dialogOpen ?? false, chimes: 0, escapes: 0,
+		navigations: [] as [Route, Route][], layouts: 0, restarts: 0, faces: 0, links: 0, leftSettings: 0, modal: o.modal ?? false, dialogOpen: o.dialogOpen ?? false, chimes: 0, escapes: 0,
 		/** The calls the overlay layer, the focus views, and the router received, in order. */
 		calls: [] as string[],
 		load() {
@@ -42,16 +45,17 @@ function world(o: { stored?: Choice; away?: boolean; route?: Route; hidden?: boo
 		step: (s: StepOpen, n?: Net) => void w.calls.push(`step:${JSON.stringify(s)}:${n ? "net" : "-"}`),
 	};
 	const io: PageIo = {
-		view, root, zenEl: w.zenEl, zen: () => (w.zenLoaded ? zen : undefined), withZen: (call) => (w.zenLoaded ? call(zen) : void w.waiting.push(call)), hidden: () => w.hidden,
-		back: () => void w.backs++, leaveSettings: () => void w.leftSettings++, restart: () => void w.restarts++, icon: (n) => void w.icons.push(n), link: () => void w.links++,
+		view, mode, zenEl: w.zenEl, zen: () => (w.zenLoaded ? zen : undefined), withZen: (call) => (w.zenLoaded ? call(zen) : void w.waiting.push(call)), hidden: () => w.hidden,
+		faced: () => void w.faces++, leaveSettings: () => void w.leftSettings++, restart: () => void w.restarts++, icon: (n) => void w.icons.push(n), link: () => void w.links++,
 		signal: (fresh) => void w.signals.push(fresh.map((a) => a.key)), draw: (n, fresh, now) => void w.draws.push({ net: n, fresh: fresh.map((a) => a.key), now: now.size }),
 		map: (n) => void w.maps.push(n), navigate: (next, before) => void w.navigations.push([next, before]), layout: () => void w.layouts++,
 		panels: () => panels, withPanels: (call) => call(panels), withFocus: (call) => call({ terminal: (key) => void w.calls.push(`terminal:${key}`) }),
 		go: (route) => (w.calls.push(`go:${JSON.stringify(route)}`), core.route(route)), modal: () => w.modal, chime: () => void w.chimes++,
 	};
 	const core = createPage(io);
+	shows = core.zenOn;
 	if (o.route) core.route(o.route);
-	return Object.assign(w, { core });
+	return Object.assign(w, { core, mode, kept });
 }
 
 test("Standard: a snapshot draws the page and the map, counts the waiting units in the tab icon, and the clips tell what arrived after the first snapshot only", () => {
@@ -73,10 +77,9 @@ test("the tab icon counts every waiting unit and every trust question, and is pl
 	const zen = world({ stored: "zen" });
 	zen.core.snapshot(n);
 	assert.deepEqual(zen.icons, [0], "no count in Zen");
-	zen.root.dataset.zenAway = "";
-	zen.view.refresh();
+	zen.core.face.leave();
 	zen.core.snapshot(n);
-	assert.deepEqual(zen.icons, [0, 3], "a page that left Zen counts again");
+	assert.deepEqual(zen.icons, [0, 3, 3], "a page that left Zen counts again (the move draws the newest snapshot, then the next one)");
 });
 
 test("Zen: a snapshot goes to the Zen layer alone: no clip, no Standard draw, no map, a plain icon; what waited is not news when Standard comes back", () => {
@@ -194,8 +197,8 @@ test("while away, snapshots go to Standard alone; coming back hands Zen the newe
 	w.core.snapshot(net(unit("a", "idle")));
 	assert.equal(w.nets.length, before, "Zen is not told while the page shows Standard");
 	assert.deepEqual(w.draws.at(-1)!.fresh, [], "and Standard drew the new state");
-	w.core.face.back();
-	assert.deepEqual([w.core.zenOn(), w.backs > 0, w.nets.length, w.nets.at(-1)![0].get("a")?.mark], [true, true, before + 1, "idle"]);
+	w.core.face.enter();
+	assert.deepEqual([w.core.zenOn(), w.faces > 0, w.nets.length, w.nets.at(-1)![0].get("a")?.mark], [true, true, before + 1, "idle"]);
 });
 
 const alert = (key: string, o: Partial<Alert> = {}): Alert => ({ key, ws: "w", name: key, role: "main", mark: "waiting", at: 1, ...o });
@@ -264,16 +267,16 @@ test("leaving Zen: Standard first, then the item's dialog or the session's comms
 	assert.deepEqual([none.core.zenOn(), none.calls], [false, []], "a pause just returns to the page");
 });
 
-test("coming back to Zen: the mark that the page left goes and the view is read again; from the settings page the page leaves it", () => {
+test("the header's Zen button: the mode goes on and Zen shows; from the settings page the page leaves it first", () => {
 	const w = world({ stored: "zen" });
 	w.core.face.leave();
 	assert.equal(w.core.zenOn(), false);
 	w.core.enterZen();
-	assert.deepEqual([w.core.zenOn(), w.root.dataset.zenAway, w.zenEl.hidden], [true, undefined, false]);
+	assert.deepEqual([w.core.zenOn(), w.mode.on(), w.zenEl.hidden, w.root.dataset.view], [true, true, false, "zen"]);
 	const settings = world({ stored: "zen", route: { view: "settings" } });
 	assert.equal(settings.core.zenOn(), false);
 	settings.core.enterZen();
-	assert.deepEqual([settings.leftSettings, settings.root.dataset.zenAway], [1, undefined], "an explicit return is a pick: the settings page is left, as Back would");
+	assert.deepEqual([settings.leftSettings, settings.mode.on()], [1, true], "the Zen button on the settings page leaves the page, as Back would, and the mode is on");
 });
 
 test("a click on a system notification: Zen changes nothing (it tells its item itself), a trust question opens its dialog, any other alert opens its session", () => {

@@ -43,6 +43,7 @@
 <symbol id="i-barracks" viewBox="0 0 512 512" fill="currentColor"><path fill-rule="evenodd" d="M32 448V224L256 96l224 128v224H384V288H128v160zm128-128h192v24H160zm0 48h192v24H160zm0 48h192v24H160z"/></symbol>
 <symbol id="i-paused" viewBox="0 0 512 512" fill="currentColor"><path d="M300 48a208 208 0 1 0 164 312A176 176 0 0 1 300 48z"/></symbol>
 <symbol id="i-stale" viewBox="0 0 512 512" fill="currentColor"><path d="M112 48h288v40h-28c0 80-60 120-84 168 24 48 84 88 84 168h28v40H112v-40h28c0-80 60-120 84-168-24-48-84-88-84-168h-28zm76 40c0 56 40 92 68 124 28-32 68-68 68-124zm68 216c-28 32-68 68-68 120h136c0-52-40-88-68-120z"/></symbol>
+<symbol id="i-zen" viewBox="0 0 24 24"><path d="M8.6 19.8A8.6 8.6 0 1 1 14.4 20.4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
 <symbol id="i-fog" viewBox="0 0 512 512" fill="currentColor"><path d="M80 208h352v40H80zm-48 80h352v40H32zm96 80h352v40H128z"/></symbol>
 </defs></svg>
 <div class="shell" inert>
@@ -70,8 +71,8 @@
     <!-- A phone: Dismiss finished and Stashed, which sit under the header above 640 px, wait behind this button (style.css, "A phone's menus"). -->
     <button class="pair-btn menu-btn bar-more" id="bar-more" type="button" popovertarget="bar-pop" aria-haspopup="true" aria-label="More" title="More" data-m-label="menu_more" data-m-title="menu_more" hidden>⋯</button>
     <a class="pair-btn prefs-btn" id="prefs" href="settings" data-route="settings" aria-label="Settings" data-m-label="settings" data-m-title="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg></a>
-    <!-- Back into Zen after Esc or the corner control left it (main.ts; Z3): shown only while `data-zen-away` is on <html>. -->
-    <button class="pair-btn zen-back" id="zen-back" type="button" hidden data-m="zen_back" data-m-title="zen_back_title">Zen</button>
+    <!-- The Zen button (main.ts; docs/specs/2026-11-26-storybook-theme/spec.md A1): Zen is a mode, entered from the header of every theme, the settings page's included. A phone shows the ensō alone. -->
+    <button class="pair-btn zen-enter" id="zen-enter" type="button" aria-label="Enter Zen (one waiting item at a time)" title="Enter Zen (one waiting item at a time)" data-m-label="zen_enter_title" data-m-title="zen_enter_title"><svg viewBox="0 0 24 24" aria-hidden="true"><use data-icon="zen" href="#i-zen"/></svg><span data-m="zen_enter">Zen</span></button>
     <div class="link" id="link" data-state="connecting"><i></i><span id="link-text">connecting</span></div>
   </header>
   <div class="banner" id="banner" role="status" hidden></div>
@@ -118,7 +119,6 @@
             <button class="pair-btn" type="button" data-choice="auto" aria-pressed="true" data-m="view_auto">Auto</button>
             <button class="pair-btn" type="button" data-choice="standard" aria-pressed="false" data-m="view_standard">Standard</button>
             <button class="pair-btn" type="button" data-choice="geek" aria-pressed="false" data-m="view_geek">Geek</button>
-            <button class="pair-btn" type="button" data-choice="zen" aria-pressed="false" data-m="view_zen">Zen</button>
             <button class="pair-btn" type="button" data-choice="raven" aria-pressed="false" data-m="view_raven">Raven Keep</button>
           </div></div>
           <div class="set-row"><span id="remind-label" data-m="remind">Remind</span><button class="pair-btn tog" id="remind" type="button" aria-pressed="true" aria-labelledby="remind-label"></button></div>

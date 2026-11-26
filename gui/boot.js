@@ -1,7 +1,8 @@
 // The first frame's view, before the body exists (docs/specs/2026-11-07-raven-view/spec.md §1.2). A classic script with no imports, so it blocks nothing but the parser: the page entry's module has not run yet.
-// It resolves the device's view as gui/view.ts does on a fresh load (the stored choice, then the server's default in <meta name="sb-view">, then prefers-contrast; `held` and `zen-away` cannot exist yet), puts it on <html> as data-view, sets the
-// theme-color and the tab icon, and, when the view is a theme whose stylesheet the server did not already link, writes that link (parser-inserted, so it blocks the first paint). tests/view.test.ts runs this file against view.ts's `resolve`.
-// The theme map is <meta name="sb-themes"> (the build writes it into index.html). Anything wrong here (no storage, no map) leaves the page as the server wrote it: main.ts corrects the view and loads the theme as today.
+// It resolves the page's face as gui/view.ts and gui/mode.ts do on a fresh load: Zen while the mode is on (`sb.zen` 1, or with none stored the legacy `sb.view` zen; docs/specs/2026-11-26-storybook-theme/spec.md A3; the route is not known yet, and main.ts
+// corrects a settings route), else the device's theme (the stored choice, then the server's default in <meta name="sb-view">, then prefers-contrast). It puts the face on <html> as data-view, sets the theme-color and the tab icon, and, when the
+// face is a theme whose stylesheet the server did not already link, writes that link (parser-inserted, so it blocks the first paint). tests/view.test.ts and tests/zen-mode.test.ts run this file against view.ts's `resolve` and mode.ts.
+// The theme map is <meta name="sb-themes"> (the build writes it into index.html); an entry marked `mode` (Zen) is no view name. Anything wrong here (no storage, no map) leaves the page as the server wrote it: main.ts corrects the face and loads the theme as today.
 (function () {
 	var d = document, root = d.documentElement;
 	function meta(name) {
@@ -13,7 +14,7 @@
 		themes = JSON.parse(meta("sb-themes") || "{}") || {};
 	} catch (e) {}
 	var names = ["standard"];
-	for (var k in themes) if (Object.prototype.hasOwnProperty.call(themes, k)) names.push(k);
+	for (var k in themes) if (Object.prototype.hasOwnProperty.call(themes, k) && !(themes[k] && themes[k].mode)) names.push(k);
 	/** A name of a view, anything else is Auto. */
 	function choice(value) {
 		return typeof value === "string" && names.indexOf(value) >= 0 ? value : "auto";
@@ -25,17 +26,26 @@
 		if (shared !== "auto") return shared;
 		return contrast && names.indexOf("geek") >= 0 ? "geek" : "standard";
 	}
-	// The theme-color of each view that has one of its own (gui/view.ts THEME); Standard keeps the color the page came with.
+	/** gui/mode.ts: `sb.zen` says, and with none stored the legacy `sb.view` (prefs.ts LEGACY). */
+	function zen(storedZen, storedView) {
+		return storedZen !== null ? storedZen === "1" : storedView === "zen";
+	}
+	/** What the page shows first: Zen while the mode is on, else the theme. */
+	function face(storedView, storedZen, contrast, server) {
+		return zen(storedZen, storedView) ? "zen" : resolve(storedView, contrast, server);
+	}
+	// The theme-color of each face that has one of its own (gui/view.ts THEME); Standard keeps the color the page came with.
 	var colors = { geek: "#000000", zen: "#14110e", raven: "#0d0a10" };
-	globalThis.sbBoot = { resolve: resolve, colors: colors };
+	globalThis.sbBoot = { resolve: resolve, face: face, colors: colors };
 	try {
-		var stored = null;
+		var stored = null, storedZen = null;
 		try {
 			stored = localStorage.getItem("sb.view");
-		} catch (e) {} // storage refused: the screen and the server decide
-		var view = resolve(stored, matchMedia("(prefers-contrast: more)").matches, meta("sb-view"));
+			storedZen = localStorage.getItem("sb.zen");
+		} catch (e) {} // storage refused: the screen and the server decide, and the mode is off
+		var view = face(stored, storedZen, matchMedia("(prefers-contrast: more)").matches, meta("sb-view"));
 		root.dataset.view = view;
-		var theme = themes[view];
+		var theme = Object.prototype.hasOwnProperty.call(themes, view) ? themes[view] : undefined;
 		if (colors[view]) {
 			var bar = d.querySelector('meta[name="theme-color"]');
 			if (bar) bar.setAttribute("content", colors[view]);

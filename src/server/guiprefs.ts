@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { type Choice, isChoice } from "../views.ts";
+import { type Choice, CHOICES, isChoice, said } from "../views.ts";
 import { readOwnedText, writeJson } from "./record.ts";
 
 // The server's default view of the page (`/boss gui view`, docs/how-it-works.md Browser view): which view a device that follows the server gets. It is a presentation setting of the whole server, kept in `gui-prefs.json`
@@ -22,7 +22,7 @@ export function readView(dir: string): ServerView {
 }
 
 /** Whether the file already says exactly this default (a missing file says `auto`). An older or newer build's value this code reads as `auto` does not match, so an explicit set rewrites it. */
-export function storedIs(dir: string, view: ServerView): boolean {
+export function storedIs(dir: string, view: ServerView | "zen"): boolean {
 	const text = readOwnedText(join(dir, PREFS_FILE));
 	if (text === undefined) return view === "auto";
 	try {
@@ -32,6 +32,14 @@ export function storedIs(dir: string, view: ServerView): boolean {
 		return false;
 	}
 }
+
+/** The file still says `zen`, the value of a build where Zen was a view (docs/specs/2026-11-26-storybook-theme/spec.md A1): it reads as `auto`, and `/boss gui view` says so. Nothing rewrites it but an explicit set. */
+export const storedZen = (dir: string): boolean => storedIs(dir, "zen");
+
+/** Why `zen` is no default (A1): the page's header enters it. */
+export const ZEN_REFUSED = `Zen is a mode now: enter it with the Zen button in the page's header. The default view is ${said(CHOICES)}`;
+/** The tell's extra line while the file says `zen`. */
+export const ZEN_STORED = "gui-prefs.json still says zen, which is now a mode; the default reads as auto";
 
 /** Stores the default; throws when the folder cannot be written (the caller tells the boss, and nothing changes). */
 export const writeView = (dir: string, view: ServerView) => writeJson(join(dir, PREFS_FILE), { v: 1, view });

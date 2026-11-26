@@ -118,7 +118,7 @@ test("an unknown value is refused and changes nothing", async () => {
 	for (const view of ["sparkly", "GEEK", "", 1, null, ["geek"], { view: "geek" }]) {
 		const reply = await h.ask("gui-view", { view });
 		assert.equal(reply.ok, false, JSON.stringify(view));
-		assert.match(String(reply.error), /auto, standard, geek, zen, or raven/);
+		assert.match(String(reply.error), /auto, standard, geek, or raven/);
 	}
 	assert.deepEqual(JSON.parse(readFileSync(prefs(h), "utf8")), { v: 1, view: "geek" });
 	assert.equal(metaOf(await pageOf(h)), "geek");
@@ -200,7 +200,7 @@ test("/boss gui view <auto|standard|geek> in a pi session sets the server's defa
 	assert.match(viewer.notices.at(-1)!.text, /now Standard/);
 	await viewer.command("gui view sparkly");
 	assert.equal(viewer.notices.at(-1)!.level, "error");
-	assert.match(viewer.notices.at(-1)!.text, /auto, standard, geek, zen, or raven/);
+	assert.match(viewer.notices.at(-1)!.text, /auto, standard, geek, or raven/);
 	assert.equal(metaOf(await pageOf(h)), "standard", "a wrong value changed nothing");
 	await viewer.command("gui view auto");
 	assert.equal(metaOf(await pageOf(h)), "auto");
@@ -220,7 +220,7 @@ test("the docs name the command, the store, the meta, the event, and gui.json's 
 	// the contract is its own section (principle paragraph, then the details folded): read it up to the next heading
 	const contract = doc.split("#### `gui.json` is a contract\n")[1]?.split(/\n#{1,4} /)[0] ?? "";
 	assert.match(contract, /`owner`, and `view`/);
-	assert.match(contract, /`view` \(optional, `standard`, `geek`, or `zen`, absent when the boss has set no default\)/);
+	assert.match(contract, /`view` \(optional, `standard`, `geek`, or `raven`, absent when the boss has set no default\)/);
 	for (const f of ["site/src/content/docs/reference/commands.md", "site/src/content/docs/zh-tw/reference/commands.md"]) assert.ok(read(f).includes("`/boss gui view`"), f);
 });
 
@@ -242,36 +242,6 @@ test("a stopped GUI's gui.json carries this server's view, not the one an older 
 	await h.ask("gui", { boss: true });
 	await h.ask("gui-stop");
 	assert.equal(h.gui().view, "geek", "a record without the field gets the server's");
-});
-
-test("zen is stored, served in the meta, told in hello and as a view event, and written into gui.json; zen2 is refused with the new text", async () => {
-	const h = await startHosted(world);
-	const s = stream(h);
-	await until(() => helloOf(s.heard).length > 0, "the stream's hello");
-	assert.deepEqual(await h.ask("gui-view", { view: "zen" }), { ok: true, view: "zen", changed: true });
-	await until(() => s.heard.some(([e]) => e === "view"), "a view event");
-	assert.deepEqual(JSON.parse(readFileSync(prefs(h), "utf8")), { v: 1, view: "zen" });
-	assert.equal(metaOf(await pageOf(h)), "zen");
-	assert.equal(h.gui().view, "zen", "gui.json carries it for a shell");
-	const late = stream(h);
-	await until(() => helloOf(late.heard).length > 0, "a later stream's hello");
-	assert.equal(helloOf(late.heard)[0]!.view, "zen", "a stream opened after the set hears zen in its hello");
-	late.close();
-	assert.deepEqual(s.heard.filter(([e]) => e === "view").map(([, d]) => JSON.parse(d)), ["zen"]);
-	const reply = await h.ask("gui-view", { view: "zen2" });
-	assert.equal(reply.ok, false);
-	assert.equal(reply.error, "The default view is auto, standard, geek, zen, or raven");
-	assert.equal(metaOf(await pageOf(h)), "zen", "the refusal changed nothing");
-});
-
-test("/boss gui view zen in a pi session sets the default and says Zen", async () => {
-	const h = await startHosted(world);
-	const viewer = world.agent({ id: "viewer", pane: "wA:p1", tab: "wA:t1", deps });
-	await viewer.start();
-	await viewer.command("gui view zen");
-	assert.match(viewer.notices.at(-1)!.text, /default view is now Zen/);
-	assert.notEqual(viewer.notices.at(-1)!.level, "error");
-	assert.equal(metaOf(await pageOf(h)), "zen");
 });
 
 test("raven is stored, served in the meta, told in hello and as a view event, and written into gui.json; an older build's reading of it is auto, and /boss gui view raven says Raven Keep", async () => {
@@ -296,19 +266,15 @@ test("raven is stored, served in the meta, told in hello and as a view event, an
 	assert.equal(metaOf(await pageOf(h)), "raven");
 });
 
-test("a stored value this build reads as auto (a newer or older build's) is rewritten by an explicit set, and zen returns after a restart if nothing rewrote it", async () => {
+test("a stored value this build reads as auto (a newer or older build's) is rewritten by an explicit set, and it returns after a restart if nothing rewrote it", async () => {
 	const h = await startHosted(world);
-	await h.ask("gui-view", { view: "zen" });
+	await h.ask("gui-view", { view: "raven" });
+	writeFileSync(prefs(h), JSON.stringify({ v: 1, view: "raven2" })); // a newer build's
 	await h.ask("restart", { reason: "test", by: "test" });
 	await h.handle.done;
 	const next = await startHosted(world);
-	assert.deepEqual(JSON.parse(readFileSync(prefs(next), "utf8")), { v: 1, view: "zen" }, "starting rewrites nothing");
-	assert.equal(metaOf(await pageOf(next)), "zen");
-	writeFileSync(prefs(next), JSON.stringify({ v: 1, view: "zen2" }));
-	await next.ask("restart", { reason: "test", by: "test" });
-	await next.handle.done;
-	const later = await startHosted(world);
-	assert.equal(metaOf(await pageOf(later)), "auto", "an unknown value reads as auto");
-	assert.deepEqual(await later.ask("gui-view", { view: "auto" }), { ok: true, view: "auto", changed: false });
-	assert.deepEqual(JSON.parse(readFileSync(prefs(later), "utf8")), { v: 1, view: "auto" }, "an explicit auto replaces the value it could not read");
+	assert.deepEqual(JSON.parse(readFileSync(prefs(next), "utf8")), { v: 1, view: "raven2" }, "starting rewrites nothing");
+	assert.equal(metaOf(await pageOf(next)), "auto", "an unknown value reads as auto");
+	assert.deepEqual(await next.ask("gui-view", { view: "auto" }), { ok: true, view: "auto", changed: false });
+	assert.deepEqual(JSON.parse(readFileSync(prefs(next), "utf8")), { v: 1, view: "auto" }, "an explicit auto replaces the value it could not read");
 });
