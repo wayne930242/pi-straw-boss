@@ -1,5 +1,8 @@
 import "./style.css";
-import { domEnv, KEY, mountPick, mountView, mountZenBack, type View } from "./view.ts";
+import { domEnv, mountPick, mountView, mountZenEnter } from "./view.ts";
+import { mountMode } from "./mode.ts";
+import { KEYS } from "./prefs.ts";
+import type { Face } from "../src/views.ts";
 import { createPage } from "./pagecore.ts";
 import { localeNames, setLocale, startI18n } from "./i18n.ts";
 import { followLabel } from "./viewlabel.ts";
@@ -29,23 +32,27 @@ import { onStep } from "./terminalthen.ts";
 import { mountTimeline } from "./timeline.ts";
 import type { mountFocus } from "./views.ts";
 import { iconHref, iconOf, plainOf } from "./tabicon.ts";
-import { loadTheme, onTheme, showTheme } from "./themes/registry.ts";
+import { isTheme, loadTheme, onTheme, showTheme } from "./themes/registry.ts";
 import type { ThemeParts } from "./themes/theme.ts";
 import type { mountZen } from "./zen.ts";
 import type { TermKit } from "./zentypes.ts";
 
-// The view goes first, before anything is drawn: `data-view` on <html> picks the palette, so no frame is painted in the other one (view.ts).
-// The demo's `?zen=<state>` opens it in Zen for this page only (fixture.ts): the stored choice is not written.
+// The face goes first, before anything is drawn: `data-view` on <html> picks the palette, so no frame is painted in the other one (view.ts). It is Zen while the mode is on (mode.ts) and the route is not the settings page, and the device's theme otherwise.
+// The demo's `?zen=<state>` opens it in Zen for this page only (fixture.ts): `sb.zen` is 1 in a store of its own, and nothing is written to the device.
 const zenDemo = __LIVE__ ? null : new URLSearchParams(location.search).get("zen");
-const demoStore = new Map([[KEY, "zen"]]);
-const view = mountView(zenDemo ? { ...domEnv(), storage: { getItem: (key) => demoStore.get(key) ?? localStorage.getItem(key), setItem: (key, value) => void demoStore.set(key, value) } } : undefined);
+const demoStore = new Map<string, string>([[KEYS.zen, "1"]]);
+const env = zenDemo ? { ...domEnv(), storage: { getItem: (key: string) => demoStore.get(key) ?? localStorage.getItem(key), setItem: (key: string, value: string) => void demoStore.set(key, value) } } : domEnv();
+const mode = mountMode(env.storage);
+/** Whether the page shows Zen: the mode alone until the core knows the route (pagecore.ts `zenOn`). */
+let zenShown = () => mode.on();
+const view = mountView(env, () => zenShown());
 startI18n();
 mountMenus();
 mountPick(document.getElementById("view-pick")!, view, followLabel);
 const page = mountPage(), timeline = mountTimeline(document.getElementById("timeline") as HTMLDetailsElement);
 const el = (id: string) => document.getElementById(id)!;
-// Away from Zen (data-zen-away on <html>, set by the Zen layer): the header's Zen button returns to it. It stays hidden unless the device's resolved view is Zen.
-const root = document.documentElement, syncBack = mountZenBack(el("zen-back"), view, root, () => core.enterZen());
+// The header's Zen button, in every theme: it turns the mode on (pagecore.ts `enterZen`).
+mountZenEnter(el("zen-enter"), () => core.enterZen());
 const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour12: false }) : m.never());
 
 let started = false, hello = "";
@@ -99,7 +106,7 @@ const withZen = (call: (z: Zen) => void) => {
 			data, recent, label, online: core.online,
 			post: (key) => fixture && ((action, body) => fixture.data(key).post!(action, body)), trust: fixture && fixture.trust,
 			remind: (a) => notify.remind(a), sound: host.sound,
-			menu: { language: { get: getLocale, names: localeNames, set: setLocale }, view: { choice: () => view.choice(), set: (c) => view.set(c), auto: () => followLabel(view.server()) }, sound: { effects: { ...notify.sound.effects, try: host.menuSound.try, all: host.menuSound.all }, background: notify.sound.background } }, // the corner menu's rows act through the settings page's own switches
+			menu: { language: { get: getLocale, names: localeNames, set: setLocale }, sound: { effects: { ...notify.sound.effects, try: host.menuSound.try, all: host.menuSound.all }, background: notify.sound.background } }, // the corner menu's rows act through the settings page's own switches
 			music: host.music,
 			leave: core.leaveZen, terminals, watch: core.watchLog, companions: host.companions, activity: host.activity, trains: host.trains, settings: core.openSettings, start: fixture?.start,
 		}), zen.runs(runDialogs), zen);
@@ -121,12 +128,12 @@ const openSection = (section: Section) => (core.current.view === "settings" ? wi
 // Each view has its own icon (the build's theme map, boot.js leaves Standard's file name in data-standard); the waiting badge is drawn over the shown view's, in the theme's colours.
 const tabIcon = document.querySelector<HTMLLinkElement>('link[rel="icon"]'), homeIcon = tabIcon && (tabIcon.dataset.standard ?? tabIcon.getAttribute("href") ?? ""), themeMap = document.querySelector<HTMLMetaElement>('meta[name="sb-themes"]')?.content;
 const plains = new Map<string, Promise<string | undefined>>();
-const plainFor = (shown: View) => {
+const plainFor = (shown: Face) => {
 	const href = new URL(iconOf(themeMap, shown) ?? homeIcon ?? "", document.baseURI).href;
 	if (!plains.has(href)) plains.set(href, plainOf(href));
 	return plains.get(href)!;
 };
-let plain = tabIcon ? plainFor(view.view()) : undefined, badge: ThemeParts["badge"], badged = 0;
+let plain = tabIcon ? plainFor(view.face()) : undefined, badge: ThemeParts["badge"], badged = 0;
 function icon(n: number, again = false) {
 	if (!tabIcon || !plain || (n === badged && !again)) return;
 	badged = n;
@@ -176,19 +183,29 @@ const leaveSettings = () => (depthOf(window.history.state) > 0 ? window.history.
 const modal = () => document.querySelector(MODAL) !== null;
 // The page's face, route, stream state, and watch live in pagecore.ts, with what the page does when asked (open a session, an alert, a pane, leave or come back to Zen, Escape); this file gives it the parts (the DOM, the lazy chunks, the stream).
 const core = createPage({
-	view, root, zenEl: el("zen"), zen: () => zen, withZen, hidden: () => document.hidden, back: syncBack, leaveSettings, restart: () => started && stream.restart(),
+	view, mode, zenEl: el("zen"), zen: () => zen, withZen, hidden: () => document.hidden, faced: () => showFace(), leaveSettings, restart: () => started && stream.restart(),
 	icon, link: (link) => linkBar.net(link), signal: (fresh) => notify.signal(fresh), draw, map: page.show, navigate, layout: () => requestAnimationFrame(page.layout),
 	panels: () => panels, withPanels, withFocus, go: (route) => router.go(route), modal, chime: () => notify.chime(),
 });
-// A view's theme (stylesheet, sprite, nouns) loads the first time the page shows it; its parts take effect, and the tab takes its icon with the badge in its colours (themes/registry.ts).
+zenShown = core.zenOn;
+// A face's theme (stylesheet, sprite, nouns) loads the first time the page shows it; its parts take effect, and the tab takes its icon with the badge in its colours (themes/registry.ts).
+// In Zen the device's theme loads too, once Zen has drawn and the page is idle, so leaving shows it with no flash of Standard; its sounds and motion run only while its face shows (docs/specs/2026-11-26-storybook-theme/spec.md O10).
+const idle = (run: () => void) => ("requestIdleCallback" in window ? requestIdleCallback(() => run()) : setTimeout(run, 200));
+let faceShown: Face | undefined;
+function showFace() {
+	const face = view.face(), theme = view.view();
+	if (face === "zen" && isTheme(theme)) idle(() => void loadTheme(theme).catch(() => undefined)); // fetched once (registry.ts); its parts take effect on leaving
+	if (face === faceShown) return;
+	faceShown = face;
+	void showTheme(face);
+}
 onTheme((shown, parts) => {
 	badge = parts?.badge;
 	if (tabIcon) plain = plainFor(shown);
 	icon(badged, true);
 	if (core.latest) core.snapshot(core.latest); // the words and icons are drawn again in the shown view's, a switch back to Standard included (RRB2-F001)
 });
-view.onChange((shown) => void showTheme(shown));
-void showTheme(view.view());
+showFace();
 onStep(core.openStep); // the step an accepted answer left (terminalthen.ts)
 // The return panel (autoback.ts, a chunk of its own): read once when the first snapshot arrives, and again at once when this page's own switch ends auto mode; a later snapshot only keeps its cards current.
 let back: Promise<ReturnType<typeof import("./autoback.ts").mountBack>> | undefined;

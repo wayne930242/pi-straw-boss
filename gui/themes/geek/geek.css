@@ -133,3 +133,6 @@ html[data-view="geek"] .target-list, html[data-view="geek"] .target-find { borde
 [data-view="geek"] :is(.board-supply, .board-mini, .supply-cols, .board-supply-row, .board-pause, .board-mark, .board-state svg, .board-allies) { display: none; }
 [data-view="geek"] .board-line .board-cap { display: inline; }
 [data-view="geek"] .board-row[data-supply] { grid-template-columns: minmax(0, 1fr) auto; } [data-view="geek"] .board-row[data-supply] > :is(.board-now, .board-none) { grid-column: 1 / -1; } [data-view="geek"] .board-row[data-supply] > .board-acts { grid-column: 2; grid-row: 1; }
+/* The header's Zen button reads [Zen] in Geek, on a phone too (no glyph: the word is the terminal's). */
+[data-view="geek"] .zen-enter svg { display: none; } [data-view="geek"] .zen-enter span { display: inline; } [data-view="geek"] .zen-enter span::before { content: "["; } [data-view="geek"] .zen-enter span::after { content: "]"; }
+@media (max-width: 640px) { [data-view="geek"] .zen-enter { width: auto; padding: 0 8px; } }

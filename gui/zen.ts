@@ -445,7 +445,7 @@ export function mountZen(root: HTMLElement, deps: ZenDeps, mounts: Mounts = real
 	function paletteEntries() {
 		const c = shown.kind === "companion" ? company : undefined, n = deps.companions?.().length ?? 0;
 		return entriesOf({
-			standard: () => deps.leave({}), settings: deps.settings,
+			leave: () => deps.leave({}), settings: deps.settings,
 			companion: c && !histOpen ? { name: c.name.textContent ?? c.key, session: () => deps.leave({ route: companionRoute(c) }), ...(c.bare ? {} : { terminal: () => openTerm(c.key) }), rest } : undefined,
 			head: net?.head && shown.kind === "companion" && !company ? { talk: () => void head.unfold(), history: () => void openHistory(), page: () => deps.leave({ route: { view: "head" } }) } : undefined,
 			cycle: shown.kind === "companion" && n > 0 ? { prev: () => void cycle(-1), next: () => void cycle(1) } : undefined,

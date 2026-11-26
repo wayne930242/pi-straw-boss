@@ -1,13 +1,12 @@
-import { VIEWS } from "../src/views.ts";
 import { m } from "./sentences.ts";
 import type { Entry } from "./palette.ts";
-import { NAME } from "./viewlabel.ts";
 import type { MenuDeps } from "./zenmenu.ts";
 
-// What Zen puts in the palette: the page's actions it can do now, then the preferences the corner menu has (the same functions, so the two never disagree), and Music when a switch for it is given.
+// What Zen puts in the palette: the page's actions it can do now, then the preferences the corner menu has (no theme: it is the settings page's, O4) (the same functions, so the two never disagree), and Music when a switch for it is given.
 /** The page's actions; one left out is one the page cannot do now (no companion, nothing to step to). */
 export interface Acts {
-	standard(): void;
+	/** Leave Zen: the device's theme shows. */
+	leave(): void;
 	settings?(): void;
 	companion?: { name: string; session(): void; terminal?(): void; /** Back to the breathing circle (Z-D16). */ rest(): void };
 	cycle?: { prev(): void; next(): void };
@@ -25,12 +24,8 @@ export function entriesOf(a: Acts, p: Prefs): Entry[] {
 	if (a.cycle) (add("prev", m.pal_prev(), a.cycle.prev), add("next", m.pal_next(), a.cycle.next));
 	if (a.head) (add("head-talk", m.palette_head_talk(), a.head.talk), add("head-history", m.palette_head_history(), a.head.history), add("head-page", m.palette_head_page(), a.head.page));
 	if (a.settings) add("settings", m.pal_settings(), a.settings);
-	add("standard", m.pal_standard(), a.standard);
-	const { view, language, sound, music } = p, pick = (what: string, choice: string) => m.pal_pick({ what, choice });
-	if (view) {
-		add("view:auto", pick(m.view_label(), view.auto()), () => view.set("auto"), here(view.choice() === "auto"));
-		for (const c of VIEWS) add(`view:${c}`, pick(m.view_label(), NAME[c]()), () => view.set(c), here(view.choice() === c));
-	}
+	add("leave", m.pal_leave(), a.leave);
+	const { language, sound, music } = p, pick = (what: string, choice: string) => m.pal_pick({ what, choice });
 	if (language) for (const l of language.names()) add(`language:${l.id}`, pick(m.language(), l.name), () => language.set(l.id), here(language.get() === l.id));
 	if (sound) {
 		// Each class has its switch and two volume steps: Sound effects (ids effects, effects-louder, effects-quieter) and Background sound (background, background-louder, background-quieter).

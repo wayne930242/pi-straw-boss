@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import vm from "node:vm";
 import { test } from "node:test";
 import { followLabel } from "../gui/viewlabel.ts";
-import { autoView, mountZenBack, choiceOf, KEY, mountPick, mountView, resolve, THEME, type ViewEnv } from "../gui/view.ts";
+import { boot } from "./bootrun.ts";
+import { autoView, mountZenEnter, choiceOf, KEY, mountPick, mountView, resolve, THEME, type ViewEnv } from "../gui/view.ts";
 
 // The page's view (gui/view.ts): Auto, Standard, or Geek from the device's storage and the OS's contrast preference, set on <html> before the first render.
 
 test("the stored choice and prefers-contrast resolve to a view: an explicit choice wins, anything else is Auto", () => {
-	const table: [string | null, boolean, "standard" | "geek" | "zen" | "raven"][] = [
+	const table: [string | null, boolean, "standard" | "geek" | "raven"][] = [
 		[null, false, "standard"], [null, true, "geek"],
 		["auto", false, "standard"], ["auto", true, "geek"],
 		["standard", false, "standard"], ["standard", true, "standard"],
 		["geek", false, "geek"], ["geek", true, "geek"],
 		["", false, "standard"], ["", true, "geek"],
-		["zen", false, "zen"], ["zen", true, "zen"], ["ZEN", false, "standard"],
+		["zen", false, "standard"], ["zen", true, "geek"], ["ZEN", false, "standard"], // a legacy zen is Auto: Zen is a mode (mode.ts)
 		["raven", false, "raven"], ["raven", true, "raven"], ["RAVEN", false, "standard"],
 		["GEEK", false, "standard"], ["dark", true, "geek"], ["1", false, "standard"], ["{}", true, "geek"], ["undefined", false, "standard"],
 	];
@@ -100,11 +100,11 @@ test("an invalid stored value is Auto and is left as it is until the person choo
 	assert.deepEqual(w.written, []);
 });
 
-test("the settings' control is five words (Auto, Standard, Geek, Zen, Raven Keep) in a group, one of them pressed, each a pair-btn so a phone gives it 44 px", () => {
+test("the settings' control is four words (Auto, Standard, Geek, Raven Keep; no Zen, which is a mode) in a group, one of them pressed, each a pair-btn so a phone gives it 44 px", () => {
 	const html = readFileSync(new URL("../gui/index.html", import.meta.url), "utf8");
 	const group = /<div class="view-pick" id="view-pick"[^>]*>([\s\S]*?)<\/div><\/div>/.exec(html)?.[1] ?? "";
 	const buttons = [...group.matchAll(/<button class="pair-btn" type="button" data-choice="(\w+)" aria-pressed="(\w+)" data-m="(\w+)">/g)].map((x) => x.slice(1));
-	assert.deepEqual(buttons, [["auto", "true", "view_auto"], ["standard", "false", "view_standard"], ["geek", "false", "view_geek"], ["zen", "false", "view_zen"], ["raven", "false", "view_raven"]]);
+	assert.deepEqual(buttons, [["auto", "true", "view_auto"], ["standard", "false", "view_standard"], ["geek", "false", "view_geek"], ["raven", "false", "view_raven"]]);
 	assert.match(html, /role="group" aria-labelledby="view-label"/);
 });
 
@@ -223,24 +223,16 @@ test("main.ts feeds the server's default from the page's meta, each hello, and t
 	assert.ok(!html.includes('name="sb-view"'));
 });
 
-test("zen is a view: a device's choice, a server default that wins over prefers-contrast, never picked by Auto alone; the theme color is the ink ground, and Standard's comes back", () => {
-	assert.equal(THEME.zen, "#14110e");
+test("zen is no view: a stored or served `zen` reads as Auto (Zen is a mode, mode.ts), and THEME.zen is the mode's ink ground", () => {
+	assert.equal(choiceOf("zen"), "auto");
 	for (const contrast of [false, true]) {
-		assert.equal(resolve("auto", contrast, "zen"), "zen", `a server default of zen wins (contrast ${contrast})`);
-		assert.equal(resolve("zen", contrast, "standard"), "zen");
-		assert.equal(resolve("geek", contrast, "zen"), "geek", "a device's own choice wins over the server");
-		assert.notEqual(resolve("auto", contrast), "zen", "Auto with no default never resolves to Zen");
+		assert.equal(resolve(choiceOf("zen"), contrast), contrast ? "geek" : "standard", "a device's legacy zen is Auto");
+		assert.equal(resolve("auto", contrast, choiceOf("zen")), contrast ? "geek" : "standard", "an older server's zen is Auto");
 	}
-	const w = world(null, true, { server: "zen" });
+	assert.equal(THEME.zen, "#14110e");
+	const w = world("zen", false, { server: "zen" });
 	const view = mountView(w.env);
-	assert.deepEqual([view.choice(), view.view(), w.env.root.dataset.view, w.env.meta?.content], ["auto", "zen", "zen", THEME.zen]);
-	view.set("standard");
-	assert.equal(w.env.meta?.content, "#1a1b26", "the page's own color is back in Standard");
-	view.set("zen");
-	assert.deepEqual([w.env.root.dataset.view, w.env.meta?.content, w.written.at(-1)], ["zen", THEME.zen, `${KEY}=zen`]);
-	const older = world("zen", false);
-	older.env.server = { content: "zen" };
-	assert.equal(mountView(older.env).server(), "zen");
+	assert.deepEqual([view.choice(), view.server(), view.view(), w.env.root.dataset.view], ["auto", "auto", "standard", "standard"]);
 });
 
 test("raven is a view: a device's choice that holds against prefers-contrast, a server default that wins over it, never picked by Auto alone; the theme color is the keep's ground", () => {
@@ -263,92 +255,61 @@ test("raven is a view: a device's choice that holds against prefers-contrast, a 
 	assert.deepEqual([w.env.root.dataset.view, w.env.meta?.content, w.written.at(-1)], ["raven", THEME.raven, `${KEY}=raven`]);
 });
 
-test("a page on a following Auto switches to a server default of raven, and a page showing Zen keeps Zen when the default moves to raven (Z-D20)", () => {
+test("a page on a following Auto switches to a server default of raven; a page showing Zen keeps its face and takes the theme underneath (Z-D20)", () => {
 	const follow = world(null, false);
 	const f = mountView(follow.env);
 	f.setServer("raven");
 	assert.equal(follow.env.root.dataset.view, "raven");
-	const zen = world(null, false, { server: "zen" });
-	const z = mountView(zen.env);
+	const zen = world(null, false);
+	const z = mountView(zen.env, () => true);
 	z.setServer("raven");
-	assert.equal(zen.env.root.dataset.view, "zen", "the page showing Zen stays in it");
-	assert.equal(z.view(), "zen");
-	z.setServer("zen");
-	assert.equal(zen.env.root.dataset.view, "zen");
+	assert.deepEqual([zen.env.root.dataset.view, z.face(), z.view(), zen.env.meta?.content], ["zen", "zen", "raven", THEME.zen], "the page showing Zen stays in it; its theme is raven now");
 });
 
 test("the page's Auto label names raven's default, and the name is Raven Keep", () => {
 	assert.equal(followLabel("raven"), "Follow server (Raven Keep)");
 });
 
-test("the Auto button reads Follow server (Zen) when the server's default is zen, and the Zen button is a choice of its own", () => {
-	const g = globalThis as Record<string, unknown>, saved = g.addEventListener;
-	g.addEventListener = () => {};
-	try {
-		const w = world(null, false, { server: "zen" });
-		const view = mountView(w.env);
-		const make = (choice: string) => {
-			const attrs: Record<string, string> = {};
-			return { dataset: { choice }, attrs, textContent: "", setAttribute: (k: string, v: string) => (attrs[k] = v), addEventListener: () => {} };
-		};
-		const buttons = ["auto", "standard", "geek", "zen"].map(make);
-		const names: Record<string, string> = { zen: "Zen", geek: "Geek", standard: "Standard" };
-		mountPick({ querySelectorAll: () => buttons, toggleAttribute: () => {}, dataset: {} } as unknown as HTMLElement, view, (server) => (server === "auto" ? "Auto" : `Follow server (${names[server]})`));
-		assert.equal(buttons[0]!.textContent, "Follow server (Zen)");
-		assert.deepEqual(buttons.map((b) => b.attrs["aria-pressed"]), ["true", "false", "false", "false"]);
-	} finally {
-		if (saved === undefined) delete g.addEventListener;
-		else g.addEventListener = saved;
-	}
-});
-
-test("the page's Auto label names the server's default, Zen included", () => {
+test("the page's Auto label names the server's default", () => {
 	assert.equal(followLabel("auto"), "Auto");
-	assert.equal(followLabel("zen"), "Follow server (Zen)");
 	assert.equal(followLabel("geek"), "Follow server (Geek)");
 	assert.equal(followLabel("standard"), "Follow server (Standard)");
 });
 
-test("the Zen back button is hidden unless the view is Zen and data-zen-away is set; its click clears the mark", () => {
-	const g = globalThis as Record<string, unknown>, saved = g.addEventListener;
-	g.addEventListener = () => {};
-	try {
-		for (const [stored, away, hidden] of [["zen", false, true], ["zen", true, false], ["standard", true, true], ["geek", false, true]] as const) {
-			const w = world(stored, false);
-			const view = mountView(w.env);
-			let click: () => void = () => {};
-			const button = { hidden: false, addEventListener: (_: string, fn: () => void) => (click = fn) } as unknown as HTMLElement;
-			const root = { dataset: (away ? { zenAway: "" } : {}) as DOMStringMap };
-			mountZenBack(button, view, root);
-			assert.equal(button.hidden, hidden, `${stored} away=${away}`);
-			if (!hidden) {
-				click();
-				assert.equal(root.dataset.zenAway, undefined, "the click leaves away");
-				assert.equal(button.hidden, true);
-			}
-		}
-	} finally {
-		if (saved === undefined) delete g.addEventListener;
-		else g.addEventListener = saved;
-	}
+test("the header's Zen button is always there; a press calls enter", () => {
+	let click: () => void = () => {}, entered = 0;
+	mountZenEnter({ addEventListener: (_: string, fn: () => void) => (click = fn) } as unknown as HTMLElement, () => void entered++);
+	click();
+	click();
+	assert.equal(entered, 2);
+	const html = readFileSync(new URL("../gui/index.html", import.meta.url), "utf8");
+	const button = /<button class="pair-btn zen-enter" id="zen-enter"[^>]*>[\s\S]*?<\/button>/.exec(html)?.[0] ?? "";
+	assert.ok(button && !/\shidden\b/.test(button), "never hidden in the markup");
+	assert.match(button, /data-m-label="zen_enter_title"/);
+	assert.match(button, /<use data-icon="zen" href="#i-zen"\/>/, "the ensō glyph a phone shows");
+	assert.match(button, /<span data-m="zen_enter">Zen<\/span>/);
+	assert.match(html, /<symbol id="i-zen" /, "the glyph is a symbol of Standard's inline sprite");
+	assert.ok(!html.includes("zen-back"), "the old way back is gone");
 });
 
-test("a page that left Zen (data-zen-away on the root) shows Standard with the page's own theme color, keeps the device's choice, stores nothing, and shows Zen again when the mark goes", () => {
-	const w = world("zen", false);
-	const view = mountView(w.env);
-	assert.deepEqual([w.env.root.dataset.view, w.env.meta?.content], ["zen", THEME.zen]);
-	w.env.root.dataset.zenAway = "";
-	view.reread();
-	assert.deepEqual([w.env.root.dataset.view, w.env.meta?.content, view.choice(), view.view(), w.written], ["standard", "#1a1b26", "zen", "zen", []], "Standard on show; the resolved view is still Zen for the page's own rules");
-	w.flip(true); // an OS change re-applies the view: it must not bring Zen back over the away page
-	assert.equal(w.env.root.dataset.view, "standard");
-	delete w.env.root.dataset.zenAway;
-	view.reread();
-	assert.deepEqual([w.env.root.dataset.view, w.env.meta?.content], ["zen", THEME.zen]);
-	const geek = world("geek", false);
-	geek.env.root.dataset.zenAway = "";
-	mountView(geek.env);
-	assert.equal(geek.env.root.dataset.view, "geek", "the mark changes nothing for another view");
+test("the face is Zen while the page shows Zen and the theme otherwise: the theme color follows the face, the device's choice and storage stay", () => {
+	let zen = true;
+	const w = world("raven", false);
+	const view = mountView(w.env, () => zen);
+	assert.deepEqual([w.env.root.dataset.view, w.env.meta?.content, view.face(), view.view()], ["zen", THEME.zen, "zen", "raven"]);
+	zen = false;
+	view.refresh();
+	assert.deepEqual([w.env.root.dataset.view, w.env.meta?.content, view.choice(), w.written], ["raven", THEME.raven, "raven", []], "leaving shows the device's theme, not Standard");
+	w.flip(true); // an OS change re-applies the face: it brings no Zen back
+	assert.equal(w.env.root.dataset.view, "raven");
+	zen = true;
+	view.refresh();
+	assert.equal(w.env.root.dataset.view, "zen");
+	const std = world(null, false);
+	const s = mountView(std.env, () => zen);
+	zen = false;
+	s.refresh();
+	assert.deepEqual([std.env.root.dataset.view, std.env.meta?.content], ["standard", "#1a1b26"], "Standard's own colour comes back");
 });
 
 test("a listener that draws the view again meets no second change: the new view is noted before the listeners run", () => {
@@ -356,77 +317,33 @@ test("a listener that draws the view again meets no second change: the new view 
 	const view = mountView(w.env);
 	let calls = 0;
 	view.onChange(() => (calls++, view.refresh()));
-	view.set("zen");
+	view.set("geek");
 	assert.equal(calls, 1);
-	assert.equal(w.env.root.dataset.view, "zen");
+	assert.equal(w.env.root.dataset.view, "geek");
 });
 
-test("Z-D20 R3: a change of the server's default never switches a page that is showing Zen out of it; it applies to a page on Auto that is not in Zen, and to the next load", () => {
-	const w = world(null, false, { server: "zen" });
-	const view = mountView(w.env);
+test("Z-D20: a change of the server's default never switches a page that is showing Zen out of it; the theme moves underneath and shows when the boss leaves", () => {
+	let zen = true;
+	const w = world(null, false, { server: "standard" });
+	const view = mountView(w.env, () => zen);
 	const seen: string[] = [], servers: string[] = [];
 	view.onChange((v: string) => seen.push(v));
 	view.onServer((s: string) => servers.push(s));
-	assert.equal(w.env.root.dataset.view, "zen");
-	view.setServer("standard");
 	view.setServer("geek");
-	assert.equal(w.env.root.dataset.view, "zen", "the page showing Zen stays in it");
-	assert.equal(view.view(), "zen");
-	assert.deepEqual(seen, [], "and nobody is told to leave");
-	assert.deepEqual([view.server(), servers], ["geek", ["standard", "geek"]], "the settings still know the server's default for the Follow label");
-	assert.deepEqual(w.written, []);
-	view.setServer("zen");
-	assert.equal(w.env.root.dataset.view, "zen", "the default that comes back changes nothing");
-	view.setServer("standard");
-	w.env.root.dataset.zenAway = ""; // the boss left Zen (main.ts)
+	view.setServer("raven");
+	assert.deepEqual([w.env.root.dataset.view, view.face(), view.view()], ["zen", "zen", "raven"], "the page showing Zen stays in it");
+	assert.deepEqual([seen, servers, w.written], [["geek", "raven"], ["geek", "raven"], []], "the theme's listeners hear it (viewface.ts: the mode is not touched); nothing is stored");
+	zen = false; // the boss left Zen (viewface.ts `leave`)
 	view.refresh();
-	assert.equal(w.env.root.dataset.view, "standard", "a page that is away shows Standard, held or not");
-	assert.equal(view.view(), "zen", "but a visit to the settings page (the same mark) does not release the hold (ZNR-F004)");
-	view.release(); // the boss left Zen (viewface.ts `leave`)
-	view.refresh();
-	assert.equal(w.env.root.dataset.view, "standard", "once it left Zen, Auto follows the server again");
-	assert.equal(view.view(), "standard");
-	const next = mountView(world(null, false, { server: "standard" }).env);
-	assert.equal(next.view(), "standard", "the next load reads the new default");
-	const away = world(null, false, { server: "zen" });
-	away.env.root.dataset.zenAway = "";
-	const left = mountView(away.env);
-	left.setServer("geek");
-	assert.equal(left.view(), "geek", "a page on Auto that is not in Zen follows at once");
-	const own = world("zen", false, { server: "auto" });
-	assert.equal(mountView(own.env).view(), "zen", "a device's own Zen is not the server's to move");
+	assert.equal(w.env.root.dataset.view, "raven", "the new default shows on leaving");
 });
 
-// boot.js (gui/boot.js) resolves the first frame's view before the page entry runs; it must agree with `resolve` of view.ts for every stored value, contrast, and server default.
-const BOOT = readFileSync(new URL("../gui/boot.js", import.meta.url), "utf8");
-const MAP = JSON.stringify({ geek: { css: "themes/geek/geek-x.css", icon: "icon.svg" }, zen: { css: "themes/zen/zen-x.css", icon: "icon.svg" }, raven: { css: "themes/raven/raven-x.css", icon: "themes/raven/favicon-x.svg" } });
-/** boot.js run in a page of plain objects: what it did to <html>, the theme-color, the icon, and what it wrote. */
-function boot(stored: string | null, contrast: boolean, server: string | null, o: { linked?: boolean; refuse?: boolean; standardMark?: string; icon?: string } = {}) {
-	const metas: Record<string, { content: string } | undefined> = { "sb-themes": { content: MAP }, "theme-color": { content: "#1a1b26" }, ...(server !== null ? { "sb-view": { content: server } } : {}) };
-	const attrs = new Map<string, string>([["href", o.icon ?? "./icon.svg"], ...(o.standardMark ? [["data-standard", o.standardMark] as [string, string]] : [])]);
-	const wrote: string[] = [];
-	const dataset: Record<string, string> = {};
-	const document = {
-		documentElement: { dataset },
-		querySelector: (sel: string) => {
-			const meta = /^meta\[name="([\w-]+)"\]$/.exec(sel);
-			if (meta) return metas[meta[1]!] ? { getAttribute: () => metas[meta[1]!]!.content, setAttribute: (_: string, v: string) => (metas[meta[1]!]!.content = v) } : null;
-			if (sel === 'link[rel="icon"]') return { getAttribute: (k: string) => attrs.get(k) ?? null, hasAttribute: (k: string) => attrs.has(k), setAttribute: (k: string, v: string) => void attrs.set(k, v) };
-			return /^link\[data-theme=/.test(sel) && o.linked ? {} : null;
-		},
-		write: (markup: string) => void wrote.push(markup),
-	};
-	const context: Record<string, unknown> = { document, matchMedia: () => ({ matches: contrast }), localStorage: { getItem: () => { if (o.refuse) throw new Error("denied"); return stored; } } };
-	context.globalThis = context;
-	vm.runInNewContext(BOOT, context);
-	return { view: dataset.view, color: metas["theme-color"]!.content, icon: attrs.get("href"), standard: attrs.get("data-standard"), wrote, resolve: (context.sbBoot as { resolve(a: unknown, b: boolean, c: unknown): string; colors: Record<string, string> }) };
-}
-
+// boot.js (gui/boot.js) resolves the first frame's view before the page entry runs; it must agree with `resolve` of view.ts for every stored value, contrast, and server default (tests/bootrun.ts runs it; tests/zen-mode.test.ts adds the mode).
 test("boot.js resolves the view as view.ts does: every stored value, contrast, and server default", () => {
 	const stored = [null, "", "auto", "standard", "geek", "zen", "ZEN", "Geek", "dark", "1", "{}", "constructor", "__proto__", "raven"];
 	const servers = [null, "auto", "standard", "geek", "zen", "raven", "nope"];
 	for (const s of stored) for (const server of servers) for (const contrast of [false, true]) {
-		const run = boot(s, contrast, server);
+		const run = boot(s, contrast, server, { zen: "0" }); // the mode off: the face is the theme (tests/zen-mode.test.ts walks the mode)
 		const expected = resolve(choiceOf(s), contrast, choiceOf(server ?? undefined));
 		assert.equal(run.view, expected, `boot: stored ${JSON.stringify(s)}, server ${JSON.stringify(server)}, contrast ${contrast}`);
 		assert.equal(run.resolve.resolve(s, contrast, server), expected, `sbBoot.resolve: stored ${JSON.stringify(s)}, server ${JSON.stringify(server)}, contrast ${contrast}`);
@@ -437,13 +354,14 @@ test("boot.js sets the theme-color view.ts names, links the theme's stylesheet o
 	const geek = boot("geek", false, null);
 	assert.deepEqual([geek.color, geek.icon, geek.standard], [THEME.geek, "icon.svg", "./icon.svg"]);
 	assert.deepEqual(geek.wrote, ['<link rel="stylesheet" data-theme="geek" href="themes/geek/geek-x.css">']);
-	assert.deepEqual(boot("zen", false, null).wrote, ['<link rel="stylesheet" data-theme="zen" href="themes/zen/zen-x.css">']);
-	assert.equal(boot("zen", false, null).color, THEME.zen);
+	assert.deepEqual(boot("standard", false, null, { zen: "1" }).wrote, ['<link rel="stylesheet" data-theme="zen" href="themes/zen/zen-x.css">'], "the mode on: Zen's sheet");
+	assert.equal(boot("standard", false, null, { zen: "1" }).color, THEME.zen);
 	assert.deepEqual(boot("geek", false, null, { linked: true }).wrote, [], "a theme the server already linked is not linked twice");
 	const standard = boot("standard", true, "geek");
 	assert.deepEqual([standard.view, standard.color, standard.icon, standard.wrote], ["standard", "#1a1b26", "./icon.svg", []], "a device on Standard gets no theme link");
 	assert.deepEqual(boot(null, true, null).wrote.length, 1, "Auto with more contrast is Geek");
-	assert.equal(boot(null, false, "zen", { refuse: true }).view, "zen", "storage refused: the server's default decides");
+	assert.equal(boot(null, false, "geek", { refuse: true }).view, "geek", "storage refused: the server's default decides");
+	assert.equal(boot(null, false, "zen").view, "standard", "an older server's zen is no view (the map marks it a mode): Auto");
 	assert.deepEqual(Object.fromEntries(Object.entries(boot(null, false, null).resolve.colors)), THEME, "the colours are view.ts's");
 });
 

@@ -79,7 +79,7 @@ export function createHost({ pi, cfg, s, guiDir, tell }: Kit, { connected, ask }
 				// Showing the default is a read: it never starts a server, so a server the boss stopped on purpose stays down.
 				if (!r.ok) return tell(`Straw net GUI: ${!wanted && r.error === "no server" ? "the sb server is not running (/boss server starts it)" : (r.error ?? "the sb server did not answer")}`, "error");
 				const name = r.view === "raven" ? "Raven Keep" : String(r.view).replace(/^./, (c) => c.toUpperCase());
-				return tell(!wanted ? `The straw net GUI's default view is ${name}${r.view === "auto" ? " (each device follows its own screen's contrast setting)" : ""}` : r.changed === false ? `The straw net GUI's default view is already ${name}` : `The straw net GUI's default view is now ${name}; devices that follow the server switch at once, and a device with a view of its own keeps it`);
+				return tell(!wanted ? `The straw net GUI's default view is ${name}${r.view === "auto" ? " (each device follows its own screen's contrast setting)" : ""}${typeof r.note === "string" ? `\n${r.note}` : ""}` : r.changed === false ? `The straw net GUI's default view is already ${name}` : `The straw net GUI's default view is now ${name}; devices that follow the server switch at once, and a device with a view of its own keeps it`);
 			}
 			if (mode === "lan off") {
 				// Starts a server when none runs, as `remote off` does: the server clears the wish in lan.json, which a later start would otherwise serve again.

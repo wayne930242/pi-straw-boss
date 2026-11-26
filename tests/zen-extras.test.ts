@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import type { Choice } from "../gui/view.ts";
 import { El, page } from "./fake-dom.ts";
 
 // Z4's small parts, each on the fake document: the corner menu (gui/zenmenu.ts), the full-screen control (gui/zenfs.ts), the line under the idle circle (gui/zenlines.ts), the shared sound and
@@ -45,7 +44,7 @@ const text = (e: El) => e.textContent;
 
 function menuRig(o: { sound?: boolean } = {}) {
 	const c = clock(), st = store(), calls: string[] = [], pf = createPrefs(st);
-	let lang = "en", view: Choice = "zen";
+	let lang = "en";
 	const state = { effects: { on: o.sound ?? false, volume: 60 }, background: { on: false, volume: 60 } };
 	const sw = (cls: Cls) => ({
 		on: () => state[cls].on, volume: () => state[cls].volume, onChange() {},
@@ -55,7 +54,6 @@ function menuRig(o: { sound?: boolean } = {}) {
 	});
 	const m = mountMenu({
 		language: { get: () => lang, names: () => [{ id: "en", name: "English" }, { id: "zh-TW", name: "正體中文" }], set: (id) => ((lang = id), calls.push(`lang:${id}`)) },
-		view: { choice: () => view, auto: () => "Auto", set: (v) => ((view = v), calls.push(`view:${v}`)) },
 		sound: { effects: { ...sw("effects"), all: () => calls.push("try-all") }, background: sw("background") },
 	}, () => calls.push("leave"));
 	page.body.replaceChildren(m.el as unknown as El);
@@ -68,7 +66,7 @@ function menuRig(o: { sound?: boolean } = {}) {
 	return { c, st, calls, m, host, btn, by, sw$, vol$, key: (key: string, extra: object = {}) => (page.focused ?? host).bubble("keydown", { key, ...extra }), mouse: (type: string) => host.bubble(type, { pointerType: "mouse" }) };
 }
 
-test("the menu never opens by hover, whatever the pointer or the time; a press of its button opens it, a second press, Esc, a press outside, and a choice of language, view, or the way back close it", () => {
+test("the menu never opens by hover, whatever the pointer or the time; a press of its button opens it, a second press, Esc, a press outside, and a choice of language or the way out close it", () => {
 	const r = menuRig();
 	assert.equal(r.btn.getAttribute("aria-expanded"), "false");
 	assert.equal(r.host.handlers.pointerenter, undefined, "no hover handler is listening");
@@ -97,7 +95,7 @@ test("the menu never opens by hover, whatever the pointer or the time; a press o
 	r.btn.click();
 	for (const on of page.on.pointerdown ?? []) on({ target: r.host });
 	assert.equal(r.m.isOpen(), false, "so does a press on the veil, which the host draws and takes, so the press never reaches the card under it (ZVL-F002)");
-	for (const label of ["正體中文", "Standard", "Leave Zen"]) {
+	for (const label of ["正體中文", "Leave Zen"]) {
 		r.btn.click();
 		(label === "Leave Zen" ? r.host.all((e) => e.getAttribute("class") === "zen-leave")[0]! : r.by(label)).click();
 		assert.equal(r.m.isOpen(), false, `choosing ${label} closes it`);
@@ -129,7 +127,7 @@ test("an open menu traps Tab inside, and a press outside closes it", () => {
 	const r = menuRig();
 	r.btn.click();
 	const stops = r.host.all((e) => e.tagName === "button" || e.tagName === "input").filter((e) => e !== r.btn);
-	assert.ok(stops.length >= 10, "language, view, sound effects (switch, Try, volume), background sound (switch, volume), and the way back");
+	assert.ok(stops.length >= 8, "language, sound effects (switch, Try, volume), background sound (switch, volume), and the way out");
 	page.focused = stops.at(-1);
 	r.key("Tab");
 	assert.equal(page.focused, stops[0], "past the last control it wraps to the first");
@@ -139,13 +137,10 @@ test("an open menu traps Tab inside, and a press outside closes it", () => {
 	assert.equal(r.m.isOpen(), false);
 });
 
-test("each row acts through the settings page's own function or store: language, view, each sound class's switch and volume, and the way back", () => {
+test("each row acts through the settings page's own function or store: language, each sound class's switch and volume, and the way out; there is no theme row (O4)", () => {
 	const r = menuRig();
 	r.btn.click();
 	r.by("正體中文").click();
-	r.by("Auto").click();
-	r.by("Standard").click();
-	r.by("Geek").click();
 	r.sw$("effects").click();
 	r.vol$("effects").value = "35";
 	r.vol$("effects").oninput?.();
@@ -154,8 +149,9 @@ test("each row acts through the settings page's own function or store: language,
 	r.vol$("background").value = "15";
 	r.vol$("background").oninput?.();
 	(r.vol$("background") as unknown as { onchange?: () => void }).onchange?.();
-	r.by("Back to the Standard view (Esc Esc)").click();
-	assert.deepEqual(r.calls.filter((c) => !c.endsWith("-try")), ["lang:zh-TW", "view:auto", "view:standard", "view:geek", "effects:true", "effects-volume:35", "background:true", "background-volume:15", "leave"]);
+	assert.equal(r.host.all((e) => e.tagName === "button" && ["Auto", "Standard", "Geek", "Raven Keep"].includes(text(e))).length, 0, "no theme row");
+	r.by("Leave Zen (Esc Esc)").click();
+	assert.deepEqual(r.calls.filter((c) => !c.endsWith("-try")), ["lang:zh-TW", "effects:true", "effects-volume:35", "background:true", "background-volume:15", "leave"]);
 	assert.deepEqual(r.calls.filter((c) => c.endsWith("-try")), ["effects-try", "background-try"], "a release of either volume plays its class's sample");
 	assert.deepEqual([r.st.get(KEYS.effects), r.st.get(KEYS.effectsVolume), r.st.get(KEYS.background), r.st.get(KEYS.backgroundVolume)], ["1", "35", "1", "15"], "each class's own keys");
 	const read = createPrefs(r.st);
@@ -329,7 +325,7 @@ test("the Japanese original shows under the source when a line has one, in a lan
 test("the words: the new keys exist in both languages with the boss's copy, and zen_nothing is gone", () => {
 	const read = (f: string) => JSON.parse(readFileSync(new URL(`../gui/messages/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
 	const zh = read("zh-TW"), en = read("en");
-	const want: Record<string, string> = { zen_back_title: "回到禪", zen_leave_title: "回到標準畫面（Esc Esc）", zen_esc_hint: "再按一次 Esc 回到標準", zen_asks: "{name} 想問你", zen_not_now: "晚點再說", zen_open_terminal: "開啟終端機", zen_term_esc_hint: "再按一次 Esc 回到禪", zen_elsewhere: "已經在別處回好了", zen_pause: "吸一口氣", zen_fullscreen: "全螢幕", zen_fullscreen_exit: "離開全螢幕", zen_add_home: "想全螢幕，可以把這頁加入主畫面。" };
+	const want: Record<string, string> = { zen_back_title: "回到禪", zen_leave_title: "離開禪（Esc Esc）", zen_esc_hint: "再按一次 Esc 離開禪", zen_enter: "禪", zen_enter_title: "進入禪（一次只看一件待辦）", zen_asks: "{name} 想問你", zen_not_now: "晚點再說", zen_open_terminal: "開啟終端機", zen_term_esc_hint: "再按一次 Esc 回到禪", zen_elsewhere: "已經在別處回好了", zen_pause: "吸一口氣", zen_fullscreen: "全螢幕", zen_fullscreen_exit: "離開全螢幕", zen_add_home: "想全螢幕，可以把這頁加入主畫面。" };
 	for (const [k, v] of Object.entries(want)) {
 		assert.equal(zh[k], v, k);
 		assert.ok(en[k] && en[k] !== v, `${k} has its English`);

@@ -1,20 +1,21 @@
-import { type Choice, viewOf, type View } from "../src/views.ts";
+import { type Choice, type Face, viewOf, type View } from "../src/views.ts";
 import { createPrefs, KEYS } from "./prefs.ts";
 
-// The page's view: Standard (the Tokyo Night palette with its motion), Geek (black, monospace, AAA contrast, nothing moves; style.css `[data-view="geek"]`), or Zen (ink; one waiting item at a time, docs/specs/2026-11-01-zen-view.md; until its layer lands a Zen page shows Standard's page).
-// The choice is the device's: Auto, Standard, Geek, or Zen in localStorage `sb.view`. An explicit Standard or Geek wins; Auto (also a missing or invalid value)
-// follows the server's default when the boss set one (`/boss gui view`: Standard, Geek, or Zen), else the OS, Geek when it asks for more contrast (prefers-contrast: more).
+// The page's theme: Standard (the Tokyo Night palette with its motion), Geek (black, monospace, AAA contrast, nothing moves; themes/geek), or Raven Keep (themes/raven). Zen is no theme but a mode (mode.ts,
+// docs/specs/2026-11-26-storybook-theme/spec.md Part A): the page's face (`data-view` on <html>) is Zen while the mode is on and the route is not the settings page (`zen()`, which pagecore.ts says), and the theme otherwise.
+// The choice is the device's: Auto, Standard, Geek, or Raven Keep in localStorage `sb.view`. An explicit theme wins; Auto (also a missing or invalid value, a legacy `zen` included)
+// follows the server's default when the boss set one (`/boss gui view`), else the OS, Geek when it asks for more contrast (prefers-contrast: more).
 // The server's default is not the device's to write: it comes in the page's `<meta name="sb-view">` (read here before the first paint, so a following page shows it with
 // no flash), in each stream's `hello`, and in a `view` event (main.ts hands them to `setServer`), and is never stored on the device. `data-view` goes on <html> as the first
 // thing main.ts does, before any render, and the browser's theme-color follows it, so an installed app's bar matches.
-// A page that is showing Zen is never switched out of it by a change of the server's default (Z-D20, 「永遠不要打斷」): the new default applies at its next load, and at once to a page on Auto that is not in Zen.
+// A change of the theme (a pick, the server's default, the screen) never touches the mode: a page in Zen keeps its face, and the new theme shows when the boss leaves (Z-D20, 「永遠不要打斷」).
 
 export type { Choice, View };
 /** What moved the view: the person chose one (`pick`: here or on another page of this device), or the page's own Auto followed the server's default or the screen (`follow`). */
 export type Cause = "pick" | "follow";
 export const KEY: string = KEYS.view;
-/** The theme-color of the Geek, Zen, and Raven Keep views (Zen: the ink ground; Raven: the near-black violet); Standard keeps the color the page came with (index.html). */
-export const THEME = { geek: "#000000", zen: "#14110e", raven: "#0d0a10" } as const;
+/** The theme-color of each face but Standard: Geek, Raven Keep (the near-black violet), and the mode Zen (the ink ground); Standard keeps the color the page came with (index.html). */
+export const THEME: Record<Exclude<Face, "standard">, string> = { geek: "#000000", zen: "#14110e", raven: "#0d0a10" };
 
 /** The stored value as a choice: only a named view is a choice of its own (src/views.ts), anything else (missing, invalid) is Auto. */
 export const choiceOf = (stored: string | null | undefined): Choice => viewOf(stored) ?? "auto";
@@ -44,17 +45,18 @@ export function domEnv(): ViewEnv {
 	};
 }
 
-export function mountView(env: ViewEnv = domEnv()) {
+/** `zen`: whether the page shows Zen now (the mode is on and the route is not the settings page; pagecore.ts `zenOn`). Without it the face is the theme. */
+export function mountView(env: ViewEnv = domEnv(), zen: () => boolean = () => false) {
 	const listeners: ((view: View, cause: Cause) => void)[] = [], serverListeners: ((server: Choice) => void)[] = [], standard = env.meta?.content ?? "";
 	const prefs = createPrefs(env.storage), read = () => choiceOf(prefs.get("view")); // storage refused: the OS decides
-	let choice = read(), server = choiceOf(env.server?.content), shown: View | undefined, held = false; // held: the server's default moved away from Zen under a page that is showing it, which stays until it leaves Zen (`release`) or picks a view; a visit to the settings page is neither (ZNR-F004)
-	const now = () => (held ? "zen" : resolve(choice, env.media.matches, server));
-	/** A `pick` tells the listeners every time, even when the view it resolves to is the one shown (a Zen page that was left comes back); a `follow` only when the view changed. */
+	let choice = read(), server = choiceOf(env.server?.content), shown: View | undefined;
+	const now = () => resolve(choice, env.media.matches, server);
+	const face = (): Face => (zen() ? "zen" : now());
+	/** A `pick` tells the listeners every time, even when the theme it resolves to is the one shown; a `follow` only when the theme changed. */
 	function apply(cause?: Cause) {
-		if (held && cause === "pick") held = false; // the boss picked a view: Auto follows the server again
-		const view = now(), face = view === "zen" && env.root.dataset.zenAway !== undefined ? "standard" : view; // a page that left Zen (main.ts) shows Standard
-		env.root.dataset.view = face;
-		if (env.meta) env.meta.content = face === "standard" ? standard : THEME[face];
+		const view = now(), shows = face();
+		env.root.dataset.view = shows;
+		if (env.meta) env.meta.content = shows === "standard" ? standard : THEME[shows];
 		const told = cause === "pick" || (cause === "follow" && shown !== undefined && shown !== view);
 		shown = view; // before the listeners, which may draw the view again (viewface.ts)
 		if (told) for (const fn of listeners) fn(view, cause!);
@@ -63,27 +65,27 @@ export function mountView(env: ViewEnv = domEnv()) {
 	env.media.addEventListener("change", () => apply("follow"));
 	return {
 		choice: () => choice,
+		/** The device's theme now: what the page shows outside Zen. */
 		view: now,
+		/** What the page shows now (`data-view`): Zen, or the theme. */
+		face,
 		/** The server's default, as the page last heard it. */
 		server: () => server,
-		/** The server named a default (hello, a `view` event): a page that follows it switches at once unless it is showing Zen (that waits for its next load), one with a choice of its own stays; nothing is stored. */
+		/** The server named a default (hello, a `view` event): a page that follows it takes the theme at once (under Zen it shows on leaving), one with a choice of its own stays; nothing is stored. */
 		setServer(next: unknown) {
 			const value = choiceOf(typeof next === "string" ? next : undefined);
 			if (value === server) return;
-			held ||= choice === "auto" && now() === "zen" && env.root.dataset.zenAway === undefined && resolve(choice, env.media.matches, value) !== "zen";
 			server = value;
 			for (const fn of serverListeners) fn(server);
 			apply("follow");
 		},
-		/** Switches at once and keeps the choice for this device; a refused storage still switches this page. */
+		/** Switches the theme at once and keeps the choice for this device; a refused storage still switches this page. */
 		set(next: Choice) {
 			choice = next;
 			prefs.set("view", next); // storage refused: the choice holds until the page closes
 			apply("pick");
 		},
-		/** The page left Zen itself (Esc Esc, the corner control, an item's or a session's exit: viewface.ts): Auto follows the server again. The settings page is not that: the hold stays through it, and Zen shows on leaving it. */
-		release() { held = false; },
-		/** Draws the view again (the page left Zen or came back, viewface.ts) without reading the storage, and tells no one. */
+		/** Draws the face again (the mode or the route moved, viewface.ts) without reading the storage, and tells no one. */
 		refresh: () => apply(),
 		/** Another tab of this device chose: read the stored value again. */
 		reread() {
@@ -99,7 +101,7 @@ export function mountView(env: ViewEnv = domEnv()) {
 }
 export type PageView = ReturnType<typeof mountView>;
 
-/** The settings' four-way control: buttons `[data-choice]` in `group`, the chosen one `aria-pressed`. `label` words the Auto button for the server's default (Follow server (geek)); without one it keeps its text. */
+/** The settings' theme control: buttons `[data-choice]` in `group`, the chosen one `aria-pressed`. `label` words the Auto button for the server's default (Follow server (geek)); without one it keeps its text. */
 export function mountPick(group: HTMLElement, view: PageView, label?: (server: Choice) => string) {
 	const buttons = [...group.querySelectorAll<HTMLButtonElement>("button[data-choice]")];
 	const auto = buttons.find((b) => b.dataset.choice === "auto");
@@ -116,14 +118,5 @@ export function mountPick(group: HTMLElement, view: PageView, label?: (server: C
 	sync();
 }
 
-/** Back to Zen: the mark that this page left it goes, and the view is read again, which shows Zen (a pick: viewface.ts). */
-export const enterZen = (view: Pick<PageView, "reread">, root: { dataset: Record<string, string | undefined> }) => (delete root.dataset.zenAway, view.reread());
-
-/** The header's Zen button: shown only when the device's view is Zen and the Zen layer was left (`data-zen-away` on <html>); a click returns to it. Returns the sync. */
-export function mountZenBack(button: HTMLElement, view: PageView, root: { dataset: DOMStringMap }, enter = () => enterZen(view, root)) {
-	const sync = () => (button.hidden = view.view() !== "zen" || root.dataset.zenAway === undefined);
-	view.onChange(sync);
-	button.addEventListener("click", () => (enter(), sync()));
-	sync();
-	return sync;
-}
+/** The header's Zen button (`#zen-enter`): in every theme's header, the settings page's included, while the shell shows; a press turns the mode on (viewface.ts `enter`). */
+export const mountZenEnter = (button: Pick<HTMLElement, "addEventListener">, enter: () => void) => button.addEventListener("click", () => enter());

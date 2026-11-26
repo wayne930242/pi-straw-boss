@@ -129,7 +129,7 @@ function store(seed: Record<string, string> = {}) {
 }
 
 test("the old Sound and Volume are the legacy keys of both classes", () => {
-	assert.deepEqual(LEGACY, { effects: "sb.sound", background: "sb.sound", effectsVolume: "sb.volume", backgroundVolume: "sb.volume" });
+	assert.deepEqual(LEGACY, { zen: "sb.view", effects: "sb.sound", background: "sb.sound", effectsVolume: "sb.volume", backgroundVolume: "sb.volume" });
 	assert.deepEqual([KEYS.effects, KEYS.effectsVolume, KEYS.background, KEYS.backgroundVolume], ["sb.effects", "sb.effects.volume", "sb.background", "sb.background.volume"]);
 	assert.equal("sound" in KEYS || "volume" in KEYS, false, "the single setting is gone from the store's names");
 });

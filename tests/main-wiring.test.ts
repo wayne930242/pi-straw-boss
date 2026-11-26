@@ -28,8 +28,9 @@ test("Escape reaches the core twice: the capture phase with its flag true (Zen t
 	assert.match(main, /addEventListener\("keydown", \(event\) => core\.escape\(event, false\)\);/);
 });
 
-test("the header's Zen button returns through the core, and the Zen layer's exits and watch are the core's and its terminals the overlay chunk's", () => {
-	assert.match(main, /mountZenBack\(el\("zen-back"\), view, root, \(\) => core\.enterZen\(\)\)/);
+test("the header's Zen button enters through the core, the view's face reads the core's zenOn, and the Zen layer's exits and watch are the core's and its terminals the overlay chunk's", () => {
+	assert.match(main, /mountZenEnter\(el\("zen-enter"\), \(\) => core\.enterZen\(\)\)/);
+	assert.match(main, /^zenShown = core\.zenOn;$/m);
 	assert.match(main, /leave: core\.leaveZen, terminals, watch: core\.watchLog/);
 	assert.match(main, /embedTerminal: \(key, name, host\) => embed\(key, name, host, \{ keys: false \}\)/, "the session view's terminal mode keeps its own focus rule");
 	assert.ok(main.includes("done(p.terminal.embed(key, name, host, o))"), "the one embed hands the options (keys, end) to the terminals");

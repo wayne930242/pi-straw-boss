@@ -1,18 +1,19 @@
 import type { Net } from "../src/net.ts";
 import { type Alert, alertsOf, arrivals, unitOf } from "./alerts.ts";
-import { RULES, rulesOf } from "./faces.ts";
+import { rulesOf } from "./faces.ts";
 import type { Hotkey } from "./hotkeys.ts";
 import { linkChime } from "./linkbar.ts";
 import { type Route, upOf, watchOf } from "./router.ts";
 import { CONNECTING, type Status } from "./stream.ts";
 import type { StepOpen } from "./terminalthen.ts";
 import { unitsOf, waitingOf } from "./units.ts";
-import { enterZen, type PageView } from "./view.ts";
+import type { PageView } from "./view.ts";
+import type { PageMode } from "./mode.ts";
 import type { PairRequest } from "./pairs.ts";
 import { mountFace } from "./viewface.ts";
 import type { Exit, Term } from "./zentypes.ts";
 
-// What the page decides, apart from what it draws: the face (Zen or Standard), the route, the stream's state and watch, and where each snapshot goes. main.ts builds the parts (DOM, chunks, the stream) and hands them in;
+// What the page decides, apart from what it draws: the face (Zen or the device's theme), the route, the stream's state and watch, and where each snapshot goes. main.ts builds the parts (DOM, chunks, the stream) and hands them in;
 // this module holds the state and the rules over them, so tests/pagecore.test.ts can run the page's wiring with plain fakes (Z3R-F006). No events and no registry: the page calls these functions, and they call the parts it gave.
 /** An Escape keydown, as far as the page reads it. */
 export interface Esc { key: string; defaultPrevented: boolean; isComposing: boolean; preventDefault(): void; stopPropagation(): void }
@@ -23,9 +24,9 @@ interface PanelsFace { /** A page key for the dialogs (layer.ts); false when it 
 /** The focus views (the base, the session's comms and dossier). */
 interface FocusFace { terminal(key: string): void }
 export interface PageIo {
-	view: Pick<PageView, "view" | "refresh" | "release" | "onChange" | "reread">;
-	/** `<html>`: `data-zen-away` is on it while this page has left Zen. */
-	root: { dataset: Record<string, string | undefined> };
+	view: Pick<PageView, "view" | "refresh" | "onChange">;
+	/** The Zen mode of this device (mode.ts). */
+	mode: Pick<PageMode, "on" | "enter" | "leave">;
 	/** The Zen layer's box. */
 	zenEl: Pick<HTMLElement, "hidden">;
 	/** The Zen layer once its chunk is here, or none yet. */
@@ -33,8 +34,8 @@ export interface PageIo {
 	/** The Zen layer, fetching its chunk first when it is not here. */
 	withZen(call: (z: ZenFace) => void): void;
 	hidden(): boolean;
-	/** The header's Zen button follows the face. */
-	back(): void;
+	/** The face was drawn: the theme's parts and the tab icon follow it (main.ts). */
+	faced(): void;
 	/** The settings page's own Back. */
 	leaveSettings(): void;
 	/** The stream asked for another watch; nothing before the stream has started. */
@@ -69,8 +70,8 @@ export interface PageIo {
 export function createPage(io: PageIo) {
 	let current: Route = { view: "map" }, latest: Net | undefined, pending: Net | undefined, shown: Net | undefined, status: Status = CONNECTING;
 	let known: Map<string, Alert> | undefined, heard: Map<string, Alert> | undefined, zenKey: string | null = null, watching: string | null = null, pairList: PairRequest[] = [];
-	// `rules()`: the face the page shows. Zen is on while the device's view is Zen, this page has not left it (Esc or the corner control: `data-zen-away`), and the route is not the settings page, which Zen never covers.
-	const rules = () => rulesOf(io.view.view(), io.root.dataset.zenAway !== undefined || current.view === "settings"), zenOn = () => rules() === RULES.zen;
+	// `zenOn()`: the page shows Zen while the mode is on and the route is not the settings page, which Zen never covers (it suspends the mode, ZNR-F004). `rules()`: the face's row (faces.ts).
+	const zenOn = () => io.mode.on() && current.view !== "settings", rules = () => rulesOf(zenOn() ? "zen" : io.view.view());
 	/** What the stream is asked to watch: the companion's session while Zen shows one, else the route's. */
 	const watch = () => (zenOn() && zenKey) || watchOf(current, latest?.head?.key);
 	function rewatch() {
@@ -81,7 +82,7 @@ export function createPage(io: PageIo) {
 	}
 	/** The tab icon carries the count of units waiting on an answer, and every project trust question; Zen shows none. */
 	const badge = (net: Net) => io.icon(rules().count ? waitingOf(unitsOf(net).map((r) => r.unit)).length + (net.trust?.length ?? 0) + [...alertsOf(net, Date.now()).values()].filter((a) => a.wait).length : 0); // a wait the tower recorded on the boss counts like a trust question: it is an alert that is not a unit
-	/** Shows Zen or Standard to match `zenOn()`: Zen draws the newest snapshot when it comes on, and Standard draws it again on leaving. */
+	/** Shows Zen or the theme's page to match `zenOn()`: Zen draws the newest snapshot when it comes on, and the theme's page draws it again on leaving. */
 	function sync() {
 		const on = zenOn();
 		io.zenEl.hidden = !on;
@@ -90,8 +91,8 @@ export function createPage(io: PageIo) {
 		latest && badge(latest);
 		rewatch();
 	}
-	// Where the page's face moves when the view does (viewface.ts): a pick shows at once, a followed default waits on the settings page, Esc and the corner control leave this page for Standard.
-	const face = mountFace({ view: io.view, root: io.root, settings: () => current.view === "settings", leaveSettings: io.leaveSettings, draw: () => (io.back(), sync()) });
+	// Where the page's face moves (viewface.ts): the Zen button enters the mode, Esc Esc and the exits leave it for the theme, a theme's pick or follow never touches it, and the settings route suspends it.
+	const face = mountFace({ view: io.view, mode: io.mode, settings: () => current.view === "settings", leaveSettings: io.leaveSettings, draw: () => (sync(), io.faced()) });
 	// Reminders and sounds follow every snapshot, a hidden page's above all: `heard` is apart from `known`, which the alert queue advances only while the page is shown, so a page that comes back still queues what arrived while it was hidden.
 	function snapshot(net: Net) {
 		latest = pending = net;
@@ -155,7 +156,7 @@ export function createPage(io: PageIo) {
 		},
 		openAlert, openSession,
 		openStep,
-		/** The way out of Zen (zen.ts): Standard first, then the item's dialog or the session's comms, and the newest snapshot. */
+		/** The way out of Zen (zen.ts): the theme's page first, then the item's dialog or the session's comms, and the newest snapshot. */
 		leaveZen({ item, route }: Exit) {
 			face.leave();
 			item && openAlert(item);
@@ -172,8 +173,8 @@ export function createPage(io: PageIo) {
 			pairList = list;
 			if (zenOn()) io.withZen((z) => z.pairs(list)); // a Zen that is not on is given the list when it comes on (`sync`)
 		},
-		/** The header's Zen button: the mark that this page left Zen goes and the view is read again. */
-		enterZen: () => enterZen(io.view, io.root),
+		/** The header's Zen button: the mode goes on (from the settings page, the page leaves it first). */
+		enterZen: () => face.enter(),
 		/** A click on a system notification: Zen tells its one item itself; a trust question or a wait for the boss opens its dialog, any other alert its session. */
 		notified: (a: Alert) => rules().announce === "current" || Boolean(a.card) || (a.trust || a.wait ? openAlert(a) : openSession(a.ws, unitOf(a))), // a card (Zen's) has no dialog or session in Standard: the click only brings the page forward
 		/** The chime for new link notices: Zen makes no sound of its own accord. */

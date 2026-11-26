@@ -16,7 +16,7 @@ mkdirSync(join(dir, "assets"), { recursive: true });
 const HEAD = '<!doctype html><html><head><meta charset="utf-8"><link rel="icon" type="image/svg+xml" href="./icon.svg"><link rel="stylesheet" href="./assets/app.css"><!--sb-theme--><script src="./assets/boot.js"></script></head><body></body></html>';
 writeFileSync(join(dir, "index.html"), HEAD);
 writeFileSync(join(dir, "assets", "app.css"), "body{}");
-writeFileSync(join(dir, "themes.json"), JSON.stringify({ geek: { css: "themes/geek/geek-ab12.css", module: "themes/geek/geek-cd34.js", icon: "themes/geek/favicon-ef56.svg" }, zen: { css: "themes/zen/zen-ab12.css", icon: "icon.svg" } }));
+writeFileSync(join(dir, "themes.json"), JSON.stringify({ geek: { css: "themes/geek/geek-ab12.css", module: "themes/geek/geek-cd34.js", icon: "themes/geek/favicon-ef56.svg" }, raven: { css: "themes/raven/raven-ab12.css", icon: "icon.svg" } }));
 writeFileSync(join(dir, "themes", "geek", "geek-ab12.css"), "first");
 writeFileSync(join(dir, "themes", "geek", "pic-aa11.webp"), Buffer.from([0x52, 0x49, 0x46, 0x46]));
 writeFileSync(join(dir, "themes", "geek", "gone-bb22.css"), "soon gone");
@@ -69,6 +69,6 @@ test("the default view's first frame links its theme after the entry's styleshee
 	assert.match(geek, /<link rel="icon" type="image\/svg\+xml" href="themes\/geek\/favicon-ef56\.svg" data-standard="\.\/icon\.svg">/);
 	assert.match(geek, /<meta name="sb-view" content="geek">/);
 	for (const view of ["standard", "auto"] as const) assert.ok(!(await page(view)).includes("data-theme"), `${view}: no theme link`);
-	const zen = await page("zen");
-	assert.ok(zen.includes('data-theme="zen" href="themes/zen/zen-ab12.css"') && zen.includes('href="icon.svg" data-standard'), "a theme without an icon of its own takes the one the map names");
+	const raven = await page("raven");
+	assert.ok(raven.includes('data-theme="raven" href="themes/raven/raven-ab12.css"') && raven.includes('href="icon.svg" data-standard'), "a theme without an icon of its own takes the one the map names");
 });

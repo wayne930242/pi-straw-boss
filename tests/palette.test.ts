@@ -174,7 +174,7 @@ const acts = () => {
 	return {
 		calls,
 		acts: {
-			standard: () => void calls.push("standard"), settings: () => void calls.push("settings"),
+			leave: () => void calls.push("leave"), settings: () => void calls.push("settings"),
 			companion: { name: "Harbor", session: () => void calls.push("session"), terminal: () => void calls.push("terminal"), rest: () => void calls.push("rest") },
 			cycle: { prev: () => void calls.push("prev"), next: () => void calls.push("next") },
 		},
@@ -184,31 +184,26 @@ const labels = (list: Entry[]) => list.map((e) => e.label);
 
 const cls = (st: { on: boolean; volume: number; tries?: number }) => ({ on: () => st.on, volume: () => st.volume, set: (on: boolean) => void (st.on = on), setVolume: (v: number) => void (st.volume = v), try: () => void (st.tries = (st.tries ?? 0) + 1), onChange() {} });
 
-test("entriesOf lists the page's actions, then the preferences the menu has: view, language, and each sound class's switch and two volume steps; a row without its dep is left out", () => {
-	const a = acts(), views: string[] = [], langs: string[] = [];
+test("entriesOf lists the page's actions, then the preferences the menu has: language, and each sound class's switch and two volume steps (no theme: O4); a row without its dep is left out", () => {
+	const a = acts(), langs: string[] = [];
 	const fx = { on: false, volume: 50, tries: 0 }, bg = { on: false, volume: 20, tries: 0 };
 	const prefs = {
 		language: { get: () => "en", names: () => [{ id: "en", name: "English" }, { id: "zh-TW", name: "繁體中文" }], set: (id: string) => void langs.push(id) },
-		view: { choice: () => "zen" as const, set: (c: string) => void views.push(c), auto: () => "Auto (Zen)" },
 		sound: { effects: cls(fx), background: cls(bg) },
 	};
 	const list = entriesOf(a.acts, prefs as never);
 	assert.deepEqual(labels(list), [
-		"Open Harbor's session", "Open Harbor's terminal", "Back to the breath", "Previous companion", "Next companion", "Settings", "Back to the Standard view",
-		"View: Auto (Zen)", "View: Standard", "View: Geek", "View: Zen", "View: Raven Keep", "Language: English", "Language: 繁體中文",
+		"Open Harbor's session", "Open Harbor's terminal", "Back to the breath", "Previous companion", "Next companion", "Settings", "Leave Zen (Esc Esc)",
+		"Language: English", "Language: 繁體中文",
 		"Sound effects", "Sound effects volume up", "Sound effects volume down", "Background sound", "Background volume up", "Background volume down",
 	]);
 	assert.equal(new Set(list.map((e) => e.id)).size, list.length, "ids are unique");
 	const by = (label: string) => list.find((e) => e.label === label)!;
-	for (const label of ["Open Harbor's session", "Open Harbor's terminal", "Back to the breath", "Previous companion", "Next companion", "Settings", "Back to the Standard view"]) by(label).run();
-	assert.deepEqual(a.calls, ["session", "terminal", "rest", "prev", "next", "settings", "standard"]);
-	by("View: Geek").run();
-	by("View: Auto (Zen)").run();
-	assert.deepEqual(views, ["geek", "auto"]);
+	for (const label of ["Open Harbor's session", "Open Harbor's terminal", "Back to the breath", "Previous companion", "Next companion", "Settings", "Leave Zen (Esc Esc)"]) by(label).run();
+	assert.deepEqual(a.calls, ["session", "terminal", "rest", "prev", "next", "settings", "leave"]);
+	assert.ok(!list.some((e) => e.id.startsWith("view:")), "no theme entry: a theme picked in Zen would show only after leaving");
 	by("Language: 繁體中文").run();
 	assert.deepEqual(langs, ["zh-TW"]);
-	assert.equal(by("View: Zen").hint, "current", "the current view says so");
-	assert.equal(by("View: Geek").hint, undefined);
 	assert.equal(by("Language: English").hint, "current");
 	for (const label of ["Sound effects", "Background sound"]) (assert.equal(by(label).hint, "Off"), assert.equal(by(label).keep, true));
 	by("Sound effects").run();
@@ -231,18 +226,18 @@ test("entriesOf lists the page's actions, then the preferences the menu has: vie
 });
 
 test("entriesOf leaves out what the page cannot do now: no companion, no cycle, no settings, and no preferences given", () => {
-	assert.deepEqual(labels(entriesOf({ standard: () => {} }, {})), ["Back to the Standard view"]);
-	const one = entriesOf({ standard: () => {}, settings: () => {} }, {});
-	assert.deepEqual(labels(one), ["Settings", "Back to the Standard view"]);
+	assert.deepEqual(labels(entriesOf({ leave: () => {} }, {})), ["Leave Zen (Esc Esc)"]);
+	const one = entriesOf({ leave: () => {}, settings: () => {} }, {});
+	assert.deepEqual(labels(one), ["Settings", "Leave Zen (Esc Esc)"]);
 });
 
 test("entriesOf lists Music only when a music switch is given", () => {
 	let on = false;
-	const list = entriesOf({ standard: () => {} }, { music: { on: () => on, set: (v) => void (on = v) } });
+	const list = entriesOf({ leave: () => {} }, { music: { on: () => on, set: (v) => void (on = v) } });
 	const music = list.find((e) => e.label === "Music")!;
 	assert.equal(music.hint, "Off");
 	assert.equal(music.keep, true);
 	music.run();
 	assert.equal(on, true);
-	assert.equal(entriesOf({ standard: () => {} }, {}).some((e) => e.label === "Music"), false);
+	assert.equal(entriesOf({ leave: () => {} }, {}).some((e) => e.label === "Music"), false);
 });
