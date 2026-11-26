@@ -155,8 +155,8 @@ Standard's sheet hides every slot and makes it inert to the pointer:
 
 - **No layout impact.** A theme that shows a slot positions it `absolute` or `fixed`. A slot never takes part in flow, grid, or flex sizing. The contract test checks that every theme rule which gives a slot a `display` value also gives it `position: absolute` or `fixed`.
 - **Never above a control.** `backdrop` uses `z-index: -1` in the root stacking context. Every other slot stays at `z-index` 1 or lower inside its parent, and its paint avoids the parent's controls: the `chat-edge` tape sits above the page's top edge, not over the first row, as ca9f491d fixed by hand. The phase screenshots check this (§10.1).
-- **Compositor-friendly.** A slot that animates changes only `transform` and `opacity` (the raven §1.5 and storybook §B6 rules), and it may set `contain: strict`.
-- **Forced colours and calm.** Under `forced-colors: active` a slot draws nothing. Calm and reduced motion still the slot through Standard's `!important` stops.
+- **Compositor-friendly.** A slot that animates changes only `transform` and `opacity` (the raven §1.5 and storybook §B6 rules), and it may set `contain: strict`. Until Raven's head scene is redesigned, its existing window lights and lightning may animate `--rk-a`, `--rk-b`, and `--rk-bolt`, and its fog, bats, and wing strip may animate `background-position`.
+- **Forced colours and calm.** Under `forced-colors: active` a slot draws nothing. Calm and reduced motion still the slot through Standard's `!important` stops. Raven keeps the lightning and perched bird moving under calm on a fine pointer only; reduced motion still stops both.
 
 ### 5.3 Reserved pseudo-elements
 

@@ -101,7 +101,7 @@ test("every animation sits in the no-preference block and stops at data-calm; ou
 	const forced = block("(forced-colors: active)") + strip(css).split("@media (forced-colors: active) {").slice(2).join("");
 	assert.match(forced, /\.badge, \.sweep, \.pulse, \.ring, \.connect-ring\)[^{]*\{ animation: none !important; \}/, "forced colours stop the figures and Standard's hosts");
 	// the ambient layers exist only where no forced colours are
-	const ambient = rules.filter((r) => r.parts.some((p) => p.includes(GATE)) && /content:\s*""/.test(r.body));
+	const ambient = rules.filter((r) => r.parts.some((p) => p.includes(GATE)) && /display:\s*block/.test(r.body));
 	assert.ok(ambient.length >= 6, `the ambient layers were read (${ambient.length})`);
 	const unforced = [...strip(css).matchAll(/@media \(forced-colors: none\) \{/g)].flatMap((m) => {
 		let depth = 1, end = m.index! + m[0].length;
@@ -177,31 +177,31 @@ test("the still figures: each state's badge draws a figure of its own shape in t
 });
 
 test("the ambient layers (§B6): on the map and the head page only, timed as the spec says, fewer on a phone, and the ephemeral ones drawn only while they move", () => {
-	const gated = rules.filter((r) => r.parts.some((p) => p.includes(":has(#stage") && /::(before|after)$/.test(p) && !/comms-head/.test(p)));
+	const gated = rules.filter((r) => r.parts.some((p) => p.includes(":has(#stage") && p.includes('[data-slot="backdrop"] > :nth-child(') && !/comms-head/.test(p)));
 	for (const r of gated) for (const p of r.parts) assert.ok(p.includes(GATE), `${p} waits for the routed map or head page`);
 	const anim = (re: RegExp) => motion.filter((r) => r.parts.some((p) => re.test(p))).flatMap((r) => animationOf(r.body).flatMap(shorthand));
 	const day = (tail: string) => new RegExp(`^html\\[data-view="storybook"\\]\\[data-phase="day"\\].*${tail}$`), night = (tail: string) => new RegExp(`^html\\[data-view="storybook"\\]\\[data-phase="night"\\].*${tail}$`);
-	assert.deepEqual([...anim(day("\\)\\)::before")), ...anim(day("\\)\\)::after"))].map((a) => a.seconds), [150, 210], "two cloud strips, 150 s and 210 s");
-	const crossings = [...anim(day(" body::before")), ...anim(day(" #stage::before"))].filter((a) => a.name === "sb-cross");
+	assert.deepEqual([...anim(day(" :nth-child\\(1\\)")), ...anim(day(" :nth-child\\(2\\)"))].map((a) => a.seconds), [150, 210], "two cloud strips, 150 s and 210 s");
+	const crossings = [...anim(day(" :nth-child\\(3\\)")), ...anim(day(" :nth-child\\(5\\)"))].filter((a) => a.name === "sb-cross");
 	assert.equal(crossings.length, 2, "two butterflies");
 	const gap = Math.abs(crossings[0]!.delay - crossings[1]!.delay) % 88;
 	assert.ok(crossings.every((c) => c.seconds === 88) && Math.min(gap, 88 - gap) >= 40, "at most one crossing per 40 s");
-	for (const tail of [" body::after", " #stage::after"]) assert.deepEqual(anim(day(tail)).map((a) => a.name).sort(), ["sb-cross-wings", "sb-wing"], "the wings are a second layer that swaps by opacity on the body's path");
-	assert.equal(anim(day(" #work::before"))[0]?.name, "sb-leaf", "a leaf drifts down");
-	const stars = [" body::before", " body::after", " #stage::before"].map((t) => anim(night(t))[0]!);
+	for (const tail of [" :nth-child\\(4\\)", " :nth-child\\(6\\)"]) assert.deepEqual(anim(day(tail)).map((a) => a.name).sort(), ["sb-cross-wings", "sb-wing"], "the wings are a second layer that swaps by opacity on the body's path");
+	assert.equal(anim(day(" :nth-child\\(7\\)"))[0]?.name, "sb-leaf", "a leaf drifts down");
+	const stars = [" :nth-child\\(3\\)", " :nth-child\\(4\\)", " :nth-child\\(5\\)"].map((t) => anim(night(t))[0]!);
 	for (const s of stars) assert.ok(s.name === "sb-glint" && s.seconds >= 4 && s.seconds <= 7, "stars twinkle on 4 to 7 s");
 	assert.equal(new Set(stars.map((s) => `${s.seconds}/${s.delay}`)).size, 3, "three groups out of phase");
-	const flies = [" #stage::after", " #work::before", " #work::after"].map((t) => anim(night(t))[0]!);
+	const flies = [" :nth-child\\(6\\)", " :nth-child\\(7\\)", " :nth-child\\(8\\)"].map((t) => anim(night(t))[0]!);
 	for (const f of flies) assert.ok(f.name === "sb-flick" && f.seconds >= 9 && f.seconds <= 14, "fireflies wander on 9 to 14 s");
 	assert.equal(new Set(flies.map((f) => f.seconds)).size, 3, "out of phase");
-	assert.deepEqual([anim(night("\\)\\)::after"))[0]?.seconds, anim(night("\\)\\)::before"))[0]?.seconds], [8, 5.3], "the halo breathes in 8 s, the lamplight in 5.3 s");
-	const lamp = rules.find((r) => !inMotion(r) && r.parts.some((p) => night("\\)\\)::before").test(p)))!;
+	assert.deepEqual([anim(night(" :nth-child\\(2\\)"))[0]?.seconds, anim(night(" :nth-child\\(1\\)"))[0]?.seconds], [8, 5.3], "the halo breathes in 8 s, the lamplight in 5.3 s");
+	const lamp = rules.find((r) => !inMotion(r) && r.parts.some((p) => night(" :nth-child\\(1\\)").test(p)))!;
 	for (const a of lamp.body.matchAll(/rgb\(\d+ \d+ \d+ \/ ([\d.]+)\)/g)) assert.ok(Number(a[1]) <= 0.16, "the lamplight is at most 16 percent alpha");
 	// the butterflies, the leaf, and the fireflies exist only in the motion block: calm and reduced motion draw the still picture
-	for (const r of rules.filter((r) => !inMotion(r) && r.parts.some((p) => p.includes(GATE)))) for (const p of r.parts) assert.ok(!/(#work::|data-phase="day".*(body|#stage)::|data-phase="night".*#stage::after)/.test(p), `${p}: an ephemeral layer outside the motion block`);
+	for (const r of rules.filter((r) => !inMotion(r) && r.parts.some((p) => p.includes(GATE)))) for (const p of r.parts) assert.ok(!/(data-phase="day".*:nth-child\([3-8]\)|data-phase="night".*:nth-child\([6-8]\))/.test(p), `${p}: an ephemeral layer outside the motion block`);
 	// a phone: one butterfly, three fireflies (one radial pair each)
 	const phone = rulesOf(/@media \(max-width: 600px\) \{([\s\S]*?)\n\t\t\}/.exec(block("(prefers-reduced-motion: no-preference)"))?.[1] ?? "");
-	assert.ok(phone.some((r) => r.parts.every((p) => /#stage::(before|after)$/.test(p) && p.includes('data-phase="day"')) && /content: none/.test(r.body)), "a phone has one butterfly");
+	assert.ok(phone.some((r) => r.parts.every((p) => /:nth-child\([56]\)$/.test(p) && p.includes('data-phase="day"')) && /display: none/.test(r.body)), "a phone has one butterfly");
 	const onPhone = phone.filter((r) => r.parts.some((p) => p.includes('data-phase="night"')));
 	assert.equal(onPhone.length, 3);
 	for (const r of onPhone) assert.equal((r.body.match(/radial-gradient/g) ?? []).length, 2, "one firefly per layer on a phone");

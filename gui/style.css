@@ -1311,7 +1311,11 @@ body[data-route="settings"] :is(.bar-acts, .crumbs) { display: none; } /* the pa
 @container (max-width: 240px) { .head-node .head-line { display: none; } } /* a band too narrow for the line shows the crown, the name, and the chip */
 .head-node:is([data-mark="working"], [data-mark="commanding"]) { animation: glow 2.6s ease-in-out infinite; } /* its state is the band's look: a glow while it works, the amber edge while it waits on the boss */
 .head-node[data-mark="waiting"] { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); }
-.perch { display: none; } /* the perched raven is the Raven Keep theme's (raven.css); every other theme draws nothing */
+[data-slot], [data-slot="backdrop"] > i { display: none; pointer-events: none !important; }
+@media (forced-colors: active) { [data-slot] { display: none !important; } }
+/* Raven's fine-pointer strike and perch keep their original clock; its theme gates every other animation. */
+html:not([data-view="raven"])[data-calm] :is([data-slot], [data-slot] > i), html:not([data-view="raven"])[data-calm] :is([data-slot], [data-slot] > i)::before, html:not([data-view="raven"])[data-calm] :is([data-slot], [data-slot] > i)::after { animation: none !important; }
+@media (pointer: coarse), (pointer: none) { [data-calm] :is([data-slot], [data-slot] > i), [data-calm] :is([data-slot], [data-slot] > i)::before, [data-calm] :is([data-slot], [data-slot] > i)::after { animation: none !important; } }
 .head-node.absent { opacity: 0.55; border-style: dashed; box-shadow: none; animation: none; }
 .head-node:hover, .head-node:focus-visible { border-color: color-mix(in srgb, var(--gold) 70%, var(--line)); }
 /* The head page's asks: a card per broadcast, whose closed line is its labelled parts (what the boss said, what the head sent, to whom) and when with how many replied; a tap unfolds the whole texts and each tower's answer; a correction folds the orders it replaced under it; groups quiet for a day fold into "Older" (docs/specs/2026-11-07-head-log-cards.md). */

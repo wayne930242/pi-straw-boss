@@ -76,7 +76,7 @@ test("the corner picture: one per phase, named only under its phase's selector, 
 	}
 	assert.equal([...bare.matchAll(/var\(--sb-nook\)/g)].length, 2, "two places draw it");
 	assert.match(bare, /\[data-view="storybook"\] \.comms-in > \.chat-root \{ container: comms \/ inline-size;/);
-	assert.match(bare, /@container comms \(min-width: 980px\) \{ \[data-view="storybook"\] \.chat-scroll \{ background: var\(--sb-nook\) [^;]*no-repeat scroll, var\(--sb-lines\); \} \}/, "a wide page: fixed in the log's corner");
+	assert.match(bare, /@container comms \(min-width: 980px\) \{ \[data-view="storybook"\] \[data-slot="chat-corner"\] \{ display: block; position: absolute; inset: 0; transform: translateZ\(0\); background: var\(--sb-nook\) [^;]*no-repeat; \} \}/, "a wide page: fixed in the log's corner");
 	assert.match(bare, /@container comms \(max-width: 979\.98px\) \{ \[data-view="storybook"\] \.chat-list::after \{[^}]*var\(--sb-nook\)/, "a narrow page: after the last message, never over the end sentinel");
 	assert.match(bare, /\[data-view="storybook"\] \.chat-list \{ max-width: 800px;/, "the column leaves the corner to the picture");
 	assert.match(bare, /@media \(forced-colors: active\) \{[^@]*\.chat-list::after[^@]*display: none;[^@]*\.chat-scroll \{ background: none; \}/, "forced colours draw no picture, holes, or tape");
@@ -84,13 +84,13 @@ test("the corner picture: one per phase, named only under its phase's selector, 
 
 test("the working bee: only while the unit works, transform alone, no cycle under 1.6 s, still under calm and reduced motion, gone under forced colours, and Standard's sweep stopped", () => {
 	const rules = rulesOf(css);
-	const still = rules.find((r) => r.selector === '[data-view="storybook"] .composer[data-activity="working"]::before');
+	const still = rules.find((r) => r.selector === '[data-view="storybook"] .composer[data-activity="working"] > [data-slot="composer-edge"]::before');
 	assert.ok(still && /mask: var\(--sb-bee\)/.test(still.body) && !/animation/.test(still.body), "a still bee, drawn as a mask");
 	for (const r of rules) if (/\.composer(?!\[data-activity="working"\])[^,]*::(before|after)/.test(r.selector) && !r.selector.includes(".cmp-row")) assert.equal(r.body.trim(), "display: none;", `${r.selector}: no bee on a composer that is not working`);
 	const moving = [...bare.matchAll(/([^{}]*)\{ animation: (sb-bee[^;]*); \}/g)];
 	assert.ok(moving.length >= 2);
 	for (const [, selector, value] of moving) {
-		for (const part of selector!.split(",")) assert.match(part.trim(), /^html\[data-view="storybook"\](\[data-phase="night"\])?:not\(\[data-calm\]\) \.composer\[data-activity="working"\]::(before|after)$/);
+		for (const part of selector!.split(",")) assert.match(part.trim(), /^html\[data-view="storybook"\](\[data-phase="night"\])?:not\(\[data-calm\]\) \.composer\[data-activity="working"\] > \[data-slot="composer-edge"\]::(before|after)$/);
 		for (const s of value!.matchAll(/(\d*\.?\d+)s\b/g)) assert.ok(Number(s[1]) >= 1.6, `${value}: ${s[1]} s`);
 		assert.ok(bare.indexOf(selector!) > bare.indexOf("@media (prefers-reduced-motion: no-preference) {"), "inside the motion block");
 	}
@@ -100,7 +100,7 @@ test("the working bee: only while the unit works, transform alone, no cycle unde
 		assert.ok(props.size && [...props].every((p) => p === "transform" || p === "opacity"), `${name}: ${[...props]}`);
 	}
 	assert.match(bare, /html\[data-view="storybook"\]:not\(\[data-calm\]\) \.comms-in \.composer\[data-activity="working"\] \.cmp-row::before \{ animation: none;/, "the ring's sweep is off where the bee flies");
-	assert.match(bare, /@media \(forced-colors: active\) \{[^@]*\.composer::before, \[data-view="storybook"\] \.composer::after \{ display: none; \}/);
+	assert.match(bare, /@media \(forced-colors: active\) \{[^@]*\[data-slot="composer-edge"\]::before, \[data-view="storybook"\] \[data-slot="composer-edge"\]::after \{ display: none; \}/);
 });
 
 test("the page's text keeps 4.5 : 1 on the page, the boss's note, and a slip, and a sticker's label on its sticker, in both phases (the night's error sticker in --err-soft)", () => {

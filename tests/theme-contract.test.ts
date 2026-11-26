@@ -174,6 +174,24 @@ test("9. Only the Zen first paint, alpha masks and document canvas may use colou
 	].sort());
 });
 
+test("the backdrop has eight empty paint hosts, and the HUD, map and perches have named slots", () => {
+	const html = gui("index.html");
+	assert.match(html, /<body>\s*<div class="deco" data-slot="backdrop" aria-hidden="true">(?:\s*<i><\/i>){8}\s*<\/div>/);
+	for (const [name, count] of Object.entries({ stage: 2, head: 2, map: 1, hud: 1 })) {
+		assert.equal(html.split(`data-slot="${name}" aria-hidden="true"></i>`).length - 1, count, name);
+	}
+	assert.match(html, /id="stage"[^>]*>\s*(?:<i class="deco perch(?: perch-turn)?" data-slot="stage" aria-hidden="true"><\/i>){2}/);
+	const band = /<a class="head-node"[^>]*>([\s\S]*?)<\/a>/.exec(html)?.[1] ?? "";
+	assert.equal(band.match(/data-slot="head"/g)?.length, 2);
+	for (const [parent, slot] of [['header class="hud"', "hud"], ['main[^>]*id="map"', "map"]]) assert.match(html, new RegExp(`<${parent}[^>]*>\\s*<i class="deco" data-slot="${slot}"`));
+	const chat = gui("chat.ts"), composer = gui("composer.ts");
+	const node = (slot: string) => `h("i", { class: "deco", "data-slot": "${slot}", "aria-hidden": "true" })`;
+	assert.ok(chat.includes(`root.replaceChildren(${node("chat-edge")}, scroller, ${node("chat-corner")}, pill)`));
+	assert.ok(composer.includes(`h("form", { class: "composer" }, ${node("composer-edge")},`));
+	const hide = rulesOf(gui("style.css")).find(r => r.parts.includes("[data-slot]") && r.parts.includes('[data-slot="backdrop"] > i'));
+	assert.ok(hide && /display: none; pointer-events: none !important/.test(hide.body));
+});
+
 test("a layer order statement does not swallow the next selector", () => {
 	assert.deepEqual(rulesOf('@layer standard, theme; :root { --a: 1 }').map(r => r.selector), [":root"]);
 });

@@ -210,7 +210,7 @@ test("the perched raven sits on the head page only, in two frames of one strip, 
 	assert.ok(holdProfile >= 8 && holdProfile <= 15.5, `in profile for ${holdProfile.toFixed(1)} s`);
 	assert.ok(((first.at - from.at) / 100) * cycle <= 1.2 && ((to.at - last.at) / 100) * cycle <= 1.2, "the head turns in a dissolve of about a second at most");
 	// a 600 px phone and forced colours do not draw it
-	for (const query of ["(max-width: 600px)", "(forced-colors: active)"]) {
+	for (const query of ["(max-width: 600px)"]) {
 		const block = new RegExp(`@media ${query.replace(/[()]/g, "\\$&")} \\{([^\\n]*)\\}`).exec(raw)?.[1] ?? "";
 		assert.match(block, /\.stage\[data-view="head"\] > \.perch/, `${query} hides the perch`);
 	}
@@ -221,12 +221,12 @@ test("the perched raven sits on the head page only, in two frames of one strip, 
 });
 
 test("the backdrop belongs to the head page only, and fog, flicker, bats, and the raven are all in the stylesheet", () => {
-	assert.match(raw, /html\[data-view="raven"\]:has\(#stage\[data-view="head"\]\)::before/);
+	assert.match(raw, /html\[data-view="raven"\]:has\(#stage\[data-view="head"\]\) \[data-slot="backdrop"\] > :nth-child\(1\)/);
 	for (const name of ["rk-fog", "rk-bat", "rk-raven", "rk-lit-a", "rk-lit-b", "rk-bolt"]) assert.match(raw, new RegExp(`@keyframes ${name}\\b`), name);
 });
 
 // The map's backdrop (boss, 2026-11-08, spec §1.5 "On the map"): the same picture, strike, mist, bats, flying raven, and a perched raven on the head band. The map is open for hours, so every layer there only fades or moves (opacity, transform, translate; the compositor runs them without repainting a layer).
-const MAP = 'html[data-view="raven"]:has(#stage[data-view="map"])', STAGE = 'html[data-view="raven"] .stage[data-view="map"]';
+const MAP = 'html[data-view="raven"]:has(#stage[data-view="map"])';
 const mapRules = css.filter((r) => r.parts.some((p) => /data-view="map"/.test(p)));
 const rulesFor = (...needles: string[]) => css.filter((r) => needles.every((n) => r.selector.includes(n)));
 const zOf = (selector: string) => Number([...css.filter((r) => r.parts.includes(selector)).map((r) => r.body).join(";").matchAll(/z-index:\s*(-?\d+)/g)].at(-1)?.[1]); // the last rule wins
@@ -241,22 +241,22 @@ const framesBalanced = (name: string, prop: string) => {
 };
 test("the map draws the head page's picture in layers of its own, all scoped to raven and the map, stacked picture, rest veil, lights, mist, bats, flyer", () => {
 	for (const r of mapRules) for (const p of r.parts.filter((x) => /data-view="map"/.test(x))) assert.match(p, /^html\[data-view="raven"\]/, `${p} starts at the raven view`);
-	const layers = [`${MAP}::before`, `${STAGE}::before`, `${STAGE}::after`, `${MAP} body::before`, `${STAGE} > .work::before`, `${MAP} body::after`, `${MAP}::after`];
+	const layers = [`${MAP} [data-slot="backdrop"] > :nth-child(1)`, `${MAP} [data-slot="backdrop"] > :nth-child(2)`, `${MAP} [data-slot="backdrop"] > :nth-child(3)`, `${MAP} [data-slot="backdrop"] > :nth-child(4)`, `${MAP} [data-slot="backdrop"] > :nth-child(5)`, `${MAP} [data-slot="backdrop"] > :nth-child(6)`, `${MAP} [data-slot="backdrop"] > :nth-child(7)`];
 	const z = layers.map(zOf);
 	assert.ok(z.every((n) => Number.isInteger(n) && n < 0), `every layer sits behind the page: ${z}`);
 	assert.deepEqual([...z].sort((a, b) => a - b), z.slice().sort((a, b) => a - b));
 	assert.ok(z[0]! < z[1]! && z[1]! < z[2]! && z[2]! < z[3]! && z[3]! <= z[4]! && z[4]! < z[5]! && z[5]! < z[6]!, `picture < rest veil < lights < mist < bats < flyer: ${z}`);
 	const body = (selector: string) => css.filter((r) => r.parts.includes(selector)).map((r) => r.body).join(";");
-	assert.match(body(`${MAP}::before`), /url\("\.\/backdrop\.webp"\)/, "the picture");
-	assert.match(body(`${STAGE}::before`), /rgb\(3 2 5 \/ 0\.8\)/, "the rest veil");
-	assert.match(body(`${STAGE}::after`), /rgb\(255 190 92 \//, "the lit windows and lanterns");
-	assert.match(body(`${MAP} body::after`), /<svg|svg\+xml/, "the bats");
-	assert.ok(rulesFor('html[data-view="raven"]:has(#stage[data-view="map"])::after').some((r) => /rk-raven|rk-flap|aspect-ratio: 96 \/ 34|data:image\/svg/.test(r.body)), "the flying raven shares the head page's drawing");
+	assert.match(body(`${MAP} [data-slot="backdrop"] > :nth-child(1)`), /url\("\.\/backdrop\.webp"\)/, "the picture");
+	assert.match(body(`${MAP} [data-slot="backdrop"] > :nth-child(2)`), /rgb\(3 2 5 \/ 0\.8\)/, "the rest veil");
+	assert.match(body(`${MAP} [data-slot="backdrop"] > :nth-child(3)`), /rgb\(255 190 92 \//, "the lit windows and lanterns");
+	assert.match(body(`${MAP} [data-slot="backdrop"] > :nth-child(6)`), /<svg|svg\+xml/, "the bats");
+	assert.ok(rulesFor('html[data-view="raven"]:has(#stage[data-view="map"]) [data-slot="backdrop"] > :nth-child(7)').some((r) => /rk-raven|rk-flap|aspect-ratio: 96 \/ 34|data:image\/svg/.test(r.body)), "the flying raven shares the head page's drawing");
 	// the session, workspace, and settings pages stay plain: no rule of the theme names them
 	assert.ok(!/data-view="(workspace|settings)"/.test(raw), "only the head page, the map, and the chat page's rooms (tests/raven-rooms.test.ts) carry a picture");
 	for (const r of css.filter((x) => /data-view="session"/.test(x.selector))) assert.ok(/session-view\[data-role/.test(r.selector), `${r.selector}: the session stage is named by the rooms alone`);
 	// the head page keeps its own selectors
-	assert.match(raw, /html\[data-view="raven"\]:has\(#stage\[data-view="head"\]\)::before/);
+	assert.match(raw, /html\[data-view="raven"\]:has\(#stage\[data-view="head"\]\) \[data-slot="backdrop"\] > :nth-child\(1\)/);
 });
 
 test("the map's layers animate nothing but opacity, transform, translate, no filter, no registered number, no background-position, so a quiet map costs the main thread nothing (a background-position animation made it run a frame every vsync, measured)", () => {
@@ -275,7 +275,7 @@ test("the map's layers animate nothing but opacity, transform, translate, no fil
 		assert.ok(!/--rk-(a|b|bolt)\b/.test(frames), `${name} animates no registered number`);
 	}
 	assert.match(raw, /@keyframes rk-raven-map \{ 0% \{ translate: -20vw 0; \} 15%, 100% \{ translate: calc\(var\(--rk-w\) \+ 10vw\) 0; \} \}/, "the raven crosses by translate, at one speed (two keyframes, linear), and ends off the right edge");
-	assert.ok(rulesFor(`${STAGE} > .work::after`).some((r) => /background-position:\s*100% 0;\s*opacity:\s*0/.test(r.body)), "the second wing frame is its own layer");
+	assert.ok(rulesFor(`${MAP} [data-slot="backdrop"] > :nth-child(8)`).some((r) => /background-position:\s*100% 0;\s*opacity:\s*0/.test(r.body)), "the second wing frame is its own layer");
 	for (const r of mapRules.filter((x) => !/animation/.test(x.body))) assert.ok(!/var\(--rk-(a|b|bolt)\)/.test(r.body), `${r.selector} reads no animated number`);
 });
 
@@ -289,7 +289,7 @@ test("the map's lightning is the head page's, as opacity: the rest veil fades on
 	for (const a of peaks) assert.ok(peaks.filter((b) => sec(b) >= sec(a) && sec(b) < sec(a) + 1).length <= 3, "at most 3 flashes in a second");
 	const last = peaks.at(-1)!, after = rest.find((f) => f.at > last.at && f.v === 0)!;
 	assert.ok(sec(after) - sec(last) >= 1 && sec(after) - sec(last) <= 2.2, "the fade back to dark");
-	assert.ok(!/(#fff\b|#ffffff|white)/i.test(body(`${STAGE}::before`) + body(`${MAP}::before`)), "no white");
+	assert.ok(!/(#fff\b|#ffffff|white)/i.test(body(`${MAP} [data-slot="backdrop"] > :nth-child(2)`) + body(`${MAP} [data-slot="backdrop"] > :nth-child(1)`)), "no white");
 });
 function body(selector: string) { return css.filter((r) => r.parts.includes(selector)).map((r) => r.body).join(";"); }
 
@@ -308,15 +308,14 @@ test("on the map the perched raven stands on the head band's top edge: the head 
 	assert.match(inMotion, /\.head-node:not\(\[hidden\]\)\) \.head-node > \.perch::after\s*\{\s*animation: rk-perch-dark 61s/);
 	assert.match(inMotion, /\.head-node > \.perch-turn\s*\{\s*animation: rk-perch-turn 17s linear -7\.5s infinite/);
 	// the strike layer and the perch's light start together: both wait for the band to be shown
-	assert.match(inMotion, /:has\(#stage\[data-view="map"\] \.head-node:not\(\[hidden\]\)\) \.stage\[data-view="map"\]::before\s*\{\s*animation: rk-rest 61s linear -50\.584s/);
+	assert.match(inMotion, /:has\(#stage\[data-view="map"\] \.head-node:not\(\[hidden\]\)\) \[data-slot="backdrop"\] > :nth-child\(2\)\s*\{\s*animation: rk-rest 61s linear -50\.584s/);
 	assert.ok(css.some((r) => r.parts.includes("html[data-view=\"raven\"] .head-node.absent > .perch") && /visibility:\s*hidden/.test(r.body)), "unseen while the head is not open, its clock still running");
-	const phone = /@media \(max-width: 600px\) \{ html\[data-view="raven"\]:has\(#stage\[data-view="map"\]\) body::after([^\n]*)\}\s*$/m.exec(raw)?.[0] ?? "";
-	assert.ok(phone.includes(`${MAP} body::after`) && phone.includes(`${MAP}::after`) && !phone.includes(`${band}, `) && !/\.head-node > \.perch \{ display: none/.test(phone), "a phone draws neither the bats nor the flyer, but keeps the perch on the band (2026-11-09)");
+	const phone = /@media \(max-width: 600px\) \{ html\[data-view="raven"\]:has\(#stage\[data-view="map"\]\) \[data-slot="backdrop"\] > :nth-child\(6\)([^\n]*)\}\s*$/m.exec(raw)?.[0] ?? "";
+	assert.ok(phone.includes(`${MAP} [data-slot="backdrop"] > :nth-child(6)`) && phone.includes(`${MAP} [data-slot="backdrop"] > :nth-child(7)`) && !phone.includes(`${band}, `) && !/\.head-node > \.perch \{ display: none/.test(phone), "a phone draws neither the bats nor the flyer, but keeps the perch on the band (2026-11-09)");
 	assert.match(phone, /\.head-node \{ --rk-pw: 56px; margin-top: calc\(var\(--rk-pw\) \* 0\.806 - 8px\); \}/, "at 56 px, with room for it in the band's margin");
 	assert.match(base, /pointer-events:\s*none/, "and it takes no tap");
-	const forced = [...raw.matchAll(/@media \(forced-colors: active\) \{([^\n]*)\}/g)].map((m) => m[1]).join("\n");
-	for (const layer of [`${MAP}::before`, `${MAP}::after`, `${MAP} body::before`, `${MAP} body::after`, `${STAGE}::before`, `${STAGE}::after`, `${STAGE} > .work::before`, 'html[data-view="raven"] .head-node > .perch']) assert.ok(forced.includes(layer), `forced colours hide ${layer}`);
-	assert.match(forced, /display: none/);
+	assert.match(at("gui/style.css"), /@media \(forced-colors: active\) \{ \[data-slot\] \{ display: none !important;/);
+
 });
 
 test("the map's motion stops under calm and reduced motion: every animated map rule is inside the no-preference block, outside data-calm, and each layer then holds a still state", () => {
@@ -327,17 +326,17 @@ test("the map's motion stops under calm and reduced motion: every animated map r
 	const fineSelectors = rulesOf(FINE_BLOCK).map((r) => r.selector); // calm on a fine pointer keeps the strike and the raven only (the calm test above)
 	for (const r of mapRules) assert.ok(!/animation\s*:\s*(?!none)/.test(r.body) || mapMotion.some((m) => m.selector === r.selector) || fineSelectors.includes(r.selector), `${r.selector} animates only in the no-preference block`);
 	// the still state: the rest veil whole, the lights at a middle opacity, the bats off the left edge, the flyer unseen
-	assert.match(body(`${STAGE}::after`), /opacity:\s*0\.75/);
-	assert.match(body(`${MAP} body::after`), /transform:\s*translate\(calc\(var\(--rk-w\) \* -0\.251\)/);
-	assert.match(css.filter((r) => r.parts.includes(`${MAP}::after`)).map((r) => r.body).join(";"), /translate:\s*-20vw 0/, "the flyer waits off the left edge");
+	assert.match(body(`${MAP} [data-slot="backdrop"] > :nth-child(3)`), /opacity:\s*0\.75/);
+	assert.match(body(`${MAP} [data-slot="backdrop"] > :nth-child(6)`), /transform:\s*translate\(calc\(var\(--rk-w\) \* -0\.251\)/);
+	assert.match(css.filter((r) => r.parts.includes(`${MAP} [data-slot="backdrop"] > :nth-child(7)`)).map((r) => r.body).join(";"), /translate:\s*-20vw 0/, "the flyer waits off the left edge");
 });
 
 test("no selector of the theme puts a pseudo-element inside :is() (it matches nothing there)", () => {
 	const bad = css.filter((r) => /:is\([^)]*::/.test(r.selector) || /:is\([^)]*:(before|after)\b/.test(r.selector));
 	assert.deepEqual(bad.map((r) => r.selector), []);
-	for (const query of ["(max-width: 600px)", "(forced-colors: active)"]) {
+	for (const query of ["(max-width: 600px)"]) {
 		const block = new RegExp(`@media ${query.replace(/[()]/g, "\\$&")} \\{([^\\n]*)\\}`).exec(raw)?.[1] ?? "";
-		assert.match(block, /::after/, `${query} hides ::after`);
+		assert.match(block, /:nth-child\(7\)/, `${query} hides the flyer`);
 		assert.ok(!/:is\(/.test(block), `${query} writes its selectors out`);
 	}
 });

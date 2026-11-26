@@ -16,9 +16,10 @@
     "deprecated": { "--hi": "--tint" }
   },
   "markProperties": ["--c", "--c1", "--c4"],
-  "slots": [],
+  "slots": ["backdrop", "stage", "head", "map", "hud", "chat-edge", "chat-corner", "composer-edge"],
   "reservedPseudo": [".base::after", ".dialog::after", ".head-node::after", ".chat-list::after", ".comms-head::after"],
   "attributes": {
+    "data-slot": ["backdrop", "stage", "head", "map", "hud", "chat-edge", "chat-corner", "composer-edge"],
     "data-view": ["standard", "geek", "raven", "storybook", "zen", "map", "head", "workspace", "session", "settings"],
     "data-phase": ["day", "night"], "data-calm": [""], "data-stale": ["true", "false", ""],
     "data-mark": ["working", "commanding", "waiting", "idle", "done", "error", "unknown"],
@@ -33,6 +34,7 @@
     "open": [""], "hidden": [""], "type": ["<html-input-type>"]
   },
   "writers": {
+    "data-slot": ["index.html", "chat.ts", "composer.ts"],
     "data-view": ["boot.js", "view.ts", "main.ts"], "data-phase": ["boot.js", "view.ts", "phaseclock.ts"], "data-calm": ["calm.ts"], "data-stale": ["main.ts", "board.ts"],
     "data-mark": ["render.ts", "chat.ts", "minimap.ts", "headpage.ts", "timeline.ts", "layer.ts"], "data-activity": ["composer.ts"], "data-kind": ["composer.ts"],
     "data-sender": ["chat.ts"], "data-role": ["session.ts"], "data-state": ["auto.ts", "main.ts", "connect.ts", "board.ts", "notify.ts", "linkbar.ts", "yard.ts", "layer.ts", "session.ts", "render.ts", "termcard.ts", "deploy.ts", "copy.ts", "headpage.ts", "allyunits.ts", "linkdialogs.ts", "zenmusicbar.ts"],
@@ -45,7 +47,7 @@
     "absent", "act", "active", "age", "alerts", "ally", "ally-chip", "ally-unit", "ask", "ask-cancel", "ask-head", "ask-opt", "ask-own", "ask-send", "au-dot", "au-mdot", "auto-back", "ava",
     "badge", "banner", "bar", "bar-acts", "bar-more", "base", "bases", "big", "board-acts", "board-allies", "board-ally", "board-ally-cap", "board-cap", "board-line", "board-mark", "board-mini", "board-none", "board-now", "board-pause", "board-row", "board-state", "board-supply", "board-supply-row", "board-unit", "boss-flag", "box-ended", "brand", "bubble",
     "card", "chat-list", "chat-root", "chat-scroll", "cmp-alt", "cmp-row", "cmp-send", "comms-head", "comms-in", "composer", "connect", "connect-ring", "conv-cap", "conv-now", "credit", "crumbs", "current",
-    "d-doc", "d-doc-ico", "deploy-fill", "deploy-title", "dialog", "dot", "drawer", "drawer-head", "dstate", "foot", "ghost", "go", "head", "head-btn", "head-name", "head-node", "hud", "hud-pop", "in", "joined", "later", "left", "legend", "line", "link", "link-alert", "link-team", "logo",
+    "d-doc", "d-doc-ico", "deco", "deploy-fill", "deploy-title", "dialog", "dot", "drawer", "drawer-head", "dstate", "foot", "ghost", "go", "head", "head-btn", "head-name", "head-node", "hud", "hud-pop", "in", "joined", "later", "left", "legend", "line", "link", "link-alert", "link-team", "logo",
     "map", "modes", "more", "name", "new-base", "note", "notice", "offline", "on", "packet", "pad-key", "pair-btn", "pair-tabs", "panel", "pcol", "perch", "perch-turn", "pitem", "plate", "portrait", "pulse", "queue-act", "queue-bar", "queue-list", "quit-btn",
     "remote", "ring", "rule", "set-group", "set-row", "sheet", "sheet-yes", "squad", "stage", "stale", "stats", "subs", "supply-barracks", "supply-cell", "supply-cells", "supply-chip", "supply-cols", "supply-fog", "supply-free", "supply-gate", "supply-head", "supply-icon", "supply-kind", "supply-name", "supply-points", "supply-ready", "supply-slot", "supply-tray", "supply-waiting", "sweep", "sys",
     "tab", "tab-add", "tab-btn", "tally", "target-btn", "target-chev", "target-find", "target-list", "target-veil", "tcard", "term-bar", "term-hold", "term-kb", "term-typing", "thought", "tile", "title", "tl-lanes", "tl-mark", "tmem-body", "tmem-counts", "tmem-empty", "tmem-ended", "tmem-note", "tmem-text", "todo", "tog", "token", "tower", "tower-conv", "tower-notes", "tower-notices", "tstate", "tx", "tx-body", "tx-copy", "unit", "view-pick", "work", "yard", "yard-chip", "yard-chip-btn", "yard-code", "yard-open", "yard-pill", "yard-row", "yard-title", "you", "zen-enter"

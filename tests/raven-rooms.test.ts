@@ -13,8 +13,8 @@ const raw = readFileSync(join(dir, "raven.css"), "utf8"), css = rulesOf(raw);
 const body = (selector: string) => css.filter((r) => r.parts.includes(selector)).map((r) => r.body).join(";");
 const ROOMS = { tower: "room-study.webp", main: "room-hall.webp", subagent: "room-crypt.webp", other: "room-library.webp" } as const;
 const PAGE = 'html[data-view="raven"]:has(#stage[data-view="session"] #session-view[data-role';
-const room = (role: keyof typeof ROOMS, part: "before" | "after") => (role === "other" ? `${PAGE}]:not([data-role="tower"], [data-role="main"], [data-role="subagent"]))::${part}` : `${PAGE}="${role}"])::${part}`);
-const ANY = (part: "before" | "after") => `${PAGE}])::${part}`;
+const room = (role: keyof typeof ROOMS, part: "before" | "after") => (role === "other" ? `${PAGE}]:not([data-role="tower"], [data-role="main"], [data-role="subagent"])) [data-slot="backdrop"] > :nth-child(${part === "before" ? 1 : 7})` : `${PAGE}="${role}"]) [data-slot="backdrop"] > :nth-child(${part === "before" ? 1 : 7})`);
+const ANY = (part: "before" | "after") => `${PAGE}]) [data-slot="backdrop"] > :nth-child(${part === "before" ? 1 : 7})`;
 
 /** A lossy WebP's size, read from its VP8 frame header. */
 const sizeOf = (file: Buffer) => {
@@ -84,7 +84,7 @@ test("the veil is #0d0a10 at 55 percent at the top, 62 at 70 percent, and 80 at 
 test("the candle light breathes by opacity alone, in the no-preference block outside data-calm; calm, reduced motion, and forced colours keep still light or none, and no lightning is in a room", () => {
 	const light = body(ANY("after"));
 	assert.match(light, /position:\s*fixed/);
-	const peak = Math.max(...[...raw.matchAll(/session-view\[data-role[^{]*::after\s*\{[^}]*\}/g)].flatMap((m) => [...m[0].matchAll(/rgb\(255 190 92 \/ ([\d.]+)\)/g)].map((x) => Number(x[1]))));
+	const peak = Math.max(...[...raw.matchAll(/session-view\[data-role[^{]*:nth-child\(7\)\s*\{[^}]*\}/g)].flatMap((m) => [...m[0].matchAll(/rgb\(255 190 92 \/ ([\d.]+)\)/g)].map((x) => Number(x[1]))));
 	assert.ok(peak > 0 && peak <= 0.16, `the light's peak alpha is ${peak}`);
 	const frames = /@keyframes rk-room-candle \{((?:[^{}]|\{[^{}]*\})*)\}/.exec(raw)?.[1] ?? "";
 	assert.ok(frames.length > 0, "the candle keyframes exist");
@@ -96,6 +96,5 @@ test("the candle light breathes by opacity alone, in the no-preference block out
 	assert.ok(!/animation[^;}]*rk-room-candle/.test(raw.replace(inMotion, "")), "no candle animation outside the block");
 	assert.match(light, /opacity:\s*0?\.[5-9]/, "the still light holds a middle opacity");
 	assert.ok(!/rk-bolt|rk-rest/.test(rulesOf(inMotion).filter((r) => /session-view/.test(r.selector)).map((r) => r.body).join(";")), "no lightning in a room");
-	const forced = [...raw.matchAll(/@media \(forced-colors: active\) \{([^\n]*)\}/g)].map((m) => m[1]).join("\n");
-	for (const part of ["before", "after"] as const) assert.ok(forced.includes(ANY(part)), `forced colours hide ${ANY(part)}`);
+	assert.match(readFileSync(join(root, "gui/style.css"), "utf8"), /@media \(forced-colors: active\) \{ \[data-slot\] \{ display: none !important;/, "the whole backdrop is hidden");
 });

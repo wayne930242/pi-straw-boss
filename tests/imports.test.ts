@@ -1628,7 +1628,7 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// PBS 0.10.0: review lightbox navigation, grouped and multi picks, and the outgoing name check (+4,123 raw / +1,212 gzip against clean 0.8.0).
 	// 0.97.0 integration (2026-11-26; measured after a fresh `npm run gui:build`, node 24): the device hold's chips, PBS 0.10.1, Zen as a mode, and Storybook's words and view settings together: 528,566 / 197,312. Caps = measured.
 	// Storybook chat page (2026-11-26, spec §B11; measured after a fresh `npm run gui:build`, node 24): 528,566 / 197,312 to 529,245 / 197,594 (+679 / +282): gui/senders.ts (a notice's sender in the net) and chat.ts's sender icon. Caps = measured. Storybook brand (2026-11-26): gzip 197,617, measured (hashed chunk names; no chat code changed).
-	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 531_704 && total(chunks, gz) <= 198_754 /* P2 on the v1 floor: measured chunk hashes. */ /* Theme contract: keyed transmissions; measured. */ /* Contract 1: Raven and Storybook share the loop player; measured. Rebased on the layers (P1): 198,712 gzipped, measured. */, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
+	assert.ok(chunks.length >= 1 && total(chunks, (n) => size(n).length) <= 531_911 && total(chunks, gz) <= 198_777 /* measured: chat and composer decoration slots */ /* P2 on the v1 floor: measured chunk hashes. */ /* Theme contract: keyed transmissions; measured. */ /* Contract 1: Raven and Storybook share the loop player; measured. Rebased on the layers (P1): 198,712 gzipped, measured. */, `the chat chunks are ${total(chunks, (n) => size(n).length)} bytes (${total(chunks, gz)} gzipped)`);
 	// The stylesheet's figure was 22 KB / 6 KB; 0.4.0 raised it by 0.1 KB for the comms anchor highlight, the receive-only strip, and the title link;
 	// 0.5.0 to 24.6 KB / 6.7 KB for the composer, the phone layout with its touch targets and safe-area insets, and the pairing tile.
 	// and to 26 KB / 7 KB for the read-only question panel and the net log that folds on a phone; 0.5.1 to 26.5 KB raw for the queue line in the dialogs.
@@ -1799,7 +1799,7 @@ test("the built page is small, self-contained (no remote URLs, fonts, or imports
 	// Zen as a mode (2026-11-26, docs/specs/2026-11-26-storybook-theme/spec.md Part A; measured after a fresh `npm run gui:build`, node 24): 149,780 to 149,839 bytes (+59: the header's Zen button in every theme with its phone ensō, for the two `.zen-back` rules it replaces), gzip 30,528, under its cap. Cap = measured.
 	// Layer order and standard blocks in both page sheets: measured 149,917 raw / 30,568 gzip.
 	// Theme contract §4: exported ANSI colours and adjustable glows; measured on the production build.
-	assert.ok(total(css, (n) => size(n).length) <= 151_259 && total(css, gz) <= 30_762, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
+	assert.ok(total(css, (n) => size(n).length) <= 151_838 && total(css, gz) <= 30_852 /* measured: slot hiding and stop rules */, `the stylesheet is ${total(css, (n) => size(n).length)} bytes (${total(css, gz)} gzipped)`);
 });
 
 // The Zen rows of the keymap exist only because the Zen theme's entry imports zenrows.ts for its side effect: nothing else loads them in the page, so dropping that "unused" import leaves Enter, H, [, ], and the palette key dead while every other test stays green.

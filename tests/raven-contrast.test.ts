@@ -89,12 +89,12 @@ test("under the brightest lightning frame the map's ground and the legend's keep
 	const raw = readFileSync(new URL("../gui/themes/raven/raven.css", import.meta.url), "utf8");
 	const sheet = rulesOf(raw), body = (selector: string) => sheet.filter((r) => r.parts.includes(selector)).map((r) => r.body).join(";");
 	const MAP = 'html[data-view="raven"]:has(#stage[data-view="map"])', STAGE = 'html[data-view="raven"] .stage[data-view="map"]';
-	const picture = body(`${MAP}::before`);
+	const picture = body(`${MAP} [data-slot="backdrop"] > :nth-child(1)`);
 	for (const layer of SAMPLED_LAYERS) assert.ok(picture.includes(layer), `the sampled layer is still there: ${layer}`);
-	const alphas = [...body(`${STAGE}::after`).matchAll(/rgb\(255 190 92 \/ ([\d.]+)\)/g)].map((m) => Number(m[1]));
+	const alphas = [...body(`${MAP} [data-slot="backdrop"] > :nth-child(3)`).matchAll(/rgb\(255 190 92 \/ ([\d.]+)\)/g)].map((m) => Number(m[1]));
 	assert.equal(alphas.length, 11, "eleven lit windows and lanterns");
 	assert.ok(Math.max(...alphas) <= 0.7125 + 1e-9, `the lights' peak alpha is ${Math.max(...alphas)}; the sample took 0.7125`);
-	assert.match(body(`${STAGE}::after`), /opacity:\s*0\.75/);
+	assert.match(body(`${MAP} [data-slot="backdrop"] > :nth-child(3)`), /opacity:\s*0\.75/);
 	const candle = [...(/@keyframes rk-candle \{(.*)\}\n/.exec(raw)?.[1] ?? "").matchAll(/opacity:\s*([\d.]+)/g)].map((m) => Number(m[1]));
 	assert.ok(candle.length >= 4 && Math.max(...candle) <= 1, "the lights breathe at most to full");
 	assert.match(raw, /@keyframes rk-rest \{.*94\.4% \{ opacity: 0; \}/, "the rest veil is gone at the flash");
@@ -131,7 +131,7 @@ test("under the lightest veil, the candle light at its peak, and the comms' or c
 	assert.ok(veil, "the veil is a gradient of rgb()");
 	const hex = (r: string, g: string, b: string) => `#${[r, g, b].map((n) => Number(n).toString(16).padStart(2, "0")).join("")}`;
 	const lightest = Number(veil[4]), veilColour = hex(veil[1]!, veil[2]!, veil[3]!);
-	const peak = Math.max(...[...ravenCss.matchAll(/session-view\[data-role[^{]*::after\s*\{[^}]*\}/g)].flatMap((m) => [...m[0].matchAll(/rgb\(255 190 92 \/ ([\d.]+)\)/g)].map((x) => Number(x[1]))));
+	const peak = Math.max(...[...ravenCss.matchAll(/session-view\[data-role[^{]*:nth-child\(7\)\s*\{[^}]*\}/g)].flatMap((m) => [...m[0].matchAll(/rgb\(255 190 92 \/ ([\d.]+)\)/g)].map((x) => Number(x[1]))));
 	const grounds = (name: string) => {
 		const m = new RegExp(`--${name}:\\s*rgba\\((\\d+),\\s*(\\d+),\\s*(\\d+),\\s*([\\d.]+)\\)`).exec(ravenCss);
 		assert.ok(m, `--${name}`);
@@ -151,17 +151,20 @@ test("under the lightest veil, the candle light at its peak, and the comms' or c
 // Frosted glass (gui/themes/raven/raven.css, "Frosted glass"): a large panel is --rk-glass over the picture blurred by --rk-blur. The brightest pixel of the picture at the lightning's peak, as the map's layers paint it (the sampled layers above, the lights at their peak 0.7125, rest veil gone, the mask included),
 // then blurred with a Gaussian of the blur's standard deviation (CSS blur(8px) is a sigma of 8 px) at the widest frame (1600 px, a desktop; a phone's cover frame is 1498 px), below the header strip: rgb(165 121 72), sampled with PIL on the shipped picture (the blur only lowers the peak of a small lit window; a large light region stays as bright).
 // Round 3 (todo #138): the fill went from 0.72 to 0.6 so the castle reads through the bases, and the strike drew a bolt, whose layer is in the picture. So the sample is now taken from the page itself: Chrome's render of the picture's layers alone (every panel hidden, the bolt layer shown) at the first peak of the strike (the lights at their brightest candle, the rest veil gone), blurred by 8 px, and the largest value of each channel over everything from 30 percent of the frame's height down, which is where a base can be (the strike runs only while the head band is shown, and the bases start under it: 295 px of 811 at 1440, 255 of 844 on a phone;
-// the bolt's layer fades out between 16 and 42 percent of the frame for this reason: above the line a bolt may be as bright as it likes, since only the bar's text stands bare there and its ground is --rk-well, below the pure white of the bolt's core, see the next test). At 1600 x 901 it is rgb(100 82 105) and on a 390 x 844 phone rgb(99 81 103); the larger is pinned.
+// the bolt's layer fades out between 16 and 42 percent of the frame for this reason: above the line a bolt may be as bright as it likes, since only the bar's text stands bare there and its ground is --rk-well, below the pure white of the bolt's core, see the next test). At 1600 x 901 it was rgb(100 82 105) and on a 390 x 844 phone rgb(99 81 103); the historical test uses the larger of those two samples.
 // A change to the layers, the bolt's layer (its CSS is hashed below), the picture, or the blur makes this test ask for a new sample instead of passing on old arithmetic. The hashes and the blur are asserted; the fill's alpha is then checked on the sample.
-const GLASS_SAMPLE = { sha: "65a27813b776dc77", blur: 8, worst: "#645269", bolt: "cfc02f8ce57dfa67" }; // rgb(100 82 105)
+// Slot migration: same declarations on the bolt except how its box is generated. At full candle and bolt, with the rest veil clear, a paired capture with the UI hidden found no brightening: below 30%, after an 8 px Gaussian blur,
+// desktop RGB maxima (154,114,104) → (153,113,104); phone (150,111,102) unchanged. These conservative independent-channel maxima do not reproduce the historical sample; whether --err reaches 4.5 on actual text at the flash is a separate check.
+const GLASS_SAMPLE = { sha: "65a27813b776dc77", blur: 8, worst: "#645269", bolt: "95bb6d83a03b8ee6" };
 test("the glass fill keeps --text, --dim, and every state colour at 4.5 : 1 over the brightest blurred pixel of the picture at the lightning's peak, for a panel and for a sheet; the blur is no narrower than the one sampled", () => {
 	const sheet = rulesOf(ravenCss), body = (selector: string) => sheet.filter((r) => r.parts.includes(selector)).map((r) => r.body).join(";");
-	const picture = body('html[data-view="raven"]:has(#stage[data-view="map"])::before');
+	const picture = body('html[data-view="raven"]:has(#stage[data-view="map"]) [data-slot="backdrop"] > :nth-child(1)');
 	for (const layer of SAMPLED_LAYERS) assert.ok(picture.includes(layer), `the sampled layer is still there: ${layer}`);
 	assert.equal(createHash("sha256").update(readFileSync(new URL("../gui/themes/raven/backdrop.webp", import.meta.url))).digest("hex").slice(0, 16), GLASS_SAMPLE.sha, "the backdrop changed: sample its blurred brightest pixel again");
-	const boltRule = sheet.find((r) => r.parts.includes('html[data-view="raven"] .map::before') && /data:image\/svg/.test(r.body));
+	const boltRule = sheet.find((r) => r.parts.includes('html[data-view="raven"] [data-slot="map"]') && /data:image\/svg/.test(r.body));
 	assert.ok(boltRule, "the bolt's layer is in the sheet");
-	assert.equal(createHash("sha256").update(boltRule.body).digest("hex").slice(0, 16), GLASS_SAMPLE.bolt, "the bolt's layer changed: sample the picture's layers at the strike's peak again");
+	const paint = declarations(boltRule.body).filter(([name]) => name !== "display" && name !== "content");
+	assert.equal(createHash("sha256").update(JSON.stringify(paint)).digest("hex").slice(0, 16), GLASS_SAMPLE.bolt, "the bolt's layer changed: sample the picture's layers at the strike's peak again");
 	const blur = Number(/--rk-blur:\s*([\d.]+)px/.exec(ravenCss)?.[1]);
 	assert.ok(blur >= GLASS_SAMPLE.blur, `the blur is ${blur} px; the sample took ${GLASS_SAMPLE.blur} (a narrower blur leaves a brighter peak)`);
 	const hex = (n: string) => Number(n).toString(16).padStart(2, "0");

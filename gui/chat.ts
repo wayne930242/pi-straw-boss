@@ -129,7 +129,7 @@ export function mountChat(root: HTMLElement, data: Data, { who, link, docFor, pa
 	const docs = () => opens.forEach((o) => (o.button.isConnected ? ((o.shown = true), (o.button.hidden = !o.paths.some((p) => docFor?.(p)))) : o.shown && opens.delete(o)));
 	const list = h("div", { class: "chat-list" }), top = h("div", { class: "chat-top" }), foot = h("div", { class: "chat-end" }), pill = h("button", { class: "chat-pill", type: "button", hidden: "" }), empty = h("p", { class: "chat-empty" }, m.no_transmissions());
 	const scroller = h("div", { class: "chat-scroll", tabindex: "-1", "aria-label": m.comms_log() }, top, list, foot);
-	root.replaceChildren(scroller, pill);
+	root.replaceChildren(h("i", { class: "deco", "data-slot": "chat-edge", "aria-hidden": "true" }), scroller, h("i", { class: "deco", "data-slot": "chat-corner", "aria-hidden": "true" }), pill);
 	const follow = createFollow();
 	let loading = false, loaded = false, target: string | undefined, held: HTMLElement | undefined, release = 0, down = false, coast: ReturnType<typeof setTimeout> | undefined;
 	// A finger on the log, a wheel or key moving it up, or the fling after them still coasting (no input and no scroll for 250 ms ends it), hold the log where the user put it: nothing pulls it to the bottom, and

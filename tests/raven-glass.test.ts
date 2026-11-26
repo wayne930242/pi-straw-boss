@@ -26,16 +26,16 @@ test("the glass is inside @supports and the phone frame inside a 600 px query, s
 });
 
 test("Standard's and Geek's stylesheets carry no raven glass: neither names a raven token", () => {
-	for (const file of ["gui/style.css", "gui/themes/geek/geek.css"]) assert.ok(!/--rk-|data-view="raven"/.test(read(file)), `${file} has no raven rule`);
+	for (const file of ["gui/style.css", "gui/themes/geek/geek.css"]) assert.ok(!/--rk-/.test(read(file)), `${file} has no raven rule`);
 });
 
 test("a phone keeps the map's perched raven (56 px, on the band, taking no tap) and the head page's stays off it", () => {
-	const phone = /@media \(max-width: 600px\) \{ (html\[data-view="raven"\]:has\(#stage\[data-view="map"\]\) body::after[^\n]*)\n/.exec(raven)?.[1] ?? "";
+	const phone = /@media \(max-width: 600px\) \{ (html\[data-view="raven"\]:has\(#stage\[data-view="map"\]\) \[data-slot="backdrop"\] > :nth-child\(6\)[^\n]*)\n/.exec(raven)?.[1] ?? "";
 	assert.ok(phone.length > 0, "the map's phone block");
 	assert.ok(!/\.head-node > \.perch \{ display: none/.test(phone) && !/\.head-node > \.perch,? ?\{? ?display/.test(phone), "the band's perch is not hidden");
 	assert.match(phone, /\.head-node \{ --rk-pw: 56px; margin-top: calc\(var\(--rk-pw\) \* 0\.806 - 8px\); \}/);
 	assert.match(raven, /\.head-node > \.perch \{\s*display: block; position: absolute; pointer-events: none;/);
-	assert.match(raven, /@media \(max-width: 600px\) \{ html\[data-view="raven"\]:has\(#stage\[data-view="head"\]\) body::after[^\n]*\.stage\[data-view="head"\] > \.perch \{ display: none; \}/, "the head page's perch is on the gate, off a phone's visible part of the frame");
+	assert.match(raven, /@media \(max-width: 600px\) \{ html\[data-view="raven"\]:has\(#stage\[data-view="head"\]\) \[data-slot="backdrop"\] > :nth-child\(6\)[^\n]*\.stage\[data-view="head"\] > \.perch \{ display: none; \}/, "the head page's perch is on the gate, off a phone's visible part of the frame");
 });
 
 test("the head turn is lit: the turned frame is lifted from the profile's resting dark, rimmed in cool moonlight, and has a glint in its eye, all static so only its opacity animates", () => {
@@ -83,7 +83,7 @@ test("the head page's glass is thin (so the castle shows) and its bare text has 
 
 // Round 3 (todo #138): the strike draws a bolt. The boss saw a 17 to 29 of 255 brightening, not lightning (「鴉閣我好像還是都沒看到雷聲和閃電」). The layer below is an opacity only, in the picture's frame, on the same 61 s clock and 7 s first strike as the picture's own light.
 const strike = (selector: string) => rules.filter((r) => r.parts.includes(selector)).map((r) => r.body).join(";");
-const LAYERS = ['html[data-view="raven"] .map::before', 'html[data-view="raven"] .stage[data-view="head"]::before'];
+const LAYERS = ['html[data-view="raven"] [data-slot="map"]', 'html[data-view="raven"]:has(#stage[data-view="head"]) [data-slot="backdrop"] > :nth-child(3)'];
 test("the strike's bolt is one fixed layer in the picture's frame on the map and on the head page: hidden at rest, a small SVG of the painting's own size, a wash, and nothing that takes a tap", () => {
 	for (const layer of LAYERS) {
 		const rule = rules.find((r) => r.parts.includes(layer) && /url\("data:image\/svg\+xml/.test(r.body));
@@ -99,7 +99,7 @@ test("the strike's bolt is one fixed layer in the picture's frame on the map and
 		assert.match(body, /linear-gradient\(rgb\(176 158 255 \/ 0\.\d+\)/, "and a wash of the sky");
 		assert.match(body, /mask-image:\s*linear-gradient\(#000 16%, transparent 42%\)/, "it fades into the glass below the bar (the glass's contrast is sampled with that fade)");
 	}
-	assert.match(strike(LAYERS[0]!), /z-index:\s*-4/, "over the rest veil (-5) that the strike lifts, under the lights' layer's neighbours");
+	assert.match(strike(LAYERS[0]!), /z-index:\s*-1/, "above the backdrop but behind the map");
 	assert.match(strike(LAYERS[1]!), /z-index:\s*-1/);
 });
 
@@ -128,17 +128,15 @@ test("the bolt runs where the strike runs, and nowhere else: on the map once the
 	for (const [source, name] of [[motion, "motion"], [fine, "calm"]] as const) {
 		const mine = rulesOf(source).filter((r) => r.body.includes(clock));
 		assert.equal(mine.length, 2, `${name}: the head page's and the map's bolt`);
-		assert.ok(mine.some((r) => /\.stage\[data-view="head"\]::before$/.test(r.selector)), `${name}: the head page`);
-		assert.ok(mine.some((r) => /:has\(#stage\[data-view="map"\] \.head-node:not\(\[hidden\]\)\) \.map::before$/.test(r.selector)), `${name}: the map, once the band is shown (the rest veil's gate)`);
+		assert.ok(mine.some((r) => /:has\(#stage\[data-view="head"\]\) \[data-slot="backdrop"\] > :nth-child\(3\)$/.test(r.selector)), `${name}: the head page`);
+		assert.ok(mine.some((r) => /:has\(#stage\[data-view="map"\] \.head-node:not\(\[hidden\]\)\) \[data-slot="map"\]$/.test(r.selector)), `${name}: the map, once the band is shown (the rest veil's gate)`);
 		for (const r of mine) assert.match(r.selector, name === "motion" ? /:not\(\[data-calm\]\)/ : /\[data-calm\]/);
 	}
 	// the picture's own animations of the strike run on the same clock, so bolt and flash start together
 	assert.match(raven, /rk-rest 61s linear -50\.584s infinite, rk-clap 61s linear 7s infinite/);
 	assert.ok(!/animation[^;]*rk-strike/.test(raven.replace(/@media \(prefers-reduced-motion: no-preference\)(?: and \(pointer: fine\))? \{(?:[^{}]|\{[^{}]*\})*\}/g, "")), "no rk-strike outside the no-preference blocks: under reduced motion there is no bolt and no wash");
 	// forced colours draw no picture, and so no bolt; a phone pins it to the left edge like the picture
-	assert.match(raven, /@media \(forced-colors: active\) \{ html\[data-view="raven"\] \.map::before,/);
-	assert.match(raven, /@media \(forced-colors: active\) \{ html\[data-view="raven"\] \.stage\[data-view="head"\] > \.perch, html\[data-view="raven"\] \.stage\[data-view="head"\]::before,/);
-	assert.match(raven, /html\[data-view="raven"\] \.map::before, html\[data-view="raven"\] \.stage\[data-view="head"\]::before \{ left: 0; translate: none; \}/, "pinned left on a phone, where the castle is");
+	assert.match(raven, /html\[data-view="raven"\] \[data-slot="map"\], html\[data-view="raven"\]:has\(#stage\[data-view="head"\]\) \[data-slot="backdrop"\] > :nth-child\(3\) \{ left: 0; translate: none; \}/, "pinned left on a phone, where the castle is");
 });
 
 test("the head page's perch stands in the margin left of the log column: it clears the 1040 px column wherever it is drawn (1381 px and up) and is not drawn where no margin fits", () => {

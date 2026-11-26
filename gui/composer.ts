@@ -160,7 +160,7 @@ export function mountComposer(root: HTMLElement, key: string, post: Post, upload
 	const menu = mountSlash(box, (prefix) => post("commands", { prefix })); // before the composer's own keys, so Enter on the menu picks
 	const bar = h("p", { class: "cmp-bar", role: "status" }), activity = h("p", { class: "cmp-activity", role: "status", "aria-live": "polite" }); // the unit's state in words, for assistive tech: the ring round the box is its picture
 	bar.hidden = true;
-	const form = h("form", { class: "composer" }, menu, h("div", { class: "cmp-row" }, attach, picker, box, h("div", { class: "cmp-acts" }, send, follow, stop)), h("div", { class: "cmp-foot" }, note), bar, activity);
+	const form = h("form", { class: "composer" }, h("i", { class: "deco", "data-slot": "composer-edge", "aria-hidden": "true" }), menu, h("div", { class: "cmp-row" }, attach, picker, box, h("div", { class: "cmp-acts" }, send, follow, stop)), h("div", { class: "cmp-foot" }, note), bar, activity);
 	if (o.target) form.querySelector(".cmp-row")!.prepend(o.target.button);
 	root.replaceChildren(form);
 	let unit: Unit = { name: "", control: false, live: false, mark: "unknown", online: false }, busy = false, asking = false;

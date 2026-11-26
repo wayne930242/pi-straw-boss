@@ -16,6 +16,9 @@
 <link rel="icon" type="image/svg+xml" href="./icon.svg">
 </head>
 <body>
+<div class="deco" data-slot="backdrop" aria-hidden="true">
+  <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+</div>
 <!-- Icons: game-icons.net, CC BY 3.0 (Lorc, Delapouite); see gui/ICONS.md -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
 <symbol id="i-brand" viewBox="0 0 32 32"><path d="M12 8.2A5 5 0 0 1 20 8.2M8.5 8.2A9 9 0 0 1 23.5 8.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M9.5 11h13l-1.8 4.4h-9.4zM13.7 16.6h4.6l.9 4.4h-6.4z" fill="currentColor"/><path d="M16 21L6.5 27M16 21V27M16 21l9.5 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="6.5" cy="27" r="2.5" fill="currentColor"/><circle cx="16" cy="27" r="2.5" style="fill: var(--violet)"/><circle cx="25.5" cy="27" r="2.5" fill="currentColor"/></symbol>
@@ -48,6 +51,7 @@
 </defs></svg>
 <div class="shell" inert>
   <header class="hud">
+    <i class="deco" data-slot="hud" aria-hidden="true"></i>
     <a class="brand" href="./" data-route="" aria-label="Straw Net: all bases" data-m-label="brand_label">
       <span class="logo"><svg viewBox="0 0 32 32" aria-hidden="true"><use data-icon="brand" href="#i-brand"/></svg></span>
       <div><h1>Straw Net</h1><p data-m="tagline">live net · comms</p></div>
@@ -99,12 +103,13 @@
     </ul>
   </div>
   <div class="stage" id="stage" data-view="map">
-    <i class="perch" aria-hidden="true"></i><i class="perch perch-turn" aria-hidden="true"></i>
+    <i class="deco perch" data-slot="stage" aria-hidden="true"></i><i class="deco perch perch-turn" data-slot="stage" aria-hidden="true"></i>
     <div class="work" id="work">
       <main class="map view" id="map">
+        <i class="deco" data-slot="map" aria-hidden="true"></i>
         <svg class="links" id="links" aria-hidden="true"></svg>
         <div class="packets" id="packets" aria-hidden="true"></div>
-        <a class="head-node" id="head-node" href="head" data-route="head" hidden><svg class="head-crown" aria-hidden="true"><use data-icon="crown" href="#i-crown"/></svg><b class="head-name" data-m="head_tower">Head tower</b><span class="head-line"></span><em class="head-waits" hidden></em><i class="perch" aria-hidden="true"></i><i class="perch perch-turn" aria-hidden="true"></i></a>
+        <a class="head-node" id="head-node" href="head" data-route="head" hidden><svg class="head-crown" aria-hidden="true"><use data-icon="crown" href="#i-crown"/></svg><b class="head-name" data-m="head_tower">Head tower</b><span class="head-line"></span><em class="head-waits" hidden></em><i class="deco perch" data-slot="head" aria-hidden="true"></i><i class="deco perch perch-turn" data-slot="head" aria-hidden="true"></i></a>
         <div class="bases" id="bases"><button type="button" class="new-base" data-open="base" data-m="new_base">+ New base</button></div>
       </main>
       <section class="zoom view" id="ws-view" hidden></section>
