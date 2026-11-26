@@ -109,7 +109,7 @@ function capsReplyCases() {
 	const mk = (name: string, kind: Kind, plaintext: Buffer, expect: unknown) => ({ name, kind, plaintext: hex(plaintext), expect });
 	return [
 		mk("an empty caps", "caps", enc(list([])), { features: [] }),
-		mk("caps cut to 16 features", "caps", enc(list(Array.from({ length: 18 }, (_, i) => str(`f${i}`)))), { features: Array.from({ length: 16 }, (_, i) => `f${i}`) }),
+		mk("caps cut to 32 features", "caps", enc(list(Array.from({ length: 34 }, (_, i) => str(`f${i}`)))), { features: Array.from({ length: 32 }, (_, i) => `f${i}`) }),
 		mk("caps with a trailing field", "caps", enc(list([]), str("x")), null),
 		mk("caps with a cut list", "caps", enc(Buffer.from([0, 0])), null),
 		mk("a tower-reply", "tower-reply", enc(str(ASK_ID), str("ok")), { inReplyTo: ASK_ID, text: "ok" }),

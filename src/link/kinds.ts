@@ -58,6 +58,8 @@ export const LIMITS = {
 	boardHolds: 8,
 	/** Not in the spec: a `caps` lists at most this many features; the rest is cut when it is decoded. 16 before 0.99.0: such a decoder keeps the first 16, and `hello` goes first, so it still sees it and every feature it knows. */
 	capsFeatures: 32,
+	/** An operate `open` (operate/1) keeps the 16 features it always did. */
+	openCaps: 16,
 	/** The spec's: a `unit-status` names at most this many mains, each by a name of at most `boardLabel` characters; a stop's reason is at most this many bytes. */
 	mains: 20,
 	stopReason: 200,
@@ -194,7 +196,7 @@ const exactBytes = (b: Buffer, n: number, what: string): Buffer => {
 /** The canonical bytes of an `operate` body: `accept` carries sha256 of the `open` body, so a box's signature covers the operator's key. */
 export function operateBody(m: OperateMessage): Buffer {
 	switch (m.type) {
-		case "open": return enc(exactBytes(m.eph, 32, "an ephemeral key"), list(m.caps.slice(0, LIMITS.capsFeatures).map((c) => str(short(c)))), str(m.want));
+		case "open": return enc(exactBytes(m.eph, 32, "an ephemeral key"), list(m.caps.slice(0, LIMITS.openCaps).map((c) => str(short(c)))), str(m.want));
 		case "accept": return enc(exactBytes(m.eph, 32, "an ephemeral key"), exactBytes(m.openHash, 32, "an open hash"), enc(list(m.scope.teams.slice(0, LIMITS.operateTeams).map((t) => exactBytes(t, 16, "a team id"))), bool(m.scope.box)), enc(int(m.limits.mirrors), int(m.limits.watches), int(m.limits.budget)));
 		case "refuse": return enc(str(short(m.reason)));
 		case "frame":
@@ -395,7 +397,7 @@ const decoders: { [K in Kind]: (b: Buffer) => Plaintexts[K] } = {
 				const [eph, caps, want] = dec(body, 3) as [Buffer, Buffer, Buffer], w = readStr(want);
 				if (eph.length !== 32) throw new CanonError("an ephemeral key is 32 bytes");
 				if (w !== "team" && w !== "box") throw new CanonError("want is team or box");
-				return { ...base, type: "open", eph, caps: readList(caps).slice(0, LIMITS.capsFeatures).map((c) => s(c)), want: w };
+				return { ...base, type: "open", eph, caps: readList(caps).slice(0, LIMITS.openCaps).map((c) => s(c)), want: w };
 			}
 			case "accept": {
 				const [eph, openHash, scope, limits] = dec(body, 4) as [Buffer, Buffer, Buffer, Buffer];
