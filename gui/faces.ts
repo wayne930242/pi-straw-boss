@@ -8,6 +8,6 @@ import type { Face } from "../src/views.ts";
  */
 export interface Rules { count: boolean; signal: boolean; announce: "arrivals" | "current"; keys: "dialogs" | "zen"; drawer: boolean; calm: boolean; chime: boolean; escape: "stay" | "blur" }
 const standard: Rules = { count: true, signal: true, announce: "arrivals", keys: "dialogs", drawer: true, calm: true, chime: true, escape: "stay" };
-export const RULES: Record<Face, Rules> = { standard, raven: standard, geek: { ...standard, calm: false }, zen: { count: false, signal: false, announce: "current", keys: "zen", drawer: false, calm: true, chime: false, escape: "blur" } };
+export const RULES: Record<Face, Rules> = { standard, raven: standard, storybook: standard, geek: { ...standard, calm: false }, zen: { count: false, signal: false, announce: "current", keys: "zen", drawer: false, calm: true, chime: false, escape: "blur" } };
 /** The rules of the face the page shows. */
 export const rulesOf = (face: Face): Rules => RULES[face];

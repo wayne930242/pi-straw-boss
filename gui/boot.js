@@ -34,9 +34,13 @@
 	function face(storedView, storedZen, contrast, server) {
 		return zen(storedZen, storedView) ? "zen" : resolve(storedView, contrast, server);
 	}
-	// The theme-color of each face that has one of its own (gui/view.ts THEME); Standard keeps the color the page came with.
-	var colors = { geek: "#000000", zen: "#14110e", raven: "#0d0a10" };
-	globalThis.sbBoot = { resolve: resolve, face: face, colors: colors };
+	// The theme-color of each face that has one of its own (gui/view.ts THEME), Storybook's by its phase; Standard keeps the color the page came with.
+	var colors = { geek: "#000000", zen: "#14110e", raven: "#0d0a10", storybook: { day: "#fbf5e9", night: "#111a35" } };
+	/** gui/phase.ts `phaseAt`: day from 06:00 to 17:59 by the device's clock, night otherwise (docs/specs/2026-11-26-storybook-theme/spec.md §B2). */
+	function phase(hours) {
+		return hours >= 6 && hours < 18 ? "day" : "night";
+	}
+	globalThis.sbBoot = { resolve: resolve, face: face, colors: colors, phase: phase };
 	try {
 		var stored = null, storedZen = null;
 		try {
@@ -45,10 +49,15 @@
 		} catch (e) {} // storage refused: the screen and the server decide, and the mode is off
 		var view = face(stored, storedZen, matchMedia("(prefers-contrast: more)").matches, meta("sb-view"));
 		root.dataset.view = view;
+		var now = phase(new Date().getHours());
+		if (view === "storybook") root.dataset.phase = now; // the stylesheet hangs each phase on it, so the first paint is in the right one
 		var theme = Object.prototype.hasOwnProperty.call(themes, view) ? themes[view] : undefined;
 		if (colors[view]) {
 			var bar = d.querySelector('meta[name="theme-color"]');
-			if (bar) bar.setAttribute("content", colors[view]);
+			if (bar) {
+				if (!bar.hasAttribute("data-standard")) bar.setAttribute("data-standard", bar.getAttribute("content") || ""); // Standard's, which view.ts paints on leaving Zen or another theme (RV-F002)
+				bar.setAttribute("content", typeof colors[view] === "string" ? colors[view] : colors[view][now]);
+			}
 		}
 		var icon = d.querySelector('link[rel="icon"]');
 		if (icon && !(theme && theme.icon) && icon.hasAttribute("data-standard")) icon.setAttribute("href", icon.getAttribute("data-standard")); // the server wrote its default's icon; this device's view has none

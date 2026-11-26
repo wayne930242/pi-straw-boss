@@ -1,4 +1,5 @@
 import { type Choice, type Face, viewOf, type View } from "../src/views.ts";
+import { type Phase, phaseNow } from "./phase.ts";
 import { createPrefs, KEYS } from "./prefs.ts";
 
 // The page's theme: Standard (the Tokyo Night palette with its motion), Geek (black, monospace, AAA contrast, nothing moves; themes/geek), or Raven Keep (themes/raven). Zen is no theme but a mode (mode.ts,
@@ -14,8 +15,13 @@ export type { Choice, View };
 /** What moved the view: the person chose one (`pick`: here or on another page of this device), or the page's own Auto followed the server's default or the screen (`follow`). */
 export type Cause = "pick" | "follow";
 export const KEY: string = KEYS.view;
-/** The theme-color of each face but Standard: Geek, Raven Keep (the near-black violet), and the mode Zen (the ink ground); Standard keeps the color the page came with (index.html). */
-export const THEME: Record<Exclude<Face, "standard">, string> = { geek: "#000000", zen: "#14110e", raven: "#0d0a10" };
+/** The theme-color of each face but Standard: Geek, Raven Keep (the near-black violet), Storybook by its phase (the cream page by day, the night sky after dark; phase.ts), and the mode Zen (the ink ground); Standard keeps the color the page came with (index.html). */
+export const THEME: Record<Exclude<Face, "standard">, string | Record<Phase, string>> = { geek: "#000000", zen: "#14110e", raven: "#0d0a10", storybook: { day: "#fbf5e9", night: "#111a35" } };
+/** A face's theme-color in a phase. */
+export const colorOf = (face: Exclude<Face, "standard">, phase: Phase): string => {
+	const c = THEME[face];
+	return typeof c === "string" ? c : c[phase];
+};
 
 /** The stored value as a choice: only a named view is a choice of its own (src/views.ts), anything else (missing, invalid) is Auto. */
 export const choiceOf = (stored: string | null | undefined): Choice => viewOf(stored) ?? "auto";
@@ -26,8 +32,8 @@ export const resolve = (choice: Choice, contrast: boolean, server: Choice = "aut
 /** What the view reads and writes, as plain parts so a test can stand in for the page. */
 export interface ViewEnv {
 	root: { dataset: Record<string, string | undefined> };
-	/** `<meta name="theme-color">`, when the page has one. */
-	meta?: { content: string } | null;
+	/** `<meta name="theme-color">`, when the page has one. boot.js keeps the colour the server wrote in its `data-standard` before it paints its own (RV-F002). */
+	meta?: { content: string; dataset?: Record<string, string | undefined> } | null;
 	/** `<meta name="sb-view">`, the server's default as it wrote it into the page (absent from a page an older server or the demo serves: Auto). */
 	server?: { content: string } | null;
 	/** The `(prefers-contrast: more)` query. */
@@ -46,8 +52,10 @@ export function domEnv(): ViewEnv {
 }
 
 /** `zen`: whether the page shows Zen now (the mode is on and the route is not the settings page; pagecore.ts `zenOn`). Without it the face is the theme. */
-export function mountView(env: ViewEnv = domEnv(), zen: () => boolean = () => false) {
-	const listeners: ((view: View, cause: Cause) => void)[] = [], serverListeners: ((server: Choice) => void)[] = [], standard = env.meta?.content ?? "";
+/** `phase`: Storybook's day or night now (phase.ts), read at each draw. */
+export function mountView(env: ViewEnv = domEnv(), zen: () => boolean = () => false, phase: () => Phase = () => phaseNow()) {
+	// Standard's colour is the one the page came with: boot.js may already have painted a theme's (Zen's, the theme's) over it, and kept the original in data-standard (RV-F002).
+	const listeners: ((view: View, cause: Cause) => void)[] = [], serverListeners: ((server: Choice) => void)[] = [], standard = env.meta?.dataset?.standard ?? env.meta?.content ?? "";
 	const prefs = createPrefs(env.storage), read = () => choiceOf(prefs.get("view")); // storage refused: the OS decides
 	let choice = read(), server = choiceOf(env.server?.content), shown: View | undefined;
 	const now = () => resolve(choice, env.media.matches, server);
@@ -56,7 +64,9 @@ export function mountView(env: ViewEnv = domEnv(), zen: () => boolean = () => fa
 	function apply(cause?: Cause) {
 		const view = now(), shows = face();
 		env.root.dataset.view = shows;
-		if (env.meta) env.meta.content = shows === "standard" ? standard : THEME[shows];
+		if (shows === "storybook") env.root.dataset.phase = phase();
+		else delete env.root.dataset.phase;
+		if (env.meta) env.meta.content = shows === "standard" ? standard : colorOf(shows, phase());
 		const told = cause === "pick" || (cause === "follow" && shown !== undefined && shown !== view);
 		shown = view; // before the listeners, which may draw the view again (viewface.ts)
 		if (told) for (const fn of listeners) fn(view, cause!);

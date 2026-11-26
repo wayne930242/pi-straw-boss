@@ -12,6 +12,8 @@ English | [繁體中文](https://github.com/wayne930242/pi-straw-boss/blob/main/
 
 <p align="center"><img src="docs/gui-board-capacity.png" width="49%" alt="The situation board in the Standard view: the device budget as 1-point slots, each deployed unit a chip over its points, the free slots, the barracks with the ready work, and each commander's units and ready count"> <img src="docs/gui-board-raven.png" width="49%" alt="The same board in Raven Keep: candle graves lit by the deployed bats, empty graves in mist, the keep's gate with the waiting bats, a pause as a shut coffin and a stale main as circling crows"></p>
 
+<p align="center"><img src="docs/gui-storybook-day.png" width="80%" alt="The Storybook map by day, with animal icons on paper cards"></p>
+
 <p align="center"><img src="docs/gui-comms.png" width="49%" alt="A unit's comms: its chat as a live log, the messages queued for its next turn, its todo list, its background monitors, and its dossier"> <img src="docs/gui-zen-item.png" width="49%" alt="The Zen view with one item: a robot_hand question on an ink-dark page, its choices as lines of text"></p>
 
 ## Why
@@ -22,7 +24,7 @@ pi-straw-boss lets them find each other and coordinate, without a scheduler or a
 - **Everyone joins.** Each pi in Herdr joins its tab's net at start. An agent whose work grows (several steps, dispatching workers, more than one app) promotes itself to the tab's **main agent**; you, the boss, can take over with `/boss`.
 - **A tower per workspace**, an agent in a tab of its own, opens when agents start to collide: a member dispatches a subagent, or an agent promotes itself. It coordinates the mains and the other towers, and opens a tab with a new main for work no session owns. You don't need to talk to it.
 - **A head tower of your own** takes your instructions in one long conversation and hands each to the workspace that owns it.
-- **The browser view**, `/boss gui`: every workspace, agent, and subagent live, and the questions they wait on, answered in place from a desktop or a paired phone. Its Zen mode, one press away in the header, shows one thing at a time.
+- **The browser view**, `/boss gui`: every workspace, agent, and subagent live, and the questions they wait on, answered in place from a desktop or a paired phone. Choose Storybook for a notebook that changes from day to night, or press Zen in the header to see one thing at a time.
 - **Merge trains**: a project can batch its reviewed branches, so the heavy gates (lint, build, full suites) run once per train instead of once per branch.
 - **Straw Link** connects the towers of teammates' computers, and an unattended build box can take work from them.
 - **Auto mode**: tell the head tower you are going to sleep, and no agent waits on you until you are back. Agents keep working, and what needed you goes back to the agent that asked, to ask you again when you are back.
@@ -72,4 +74,4 @@ The [documentation site](https://wayne930242.github.io/pi-straw-boss/docs/) is i
 
 ## License
 
-MIT. The browser view's icons come from [game-icons.net](https://game-icons.net) (Lorc and Delapouite, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)); see [gui/ICONS.md](gui/ICONS.md). The Raven view's three sounds are not MIT: they are used under Casper's sound-effects licence; see [NOTICE.md](NOTICE.md).
+MIT. The browser view's icons come from [game-icons.net](https://game-icons.net) (Lorc and Delapouite, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)); see [gui/ICONS.md](gui/ICONS.md). The recorded sounds in Standard, Raven Keep and Storybook are not MIT: they are used under Casper's sound-effects licence; see [NOTICE.md](NOTICE.md).

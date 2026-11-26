@@ -2,6 +2,7 @@ import "./style.css";
 import { domEnv, mountPick, mountView, mountZenEnter } from "./view.ts";
 import { mountMode } from "./mode.ts";
 import { KEYS } from "./prefs.ts";
+import { forcePhase } from "./phase.ts";
 import type { Face } from "../src/views.ts";
 import { createPage } from "./pagecore.ts";
 import { localeNames, setLocale, startI18n } from "./i18n.ts";
@@ -40,6 +41,9 @@ import type { TermKit } from "./zentypes.ts";
 // The face goes first, before anything is drawn: `data-view` on <html> picks the palette, so no frame is painted in the other one (view.ts). It is Zen while the mode is on (mode.ts) and the route is not the settings page, and the device's theme otherwise.
 // The demo's `?zen=<state>` opens it in Zen for this page only (fixture.ts): `sb.zen` is 1 in a store of its own, and nothing is written to the device.
 const zenDemo = __LIVE__ ? null : new URLSearchParams(location.search).get("zen");
+// The demo's `&phase=day|night` shows Storybook in that phase whatever the clock says (phase.ts), for screenshots; a live page has no such override (docs/specs/2026-11-26-storybook-theme/spec.md O9).
+const phaseDemo = __LIVE__ ? null : new URLSearchParams(location.search).get("phase");
+if (phaseDemo === "day" || phaseDemo === "night") forcePhase(phaseDemo);
 const demoStore = new Map<string, string>([[KEYS.zen, "1"]]);
 const env = zenDemo ? { ...domEnv(), storage: { getItem: (key: string) => demoStore.get(key) ?? localStorage.getItem(key), setItem: (key: string, value: string) => void demoStore.set(key, value) } } : domEnv();
 const mode = mountMode(env.storage);
@@ -133,11 +137,11 @@ const plainFor = (shown: Face) => {
 	if (!plains.has(href)) plains.set(href, plainOf(href));
 	return plains.get(href)!;
 };
-let plain = tabIcon ? plainFor(view.face()) : undefined, badge: ThemeParts["badge"], badged = 0;
+let plain = tabIcon ? plainFor(view.face()) : undefined, badge: ThemeParts["badge"], badged = 0, shownParts: ThemeParts | undefined;
 function icon(n: number, again = false) {
 	if (!tabIcon || !plain || (n === badged && !again)) return;
 	badged = n;
-	void plain.then((svg) => svg && n === badged && (tabIcon.href = iconHref(svg, n, badge)));
+	void plain.then((svg) => svg && n === badged && (tabIcon.href = iconHref(svg, n, typeof badge === "function" ? badge() : badge)));
 }
 /** A phone's `⋯` in the header shows only while something is behind it (Dismiss finished, Stashed); when both go, its panel closes. */
 function moreActs() {
@@ -148,6 +152,7 @@ function moreActs() {
 /** Standard's page for a snapshot while it is shown (pagecore.ts says when). */
 function draw(net: Net, fresh: Alert[], now: Map<string, Alert>) {
 	page.stats(net);
+	shownParts?.recheck?.(); // a phone that slept skipped the theme's timer (Storybook's phase)
 	autoSw.net(net);
 	showDismissAll(el("dismiss-all"), net);
 	showStashed(el("stashed"), el("stashed-list"), net);
@@ -199,8 +204,19 @@ function showFace() {
 	faceShown = face;
 	void showTheme(face);
 }
+// A theme that changes under the page (Storybook's day and night) says so: the theme-color and the tab's badge are painted again, nothing else moves (no reload, no route, no focus).
+const shifting = new WeakSet<ThemeParts>();
 onTheme((shown, parts) => {
 	badge = parts?.badge;
+	shownParts = parts;
+	if (parts?.onShift && !shifting.has(parts)) {
+		shifting.add(parts);
+		parts.onShift(() => {
+			if (shownParts !== parts) return;
+			view.refresh();
+			icon(badged, true);
+		});
+	}
 	if (tabIcon) plain = plainFor(shown);
 	icon(badged, true);
 	if (core.latest) core.snapshot(core.latest); // the words and icons are drawn again in the shown view's, a switch back to Standard included (RRB2-F001)

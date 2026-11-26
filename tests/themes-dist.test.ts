@@ -83,8 +83,8 @@ test("the build's ownership rule: a module belongs to a theme only when everythi
 });
 
 test("the theme map names each theme's own files and falls back to Standard's icon; the mode Zen is built as a theme and marked a mode", () => {
-	const list = ["assets/index-a.js", "themes/geek/geek-1.js", "themes/geek/geek-1.css", "themes/zen/zen-2.js", "themes/zen/zen-2.css", "themes/zen/favicon-zen-3.svg", "themes/raven/raven-4.js", "themes/raven/raven-4.css", "themes/raven/favicon-raven-5.svg", "themes/raven/backdrop-6.webp"];
-	assert.deepEqual(themeMap(list, () => undefined), { geek: { css: "themes/geek/geek-1.css", module: "themes/geek/geek-1.js", icon: "icon.svg" }, zen: { css: "themes/zen/zen-2.css", module: "themes/zen/zen-2.js", icon: "themes/zen/favicon-zen-3.svg", mode: true }, raven: { css: "themes/raven/raven-4.css", module: "themes/raven/raven-4.js", icon: "themes/raven/favicon-raven-5.svg" } });
+	const list = ["assets/index-a.js", "themes/geek/geek-1.js", "themes/geek/geek-1.css", "themes/zen/zen-2.js", "themes/zen/zen-2.css", "themes/zen/favicon-zen-3.svg", "themes/raven/raven-4.js", "themes/raven/raven-4.css", "themes/raven/favicon-raven-5.svg", "themes/raven/backdrop-6.webp", "themes/storybook/storybook-7.js", "themes/storybook/storybook-7.css", "themes/storybook/favicon-storybook-8.svg"];
+	assert.deepEqual(themeMap(list, () => undefined), { geek: { css: "themes/geek/geek-1.css", module: "themes/geek/geek-1.js", icon: "icon.svg" }, zen: { css: "themes/zen/zen-2.css", module: "themes/zen/zen-2.js", icon: "themes/zen/favicon-zen-3.svg", mode: true }, raven: { css: "themes/raven/raven-4.css", module: "themes/raven/raven-4.js", icon: "themes/raven/favicon-raven-5.svg" }, storybook: { css: "themes/storybook/storybook-7.css", module: "themes/storybook/storybook-7.js", icon: "themes/storybook/favicon-storybook-8.svg" } });
 });
 
 // A stylesheet that names a file (the raven backdrop) names it relative to the stylesheet itself: the page loads a theme's stylesheet from themes/<view>/, so a URL that Vite wrote for a sheet in assets/ (`../themes/raven/x.webp`) would 404 there.

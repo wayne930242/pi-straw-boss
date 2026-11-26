@@ -1,4 +1,4 @@
-Status: approved by the boss 2026-11-26 (spec, animals O11, day 06:00–17:59)
+Status: implemented
 Base: `main` 8e3c816c (0.93.0)
 Related: [2026-11-07-raven-view/spec.md](../2026-11-07-raven-view/spec.md) (the theme mechanism and the precedent this follows), [2026-11-01-zen-view.md](../2026-11-01-zen-view.md) (Zen, Z-D16, Z-D20), [2026-11-09-sound-split.md](../2026-11-09-sound-split.md) (the two sound classes). Design notes: [design.md](design.md).
 

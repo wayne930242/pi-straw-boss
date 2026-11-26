@@ -45,7 +45,7 @@ The Raven Keep view draws its own icons (`gui/themes/raven/sprite.svg`), origina
 | Comms channel | a raven |
 | Document tile | a tome |
 
-The train and the seven kinds (coordinator, integrator, standing, worker, scout, planner, reviewer) have no Raven Keep twin: the keep shows Standard's icon for them, as it does for any role its sprite does not draw.
+Storybook and Raven Keep each draw the seven kinds: coordinator, integrator, standing, worker, scout, planner, and reviewer. Both use Standard’s locomotive for the train.
 
 The head page's backdrop (`gui/themes/raven/backdrop.webp`) and the raven perched on its gate (`gui/themes/raven/perch.webp`) are raster art made with the same image generator (Codex image generation) for this project, resized and cut; nothing in them is copied.
 

@@ -129,7 +129,7 @@ GUI 的記憶面板做的和 `/boss memory` 一樣。見[塔台記憶](/pi-straw
 | `/boss gui` | 從任何 session 在瀏覽器裡開啟網；沒有 sb server 在跑就啟動它，並印出 URL。 |
 | `/boss gui stop` | 停掉 GUI，直到下一次 `/boss gui`。 |
 | `/boss gui rotate` | 確認後給 GUI 一個新 token：每支手機都解除配對，舊位址回應 403。 |
-| `/boss gui view`、`/boss gui view auto\|standard\|geek\|raven` | 顯示或設定設成自動的裝置的預設檢視。只有這個指令能設定。禪是模式，用頁面頁首的禪按鈕進入，所以 `zen` 會被拒絕。 |
+| `/boss gui view`、`/boss gui view auto\|standard\|geek\|raven\|storybook` | 顯示或設定設成自動的裝置的預設檢視。只有這個指令能設定。禪是模式，用頁面頁首的禪按鈕進入，所以 `zen` 會被拒絕。 |
 | `/boss gui remote`、`/boss gui remote off` | 透過你的 tailnet 用手機連到 GUI。見[手機與遠端存取](/pi-straw-boss/docs/zh-tw/guide/phone/)。 |
 | `/boss gui lan`、`/boss gui lan off`、`/boss gui lan reset` | 讓同一個 Wi-Fi 上的手機不用 Tailscale 就能連到 GUI。 |
 | `/boss gui devices`、`/boss gui unpair <id\|all>` | 列出已配對的手機；解除其中一支或全部的配對。 |
