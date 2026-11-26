@@ -67,9 +67,9 @@ export function openWorker(d: WorkerDoor, peer: PeerSender, request: OpenRequest
 		try {
 			const config = readWorkers(d.stateDir), budget = readBudget(d.stateDir);
 			if (!config) throw new OpenLimitError("this box opens no workers: config.json has no workers section");
-			// A held box opens workers for its holder alone (docs/specs/2026-11-26-device-hold.md, D3): its room is that device's.
+			// A held box opens workers for its holder alone (docs/specs/2026-11-26-device-hold.md, D3): its room is that device's. The opener names a peer `link:<device id>`.
 			const hold = readHold(capDir(join(d.stateDir, "board")), d.now());
-			if (hold && peer.id !== hold.device) throw new OpenLimitError(`held by ${hold.label} (${hold.short}): its capacity is that device's`);
+			if (hold && peer.id.replace(/^link:/, "") !== hold.device) throw new OpenLimitError(`held by ${hold.label} (${hold.short}): its capacity is that device's`);
 			if (budget === undefined) throw new OpenLimitError("this box opens no workers: config.json sets no capacity.budget");
 			const model = modelRefusal(config.models, spec.model);
 			if (model) throw new OpenLimitError(model);
