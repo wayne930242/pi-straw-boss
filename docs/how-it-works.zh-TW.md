@@ -757,7 +757,7 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 **補給站。** 主塔台頁面把裝置列畫成托盤（`gui/supply.ts`、`docs/specs/2026-11-24-capacity-supply/spec.md`）：預算每 1 點一格，每個已部署的單位是一個橫跨它點數的方塊（名稱與點數來自裝置列的 `units`，只留在這台電腦上，從不進 `board_read`、連線、遠端輪次或 operate 切片），空格只在裝置被標為產能閒置時柔和閃動（減少動態或靜止時不動），加上可用格數，以及放待命工作的兵營；沒設預算時只畫已部署的方塊。摺疊行帶迷你格；每個主智慧體顯示它種類的徽記、它的單位方塊與可接件數（手機上是一行 `6 pts · 5 ready`，中文介面寫「6 點 · 可接 5 件」），額度停機旁有月亮，停滯的狀態字前有沙漏；最後是隊友裝置，在線或失聯，產能不明。鴉閣把它畫成燭火墓位、閣門、合上的棺木與盤旋的群鴉；Geek 保留純文字；禪完全不顯示。
 
-**放行。** sb 不以數量擋工作者。在有人值守的裝置上（有人在場：沒有無人值守的 policy 檔），什麼都不會擋下 `worker`，那裡的 `capacity.budget` 只用於看板、補給盤與產能通知。在設了 `capacity.budget` 的無人值守裝置上，只有當裝置列的點數（5 分鐘內的）、裝置上的保留量與這個 `worker` 子智慧體自己的權重都放得進預算，它才會出發：權重是主智慧體自己的 todo 中，`owner` 等於子智慧體 `name`（不分大小寫、去掉前後空白；沒有這樣的 todo，或它已完成時算 1）那一項的 `metadata.points`。出發時先寫下自己的保留（`capacity/_reserved/<id>.json`，一筆一個檔，寫好再改名就位，記下所屬的主智慧體與工作者名稱），再讀裝置列與加總，所以同一台裝置上同時派工的兩個主智慧體看得到彼此，被拒的那一筆什麼都不留。保留在出發結果回來後仍然算數，直到主智慧體讀到的裝置列顯示這個工作者正在該主智慧體底下執行（裝置列記著每個主智慧體取樣到的工作者，只存在本機），而且是在出發之後取樣的；讀到較舊裝置列的主智慧體仍然算它。出發失敗，或該輪結束時還沒有結果，保留立刻釋放；沒有任何裝置列顯示過的保留，在出發 10 分鐘後失效。裝置列沒有列出的主智慧體（另一個 Herdr slot，或還沒取樣到），以及沒有新的裝置列時的任何主智慧體，照樣在整台裝置上寫保留，並加上 pi-herdr-agents 登記中自己正在跑的工作者，因為沒有裝置列算到它們。預算在每次放行時從 `config.json` 讀取，所以改了不必重新啟動就生效；沒設就什麼都不擋（sb 自己沒有預設數字）。輕量、受 API 限制的工作者，它的 todo 可以只算 0.25 點。拒絕訊息：`sb: the device runs 1 of its 2 capacity points, 0.5 more held by launches it does not count yet: this worker needs 2. …`。
+**放行。** sb 不以數量擋工作者。在有人值守的裝置上（有人在場：沒有無人值守的 policy 檔），什麼都不會擋下 `worker`，那裡的 `capacity.budget` 只用於看板、補給盤與產能通知。在設了 `capacity.budget` 的無人值守裝置上，只有當裝置列的點數（5 分鐘內的）、裝置上的保留量與這個 `worker` 子智慧體自己的權重都放得進預算，它才會出發：權重是主智慧體自己的 todo 中，`owner` 等於子智慧體 `name`（不分大小寫、去掉前後空白；沒有這樣的 todo，或它已完成時算 1）那一項的 `metadata.points`。出發時先寫下自己的保留（`capacity/_reserved/<id>.json`，一筆一個檔，寫好再改名就位，記下所屬的主智慧體與工作者名稱），再讀裝置列與加總，所以同一台裝置上同時派工的兩個主智慧體看得到彼此，被拒的那一筆什麼都不留。保留在出發結果回來後仍然算數，直到主智慧體讀到的裝置列顯示這個工作者正在該主智慧體底下執行（裝置列記著每個主智慧體取樣到的工作者，只存在本機），而且是在出發之後取樣的；讀到較舊裝置列的主智慧體仍然算它。出發失敗，或該輪結束時還沒有結果，保留立刻釋放；沒有任何裝置列顯示過的保留，在出發 10 分鐘後失效。裝置列沒有列出的主智慧體（另一個 Herdr slot，或還沒取樣到），以及沒有新的裝置列時的任何主智慧體，照樣在整台裝置上寫保留，並加上 pi-herdr-agents 登記中自己正在跑的工作者，因為沒有裝置列算到它們。預算在每次放行時從 `config.json` 讀取，所以改了不必重新啟動就生效；沒設就什麼都不擋（sb 自己沒有預設數字）。輕量、受 API 限制的工作者，它的 todo 可以只算 0.25 點。拒絕訊息：`sb: the device runs 1 of its 2 capacity points, 0.5 more held by launches it does not count yet: this worker needs 2. …`。隊友的 box 為它的控制者開啟的工作者（[見下](#為裝置開啟的工作者)）也通過同樣以 `capacity.budget` 計的放行，有人值守的裝置也一樣，而它的保留量算 box 自己的。
 
 **停機接口。** 撞到模型額度而停下的主智慧體自己寫不了看板，所以由它 session 裡的擴充代為標記：pi-agent-basic 在 pi 的行程內事件匯流排發出 `straw-boss:pause`，`{ v: 1, state: "paused" | "resumed", reason: "quota", until?: <epoch ms>, detail?: <at most 120 characters> }`（`detail` 至多 120 字元）；sb 不 import basic 的任何東西，收到後把該主智慧體標成停機，直到收到 `resumed` 或該 session 開始新的一輪。`/reload` 保留這個標記，停機中的主智慧體永遠不算停滯。
 
@@ -3902,7 +3902,7 @@ server 把執行限制在它被認領的等級與裝置現在的等級兩者較�
 <details>
 <summary>細節</summary>
 
-開啟的路由每個裝置最多 8 條、總共 20 條（broker 不再列出的主智慧體的列先去，然後是最舊的），broker 不再列出的主智慧體的列，在它沉默 10 分鐘之後、下一個主智慧體開啟時被丟棄，而關閉主智慧體會丟掉它的列。裝置自己對它的主智慧體的 `tower_reply`（帶 `reply: true`）不會增加第二條路由，也不會取代已開啟的那條。即使伺服器不提供 GUI，被閘門管的呼叫的終端機 yes 也會到達 server：它在 `hub.json` 裡為橋接指名它的 session。
+開啟的路由每個裝置最多 24 條、總共 40 條，而且只修剪 broker 不再列出的主智慧體的列，最舊的先去（在世的列從不修剪；工作者在上限時的開啟改為被拒），broker 不再列出的主智慧體的列，在它沉默 10 分鐘之後、下一個主智慧體開啟時被丟棄，而關閉主智慧體會丟掉它的列。裝置自己對它的主智慧體的 `tower_reply`（帶 `reply: true`）不會增加第二條路由，也不會取代已開啟的那條。即使伺服器不提供 GUI，被閘門管的呼叫的終端機 yes 也會到達 server：它在 `hub.json` 裡為橋接指名它的 session。
 
 </details>
 
@@ -3920,6 +3920,21 @@ server 把執行限制在它被認領的等級與裝置現在的等級兩者較�
 隊友 run 對為另一個裝置開啟的主智慧體所做的 `tower_reply`，不論來自哪個工作區都被拒絕（主智慧體自己的 `sb_opened_by` pane token 與路由表是兩個見證，任何一個指名另一個裝置就拒絕這次寫入，所以本機行程設的 token 絕不會蓋過路由表），而且在詢問老闆的 Allow 之前就拒絕，所以不會為它花掉任何 Allow：那個主智慧體的報告留給它為之開啟的裝置。
 
 拒絕不重複名稱；不存在或有歧義的目標在那裡不會被拒絕，而是像存在的一樣繼續到閘門，所以 `dispatch` 以下的執行被告知的，對不存在的 session 與存在的 session 是一樣的（閘門的確認，不花 Allow），只有為另一個裝置所持的主智慧體會被區分出來。開啟的列保留主智慧體的 pane，而只有當 broker 與 Herdr 都不再顯示該主智慧體時，才當成已死而丟棄。當 session 有好幾列時，先讀開啟的路由。執行已回答的請求集合在 24 小時後被遺忘。執行裡有好幾個請求時，一個都不保留。
+
+</details>
+
+#### 為裝置開啟的工作者
+
+控制者的主智慧體以 `call_tower` `worker` 把一個工作者送到隊友的 box（`device`、`branch`，以及可選的 `base`、`model`、`points`、`label`；訊息就是完整的任務說明）。程式在任務說明上方寫出單據的第一行 `worker: <label> | branch: <b> | base: <ref> | model: <id> | points: <n>`，以工作區的塔台身分送出，並為那個主智慧體開一個存活 7 天的 ask；box 的 `caps` 沒有列出 `tower.worker`，或單據、任務說明被拒時，什麼都不送（[規格](specs/2026-11-26-ally-workers.md)）。在 box 上，隊友 run 只在 `dispatch` 時以 `role: "worker"` 呼叫 `boss_open_main`，其餘由伺服器以程式完成：每個結果（拒絕、工作者的最終報告、收據）都回答那個 ask，並以 `link_reply` 依 session id 送到那個主智慧體。
+
+<details>
+<summary>細節</summary>
+
+**開啟。** 伺服器從 run 取走的訊息讀單據，從不從模型的參數讀（有好幾張時以 `branch` 指定一張）。它需要 `config.json` 裡有 `workers` 與 `capacity.budget`（兩者都有時 box 才列出 `tower.worker`）、`model` 在 `workers.models` 上（沒給則用 pi 的預設）、路由上限還有空位（每個裝置 24 條開啟的列，總共 40 條）、checkout 在團隊綁定的專案內，以及預算還有空間，不論裝置有沒有人值守：工作者的 `points`（0.25 到 10，預設 1）在讀裝置列之前，先以 box 自己的名義（`self`）保留在 `capacity/_reserved` 下。接著它 fetch `origin`，在 `~/.herdr/worktrees/<repo>/<branch>`（`/` 換成 `-`；必須還不存在）建立 worktree：origin 已有這個分支時從 `origin/<branch>` 開始（重做），否則從 `base`（origin 的分支或 40 位十六進位的 commit；預設為 origin 的預設分支）。`main`、`master`、`develop`、`release/*`、`pre-dev/*`、`train-*`、`agent-train/*` 與應用程式的 `integration.base` 都不能當分支，origin 沒有或內容不同的本機分支也一樣被拒。Git 不經 shell、帶 `GIT_TERMINAL_PROMPT=0` 與逾時執行。
+
+**分頁。** 開啟器在 `assertSettingsSafe` 之後於 worktree 裡啟動 `pi --model <id>`，並帶 `sb_open_duty=worker`：這個主智慧體的種類是 `worker`，它的提示只有 `prompts/worker.md`，交接內容帶著這個時刻的規則與逐字的任務說明。工作者不佔工作區兩個開啟主智慧體的名額，也不佔它的發送者那一個（見證是它的路由，而不是窗格 token），它自己的點數算在它那一列的裝置產能上（`joinCaps`），它自己的 todo 也不是裝置的就緒工作。它不能改種類、不能呼叫 `boss_wrap`，也不能啟動 `worker` 子智慧體；scout 與 reviewer 可以幫忙。拒絕或開啟失敗會以原因回答 ask、移除 worktree 與這次開啟建立的分支，且不留帳本列，所以同一張單據可以再送一次。
+
+**結束。** 工作者的第一個 `call_tower` `why: milestone` 就是它的最終報告：伺服器以程式把它當作 `tower-reply` 送給那個 ask（沒有隊友 run 經手；送不出去時退回隊友回答的路徑），下一次巡查關掉分頁，並在 worktree 乾淨且 HEAD 已在 `origin/<branch>` 上、或仍停在基底時移除它；否則保留 worktree 並告知塔台。閒置 15 分鐘，工作者在每段閒置期被提醒一次；閒置 60 分鐘仍沒有報告，box 中斷它，以程式寫的收據回答 ask，並保留 worktree。pi 已經不在的工作者（連續兩次巡查）會收到一張收據，寫明它的分支、head，以及它的 worktree 的下落。
 
 </details>
 
@@ -3974,7 +3989,7 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 
 #### 控制者的工作隨它的 dispatch 結束
 
-在 `dispatch` 認領的隊友 run，在它的裝置離開團隊或降到 `dispatch` 以下時（連續兩個 tick，而且只在持有者能讀團隊名冊時），由監看者 quit，原因寫在結束通知裡。隊友 run 在 `dispatch` 開啟的主智慧體（路由保留執行的等級；沒有等級的列算作 `dispatch`）由 `revoke.ts` 每 15 秒對照名冊與政策檢查，裝置已不在或低於 `dispatch` 的主智慧體，會像 `boss_close_main` 那樣被要求 quit，忙碌時再次被要求，並在它 quit 時連同它的路由一起放掉；團隊的管理員會被告知一次它仍在執行、一次它已結束（[規格](specs/2026-11-05-link-shared-box.md)）。
+在 `dispatch` 認領的隊友 run，在它的裝置離開團隊或降到 `dispatch` 以下時（連續兩個 tick，而且只在持有者能讀團隊名冊時），由監看者 quit，原因寫在結束通知裡。隊友 run 在 `dispatch` 開啟的主智慧體（路由保留執行的等級；沒有等級的列算作 `dispatch`）由 `revoke.ts` 每 15 秒對照名冊與政策檢查，裝置已不在或低於 `dispatch` 的主智慧體，會像 `boss_close_main` 那樣被要求 quit，忙碌時再次被要求，並在它 quit 時連同它的路由一起放掉；團隊的管理員會被告知一次它仍在執行、一次它已結束（[規格](specs/2026-11-05-link-shared-box.md)）。[工作者](#為裝置開啟的工作者)以 `interrupt` 被要求，所以正在工作的會中止它的這一輪。
 
 <details>
 <summary>細節</summary>
