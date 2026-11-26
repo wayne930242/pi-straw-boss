@@ -12,6 +12,8 @@
 
 <p align="center"><img src="docs/gui-board-capacity.png" width="49%" alt="標準檢視的戰況板：裝置預算畫成每格 1 點的補給格，每個已部署的單位橫跨它的點數，旁邊是空格、放待命工作的兵營，以及每位指揮官的單位與可接件數"> <img src="docs/gui-board-raven.png" width="49%" alt="鴉閣檢視的同一張板：已部署的蝙蝠點亮燭火墓位，空墓泛霧，閣門前有待命的蝙蝠，額度停機是合上的棺木，停滯的主智慧體上方群鴉盤旋"></p>
 
+<p align="center"><img src="docs/gui-storybook-day.png" width="80%" alt="白天的繪本地圖，每張紙卡上都有代表角色的動物圖示"></p>
+
 <p align="center"><img src="docs/gui-comms.png" width="49%" alt="單位的通訊畫面：即時的對話紀錄、排隊等下一輪的訊息、待辦清單、背景 Monitor，以及單位檔案"> <img src="docs/gui-zen-item.png" width="49%" alt="禪檢視裡的一件待辦：墨色畫面上是一個 robot_hand 問題，選項是一行行的字"></p>
 
 ## 為什麼需要它
@@ -22,7 +24,7 @@ pi-straw-boss 讓它們能找到彼此、互相協調，不需要排程器，也
 - **每個人都會加入。** Herdr 裡的每個 pi 一啟動就加入所在分頁的網。工作變多（步驟變多、要派工作者、涉及不只一個 app）的智慧體會升任為分頁的**主智慧體**；你，也就是老闆，可以用 `/boss` 接手。
 - **每個工作區一座塔台**：它是一個在自己分頁裡的智慧體，在智慧體開始互相干擾時開起來（成員派出子智慧體，或有智慧體升任）。它協調各個主智慧體和其他塔台；沒有 session 負責的工作，它會開一個分頁、啟動新的主智慧體來處理。你不用跟它說話。
 - **你自己的主塔台**，和你保持一場長對話，把你交代的每件事轉給該處理的工作區。
-- **瀏覽器畫面** `/boss gui`：即時看到每個工作區、智慧體和子智慧體，它們在等你回答的問題，可以直接在桌面或已配對的手機上回答。頁首一按就進入的禪模式，一次只給你看一件事。
+- **瀏覽器畫面** `/boss gui`：即時看到每個工作區、智慧體和子智慧體，它們在等你回答的問題，可以直接在桌面或已配對的手機上回答。選「繪本」會看到隨日夜換色的手帳；按頁首的「禪」，就能一次只看一件事。
 - **合併火車**：專案可以把審查過的分支整批合併，重型檢查（lint、build、完整測試）每列火車只跑一次，不必每條分支各跑一次。
 - **Straw Link** 連起隊友電腦上的塔台，無人值守的建置機也能接隊友送來的工作。
 - **自動模式**：跟主塔台說你要去睡了，在你回來之前，沒有智慧體會等你。智慧體照常工作，需要你的事等你回來時退回給提出的智慧體，由它再問你一次。
@@ -68,4 +70,4 @@ pi install npm:pi-straw-boss
 
 ## 授權
 
-MIT。瀏覽器畫面的圖示來自 [game-icons.net](https://game-icons.net)（Lorc 與 Delapouite，[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)）；見 [gui/ICONS.md](gui/ICONS.md)。鴉閣畫面的三段音效不屬 MIT，依 Casper 音效庫的授權使用；見 [NOTICE.md](NOTICE.md)。
+MIT。瀏覽器畫面的圖示來自 [game-icons.net](https://game-icons.net)（Lorc 與 Delapouite，[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)）；見 [gui/ICONS.md](gui/ICONS.md)。標準、鴉閣與繪本使用的錄音不屬 MIT，依 Casper 音效庫的授權使用；見 [NOTICE.md](NOTICE.md)。

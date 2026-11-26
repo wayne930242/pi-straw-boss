@@ -87,7 +87,7 @@ Each device picks its view on the settings page: Auto, Standard, Geek, Raven Kee
 
 - **Standard** is the map above.
 - **Geek** is a terminal: black, monospace, high contrast, no motion, and each state also as a text tag such as `[WORK]`, `[WAIT?]`, or `[ERR!]`.
-- **Raven Keep** is a gothic skin of Standard: the same layout, its own icons, role names, and sounds. The kinds' icons are Standard's in it.
+- **Raven Keep** is a gothic skin of Standard: the same layout, its own icons, role names, and sounds. Each unit kind has its own Raven Keep icon.
 - **Storybook** is a cute, soothing picture-book skin of Standard with the same words (below).
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-geek.png" width="70%" alt="The Geek view of the map: black, monospace, high contrast, with each unit's state as a tag"></p>
@@ -97,7 +97,7 @@ Each device picks its view on the settings page: Auto, Standard, Geek, Raven Kee
 Storybook (繪本) draws the net as a pressed-flower notebook: each card is a paper page held by washi tape, with a thin hand-drawn line and a fine paper grain, and the question card is a ruled page.
 It follows your device's clock. From 06:00 to 17:59 it is cream paper with deep plum ink; from 18:00 to 05:59 it is grey-violet pages on a night-blue sky.
 The page changes over at the boundary by itself, with no reload, and a page opened at night never flashes the day first.
-Every text stays at least 4.5 : 1 in both, and the terminal keeps its dark well.
+Look beside the animal icons to read a unit’s state: pencil for work, envelope for waiting, flag for an error, crescent for idle. The shapes stay readable with motion off. Butterflies cross the map by day; fireflies glow at night. Turn on Background sound to hear birds or crickets with the scenery. Sound effects is separate: turn it on for a kalimba note when a question needs you.
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-storybook-day.png" width="49%" alt="The Storybook view by day: cream paper cards held by washi tape, hand-drawn outlines, plum text"> <img src="/pi-straw-boss/docs/img/gui-storybook-night.png" width="49%" alt="The Storybook view at night: grey-violet cards held by grey-green tape on a night-blue ground"></p>
 
@@ -143,7 +143,7 @@ See [Headless runs in Zen](/pi-straw-boss/docs/reference/how-it-works/browser-vi
 Sound effects follow the settings page's Sound effects switch (off by default): a singing bowl when an item takes the screen, a wooden fish when one is done.
 Put audio files in `~/.pi/agent/straw-boss-music/` and Zen shows a ♪ in the corner that plays them on a loop, while the Background sound switch is on.
 
-<p align="center"><img src="/pi-straw-boss/docs/img/gui-zen-menu.png" width="49%" alt="The Zen view's corner menu: language, view, sound and volume, and the way back to Standard"> <img src="/pi-straw-boss/docs/img/gui-zen-music.png" width="49%" alt="The Zen view with a music folder: the ♪ switch and the open track list"></p>
+<p align="center"><img src="/pi-straw-boss/docs/img/gui-zen-menu.png" width="49%" alt="The Zen view's corner menu: language, sound controls and Exit Zen"> <img src="/pi-straw-boss/docs/img/gui-zen-music.png" width="49%" alt="The Zen view with a music folder: the ♪ switch and the open track list"></p>
 
 The head tower lives under Zen's breathing circle; see [The head tower](/pi-straw-boss/docs/guide/head-tower/).
 
