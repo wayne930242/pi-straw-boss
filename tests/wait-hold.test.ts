@@ -6,7 +6,7 @@ import { type Running, sleep, until } from "./server-world.ts";
 import { fieldsOf, header } from "../src/header.ts";
 import { callControl } from "../src/server/socket.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
-import { readQueue } from "../src/server/towerstore.ts";
+import { putLedger, readQueue } from "../src/server/towerstore.ts";
 
 // The wake hold (docs/specs/2026-11-16-wait-cards-flow.md, A): while the tower prompt's polls say the boss is answering wait cards in the standing pane, no run of that tower wakes, whatever event waits (D2: every event), so a press does
 // not take the pane from under the next card. The hold ends `answer` (10 s) after the last poll that said so, at once with a poll that says the boss is done, and `answerMax` (5 min) after the first of a stretch at the latest; then one
@@ -32,6 +32,8 @@ const setup = async () => {
 	const s = await world.start();
 	await s.handle.ready;
 	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	// A milestone queues only when it answers the tower (docs/specs/2026-11-28-tower-quiet.md): main-1 is a main the tower opened, so its milestone is a done report.
+	putLedger(world.slot, "wA", { key: "main-1", sender: "main-0", outcome: "opened", at: Date.now(), opened: { tab: "wA:t1", pane: "wA:p1", main: "main-1", sender: "main-0" } }, Date.now());
 	return s;
 };
 /** The nth run the server started (1-based), claimed. */

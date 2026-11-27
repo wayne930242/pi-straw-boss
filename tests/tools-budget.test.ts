@@ -34,15 +34,18 @@ test("a main's always-on sb tools stay within their budget, and boss_status is g
 	// The doctor (2026-11-26, docs/how-it-works.md#the-doctor; measured): sb_doctor is new and registered at the join, as the other net tools (260 characters: its description, no parameters),
 	// kept out of the trimmed set as the other new ones are: all 11,233 to 11,493 (+260).
 	// The ward (docs/how-it-works.md#ward-a-plain-pane; measured): sb_ward is new, registered at the join and active for a main only (as call_peer), kept out of the trimmed set: all 11,493 to 11,962 (+469).
+	// The quiet tower (docs/specs/2026-11-28-tower-quiet.md; boss 2026-11-28 「塔台只要有辦法查帳就好」; measured): trimmed 7,908 to 8,156 and all 11,962 to 12,206 (+248): call_tower says a milestone is
+	// only recorded unless it answers the tower, a heads-up names its thing and wakes the tower only on an overlap (else "recorded, no clash seen"), and drops "it answers through intercom unless reply is false"; board_read names section logbook.
 	const active = (t: { name: string; defaultActive?: boolean }) => (a.active ? a.active.includes(t.name) : t.defaultActive !== false);
 	const tools = [...a.tools.values()].filter((t) => t.name !== "ask_user_question" && active(t as { name: string; defaultActive?: boolean }));
 	assert.ok(a.active?.includes("call_peer"), "a main carries call_peer");
 	assert.ok(!a.tools.has("boss_status"), "folded into board_read");
 	const trimmed = tools.filter((t) => t.name !== "boss_server" && t.name !== "boss_watch" && t.name !== "boss_pair" && t.name !== "boss_wrap" && t.name !== "sb_doctor" && t.name !== "sb_ward").reduce((n, t) => n + size(t), 0);
 	// The boss asks (docs/specs/2026-11-28-boss-asks.md; measured): call_tower's `boss.item`, the todo the question blocks, with no description (+26): trimmed 7,908 to 7,934 and all 11,962 to 11,988.
-	assert.ok(trimmed <= 7_934, `the trimmed tools hold ${trimmed} characters (10,634 before B2)`);
+	// With the quiet tower on top (both measured): trimmed 8,182 and all 12,232.
+	assert.ok(trimmed <= 8_182, `the trimmed tools hold ${trimmed} characters (10,634 before B2)`);
 	const all = tools.reduce((n, t) => n + size(t), 0);
-	assert.ok(all <= 11_988, `all of sb's tools hold ${all} characters (11,594 before B2 and E; 8,753 before D; 9,601 before boss_wrap; 10,161 before call_tower boss; 10,328 before 0.92.0; 10,664 before standing.md; 10,771 before note; 10,798 before call_peer; 11,233 before sb_doctor; 11,493 before sb_ward)`);
+	assert.ok(all <= 12_232, `all of sb's tools hold ${all} characters (11,594 before B2 and E; 8,753 before D; 9,601 before boss_wrap; 10,161 before call_tower boss; 10,328 before 0.92.0; 10,664 before standing.md; 10,771 before note; 10,798 before call_peer; 11,233 before sb_doctor; 11,493 before sb_ward)`);
 });
 
 test("the trimmed descriptions keep the sentences that carry a rule: board_set's privacy line, call_tower's three points, boss_wait_ask over ask_user_question", async () => {

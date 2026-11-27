@@ -5,10 +5,11 @@ import { type Running, sleep, until } from "./server-world.ts";
 import { callControl } from "../src/server/socket.ts";
 import { stamp, type Why } from "../src/header.ts";
 import { readRun } from "../src/server/towerrunstore.ts";
-import { readQueue } from "../src/server/towerstore.ts";
+import { putLedger, readQueue } from "../src/server/towerstore.ts";
 
 // D19 (docs/specs/2026-10-26-sb-backend.md, Queueing and concurrency, Coalescing): a milestone that expects no reply waits up to the hold for others when no local run is live, so mains
 // that finish together land in one run; every other event wakes at the short wait and takes the held milestones with it. The timers here are short: wake 40 ms, hold 600 ms.
+// Since the quiet tower (docs/specs/2026-11-28-tower-quiet.md) only a milestone that answers the tower's request is queued at all: the mains here are ones the tower opened (its opener's ledger), so theirs are done reports.
 
 let world: TowerWorld;
 beforeEach(() => {
@@ -24,6 +25,7 @@ const setup = async () => {
 	const s = await world.start();
 	await s.handle.ready;
 	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	for (const main of ["main-1", "main-2"]) putLedger(world.slot, "wA", { key: main, sender: "main-0", outcome: "opened", at: Date.now(), opened: { tab: "wA:t1", pane: "wA:p1", main, sender: "main-0" } }, Date.now());
 	return s;
 };
 const tower = () => world.client("sb-tower-wa")!;
@@ -77,7 +79,8 @@ test("D19: milestones that finish together land in one run, and a later one does
 });
 
 test("D19: a shared or blocked call wakes at the short wait and takes the held milestones with it", async () => {
-	for (const why of ["shared", "blocked"] as const) {
+	// A plain heads-up is recorded and wakes nothing now (tower-quiet.test.ts); a `shared` call that carries a car slip is the tower's to forward, so it wakes as before.
+	for (const [why, text] of [["shared", "car: web | tickets: MP-1"], ["blocked", "blocked now"]] as const) {
 		const w = new TowerWorld();
 		w.setFlag(true);
 		w.runTimers = { hold: 3000 };
@@ -88,10 +91,10 @@ test("D19: a shared or blocked call wakes at the short wait and takes the held m
 			tower().incoming(from, call("m1", "api landed", "milestone", false));
 			await sleep(150);
 			assert.equal(world.pis.size, 0, "held");
-			tower().incoming({ id: "main-2", name: "web-main" }, call("m2", `${why} now`, why, true));
+			tower().incoming({ id: "main-2", name: "web-main" }, call("m2", text, why, true));
 			await until(() => world.pis.size >= 1, `a run at the short wait, not the hold (3000 ms), after ${why}`, 1000);
 			const id = await nthRun();
-			assert.deepEqual(await drain(s, await claimed(s, id)), ["api landed", `${why} now`]);
+			assert.deepEqual(await drain(s, await claimed(s, id)), ["api landed", text]);
 		} finally {
 			await w.close();
 			world = prior;

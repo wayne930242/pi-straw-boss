@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { callControl } from "../src/server/socket.ts";
-import { readQueue, removeEvent } from "../src/server/towerstore.ts";
+import { putLedger, readQueue, removeEvent } from "../src/server/towerstore.ts";
 import { stamp } from "../src/header.ts";
 import type { Proc } from "../src/server/lineage.ts";
 import { SHELL_PID } from "./fakes.ts";
@@ -34,6 +34,8 @@ const winHeld = async () => {
 	const real = world.herdr.onAgentStart;
 	await s.handle.ready;
 	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	// A milestone queues only when it answers the tower (docs/specs/2026-11-28-tower-quiet.md): main-1 is a main the tower opened, so its milestone is a done report.
+	putLedger(world.slot, "wA", { key: "main-1", sender: "main-0", outcome: "opened", at: Date.now(), opened: { tab: "wA:t1", pane: "wA:p1", main: "main-1", sender: "main-0" } }, Date.now());
 	world.procTable = [row(SHELL_PID, 1, "powershell.exe")];
 	world.procGate = (runId) => (world.pis.has(runId) ? undefined : void retryReads.push(runId));
 	world.herdr.onAgentStart = () => {

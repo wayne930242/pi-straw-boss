@@ -21,7 +21,7 @@ export interface IntercomLike {
 	connect(session: Registration, sessionId?: string): Promise<void>;
 	disconnect(): Promise<void>;
 	listSessions(options?: { timeoutMs?: number }): Promise<Session[]>;
-	send(to: string, options: { text: string; messageId?: string; provenance?: unknown }): Promise<{ id: string; delivered: boolean; reason?: string; code?: string; /** pi-intercom 0.18.1: `socket_delivered` when the session's connection took it, `queued` when the broker holds it for a session that is not connected; `failed` and `unknown` come with `delivered: false`. */ delivery?: "socket_delivered" | "queued" | "failed" | "unknown" }>;
+	send(to: string, options: { text: string; messageId?: string; provenance?: unknown; /** pi-intercom 0.18.1: the receiver reads it on its next turn instead of starting one. */ noWake?: boolean }): Promise<{ id: string; delivered: boolean; reason?: string; code?: string; /** pi-intercom 0.18.1: `socket_delivered` when the session's connection took it, `queued` when the broker holds it for a session that is not connected; `failed` and `unknown` come with `delivered: false`. */ delivery?: "socket_delivered" | "queued" | "failed" | "unknown" }>;
 	updatePresence(updates: { name?: string; status?: string }): void;
 	updateExtensionCapabilities(extensions: { namespace: string; ownerEligible: boolean }[]): void;
 	sendExtensionMessage(message: Record<string, unknown>): void;

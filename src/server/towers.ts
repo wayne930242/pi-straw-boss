@@ -61,6 +61,8 @@ import { openSeen, type Seen } from "./towerseen.ts";
 import { readTowerRuns } from "./towerruns.ts";
 import type { CarBook } from "./carbook.ts";
 import { noteTrains } from "./trainnote.ts";
+import { createGate } from "./towergate.ts";
+import { entryLine, markRead, readBook, unreadOf } from "./logbook.ts";
 import { appendEvent, appendQuiet, bindDir, deleteService, HEAD_KEY, headDir, listServices, purgeAll, purgeQueues, putLedger, queueLength, readHeadService, readQueue, readLedger, readService, type ServiceRecord, towerDir, unbindDir, writeService } from "./towerstore.ts";
 
 // The tower service without runs (docs/specs/2026-10-26-sb-backend.md, The tower service; build step B4), behind `towerRuns.enabled`. The server stands in for a workspace's tower:
@@ -304,7 +306,8 @@ export function createTowers(o: TowersOptions): Towers {
 		towerKey: async () => (isHeadL(l) ? undefined : (await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world)).own.sb_order ?? undefined),
 		yieldPane: () => standing.yieldPane(l.record.workspace),
 		freed: (over) => standing.freed(l.record.workspace, over?.fresh, over?.keepParked),
-		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
+		// The logbook's read mark rides on the digest's keys (`book:<seq>`): a run that ended well read its brief's entries.
+		clearDigest: (keys) => digest.drop(l.record.workspace, keys.filter((k) => !k.startsWith("book:"))).then(() => keys.forEach((k) => k.startsWith("book:") && markRead(slot.stateDir, l.record.workspace, Number(k.slice(5)), now()))),
 		renewPane: (runId) => renew(l, runId),
 		renewing: () => l.renewing === true, seat: (why) => void stow.open(l.record.workspace, why).catch((cause: Error) => error("tower-seat", cause.message)),
 		// The run that was shown an expired wait has polled: it will not be shown again (towermemory.ts).
@@ -346,7 +349,7 @@ export function createTowers(o: TowersOptions): Towers {
 			if (!target || !l.client) throw new Error("the tower's workspace or its intercom connection is gone");
 			if (isHeadL(l)) return headBrief({ slot, run, now, auto: autoLine, record: () => l.record, sessions: () => l.client!.listSessions(), towerState, locale: localeOf(o.env, slot.stateDir) }, { woken, run: rec, ...(split ? { split } : {}) });
 			const mains = await gatherMains({ run, now, sessions: () => l.client!.listSessions(), boardDir: join(slot.stateDir, "board"), workspace: target, ledger: readLedger(slot, ws, now()) });
-			const lines = await digest.peek(ws).catch(() => []), note = lastNote(slot, ws, "local"), timer = readTimer(slot, ws);
+			const lines = await digest.peek(ws).catch(() => []), note = lastNote(slot, ws, "local"), timer = readTimer(slot, ws), book = unreadOf(readBook(slot.stateDir, now()), ws);
 			const counts: Record<string, number> = {};
 			for (const e of events) counts[e.kind] = (counts[e.kind] ?? 0) + 1;
 			const crashed = events.filter((e) => e.flag === "crash"), oldest = events.map((e) => now() - Date.parse(e.at)).filter(Number.isFinite).sort((a, b) => b - a)[0];
@@ -355,12 +358,12 @@ export function createTowers(o: TowersOptions): Towers {
 			const kept = readMemory(slot, ws, now()), section = memorySection(kept.memory, now(), kept.problem);
 			const talk = rec.conversation && conversationLines(rec.conversation, ws);
 			return {
-				digestKeys: lines.map((x) => x.key),
+				digestKeys: [...lines.map((x) => x.key), ...(book.length ? [`book:${book.at(-1)!.seq}`] : [])],
 				expired: section.expired,
 				text: buildBrief({
 					label: l.record.label, workspace: ws, head: headState(), woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, counts, identity: l.record.id,
 					...(autoLine() ? { auto: autoLine()! } : {}), ...(refresh ? { refreshed: true as const } : {}), ...(talk ? { conversation: talk.line, since: talk.since } : {}),
-					memory: section.text, mains: mains.rows, dead: deadWatch.rows(ws).map((r) => rowLine(r, now())), obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line),
+					memory: section.text, mains: mains.rows, dead: deadWatch.rows(ws).map((r) => rowLine(r, now())), obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line), book: book.map((e) => entryLine(e, now())),
 					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
 					flags: [
 						...(crashed.length ? [`${crashed.length} event${crashed.length > 1 ? "s were" : " was"} possibly handled by a run that crashed: check before acting.`] : []),
@@ -405,6 +408,7 @@ export function createTowers(o: TowersOptions): Towers {
 		kids: createKids({ port: { on: () => readTowerRuns(slot.stateDir).headless, pi: () => resolvePi(o.env, readTowerRuns(slot.stateDir).pi), env: o.env, herdr: slot.herdr, dir: (ws) => towerDir(slot, ws), ...o.kidsPort }, log, now }),
 		allyEnded: (end) => allyReceipts({ slot, now, unattended: () => o.unattended?.() === true, answered: (run, ask) => answered.has(run, ask), label: () => o.ally?.selfLabel?.() ?? "the box", log: (event, facts) => log.line(event, facts), send: (ws, device, text, inReplyTo) => o.link ? o.link({ op: "send", device, text, reply: false, inReplyTo }, services.get(ws)?.record.id ?? "", true) : Promise.reject(new Error("no link holder")) })(end), ...o.runs });
 
+	const gate = createGate({ slot, now, log: (event, facts) => log.line(event, facts), notice: (workspace, text, key) => runs.notice(workspace, text, key) });
 	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.standingWait ? { wait: o.standingWait } : {}), ...(o.runs?.platform ? { platform: o.runs.platform } : {}), ...(o.runs?.alive ? { alive: o.runs.alive } : {}), locale: () => localeOf(o.env, slot.stateDir), attended: () => !o.unattended?.(), once: () => headless() });
 	/** `towerRuns.headless`: runs are the server's children, a service may have no tab, and a viewer pane is typed into once (docs/specs/2026-11-23-lite-b2-d-e-f.md §4). */
 	const headless = () => readTowerRuns(slot.stateDir).headless;
@@ -454,12 +458,16 @@ export function createTowers(o: TowersOptions): Towers {
 					log.line("tower-ally-answer", { workspace: ws, from: from.id });
 					runs.pokeAllies(l.record.id);
 				} else if (verdict === "new") {
-					const written = appendEvent(slot, l.record, { kind: "intercom", from: { id: from.id, ...(from.name ? { name: from.name } : {}) }, text: relayOnlyFromHead(slot, from.id, message.content.text), at: new Date(now()).toISOString(), messageId: message.id });
-					seen.add(from.id, message.id, message.content.text);
-					clearExpect(slot, l.record.workspace, from.id, now());
-					void markAnswered(l, from.id);
-					log.line("tower-event", { workspace: l.record.workspace, kind: "intercom", from: from.id, seq: written.seq });
-					runs.poke(l.record.workspace);
+					const queue = () => {
+						const written = appendEvent(slot, l.record, { kind: "intercom", from: { id: from.id, ...(from.name ? { name: from.name } : {}) }, text: relayOnlyFromHead(slot, from.id, message.content.text), at: new Date(now()).toISOString(), messageId: message.id });
+						seen.add(from.id, message.id, message.content.text);
+						clearExpect(slot, l.record.workspace, from.id, now());
+						void markAnswered(l, from.id);
+						log.line("tower-event", { workspace: l.record.workspace, kind: "intercom", from: from.id, seq: written.seq });
+						runs.poke(l.record.workspace);
+					};
+					// A milestone or heads-up is recorded in the logbook and may wake nothing (towergate.ts); everything else is queued.
+					if (!gate.take({ record: l.record, client: l.client ?? client, ...(l.reach ? { read: l.reach.read } : {}), queue, seen: () => seen.add(from.id, message.id, message.content.text) }, from, message)) queue();
 				}
 				client.sendMessageReceipt?.({ messageId: message.id, status: "queued", timestamp: now() });
 			} catch (cause) {

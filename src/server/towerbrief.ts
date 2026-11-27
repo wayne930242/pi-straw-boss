@@ -17,7 +17,7 @@ import { heldLine } from "../moments.ts";
 // characters. Each section has its own cap, and a section that was cut says how much it left out. The events are not part of it: they arrive as messages.
 
 export const BRIEF_MAX = 8000;
-const CAPS = { talk: 1400, who: 300, mains: 24, mainRow: 200, obligations: 10, digest: 20, digestLine: 80, note: 1200, tools: 900 } as const;
+const CAPS = { talk: 1400, who: 300, mains: 24, mainRow: 200, obligations: 10, digest: 20, digestLine: 80, note: 1200, tools: 900, book: 14, bookRow: 280 } as const;
 export const RUN_CAP_MINUTES = 20;
 
 /** The session a tab is led by, as the brief shows it. */
@@ -43,6 +43,8 @@ export interface BriefInput {
 	/** The Memory section (towermemory.ts `memorySection`): the boss's standing instructions and decisions as the boss wrote or confirmed them, and the open waits; empty when there is none. */
 	memory?: string;
 	digest: string[];
+	/** The logbook's entries no run read yet (logbook.ts `entryLine`): milestones and heads-ups sb recorded without a wake, oldest first. */
+	book?: string[];
 	note?: { text: string; age: string };
 	/** Events a crashed run had taken: the run checks before it acts. */
 	flags: string[];
@@ -88,6 +90,8 @@ export function buildBrief(i: BriefInput): string {
 	const who = cut(`You are a run of the tower of workspace ${i.label} (${i.workspace}); head tower: ${i.head || "none"}. ${i.refreshed ? `Woken ${i.woken}; this is the newest brief, refreshed while you run.` : `Woken ${i.woken} by: ${woke.join(", ") || "nothing queued"}.`} Your identity for replies is ${i.identity}; everything you send leaves under it.`, CAPS.who) + (i.auto ? `\n${i.auto}` : "");
 	const obligations = i.obligations.length ? ["Open obligations:", ...rowsOf(i.obligations, CAPS.obligations, 200, 2300)].join("\n") : "";
 	const digest = i.digest.length ? ["Since your last run:", ...i.digest.slice(-CAPS.digest).map((l) => `- ${cut(one(l), CAPS.digestLine)}`), ...(i.digest.length > CAPS.digest ? [`(+${i.digest.length - CAPS.digest} older lines left out)`] : [])].join("\n") : "";
+	// The logbook before the rest (boss 2026-11-28): what sb recorded without waking a run, which this run reads first.
+	const book = i.book?.length ? ["Logbook since your last run: milestones and heads-ups sb recorded without waking a run, the senders' own words in «»; read these first (board_read logbook lists the open heads-ups):", ...rowsOf(i.book, CAPS.book, CAPS.bookRow, 3000)].join("\n") : "";
 	const note = i.note ? [`Handoff note from the last run (${i.note.age} ago):`, cut(i.note.text, CAPS.note)].join("\n") : "";
 	const tools = cut(["Tools:", ...i.tools, "Call tower_done with a handoff note when nothing is left for you."].join("\n"), 4 * CAPS.tools);
 	const flags = [...i.flags, `A run ends after ${RUN_CAP_MINUTES} minutes.`].join("\n");
@@ -97,9 +101,9 @@ export function buildBrief(i: BriefInput): string {
 	});
 	const mains = ["Mains you supervise:", ...(mainLines.length ? rowsOf(mainLines, CAPS.mains, CAPS.mainRow, 2400) : ["- none: no tab of this workspace has joined"])].join("\n")
 		+ (i.dead?.length ? `\n${["Mains that ended without a close (boss_revive_main revives a dead one):", ...rowsOf(i.dead, 6, 400, 1600)].join("\n")}` : "");
-	// The tools, the tower_done line, the crash flags, and the 20-minute line are never cut. When the rest does not fit, the memory beyond its floor goes first, then the mains, the digest, the note, the rest of the memory, and the obligations.
+	// The tools, the tower_done line, the crash flags, and the 20-minute line are never cut. When the rest does not fit, the memory beyond its floor goes first, then the mains, the digest, the note, the logbook, the rest of the memory, and the obligations.
 	const talk = cut([i.conversation ?? "", ...(i.since?.length ? ["Since you last talked with the boss:", ...i.since.slice(0, 3)] : [])].filter(Boolean).join("\n"), CAPS.talk);
-	const parts: Record<string, string> = { talk, mains, obligations, memory: i.memory ?? "", digest, note };
+	const parts: Record<string, string> = { talk, book, mains, obligations, memory: i.memory ?? "", digest, note };
 	const size = () => [who, ...Object.values(parts), tools, flags].filter(Boolean).join("\n\n").length;
 	const MORE = (n: number) => `(+${n} more)`, left = (what: string) => `${what}: left out to fit the brief.`;
 	const pass = (name: string, floor: number, marker: (n: number) => string, none: string) => {
@@ -111,9 +115,10 @@ export function buildBrief(i: BriefInput): string {
 	pass("mains", 0, MORE, left("Mains you supervise"));
 	pass("digest", 0, MORE, left("Since your last run"));
 	pass("note", 0, MORE, left("Handoff note"));
+	pass("book", 0, (n) => `(+${n} more: board_read logbook)`, "Logbook: left out to fit the brief; call board_read for section logbook.");
 	pass("memory", 0, memoryMarker, memoryNone);
 	pass("obligations", 0, MORE, left("Open obligations"));
-	return cut([who, parts.talk, parts.mains, parts.obligations, parts.memory, parts.digest, parts.note, tools, flags].filter(Boolean).join("\n\n"), BRIEF_MAX);
+	return cut([who, parts.talk, parts.book, parts.mains, parts.obligations, parts.memory, parts.digest, parts.note, tools, flags].filter(Boolean).join("\n\n"), BRIEF_MAX);
 }
 
 /** `3m`, `2h`, `1d 4h`: how long ago, for a note or an event. */

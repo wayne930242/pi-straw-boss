@@ -11,7 +11,7 @@ export class StubClient extends EventEmitter implements IntercomLike {
 	sessions: Session[] = [];
 	capabilities: { namespace: string; ownerEligible: boolean }[][] = [];
 	frames: Record<string, unknown>[] = [];
-	sent: { to: string; text: string; messageId?: string }[] = [];
+	sent: { to: string; text: string; messageId?: string; noWake?: boolean }[] = [];
 	deliver: { delivered: boolean; reason?: string; delivery?: "socket_delivered" | "queued" | "failed" | "unknown" } = { delivered: true };
 	private taps = new Set<(message: Broker) => void>();
 	isConnected = () => this.connected;
@@ -29,8 +29,8 @@ export class StubClient extends EventEmitter implements IntercomLike {
 		this.emit("closed");
 	}
 	listSessions = async () => this.sessions;
-	async send(to: string, options: { text: string; messageId?: string }) {
-		this.sent.push({ to, text: options.text, messageId: options.messageId });
+	async send(to: string, options: { text: string; messageId?: string; noWake?: boolean }) {
+		this.sent.push({ to, text: options.text, messageId: options.messageId, ...(options.noWake ? { noWake: true } : {}) });
 		return { id: options.messageId ?? "m", ...this.deliver };
 	}
 	updatePresence = (updates: { name?: string }) => void this.frames.push({ type: "presence", ...updates });

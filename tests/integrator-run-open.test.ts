@@ -126,7 +126,7 @@ test("a local run: a coordinator's car slip opens the project's integrator as th
 test("a local run's standing open says the main tells its sender once and is not closed (rev-0803d-F001)", async () => {
 	const s = await started();
 	world.sessions = [{ ...COORD1, herdrLocation: loc("wA:p1") as never }];
-	towerClient().incoming(COORD1, { id: "m1", content: { text: callTower(COORD1, "Please mind the nightly backup.") } } as never);
+	towerClient().incoming(COORD1, { id: "m1", content: { text: callTower(COORD1, "Please mind the nightly backup.", "blocked") } } as never);
 	const run = await claimed(s, 1);
 	const opened = await run.tool("boss_open_main", { request: "mind the nightly backup", sender: "docs-main", duty: "standing" });
 	assert.equal(opened.ok, true, JSON.stringify(opened));
