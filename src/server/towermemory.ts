@@ -4,6 +4,7 @@ import { clean } from "../board.ts";
 import type { MemorySummary } from "../net.ts";
 import type { Locale } from "../towerprompt/messages.ts";
 import { checkCard, type Card, DONE_LABEL, isCard, isPress, type Press, type Raiser, refusalText } from "./waitcard.ts";
+import { waitSubject } from "../waitbudget.ts";
 import { lapsedWait } from "../waitlapse.ts";
 import type { Log } from "./log.ts";
 import type { Slot } from "./record.ts";
@@ -454,7 +455,7 @@ export function memorySummary(m: Memory, now?: number): MemorySummary {
 	return {
 		rev: m.rev, standing: m.entries.filter((e) => e.kind === "standing").length, decisions: m.entries.filter((e) => e.kind === "decision").length, waits: m.entries.filter(shown).length,
 		// A boss wait that was resolved or declined stays until the sweep drops it (24 h): the page draws it struck through, with what became of it.
-		bossWaits: m.entries.filter((e) => e.for === "boss" && (shown(e) || (e.kind === "wait" && e.state === "resolved"))).map((e) => ({ id: e.id, text: e.text, at: e.at, ...(e.state === "answered" && e.answered ? { answered: e.answered } : {}), ...(e.state === "resolved" ? { state: "resolved" as const, ...(e.outcome ? { outcome: e.outcome } : {}), ...(e.ended ? { ended: e.ended } : {}) } : {}), ...(e.card ? { card: e.card } : {}), ...(e.press ? { press: e.press } : {}), ...(e.parked ? { parked: true as const } : {}), ...(e.listed ? { listed: true as const } : {}), ...(e.returned ? { returned: e.returned } : {}) })), proposals: m.proposals.map(proposalView),
+		bossWaits: m.entries.filter((e) => e.for === "boss" && (shown(e) || (e.kind === "wait" && e.state === "resolved"))).map((e) => ({ id: e.id, text: waitSubject(e), at: e.at, ...(e.state === "answered" && e.answered ? { answered: e.answered } : {}), ...(e.state === "resolved" ? { state: "resolved" as const, ...(e.outcome ? { outcome: e.outcome } : {}), ...(e.ended ? { ended: e.ended } : {}) } : {}), ...(e.card ? { card: e.card } : {}), ...(e.press ? { press: e.press } : {}), ...(e.parked ? { parked: true as const } : {}), ...(e.listed ? { listed: true as const } : {}), ...(e.returned ? { returned: e.returned } : {}) })), proposals: m.proposals.map(proposalView),
 	};
 }
 /** The memory as the panel reads it, swept as of `now`. */
@@ -466,7 +467,7 @@ export function readMemory(slot: Slot, workspace: string, now: number): { memory
 const proposalView = ({ id, op, kind, text, target, cites }: Proposal) => ({ id, op, kind, text, ...(target ? { target } : {}), ...(cites ? { cites } : {}) });
 export const memoryView = (m: Memory) => ({
 	rev: m.rev, proposals: m.proposals.map((p) => ({ ...proposalView(p), at: p.at })),
-	entries: m.entries.map((e) => ({ id: e.id, kind: e.kind, text: e.text, by: e.by, via: e.via, at: e.at, ...(e.for ? { for: e.for } : {}), ...(e.on ? { on: e.on.name } : {}), ...(e.state ? { state: e.state } : {}), ...(e.due ? { due: e.due } : {}), ...(e.answered ? { answered: e.answered } : {}), ...(e.outcome ? { outcome: e.outcome } : {}), ...(e.ended ? { ended: e.ended } : {}), ...(e.card ? { card: e.card } : {}), ...(e.press ? { press: e.press } : {}), ...(e.parked ? { parked: true as const } : {}), ...(e.listed ? { listed: true as const } : {}), ...(e.returned ? { returned: e.returned } : {}) })),
+	entries: m.entries.map((e) => ({ id: e.id, kind: e.kind, text: waitSubject(e), by: e.by, via: e.via, at: e.at, ...(e.for ? { for: e.for } : {}), ...(e.on ? { on: e.on.name } : {}), ...(e.state ? { state: e.state } : {}), ...(e.due ? { due: e.due } : {}), ...(e.answered ? { answered: e.answered } : {}), ...(e.outcome ? { outcome: e.outcome } : {}), ...(e.ended ? { ended: e.ended } : {}), ...(e.card ? { card: e.card } : {}), ...(e.press ? { press: e.press } : {}), ...(e.parked ? { parked: true as const } : {}), ...(e.listed ? { listed: true as const } : {}), ...(e.returned ? { returned: e.returned } : {}) })),
 });
 
 /**

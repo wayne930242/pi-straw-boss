@@ -10,6 +10,7 @@ import { m } from "./sentences.ts";
 import type { Answer } from "./post.ts";
 import { aim, text, waitTitle } from "./render.ts";
 import { formatRoute, type NetRoute } from "./router.ts";
+import { waitSubject } from "../src/waitbudget.ts";
 import { type ButtonId, type CardModel, cardModel, type Phase, pressedLine } from "./waitcardmodel.ts";
 import { replyBox } from "./waitpanel.ts";
 import { towerWhy } from "./towerturns.ts";
@@ -188,7 +189,7 @@ export function waitCard(o: WaitCardOptions) {
 
 	function render() {
 		const w = effective(), md = model(), lang = w.card?.lang ?? "", ph = phase();
-		const doText = md.parts.find((p) => p.id === "do" || p.id === "words")?.text ?? "";
+		const doText = w.card && w.card.from?.role !== "device" ? w.card.do : waitSubject(w);
 		// Fold once per answer, not on every snapshot: the boss can reopen it to reply or skip.
 		const answer = o.host === "row" && ph !== "ended" && w.press?.act !== "secret" ? w.press?.at ?? w.answered : undefined;
 		if (answer && answer !== lastAnswer) { folded = true; pick = undefined; }

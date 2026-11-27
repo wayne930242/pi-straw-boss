@@ -438,6 +438,12 @@ test("copying a command puts it on the clipboard and posts nothing; where the cl
 	delete (globalThis as { getSelection?: unknown }).getSelection;
 });
 
+test("a folded device wait shows the subject even from a peer whose text is the action hint", () => {
+	const body = { ...fonstar(), from: { name: "box", role: "device" } };
+	const card = rig(wait(body, { text: body.do }), { host: "row" });
+	assert.equal(byClass(card, "wc-do")[0]!.textContent, body.happened);
+});
+
 test("a row folds the card to one line with no press beside it; a tap on the line unfolds the panel, and an update keeps it unfolded (Q1)", () => {
 	const card = rig(wait(fonstar()), { host: "row" });
 	const fold = byClass(card, "wc-fold")[0]!;

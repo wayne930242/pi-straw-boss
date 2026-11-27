@@ -8,7 +8,7 @@ import type { InboxItem } from "../src/link/store.ts";
 import { CLOSED_PER_DEVICE, createLinkWaits, OPEN_PER_DEVICE, readWaits, TEXT_SHOWN, type WaitsDeps } from "../src/server/linkwaits.ts";
 import { slotOf, type Slot } from "../src/server/record.ts";
 import { returnParked } from "../src/server/autotower.ts";
-import { loadMemory, readMemory, resolveWait, updateMemory } from "../src/server/towermemory.ts";
+import { loadMemory, memorySummary, readMemory, resolveWait, updateMemory } from "../src/server/towermemory.ts";
 import { towerDir } from "../src/server/towerstore.ts";
 import { pressRequest } from "../src/server/waitpress.ts";
 
@@ -90,6 +90,7 @@ test("D11: a card says what the device waits on, quotes its message as the teamm
 	await none.router.take(item({ owner: "work-on" }, { text: "[waits on you: merge !13]\nPlease merge approval-api !13; the box train waits on it." }), "w15X");
 	assert.equal(none.posts.length, 0);
 	const [card] = cards();
+	assert.equal(memorySummary(loadMemory(slot, "w15X").memory).bossWaits[0]!.text, card!.card!.happened);
 	assert.equal(card!.card!.type, "action");
 	assert.equal(card!.card!.from!.id, `link:${BOX}`);
 	assert.equal(card!.card!.happened, "waydosoft (teammate device) waits on this computer: «merge !13». Its message, in the teammate's words: «Please merge approval-api !13; the box train waits on it.». No main here to tell.");

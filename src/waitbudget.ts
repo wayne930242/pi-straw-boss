@@ -3,6 +3,12 @@ import type { BossWait, MemorySummary, WaitCardView } from "./net.ts";
 // The wait cards in the net snapshot (docs/specs/2026-11-07-wait-cards.md, The snapshot): every page and paired device gets the whole snapshot on every change, so the cards are bounded. Whole cards go newest first across all towers while
 // their text sum is at most CARD_TEXTS UTF-16 units; any card after that goes as `{ id, text, at, answered?, cut: true }`, and the page reads its entry with the memory route's `read` when it draws or opens it. Pure: no node module.
 
+/** Router cards put the peer's request in happened; do only explains the buttons. */
+export function waitSubject(w: Pick<BossWait, "text" | "card">): string {
+	const card = w.card;
+	return card?.from?.role === "device" && !w.text.startsWith(card.happened) ? card.happened : w.text;
+}
+
 export const CARD_TEXTS = 24_000;
 
 /** The UTF-16 units of a card's text fields (what the page draws), and of the press's reason. */
@@ -25,5 +31,5 @@ export function cutCards(sums: MemorySummary[]): MemorySummary[] {
 		else (over = true, cut.add(r.w));
 	}
 	if (!cut.size) return sums;
-	return sums.map((s) => (s.bossWaits.some((w) => cut.has(w)) ? { ...s, bossWaits: s.bossWaits.map((w): BossWait => (cut.has(w) ? { id: w.id, text: w.text, at: w.at, ...(w.answered ? { answered: w.answered } : {}), ...(w.parked ? { parked: true as const } : {}), ...(w.listed ? { listed: true as const } : {}), ...(w.state ? { state: w.state, ...(w.outcome ? { outcome: w.outcome } : {}), ...(w.ended ? { ended: w.ended } : {}), ...(w.returned ? { returned: w.returned } : {}) } : {}), cut: true } : w)) } : s));
+	return sums.map((s) => (s.bossWaits.some((w) => cut.has(w)) ? { ...s, bossWaits: s.bossWaits.map((w): BossWait => (cut.has(w) ? { id: w.id, text: waitSubject(w), at: w.at, ...(w.answered ? { answered: w.answered } : {}), ...(w.parked ? { parked: true as const } : {}), ...(w.listed ? { listed: true as const } : {}), ...(w.state ? { state: w.state, ...(w.outcome ? { outcome: w.outcome } : {}), ...(w.ended ? { ended: w.ended } : {}), ...(w.returned ? { returned: w.returned } : {}) } : {}), cut: true } : w)) } : s));
 }
