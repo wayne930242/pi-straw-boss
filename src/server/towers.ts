@@ -307,7 +307,7 @@ export function createTowers(o: TowersOptions): Towers {
 		yieldPane: () => standing.yieldPane(l.record.workspace),
 		freed: (over) => standing.freed(l.record.workspace, over?.fresh, over?.keepParked),
 		// The logbook's read mark rides on the digest's keys (`book:<seq>`): a run that ended well read its brief's entries.
-		clearDigest: (keys) => digest.drop(l.record.workspace, keys.filter((k) => !k.startsWith("book:"))).then(() => keys.forEach((k) => k.startsWith("book:") && markRead(slot.stateDir, l.record.workspace, Number(k.slice(5)), now()))),
+		clearDigest: async (keys) => { for (const k of keys) if (k.startsWith("book:")) markRead(slot.stateDir, l.record.workspace, Number(k.slice(5)), now()); await digest.drop(l.record.workspace, keys.filter((k) => !k.startsWith("book:"))); },
 		renewPane: (runId) => renew(l, runId),
 		renewing: () => l.renewing === true, seat: (why) => void stow.open(l.record.workspace, why).catch((cause: Error) => error("tower-seat", cause.message)),
 		// The run that was shown an expired wait has polled: it will not be shown again (towermemory.ts).
