@@ -68,8 +68,8 @@ export function mountQueueEdit(view: HTMLElement, take: () => Promise<unknown>) 
 		void take().finally(() => (button.disabled = false));
 	};
 }
-/** The plan section each todo box shows now: after the checklist, which it hides (so `querySelector("ol")` still finds the checklist, not the plan's layers). */
-const plans = new WeakMap<HTMLElement, HTMLElement>();
+/** The plan section each todo box shows now; the box's checklist (its own `ol`, taken before a plan's layers are there to match); and the fold the checklist moves into under a plan, kept so a fold the user opened stays open on a redraw. */
+const plans = new WeakMap<HTMLElement, HTMLElement>(), lists = new WeakMap<HTMLElement, HTMLOListElement>(), folds = new WeakMap<HTMLElement, HTMLDetailsElement>();
 /** The session's todo list above the composer: folded to the count and the task in progress, unfolded to every task. */
 export function drawTodos(view: HTMLElement, list: Todo[] | null | undefined, at: PlanAt = {}) {
 	const box = view.querySelector<HTMLDetailsElement>(".todos");
@@ -79,10 +79,15 @@ export function drawTodos(view: HTMLElement, list: Todo[] | null | undefined, at
 	const done = list.filter((t) => t.status === "completed").length, now = list.find((t) => t.status === "in_progress");
 	text(box, "summary b", m.todos_count({ done, total: list.length }));
 	text(box, "summary span", now ? (now.activeForm ?? now.subject) : done === list.length ? m.todos_done() : "");
-	// A plan with graph data is drawn as the plan (gui/plangraph.ts) in the checklist's place; an operate box whose build sends no such field keeps the checklist.
-	const plan = planOfTodos(list), ol = box.querySelector("ol")!, old = plans.get(box), drawn = graphed(plan) ? planView(plan, Date.now(), { ...at, byName: true }) : undefined;
-	(ol.hidden = Boolean(drawn)), old?.remove(), drawn ? (box.append(drawn), plans.set(box, drawn)) : plans.delete(box);
-	if (drawn) return;
+	// A plan with graph data is drawn as the plan (gui/plangraph.ts), and the checklist folds under it, so a finished task, the points, the anchor, and the last run stay a tap away; an operate box whose build sends no such field keeps the checklist.
+	const plan = planOfTodos(list), ol = lists.get(box) ?? box.querySelector<HTMLOListElement>("ol")!, drawn = graphed(plan) ? planView(plan, Date.now(), { ...at, byName: true }) : undefined;
+	lists.set(box, ol), plans.get(box)?.remove();
+	if (drawn) {
+		const fold = folds.get(box) ?? Object.assign(document.createElement("details"), { className: "todos-all" });
+		if (!folds.has(box)) fold.append(document.createElement("summary")), folds.set(box, fold);
+		fold.querySelector("summary")!.textContent = m.todos_checklist({ count: list.length });
+		box.append(drawn, fold), fold.append(ol), plans.set(box, drawn);
+	} else if (folds.has(box)) box.append(ol), folds.get(box)!.remove(), folds.delete(box), plans.delete(box); // the checklist back in the box's own place
 	ol.replaceChildren(...list.map((t) => {
 		const row = Object.assign(document.createElement("li"), { textContent: t.subject, className: t.status });
 		if (t.points !== undefined) row.append(" ", Object.assign(document.createElement("small"), { textContent: m.todos_points({ points: t.points }) }));

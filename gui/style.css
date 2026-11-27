@@ -230,6 +230,7 @@ body:has(#remind[data-state="blocked"]) .prefs-btn { color: var(--err-soft); } /
 .plan-focus { padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--dim); font: inherit; font-size: 11px; cursor: pointer; } .plan-focus:hover, .plan-focus:focus-visible { color: var(--text); border-color: var(--accent); }
 @media (pointer: coarse) { a.plan-owner, .plan-focus { display: inline-flex; align-items: center; min-height: 44px; } } /* a tap target on a phone */ .plan-wait { color: var(--gold); } .plan-wait::before { content: "⏳ "; }
 .plan-cut { margin: 0 2px; font-size: 11px; color: var(--dim); }
+.todos-all { margin: 2px 0 0; border-top: 1px solid var(--line); } .todos .todos-all > summary { color: var(--dim); font-size: 12px; } .todos .todos-all > summary::after { content: "▸"; } .todos .todos-all[open] > summary::after { content: "▾"; } /* the checklist folded under a plan: its own mark, not the box's */
 .board-plan > .plan { margin: 0 0 6px; } .todos .plan li::before { content: none; } .todos .plan .plan-layer + .plan-layer::before { content: "↓"; } /* the checklist's circles are not the plan's; its down marks stay */
 .in-term .todos, .in-term .monitors { display: none; }
 .monitors { margin: 6px 16px 0; padding: 6px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); font-size: 13px; }

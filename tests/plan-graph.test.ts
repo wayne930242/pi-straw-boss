@@ -93,18 +93,33 @@ const todoBox = () => {
 	return { view, d, ol };
 };
 
-test("the session page's todos: a list with graph data shows the plan and hides the checklist; one without (an operate box on an older build) keeps the checklist; a redraw replaces the plan", () => {
+test("the session page's todos: a list with graph data shows the plan with the checklist folded under it (finished tasks, points, anchor, last run); one without (an operate box on an older build) keeps the checklist; a redraw replaces the plan", () => {
 	const { view, d, ol } = todoBox();
-	const list = [todo(1, "Survey", "completed"), todo(2, "Build", "in_progress", { owner: "w1", blockedBy: [1] }), todo(3, "Ship", "pending", { blockedBy: [2], waitsOn: "boss" })];
+	const run = { command: "npm test", result: "pass" as const, sha: "abc1234", at: "2026-11-27T08:00:00.000Z" };
+	const list = [todo(1, "Survey", "completed", { points: 2, anchor: "survey.md exists", evidence: run }), todo(2, "Build", "in_progress", { owner: "w1", blockedBy: [1] }), todo(3, "Ship", "pending", { blockedBy: [2], waitsOn: "boss" })];
 	drawTodos(view as never, list);
-	assert.equal(ol.hidden, true);
 	assert.deepEqual(d.querySelectorAll(".plan-node").map((n) => [n.dataset.id, n.dataset.state]), [["2", "doing"], ["3", "waiting"]], "open todos only; a completed blocker no longer holds #2");
+	const fold = d.querySelector(".todos-all")!;
+	assert.equal(d.children.indexOf(fold), d.children.indexOf(d.querySelector(".plan")!) + 1, "the checklist's fold sits under the plan");
+	assert.equal(ol.parent, fold);
+	assert.equal(ol.hidden, false);
+	assert.equal(fold.querySelector("summary")!.textContent, m.todos_checklist({ count: 3 }));
+	assert.deepEqual(ol.children.map((li) => [li.className, li.textContent]), [["completed", `Survey ${m.todos_points({ points: 2 })}`], ["in_progress", "Build"], ["pending", "Ship"]], "the finished task stays, with its points");
+	assert.match(ol.children[0]!.title, /survey\.md exists[\s\S]*npm test · pass · abc1234/, "its anchor and last run stay reachable");
+	fold.setAttribute("open", "");
 	drawTodos(view as never, [...list, todo(4, "Docs", "pending", { blockedBy: [3] })]);
 	assert.equal(d.querySelectorAll(".plan").length, 1, "one plan section, redrawn");
+	assert.equal(d.querySelectorAll(".todos-all").length, 1, "one fold, kept");
+	assert.equal(d.querySelector(".todos-all"), fold);
+	assert.equal(fold.hasAttribute("open"), true, "a fold the boss opened stays open on a redraw");
+	assert.equal(d.children.indexOf(fold), d.children.indexOf(d.querySelector(".plan")!) + 1);
 	assert.equal(d.querySelectorAll(".plan-layer").length, 3);
+	assert.equal(ol.children.length, 4);
 	drawTodos(view as never, list.map(({ owner: _o, blockedBy: _b, waitsOn: _w, ...t }) => t));
 	assert.equal(d.querySelector(".plan"), null);
+	assert.equal(d.querySelector(".todos-all"), null, "no fold without a plan");
+	assert.equal(ol.parent, d);
 	assert.equal(ol.hidden, false);
-	assert.deepEqual(ol.children.map((li) => li.textContent), ["Survey", "Build", "Ship"]);
+	assert.deepEqual(ol.children.map((li) => li.textContent), [`Survey ${m.todos_points({ points: 2 })}`, "Build", "Ship"]);
 	assert.equal(planOfTodos([todo(1, "x", "completed")]), undefined);
 });

@@ -420,6 +420,7 @@
 	"todos_anchor": "Anchor: {anchor}",
 	"todos_recorded": "Recorded: {run}",
 	"todos_count": "Todos {done}/{total}",
+	"todos_checklist": "Checklist ({count})",
 	"todos_done": "All done",
 	"monitor_failed": "Monitor failed: {what}",
 	"monitor_stale": "Monitor went quiet and stopped: {what}",

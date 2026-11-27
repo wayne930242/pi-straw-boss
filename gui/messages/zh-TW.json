@@ -364,6 +364,7 @@
 	"todos_anchor": "驗收條件：{anchor}",
 	"todos_recorded": "執行紀錄：{run}",
 	"todos_count": "待辦 {done}/{total}",
+	"todos_checklist": "清單（{count}）",
 	"todos_done": "全部完成",
 	"monitor_failed": "Monitor 出錯：{what}",
 	"monitor_stale": "Monitor 太久沒輸出，已停止：{what}",
