@@ -8,7 +8,7 @@
 // - `typeGate`: may the look type the command now (type / no, with the rule that said no).
 // - the marks the typing rests on, which a caller sets by these: `giveBackGate` (a run ended, a Retry, the table proof), `settleGate` (a hand-over's proof and the lapse of a mark), `handGate` (a hand-over is
 //   believed), `refusedGate` (what Herdr's refusal of the typing leaves of the mark), `holdGate` (a held pane is free again), `retryGate` and `tableGate` (what a Retry may do, and what a read of the process
-//   table proves; the proof asks `retryGate` again after its read), `runEndGate` (what a run's end says of the pane).
+//   table proves; the proof asks `retryGate` again after its read), `runEndGate` (what a run's end says of the pane), `pollGate` (whether a poll that lands after the boss's Ctrl+D is a prompt there).
 // Two marks are facts, not typing decisions, and are set where the fact happens: `fresh: true` at `attach(target, fresh)` (Herdr just made the pane, so it is a shell nobody has used) and at `reset()` (a new Herdr
 // server: every pane is a fresh shell). Neither depends on what the pane did, so no rule could be wrong there; they only start the clock that `typeGate` and `settleGate` then judge.
 // - `seatGate`: whether the pane a service recorded is still the tower's own seat after a Herdr came back or a server started. `typeGate` asks it as a fact (`seated`), and the callers that mark a pane or wake a run in it ask the same fact.
@@ -245,6 +245,13 @@ export function holdGate(f: HoldFacts): HoldVerdict {
 	const clear = f.gone && f.idle ? f.clear + 1 : 0;
 	return clear >= 2 ? { free: true, clear: 0 } : { free: false, clear };
 }
+
+/**
+ * What a prompt's poll proves while the boss's Ctrl+D park stands. A poll from the prompt that parked the pane (`parkedBy`, the pid that sent the leave) proves no prompt: each request is a connection of its own, so the last poll,
+ * on its way when the prompt left, may be read after the leave (a load of 63: the look took it for a prompt the boss had started, ended the park, and typed the command into his shell five times). That prompt is told to
+ * leave (`left`); only another pid's poll, a prompt the boss started by hand, is a prompt there (`present`), and the look ends the park on it.
+ */
+export const pollGate = (f: { parked: boolean; parkedBy: number | undefined; pid: number }): "present" | "left" => (f.parked && f.parkedBy === f.pid ? "left" : "present");
 
 /** What a give-back asks: `fresh` false when the run's pi never started in the pane; `keepParked` for a Retry or the tower's own proof, which never ends the boss's Ctrl+D park. */
 export interface GiveBackFacts { fresh: boolean; keepParked: boolean; parked: boolean; prompt: boolean; now: number; markMs: number }

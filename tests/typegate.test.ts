@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { claimGate, giveBackGate, handGate, holdGate, idleShell, type NoReason, onceGate, proofGate, refusedGate, retryGate, runEndGate, seatGate, settleGate, tableGate, type TypeFacts, typeGate } from "../src/server/typegate.ts";
+import { claimGate, giveBackGate, handGate, holdGate, idleShell, type NoReason, onceGate, pollGate, proofGate, refusedGate, retryGate, runEndGate, seatGate, settleGate, tableGate, type TypeFacts, typeGate } from "../src/server/typegate.ts";
 import { HEAD_LABEL, TOWER_LABEL } from "../src/herdr.ts";
 
 // The gate (src/server/typegate.ts) is the one place that says whether the server may type the tower prompt's command into a standing pane. Each rule is pinned alone here: a case in which only that rule says no
@@ -253,6 +253,13 @@ test("giveBackGate: a Retry or proof keeps the park, expires its mark, marks no 
 	assert.deepEqual(giveBackGate({ ...retry, fresh: false }), { apply: true, unpark: false, fresh: false, freshUntil: undefined });
 	assert.deepEqual(giveBackGate({ ...retry, prompt: true }), { apply: false });
 	assert.deepEqual(giveBackGate({ ...retry, prompt: true, parked: true }), { apply: false });
+});
+
+test("pollGate: the last poll of the prompt that took the boss's Ctrl+D, read after its leave, proves no prompt; another pid's poll, or any poll with no park, is a prompt there", () => {
+	assert.equal(pollGate({ parked: true, parkedBy: 41, pid: 41 }), "left", "the prompt that parked the pane: its late poll ends no park");
+	assert.equal(pollGate({ parked: true, parkedBy: 41, pid: 42 }), "present", "a prompt the boss started by hand");
+	assert.equal(pollGate({ parked: true, parkedBy: undefined, pid: 41 }), "present");
+	assert.equal(pollGate({ parked: false, parkedBy: 41, pid: 41 }), "present", "a run's end ended the park: the pid proves nothing any more");
 });
 
 test("runEndGate and handGate: an unstarted run leaves the pane unmarked; a hand-over is not believed while the prompt polls", () => {

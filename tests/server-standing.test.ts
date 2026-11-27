@@ -253,6 +253,8 @@ test("Ctrl+D leaves the pane to the boss for good: the stand-in goes and nothing
 	const prompt = new FakePrompt(s, pane);
 	await until(() => world.herdr.pane(pane).agent === "tower", "the stand-in");
 	assert.equal((await ask(s, { cmd: "prompt-leave", workspace: "wA", pid: prompt.pid })).ok, true);
+	// The prompt's last poll was on its way when it left: each request is a connection of its own, so the server may read it after the leave (seen at a load of 63). It proves no prompt and ends no park.
+	assert.equal((await ask(s, { cmd: "prompt-poll", workspace: "wA", pid: prompt.pid })).leave, true, "the prompt that left is told to leave");
 	await prompt.exit();
 	await until(() => releases().length === 1, "the stand-in to be released");
 	assert.equal(world.herdr.pane(pane).agent, undefined);

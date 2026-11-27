@@ -4,7 +4,7 @@ import { alive as pidAlive } from "../remote.ts";
 import type { Log } from "./log.ts";
 import type { ServiceStatus } from "./runs.ts";
 import { type Standin, standinReport } from "./standin.ts";
-import { giveBackGate, handGate, holdGate, idleShell, nameOf, refusedGate, SHELLS, settleGate, typeGate } from "./typegate.ts";
+import { giveBackGate, handGate, holdGate, idleShell, nameOf, pollGate, refusedGate, SHELLS, settleGate, typeGate } from "./typegate.ts";
 
 /** Headless runs: how long after a viewer call made its pane the one typing may still happen (Herdr's lost Enter), and the command as typed there, so the viewer takes the shell's place (`exec`) and no shell is left behind it. */
 export const ONCE_MS = 60_000;
@@ -109,8 +109,9 @@ interface Mine {
 	leaver?: number;
 	/** A run is about to start or holds the pane: the prompt is told to leave. */
 	leaving: boolean;
-	/** The boss took the shell with Ctrl+D: nothing is typed until a run takes the pane (`freed`) or Herdr restarts (`reset`). */
+	/** The boss took the shell with Ctrl+D: nothing is typed until a run takes the pane (`freed`) or Herdr restarts (`reset`). `parkedBy`: the pid of the prompt that left then (`pollGate`). */
 	parked: boolean;
+	parkedBy?: number;
 	/** When the command was last typed. */
 	launched?: number;
 	/** Typings since the last poll: the wait before the next one doubles with each. */
@@ -396,6 +397,9 @@ export function createStanding(o: StandingOptions) {
 		poll(workspace: string, pid: number): PromptReply {
 			const m = mines.get(workspace);
 			if (!m) return { ok: false, error: `The sb server stands in for no tower of workspace ${workspace}`, gone: true };
+			const status = m.target.status(), answer = (leave: boolean): PromptReply => ({ ok: true, label: m.target.label(), state: status?.state ?? "standing", queued: status?.queued ?? 0, leave, ...(m.target.agent === STANDIN_HEAD ? { head: true as const } : {}) });
+			// The last poll of the prompt that took the boss's Ctrl+D, read after its leave, is no prompt there: it changes nothing and is told to leave.
+			if (pollGate({ parked: m.parked, parkedBy: m.parkedBy, pid }) === "left") return answer(true);
 			m.seen = { pid, at: now() };
 			m.polled = true;
 			// A prompt that polls is the current one: the pid of an earlier prompt that left is no longer the one to wait for.
@@ -403,8 +407,7 @@ export function createStanding(o: StandingOptions) {
 			m.typings = 0;
 			m.noStart = false;
 			m.lost = false;
-			const status = m.target.status();
-			return { ok: true, label: m.target.label(), state: status?.state ?? "standing", queued: status?.queued ?? 0, leave: m.leaving, ...(m.target.agent === STANDIN_HEAD ? { head: true as const } : {}) };
+			return answer(m.leaving);
 		},
 		/** Ctrl+D at the prompt: the shell is the boss's until a run takes the pane and ends, or Herdr restarts. */
 		async leave(workspace: string, pid: number): Promise<PromptReply | { ok: true }> {
@@ -412,6 +415,7 @@ export function createStanding(o: StandingOptions) {
 			if (!m) return { ok: false, error: `The sb server stands in for no tower of workspace ${workspace}`, gone: true };
 			if (m.seen?.pid === pid) m.seen = undefined;
 			m.parked = true;
+			m.parkedBy = pid;
 			await unreport(m);
 			return { ok: true };
 		},
