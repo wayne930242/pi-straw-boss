@@ -60,8 +60,9 @@ const WORDS = {
 		oldServer: (have: string | undefined, need: string) => `Nothing was sent: the sb server runs pi-straw-boss ${have ?? "(unknown)"}, which does not hold /boss send to a remote write's guards. Restart it on pi-straw-boss ${need} or newer (/boss server restart).`,
 		sendSelf: "That is this session: type it here instead",
 		noTodo: (q: string) => `This session's todo list has no ${q}`,
-		noOwner: (q: string, owner?: string) => (owner ? `The owner of ${q}, "${owner}", is not on the net: nothing was sent` : `${q} names no owner: nothing was sent`),
+		noOwner: (q: string, owner?: string) => (owner ? `The owner of ${q}, "${owner}", is not a subagent of this main on the net: nothing was sent; name it by its key` : `${q} names no owner: nothing was sent`),
 		ownerGone: (q: string, owner: string) => `The owner of ${q}, "${owner}", has left the net: nothing was sent`,
+		ownerTwice: (q: string, owner: string) => `More than one subagent under this main is named "${owner}", the owner of ${q}: nothing was sent; name it by its key`,
 		sent: (n: string, after: boolean) => `Sent to ${n}${after ? " as a follow-up" : ""}`,
 		notSent: "Nothing was sent",
 		confirmSend: "Send it?", confirmSendBody: (n: string, text: string) => `${n} would end or replace its session with this: ${text}`,
@@ -113,8 +114,9 @@ const WORDS = {
 		oldServer: (have: string | undefined, need: string) => `沒有送出：sb server 是 pi-straw-boss ${have ?? "（未知）"}，不會讓 /boss send 受遠端寫入的防護約束。請重啟成 pi-straw-boss ${need} 以上（/boss server restart）。`,
 		sendSelf: "這就是目前的工作階段：直接在這裡輸入",
 		noTodo: (q: string) => `這個工作階段的待辦清單沒有 ${q}`,
-		noOwner: (q: string, owner?: string) => (owner ? `${q} 的負責者「${owner}」不在網路上：沒有送出` : `${q} 沒有負責者：沒有送出`),
+		noOwner: (q: string, owner?: string) => (owner ? `${q} 的負責者「${owner}」不是這個主智慧體在網上的子智慧體：沒有送出；請用 key 指定` : `${q} 沒有負責者：沒有送出`),
 		ownerGone: (q: string, owner: string) => `${q} 的負責者「${owner}」已離開網路：沒有送出`,
+		ownerTwice: (q: string, owner: string) => `這個主智慧體底下有不只一個子智慧體叫「${owner}」（${q} 的負責者）：沒有送出；請用 key 指定`,
 		sent: (n: string, after: boolean) => `已送給 ${n}${after ? "（排在目前工作之後）" : ""}`,
 		notSent: "沒有送出",
 		confirmSend: "要送出嗎？", confirmSendBody: (n: string, text: string) => `${n} 會因為這段話結束或換掉它的工作階段：${text}`,
@@ -200,6 +202,7 @@ export function createBossPaths(kit: Kit, { host, server, closeSelf, post = post
 		if (!todo) return t().noTodo(query);
 		const hit = ownerOf(n, me(), todo);
 		if (hit === "gone") return t().ownerGone(query, named!);
+		if (hit === "ambiguous") return t().ownerTwice(query, named!);
 		return sendables(n).find((x) => x.key === hit?.key) ?? t().noOwner(query, named);
 	}
 	async function toSession(query: string, post1: (key: string, named: string) => Promise<Reply>, said: (name: string) => string) {

@@ -80,7 +80,7 @@ export function drawTodos(view: HTMLElement, list: Todo[] | null | undefined, at
 	text(box, "summary b", m.todos_count({ done, total: list.length }));
 	text(box, "summary span", now ? (now.activeForm ?? now.subject) : done === list.length ? m.todos_done() : "");
 	// A plan with graph data is drawn as the plan (gui/plangraph.ts) in the checklist's place; an operate box whose build sends no such field keeps the checklist.
-	const plan = planOfTodos(list), ol = box.querySelector("ol")!, old = plans.get(box), drawn = graphed(plan) ? planView(plan, Date.now(), at) : undefined;
+	const plan = planOfTodos(list), ol = box.querySelector("ol")!, old = plans.get(box), drawn = graphed(plan) ? planView(plan, Date.now(), { ...at, byName: true }) : undefined;
 	(ol.hidden = Boolean(drawn)), old?.remove(), drawn ? (box.append(drawn), plans.set(box, drawn)) : plans.delete(box);
 	if (drawn) return;
 	ol.replaceChildren(...list.map((t) => {

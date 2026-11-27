@@ -10,13 +10,13 @@ import { m } from "./sentences.ts";
 // A main's plan as a graph (src/boardplan.ts): its open todos in layers by dependency (a node sits one step below the deepest open todo it waits on), each with its state in words and a tint, its owner, its defer (who, until when),
 // and the ids it comes after, so the layers read on a phone without lines between boxes. The board row draws an auto line's plan (gui/board.ts); the session page draws the plan of the todo list it has, an operate box's too (gui/bars.ts).
 // A plan with no graph data (no dependency, owner, defer, or graph name) stays the checklist. Every field is a model's text: drawn as text only.
-// An owner the net has (src/planowner.ts: the Herdr child's run id, then its full name) is a link to its session page, whose composer writes to it as the boss, and a Focus button that brings its pane forward (the routes the page
+// An owner the net has (src/planowner.ts: the Herdr child's run id; on the session page also the one subagent of its exact name under the main) is a link to its session page, whose composer writes to it as the boss, and a Focus button that brings its pane forward (the routes the page
 // and `/boss send` use); an owner whose child left the net, or whose pane is gone, is marked gone.
 
 /** The seam a test replaces: the page's post. */
 export const io = { post: (path: string, body: Record<string, unknown>): Promise<Answer> => post(path, body) };
-/** Where a plan is drawn: the net, for its owners, and the main whose plan it is (its own subagents are looked at first). */
-export interface PlanAt { net?: Net | undefined; main?: string | undefined }
+/** Where a plan is drawn: the net, for its owners, the main whose plan it is (an owner by name is looked for under it alone), and `byName`: whether the owner text is the todo's own, exact (the session page), not the board's cut and scrubbed label. */
+export interface PlanAt { net?: Net | undefined; main?: string | undefined; byName?: boolean }
 
 export type NodeState = "doing" | "ready" | "blocked" | "waiting";
 /** In progress wins; a deferred todo waits; one with an open blocker is blocked; else it is ready to start. */
@@ -56,7 +56,8 @@ export const planLine = (p: Plan): string => [m.plan_open({ count: p.nodes.lengt
 /** A node's owner: a link and a Focus button for a unit the net has in a pane, the name marked gone for one that left, else the name as text. */
 function ownerEl(n: PlanNode, at: PlanAt): HTMLElement[] {
 	if (!n.owner && !n.agent) return [];
-	const hit = at.net ? ownerOf(at.net, at.main, n) : undefined, name = n.owner ?? (hit && hit !== "gone" ? hit.name : n.agent!), title = m.plan_owner({ owner: name });
+	const hit = at.net ? ownerOf(at.net, at.main, n, at.byName === true) : undefined, name = n.owner ?? (typeof hit === "object" ? hit.name : n.agent!), title = m.plan_owner({ owner: name });
+	if (hit === "ambiguous") return [h("span", { class: "plan-owner", title }, name)]; // two of one name: no guess
 	if (hit === "gone" || (hit && !hit.live)) return [h("span", { class: "plan-owner", "data-gone": "", title }, name, h("small", null, ` ${m.plan_gone()}`))];
 	if (!hit) return [h("span", { class: "plan-owner", title }, name)];
 	const route = formatRoute({ view: "session", ws: hit.ws, key: hit.key }), focus = h("button", { type: "button", class: "plan-focus", title: m.plan_focus_title({ owner: name }) }, m.plan_focus());
