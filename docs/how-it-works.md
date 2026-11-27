@@ -1794,6 +1794,12 @@ A grant never reaches a pane that runs an agent or carries `sb_role`, and ends t
 
 </details>
 
+#### Questions waiting on you
+
+Every open question to the boss is recorded, so he can see who waits on him and where ([spec](specs/2026-11-28-boss-asks.md); boss 2026-11-28). The sb server keeps each as an Ask under `<state>/asks/`, one file per Ask written by rename, kept across restarts. `call_tower`'s boss question opens a blocking Ask: the first valid answer wins, whether the boss gives it in the pane, on this computer's page or on a paired phone (the session's dialog panel, or `POST api/asks/<id>/answer`), and the others close; a late answer gets 409 naming where it was answered, and a resent answer id replays the first result. The questions sb only sees are mirrored as Asks without taking them from their owners: the open wait cards of the towers' memory, the cards a teammate's wait put on the boss's list, and units that wait on `ask_user_question` or `ask_user`. A mirror closes when its owner drops it or its asker leaves the net. Each Ask is bound once to the todo it blocks: an explicit `boss.item` or `item`, else for a subagent its launcher's todo bound to its run, else the asker's todo in progress.
+
+A unit's plate shows a gold pill with its count of open Asks (a wait card's on its raiser, a teammate's on the tower), and the head page and each workspace page list them (Q3 · decision · subject · asker · where · 7m); a tap opens its card, else the asker's comms, and **Terminal** opens the asker's pane. In pi, `/boss asks` prints the same, this session's and its subagents' first, with the todo each blocks, and every session in a pane answers `straw-boss:ask-rows:v1` on `pi.events` for pi-todo-ledger, which can draw a row under the todo it blocks or in a group of its own.
+
 #### Notices
 
 Notices are read once opened: they have no Later, and closing one does not put it back in the queue. They wait apart from what needs you, under the header's **Notices N** button: it opens a list of the finished or failed units, each with its base and last line; a row goes to the unit's comms and clears it, and **Clear all** clears every one (questions stay, to be answered).

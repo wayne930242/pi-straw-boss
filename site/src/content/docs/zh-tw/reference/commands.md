@@ -60,6 +60,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | --- | --- |
 | `/boss` | 接手成為這個分頁的主智慧體，即使它已經有一位。 |
 | `/boss status` | 每個分頁的主智慧體與各座塔台。 |
+| `/boss asks` | 這台電腦上在等你回答的問題：`call_tower` 的 boss 問題、開著的等待卡、隊友送到你這裡的等待，以及在等 `ask_user_question` 的單位，每題顯示為 `Q3 · 7m · 發問者 · 位置 · 主旨`，並寫出它卡住的 todo；這個 session 和它的子代理排前面。todo 面板透過 `straw-boss:ask-rows:v1` 畫的是同樣的列；見[等你回答的問題](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#等你回答的問題)。 |
 | `/boss cars` | 這個 session 的車廂在哪裡：每節掛在它的 todo 底下（或「其他車廂」；調度員的火車在「火車」），顯示為 `📮 已送出`、帶發車規則的等發車、在火車的哪一關（`🚂 1127l ▰▰▰▱▱▱▱ merge 12m · 等 1127j`，關卡用火車自己的名字），或 30 分鐘內結束。和 todo 面板透過 `straw-boss:car-rows:v1` 畫的是同樣的列；見[車廂列](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#車廂列)。 |
 | `/boss tower` | 這個工作區沒有塔台在跑就開一座，並聚焦它的分頁。 |
 | `/boss tower <prompt>` | 寫給這個工作區的塔台。 |

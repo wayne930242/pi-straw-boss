@@ -20,6 +20,8 @@ English | [繁體中文](https://github.com/wayne930242/pi-straw-boss/blob/main/
 
 <p align="center"><img src="docs/gui-car-card.png" width="34%" alt="A main's unit card with its cars: one riding at its second full check on a ladder of the app's stages, one waiting for the load another train holds, one landed with its version, each with See this train"> <img src="docs/gui-car-yard.png" width="64%" alt="The yard opened from a car card, scrolled to that car's train and marked: its steps as pills, the load it needs, and each car's acceptance and notice"></p>
 
+![A workspace page with the questions waiting on the boss: a gold count on each asker's plate, and the list of open questions with their number, kind, subject, asker, place, the todo each blocks, the time, and Terminal](docs/gui-asks.png)
+
 ## Why
 
 Run a few agents on the same project and they start stepping on each other: two dev servers on one port, two branches editing the same migration, and no agent knows the others exist.
