@@ -18,7 +18,7 @@ What still wakes a run, and what is only recorded, is the table in [The logbook]
 
 - A milestone wakes a run when its sender is a main a tower opened (its pane's `sb_opened_by`, or the opener's ledger). A session this tower asked (`expects.json`) wakes it with any `why`, a `shared` one too: that is its answer. Any other milestone is recorded; a sender that expected a reply is told that none comes.
 - A heads-up wakes a run, after an sb notice naming both sides, when it shares a name with an open heads-up from another session (any workspace of any Herdr slot), or with the board line or open items of another main or train of the sender's workspace (where the net places the sender, which may not be the tower's workspace). Any other heads-up is recorded, and the sender gets "recorded, no clash seen" with pi-intercom's `noWake`.
-- A call carrying a car slip (a `car:` line, or `car: <app> | tickets:`) or a `train:` manifest is the tower's to forward or open, whatever its `why`, so it wakes as before. So does any call with a wait or forward field (`waits-on=`, `ask=`, `relay=`, `in-reply-to=`, `fwd=`), a peer's turn (`origin=`, `remote=`), or the handover notice sb writes (`handed-to=`). A `train:` manifest that does not read is refused with a resend, never recorded as a heads-up.
+- A call carrying a car slip (a `car:` line, or `car: <app> | tickets:`) or a `train:` manifest is the tower's to forward or open, whatever its `why`, so it wakes as before. So does any call with a wait or forward field (`waits-on=`, `ask=`, `relay=`, `in-reply-to=`, `fwd=`), a peer's turn (`origin=`, `remote=`), or the handover notice sb writes (`handed-to=`, or the words of an older Straw Boss's notice, which has none). A `train:` manifest is recognised before anything else in it, a car slip included; one that does not read is refused with a resend, never recorded as a heads-up.
 
 ## The entry
 
@@ -34,7 +34,7 @@ What still wakes a run, and what is only recorded, is the table in [The logbook]
 ] }
 ```
 
-`text` is the message under its header, folded and cut to 300 characters: the sender's own words. `woke: true` marks an entry whose call woke a run, with `clash` naming what it overlapped. An entry is kept 24 hours. A heads-up ends at the time its text names (`until 14:30`, `for 2h`, `~10 min`) and never later than 24 hours after it came. `msg` is the intercom message id: a retry of a message whose receipt never went adds no second entry. `read` is each workspace's mark: a woken run's brief lists the entries past it, oldest first and before the rest of the brief, and a run that ends with `tower_done` moves the mark to the last row its first brief carried whole.
+`text` is the message under its header, folded and cut to 300 characters: the sender's own words. `woke: true` marks an entry whose call woke a run, with `clash` naming what it overlapped. An entry is kept 24 hours. A heads-up ends at the time its text names (`until 14:30`, `for 2h`, `~10 min`) and never later than 24 hours after it came. `msg` is the intercom message's base id (a retry's `~r<n>` removed) and `hash` the SHA-256 of its text: a retry of a message whose receipt never went adds no second entry, and the same id with other words is dropped. `read` is each workspace's mark: a woken run's brief lists the entries past it, oldest first and before the rest of the brief, and a run that ends with `tower_done` moves the mark to the last row its first brief carried whole.
 
 Readers: the brief (`Logbook since your last run:`), `board_read` section `logbook` for a tower or a main (never in a remote turn), and `/boss board log` for the boss.
 
@@ -83,3 +83,12 @@ The review of `07a463cf..3a0cce5d` (P0 0, P1 4) and its fixes, each with a test 
 - quiet-F007 (P2): the handover notice sb writes went out as a plain milestone and was only recorded. Its header now names the successor (`handed-to=`), which the gate queues.
 - quiet-F008 (P2): the brief cut whole rows, which could drop the closing `»`, and the sender's name was not fenced. A row now cuts the name and the words first, then fences each.
 - quiet-F009 (P2): `call_tower`'s slip note and the gate now share one recognizer (`carriesSlip` in `src/carslip.ts`). A heads-up with no end stays as it is (Limits above).
+
+## Second review round
+
+The review of `8cf3e232..8029f609` (P0 0, P1 1) and its fixes, each with a test in `tests/tower-quiet.test.ts` that failed first:
+
+- quiet-F010 (P1): two heads-ups whose net reads overlapped both compared before either was written, so both heard "go ahead" and no run woke. The compare with the open heads-ups now runs after the reads, in one synchronous step with the write, under `locks/logbook.lock` (`src/server/trainlock.ts`, one for every slot: each slot's sb server is its own process). The process that writes holds the lock across that step and awaits nothing while it does. A lock that stays busy for 3 s records the heads-up and wakes the run.
+- quiet-F011 (P2): a retry under `~r<n>` while its first try was still being classified was a new call, so it was recorded and queued twice. The gate keys a call in flight by receiving tower, sender, and base id, and an entry by its workspace, sender, and base id; a retry with the same text shares the first try's end and receipt, and the same base id with other words is dropped without a receipt.
+- quiet-F006 rest (P2): a `train:` block with neither `project:` nor `code:` became a heads-up, and a bad manifest that carried its slips was queued as a car slip. A manifest (a `train:` block, or a `train:` line beside a `project:` or `code:`) is now recognised first, then read, then queued or refused. A `train:` line with words after it and no such key is a train's own heads-up.
+- quiet-F007 rest (P2): a main on 0.99.0 sends its handover notice with no `handed-to=`, so it was recorded only. The gate also recognises the words `handedNotice` has written since 0.99.0 when the session they name as stepping down is the sender's own.

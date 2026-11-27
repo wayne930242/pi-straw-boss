@@ -15,9 +15,10 @@ const BOOK_MAX = 400, TEXT_MAX = 300;
 export type BookKind = "milestone" | "heads-up";
 /**
  * One entry. `text` is the sender's message under its header, folded and cut: the sender's own words, never an instruction. A heads-up has `until` and the `resources` read from its text; `woke` marks an entry whose
- * call woke a tower run (it reached the run as an event), and `clash` says what it overlapped. `msg` is the intercom message id: a retry of a message whose receipt never went adds no second entry.
+ * call woke a tower run (it reached the run as an event), and `clash` says what it overlapped. `msg` is the intercom message's base id (a retry's `~r<n>` removed, towerseen.ts `baseId`) and `hash` the SHA-256 of its
+ * whole text: a retry of a message whose receipt never went adds no second entry, and the same id with other words is no retry (quiet-F011).
  */
-export interface BookEntry { seq: number; kind: BookKind; workspace: string; label: string; at: number; from: { id: string; name: string }; text: string; msg?: string; reply?: true; until?: number; resources?: string[]; woke?: true; clash?: string }
+export interface BookEntry { seq: number; kind: BookKind; workspace: string; label: string; at: number; from: { id: string; name: string }; text: string; msg?: string; hash?: string; reply?: true; until?: number; resources?: string[]; woke?: true; clash?: string }
 export interface Book { v: 1; seq: number; read: Record<string, number>; entries: BookEntry[] }
 /** An entry as a reader of every slot sees it: `slot` is its file's folder. */
 export type SlotEntry = BookEntry & { slot: string };
@@ -45,9 +46,9 @@ const slotDirs = (stateDir: string) => [stateDir, ...((): string[] => { try { re
 export const allEntries = (stateDir: string, now: number): SlotEntry[] => slotDirs(stateDir).flatMap((slot) => readBook(slot, now).entries.map((e) => ({ ...e, slot })));
 const writeBook = (dir: string, book: Book) => (ensureDir(dir), writeDurable(bookFile(dir), { ...book, entries: book.entries.slice(-BOOK_MAX) }));
 
-/** Adds an entry under the next number, flushed to disk before it returns; a message already recorded (`msg`, its sender) is not added again, and its entry comes back. */
+/** Adds an entry under the next number, flushed to disk before it returns; a message already recorded (`msg` from its sender to its workspace's tower) is not added again, and its entry comes back. */
 export function addEntry(dir: string, entry: Omit<BookEntry, "seq">, now: number): BookEntry {
-	const book = readBook(dir, now), had = entry.msg !== undefined && book.entries.find((e) => e.msg === entry.msg && e.from.id === entry.from.id);
+	const book = readBook(dir, now), had = entry.msg !== undefined && book.entries.find((e) => e.msg === entry.msg && e.from.id === entry.from.id && e.workspace === entry.workspace);
 	if (had) return had;
 	const written: BookEntry = { ...entry, seq: book.seq + 1 };
 	writeBook(dir, { ...book, seq: written.seq, entries: [...book.entries, written] });

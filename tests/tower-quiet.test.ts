@@ -435,3 +435,115 @@ test("quiet-F009: call_tower's slip note reads a slip on lines as the gate does;
 	assert.equal(withMoment({ text: "Sent." }, "deploying ws01", "shared").text, "Sent.");
 	assert.equal(untilOf("deploying ws01", 0), BOOK_KEEP_MS);
 });
+
+// --- the second review round (quiet-F010, F011; F006 and F007 rest) ---------------------------------------------------------------------------------------------------
+
+test("quiet-F010: two heads-ups whose net reads overlap still see each other's clash: the compare and the write are one step after the reads", async () => {
+	const one = slotAt(), g = gateOf(one), a = at("main-1", "ops-main", "wA", "wA:p1"), b = at("main-2", "db-main", "wA", "wA:p2");
+	let release!: () => void;
+	const held = new Promise<void>((r) => (release = r)), net = { sessions: [a, b], ps: [pane("wA:p1"), pane("wA:p2")] };
+	const ia = intake("wA", async () => (await held, net)), ib = intake("wA", async () => (await held, net));
+	const ta = g.gate.take(ia.i, a, call(a, "h1", "restarting ws01 for 10 min", "shared", false));
+	const tb = g.gate.take(ib.i, b, call(b, "h2", "restoring ws01 for 30 min", "shared", false));
+	await new Promise((r) => setImmediate(r));
+	release();
+	await Promise.all([ta, tb]);
+	assert.deepEqual([ia.n.queued, ib.n.queued], [0, 1], "the second to be written wakes the tower");
+	assert.match(g.notices[0]!, /«db-main» \(main-2\).*overlaps the heads-up of «ops-main» \(main-1\).*on «ws01»/);
+	assert.equal(ia.sent.length + ib.sent.length, 1, "only the first hears go ahead");
+});
+
+test("quiet-F010: a heads-up waits while another slot's server holds the logbook lock, and is compared and written once it has it", async () => {
+	const { takeLock, lockDirOf } = await import("../src/server/trainlock.ts");
+	const naps: (() => void)[] = [], one = slotAt(), two = slotAt("0123456789abcdef");
+	const notices: string[] = [], g = createGate({ slot: two, now: () => Date.now(), log: () => {}, notice: (_ws, text) => (notices.push(text), true), sleep: () => new Promise<void>((r) => naps.push(r)) });
+	const other = takeLock(lockDirOf(world.stateDir), "logbook", { train: "logbook", step: 0 });
+	assert.equal(other.ok, true);
+	const b = at("main-2", "db-main", "w1", "w1:p1"), it = intake("w1", netOf([b], [pane("w1:p1")]));
+	const taken = g.take(it.i, b, call(b, "h2", "restoring ws01 for 30 min", "shared", false));
+	await until(() => naps.length === 1, "the gate to wait for the lock");
+	assert.equal(readBook(two.dir, Date.now()).entries.length, 0, "nothing compared or written without the lock");
+	// The holder writes its heads-up meanwhile, then lets go.
+	addEntry(one.dir, { kind: "heads-up", workspace: "w1", label: "L-w1", at: Date.now(), from: { id: "main-1", name: "ops-main" }, text: "restarting ws01 for 10 min", resources: ["ws01"], until: Date.now() + 600_000 }, Date.now());
+	if (other.ok) other.release();
+	naps.shift()!();
+	await taken;
+	assert.equal(it.n.queued, 1, "the heads-up the holder wrote under the lock is seen");
+	assert.match(notices[0]!, /overlaps the heads-up of «ops-main» \(main-1\)/);
+});
+
+test("quiet-F010: a logbook lock that stays busy past its wait records the heads-up and wakes the tower, the safe way to be wrong", async () => {
+	const { takeLock, lockDirOf } = await import("../src/server/trainlock.ts");
+	let clock = Date.now();
+	// The holder's start time is told, not read with ps at each look.
+	const lock = { startOf: () => "T-1" }, logs: string[] = [];
+	const g = createGate({ slot: slotAt(), now: () => clock, log: (event, facts) => void logs.push(`${event} ${facts.why ?? facts.wake ?? ""}`), notice: () => true, sleep: async (ms) => void (clock += ms), lock });
+	const other = takeLock(lockDirOf(world.stateDir), "logbook", { train: "logbook", step: 0, started: "T-1" }, lock);
+	assert.equal(other.ok, true);
+	const m = at("main-1", "ops-main", "wA", "wA:p1"), it = intake("wA", netOf([m], [pane("wA:p1")]));
+	await g.take(it.i, m, call(m, "h1", "restarting ws01 for 10 min", "shared", false));
+	if (other.ok) other.release();
+	assert.equal(it.n.queued, 1);
+	assert.equal(readBook(world.stateDir, clock).entries[0]?.woke, true);
+	assert.ok(logs.some((l) => /^tower-gate-wake .*logbook lock/.test(l)), logs.join("\n"));
+});
+
+test("quiet-F011: a retry under its ~rN id joins the call in flight by its base id, per receiving tower and sender; a retry with other words gets no receipt", async () => {
+	const one = slotAt(), g = gateOf(one), m = at("main-1", "docs-main", "wA", "wA:p1");
+	let release!: () => void;
+	const held = new Promise<void>((r) => (release = r)), net = { sessions: [m], ps: [pane("wA:p1", { sb_role: "main", sb_opened_by: "main-0" })] };
+	const it = intake("wA", async () => (await held, net));
+	const first = g.gate.take(it.i, m, call(m, "m1", "done: api landed", "milestone", false));
+	const retry = g.gate.take(it.i, m, call(m, "m1~r1", "done: api landed", "milestone", false));
+	const other = g.gate.take(it.i, m, call(m, "m1~r2", "done: something else", "milestone", false));
+	release();
+	assert.deepEqual(await Promise.all([first, retry, other]), [true, true, false], "the retry shares the receipt; other words under the same base id do not");
+	assert.deepEqual([readBook(one.dir, Date.now()).entries.length, it.n.queued], [1, 1], "one entry, queued once");
+	assert.equal(readBook(one.dir, Date.now()).entries[0]!.msg, "m1", "the entry keeps the base id");
+	// A server that started again has no call in flight: the entry answers for its base id, and its fingerprint for its words.
+	const again = gateOf(one), later = intake("wA", netOf(net.sessions, net.ps));
+	assert.equal(await again.gate.take(later.i, m, call(m, "m1~r3", "done: api landed", "milestone", false)), true);
+	assert.equal(await again.gate.take(later.i, m, call(m, "m1~r4", "done: something else", "milestone", false)), false);
+	assert.deepEqual([readBook(one.dir, Date.now()).entries.length, later.n.queued, later.n.seen], [1, 1, 0], "the retry is queued as its first try decided; the other words are dropped");
+	// Another tower that got the same id from the sender keeps its own entry.
+	const there = intake("wB", netOf(net.sessions, net.ps));
+	assert.equal(await again.gate.take(there.i, m, call(m, "m1", "done: api landed", "milestone", false)), true);
+	assert.equal(readBook(one.dir, Date.now()).entries.length, 2);
+});
+
+test("quiet-F006: a train: block is a manifest before anything else: one that does not read is refused, a car slip in it included; a train's own heads-up is no manifest", () => {
+	const none = { opened: () => false, expects: () => false };
+	const of = (why: Why, text: string) => sortCall(stamp({ from: { name: "a", id: "main-1", role: "main", workspace: "Alpha" }, kind: "call_tower", scope: "tower", to: [tower0], reply: false, why }, text), "main-1", none);
+	assert.match(String((of("shared", "train:\napp: web\nbase: develop\nstages: merge, deploy") as { why?: string }).why), /missing project and code/);
+	const slip = "car: web | tickets: MP-1\nhead: 0123456789abcdef0123456789abcdef01234567";
+	assert.match(String((of("shared", `train:\nproject: mp\ncode: tomorrow\n\n${slip}`) as { why?: string }).why), /not a train code/);
+	assert.deepEqual(of("shared", `train:\nproject: mp\ncode: 2026-11-28-a\n\n${slip}`), { book: false });
+	assert.deepEqual(of("shared", "train: 2026-11-28-a deploying ws01 for 20 min"), { book: "heads-up", wake: false });
+});
+
+test("quiet-F007: the handover notice of a Straw Boss before handed-to (0.99.0's text, the sender's own session in it) is still queued", () => {
+	const none = { opened: () => false, expects: () => false };
+	const head = "[straw net from=docs-main id=main-1 role=main workspace=Alpha kind=call_tower scope=tower to=\"tower (tower of Alpha)\" reply=none why=milestone]";
+	// The text v0.99.0's closemain.ts `handedNotice` writes, word for word.
+	const text = (id: string) => `Straw Boss: main docs-main (session ${id}) handed over to its successor in tab wA:t2 (session opened-wA:p101), which took the handoff. docs-main steps down now and closes itself once its successor confirms the takeover and nothing of it runs; if it is still open later while its successor is live and it is idle, close it with boss_close_main with main "${id}".`;
+	assert.deepEqual(sortCall(`${head} ${text("main-1")}`, "main-1", none), { book: false });
+	assert.deepEqual(sortCall(`${head} ${text("main-9")}`, "main-1", none), { book: "milestone", wake: false }, "the text names another session than its sender: a milestone");
+});
+
+test("quiet-F011: at the intake, a retry of a call in flight is receipted with it, and one with other words is not", async () => {
+	await setup();
+	const m = main("main-1", "docs-main", "wA:p1", { sb_opened_by: "main-0" }), t = tower(), list = t.listSessions;
+	let release!: () => void, asked = 0;
+	const held = new Promise<void>((r) => (release = r));
+	t.listSessions = async () => (asked++, await held, list());
+	t.incoming(m, call(m, "m1", "done: api landed", "milestone", false));
+	await until(() => asked > 0, "the gate to read the net");
+	t.incoming(m, call(m, "m1~r1", "done: api landed", "milestone", false));
+	t.incoming(m, call(m, "m1~r2", "done: other words", "milestone", false));
+	t.listSessions = list;
+	release();
+	await until(() => t.receipts.filter((r) => r.status === "queued").length === 2, "the receipts");
+	assert.deepEqual(t.receipts.filter((r) => r.status === "queued").map((r) => r.messageId).sort(), ["m1", "m1~r1"]);
+	assert.equal(book().length, 1);
+	assert.equal(readQueue(world.slot, "wA").filter((e) => e.kind === "intercom").length, 1, "queued once");
+});

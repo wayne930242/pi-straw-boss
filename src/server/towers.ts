@@ -405,7 +405,7 @@ export function createTowers(o: TowersOptions): Towers {
 		kids: createKids({ port: { on: () => readTowerRuns(slot.stateDir).headless, pi: () => resolvePi(o.env, readTowerRuns(slot.stateDir).pi), env: o.env, herdr: slot.herdr, dir: (ws) => towerDir(slot, ws), ...o.kidsPort }, log, now }),
 		allyEnded: (end) => allyReceipts({ slot, now, unattended: () => o.unattended?.() === true, answered: (run, ask) => answered.has(run, ask), label: () => o.ally?.selfLabel?.() ?? "the box", log: (event, facts) => log.line(event, facts), send: (ws, device, text, inReplyTo) => o.link ? o.link({ op: "send", device, text, reply: false, inReplyTo }, services.get(ws)?.record.id ?? "", true) : Promise.reject(new Error("no link holder")) })(end), ...o.runs });
 
-	const gate = createGate({ slot, now, log: (event, facts) => log.line(event, facts), notice: (workspace, text, key) => runs.notice(workspace, text, key) });
+	const gate = createGate({ slot, now, sleep, log: (event, facts) => log.line(event, facts), notice: (workspace, text, key) => runs.notice(workspace, text, key) });
 	const standing = createStanding({ run, api: cfg.api, world: cfg.world, sleep, now, log, command: o.promptCommand ?? (() => undefined), timers: o.standing, ...(o.standingWait ? { wait: o.standingWait } : {}), ...(o.runs?.platform ? { platform: o.runs.platform } : {}), ...(o.runs?.alive ? { alive: o.runs.alive } : {}), locale: () => localeOf(o.env, slot.stateDir), attended: () => !o.unattended?.(), once: () => headless() });
 	/** `towerRuns.headless`: runs are the server's children, a service may have no tab, and a viewer pane is typed into once (docs/specs/2026-11-23-lite-b2-d-e-f.md §4). */
 	const headless = () => readTowerRuns(slot.stateDir).headless;
@@ -466,7 +466,7 @@ export function createTowers(o: TowersOptions): Towers {
 					// A milestone or heads-up is recorded in the logbook and may wake nothing (towergate.ts); everything else is queued.
 					// The receipt goes once the gate classified and recorded the call (quiet-F002): a server that stops before then leaves it unreceipted, and the sender's retry comes back to the gate.
 					const taken = gate.take({ record: l.record, client: l.client ?? client, ...(l.reach ? { read: l.reach.read } : {}), queue, seen: () => seen.add(from.id, message.id, message.content.text) }, from, message);
-					if (taken) return void taken.then(() => client.sendMessageReceipt?.({ messageId: message.id, status: "queued", timestamp: now() }), (cause: Error) => error("queue", `a call for ${l.record.id} could not be recorded: ${cause.message}`));
+					if (taken) return void taken.then((ok) => void (ok && client.sendMessageReceipt?.({ messageId: message.id, status: "queued", timestamp: now() })), (cause: Error) => error("queue", `a call for ${l.record.id} could not be recorded: ${cause.message}`));
 					queue();
 				}
 				client.sendMessageReceipt?.({ messageId: message.id, status: "queued", timestamp: now() });
