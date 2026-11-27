@@ -15,7 +15,7 @@ const subjects = (entries: unknown[]) => todosOfBranch(entries)?.map((t) => t.su
 test("a todo/v1 entry wins over rpiv-todo's records, even an rpiv entry later on the branch; the newest valid v1 entry is the list", () => {
 	assert.deepEqual(subjects([rpiv([task(1, "pending")]), v1([task(2, "pending")]), rpiv([task(3, "pending")]), result([task(4, "pending")])]), ["task 2"]);
 	assert.deepEqual(subjects([v1([task(1, "pending")]), v1([task(5, "in_progress")])]), ["task 5"]);
-	assert.deepEqual(todoOfBranch([v1([task(1, "completed"), task(2, "in_progress", { activeForm: "doing 2" }), task(3, "deleted")])]), { done: 1, total: 2, now: "doing 2" }, "a tombstone is no task");
+	assert.deepEqual(todoOfBranch([v1([task(1, "completed"), task(2, "in_progress", { activeForm: "doing 2" }), task(3, "deleted")])]), { done: 1, total: 2, now: "doing 2", doing: 2 }, "a tombstone is no task; the summary names the todo in progress (docs/specs/2026-11-28-boss-asks.md)");
 	assert.deepEqual(snapshotOfBranch([v1([])]), { v: 1, tasks: [], nextId: 1 }, "an empty v1 list is a list: an older rpiv record does not come back");
 	assert.deepEqual(subjects([rpiv([task(1, "pending")]), v1([])]), []);
 });

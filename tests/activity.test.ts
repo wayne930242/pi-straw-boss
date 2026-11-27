@@ -69,7 +69,7 @@ test("the todo summary follows rpiv-todo's replay: state entries win over tool r
 	const result = { type: "message", message: { role: "toolResult", toolName: "todo", details: snapshot([{ id: 1, subject: "old", status: "pending" }]) } };
 	assert.deepEqual(todoOfBranch([result]), { done: 0, total: 1 });
 	const entry = { type: "custom", customType: "rpiv-todo-state", data: snapshot([{ id: 1, subject: "Write tests", status: "completed" }, { id: 2, subject: "Fix rounding", status: "in_progress", activeForm: "Fixing the\nrounding" }, { id: 3, subject: "Ship", status: "pending" }]) };
-	assert.deepEqual(todoOfBranch([entry, result]), { done: 1, total: 3, now: "Fixing the rounding" }, "a later tool result does not override a state entry");
+	assert.deepEqual(todoOfBranch([entry, result]), { done: 1, total: 3, now: "Fixing the rounding", doing: 2 }, "a later tool result does not override a state entry; the summary names the todo in progress (docs/specs/2026-11-28-boss-asks.md)");
 	assert.equal(todoOfBranch([{ type: "custom", customType: "rpiv-todo-state", data: snapshot([]) }]), undefined, "an emptied list is none");
 	assert.equal(todoOfBranch([{ type: "custom", customType: "rpiv-todo-state", data: { tasks: "x" } }]), undefined);
 	assert.ok(todoOk(todoOfBranch([entry])));
