@@ -859,3 +859,15 @@ test("RC-F009: only the end of a large session file is read, and a cut found in 
 	write(kidFile, asked, call(1, "bash", "read"), result(2, "c10", "bash"), huge.replace("c10", "zzz"));
 	assert.deepEqual(cutOf(kidFile), { kind: "call", tools: ["read"], at: CUT_AT }, "a result that answers no call does not hide the open one");
 });
+
+test("F009: a run the host resumed under a new run id while the old pane closed is not asked for again", async () => {
+	registry();
+	const { state, polls, art, kidFile } = rig();
+	state.onClose = () => {
+		writeFileSync(join(art, "subagent-scripts", "kid-one-resume-kid-2.sh"), `#!/bin/bash\n# Subagent resume script for kid-one\n# Generated: 2026-10-18T01:00:00.000Z\n# Session: ${kidFile}\ncd '/x' && PI_SUBAGENT_ID='kid-2' pi --session '${kidFile}'; echo '__SUBAGENT_DONE_'$?'__'\n`);
+		registry("kid-2"); // tracked by the host; its pane has not reported the session yet
+	};
+	await polls(2);
+	assert.equal(state.resumed.length, 0, "no second resume");
+	assert.deepEqual(state.transcript.slice(1).map((e) => e.data), [{ closing: KID }, { resumed: KID }]);
+});

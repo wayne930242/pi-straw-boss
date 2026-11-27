@@ -532,3 +532,53 @@ test("RV2-F001: a noted death the model resumed anyway, running or finished, is 
 	assert.deepEqual(v.steps(), ["skipped"]);
 	assert.ok(v.sent.every((s) => !s.wake && !/subagent_resume/.test(s.text)), "finished: no wake, no resume advice");
 });
+
+test("F007: a newer resume script the host never started only pauses a revived run: its .exit is delivered once no run of it shows", async () => {
+	const w = world({ events: runBus(() => []) }), session = w.child("r1", "worker-a");
+	w.result(session, "worker-a");
+	const p = w.make();
+	await p.poll(); w.tick(); await p.poll();
+	assert.deepEqual(w.steps(), ["reviving", "reviving", "revived"]);
+	writeFileSync(`${session}.exit`, JSON.stringify({ type: "done" }));
+	w.resume(session, "worker-a", "r1-b"); // written; its Herdr dispatch failed, so the snapshot stays empty
+	await p.poll();
+	assert.deepEqual(w.steps().at(-1), "revived", "paused, not handed off");
+	assert.ok(existsSync(`${session}.exit`));
+	w.tick(6000);
+	await p.poll();
+	assert.deepEqual(w.steps().at(-1), "delivered", "the newer run never started: the revive keeps its result");
+	assert.ok(w.sent.some((s) => s.type === RESULT && s.wake));
+	// A newer run that did start, by a pane of its own, still takes it over.
+	const v = world({ events: runBus(() => []) }), file = v.child("r1", "worker-a");
+	v.result(file, "worker-a");
+	const q2 = v.make();
+	await q2.poll(); v.tick(); await q2.poll();
+	v.resume(file, "worker-a", "r1-b");
+	v.herdr.addPane("wA:p8", "wA:t1", "pi").agent_session = { value: file };
+	writeFileSync(`${file}.exit`, JSON.stringify({ type: "done" }));
+	await q2.poll();
+	assert.deepEqual(v.steps().at(-1), "skipped");
+	assert.ok(existsSync(`${file}.exit`));
+});
+
+test("F008: a deferred revive whose pane would not close keeps its pane, and the death is tried again only once that pane is gone", async () => {
+	let reply: unknown = { version: 1, runs: [] }, once = true, failClose = true;
+	const w = world({ events: replyBus(() => reply) }), session = w.child("r1", "worker-a");
+	w.result(session, "worker-a");
+	const orig = w.herdr.runFor.bind(w.herdr);
+	w.herdr.runFor = (self: string) => { const run = orig(self); return async (args: string[]) => { if (failClose && args[0] === "pane" && args[1] === "close") throw new Error("herdr: busy"); return run(args); }; };
+	const p = w.make(5000, undefined, () => void (once && ((once = false), (reply = { version: 2, runs: [] }))));
+	await p.poll(); w.tick(); await p.poll();
+	const deferred = w.entries.flatMap((e) => (e.type === "custom" ? [(e.data as { workerRevive?: { step: string; pane?: string } }).workerRevive] : [])).at(-1);
+	assert.equal(deferred?.step, "deferred");
+	assert.ok(deferred?.pane, "the pane is in the mark");
+	reply = { version: 1, runs: [] };
+	w.tick(); await p.poll(); w.tick(); await p.poll();
+	assert.equal(w.herdr.typed.length, 0, "no second pane while the first is open");
+	assert.equal(w.steps().filter((s) => s === "reviving").length, 2);
+	failClose = false;
+	await p.poll(); // closes it
+	w.tick(); await p.poll(); w.tick(); await p.poll();
+	assert.equal(w.steps().at(-1), "revived");
+	assert.equal(w.herdr.typed.length, 1);
+});

@@ -85,6 +85,21 @@ function hostRuns(launcher: string, file: string, since: number, events?: RunEve
 	return [/\bPI_SUBAGENT_ID='([^']*)'/.exec(text)?.[1], also].some((x) => x && live.has(x)) ? "pi-herdr-agents runs it again" : undefined;
 }
 
+/** Whether a host run took over the session of a revive sb started (`mine`, its pane): a string says why. A newer script alone only pauses (null, as an unread owner does): the host writes it before
+ * it dispatches, so its run counts as started only once tracked, in a pane of its own, or reported in the transcript; a script that shows none of these within START_MS never started (review F007). */
+function handedOff(launcher: string, file: string, since: number, d: ChildRevive, ps: Pane[], mine: string | undefined, now: number): string | undefined | null {
+	const script = newest(launcher, file), live = tracked(d.events), p = ps.find((x) => x.agent_session?.value === file && x.pane_id !== mine);
+	if (!live) return null;
+	let text = "";
+	try { text = script ? readFileSync(script.path, "utf8") : ""; } catch { /* gone */ }
+	const id = /\bPI_SUBAGENT_ID='([^']*)'/.exec(text)?.[1];
+	if (id && live.has(id)) return "pi-herdr-agents runs it again";
+	if (!script || script.at <= since) return undefined;
+	if (p) return `pane ${p.pane_id} runs its session now`;
+	if (d.entries().some((e) => e.type === "custom_message" && FINALS.has(e.customType ?? "") && (e.details as { sessionFile?: unknown } | undefined)?.sessionFile === file && (Date.parse(e.timestamp ?? "") || 0) >= script.at)) return "a later result or ping names its session file";
+	return now - script.at < (d.startMs ?? START_MS) ? null : undefined;
+}
+
 /** The newest launch or resume script of `launcher` whose header names `file`, read for a revive; a string is why it cannot be. */
 export function launchOf(launcher: string, file: string): Launch | string {
 	const found = newest(launcher, file);
@@ -221,8 +236,9 @@ export function childRevive(d: ChildRevive) {
 			const seen = await holder(), other = seen === undefined ? hostRuns(launcher, death.file, launch.at, d.events, launch.id) : seen;
 			if (other === null) {
 				// Not known free is not free: the pane goes, the model is told nothing, and the death is looked at again (review snapshot-F004).
+				// Its pane stays in the mark: the death is looked at again only once Herdr no longer lists it (review F008).
 				await close();
-				mark({ ...base, step: "deferred", at: d.now() });
+				mark({ ...base, step: "deferred", at: d.now(), pane });
 				return d.tell(`Straw Boss: waits to revive subagent ${launch.name}: who runs its session cannot be told now`);
 			}
 			if (other) {
@@ -268,7 +284,7 @@ export function childRevive(d: ChildRevive) {
 	/** A revived run: its `.exit` delivered, or its second death told, while no one else runs its file. */
 	async function watch(m: Mark, ps: Pane[], list: Session[] | undefined, now: number): Promise<void> {
 		// A resume the host started since is that run's, and so is the `.exit` (review snapshot-F002); unknown waits.
-		const other = hostRuns(d.file() ?? "", m.file, m.since ?? m.at, d.events);
+		const other = handedOff(d.file() ?? "", m.file, m.since ?? m.at, d, ps, m.pane, now);
 		if (other === null) return;
 		if (other) return (gone.delete(m.death), leave(m, other, ps, now));
 		const exit = `${m.file}.exit`;
@@ -319,7 +335,7 @@ export function childRevive(d: ChildRevive) {
 			for (const m of cutOff) {
 				// Only the pane it made is its own: another pane on the file, or a run the host supervises now, is someone else's, which a reload must not take over (review snapshot-F002).
 				const p = ps.find((x) => x.agent_session?.value === m.file), mine = p !== undefined && p.pane_id === m.pane;
-				const other = p && !mine ? `pane ${p.pane_id} runs its session now` : hostRuns(launcher, m.file, m.since ?? m.at, d.events);
+				const other = p && !mine ? `pane ${p.pane_id} runs its session now` : handedOff(launcher, m.file, m.since ?? m.at, d, ps, m.pane, now);
 				if (other === null) continue; // unknown: the next look
 				if (other) await leave(m, other, ps, now);
 				else if (mine) mark({ ...m, step: "revived", at: now, pane: m.pane });
@@ -335,6 +351,8 @@ export function childRevive(d: ChildRevive) {
 			if (!live) return;
 			for (const o of open) {
 				if (stopped) return;
+				const left = marks.get(o.id)?.pane;
+				if (left && ps.some((p) => p.pane_id === left)) { await d.run(["pane", "close", left]).catch(() => {}); continue; } // a deferred revive's pane still open
 				const launch = launchOf(launcher, o.death.file), facts = factsOf(o.death.file, ps, list);
 				const later = superseded(o, all, launch);
 				if (later) {

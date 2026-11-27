@@ -70,6 +70,21 @@ function launchOf(file: string, id: string): Launch | undefined {
 	}
 }
 
+/** Whether a run of the host or a result in `entries` has `session` now: a resume takes it under a new run id, so a run is matched by its script's session file (review F009). */
+function taken(file: string, session: string, entries: Entry[], events: Restored["events"]): boolean | null {
+	const live = tracked(events), dir = join(artifacts(file), "subagent-scripts");
+	if (!live) return null;
+	if (entries.some((e) => e.type === "custom_message" && FINAL.includes(e.customType ?? "") && (e.details as { sessionFile?: unknown } | undefined)?.sessionFile === session)) return true;
+	try {
+		return readdirSync(dir).some((name) => {
+			const text = name.endsWith(".sh") ? readFileSync(join(dir, name), "utf8") : "", id = /\bPI_SUBAGENT_ID='([^']*)'/.exec(text)?.[1];
+			return id !== undefined && live.has(id) && /^# Session: (.+)$/m.exec(text)?.[1]?.trim() === session;
+		});
+	} catch {
+		return false;
+	}
+}
+
 /** The sidecar pi-herdr-agents writes beside a subagent session file, or undefined when there is none or it cannot be read. */
 function policyOf(file: string): { owner?: unknown; persistent?: unknown } | undefined {
 	try {
@@ -279,6 +294,12 @@ export function restored(d: Restored) {
 					d.remember({ gaveUp: c.id });
 					d.tell(`Straw Boss: could not close the restored pane ${c.pane} of ${c.name}, so it was not resumed: ${(error as Error).message}`, "warning");
 				}
+			}
+			// Read again after the waits: a run the host or the model resumed meanwhile, under any run id, is not asked for twice; an unreadable host proves nothing, so it waits for the next start.
+			for (const c of [...resumable]) {
+				const t = taken(file, c.session, d.entries(), d.events);
+				if (t !== false) resumable.splice(resumable.indexOf(c), 1);
+				if (t) d.remember({ resumed: c.id });
 			}
 			// A stopped session sends nothing: a closed pane's record says `closing`, and the next session start asks.
 			if (stopped || (!resumable.length && !kept.length)) return;
