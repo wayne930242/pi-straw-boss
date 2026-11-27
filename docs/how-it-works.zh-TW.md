@@ -54,7 +54,7 @@ flowchart TD
 
 | 執行 | 由什麼喚醒 | 它是什麼 |
 |---|---|---|
-| 事件 run | session 送來的事件，例如主智慧體的 `call_tower` 或完成的里程碑 | 常駐 pane 裡的一個全新 pi；以 `tower_done` 和交接筆記結束 |
+| 事件 run | session 送來的事件，例如主智慧體 `blocked` 的 `call_tower`、有衝突的報備，或塔台開啟的主智慧體的完成報告 | 常駐 pane 裡的一個全新 pi；以 `tower_done` 和交接筆記結束 |
 | 老闆對話 | 老闆的話（頁面的輸入框、常駐 pane、`/boss tower`） | 接續老闆上一個 session 的 run |
 | 隊友 run | 隊友的裝置送來的 Straw Link 訊息 | 常駐 pane 旁邊的 pane 裡的一個全新 pi，以寄件者的信任等級執行 |
 
@@ -702,7 +702,7 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 #### `board_read({ scope?, device? })`
 
-`board_read({ scope?, device? })`（塔台和主智慧體能用；成員只拿到 `towers` 區段）回答 JSON：一則說明遠端條目是資料的 `note`、`local`（每個運作中主智慧體的工作區、分頁、名稱、`kind`、狀態、`now`、`items`、`updatedSecondsAgo`；沒有條目的運作中主智慧體只顯示它的名稱和分頁；閒置主智慧體的舊條目帶 `stale: true`，值守主智慧體的不會；`kind` 是 `coordinator`、`integrator` 或 `standing`，取自主智慧體的 `sb_duty`，和 `tower_list` 讀到的相同，火車、已結束的條目，以及沒有發布種類的主智慧體為 null；隊友的 `remote` 列沒有它），以及只在設定了 Straw Link 時才有的 `remote`（每個隊友裝置一列：`origin: "remote"`、團隊在這台電腦上的名稱、裝置的 id、短 id 和**取自名冊的**標籤、`online`、`boardSecondsAgo`，以及它的條目），以及 `towers`（0.83.0 之前 `boss_status` 給的內容：這個 session、這個工作區與它的塔台、主塔台與自動模式、每個分頁的主智慧體與種類，以及其他工作區的塔台；在遠端輪次裡和 `tower_list` 一樣限定範圍並清理）。`scope` 是 `local`、`remote` 或 `all`；`device` 讀一個隊友（和 `tower_send` 的解析方式相同，所以未知或有歧義的名稱是一個錯誤，並列出候選者），並略過本機的部分。遠端文字保留它的字元，但會失去控制和格式字元，並再截斷一次。
+`board_read({ scope?, device? })`（塔台和主智慧體能用；成員只拿到 `towers` 區段）回答 JSON：一則說明遠端條目是資料的 `note`、`local`（每個運作中主智慧體的工作區、分頁、名稱、`kind`、狀態、`now`、`items`、`updatedSecondsAgo`；沒有條目的運作中主智慧體只顯示它的名稱和分頁；閒置主智慧體的舊條目帶 `stale: true`，值守主智慧體的不會；`kind` 是 `coordinator`、`integrator` 或 `standing`，取自主智慧體的 `sb_duty`，和 `tower_list` 讀到的相同，火車、已結束的條目，以及沒有發布種類的主智慧體為 null；隊友的 `remote` 列沒有它），以及只在設定了 Straw Link 時才有的 `remote`（每個隊友裝置一列：`origin: "remote"`、團隊在這台電腦上的名稱、裝置的 id、短 id 和**取自名冊的**標籤、`online`、`boardSecondsAgo`，以及它的條目），以及 `towers`（0.83.0 之前 `boss_status` 給的內容：這個 session、這個工作區與它的塔台、主塔台與自動模式、每個分頁的主智慧體與種類，以及其他工作區的塔台；在遠端輪次裡和 `tower_list` 一樣限定範圍並清理），以及 `logbook`（遠端輪次裡沒有：`recent` 是這個工作區最近一天的里程碑與報備，新的在前，`elsewhere` 是其他工作區仍有效的報備；見[帳本](#帳本)）。`scope` 是 `local`、`remote` 或 `all`；`device` 讀一個隊友（和 `tower_send` 的解析方式相同，所以未知或有歧義的名稱是一個錯誤，並列出候選者），並略過本機的部分。遠端文字保留它的字元，但會失去控制和格式字元，並再截斷一次。
 
 #### 在遠端輪次裡
 
@@ -738,7 +738,7 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 
 **清除**（只有伺服器標為 `clearable` 的列：session 不是運作中的主智慧體，或閒置的運作中主智慧體的那一行超過 2 小時）在頁面的面板裡詢問，然後 post `board/clear {session}`：伺服器只接受指名看板資料夾裡某個檔案的 session id，自己再讀一次看板（絕不採信頁面的說法），拒絕寫入者在這期間又寫過的行，刪除檔案，並在它的 session 仍然開著時（閒置的主智慧體，或不再是主智慧體的 session，顯示為「not a main」）告訴寫入者一次：一則 `kind=board_clear` 訊息（`The boss cleared your work-board line…`），而回答會寫 `told: "delivered"`（它的連線收下了）、`"queued"`（broker 持有它）或 `false`，頁面把這些讀成「Cleared; it was told」、「Cleared; the reminder is queued」和「Cleared」；完全不在運作的 session 不會被告知任何事。
 
-請求在路上時，按鈕會停用。寫入者的自動填入是和它上次寫的內容比較，所以被清掉的那一行只有在它的 todo 清單或名稱變動時才會回來。`/boss board` 把同樣的列印成文字。禪沒有變。
+請求在路上時，按鈕會停用。寫入者的自動填入是和它上次寫的內容比較，所以被清掉的那一行只有在它的 todo 清單或名稱變動時才會回來。`/boss board` 把同樣的列印成文字，`/boss board log` 則印出帳本（[帳本](#帳本)）。禪沒有變。
 
 </details>
 
@@ -3599,8 +3599,8 @@ Herdr（0.9.5）會在一秒內，丟掉它不認得標籤的已回報智慧體�
 
 | `why` | 時機 | 回覆 |
 |---|---|---|
-| `milestone` | 一項任務落地、交付物就緒，或塔台要求的事完成了。 | `reply: false`，除非主智慧體需要答案。 |
-| `shared` | 在主智慧體動它的分頁之外的任何東西之前：連接埠、資料庫、共用分支、部署目標、另一個應用程式的 checkout、執行中的服務。它說明是什麼以及多久，作為報備，不等回覆就繼續；塔台只在有衝突時回答。 | 不預期（車廂單等 sb 的車廂通知：結果會這樣說）。 |
+| `milestone` | 一項任務落地、交付物就緒，或塔台要求的事完成了。sb 把它記進塔台的帳本；只有在它回應塔台的請求時才會喚醒 run（[帳本](#帳本)）。 | `reply: false`，除非主智慧體需要答案（這時 sb 會回答說不會有答案）。 |
+| `shared` | 在主智慧體動它的分頁之外的任何東西之前：連接埠、資料庫、共用分支、部署目標、另一個應用程式的 checkout、執行中的服務。它以名稱說明是什麼以及多久，作為報備，不等回覆就繼續。sb 把它記下，只在它和另一則仍有效的報備或某個主智慧體的看板重疊時才喚醒塔台；否則 sb 回答「recorded, no clash seen」。 | 不預期（車廂單等 sb 的車廂通知：結果會這樣說）。 |
 | `blocked` | 主智慧體在等它的分頁之外的某個人，或等一個它的授權沒有涵蓋的決定。只有老闆能做的決定放進 `call_tower` 的 `boss` 欄位：sb 在主智慧體自己的面板裡問他，他的回答就是結果，什麼都不送給塔台；自動模式開著時，以及任何畫不出對話框的地方，它照舊送給塔台，塔台把它擱置到自動模式結束，再以 `wait_returned` 發回（[規格](specs/2026-11-25-idle-wrap-up.md)第二部分）。成員也以同樣的方式回報協調上的摩擦。 | 預期有。 |
 
 <details>
@@ -3612,14 +3612,38 @@ Herdr（0.9.5）會在一秒內，丟掉它不認得標籤的已回報智慧體�
 
 </details>
 
-#### 保留
+#### 帳本
 
-標頭說 `why=milestone` 與 `reply=none`、而且沒有本機 run 存活的 intercom 事件，會從第一個這樣的事件起算，最多等 30 秒（`hold`）等其他事件，所以一起完成的主智慧體會落在同一個 run 裡。其他每個事件（`shared`、`blocked`、未指定、預期回覆、老闆、通知、計時器）像以前一樣在 1 秒時喚醒，並帶著任何被保留的 milestone 一起。存活的 run 在它的下一個閒置時刻取得每個事件，不保留。server 只讀事件文字最開頭的標頭，所以在更後面或引用的名稱裡拼出 `why=milestone` 的訊息不會被保留。
+從 0.112.0 起（老闆 2026-11-28：「塔台只要有辦法查帳就好」，[規格](specs/2026-11-28-tower-quiet.md)），sb server 的收件處把每一則 `milestone` 與 `shared` 呼叫記進帳本 `<state folder>/logbook.json`，只在 run 有事可做時才喚醒它。被喚醒的 run 的簡報會在其他內容之前列出還沒有 run 讀過的條目（`Logbook since your last run:`）；`board_read` 的 `logbook` 區段與 `/boss board log` 則為塔台、主智慧體與老闆列出它們。
+
+| 到達塔台身分的東西 | 0.112.0 之前 | 現在 |
+|---|---|---|
+| `call_tower` `blocked`，或沒有 `why`（`unspecified`） | 1 秒時喚醒 | 相同 |
+| 塔台開啟的主智慧體（它的 pane 有 `sb_opened_by`，或開啟者的帳裡有它）或這個塔台問過的 session（`expects.json`）送來的 `call_tower` `milestone` | 最多等 30 秒（保留），然後喚醒 | 相同，並記下它喚醒了塔台 |
+| 其他任何 `call_tower` `milestone` | 最多等 30 秒，然後喚醒 | 只記下；期望回覆的寄件者會被告知不會有答案 |
+| 帶著車廂單或 `train:` 清單的 `call_tower` `shared` | 1 秒時喚醒 | 相同 |
+| 其他任何 `call_tower` `shared`（報備） | 1 秒時喚醒 | 記下；只在它和另一個 session（任何工作區）仍有效的報備，或它的工作區裡另一個主智慧體或火車的看板那一行或未完成項目重疊時，才在一則指名雙方的 sb 通知之後於 1 秒時喚醒；否則告訴寄件者「recorded, no clash seen」 |
+| 帶有 `waits-on=`、`ask=`、`relay=`、`in-reply-to=`、`fwd=`、`origin=` 或 `remote=` 的 `call_tower` | 依它的 `why` 喚醒 | 相同，從不記下 |
+| 其他任何 intercom 訊息（`tower_send`、廣播、交接、沒有標頭的訊息）、老闆的話、server 通知（產能、`main_died`、停滯、run 結束後才失敗的工具、退回的等待、link 等待的路由器、ledger 清掃、保留下來的 worker）、`wakeAfter` 計時器 | 1 秒時喚醒 | 相同 |
+| 主塔台擱置的通知 | 安靜地排入：下一個 run 取走它 | 相同 |
 
 <details>
 <summary>細節</summary>
 
-塔台的 run 提示（`prompts/tower-run.md`）說明每個原因該怎麼做：`milestone` 更新它的義務，告訴等它的人，並關閉它開啟的主智慧體；`shared` 呼叫（主智慧體寫入或改變它的分頁之外的東西，不是讀取）是報備，不是請求放行：主智慧體直接繼續，塔台對照看板與它的義務檢查，只在有衝突時告訴主智慧體與擁有者；`blocked` 呼叫會轉給它的擁有者，唯獨只有老闆能做的決定例外，塔台在它的交接筆記中指名它為等待老闆，並告訴主智慧體，而不是把它送回去。自動模式關著時，本機主智慧體自己要問老闆的事不會到塔台：`call_tower` 的 `boss` 在主智慧體的面板裡問他。
+這道閘（`src/server/towergate.ts`）和保留一樣，只讀寄件者的程式碼寫在文字最開頭的標頭：舊版 Straw Boss 的主智慧體（box 上的 0.99.0）送出同樣的標頭，走過同一道閘，所以協定沒有任何改變。一筆條目記著它的種類、工作區、時間、寄件者、標頭底下的訊息（摺疊空白，最多 300 字元：寄件者自己的話，簡報以 `«»` 圍起來）、是否期望回覆，報備還有它給出的名稱（`resources`）與結束時間（`until`）；`woke` 與 `clash` 說明它的呼叫何時喚醒了 run。一個名稱算數的條件是：同時有字母與數字（`ws01`、`v3`、`MP-5827`）、是三位數以上的數字（連接埠、migration），或中間有分隔符號（`moldplan-center`、`atlas.moldplan.app`、`feat/x`）；時刻、時長、兩位數的數字、指令的旗標（`--include-all`），以及單獨的 `main` 或 `staging`（每個 repository 都有：在 2026-11-26 與 27 日的報備裡，它把推到不同 repository 的動作配在一起）都不算。報備在它的文字指名的時間結束（`until 14:30`、`for 2h`、`~10 min`），最晚不超過它送達後 24 小時；條目保留 24 小時。只因共用一個名稱而相符也會喚醒塔台，由塔台判斷：這是比較安全的錯法。
+
+條目在訊息的 `queued` 回條送出之前寫入並寫到磁碟，和事件一樣。和其他報備的比對立刻進行；和看板的比對，以及里程碑的 `sb_opened_by` 檢查，在回條之後讀網路，讀取失敗就喚醒 run，並在 server 記錄裡寫明原因（`tower-gate-wake`）。程式碼的回答以塔台身分的標頭（`kind=tower_reply`）送出，除非寄件者期望回覆，否則帶 pi-intercom 的 `noWake`。簡報裡的帳本列（最多 14 列）搭在摘要的鍵上：以 `tower_done` 結束的 run，或關閉的老闆對話，會把工作區的已讀標記移過它們，而當掉的 run 把它們留給下一個。
+
+</details>
+
+#### 保留
+
+標頭說 `why=milestone` 與 `reply=none`（從 0.112.0 起，只有回應塔台請求的里程碑才會排入）、而且沒有本機 run 存活的 intercom 事件，會從第一個這樣的事件起算，最多等 30 秒（`hold`）等其他事件，所以一起完成的主智慧體會落在同一個 run 裡。其他每個事件（`shared`、`blocked`、未指定、預期回覆、老闆、通知、計時器）像以前一樣在 1 秒時喚醒，並帶著任何被保留的 milestone 一起。存活的 run 在它的下一個閒置時刻取得每個事件，不保留。server 只讀事件文字最開頭的標頭，所以在更後面或引用的名稱裡拼出 `why=milestone` 的訊息不會被保留。
+
+<details>
+<summary>細節</summary>
+
+塔台的 run 提示（`prompts/tower-run.md`）說明每個原因該怎麼做：簡報裡的帳本列先讀，並據以更新它的義務；到達它的 `milestone` 告訴等它的人，並關閉它開啟的主智慧體；`shared` 呼叫（主智慧體寫入或改變它的分頁之外的東西，不是讀取）是報備，不是請求放行：主智慧體直接繼續，被 sb 以衝突通知喚醒的 run 對照看板與它的義務檢查，只在真的有衝突時告訴主智慧體與擁有者；`blocked` 呼叫會轉給它的擁有者，唯獨只有老闆能做的決定例外，塔台在它的交接筆記中指名它為等待老闆，並告訴主智慧體，而不是把它送回去。自動模式關著時，本機主智慧體自己要問老闆的事不會到塔台：`call_tower` 的 `boss` 在主智慧體的面板裡問他。
 
 塔台開啟的主智慧體用 `call_tower`（`why: milestone`，不回覆）回報它的完成報告。它絕不向主智慧體要求進度，因為 `board_read` 有。
 
@@ -3644,7 +3668,7 @@ flowchart TD
 <details>
 <summary>細節</summary>
 
-塔台服務開啟時（預設），送給塔台身分的事件會喚醒常駐 pane 裡的一個 pi（[規格](specs/2026-10-26-sb-backend.md)，**The wake protocol**、**Tower tools in a run**）。每個工作區同時只有一個本機 run，整台機器最多 `towerRuns.max` 個（預設 4）；一陣事件只會啟動一個執行（喚醒前等 1 秒；已完成的里程碑最多等 30 秒，見[主智慧體呼叫塔台時](#主智慧體呼叫塔台時)）。`boss` 事件（GUI 的輸入框、`/boss tower <prompt>`）優先處理。
+塔台服務開啟時（預設），送給塔台身分的事件會喚醒常駐 pane 裡的一個 pi（[規格](specs/2026-10-26-sb-backend.md)，**The wake protocol**、**Tower tools in a run**）。每個工作區同時只有一個本機 run，整台機器最多 `towerRuns.max` 個（預設 4）；一陣事件只會啟動一個執行（喚醒前等 1 秒；塔台開啟的主智慧體的完成報告最多等 30 秒，見[主智慧體呼叫塔台時](#主智慧體呼叫塔台時)）。`boss` 事件（GUI 的輸入框、`/boss tower <prompt>`）優先處理。
 
 **啟動。** 每次執行前，server 都會對 pane 所在的資料夾跑設定檢查（`assertSettingsSafe`），被拒絕就什麼都不啟動：事件留在佇列裡，塔台卡片顯示一則錯誤通知，下一次嘗試跟著下一個事件來，最多每分鐘一次。server 會在 pane 裡執行 `pi --name "tower run · <label> · <run8>" --sb-run <run id> --tools <the run's tools>`，不帶任何 Straw Boss 環境變數，並記錄這個 run的 PID 與啟動時間。老闆對話會在 `--tools` 之前加上 `--session <file>`；隊友 run 不帶 `--tools` 啟動（見下方**本機 run沒有 shell**）。
 
@@ -3675,7 +3699,7 @@ run 的 pi 在加入任何東西之前，先靠**認領**（claim）證明自己
 
 #### 執行
 
-它不加入任何網、不發佈 token、不跑守衛。它的角色段落來自 `prompts/tower-run.md`。Server 的簡報（誰、為什麼、它監督的主智慧體、未了的義務、記憶、摘要、上一份交接筆記、工具、旗標；最多 8,000 字元）另以訊息送達，後續更新也是。它每秒向 server 輪詢一次，每個閒置時刻取一個等待中的事件，當成帶 `triggerTurn` 的 `straw-tower` 訊息，然後確認為 `taken`。
+它不加入任何網、不發佈 token、不跑守衛。它的角色段落來自 `prompts/tower-run.md`。Server 的簡報（誰、為什麼、還沒有 run 讀過的帳本條目、它監督的主智慧體、未了的義務、記憶、摘要、上一份交接筆記、工具、旗標；最多 8,000 字元）另以訊息送達，後續更新也是。它每秒向 server 輪詢一次，每個閒置時刻取一個等待中的事件，當成帶 `triggerTurn` 的 `straw-tower` 訊息，然後確認為 `taken`。
 
 <details>
 <summary>細節</summary>
@@ -4187,10 +4211,10 @@ Straw Boss 給智慧體一組工具（`boss_*`、`tower_*`、`call_tower`、`boa
 
 | `tower_reply` | 僅塔台 run（不含主塔台） | 以塔台的標頭，用 intercom 名稱或 session id 回答一個本機 session（主智慧體或成員）。`reply` 說明是否等待答案；`basis` 在自動模式下指出對 blocked 的 `call_tower` 的回答依據什麼；`forward` 是車廂單的路徑（[合併火車](#合併火車)）。 |
 | `tower_done` | 僅塔台 run | 以一份給下一次執行的交接筆記結束這次執行：每行一項，1 到 1,200 個字元。`wakeAfter`（5 到 240 分鐘）要求一次後續執行，只限本機 run。老闆在執行裡時，執行不會結束（[執行中的老闆](#執行中的老闆)）。 |
-| `board_read` | 塔台、主智慧體；成員只拿到 `towers` 區段 | 工作看板：這台電腦上，以及透過 Straw Link 在隊友電腦上，每個主智慧體的一行目前工作與檢查清單、未結的 link 等待，以及 `towers` 區段（每個分頁的主智慧體與種類、這個工作區的塔台、主塔台、其他塔台；0.83.0 之前是 `boss_status`），以及主智慧體的審查串；`thread` 讀一個串的貼文，以 JSON 形式（見[工作看板](#工作看板)）。 |
+| `board_read` | 塔台、主智慧體；成員只拿到 `towers` 區段 | 工作看板：這台電腦上，以及透過 Straw Link 在隊友電腦上，每個主智慧體的一行目前工作與檢查清單、未結的 link 等待，`towers` 區段（每個分頁的主智慧體與種類、這個工作區的塔台、主塔台、其他塔台；0.83.0 之前是 `boss_status`）、`logbook` 區段（sb 為塔台記下的里程碑與報備），以及主智慧體的審查串；`thread` 讀一個串的貼文，以 JSON 形式（見[工作看板](#工作看板)）。 |
 | `board_set` | 已加入且不是塔台的 session（只有分頁的主智慧體可以寫） | 覆寫主智慧體自己的看板項目（它會依 todo 清單與名稱自己填）：`now` 與最多 8 個檢查清單項目，或 `auto: true` 交還給它；回答會說明它去了哪裡。 |
 | `link_request` | 設好 Straw Link 的受管電腦上的每個 session（session 啟動時決定），以及本機塔台 run | 以一個理由請求一個 Straw Link 動作（create、invite、invite-unattended、join、trust、leave、remove、role、rotate）。老闆在一個顯示動作、每個引數、理由與這個 session 的對話框裡核准每一個；沒有任何東西會未經詢問就執行。在無人值守裝置上與遠端輪次裡會被拒絕。 |
-| `call_tower` | 已加入的 session 與塔台 | 在標頭之下送一則訊息給這個工作區的塔台，或依 id 或完整標籤送給另一個工作區的。沒有塔台在跑時會開啟塔台分頁。`why`（在 pi 裡必填：`milestone`、`shared` 或 `blocked`）寫進標頭。`reply`（預設 true）說明是否期望塔台回答。`boss`（搭配 `why: blocked`）是只有老闆能做的決定，在本機主智慧體的面板裡問（見[主智慧體呼叫塔台時](#主智慧體呼叫塔台時)）。 |
+| `call_tower` | 已加入的 session 與塔台 | 在標頭之下送一則訊息給這個工作區的塔台，或依 id 或完整標籤送給另一個工作區的。沒有塔台在跑時會開啟塔台分頁。`why`（在 pi 裡必填：`milestone`、`shared` 或 `blocked`）寫進標頭。`reply`（預設 true）說明是否期望塔台回答。`boss`（搭配 `why: blocked`）是只有老闆能做的決定，在本機主智慧體的面板裡問（見[主智慧體呼叫塔台時](#主智慧體呼叫塔台時)）。sb 把 `milestone` 或 `shared` 呼叫記進帳本，只照[帳本](#帳本)說的時機喚醒塔台。 |
 | `boss_duty` | 分頁的主智慧體（成員、火車、塔台與子智慧體會被拒絕或沒有這個工具） | 設定主智慧體的種類：`coordinator`、`integrator`（整合關閉時省略）或 `standing`，附一行理由（至多 200 字元）。對同一個種類、對在 `train` todo 還待處理或進行中時從 `integrator` 切換出去，以及在 Straw Link 遠端輪次裡，都會被拒絕。寫入種類項目、重新 brief（一次 steer，帶完整的新角色 prompt；system 段落不變）、發佈 `sb_duty`，並記到塔台的摘要裡。 |
 | `boss_rename` | 已加入的 session，不含塔台 | 把 session 的名稱（`pi.setSessionName`）設成描述它目前工作的短語，去除空白，至多 40 字元（分頁標籤放得下 16 個）。網與 GUI 依名稱顯示 session，而主智慧體用它來標示它的 Herdr 分頁（和 pi-auto-tab-name 一樣截成 16 字元，所以那個擴充在載入時，會把標籤當成自己的，並在壓縮之間把它當成選定的名稱保留）。主智慧體自己重新命名分頁，是因為 pi-auto-tab-name 不動別人標示過的分頁，例如老闆命名的分頁，或塔台帶著標籤開啟的分頁；成員不動它的主智慧體的分頁。主智慧體的 prompt 讓它在工作轉向另一個任務時呼叫這個。塔台沒有這樣的工具：網依它的名稱認出它。名稱若是塔台或列車分頁的標籤（塔台圖示、主塔台圖示、`train <MMDDx>`）會被拒絕：還原之後，證明角色的就是這個標籤。 |
 | `boss_broadcast` | 已加入的 session 與塔台 | 在標頭（指名每個收件者）之下，送一則訊息給某個範圍內的每個其他 session。`tab`、`workspace` 與 `towers` 只觸及加入網的 session（Herdr 裡幾乎每個 pi，不含子工作區的 session；`towers` 透過主智慧體觸及沒有塔台的工作區，否則透過它的成員）；`all` 觸及這台機器上每個 pi session，不論有沒有加入（用於像是要去睡覺之類的通知）。預設 `workspace`。塔台對其他塔台用 `tower_send`。 |
