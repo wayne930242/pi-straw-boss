@@ -16,13 +16,13 @@ The sb server's intake for a tower identity (`src/server/towers.ts`, `wire`) ask
 
 What still wakes a run, and what is only recorded, is the table in [The logbook](../how-it-works.md#the-logbook). In short:
 
-- A milestone wakes a run when its sender is a main a tower opened (its pane's `sb_opened_by`, or the opener's ledger) or a session this tower asked (`expects.json`). Any other milestone is recorded; a sender that expected a reply is told that none comes.
-- A heads-up wakes a run, after an sb notice naming both sides, when it shares a name with an open heads-up from another session (any workspace), or with the board line or open items of another main or train of its workspace. Any other heads-up is recorded, and the sender gets "recorded, no clash seen" with pi-intercom's `noWake`.
-- A `shared` call carrying a car slip (a `car:` line, or `car: <app> | tickets:`) or a `train:` manifest is the tower's to forward or open, so it wakes as before. So does any call with a wait or forward field (`waits-on=`, `ask=`, `relay=`, `in-reply-to=`, `fwd=`) or a peer's turn (`origin=`, `remote=`).
+- A milestone wakes a run when its sender is a main a tower opened (its pane's `sb_opened_by`, or the opener's ledger). A session this tower asked (`expects.json`) wakes it with any `why`, a `shared` one too: that is its answer. Any other milestone is recorded; a sender that expected a reply is told that none comes.
+- A heads-up wakes a run, after an sb notice naming both sides, when it shares a name with an open heads-up from another session (any workspace of any Herdr slot), or with the board line or open items of another main or train of the sender's workspace (where the net places the sender, which may not be the tower's workspace). Any other heads-up is recorded, and the sender gets "recorded, no clash seen" with pi-intercom's `noWake`.
+- A call carrying a car slip (a `car:` line, or `car: <app> | tickets:`) or a `train:` manifest is the tower's to forward or open, whatever its `why`, so it wakes as before. So does any call with a wait or forward field (`waits-on=`, `ask=`, `relay=`, `in-reply-to=`, `fwd=`), a peer's turn (`origin=`, `remote=`), or the handover notice sb writes (`handed-to=`). A `train:` manifest that does not read is refused with a resend, never recorded as a heads-up.
 
 ## The entry
 
-`<state folder>/logbook.json`, one file for every workspace of the computer, written by the sb server alone:
+`logbook.json` in the folder of a Herdr slot (the state folder for the default Herdr, `servers/<hash>` for another), one file for every workspace of that slot, written by its sb server alone; a heads-up is compared with every slot's file:
 
 ```json
 { "v": 1, "seq": 42, "read": { "w15X": 40 }, "entries": [
@@ -30,11 +30,11 @@ What still wakes a run, and what is only recorded, is the table in [The logbook]
     "from": { "id": "01a21d65-…", "name": "Spark main" }, "text": "Now: infra-center Prometheus-only redeploy …, ~10 min",
     "resources": ["infra-center", "mp-5827"], "until": 1795760600000 },
   { "seq": 42, "kind": "milestone", "workspace": "w15X", "label": "MP Center", "at": 1795760900000,
-    "from": { "id": "01a21221-…", "name": "work-on" }, "text": "MP-5741 received by Mac …", "reply": true }
+    "from": { "id": "01a21221-…", "name": "work-on" }, "text": "MP-5741 received by Mac …", "msg": "7f3c…", "reply": true }
 ] }
 ```
 
-`text` is the message under its header, folded and cut to 300 characters: the sender's own words. `woke: true` marks an entry whose call woke a run, with `clash` naming what it overlapped. An entry is kept 24 hours. A heads-up ends at the time its text names (`until 14:30`, `for 2h`, `~10 min`) and never later than 24 hours after it came. `read` is each workspace's mark: a woken run's brief lists the entries past it, oldest first and before the rest of the brief, and a run that ends with `tower_done` moves the mark past what it was shown.
+`text` is the message under its header, folded and cut to 300 characters: the sender's own words. `woke: true` marks an entry whose call woke a run, with `clash` naming what it overlapped. An entry is kept 24 hours. A heads-up ends at the time its text names (`until 14:30`, `for 2h`, `~10 min`) and never later than 24 hours after it came. `msg` is the intercom message id: a retry of a message whose receipt never went adds no second entry. `read` is each workspace's mark: a woken run's brief lists the entries past it, oldest first and before the rest of the brief, and a run that ends with `tower_done` moves the mark to the last row its first brief carried whole.
 
 Readers: the brief (`Logbook since your last run:`), `board_read` section `logbook` for a tower or a main (never in a remote turn), and `/boss board log` for the boss.
 
@@ -67,6 +67,19 @@ The replay script is not part of the change; it read `tower/<ws>/runs/*.json`, t
 
 ## Limits and follow-ups
 
-- A heads-up whose text names no end stays open 24 hours, and a later heads-up on the same name from another main wakes the tower until then. A milestone from the same sender does not close it.
-- `call_tower`'s `SLIP_NOTE` (`withMoment`) still matches only the `car: <app> | tickets:` form of a slip, not a slip on lines; the gate matches both.
+- A heads-up whose text names no end stays open 24 hours, and a later heads-up on the same name from another main wakes the tower until then. A milestone from the same sender does not close it: sb guesses no end from free text, and an explicit end marker would be a protocol change. This stays as it is.
 - With `towerRuns` off, the resident tower gets every call, as before.
+
+## Review round
+
+The review of `07a463cf..3a0cce5d` (P0 0, P1 4) and its fixes, each with a test in `tests/tower-quiet.test.ts`:
+
+- quiet-F001 (P1): two Herdr slots wrote one `logbook.json`, so two servers overwrote each other's entries, and two slots' `w1` shared entries and a read mark. Each slot's server now writes its own file; the heads-up check and `/boss board log` read every slot's.
+- quiet-F002 (P1): the intake receipted a message before the gate had classified it (the net reads came after), so a server that stopped between left a seen message with no event. The gate now classifies, records, and queues or sees a call before the receipt goes; the entry carries the message id, so the sender's retry adds none.
+- quiet-F003 (P1): a session the tower asked that answered with `why: shared` was only recorded. Its answer now wakes the tower whatever its `why`.
+- quiet-F004 (P1): `ws01` and `ws01:5432` did not clash. An endpoint now names its host (and a local endpoint its port). The board compared is the sender's workspace's, not the receiving tower's.
+- quiet-F005 (P2): the read mark moved past rows the brief left out, and past rows only a refreshed brief showed. It now moves to the last row the run's first brief carried whole.
+- quiet-F006 (P2): a slip or manifest under `why: milestone` was recorded, and a `shared` manifest with a bad code became a heads-up. Both are now recognised whatever the `why`, and a manifest that does not read is refused with a resend.
+- quiet-F007 (P2): the handover notice sb writes went out as a plain milestone and was only recorded. Its header now names the successor (`handed-to=`), which the gate queues.
+- quiet-F008 (P2): the brief cut whole rows, which could drop the closing `»`, and the sender's name was not fenced. A row now cuts the name and the words first, then fences each.
+- quiet-F009 (P2): `call_tower`'s slip note and the gate now share one recognizer (`carriesSlip` in `src/carslip.ts`). A heads-up with no end stays as it is (Limits above).

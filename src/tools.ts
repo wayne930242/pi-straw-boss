@@ -28,6 +28,7 @@ import { todosOf } from "./items.ts";
 import { integrationOff } from "./trainswitch.ts";
 import { isRoleLabel, ownsBoard, trainLabel } from "./trainrole.ts";
 import { trustDir } from "./trust/files.ts";
+import { slotOf } from "./server/record.ts";
 import { noteLedger } from "./server/ledger.ts";
 import { tabLabel } from "./tablabel.ts";
 export { tabLabel };
@@ -100,7 +101,7 @@ export function createTools({ pi, cfg, s, guiDir, me, role, tell }: Kit, { mainD
 					// In a remote turn the towers section is for the senders, so its labels and names are scrubbed.
 					const remote = link.remoteScope(), towers = await status(remote ? { project: remote.project } : undefined);
 					if (role() === "member") return { text: JSON.stringify({ towers }, null, 2), details: { towers } };
-					const result = await readBoard({ dir: join(guiDir, "board"), now: cfg.now(), net: await read(), link, scope: scope ?? "all", workspace: s.at.workspaceId, ...(device !== undefined ? { device } : {}), waits: () => link.waitOp({ op: "waits-read", ...(link.remoteScope() ? { teams: link.remoteScope()!.teams } : {}) }).then((a) => a.waits as unknown[], () => undefined) });
+					const result = await readBoard({ dir: join(guiDir, "board"), now: cfg.now(), net: await read(), link, scope: scope ?? "all", workspace: s.at.workspaceId, slotDir: slotOf(cfg.stateDir ?? guiDir, cfg.env).dir, ...(device !== undefined ? { device } : {}), waits: () => link.waitOp({ op: "waits-read", ...(link.remoteScope() ? { teams: link.remoteScope()!.teams } : {}) }).then((a) => a.waits as unknown[], () => undefined) });
 					const threads = await pair?.list(), all = { ...result, towers, ...(threads ? { threads } : {}) };
 					return { text: JSON.stringify(all, null, 2), details: all };
 				});
@@ -255,9 +256,9 @@ export function createTools({ pi, cfg, s, guiDir, me, role, tell }: Kit, { mainD
 						noteLedger(guiDir, { kind: "handover", id: next.main, session: me(), workspace: s.at.workspaceId }, cfg.now(), (text) => tell(text, "warning")); // the ledger's `handover` (server/ledger.ts): the successor's id
 						// RVR-F004: the successor took the handoff, so this main's record says so: a later Herdr close of this tab raises no main_died, and no tower revives it.
 						if (s.file) try { markHandedOver(guiDir, s.file, { at: s.saved.successor.at, to: next.main, tab: next.tab, pane: next.pane }); } catch { /* the entry above keeps it for the next record this session writes */ }
-						// The workspace's tower closes this main once its successor is live (docs/specs/2026-11-23-tower-close-panes.md §4): it listens for that ask now, and the tower hears of the handover as a milestone, so it need not poll.
+						// The workspace's tower closes this main once its successor is live (docs/specs/2026-11-23-tower-close-panes.md §4): it listens for that ask now, and the tower hears of the handover as a milestone that names its successor (`handed-to=`), which its gate queues as an event (quiet-F007), so it need not poll.
 						try { listen(); } catch { /* no pi-intercom channel: the tower's ask goes unanswered and says so; the handover itself stands */ }
-						const told = await openTower(undefined, false).then((tower) => post(tower.id, handedNotice(name, me(), next), "call_tower", "tower", false, undefined, "milestone")).then((r) => r.status === "sent", () => false);
+						const told = await openTower(undefined, false).then((tower) => post(tower.id, handedNotice(name, me(), next), "call_tower", "tower", false, undefined, "milestone", { handedTo: next.main })).then((r) => r.status === "sent", () => false);
 						const closer = told ? "your workspace's tower was told too" : "no tower of this workspace took the notice";
 						return { text: `Opened your successor in tab ${next.tab} (session ${next.main}) and handed it ${path}. ${todos.written ? `Wrote ${todos.count} tasks to ${todos.path}.` : `No todos file written (0 tasks exported): ${todos.reason}.`} When it tells you it took over, give up your role as your rule says: boss_duty coordinator (if you are standing or integrator), boss_rename to "old ${name} (handed over to ${next.main.slice(0, 8)})", stop your monitors and loops, clear your board, and end your turn. Its takeover reaches sb too: sb then closes this session and its pane once nothing of yours runs (no subagent, monitor, loop, watch, dialog, or queued message), under auto mode too, and sends a subagent result that reaches you meanwhile to your successor itself; do not ask the boss to close you (${closer}).`, details: { ...next, towerTold: told, todos } };
 					} finally {

@@ -30,7 +30,7 @@ import { autoAnswer, headHost, headTool, type HeadPort } from "./headtools.ts";
 import type { Allows } from "./allows.ts";
 import { runApprover } from "./runapprove.ts";
 import type { Asks } from "./asks.ts";
-import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, heldFlag, localTools } from "./towerbrief.ts";
+import { ageOf, allyTools, briefOf, buildAllyBrief, gatherMains, heldFlag, localTools } from "./towerbrief.ts";
 import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
 import { createStow, type StowTimers } from "./towerstow.ts";
 import { createKids, type KidsPort } from "./runkids.ts";
@@ -62,7 +62,7 @@ import { readTowerRuns } from "./towerruns.ts";
 import type { CarBook } from "./carbook.ts";
 import { noteTrains } from "./trainnote.ts";
 import { createGate } from "./towergate.ts";
-import { entryLine, markRead, readBook, unreadOf } from "./logbook.ts";
+import { BOOK_KEY, entryLine, markRead, readBook, unreadOf } from "./logbook.ts";
 import { appendEvent, appendQuiet, bindDir, deleteService, HEAD_KEY, headDir, listServices, purgeAll, purgeQueues, putLedger, queueLength, readHeadService, readQueue, readLedger, readService, type ServiceRecord, towerDir, unbindDir, writeService } from "./towerstore.ts";
 
 // The tower service without runs (docs/specs/2026-10-26-sb-backend.md, The tower service; build step B4), behind `towerRuns.enabled`. The server stands in for a workspace's tower:
@@ -306,8 +306,8 @@ export function createTowers(o: TowersOptions): Towers {
 		towerKey: async () => (isHeadL(l) ? undefined : (await netTokens(run, place(l), "tower", l.record.name, now(), cfg.world)).own.sb_order ?? undefined),
 		yieldPane: () => standing.yieldPane(l.record.workspace),
 		freed: (over) => standing.freed(l.record.workspace, over?.fresh, over?.keepParked),
-		// The logbook's read mark rides on the digest's keys (`book:<seq>`): a run that ended well read its brief's entries.
-		clearDigest: async (keys) => { for (const k of keys) if (k.startsWith("book:")) markRead(slot.stateDir, l.record.workspace, Number(k.slice(5)), now()); await digest.drop(l.record.workspace, keys.filter((k) => !k.startsWith("book:"))); },
+		// The logbook's read mark rides on the digest's keys (`book:<seq>`, this slot's book): a run that ended well read the rows its brief carried.
+		clearDigest: async (keys) => { for (const k of keys) if (k.startsWith(BOOK_KEY)) markRead(slot.dir, l.record.workspace, Number(k.slice(BOOK_KEY.length)), now()); await digest.drop(l.record.workspace, keys.filter((k) => !k.startsWith(BOOK_KEY))); },
 		renewPane: (runId) => renew(l, runId),
 		renewing: () => l.renewing === true, seat: (why) => void stow.open(l.record.workspace, why).catch((cause: Error) => error("tower-seat", cause.message)),
 		// The run that was shown an expired wait has polled: it will not be shown again (towermemory.ts).
@@ -349,7 +349,7 @@ export function createTowers(o: TowersOptions): Towers {
 			if (!target || !l.client) throw new Error("the tower's workspace or its intercom connection is gone");
 			if (isHeadL(l)) return headBrief({ slot, run, now, auto: autoLine, record: () => l.record, sessions: () => l.client!.listSessions(), towerState, locale: localeOf(o.env, slot.stateDir) }, { woken, run: rec, ...(split ? { split } : {}) });
 			const mains = await gatherMains({ run, now, sessions: () => l.client!.listSessions(), boardDir: join(slot.stateDir, "board"), workspace: target, ledger: readLedger(slot, ws, now()) });
-			const lines = await digest.peek(ws).catch(() => []), note = lastNote(slot, ws, "local"), timer = readTimer(slot, ws), book = unreadOf(readBook(slot.stateDir, now()), ws);
+			const lines = await digest.peek(ws).catch(() => []), note = lastNote(slot, ws, "local"), timer = readTimer(slot, ws), book = unreadOf(readBook(slot.dir, now()), ws);
 			const counts: Record<string, number> = {};
 			for (const e of events) counts[e.kind] = (counts[e.kind] ?? 0) + 1;
 			const crashed = events.filter((e) => e.flag === "crash"), oldest = events.map((e) => now() - Date.parse(e.at)).filter(Number.isFinite).sort((a, b) => b - a)[0];
@@ -357,21 +357,18 @@ export function createTowers(o: TowersOptions): Towers {
 			// The boss's standing instructions and decisions and the open waits (towermemory.ts): a local brief only, never an ally's. An expired wait is shown once.
 			const kept = readMemory(slot, ws, now()), section = memorySection(kept.memory, now(), kept.problem);
 			const talk = rec.conversation && conversationLines(rec.conversation, ws);
-			return {
-				digestKeys: [...lines.map((x) => x.key), ...(book.length ? [`book:${book.at(-1)!.seq}`] : [])],
-				expired: section.expired,
-				text: buildBrief({
-					label: l.record.label, workspace: ws, head: headState(), woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, counts, identity: l.record.id,
-					...(autoLine() ? { auto: autoLine()! } : {}), ...(refresh ? { refreshed: true as const } : {}), ...(talk ? { conversation: talk.line, since: talk.since } : {}),
-					memory: section.text, mains: mains.rows, dead: deadWatch.rows(ws).map((r) => rowLine(r, now())), obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line), book: book.map((e) => entryLine(e, now())),
-					...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
-					flags: [
-						...(crashed.length ? [`${crashed.length} event${crashed.length > 1 ? "s were" : " was"} possibly handled by a run that crashed: check before acting.`] : []),
-						...(oldest !== undefined && oldest > 10 * 60_000 ? [`The oldest event waiting is ${ageOf(oldest)} old.`] : []), ...heldFlag(slot.stateDir, now()),
-					],
-					tools: localTools(localeOf(o.env, slot.stateDir)),
-				}),
-			};
+			const built = briefOf({
+				label: l.record.label, workspace: ws, head: headState(), woken: `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`, counts, identity: l.record.id,
+				...(autoLine() ? { auto: autoLine()! } : {}), ...(refresh ? { refreshed: true as const } : {}), ...(talk ? { conversation: talk.line, since: talk.since } : {}),
+				memory: section.text, mains: mains.rows, dead: deadWatch.rows(ws).map((r) => rowLine(r, now())), obligations: [...mains.opened, ...(o.asks?.openOf(ws) ?? []).map((a) => `an ask for the main ${a.forName} is open (sent ${ageOf(now() - a.at)} ago): its answer goes to that main, not to you`), ...readExpects(slot, ws, now()).map((e) => `waiting for a reply from ${e.name} (asked ${ageOf(now() - e.at)} ago): ${e.first}`), ...(timer && timer.at <= now() ? ["your wakeAfter follow-up is due"] : [])], digest: lines.map((x) => x.line), book: book.map((e) => entryLine(e, now())),
+				...(note ? { note: { text: note.note, age: ageOf(now() - Date.parse(note.at)) } } : {}),
+				flags: [
+					...(crashed.length ? [`${crashed.length} event${crashed.length > 1 ? "s were" : " was"} possibly handled by a run that crashed: check before acting.`] : []),
+					...(oldest !== undefined && oldest > 10 * 60_000 ? [`The oldest event waiting is ${ageOf(oldest)} old.`] : []), ...heldFlag(slot.stateDir, now()),
+				],
+				tools: localTools(localeOf(o.env, slot.stateDir)),
+			});
+			return { digestKeys: [...lines.map((x) => x.key), ...(built.bookShown ? [`${BOOK_KEY}${book[built.bookShown - 1]!.seq}`] : [])], expired: section.expired, text: built.text };
 		},
 	});
 	// The link holder's messages for the identity, and beside them the answers local sessions gave to what ally runs asked or opened (allyroute.ts): both are for a device's next ally run, neither enters a local run.
@@ -467,7 +464,10 @@ export function createTowers(o: TowersOptions): Towers {
 						runs.poke(l.record.workspace);
 					};
 					// A milestone or heads-up is recorded in the logbook and may wake nothing (towergate.ts); everything else is queued.
-					if (!gate.take({ record: l.record, client: l.client ?? client, ...(l.reach ? { read: l.reach.read } : {}), queue, seen: () => seen.add(from.id, message.id, message.content.text) }, from, message)) queue();
+					// The receipt goes once the gate classified and recorded the call (quiet-F002): a server that stops before then leaves it unreceipted, and the sender's retry comes back to the gate.
+					const taken = gate.take({ record: l.record, client: l.client ?? client, ...(l.reach ? { read: l.reach.read } : {}), queue, seen: () => seen.add(from.id, message.id, message.content.text) }, from, message);
+					if (taken) return void taken.then(() => client.sendMessageReceipt?.({ messageId: message.id, status: "queued", timestamp: now() }), (cause: Error) => error("queue", `a call for ${l.record.id} could not be recorded: ${cause.message}`));
+					queue();
 				}
 				client.sendMessageReceipt?.({ messageId: message.id, status: "queued", timestamp: now() });
 			} catch (cause) {
@@ -1232,7 +1232,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const route = (to: string, name: string, kind: "expect" | "opened", ask?: string, live?: ReadonlySet<string>, panes?: ReadonlySet<string>, pane?: string) => { try { addRoute(slot, ws, { ...peer!, to, name, kind, at: now(), ...(ask ? { ask } : {}), ...(pane ? { pane } : {}), ...(kind === "opened" && who.level ? { level: who.level } : {}) }, now(), live, panes); } catch (cause) { error("ally-route", (cause as Error).message); } };
 		const ev = runEvents({ slot, ws, who, label: l.record.label, read: () => l.reach!.read() }), { mainOf } = ev;
 		const host = {
-			reach: l.reach!, open: peer ? async (request: Parameters<NonNullable<Live["open"]>>[0]) => { if (request.role === "worker") return workerDoor({ slot, ws, who, peer, request, answered, l, o, now, log, run }); const opened = await l.openAlly!(request); const net = await l.reach!.read().catch(() => undefined), live = net && new Set(net.sessions.map((x) => x.id)), panes = net && new Set(net.ps.map((p) => p.pane_id)); route(opened.main, "opened main", "opened", routedAsk(answered, who.id, who.asks ?? []), live, panes, opened.pane); return opened; } : l.open!, closeMain: (l.control ? async (query: string) => forgetClosed(ws, await l.control!.closeMain(query)) : undefined) as unknown as Control["closeMain"], now, boardDir: join(slot.stateDir, "board"), label: l.record.label, ...(l.control && !peer ? { closePane: (pane: string) => l.control!.closePane(pane), deadPanes: () => l.control!.deadPanes() } : {}), stateDir: slot.stateDir, // a local run's dead panes (deadpane.ts); an ally run is refused them (runtools.ts)
+			reach: l.reach!, open: peer ? async (request: Parameters<NonNullable<Live["open"]>>[0]) => { if (request.role === "worker") return workerDoor({ slot, ws, who, peer, request, answered, l, o, now, log, run }); const opened = await l.openAlly!(request); const net = await l.reach!.read().catch(() => undefined), live = net && new Set(net.sessions.map((x) => x.id)), panes = net && new Set(net.ps.map((p) => p.pane_id)); route(opened.main, "opened main", "opened", routedAsk(answered, who.id, who.asks ?? []), live, panes, opened.pane); return opened; } : l.open!, closeMain: (l.control ? async (query: string) => forgetClosed(ws, await l.control!.closeMain(query)) : undefined) as unknown as Control["closeMain"], now, boardDir: join(slot.stateDir, "board"), slotDir: slot.dir, label: l.record.label, ...(l.control && !peer ? { closePane: (pane: string) => l.control!.closePane(pane), deadPanes: () => l.control!.deadPanes() } : {}), stateDir: slot.stateDir, // a local run's dead panes (deadpane.ts); an ally run is refused them (runtools.ts)
 			link: async (body: Record<string, unknown>) => ((await o.link?.(body, l.record.id, true)) ?? { ok: false, code: "no_holder", error: "The link holder is not running in the sb server" }) as { ok: boolean; error?: string },
 			server: o.server ?? { status: () => ({}), logs: () => [], restart: () => Promise.reject(new Error("The server cannot restart itself here")) },
 			expect: (to: string, name: string, text: string) => { if (peer) return route(to, phrase(name, 40), "expect"); try { addExpect(slot, ws, { to, name, at: now(), first: phrase(text, 80) }, now()); } catch (cause) { error("expects", (cause as Error).message); } },

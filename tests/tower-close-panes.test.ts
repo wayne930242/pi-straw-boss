@@ -105,7 +105,7 @@ test("when the successor takes the handoff, the old main's workspace tower gets 
 	const result = await handOver(m, handoff);
 	const told = world.broker.delivered.filter((d) => d.to === "tower-wA");
 	assert.equal(told.length, 1);
-	assert.match(told[0]!.message, /^\[straw net from="box watch" id=main-1 role=main workspace=Alpha kind=call_tower scope=tower to="tower · tower-wA \(tower of Alpha\)" reply=none why=milestone\]/);
+	assert.match(told[0]!.message, /^\[straw net from="box watch" id=main-1 role=main workspace=Alpha kind=call_tower scope=tower to="tower · tower-wA \(tower of Alpha\)" reply=none why=milestone handed-to=opened-wA:p101\]/, "the header names the successor: the tower's gate queues the notice (quiet-F007)");
 	assert.match(told[0]!.message, /box watch \(session main-1\) handed over to its successor in tab wA:t100 \(session opened-wA:p101\)/);
 	assert.match(told[0]!.message, /boss_close_main with main "main-1"/);
 	assert.equal(world.broker.delivered.filter((d) => d.to === "tower-wB").length, 0, "another workspace's tower hears nothing");

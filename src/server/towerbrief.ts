@@ -61,8 +61,9 @@ export interface BriefInput {
 
 const cut = (text: string, max: number) => (Array.from(text).length > max ? `${Array.from(text).slice(0, max - 1).join("").trimEnd()}…` : text);
 const one = (text: string) => text.replace(/\s+/g, " ").trim();
+const BOOK_MORE = (n: number) => `(+${n} more: board_read logbook)`;
 /** Rows, each cut to `rowMax`, at most `rows` of them and `budget` characters; the rest counted. */
-function rowsOf(list: string[], rows: number, rowMax: number, budget: number): string[] {
+function rowsOf(list: string[], rows: number, rowMax: number, budget: number, more = (n: number) => `(+${n} more)`): string[] {
 	const out: string[] = [];
 	let used = 0;
 	for (const row of list.slice(0, rows)) {
@@ -71,7 +72,21 @@ function rowsOf(list: string[], rows: number, rowMax: number, budget: number): s
 		out.push(line);
 		used += line.length + 1;
 	}
-	return out.length < list.length ? [...out, `(+${list.length - out.length} more)`] : out;
+	return out.length < list.length ? [...out, more(list.length - out.length)] : out;
+}
+/** How many of a section's rows, from its first, a brief carries whole (quiet-F005: the logbook's read mark moves past these only, not past a row the caps or the budget left out). */
+function rowsShown(text: string, section: string): number {
+	const [title, ...rows] = section.split("\n");
+	let at = title ? text.indexOf(`${title}\n`) : -1, n = 0;
+	if (at < 0) return 0;
+	at += title!.length + 1;
+	for (const row of rows) {
+		const whole = text.startsWith(`${row}\n`, at) || (text.startsWith(row, at) && text.length === at + row.length);
+		if (!row.startsWith("- ") || !whole) break;
+		n++;
+		at += row.length + 1;
+	}
+	return n;
 }
 
 /** The room the memory keeps when the brief has to give up characters: the standing instructions and the head of the memory, which come first in its section. */
@@ -85,13 +100,14 @@ function shrink(text: string, limit: number, marker: (n: number) => string, none
 	return kept > 1 ? [...lines.slice(0, kept), marker(lines.length - kept)].join("\n") : none;
 }
 
-export function buildBrief(i: BriefInput): string {
+/** The brief, and how many of its logbook rows (`book`, from the first) it carries whole. */
+export function briefOf(i: BriefInput): { text: string; bookShown: number } {
 	const woke = (["intercom", "boss", "notice", "timer"] as const).flatMap((k) => (i.counts[k] ? [`${i.counts[k]} ${k}`] : []));
 	const who = cut(`You are a run of the tower of workspace ${i.label} (${i.workspace}); head tower: ${i.head || "none"}. ${i.refreshed ? `Woken ${i.woken}; this is the newest brief, refreshed while you run.` : `Woken ${i.woken} by: ${woke.join(", ") || "nothing queued"}.`} Your identity for replies is ${i.identity}; everything you send leaves under it.`, CAPS.who) + (i.auto ? `\n${i.auto}` : "");
 	const obligations = i.obligations.length ? ["Open obligations:", ...rowsOf(i.obligations, CAPS.obligations, 200, 2300)].join("\n") : "";
 	const digest = i.digest.length ? ["Since your last run:", ...i.digest.slice(-CAPS.digest).map((l) => `- ${cut(one(l), CAPS.digestLine)}`), ...(i.digest.length > CAPS.digest ? [`(+${i.digest.length - CAPS.digest} older lines left out)`] : [])].join("\n") : "";
 	// The logbook before the rest (boss 2026-11-28): what sb recorded without waking a run, which this run reads first.
-	const book = i.book?.length ? ["Logbook since your last run: milestones and heads-ups sb recorded without waking a run, the senders' own words in «»; read these first (board_read logbook lists the open heads-ups):", ...rowsOf(i.book, CAPS.book, CAPS.bookRow, 3000)].join("\n") : "";
+	const book = i.book?.length ? ["Logbook since your last run: milestones and heads-ups sb recorded without waking a run, the senders' own words in «»; read these first (board_read logbook lists the open heads-ups):", ...rowsOf(i.book, CAPS.book, CAPS.bookRow, 3000, BOOK_MORE)].join("\n") : "";
 	const note = i.note ? [`Handoff note from the last run (${i.note.age} ago):`, cut(i.note.text, CAPS.note)].join("\n") : "";
 	const tools = cut(["Tools:", ...i.tools, "Call tower_done with a handoff note when nothing is left for you."].join("\n"), 4 * CAPS.tools);
 	const flags = [...i.flags, `A run ends after ${RUN_CAP_MINUTES} minutes.`].join("\n");
@@ -115,11 +131,13 @@ export function buildBrief(i: BriefInput): string {
 	pass("mains", 0, MORE, left("Mains you supervise"));
 	pass("digest", 0, MORE, left("Since your last run"));
 	pass("note", 0, MORE, left("Handoff note"));
-	pass("book", 0, (n) => `(+${n} more: board_read logbook)`, "Logbook: left out to fit the brief; call board_read for section logbook.");
+	pass("book", 0, BOOK_MORE, "Logbook: left out to fit the brief; call board_read for section logbook.");
 	pass("memory", 0, memoryMarker, memoryNone);
 	pass("obligations", 0, MORE, left("Open obligations"));
-	return cut([who, parts.talk, parts.book, parts.mains, parts.obligations, parts.memory, parts.digest, parts.note, tools, flags].filter(Boolean).join("\n\n"), BRIEF_MAX);
+	const text = cut([who, parts.talk, parts.book, parts.mains, parts.obligations, parts.memory, parts.digest, parts.note, tools, flags].filter(Boolean).join("\n\n"), BRIEF_MAX);
+	return { text, bookShown: parts.book ? rowsShown(text, parts.book) : 0 };
 }
+export const buildBrief = (i: BriefInput): string => briefOf(i).text;
 
 /** `3m`, `2h`, `1d 4h`: how long ago, for a note or an event. */
 export function ageOf(ms: number): string {

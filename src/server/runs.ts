@@ -28,6 +28,7 @@ import { appendChapter, headResume, recapOf } from "./headchapters.ts";
 import type { RunWho } from "./rungate.ts";
 import { DIALOG_MS, type Kids } from "./runkids.ts";
 import type { ChildExit } from "./runchild.ts";
+import { BOOK_KEY } from "./logbook.ts";
 
 // The runs of the tower service (docs/specs/2026-10-26-sb-backend.md, The wake protocol, Crash and timeout, Queueing and concurrency). An event wakes a run: a new pi started in the tower tab's standing pane
 // with `--sb-run <run id>`. The run claims itself over the control socket (a run token, kept in memory only), gets the brief, takes its events one at a time when it is idle, and ends with `tower_done`
@@ -1401,7 +1402,8 @@ export function createRuns(o: RunsOptions) {
 		try {
 			const built = await a.svc.ref.brief({ events: [], woken: a.started, run: a.rec, refresh: true, split: a.split });
 			a.briefV = version;
-			a.digestKeys = built.digestKeys;
+			// The run reads a refreshed brief only at its next turn, which may not come before tower_done: the logbook's read mark stays where the brief it surely read left it (quiet-F005).
+			a.digestKeys = [...built.digestKeys.filter((k) => !k.startsWith(BOOK_KEY)), ...a.digestKeys.filter((k) => k.startsWith(BOOK_KEY))];
 			if (built.expired?.length) a.expired = built.expired;
 			return { text: built.text, ...(built.live !== undefined ? { live: built.live } : {}) };
 		} catch (cause) {

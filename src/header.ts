@@ -21,7 +21,7 @@ const FOR = /^[A-Za-z0-9_.:-]{1,80}$/;
 /** The verified sender of a message that came over Straw Link: its device label and short id from the roster, and the team. */
 export interface Remote { device: string; short: string; team: string }
 /** `origin`: `remote:<device id>` on a message a tower sent to a local session during a Straw Link remote turn, so its receiver knows a peer's text started it. */
-export interface Stamp { from: Party; kind: Kind; scope: string; to: Party[]; reply: boolean; remote?: Remote; origin?: string; /** The ask id the message carries (a `tower` with `awaitsReply`): an ally run answers it with `inReplyTo`. */ asks?: string; /** A `link_reply` for a main: the tower identity that asked on its behalf. */ for?: string; /** A `call_tower`: why the main calls. */ why?: Why; /** The head tower's forward: the ask it opened (`H12`), and `boss:<event id>` when the boss's own turn made it. */ ask?: string; relay?: string; /** A tower's answer to the head's ask. */ inReplyTo?: string; /** A `wait_card`: the wait the boss pressed a card of (`W9`). */ wait?: string; /** A link wait (docs/specs/2026-11-21-box-mac-waits.md): the teammate device a code-written `link_wait`, `link_wait_state`, or `link_notice` line is about (`remote=`, `device=`; no `verified=`, since no peer wrote it). */ peer?: { label: string; short: string }; /** A main's `call_tower` that waits on a teammate device (§2.1): its short id, the owner and what, from the call's own fields; `cancel` withdraws the open wait to it. */ waitsOn?: { short: string; owner?: string; what?: string; cancel?: true }; /** A tower's forward of a car slip: the id of the `call_tower` event it came in and the session id that sent it (docs/specs/2026-11-07-train-workers.md §5.5); the code writes both from the event it recorded, and they go together. */ fwd?: string; fwdFrom?: string }
+export interface Stamp { from: Party; kind: Kind; scope: string; to: Party[]; reply: boolean; remote?: Remote; origin?: string; /** The ask id the message carries (a `tower` with `awaitsReply`): an ally run answers it with `inReplyTo`. */ asks?: string; /** A `link_reply` for a main: the tower identity that asked on its behalf. */ for?: string; /** A `call_tower`: why the main calls. */ why?: Why; /** The head tower's forward: the ask it opened (`H12`), and `boss:<event id>` when the boss's own turn made it. */ ask?: string; relay?: string; /** A tower's answer to the head's ask. */ inReplyTo?: string; /** A `wait_card`: the wait the boss pressed a card of (`W9`). */ wait?: string; /** A link wait (docs/specs/2026-11-21-box-mac-waits.md): the teammate device a code-written `link_wait`, `link_wait_state`, or `link_notice` line is about (`remote=`, `device=`; no `verified=`, since no peer wrote it). */ peer?: { label: string; short: string }; /** A main's `call_tower` that waits on a teammate device (§2.1): its short id, the owner and what, from the call's own fields; `cancel` withdraws the open wait to it. */ waitsOn?: { short: string; owner?: string; what?: string; cancel?: true }; /** A tower's forward of a car slip: the id of the `call_tower` event it came in and the session id that sent it (docs/specs/2026-11-07-train-workers.md §5.5); the code writes both from the event it recorded, and they go together. */ fwd?: string; fwdFrom?: string; /** A main's code-written handover notice (tools.ts, closemain.ts `handedNotice`): its successor's session id, which the tower's gate queues as an event (quiet-F007). */ handedTo?: string }
 const ORIGIN = /^remote:[a-z2-7]{26}$/;
 /** A remote sender's `id=`: never a session id of this machine, so a reply cannot be aimed at a local session by a remote's choice. */
 export const REMOTE_ID = /^link:[a-z2-7]{26}$/;
@@ -36,11 +36,12 @@ const recipient = (p: Party) => `${clean(p.name)} (${roleOf(p)}${p.workspace ? `
 
 const FWD = /^[0-9a-f]{16}$/, FWD_FROM = /^[A-Za-z0-9_.:@-]{1,128}$/;
 const WAIT = /^[WL]\d{1,6}$/, HEAD_ASK = /^H\d{1,6}$/, RELAY = /^boss:[A-Za-z0-9_.-]{1,80}$/;
-export function header({ from, kind, scope, to, reply, remote, origin, asks, for: asked, why, ask, relay, inReplyTo, wait, fwd, fwdFrom, peer, waitsOn }: Stamp): string {
+export function header({ from, kind, scope, to, reply, remote, origin, asks, for: asked, why, ask, relay, inReplyTo, wait, fwd, fwdFrom, peer, waitsOn, handedTo }: Stamp): string {
 	if ((peer && !/^[a-z2-7]{6}$/.test(peer.short)) || (waitsOn && !/^[a-z2-7]{6}$/.test(waitsOn.short))) throw new Error("A teammate device is named by its short id");
 	if ((fwd === undefined) !== (fwdFrom === undefined)) throw new Error("A forward names both the event it came in and its sender");
 	if (fwd !== undefined && !FWD.test(fwd)) throw new Error("A forward is the 16-hex id of the call_tower event it came in");
 	if (fwdFrom !== undefined && !FWD_FROM.test(fwdFrom)) throw new Error("A forward names its sender by session id");
+	if (handedTo !== undefined && !FWD_FROM.test(handedTo)) throw new Error("A handover names its successor by session id");
 	if (wait !== undefined && !WAIT.test(wait)) throw new Error("A wait is W and its number");
 	if (ask !== undefined && !HEAD_ASK.test(ask)) throw new Error("A head ask id is H and a number");
 	if (inReplyTo !== undefined && !HEAD_ASK.test(inReplyTo)) throw new Error("An in-reply-to is the head's ask id, H and a number");
@@ -68,6 +69,7 @@ export function header({ from, kind, scope, to, reply, remote, origin, asks, for
 		...(inReplyTo ? [`in-reply-to=${inReplyTo}`] : []),
 		...(wait ? [`wait=${wait}`] : []),
 		...(fwd !== undefined && fwdFrom !== undefined ? [`fwd=${fwd}`, `fwd-from=${fwdFrom}`] : []),
+		...(handedTo ? [`handed-to=${handedTo}`] : []),
 	];
 	return `[straw net ${fields.join(" ")}]`;
 }

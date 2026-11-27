@@ -1008,7 +1008,7 @@ Straw Boss 每次啟動塔台時，都會把它當作 `--model` 傳給 pi，並�
 <details>
 <summary>細節</summary>
 
-`boss_handover {handoff, reason}` 是已加入的 main 的工具。交接檔必須存在；`reason` 是一行。它走開啟者的安全啟動：檢查 main 資料夾的設定、開一個不搶焦點、以 main 名稱為標籤的新分頁、帶一次性 `sb_open_main` 的 `STRAW_BOSS_ROLE=main`、main 自己的 `sb_opened_by` 與寫成 `sb_open_duty` 的種類、`sb_handover_from=<old id>`，並以 `--name <old name>` 啟動 pi。新 pi 成為分頁的 main 後會收到一則訊息：讀交接檔並照 session 輪替規則做，它的種類已經設好，並用 `call_peer`（`to: caller`）告訴舊 main 它已接手。接著舊 main 會被告知如何交出角色（`boss_duty coordinator`、`boss_rename` 成 `old <name> (handed over to <id>)`、停掉監控與迴圈、清空看板），它的工作區塔台也會收到交接的通知（一則 `why: milestone` 的 `call_tower`，指名兩個 session）。之後舊 main 會自己關閉（2026-11-26，[輪替關閉](specs/2026-11-26-rotation-close.md)）：接班者照提示在自己的輪次裡用 `call_peer`（或 intercom `send`，不是 ask）傳給它的那一則，接班者的擴充套件從工具結果看到，經 `straw-boss/control` 告訴舊 main 的擴充套件（`took-over`；只有聽到它的那個行程、或那個行程 `/reload` 之後會照做）；等舊 main 沒有任何東西在跑（沒有輪次、排隊訊息、對話框、monitor、迴圈、watch 或子智慧體，每分鐘看一次；讀 Herdr 或 watch 清單失敗也算在跑），sb 就清掉它的看板，像 `/boss close` 那樣關掉它和它的窗格，auto 模式下也一樣；這段期間送到它的子智慧體結果會轉給接班者，標明是子智慧體的結果；擋了 6 小時仍關不掉，就告訴塔台一次（`why: blocked`），不關閉。它的角色紀錄會標成已交接，之後它的分頁被關掉時不會發 `main_died`，也沒有塔台會救它。一次只能有一個活著的接班者：第一個接班者的窗格還在時，第二次呼叫會被拒絕；交接進行中，或 Herdr 說不出那個窗格是否還活著時也一樣。成員、火車、塔台（它沒有這個工具）、替隊友裝置開的 main（它的接班者會跑在裝置的撤銷與簽章停止之外）以及隊友的回合都會被拒絕；失敗時會關掉它建立的分頁。
+`boss_handover {handoff, reason}` 是已加入的 main 的工具。交接檔必須存在；`reason` 是一行。它走開啟者的安全啟動：檢查 main 資料夾的設定、開一個不搶焦點、以 main 名稱為標籤的新分頁、帶一次性 `sb_open_main` 的 `STRAW_BOSS_ROLE=main`、main 自己的 `sb_opened_by` 與寫成 `sb_open_duty` 的種類、`sb_handover_from=<old id>`，並以 `--name <old name>` 啟動 pi。新 pi 成為分頁的 main 後會收到一則訊息：讀交接檔並照 session 輪替規則做，它的種類已經設好，並用 `call_peer`（`to: caller`）告訴舊 main 它已接手。接著舊 main 會被告知如何交出角色（`boss_duty coordinator`、`boss_rename` 成 `old <name> (handed over to <id>)`、停掉監控與迴圈、清空看板），它的工作區塔台也會收到交接的通知（一則 `why: milestone` 的 `call_tower`，指名兩個 session，它的標頭指名接班者 `handed-to=`，所以塔台的閘把它當成事件排入）。之後舊 main 會自己關閉（2026-11-26，[輪替關閉](specs/2026-11-26-rotation-close.md)）：接班者照提示在自己的輪次裡用 `call_peer`（或 intercom `send`，不是 ask）傳給它的那一則，接班者的擴充套件從工具結果看到，經 `straw-boss/control` 告訴舊 main 的擴充套件（`took-over`；只有聽到它的那個行程、或那個行程 `/reload` 之後會照做）；等舊 main 沒有任何東西在跑（沒有輪次、排隊訊息、對話框、monitor、迴圈、watch 或子智慧體，每分鐘看一次；讀 Herdr 或 watch 清單失敗也算在跑），sb 就清掉它的看板，像 `/boss close` 那樣關掉它和它的窗格，auto 模式下也一樣；這段期間送到它的子智慧體結果會轉給接班者，標明是子智慧體的結果；擋了 6 小時仍關不掉，就告訴塔台一次（`why: blocked`），不關閉。它的角色紀錄會標成已交接，之後它的分頁被關掉時不會發 `main_died`，也沒有塔台會救它。一次只能有一個活著的接班者：第一個接班者的窗格還在時，第二次呼叫會被拒絕；交接進行中，或 Herdr 說不出那個窗格是否還活著時也一樣。成員、火車、塔台（它沒有這個工具）、替隊友裝置開的 main（它的接班者會跑在裝置的撤銷與簽章停止之外）以及隊友的回合都會被拒絕；失敗時會關掉它建立的分頁。
 
 </details>
 
@@ -1021,7 +1021,7 @@ Straw Boss 每次啟動塔台時，都會把它當作 `--model` 傳給 pi，並�
 
 **交接過的主智慧體。** `boss_close_main {main}` 讀這個 main 的角色紀錄（Herdr 為這個窗格指名的 session 檔的紀錄，否則是這個窗格最新的 main 紀錄）：有 `handedOver` 標記，塔台就能關老闆開的 main，也能關值守的 main，因為這個標記證明它已卸任。接班者必須活著：broker 列出它的 session id，而且 broker 放它的那個窗格裡有 pi 在跑；否則工具拒絕，什麼也不問。仍由舊 main 自己決定：它接受工作區塔台的關閉，是因為它自己的 `successor` 紀錄說它已交接，而遇到進行中的輪次、排隊的訊息、對話框、monitor 或子智慧體時，它照樣拒絕。交接成功時它登記控制頻道，`/reload` 之後再登記一次。通常在塔台來問之前它已經自己關閉了（見上）。老闆開的、活著又沒有交接的 main，以及沒有交接的值守 main，都和以前一樣被拒絕。
 
-**通知。** 接班者接下交接時，舊 main 會送給它的工作區裡活著的塔台一則 `call_tower`（`why: milestone`，不回覆），指名兩個 session 與接班者的分頁；它不會為此開一座塔台。milestone 會讓塔台執行的喚醒延後 30 秒，所以舊 main 有時間卸任；它還在工作時被拒絕的關閉，會在它的下一則訊息後再試。
+**通知。** 接班者接下交接時，舊 main 會送給它的工作區裡活著的塔台一則 `call_tower`（`why: milestone`，不回覆），指名兩個 session 與接班者的分頁，標頭也指名接班者（`handed-to=`），所以塔台的閘把它當成事件排入，絕不只記下；它不會為此開一座塔台。milestone 會讓塔台執行的喚醒延後 30 秒，所以舊 main 有時間卸任；它還在工作時被拒絕的關閉，會在它的下一則訊息後再試。
 
 **死掉的智慧體窗格。** `boss_close_main` 不帶參數時列出塔台工作區裡死掉的智慧體窗格，`boss_close_main {pane}` 則關掉其中一個，只關窗格、絕不關分頁：它是分頁裡唯一的窗格時由 Herdr 關掉分頁，查看之後才切進那個分頁的窗格會留著。由一張表（`src/deadpane.ts`）決定，窗格符合下列任一列時塔台就拒絕：
 
@@ -3614,25 +3614,25 @@ Herdr（0.9.5）會在一秒內，丟掉它不認得標籤的已回報智慧體�
 
 #### 帳本
 
-從 0.112.0 起（老闆 2026-11-28：「塔台只要有辦法查帳就好」，[規格](specs/2026-11-28-tower-quiet.md)），sb server 的收件處把每一則 `milestone` 與 `shared` 呼叫記進帳本 `<state folder>/logbook.json`，只在 run 有事可做時才喚醒它。被喚醒的 run 的簡報會在其他內容之前列出還沒有 run 讀過的條目（`Logbook since your last run:`）；`board_read` 的 `logbook` 區段與 `/boss board log` 則為塔台、主智慧體與老闆列出它們。
+從 0.112.0 起（老闆 2026-11-28：「塔台只要有辦法查帳就好」，[規格](specs/2026-11-28-tower-quiet.md)），sb server 的收件處把每一則 `milestone` 與 `shared` 呼叫記進帳本，也就是它的 Herdr slot 資料夾裡的 `logbook.json`（預設 Herdr 是 state folder，其他 Herdr 是 `servers/<hash>`），只在 run 有事可做時才喚醒它。被喚醒的 run 的簡報會在其他內容之前列出還沒有 run 讀過的條目（`Logbook since your last run:`）；`board_read` 的 `logbook` 區段與 `/boss board log` 則為塔台、主智慧體與老闆列出它們。
 
 | 到達塔台身分的東西 | 0.112.0 之前 | 現在 |
 |---|---|---|
 | `call_tower` `blocked`，或沒有 `why`（`unspecified`） | 1 秒時喚醒 | 相同 |
-| 塔台開啟的主智慧體（它的 pane 有 `sb_opened_by`，或開啟者的帳裡有它）或這個塔台問過的 session（`expects.json`）送來的 `call_tower` `milestone` | 最多等 30 秒（保留），然後喚醒 | 相同，並記下它喚醒了塔台 |
+| 塔台開啟的主智慧體（它的 pane 有 `sb_opened_by`，或開啟者的帳裡有它）送來的 `call_tower` `milestone`，或這個塔台問過的 session（`expects.json`）送來的 `milestone` 或 `shared` | `milestone` 最多等 30 秒（保留），然後喚醒 | 相同，並記下它喚醒了塔台 |
 | 其他任何 `call_tower` `milestone` | 最多等 30 秒，然後喚醒 | 只記下；期望回覆的寄件者會被告知不會有答案 |
-| 帶著車廂單或 `train:` 清單的 `call_tower` `shared` | 1 秒時喚醒 | 相同 |
-| 其他任何 `call_tower` `shared`（報備） | 1 秒時喚醒 | 記下；只在它和另一個 session（任何工作區）仍有效的報備，或它的工作區裡另一個主智慧體或火車的看板那一行或未完成項目重疊時，才在一則指名雙方的 sb 通知之後於 1 秒時喚醒；否則告訴寄件者「recorded, no clash seen」 |
-| 帶有 `waits-on=`、`ask=`、`relay=`、`in-reply-to=`、`fwd=`、`origin=` 或 `remote=` 的 `call_tower` | 依它的 `why` 喚醒 | 相同，從不記下 |
+| 帶著車廂單（一行 `car:`，或一行裡的 `car: <app> \| tickets:`）或 `train:` 清單的 `call_tower` `shared` 或 `milestone` | 喚醒（`milestone` 在保留之後） | 相同；讀不通的 `train:` 清單（沒有 `project:`，或 `code:` 不是火車代碼）會被拒絕並要求重送，什麼都不記下 |
+| 其他任何 `call_tower` `shared`（報備） | 1 秒時喚醒 | 記下；只在它和另一個 session（任何工作區）仍有效的報備，或寄件者的工作區裡另一個主智慧體或火車的看板那一行或未完成項目重疊時，才在一則指名雙方的 sb 通知之後於 1 秒時喚醒；否則告訴寄件者「recorded, no clash seen」 |
+| 帶有 `waits-on=`、`ask=`、`relay=`、`in-reply-to=`、`fwd=`、`origin=`、`remote=` 或 `handed-to=`（sb 為交接出去的主智慧體寫的通知）的 `call_tower` | 依它的 `why` 喚醒 | 相同，從不記下 |
 | 其他任何 intercom 訊息（`tower_send`、廣播、交接、沒有標頭的訊息）、老闆的話、server 通知（產能、`main_died`、停滯、run 結束後才失敗的工具、退回的等待、link 等待的路由器、ledger 清掃、保留下來的 worker）、`wakeAfter` 計時器 | 1 秒時喚醒 | 相同 |
 | 主塔台擱置的通知 | 安靜地排入：下一個 run 取走它 | 相同 |
 
 <details>
 <summary>細節</summary>
 
-這道閘（`src/server/towergate.ts`）和保留一樣，只讀寄件者的程式碼寫在文字最開頭的標頭：舊版 Straw Boss 的主智慧體（box 上的 0.99.0）送出同樣的標頭，走過同一道閘，所以協定沒有任何改變。一筆條目記著它的種類、工作區、時間、寄件者、標頭底下的訊息（摺疊空白，最多 300 字元：寄件者自己的話，簡報以 `«»` 圍起來）、是否期望回覆，報備還有它給出的名稱（`resources`）與結束時間（`until`）；`woke` 與 `clash` 說明它的呼叫何時喚醒了 run。一個名稱算數的條件是：同時有字母與數字（`ws01`、`v3`、`MP-5827`）、是三位數以上的數字（連接埠、migration），或中間有分隔符號（`moldplan-center`、`atlas.moldplan.app`、`feat/x`）；時刻、時長、兩位數的數字、指令的旗標（`--include-all`），以及單獨的 `main` 或 `staging`（每個 repository 都有：在 2026-11-26 與 27 日的報備裡，它把推到不同 repository 的動作配在一起）都不算。報備在它的文字指名的時間結束（`until 14:30`、`for 2h`、`~10 min`），最晚不超過它送達後 24 小時；條目保留 24 小時。只因共用一個名稱而相符也會喚醒塔台，由塔台判斷：這是比較安全的錯法。
+這道閘（`src/server/towergate.ts`）和保留一樣，只讀寄件者的程式碼寫在文字最開頭的標頭：舊版 Straw Boss 的主智慧體（box 上的 0.99.0）送出同樣的標頭，走過同一道閘，所以協定沒有任何改變。一筆條目記著它的種類、工作區、時間、寄件者、標頭底下的訊息（摺疊空白，最多 300 字元：寄件者自己的話；一列先截斷它和寄件者的名稱，再各自以 `«»` 圍起來，所以任何截斷都不會切掉圍欄的結尾）、它的訊息 id（`msg`）、是否期望回覆，報備還有它給出的名稱（`resources`）與結束時間（`until`）；`woke` 與 `clash` 說明它的呼叫何時喚醒了 run。一個名稱算數的條件是：同時有字母與數字（`ws01`、`v3`、`MP-5827`）、是三位數以上的數字（連接埠、migration），或中間有分隔符號（`moldplan-center`、`atlas.moldplan.app`、`feat/x`）；端點也指名它的主機（`ws01:5432` 與 `postgres://app@ws01:5432/mp` 指名 `ws01`），這台電腦的端點（`localhost:3000`）則指名它的連接埠；時刻、時長、兩位數的數字、指令的旗標（`--include-all`），以及單獨的 `main` 或 `staging`（每個 repository 都有：在 2026-11-26 與 27 日的報備裡，它把推到不同 repository 的動作配在一起）都不算。報備在它的文字指名的時間結束（`until 14:30`、`for 2h`、`~10 min`），最晚不超過它送達後 24 小時；文字沒指名結束時間的報備保持有效整整 24 小時，寄件者之後的 `milestone` 也不會結束它（sb 不從自由文字猜結束時間）；條目保留 24 小時。只因共用一個名稱而相符也會喚醒塔台，由塔台判斷：這是比較安全的錯法。
 
-條目在訊息的 `queued` 回條送出之前寫入並寫到磁碟，和事件一樣。和其他報備的比對立刻進行；和看板的比對，以及里程碑的 `sb_opened_by` 檢查，在回條之後讀網路，讀取失敗就喚醒 run，並在 server 記錄裡寫明原因（`tower-gate-wake`）。程式碼的回答以塔台身分的標頭（`kind=tower_reply`）送出，除非寄件者期望回覆，否則帶 pi-intercom 的 `noWake`。簡報裡的帳本列（最多 14 列）搭在摘要的鍵上：以 `tower_done` 結束的 run，或關閉的老闆對話，會把工作區的已讀標記移過它們，而當掉的 run 把它們留給下一個。
+每個 sb server 只寫自己 slot 的檔案，所以同一台電腦上的兩個 Herdr server 絕不會覆寫彼此的條目，也會把它們的工作區（兩個 `w1`）分開；報備會和每個 slot 檔案裡仍有效的報備比對，`/boss board log` 也讀全部。閘先判定一則呼叫，再做別的事：先和其他報備比對，再和看板比對，以及檢查里程碑的 `sb_opened_by`，這兩者會讀網路（讀取失敗就喚醒 run，並在 server 記錄裡寫明原因，`tower-gate-wake`）。接著它寫入條目並寫到磁碟，把事件排入或把訊息記為已見，之後訊息的 `queued` 回條才送出：在那之前停下的 server 不會送出回條，寄件者會重送，閘依 `msg` 找到它的條目，不會再加一筆。程式碼的回答最後才以塔台身分的標頭（`kind=tower_reply`）送出，除非寄件者期望回覆，否則帶 pi-intercom 的 `noWake`；被拒絕的清單的回答一定會喚醒寄件者。簡報裡的帳本列（最多 14 列）搭在摘要的鍵上：以 `tower_done` 結束的 run，或關閉的老闆對話，會把工作區的已讀標記移到它的第一份簡報完整帶到的最後一列，絕不越過簡報略去的列，或只有刷新後的簡報才顯示的列，而當掉的 run 把它們留給下一個。
 
 </details>
 

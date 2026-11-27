@@ -1,7 +1,7 @@
 import { Type, type Static, type TSchema } from "typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Asked, type BossAsk, type BossQuestion, bossOf, bossParameter, withBoss } from "../bossask.ts";
-import { SLIP } from "../carslip.ts";
+import { carriesSlip } from "../carslip.ts";
 import { BLOCKED_NOTE, CALL_TOWER_DESCRIPTION, SLIP_NOTE } from "../moments.ts";
 import type { Reach } from "../reach.ts";
 import { waitOwner, waitWhat } from "./kinds.ts";
@@ -16,7 +16,7 @@ export type ToolCtx = Pick<ExtensionContext, "hasUI" | "ui">;
 type Tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>, signal?: AbortSignal, ctx?: ToolCtx, id?: string) => Promise<{ text: string; details?: unknown }>) => void;
 /** The result of a plain call with the note its moment needs (docs/specs/2026-11-26-just-in-time-prompts.md: main.md no longer carries it, so the result does). */
 export const withMoment = <R extends { text: string }>(r: R, message: string, why: string | undefined): R => {
-	const note = why === "blocked" ? BLOCKED_NOTE : why === "shared" && SLIP.test(message) ? SLIP_NOTE : undefined;
+	const note = why === "blocked" ? BLOCKED_NOTE : why === "shared" && carriesSlip(message) ? SLIP_NOTE : undefined;
 	return note ? { ...r, text: `${r.text} ${note}` } : r;
 };
 

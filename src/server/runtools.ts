@@ -53,8 +53,8 @@ export interface ToolHost {
 	stateDir?: string;
 	/** A request to the link holder as this tower's identity. */
 	link(body: Record<string, unknown>): Promise<Answer>;
-	/** The work board's folder. */
-	boardDir: string;
+	/** The work board's folder, and the folder of the server's Herdr slot (its logbook, server/logbook.ts). */
+	boardDir: string; slotDir?: string;
 	now(): number;
 	server: ServerTools;
 	/** A reply the run waits for: kept for the brief's open obligations. */
@@ -499,7 +499,7 @@ async function localTool(host: ToolHost, name: string, args: Record<string, unkn
 					return answer.boards as AllyBoard[];
 				},
 			};
-			return json({ ...(await readBoard({ dir: host.boardDir, now: host.now(), net: await reach.read(), link, scope, workspace: host.who.workspace, ...(device !== undefined ? { device } : {}), waits: waitsOf(host) })), towers: await reach.status() });
+			return json({ ...(await readBoard({ dir: host.boardDir, now: host.now(), net: await reach.read(), link, scope, workspace: host.who.workspace, ...(host.slotDir ? { slotDir: host.slotDir } : {}), ...(device !== undefined ? { device } : {}), waits: waitsOf(host) })), towers: await reach.status() });
 		}
 		case "call_tower": {
 			const done = await reach.callTower(str(args, "message"), opt(args, "workspace"), args.reply !== false, opt(args, "why"));
