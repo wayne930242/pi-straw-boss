@@ -17,7 +17,7 @@ export interface Option { title: string; description?: string }
 /** `multiple`: it takes several choices; `freeform`: it takes the user's own words; `header`: the short tag ask_user_question gives a question. */
 export interface Ask { question: string; header?: string; context?: string; options: Option[]; multiple: boolean; freeform: boolean }
 /** What a waiting session waits on: `ask` for one question, `asks` for two to four (ask_user_question), else `why` there is nothing to show; `answer` when the page may answer it (never a secret: SB-F001). */
-export interface Pending { callId: string; tool: string; ask?: Ask; asks?: Ask[]; why?: string; answer?: Answerable }
+export interface Pending { callId: string; tool: string; ask?: Ask; asks?: Ask[]; why?: string; answer?: Answerable; /** The todo the call names as the one it blocks (its `item` argument; docs/specs/2026-11-28-boss-asks.md). */ item?: number }
 export const SEVERAL = "It waits on more than one dialog.";
 /** What a wait on a secret says, and the one reading every page and `/boss answer` take it by: such a wait is never answerable (SB-F001). */
 export const SECRET = "It waits for a secret.";
@@ -104,7 +104,7 @@ async function pendingWith(file: string): Promise<{ pending?: Pending; calls: Op
 	if (hit?.sig === sig) return hit;
 	const found = s ? await openCalls(file).catch(() => null) : [], calls = !found || found === "cut" ? [] : found, [c] = calls;
 	const shape = c?.name === "ask_user" ? askOf(c.args) : c?.name === "ask_user_question" ? questionsOf(c.args) : { why: c?.name === "secret_drop" ? SECRET : "It waits on a dialog." };
-	const pending = found === "cut" ? { callId: `cut:${sig}`, tool: "dialog", why: "Its call is too long to read here." } : c && { callId: c.id, tool: c.name, ...(calls.length > 1 ? { why: SEVERAL } : shape) };
+	const pending = found === "cut" ? { callId: `cut:${sig}`, tool: "dialog", why: "Its call is too long to read here." } : c && { callId: c.id, tool: c.name, ...(calls.length > 1 ? { why: SEVERAL } : shape), ...(Number.isSafeInteger(c.args?.item) && c.args.item > 0 ? { item: c.args.item as number } : {}) };
 	const entry = { sig, pending, calls: calls.map((x) => ({ id: x.id, name: x.name })), secret: !found || found === "cut" || calls.some((x) => x.name === "secret_drop"), linkRequest: !found || found === "cut" || calls.some((x) => x.name === "link_request") }; // a file it could not read through counts as a secret, and as a link_request
 	CACHE.set(file, entry);
 	if (CACHE.size > 64) CACHE.delete(CACHE.keys().next().value!);

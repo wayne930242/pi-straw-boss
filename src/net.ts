@@ -11,7 +11,7 @@ import type { Shelf } from "./documents.ts";
 import type { Monitor } from "./monitors.ts";
 import { canonical } from "./history.ts";
 import { type NetEvent, type Tick, trackActivity } from "./activity.ts";
-import type { TodoSum } from "./todo.ts";
+import type { TodoSum } from "./todo.ts"; import type { AskView } from "./asktypes.ts";
 import { type CoordinatorDuty, type Duty, isCoordinatorDuty } from "./duty.ts";
 import { type TrainId, trainFromToken } from "./trainrole.ts";
 import type { NetLoad, YardJoin, Yards } from "./train/yardview.ts";
@@ -28,7 +28,7 @@ type Lately = { since?: number; ticks?: Tick[]; todo?: TodoSum };
 /** `start`: an event of a tower the sb server has not started yet; it waits for the run to start and is queued behind no turn (a pi's own queue says `steer` or `followUp`). */
 export interface Queued { text: string; as: "steer" | "followUp" | "start"; /** Why a tower's message waits with no start under way (as `followUp`): the service is off, a start was refused a moment ago, the run slots are full, the tower's pi is not live, or the standing seat is not proven. */ why?: "off" | "refused" | "full" | "offline" | "unproven" }
 /** `ended`: a subagent whose run is over (Row.ended); the page clears its finished alert. */
-export interface Unit extends Shelf, Lately { queued?: Queued[]; monitors?: Monitor[]; id: string; key: string; control: boolean; name: string; /** A subagent's full name when its row shows another (Row.alias): a todo's owner and `/boss send` name it so. */ alias?: string; role: "main" | "member" | "train" | "subagent" | "outside"; /** A main's kind, from its pane's `sb_duty` token (docs/specs/2026-11-09-agent-kinds.md §2); a launched subagent's, from the agent role its launch script names (D16). */ duty?: Duty; /** A train's project and code (its pane's `sb_train` token). */ train?: TrainId; mark: Mark; note?: string; subs: Unit[]; pending?: Pending; ended?: boolean }
+export interface Unit extends Shelf, Lately { queued?: Queued[]; monitors?: Monitor[]; id: string; key: string; control: boolean; name: string; /** A subagent's full name when its row shows another (Row.alias): a todo's owner and `/boss send` name it so. */ alias?: string; role: "main" | "member" | "train" | "subagent" | "outside"; /** A main's kind, from its pane's `sb_duty` token (docs/specs/2026-11-09-agent-kinds.md §2); a launched subagent's, from the agent role its launch script names (D16). */ duty?: Duty; /** A train's project and code (its pane's `sb_train` token). */ train?: TrainId; mark: Mark; note?: string; subs: Unit[]; pending?: Pending; ended?: boolean; /** How many open questions to the boss this unit asks (docs/specs/2026-11-28-boss-asks.md); the server counts them into the page's reading. */ asks?: number }
 export interface Tab { id: string; label: string; units: Unit[] }
 export interface Outpost extends Lately { id: string; label: string; mark: Mark }
 /** A run's proposal the boss has not answered; `cites` is the boss message it comes from. */ export interface MemoryProposal { id: string; op: "add" | "retire"; kind: "standing" | "decision"; text: string; target?: string; cites?: string }
@@ -86,7 +86,7 @@ export interface RemoteBox {
 	/** A base two sessions of the box show (one per team) whose sessions differ: the units whose own session's state, scope or reach differs from the base's, by unit key (a unit's actions go to the session that shows it). */
 	units?: Record<string, { state: "live" | "unreachable"; scope: "team" | "box"; can: string[] }>;
 }
-export interface Base { id: string; label: string; mark: Mark; /** Only on a base of an unattended box (RemoteBox). */ box?: RemoteBox; tower: ({ name: string; mark: Mark; key: string; control: boolean; service?: TowerService; pending?: Pending; queued?: Queued[]; monitors?: Monitor[]; subs: Unit[] } & Shelf & Lately) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
+export interface Base { id: string; label: string; mark: Mark; /** Only on a base of an unattended box (RemoteBox). */ box?: RemoteBox; tower: ({ name: string; mark: Mark; key: string; control: boolean; service?: TowerService; pending?: Pending; queued?: Queued[]; monitors?: Monitor[]; subs: Unit[]; asks?: number } & Shelf & Lately) | null; tabs: Tab[]; outposts: Outpost[]; outside: Unit[] }
 /**
  * `stashed`: the bases put away with /boss stash, waiting to be popped (stash.ts). `trust`: the folders whose agents wait for a trust decision (trust/serve.ts). `link`: Straw Link's teammates' bases, the notices it raises, and the confirms waiting for the boss; absent
  * when Straw Link is not set up or says nothing. `yards`: the trains of this computer, per project, from the trainboard files (docs/specs/2026-11-07-train-workers.md §11.1, server/trainyard.ts); `load`: the 1-minute load average and the core count
@@ -95,7 +95,7 @@ export interface Base { id: string; label: string; mark: Mark; /** Only on a bas
  */
 /** Auto mode as the boss own page shows it (docs/specs/2026-11-09-auto-mode.md, section 7): present only while it is on or the head request waits for the boss confirm (`pending`: the id the confirm names, what the boss said, when it lapses). Like `board` it never reaches the link, a remote turn, or the operate slice. */
 export interface AutoSnap { on: boolean; since?: string; pending?: { id: string; said: string; expires: number } }
-export interface Net { bases: Base[]; /** The head tower (nethead.ts); present when the server runs the tower service. */ head?: HeadUnit; stashed?: Stashed[]; trust?: TrustAsk[]; events?: NetEvent[]; link?: LinkSummary; yards?: Yards; load?: NetLoad; board?: BoardViewRow[]; /** The device capacity row with the board (boardview.ts `capView`). */ capacity?: CapView; auto?: AutoSnap; /** This server can switch auto mode (the primary slot's, attended): the page shows the chip only then. */ autoable?: true }
+export interface Net { bases: Base[]; /** The head tower (nethead.ts); present when the server runs the tower service. */ head?: HeadUnit; stashed?: Stashed[]; trust?: TrustAsk[]; events?: NetEvent[]; link?: LinkSummary; yards?: Yards; load?: NetLoad; board?: BoardViewRow[]; /** The device capacity row with the board (boardview.ts `capView`). */ capacity?: CapView; auto?: AutoSnap; /** This server can switch auto mode (the primary slot's, attended): the page shows the chip only then. */ autoable?: true; /** The open questions to the boss on this computer (docs/specs/2026-11-28-boss-asks.md); like `board`, never sent to the link, a remote turn or the operate slice. */ asks?: AskView[] }
 /** What the server may read for a key: the registry entry is the allow list, and paths never come from the browser. */
 export interface Ref { key: string; base: string; name: string; role: string; file?: string; pane?: string; /** The head tower's chapters, oldest first (the last is `file`): the history chains through them (watch.ts). */ chapters?: HeadChapter[] }
 export interface Found extends Ref { live: boolean; successor?: string }
