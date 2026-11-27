@@ -44,3 +44,10 @@ A change-set that touches a shared contract, authorization or permission data, o
 ## 4. Start
 
 Dispatch without asking the boss to confirm the plan, and change it the same way: the todos record it. Before offering the boss a design choice, read the owning app's instructions and the UI and architecture rules they name; drop the options they forbid, and quote the rule that settles the design in the brief. Through your question tool, bring the boss only the decisions the plan cannot settle, before the task they block: a requirement that is unclear or contradicts the architecture, and an authorization the work needs, such as a merge to a shared branch or a deploy.
+
+## 5. When the boss adds work mid-plan
+
+- Same project, any app: add a todo here and quote the boss verbatim in `description`. Another project: use `call_tower` with its `workspace` to open a main there.
+- Finish your current step at a safe boundary, then take the insert first. Leave displaced work pending with a note; do not delete it.
+- Keep dispatched workers running. Stop or redirect one only for shared files or if the new request invalidates its brief. For shared files, set `blockedBy` and name the worktree in `description`.
+- Tell the boss in one line where the insert went; don't ask for confirmation. Use `boss_rename` if the tab's focus changes.

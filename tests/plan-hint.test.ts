@@ -22,8 +22,9 @@ function world(kind: string | undefined) {
 		const out = (handlers.get("tool_result") ?? []).map((h) => h(event)).find((x) => x !== undefined) as { content: { text: string }[] } | undefined;
 		return out?.content.slice(1).map((c) => c.text);
 	};
-	return { todo, kind: (v: string | undefined) => void (k = v), start: () => (handlers.get("session_start") ?? []).forEach((h) => h({})) };
+	return { todo, input: (source: string) => (handlers.get("input") ?? []).forEach((h) => h({ source })), kind: (v: string | undefined) => void (k = v), start: () => (handlers.get("session_start") ?? []).forEach((h) => h({})) };
 }
+const create = { action: "create", subject: "insert" };
 const plain = (id: number, status = "pending"): Task => ({ id, subject: `task ${id}`, status });
 const graphed = (id: number, graph = "fan-out/fan-in"): Task => ({ ...plain(id), metadata: { graph } });
 
@@ -76,6 +77,22 @@ test("once more only after the open todos named a graph and then again named non
 	assert.equal(w.todo({ action: "create", subject: "c" }, [graphed(1, "single-loop"), plain(2), plain(3)]), undefined);
 	assert.ok(w.todo({ action: "create", subject: "d" }, [{ ...graphed(1), status: "completed" }, plain(2, "completed"), plain(3, "completed"), plain(4)]), "a new plan with no graph");
 	assert.equal(w.todo({ action: "create", subject: "e" }, [plain(4), plain(5)]), undefined);
+});
+
+test("a create during existing work carries §5 once per boss input, independent of graph advice", () => {
+	for (const kind of ["coordinator", "standing"]) {
+		const w = world(kind), running = { ...graphed(1), status: "in_progress" };
+		assert.equal(w.todo(create, [running]), undefined, "the todo created by this call does not count");
+		const block = w.todo(create, [running, plain(2)])?.[0];
+		assert.ok(block?.includes("boss_rename"));
+		assert.ok(Buffer.byteLength(block!) <= 1200);
+		w.input("extension");
+		assert.equal(w.todo(create, [running, plain(2), plain(3)]), undefined);
+		w.input("interactive");
+		assert.deepEqual(w.todo(create, [running, plain(2), plain(3), plain(4)]), [block]);
+		assert.equal(world(kind).todo({ action: "create", tasks: [{subject: "a"}, {subject: "b"}] }, [running, plain(2)]), undefined);
+	}
+	for (const kind of [undefined, "member", "worker", "train", "integrator", "tower"]) assert.equal(world(kind).todo(create, [{ ...graphed(1), status: "in_progress" }, plain(2)]), undefined);
 });
 
 test("no member, worker, integrator, train, or tower gets it", () => {

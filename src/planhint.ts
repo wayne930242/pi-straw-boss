@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Todo, todosOf } from "./items.ts";
-import { todosOfBranch } from "./todo.ts";
+import { snapshotOfBranch } from "./todo.ts";
 
 // The planning rule at the moment it is missed (docs/specs/2026-11-26-plan-graph-jit.md; boss 2026-11-26 「sb 在派工當下送規則」): a coordinator or standing main whose `todo` create leaves it with open
 // todos and none names a graph gets planning.md §1 and §2 on that result, condensed from the file itself, so the wording has one source. Once, and once more only after its open todos named a graph
@@ -40,18 +40,25 @@ const openOf = (list: readonly Todo[]) => list.filter((t) => t.status !== "compl
 
 /** `kind`: this session's main kind now (none while it is no main or runs a tower run); `planning`: the folder of planning.md (its §1-§2 hold no integration blocks), or its text for a test, read at the moment the block is sent. */
 export function registerPlanHint(pi: ExtensionAPI, kind: () => string | undefined, planning: string | (() => string)): void {
-	let armed = true; // false after the block was shown, until the open todos name a graph or none is open
-	pi.on("session_start", () => void (armed = true));
+	let armed = true, insertArmed = true;
+	pi.on("session_start", () => { armed = insertArmed = true; });
+	pi.on("input", ({ source }) => { if (source !== "extension") insertArmed = true; });
 	pi.on("tool_result", (event, ctx) => {
 		const k = kind();
 		if (event.toolName !== "todo" || event.isError || (k !== "coordinator" && k !== "standing")) return;
-		const list = todosOf(event.details) ?? (ctx ? todosOfBranch(ctx.sessionManager.getBranch()) : undefined);
+		let snapshot = event.details, list = todosOf(snapshot);
+		if (!list && ctx) list = todosOf(snapshot = snapshotOfBranch(ctx.sessionManager.getBranch()));
 		if (!list) return;
 		const open = openOf(list), missing = open.length > 0 && !open.some((t) => t.graph);
-		if (!missing) return void (armed = true);
-		if (!armed || !creates(event.input)) return;
-		const text = planHint(typeof planning === "string" ? readFileSync(join(planning, "planning.md"), "utf8") : planning()); // a planning.md without its sections throws: pi passes the result through and reports the hook's error; tests/plan-hint.test.ts holds the file to them
-		armed = false;
-		return { content: [...event.content, { type: "text" as const, text }] };
+		if (!missing) armed = true;
+		if (!creates(event.input) || (event.details as { error?: string } | undefined)?.error) return;
+		// A successful create allocates consecutive ids ending just before nextId, including a batch.
+		const firstNew = (snapshot as { nextId: number }).nextId - (Array.isArray(event.input.tasks) ? event.input.tasks.length : 1);
+		const insert = insertArmed && open.some((t) => t.id < firstNew && t.status === "in_progress");
+		if (!(armed && missing) && !insert) return;
+		const doc = typeof planning === "string" ? readFileSync(join(planning, "planning.md"), "utf8") : planning(), content = [...event.content];
+		if (armed && missing) { content.push({ type: "text", text: planHint(doc) }); armed = false; }
+		if (insert) { content.push({ type: "text", text: section(doc, 5).replace(/\n- /g, "\n").replace(": - ", ":\n") }); insertArmed = false; }
+		return { content };
 	});
 }
