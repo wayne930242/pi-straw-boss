@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createHost } from "../src/host/index.ts";
@@ -48,4 +50,14 @@ test("a dropped parameter passed as null or false is no use of it, and a call wi
 	// Outside Herdr Maestro answers that it needs Herdr: the call got past the simple surface.
 	const result = (await w.tool("subagent").execute("c2", { name: "scout-1", task: "look", worktree: null }, undefined, undefined, w.ctx)) as { content: { text: string }[] };
 	assert.match(result.content[0]!.text, /herdr|session file/i);
+});
+
+test("a role defined as a persistent specialist is refused, and an explicit persistent: false launches it as one task", async () => {
+	const agents = join(process.env.PI_CODING_AGENT_DIR!, "agents");
+	mkdirSync(agents, { recursive: true });
+	writeFileSync(join(agents, "watcher.md"), "---\nname: watcher\ndescription: watches\npersistent: true\n---\nWatch.\n");
+	const w = await loaded();
+	await assert.rejects(Promise.resolve().then(() => w.tool("subagent").execute("c3", { name: "w", task: "t", agent: "watcher" }, undefined, undefined, w.ctx)), /role `watcher` is defined as a persistent specialist/);
+	const result = (await w.tool("subagent").execute("c4", { name: "w", task: "t", agent: "watcher", persistent: false }, undefined, undefined, w.ctx)) as { content: { text: string }[] };
+	assert.match(result.content[0]!.text, /herdr|session file/i, "past the simple surface");
 });
