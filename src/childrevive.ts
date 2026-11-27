@@ -6,7 +6,7 @@ import { CONFIRM_MS, LOOKS } from "./dead.ts";
 import { type HerdrRun, type Pane, panes, result, type Session, type Sleep } from "./herdr.ts";
 import { encoded, lastText, RESULT } from "./inherit.ts";
 import { artifacts, readJson } from "./netdata.ts";
-import { tracked } from "./orphan.ts";
+import { tracked, type RunHost } from "./trackedruns.ts";
 import { DAY_MS, LOOP_MS, sessionHeader } from "./revive.ts";
 import { line } from "./safetext.ts";
 
@@ -29,7 +29,7 @@ interface Open { id: string; at: number; death: Death; index: number }
 /** A run as its newest launch or resume script says: the folder and the command a revive runs again. */
 export interface Launch { name: string; id?: string; /** When its script was generated. */ at: number; folder: string; command: string; worktree?: { path?: string; branch?: string } }
 
-export interface ChildRevive {
+export interface ChildRevive extends RunHost {
 	run: HerdrRun;
 	sleep: Sleep;
 	now(): number;
@@ -194,7 +194,9 @@ export function childRevive(d: ChildRevive) {
 			// A resume pi-herdr-agents started since the look is in its registry before its pane shows the file (review RV-F006).
 			if (typeof fresh !== "string" && fresh.at > launch.at) return "a newer launch or resume script names its session file";
 			const ids = [launch.id, typeof fresh === "string" ? undefined : fresh.id].filter((x): x is string => Boolean(x));
-			if (ids.some((x) => tracked()?.has(x))) return "pi-herdr-agents runs it again";
+			const live = tracked(d.events);
+			if (!live) throw new Error("tracked runs are unknown; cannot confirm the session is free");
+			if (ids.some((x) => live.has(x))) return "pi-herdr-agents runs it again";
 			return p ? `pane ${p.pane_id} runs its session now` : id && (await d.sessions().catch(() => [])).some((s) => s.id === id) ? "the broker lists its session now" : undefined;
 		};
 		try {
@@ -294,7 +296,8 @@ export function childRevive(d: ChildRevive) {
 				}
 			}
 			for (const m of revived) watch(m, ps, list, now);
-			const live = tracked();
+			const live = tracked(d.events);
+			if (!live) return;
 			for (const o of open) {
 				if (stopped) return;
 				const launch = launchOf(launcher, o.death.file), facts = factsOf(o.death.file, ps, list);
@@ -309,7 +312,7 @@ export function childRevive(d: ChildRevive) {
 				const old = counted(seen, o.id, now).first - o.at > LOOP_MS ? "its death is older than 10 minutes, from before Straw Boss looked" : undefined;
 				const why = old ?? refusal(o.death, o.at, marks, launch) ?? (facts.mtimeMs === undefined ? "its session file is gone" : undefined);
 				// pi-herdr-agents tracking the run's id again (a resume of its own) holds it as a pane does.
-				const owned = typeof launch !== "string" && launch.id !== undefined && live?.has(launch.id) === true;
+				const owned = typeof launch !== "string" && launch.id !== undefined && live.has(launch.id);
 				const verdict = classify({ now, ...facts, ...(why ? { refusal: why } : {}), held: facts.held || owned, seen: counted(seen, o.id, now) });
 				if (verdict.state === "refused") {
 					seen.delete(o.id);

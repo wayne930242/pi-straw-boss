@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import type { Pane, Session } from "../src/herdr.ts";
-import { type Entry, orphans, tracked } from "../src/orphan.ts";
+import { type Entry, orphans } from "../src/orphan.ts";
+import { tracked } from "../src/trackedruns.ts";
+import { runBus, runRow } from "./run-probe.ts";
 import { until, World } from "./fakes.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "psb-orphan-test-"));
@@ -42,7 +44,7 @@ function rig(phase = "waiting", status = "done") {
 		sendStatus: "sent",
 		delay: undefined as Promise<void> | undefined,
 	};
-	const watch = () => orphans({
+	const watch = (events?: ReturnType<typeof runBus>) => orphans({ events,
 		run: async (args) => {
 			if (args[1] === "process-info") return state.infos++, await state.hold, JSON.stringify({ result: { process_info: { foreground_processes: state.processes } } });
 			return state.lists++, JSON.stringify({ result: { panes: state.panes } });
@@ -124,6 +126,21 @@ test("a pane whose processes cannot be listed is not the child either, and the c
 	state.processes = processes;
 	await polls(1, watcher);
 	assert.equal(state.sent.length, 1, "a miss is only a count, and the child had not been given up on yet");
+});
+
+test("after reload the new owner's tracked run is not orphaned, even with an empty legacy Map", async () => {
+	registry();
+	const { watch, watcher, polls, state } = rig();
+	await watcher.poll(); // old owner has not answered yet
+	watcher.stop();
+	let rows = [runRow("kid-1")];
+	const afterReload = watch(runBus(() => rows));
+	await polls(2, afterReload);
+	assert.equal(state.sent.length, 0);
+	registry("kid-1");
+	rows = []; // a real empty answer still wins over the stale Map
+	await polls(2, afterReload);
+	assert.equal(state.sent.length, 1);
 });
 
 test("a child the launcher still tracks is never asked, and Herdr is not even read", async () => {

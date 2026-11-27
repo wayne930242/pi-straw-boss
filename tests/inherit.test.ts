@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
+import { runBus, runRow } from "./run-probe.ts";
 import { FakeHerdr } from "./fakes.ts";
 import { inherited } from "../src/inherit.ts";
 
@@ -33,7 +34,7 @@ function parent() {
 		if (o.worktree) writeFileSync(join(art, "worktree-runs", `${run}.json`), JSON.stringify(o.worktree));
 		return session;
 	};
-	const make = () => inherited({
+	const make = (events?: ReturnType<typeof runBus>) => inherited({ events,
 		run: herdr.runFor("none"), file: () => file, entries: () => entries, type: "straw-boss",
 		remember: (data) => void entries.push({ type: "custom", customType: "straw-boss", data }),
 		deliver: (text, details) => void delivered.push({ text, details }), tell: () => {},
@@ -65,6 +66,15 @@ test("one message for the inherited runs: finished and ping delivered encoded, c
 	assert.match(text, /Idle at their prompt: planner-f \(run r-idle, pane wA:p9\)\. Straw Boss asks each once over intercom/);
 	assert.doesNotMatch(text, /worker-g/, "a run pi-herdr-agents tracks is its own to deliver");
 	assert.deepEqual(p.entries.map((e) => (e.data as { inherited: string }).inherited).sort(), ["r-cut", "r-done", "r-pers", "r-ping", "r-wt"]);
+});
+
+test("a reloaded watcher leaves a finished run to the new owner when its snapshot lists it", async () => {
+	const p = parent();
+	p.child("kept", "worker", { exit: { type: "done" } });
+	p.make().stop();
+	await p.make(runBus(() => [runRow("kept")])).poll();
+	assert.deepEqual(p.delivered, []);
+	assert.deepEqual(p.entries, []);
 });
 
 test("a running child is watched and delivered when its .exit appears; nothing repeats after a /reload", async () => {

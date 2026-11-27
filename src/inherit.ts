@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { type Cut, cutOf, describe } from "./cut.ts";
 import { type HerdrRun, type Pane, panes } from "./herdr.ts";
 import { artifacts, ownFile, readJson } from "./netdata.ts";
-import { type Entry, FINAL, tracked } from "./orphan.ts";
+import { type Entry, FINAL } from "./orphan.ts";
+import { tracked, type RunHost } from "./trackedruns.ts";
 import { plain } from "./safetext.ts";
 
 // A revived main picks up the subagents it launched before it died (docs/specs/2026-11-23-tower-revive.md §6, O1). It runs the same session file, so its artifacts folder is the dead main's own and nothing is re-parented:
@@ -21,7 +22,7 @@ export const RESULT = "straw-boss-orphan-result";
 const MAX_TEXT = 16_000, SCAN_MAX = 8 * 1024 * 1024;
 export const FOLLOW_UP_REVIVE = "Your launcher's pi died while you were working and was revived; your run was cut off. Read your session so far, check the current state before re-running anything that changes state, finish the task you were given, and report your result.";
 
-export interface Inherit {
+export interface Inherit extends RunHost {
 	run: HerdrRun;
 	file(): string | undefined;
 	entries(): Entry[];
@@ -132,7 +133,7 @@ export function inherited(d: Inherit) {
 	for (const e of d.entries()) if (e.type === "custom" && e.customType === d.type && typeof (e.data as { inherited?: unknown } | undefined)?.inherited === "string") done.add((e.data as { inherited: string }).inherited);
 	let busy = false, stopped = false, first = done.size === 0, watching = true;
 	async function poll(): Promise<void> {
-		const file = d.file(), live = tracked();
+		const file = d.file(), live = tracked(d.events);
 		if (busy || stopped || !watching || !file || !live) return;
 		busy = true;
 		try {

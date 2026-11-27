@@ -4,19 +4,11 @@ import { createReservations, type Holder, type Reservations } from "./capres.ts"
 import { dutyOfAgent } from "./duty.ts";
 import { todosOf } from "./items.ts";
 import { snapshotScan } from "./todo.ts";
+import { readRuns, type RunEvents } from "./trackedruns.ts";
 
 // Worker admission (docs/specs/2026-11-24-capacity.md, The cap). sb holds back no worker by count: on an attended device (the boss's own, who watches it) nothing gates a worker, and its
 // `capacity.budget` only feeds the board and the capacity notices. On an unattended device the device's points gate `worker` subagents against `capacity.budget`, read from config.json at
 // each admission (a change applies at once; none set: no cap, and no built-in figure). Scouts, planners, reviewers, and resumes are not workers and are never held.
-
-const REGISTRY = Symbol.for("pi-subagents/runtime");
-
-/** The names of the workers pi-herdr-agents runs for this process (its registry of the children it still waits on), or undefined when the registry cannot be read. */
-function runningWorkers(): string[] | undefined {
-	const map = (globalThis as Record<symbol, { runningSubagents?: unknown } | undefined>)[REGISTRY]?.runningSubagents;
-	if (!(map instanceof Map)) return undefined;
-	return [...map.values()].flatMap((run) => (dutyOfAgent((run as { agent?: string } | null)?.agent) === "worker" ? [String((run as { name?: unknown }).name ?? "")] : []));
-}
 
 /** The device's capacity as the sb server last wrote it (capacity.ts `readDevice`): points in use, when the row was sampled, and the mains it sampled with their running workers. */
 export interface Room { points: number; at?: number; mains?: readonly { session: string; workers?: readonly string[] }[] }
@@ -38,24 +30,29 @@ const pts = (n: number) => Math.round(n * 100) / 100;
 
 /**
  * The admission both a main's `subagent` call and the box's worker door (server/workerally.ts) run: a reservation of `need` for `who` is written first, then the row and the other reservations are read, and it stays when
- * all of it fits `budget`. `own`: the workers of a main no row lists yet, weighed by `weigh`, which its registry counts in place of its own launched reservations. Throws when the reservation cannot be written.
+ * all of it fits `budget`. For a main absent from that same row, `local` reads its workers instead of counting its launched reservations. Throws when the reservation cannot be written.
  */
-export function admitPoints(device: Pick<DeviceSide, "room" | "store">, budget: number, need: number, who: Holder, own?: { workers: string[]; weigh(name: string): number }): { id: string } | { refusal: string; used: number; held: number } {
+export function admitPoints(device: Pick<DeviceSide, "room" | "store">, budget: number, need: number, who: Holder, local?: { workers(): string[] | undefined; weigh(name: string): number }): { id: string } | { refusal: string } {
 	const id = device.store.add(need, who);
 	try {
 		const r = device.room(); // read after the reservation is published
-		const used = (r?.points ?? 0) + sum((own?.workers ?? []).map((w) => own!.weigh(w)));
+		const unlisted = local && !r?.mains?.some((m) => m.session === who.session), own = unlisted ? local.workers() : undefined;
+		if (unlisted && !own) {
+			device.store.drop(id);
+			return { refusal: "this main is not in the device row and its running workers are unknown" };
+		}
+		const used = (r?.points ?? 0) + (own ? sum(own.map(local!.weigh)) : 0);
 		const held = sum(device.store.live(r?.at ?? -Infinity, (h) => r !== undefined && shows(r, h)).filter((x) => x.id !== id && !(own && !who.self && x.session === who.session && x.launched)).map((x) => x.points));
 		if (used + held + need <= budget) return { id };
 		device.store.drop(id);
-		return { refusal: `the device runs ${pts(used)} of its ${budget} capacity points, ${pts(held)} more held by launches it does not count yet`, used, held };
+		return { refusal: `the device runs ${pts(used)} of its ${budget} capacity points, ${pts(held)} more held by launches it does not count yet` };
 	} catch (error) {
 		try { device.store.drop(id); } catch { /* it expires */ }
 		throw error;
 	}
 }
 
-export function createWorkerCap(device?: DeviceSide) {
+export function createWorkerCap(device?: DeviceSide, events?: RunEvents) {
 	/** Worker calls admitted whose tool has not returned yet, each with its reservation's id. */
 	const admitted = new Map<string, string>();
 	const snapshotOf = snapshotScan();
@@ -77,8 +74,9 @@ export function createWorkerCap(device?: DeviceSide) {
 			const me = device.session() ?? "", need = weight(name, branch);
 			let got: ReturnType<typeof admitPoints>;
 			try {
-				const listed = device.room()?.mains?.some((m) => m.session === me), own = listed ? undefined : runningWorkers(); // no row counts this main's workers: its registry does
-				got = admitPoints(device, budget, need, { session: me, worker: typeof name === "string" ? nameKey(name) : "" }, own ? { workers: own, weigh: (w) => weight(w, branch) } : undefined);
+				got = admitPoints(device, budget, need, { session: me, worker: typeof name === "string" ? nameKey(name) : "" }, {
+					workers: () => readRuns(events).runs?.filter((r) => dutyOfAgent(r.agent) === "worker").map((r) => r.name), weigh: (w) => weight(w, branch),
+				});
 			} catch (error) {
 				return { block: true, reason: `sb: the device's capacity reservation could not be written (${(error as Error).message}): no worker starts until it can.` };
 			}

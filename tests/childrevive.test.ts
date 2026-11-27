@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
+import { runBus, runRow } from "./run-probe.ts";
 import { FakeHerdr } from "./fakes.ts";
 import { classify, deathOf, HOST_DEATHS } from "../src/childdead.ts";
 import { childRevive, type Entry, launchOf, REVIVED, reviveCommand } from "../src/childrevive.ts";
@@ -17,7 +18,7 @@ afterEach(() => void ((globalThis as Record<symbol, unknown>)[REGISTRY] = undefi
 const q = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 const MINUTE = 61_000;
 
-function world(o: { boot?: boolean } = {}) {
+function world(o: { boot?: boolean; events?: ReturnType<typeof runBus> } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "psb-childrevive-")), launcherId = "7a7a7a7a-0000-4000-8000-000000000001";
 	const launcher = join(dir, `2026-11-24T00-10-00-000Z_${launcherId}.jsonl`), art = join(dir, "artifacts", launcherId), folder = join(dir, "work it's");
 	mkdirSync(join(art, "subagent-scripts"), { recursive: true });
@@ -54,7 +55,7 @@ function world(o: { boot?: boolean } = {}) {
 			if (session && pane && !pane.agent) Object.assign(pane, { agent: "pi", agent_status: "working", agent_session: { value: session } });
 		}
 	};
-	const make = (startMs = 5000, note: (t: string) => void = (t) => void notes.push(t), onSplit?: () => void) => childRevive({
+	const make = (startMs = 5000, note: (t: string) => void = (t) => void notes.push(t), onSplit?: () => void) => childRevive({ events: o.events,
 		run: ((run) => async (args: string[]) => { const out = await run(args); if (args[0] === "pane" && args[1] === "split") onSplit?.(); return out; })(herdr.runFor("wA:p1")), sleep: async (ms) => void ((clock += ms), started()), now: () => clock, file: () => launcher, entries: () => entries, pane: () => "wA:p1",
 		sessions: async () => sessions, active: () => true, type: "straw-boss", remember: (data) => void entries.push({ type: "custom", customType: "straw-boss", data }),
 		deliver: (type, text, details, wake) => void sent.push({ type, text, details, wake }), tell: (t) => void told.push(t), note, startMs,
@@ -367,6 +368,23 @@ test("RV-F006: a resume pi-herdr-agents starts between the look and the typing s
 	assert.equal(w.herdr.typed.length, 0, "nothing typed");
 	assert.deepEqual(w.steps(), ["reviving", "reviving", "skipped"]);
 	assert.equal(w.herdr.closed.length, 1, "its pane closed");
+});
+
+test("a snapshot acquired between the look and the start prevents a second pi, and unknown cannot start one", async () => {
+	let rows = [runRow("r1")];
+	const w = world({ events: runBus(() => rows) }), session = w.child("r1", "worker-a");
+	w.result(session, "worker-a");
+	rows = [];
+	const p = w.make(5000, undefined, () => { rows = [runRow("r1")]; });
+	await p.poll(); w.tick(); await p.poll();
+	assert.equal(w.herdr.typed.length, 0);
+	assert.deepEqual(w.steps(), ["reviving", "reviving", "skipped"]);
+	const v = world(), file = v.child("r2", "worker-b");
+	delete (globalThis as Record<symbol, unknown>)[REGISTRY];
+	v.result(file, "worker-b");
+	const watcher = v.make();
+	await watcher.poll(); v.tick(); await watcher.poll();
+	assert.deepEqual(v.steps(), []);
 });
 
 test("RV-F007: an .exit read before it holds a type waits for the next look", async () => {

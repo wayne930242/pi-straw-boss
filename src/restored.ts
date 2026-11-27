@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Entry, FINAL, tracked } from "./orphan.ts";
+import { type Entry, FINAL } from "./orphan.ts";
+import { tracked, type RunHost } from "./trackedruns.ts";
 import { artifacts, ownFile, readJson } from "./netdata.ts";
 import { type Cut, continueText, cutOf, describe } from "./cut.ts";
 import { type HerdrRun, panes, type Session, type Sleep, waitFor } from "./herdr.ts";
@@ -22,7 +23,7 @@ import { type HerdrRun, panes, type Session, type Sleep, waitFor } from "./herdr
 // starting its turn, see docs/how-it-works.md), with the launcher's id to send its report to, and only while its intercom status is idle and its transcript still ends in the cut. The launcher's message says which runs
 // were cut and whether the child was told.
 
-export interface Restored {
+export interface Restored extends RunHost {
 	run: HerdrRun;
 	sleep: Sleep;
 	/** This session's file, and every entry of its transcript. */
@@ -176,7 +177,7 @@ export function restored(d: Restored) {
 
 	async function poll(): Promise<void> {
 		if (busy || stopped) return;
-		const file = d.file(), live = tracked();
+		const file = d.file(), live = tracked(d.events);
 		// A session that cannot say what it tracks cannot say what is lost; a tower and a session without a file have nothing to resume.
 		// A subagent session (it has a policy sidecar) is no launcher of its own runs: a restored nested subagent must not act for them.
 		if (!file || !live || !d.active() || existsSync(`${file}${POLICY}`)) return void (before = new Set());

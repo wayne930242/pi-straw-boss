@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { runBus, runRow } from "./run-probe.ts";
 import { LOAD_STAMP_KEY } from "../src/doctor.ts";
 import { DOCTOR_MESSAGE, registerDoctor } from "../src/doctorlive.ts";
 
@@ -58,6 +59,22 @@ test("a child whose launch denied subagent is not flagged", () => {
 	registerDoctor(p.api as never, { env: { ...env, PI_DENY_TOOLS: "subagent" }, role: () => "child" });
 	p.fire("session_start");
 	assert.deepEqual(p.fire("before_agent_start"), [undefined]);
+});
+
+test("sb_doctor reports the live tracked-run source and count, never zero for unknown", async () => {
+	const slot = globalThis as Record<symbol, unknown>, key = Symbol.for("pi-subagents/runtime");
+	const p = fakePi(ALL);
+	const pi = { ...p.api, events: runBus() };
+	const doctor = registerDoctor(pi as never, { env, role: () => "main", headOf: () => undefined });
+	doctor.addTool();
+	const text = async () => (await p.tools.get("sb_doctor")!.execute!("id", {})).content[0]!.text;
+	try {
+		assert.match(await text(), /Tracked runs: unknown$/m);
+		slot[key] = { runningSubagents: new Map() };
+		assert.match(await text(), /Tracked runs: legacy \(0\)/);
+		pi.events = runBus(() => [runRow("live")]);
+		assert.match(await text(), /Tracked runs: snapshot \(1\)/);
+	} finally { delete slot[key]; }
 });
 
 test("sb_doctor reports the load stamp and the stale check; /boss doctor fix makes an inactive tool active again", async () => {

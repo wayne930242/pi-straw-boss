@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getPackageDir, VERSION as PI_VERSION } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { runCount } from "./trackedruns.ts";
 import { execFileSyncExe } from "./exe.mjs";
 import { agentDirOf, diagnose, type DoctorFacts, type DoctorReport, type DoctorRole, gitInstallDir, LOAD_STAMP_KEY, type LoadStamp, packageName, pinOf, renderDoctor, selfCheckText, settingsPackages } from "./doctor.ts";
 
@@ -49,7 +50,7 @@ export function liveFacts(pi: ExtensionAPI, ctx: Pick<ExtensionContext, "model">
 		tools: pi.getAllTools().map((t) => ({ name: t.name, exposure: t.exposure, source: t.sourceInfo?.source })),
 		active: pi.getActiveTools(),
 		...(stamp ? { stamp } : {}),
-		...(deep ? { installed: { pin: pinOf(herdr), head: install ? (d.headOf ?? gitHead)(install) : undefined }, pi: { running: PI_VERSION, installed: (d.piInstalled ?? diskPi)() } } : {}),
+		...(deep ? { trackedRuns: runCount(pi.events), installed: { pin: pinOf(herdr), head: install ? (d.headOf ?? gitHead)(install) : undefined }, pi: { running: PI_VERSION, installed: (d.piInstalled ?? diskPi)() } } : {}),
 		provider: ctx?.model?.provider,
 		model: ctx?.model?.id,
 	};

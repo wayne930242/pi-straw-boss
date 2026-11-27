@@ -3,6 +3,8 @@ import { basename, join } from "node:path";
 import { artifacts, ownFile, readJson } from "./netdata.ts";
 import { type HerdrRun, panes, type Session } from "./herdr.ts";
 
+import { tracked, type RunHost } from "./trackedruns.ts";
+
 // A subagent that has finished, while the session that launched it can no longer receive its result, is asked once to report over intercom.
 //
 // pi-herdr-agents delivers a child's result from the launcher's own process: its watchers, and its registry of launched children (`runningSubagents`, kept
@@ -12,7 +14,7 @@ import { type HerdrRun, panes, type Session } from "./herdr.ts";
 // holds, and whose result is not in the transcript, can no longer be delivered. A registry that cannot be read proves nothing, so nothing is sent then.
 
 export interface Entry { type: string; customType?: string; data?: unknown; details?: unknown }
-export interface Orphans {
+export interface Orphans extends RunHost {
 	run: HerdrRun;
 	/** This session's file, and every entry of its transcript. */
 	file(): string | undefined;
@@ -26,16 +28,9 @@ export interface Orphans {
 	tell(text: string, level?: "info" | "warning"): void;
 }
 
-const REGISTRY = Symbol.for("pi-subagents/runtime");
 // The messages that carry a finished child's result into the launcher's transcript; their details name the child's session file.
 export const FINAL = ["subagent_result", "subagent_ping"];
 const GIVE_UP = 4;
-
-/** The ids of the runs this process's pi-herdr-agents still tracks, or undefined when the registry cannot be read. */
-export function tracked(): Set<string> | undefined {
-	const map = (globalThis as Record<symbol, { runningSubagents?: unknown } | undefined>)[REGISTRY]?.runningSubagents;
-	return map instanceof Map ? new Set(map.keys() as Iterable<string>) : undefined;
-}
 
 export function orphans(d: Orphans) {
 	// A run a revived main was told of (inherit.ts `inherited`) is handled: its result went to the model already.
@@ -60,7 +55,7 @@ export function orphans(d: Orphans) {
 
 	async function poll(): Promise<void> {
 		if (busy || stopped) return;
-		const file = d.file(), live = tracked();
+		const file = d.file(), live = tracked(d.events);
 		// Without its own session id, a session file, or a readable registry there is nothing to say or to judge by.
 		if (!file || !live || !d.me()) return void (before = new Set());
 		busy = true;

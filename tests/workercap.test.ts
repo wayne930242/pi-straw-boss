@@ -6,6 +6,7 @@ import { afterEach, test } from "node:test";
 import { capDir, writeDevice } from "../src/capacity.ts";
 import { createReservations, RES_EXPIRE_MS, type Reservations } from "../src/capres.ts";
 import { admitPoints, createWorkerCap, deviceRoom, type Room } from "../src/workercap.ts";
+import { runBus, runRow } from "./run-probe.ts";
 import { fakeClock } from "./fake-clock.ts";
 
 // docs/specs/2026-11-24-capacity.md, The cap: sb holds back no worker by count. On an attended device (the boss's own) nothing gates a worker; on an unattended one the device's points gate it,
@@ -34,6 +35,16 @@ function device(row: (Partial<Room> & { points: number }) | undefined, given: nu
 }
 const worker = (name?: string) => ({ agent: "worker", ...(name ? { name } : {}) });
 const todos = (tasks: { id: number; owner?: string; status?: string; points?: number }[]) => () => [{ type: "custom", customType: "rpiv-todo-state", data: { nextId: 99, tasks: tasks.map((t) => ({ id: t.id, subject: `t${t.id}`, status: t.status ?? "pending", ...(t.owner ? { owner: t.owner } : {}), ...(t.points !== undefined ? { metadata: { points: t.points } } : {}) })) } }];
+
+test("an unsampled main counts its snapshot workers by duty and todo weight; no answer and no Map cannot admit it", () => {
+	delete (globalThis as Record<symbol, unknown>)[REGISTRY];
+	const { d, held } = device({ points: 1 }, 3);
+	const side = { room: () => d.row, store: createReservations(d.dir, d.clock.now), session: () => "unlisted", budget: () => 3, attended: () => false };
+	const cap = createWorkerCap(side, runBus(() => [runRow("api"), runRow("ui", "reviewer")]));
+	assert.match(cap.admit("call", worker("next"), todos([{ id: 1, owner: "api", points: 2 }]))?.reason ?? "", /runs 3 of its 3 capacity points/);
+	assert.match(createWorkerCap(side, runBus()).admit("call", worker())?.reason ?? "", /unknown/);
+	assert.equal(held(), 0);
+});
 
 // Boss 2026-11-24: 「本來就不該有上限，我自己盯。只有無人塔台要有點數上限，而且不該寫死」.
 test("an attended device caps no worker, with or without a budget: the budget there is for the board only", () => {

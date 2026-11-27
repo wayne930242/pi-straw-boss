@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { RunCount } from "./trackedruns.ts";
 
 // The doctor (docs/how-it-works.md#the-doctor): what a session's tools and loads are, and what to do when a tool the role needs is missing. It separates the three ways a tool goes
 // missing that look the same from inside the model: the package never loaded in this process (H1), it registered the tool and something left it inactive (H2), or pi has it active and
@@ -37,6 +38,7 @@ export interface DoctorFacts {
 	tools: readonly ToolFact[];
 	/** pi.getActiveTools(); undefined out of process, where nothing is active. */
 	active?: readonly string[];
+	trackedRuns?: RunCount;
 	stamp?: LoadStamp;
 	/** pi-herdr-agents as installed: the commit its settings entry pins and the checkout's HEAD. */
 	installed?: { pin?: string; head?: string };
@@ -51,6 +53,7 @@ export type ToolState = "active" | "inactive" | "unregistered";
 export type VerdictCode = "healthy" | "H1" | "H2" | "stale";
 export interface DoctorReport {
 	role: DoctorRole;
+	trackedRuns?: RunCount;
 	expected: { name: string; package: string; state: ToolState }[];
 	/** Expected tools not active, with their state. */
 	missing: { name: string; package: string; state: ToolState }[];
@@ -135,7 +138,7 @@ export function diagnose(f: DoctorFacts): DoctorReport {
 	}
 	if (!stale && f.pi?.running && f.pi.installed && f.pi.running !== f.pi.installed) stale = `pi ${f.pi.running} runs, ${f.pi.installed} is installed`;
 	const errors = [...(f.errors ?? [])];
-	const base = { role: f.role, expected, missing, loaded, silent, stamp, stale, pi: f.pi, provider: f.provider, model: f.model, errors };
+	const base = { role: f.role, expected, missing, loaded, silent, stamp, stale, trackedRuns: f.trackedRuns, pi: f.pi, provider: f.provider, model: f.model, errors };
 	const list = (ts: { name: string }[]) => ts.map((t) => t.name).join(", ");
 	const unregistered = missing.filter((t) => t.state === "unregistered"), inactive = missing.filter((t) => t.state === "inactive");
 	if (unregistered.length || stamp?.failed) {
@@ -152,6 +155,7 @@ export function diagnose(f: DoctorFacts): DoctorReport {
 export function renderDoctor(r: DoctorReport): string {
 	const lines = [`sb doctor: ${r.verdict} (${r.role})`, r.finding, `Next: ${r.next}`];
 	if (r.note) lines.push(r.note);
+	if (r.trackedRuns) lines.push(`Tracked runs: ${r.trackedRuns.source}${"count" in r.trackedRuns ? ` (${r.trackedRuns.count})` : ""}`);
 	if (r.missing.length) lines.push(`Missing: ${r.missing.map((t) => `${t.name} ${t.state} (${t.package})`).join("; ")}`);
 	if (r.stamp) lines.push(`pi-herdr-agents load: ${r.stamp.wrapperVersion ?? "?"} @${short(r.stamp.wrapperHead) ?? "?"}, maestro ${r.stamp.maestroVersion ?? "?"}, generation ${r.stamp.generation ?? "?"}, at ${r.stamp.loadedAt ?? "?"}${r.stamp.failed ? `, failed: ${r.stamp.failed}` : ""}`);
 	else if (r.expected.some((t) => t.package === "pi-herdr-agents")) lines.push("pi-herdr-agents load: no stamp (a build before the stamp, or it never loaded)");

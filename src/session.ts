@@ -148,15 +148,15 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		// file without the variable: the saved entry or the role record then claims the role, and the claim is proven against Herdr with the workspace check below (`towerProof`), never taken from the file.
 		const log = ctx.sessionManager;
 		stopWatching();
-		nudges = orphans({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
+		nudges = orphans({ events: pi.events, run, file: () => log.getSessionFile(), entries: () => log.getEntries(), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (key) => pi.appendEntry(ENTRY, { nudged: key }), me, tell });
 		// Subagents a Herdr restart brought back as plain pi sessions are closed, and this session is asked to resume them (restored.ts).
-		restores = restored({ run, sleep: cfg.sleep, file: () => log.getSessionFile(), entries: () => log.getEntries(), active: () => !s.isTower, launcher: () => (me() ? { id: me(), name: who() } : undefined), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), resume: (text, details) => pi.sendMessage({ customType: RESUME, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
+		restores = restored({ events: pi.events, run, sleep: cfg.sleep, file: () => log.getSessionFile(), entries: () => log.getEntries(), active: () => !s.isTower, launcher: () => (me() ? { id: me(), name: who() } : undefined), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), resume: (text, details) => pi.sendMessage({ customType: RESUME, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
 		// A subagent whose own pi died while this session lives is revived from its session file, and its result brought here (childrevive.ts).
-		revives = childRevive({ run, sleep: cfg.sleep, now: cfg.now, file: () => log.getSessionFile(), entries: () => log.getEntries(), pane: () => env.HERDR_PANE_ID, sessions: host.sessions, active: () => !s.isTower, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), deliver: (customType, text, details, wake) => pi.sendMessage({ customType, content: text, display: true, details }, wake ? { triggerTurn: true, deliverAs: "steer" } : { triggerTurn: false }), tell, note: (text) => void (s.at && note(text)) }); // a session that never joined has no workspace to note in
+		revives = childRevive({ events: pi.events, run, sleep: cfg.sleep, now: cfg.now, file: () => log.getSessionFile(), entries: () => log.getEntries(), pane: () => env.HERDR_PANE_ID, sessions: host.sessions, active: () => !s.isTower, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), deliver: (customType, text, details, wake) => pi.sendMessage({ customType, content: text, display: true, details }, wake ? { triggerTurn: true, deliverAs: "steer" } : { triggerTurn: false }), tell, note: (text) => void (s.at && note(text)) }); // a session that never joined has no workspace to note in
 		// A session a tower revived picks up the subagents it launched before it died (inherit.ts), at its claim and at every start after (a /reload), until none is left to watch.
 		startInherit = () => {
 			if (inherits || s.isTower) return;
-			inherits = inherited({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), deliver: (text, details) => pi.sendMessage({ customType: RESULT, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
+			inherits = inherited({ events: pi.events, run, file: () => log.getSessionFile(), entries: () => log.getEntries(), type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), deliver: (text, details) => pi.sendMessage({ customType: RESULT, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
 			void inherits.poll();
 		};
 		if (typeof s.saved.revived === "number") startInherit();
@@ -336,7 +336,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 
 	// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
-	const cap = createWorkerCap(deviceRoom(guiDir, me, attended));
+	const cap = createWorkerCap(deviceRoom(guiDir, me, attended), pi.events);
 	pi.on("turn_end", () => cap.settle());
 	pi.on("tool_call", async (event, ctx) => {
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || runMode.active()) return;
