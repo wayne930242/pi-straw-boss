@@ -70,7 +70,7 @@ export interface LocalHub { receive(from: string, msg: ToHub): void }
 export interface Ended { tool: string; toolCallId?: string; dialog: Dialog }
 export interface Bridge { /** Ends the open waits for auto mode (docs/specs/2026-11-09-auto-mode.md, §5): an owner that takes a cancel gets one, the rest are `stuck` and need the turn aborted. `skip` leaves a dialog alone (the boss's own command's). */ cancelWaits?(skip?: (d: Dialog) => boolean): { cancelled: Ended[]; stuck: Ended[] }; deliver(msg: AnswerMessage, reply: (ack: Ack) => void): void; sync(): void; probe(nonce?: string, flags?: boolean): Editor; commands(prefix: string): Cmd[]; form(msg: FormMessage, reply: (r: FormReply) => void): void; close(keepPane: boolean, ifStashable?: boolean): { accepted: boolean; reason?: string }; stashCheck(): string | undefined; /** What an `interrupt` of a stop uses (closemain.ts): whether a turn runs, what an abort does not end, and the abort. */ turn?: { running(): boolean; blockers(): string | undefined; abort(): void }; pull(step: "begin" | "finish", ref?: string, deadline?: number): Pull | Promise<Pull> }
 interface Channel { snapshot(): { connected: boolean; owner?: { sessionId: string; epoch: string } }; publish(payload: unknown, options?: { audience?: "owner" | "capable" }): void }
-interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; allow?: true; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
+interface Rec { adapter: OwnerAdapter; d: Dialog; state: "open" | "settling" | "unknown" | "closed"; answerId?: string; accepted?: boolean; by?: string; allow?: true; won?: string; at?: number; last?: Ack; waiting: ((ack: Ack) => void)[] }
 type Event = { type: string; fromSessionId?: string; owner?: { sessionId: string; epoch: string }; payload?: Record<string, unknown> };
 
 /** `close` quits the session (keeping its pane when `keepPane`), or says why it cannot. */
@@ -95,7 +95,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 	const push = (final = false) => {
 		if (!target()) return;
 		const dialogs = final ? [] : open().filter((r) => !r.d.secret).map((r) => ({ ...r.d, ...(takesCancel(r.adapter, r.d) ? { cancellable: true as const } : {}), ...(r.state !== "open" ? { busy: true as const } : {}) }));
-		const closed = final ? [] : [...recs.values()].filter((r) => r.state === "closed").map((r) => ({ id: r.d.id, by: r.by!, ...(r.by === "remote" && r.answerId ? { answerId: r.answerId } : {}), ...(r.allow ? { allow: true as const } : {}) }));
+		const closed = final ? [] : [...recs.values()].filter((r) => r.state === "closed").map((r) => ({ id: r.d.id, by: r.by!, ...(r.by === "remote" && (r.won ?? r.answerId) ? { answerId: r.won ?? r.answerId } : {}), ...(r.allow ? { allow: true as const } : {}) }));
 		const queue = final ? [] : queued.slice(0, MAX_QUEUED).map((q) => ({ ...q, text: clipQueued(q.text) }));
 		const mons = final ? [] : (monitors?.list() ?? []);
 		let msg: Dialogs = { version: 1, type: "dialogs", bridgeId, pane: env.HERDR_PANE_ID!, file: file() ?? null, dialogs, closed, documents: final ? [] : docs, ...(queue.length ? { queued: queue } : {}), ...(mons.length ? { monitors: mons } : {}), ...(todo && !final ? { todo } : {}) };
@@ -227,20 +227,22 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 			if (call?.signal?.aborted) adapter.cancel?.(bus, d);
 			changed();
 		},
-		closed(id: string, by?: string, allow?: true) {
+		closed(id: string, by?: string, allow?: true, won?: string) {
 			const r = recs.get(id);
 			if (!r || r.state === "closed") return;
 			[r.state, r.at, r.by] = ["closed", Date.now(), by === "cancel" && r.accepted ? "remote" : (by ?? (r.accepted ? "remote" : "local"))]; // A close by "cancel" after the owner accepted this bridge's own answer is that answer winning (sb's close path carries no answerId): a resend gets "accepted" (RC-F002).
-			if (allow) r.allow = true;
+			(allow && (r.allow = true), won && (r.won = won)); // `won`: the owner named the answer that won, so only that one is accepted (asks-r3-F001)
 			changed();
 		},
 	};
 	const ack = (r: Rec, a: Answer, outcome: Outcome, extra: { reason?: string; by?: string } = {}): Ack => ({ version: 1, type: "ack", bridgeId, id: r.d.id, answerId: a.answerId, outcome, ...extra });
+	/** The answer for a closed dialog: accepted only when this bridge's answer is the one that won; else stale, with who closed it. */
+	const ended = (r: Rec, a: Answer) => ack(r, a, r.by === "remote" && r.answerId === a.answerId && (r.won ?? a.answerId) === a.answerId ? "accepted" : "stale", { by: r.by });
 	function deliver(a: AnswerMessage, reply: (ack: Ack) => void) {
 		if (typeof a.id !== "string" || typeof a.answerId !== "string" || typeof a.digest !== "string") return;
 		const r = recs.get(a.id);
 		if (!r) return reply({ version: 1, type: "ack", bridgeId, id: String(a.id), answerId: String(a.answerId), outcome: "stale", by: "gone" });
-		if (r.state === "closed") return reply(ack(r, a, r.by === "remote" && r.answerId === a.answerId ? "accepted" : "stale", { by: r.by }));
+		if (r.state === "closed") return reply(ended(r, a));
 		if (r.state !== "open") return r.answerId !== a.answerId ? reply(ack(r, a, "busy")) : r.last ? reply(r.last) : void r.waiting.push(reply);
 		if (r.d.secret) return reply(ack(r, a, "rejected", { reason: "terminal_only" })); // whatever it carries, a secret is never taken from a relayed answer
 		if (a.cancel !== undefined && (a.cancel !== true || !takesCancel(r.adapter, r.d) || a.choice !== undefined || a.answers !== undefined)) return reply(ack(r, a, "rejected", { reason: takesCancel(r.adapter, r.d) ? "malformed" : "not-allowed" })); // a cancel only for an owner that takes one, and carrying nothing else; the dialog stays open
@@ -251,8 +253,8 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 			done = true;
 			off?.(), clearTimeout(timer);
 			let out: Ack;
-			if (r.state === "closed") out = ack(r, a, r.by === "remote" && r.answerId === a.answerId ? "accepted" : "stale", { by: r.by });
-			else if (!v) (r.state = "unknown"), (out = ack(r, a, "unknown"));
+			if (r.state === "closed") out = ended(r, a);
+			else if (!v || v.reason === "unconfirmed") (r.state = "unknown"), (out = ack(r, a, "unknown")); // no verdict, or one the owner could not confirm (the boss question's store never answered)
 			else if (v.accepted) (r.accepted = true), (out = ack(r, a, "accepted"));
 			else if (v.reason === "closed") out = ack(r, a, "stale", { by: "local" }); // the owner had settled it already; its close follows
 			else (r.state = "open"), (r.answerId = undefined), (out = ack(r, a, "rejected", { reason: v.reason ?? "malformed" }));

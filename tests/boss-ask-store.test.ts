@@ -145,14 +145,31 @@ test("the pane's answer whose reply was lost after the store took it: the resend
 	assert.deepEqual([r.record().state, r.record().answer?.by], ["answered", "terminal"]);
 });
 
-test("the store never answers after the Ask is open: the pane's answer is the result, said to be unconfirmed", async () => {
+test("the store never answers after the Ask is open: the pane's answer is not delivered as the boss's, the result is unconfirmed (asks-r2-F002)", async () => {
 	let gone = false;
 	const r = rig(undefined, { lose: () => gone });
 	const done = r.ask();
 	await until(() => r.opened(), "drawn");
 	gone = true;
 	r.pick("Wait");
-	assert.match(text(await done), /^The boss chose: "Wait"\..*not confirm/);
+	const result = await done;
+	assert.equal(result.kind, "unconfirmed");
+	assert.match(text(result), /^Not confirmed: .*"Wait".*do not act on it/);
+	assert.equal(r.seen.find((x) => x.channel === "closed")?.data.by, "unconfirmed", "the page's panel is not told it was answered");
+});
+
+test("a resend with no reply is followed by a second read-back: the store's verdict, here the pane's own answer, is the result (asks-r2-F002)", async () => {
+	let terminal = 0;
+	// The first send's three tries never reach the store; the read-back finds the Ask open; the resend reaches it, but its replies are lost.
+	const counted = (q: Record<string, unknown>) => q.cmd === "ask-answer" && q.by === "terminal";
+	const r = rig(undefined, { miss: (q) => counted(q) && ++terminal <= 3, lose: (q) => counted(q) && terminal > 3 });
+	const done = r.ask();
+	await until(() => r.opened(), "drawn");
+	r.pick("Wait");
+	const result = await done;
+	assert.equal(result.kind, "answered", text(result));
+	assert.match(text(result), /^The boss chose: "Wait"\./);
+	assert.deepEqual([r.record().answer?.by, r.sent.filter((x) => x.cmd === "ask-get").length], ["terminal", 2]);
 });
 
 test("a lost close is sent again, so the Ask does not stay open for a late answer (asks-r2-F002)", async () => {
@@ -176,4 +193,18 @@ test("auto mode's own cancel through the relay closes the Ask as auto, not as th
 	assert.equal((await done).kind, "tower");
 	await until(() => r.record().state !== "open", "ended");
 	assert.deepEqual([r.record().state, r.record().closed?.why, r.record().answer], ["closed", "auto", undefined]);
+});
+
+test("the phone won first and every reply after is lost: the pane's pick is not promoted to the boss's answer (asks-r2-F002)", async () => {
+	let partitioned = false;
+	const r = rig(undefined, { lose: () => partitioned });
+	const done = r.ask();
+	await until(() => r.opened(), "drawn");
+	const rec = r.record();
+	assert.equal(r.ops.answer(rec.id, { answerId: "p".repeat(16), digest: rec.digest, replies: [{ choices: [0] }] }, true).status, 200);
+	partitioned = true;
+	r.pick("Wait");
+	assert.equal(r.record().answer?.by, "phone");
+	const result = await done;
+	assert.equal(result.kind, "unconfirmed", text(result));
 });

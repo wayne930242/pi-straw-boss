@@ -39,9 +39,10 @@ export function hubRelay(bus: Bus, q: BossQuestion, title: string, callId: strin
 	});
 	if (callId) bus.emit(`${BOSS_PREFIX}:pending`, { version: 1, id, toolCallId: callId, digest, questions });
 	return {
-		close(by: string) {
+		/** `answerId`: the answer that won, so the bridge tells only that one accepted (asks-r3-F001). */
+		close(by: string, answerId?: string) {
 			off();
-			if (callId) bus.emit(`${BOSS_PREFIX}:closed`, { version: 1, id, by });
+			if (callId) bus.emit(`${BOSS_PREFIX}:closed`, { version: 1, id, by, ...(answerId ? { answerId } : {}) });
 		},
 	};
 }

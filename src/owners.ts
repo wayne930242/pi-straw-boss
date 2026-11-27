@@ -30,7 +30,8 @@ export interface Answer { id: string; answerId: string; digest: string; choice?:
 export interface Verdict { accepted: boolean; reason?: string }
 /** `closed` without `by` leaves it to the bridge (remote when its answer was taken, else local). */
 /** `closed`'s `allow` is the verdict of a gate or an approval that ended with an explicit yes (src/link/gate.ts, approval.ts): the sb server takes an ally run's gated tool call only against one (src/server/allows.ts). */
-export interface Report { open(adapter: OwnerAdapter, d: Dialog): void; closed(id: string, by?: string, allow?: true): void }
+/** `won`: the answerId that won, when the owner knows it (the boss question: its store's winner); the bridge then tells only that answer accepted (asks-r3-F001). */
+export interface Report { open(adapter: OwnerAdapter, d: Dialog): void; closed(id: string, by?: string, allow?: true, won?: string): void }
 export interface OwnerAdapter {
 	name: string;
 	/** The tool whose call opens the dialog; a dialog naming a toolCallId must belong to a call of this tool in flight. */
@@ -87,7 +88,7 @@ const contract = (name: string, prefix: string, tool?: string, gate?: true, shap
 	listen(bus, report) {
 		const self = this, offs = [
 			bus.on(`${prefix}:pending`, (raw) => { const d = shape.parse(name, raw); if (d) report.open(self, d); }),
-			bus.on(`${prefix}:closed`, (raw) => { const c = raw as { version?: unknown; id?: unknown; by?: unknown; allow?: unknown }; if (c?.version === 1 && str(c.id)) report.closed(c.id, str(c.by) ? c.by : "error", c.allow === true ? true : undefined); }),
+			bus.on(`${prefix}:closed`, (raw) => { const c = raw as { version?: unknown; id?: unknown; by?: unknown; allow?: unknown; answerId?: unknown }; if (c?.version === 1 && str(c.id)) report.closed(c.id, str(c.by) ? c.by : "error", c.allow === true ? true : undefined, str(c.answerId) && c.answerId.length <= 64 ? c.answerId : undefined); }),
 		];
 		return () => offs.forEach((off) => off());
 	},

@@ -38,7 +38,8 @@ export function bossOf(raw: BossQuestion): BossQuestion {
 /** What the tower gets when the boss is not asked here: the message, then the question and its options. */
 export const withBoss = (message: string, q: BossQuestion) => `${message}\nFor the boss: ${q.question}${q.options ? `\nOptions: ${q.options.join(" | ")}` : ""}`;
 
-export type Asked = { kind: "answered"; text: string } | { kind: "none"; text: string } | { kind: "tower"; note?: string };
+/** `unconfirmed`: an answer the store, once the Ask was open, never confirmed as the first: not the boss's decision to act on (asks-r2-F002). */
+export type Asked = { kind: "answered"; text: string } | { kind: "unconfirmed"; text: string } | { kind: "none"; text: string } | { kind: "tower"; note?: string };
 export type BossAsk = (q: BossQuestion, signal: AbortSignal | undefined, ctx: Pick<ExtensionContext, "hasUI" | "ui"> | undefined, callId?: string) => Promise<Asked>;
 type Opts = { signal: AbortSignal };
 type Took = "won" | "lost" | "unconfirmed";
@@ -63,35 +64,42 @@ export function createBossAsk(kit: Kit, d: { attended(): boolean; remote(): bool
 		const title = `The boss decides: ${q.question}`, ac = new AbortController(), stop = watch(() => void (s.autoOn() && ac.abort()), WATCH_MS);
 		const opts = { signal: signal ? AbortSignal.any([signal, ac.signal]) : ac.signal };
 		// The first answer, here or there, wins: the store decides between the pane, the page and the phone; one from the page or a paired device ends the dialog here.
-		let got: Got | undefined, looking = false, unconfirmed = false, autoCancel = false;
+		let got: Got | undefined, looking = false, unconfirmed = false, autoCancel = false, won: string | undefined; // `won`: the answerId the store (else the relay) took, which the close names (asks-r3-F001)
 		const ask = await asks.open({ subject: q.question, questions: [{ question: title, options: q.options ?? [] }], ...(callId ? { toolCallId: callId } : {}), ...((q.item ?? doing()) ? { item: q.item ?? doing() } : {}) }).catch(() => undefined);
-		const winner = (a: NonNullable<AskState["answer"]>) => void (!got && ((got = gotOf(q, a)), ac.abort()));
+		const winner = (a: NonNullable<AskState["answer"]>) => void (!got && ((got = gotOf(q, a)), (won = a.answerId), ac.abort()));
 		const judged = (r: Awaited<ReturnType<AskClient["answer"]>>): Took | undefined => (!r ? undefined : r.status === 200 ? "won" : (r.status === 409 && (r.body.ask as AskState | undefined)?.answer && winner((r.body.ask as AskState).answer!), "lost"));
 		/**
 		 * Takes an answer to the store: whether it won. A 409 means another came first, and that one is the result. No server at `ask-open` lets it stand, as before the store; once the Ask is open, an answer with no
-		 * reply is sent again with the same answerId and the Ask read back (asks-r2-F002), and only a store that never answers leaves it standing, said to be unconfirmed.
+		 * reply is sent again with the same answerId and the Ask read back after each send (asks-r2-F002). Only an answer the store confirms is the boss's: one it never confirmed is `unconfirmed`, never delivered as his.
 		 */
-		const take = async (g: Got, by: "terminal" | "gui" | "phone", given?: string): Promise<Took> => {
-			if (!ask) return "won";
-			const answerId = given && given.length >= 16 ? given : randomUUID(), send = () => asks.answer(ask.id, { answerId, digest: ask.digest, by, ...("cancel" in g ? { cancel: true as const } : { replies: repliesOf(q, g) }) }).catch(() => undefined);
-			const first = judged(await send());
-			if (first) return first;
-			const now = await asks.get(ask.id).catch(() => undefined);
-			if (now?.state === "open") return judged(await send()) ?? "unconfirmed";
-			if (now?.answer?.answerId === answerId) return "won";
-			return now ? (now.answer && winner(now.answer), "lost") : "unconfirmed";
+		const take = async (g: Got, by: "terminal" | "gui" | "phone", given?: string): Promise<{ took: Took; id: string }> => {
+			const answerId = given && given.length >= 16 ? given : randomUUID();
+			if (!ask) return { took: "won", id: answerId };
+			const send = () => asks.answer(ask.id, { answerId, digest: ask.digest, by, ...("cancel" in g ? { cancel: true as const } : { replies: repliesOf(q, g) }) }).catch(() => undefined);
+			const readBack = async (): Promise<Took | "open"> => {
+				const now = await asks.get(ask.id).catch(() => undefined);
+				if (!now) return "unconfirmed";
+				if (now.state === "open") return "open";
+				if (now.answer?.answerId === answerId) return "won";
+				return (now.answer && winner(now.answer), "lost");
+			};
+			const first = judged(await send()) ?? (await readBack());
+			const took = first !== "open" ? first : ((again) => (again === "open" ? "unconfirmed" : again))(judged(await send()) ?? (await readBack()));
+			return { took, id: answerId };
 		};
+		/** An answer taken to the store becomes the result unless another came first: one the store never confirmed is `unconfirmed`. */
+		const settle = (g: Got, t: { took: Took; id: string }) => void (t.took !== "lost" && !got && ((got = g), (unconfirmed = t.took === "unconfirmed"), (won = unconfirmed ? undefined : t.id)));
 		// One relayed answer is taken to the store at a time: a second that comes meanwhile hears the dialog closed, as it did before the store.
 		let claiming = false;
 		const relay = hubRelay(bus, q, title, callId, () => got !== undefined || claiming, async (g, answerId) => {
 			if ("cancel" in g && answerId.startsWith(AUTO_CANCEL)) return void ((autoCancel = true), ac.abort()); // auto mode's own cancel (bridge.ts cancelWaits): the Ask closes as auto, not as the page's cancel (asks-r2-F004)
 			claiming = true;
-			const took = await take(g, g.phone ? "phone" : "gui", answerId);
+			const t = await take(g, g.phone ? "phone" : "gui", answerId);
 			claiming = false;
-			if (took === "lost" || got) return "closed";
-			((got = g), (unconfirmed = took === "unconfirmed"));
+			if (t.took === "lost" || got) return "closed";
+			settle(g, t);
 			ac.abort();
-			return undefined;
+			return unconfirmed ? "unconfirmed" : undefined; // bridge.ts tells the page it is not known whether it stands
 		});
 		// An answer through the page's own route (api/asks/<id>/answer) reaches the store only: the asker looks once a second while the dialog is open.
 		const look = ask ? watch(() => {
@@ -101,18 +109,18 @@ export function createBossAsk(kit: Kit, d: { attended(): boolean; remote(): bool
 		}, LOOK_MS) : () => {};
 		try {
 			const local = await paneDialog(ctx.ui, q, title, opts, () => s.autoOn());
-			const took = !got && local ? await take(local, "terminal") : "lost";
-			if (took !== "lost" && !got) ((got = local), (unconfirmed = took === "unconfirmed"));
+			if (!got && local) settle(local, await take(local, "terminal"));
 		} finally {
 			stop();
 			look();
 			// Ended with no answer here: the close answers the Ask as it stands, so an answer the store took first (the phone's before Escape) is the result (asks-r2-F001).
 			const ended = ask && !got ? await asks.close(ask.id, signal?.aborted ? "abort" : autoCancel || s.autoOn() ? "auto" : "esc").catch(() => undefined) : undefined;
 			if (ended?.answer && ended.state !== "open") winner(ended.answer);
-			relay.close(got && "by" in got ? got.by : got ? "cancel" : signal?.aborted ? "abort" : autoCancel || s.autoOn() ? "auto" : "local");
+			// The close names the winner's answerId, so the page's answer is told accepted only when it is the one that won (asks-r3-F001); an unconfirmed one is never told so.
+			relay.close(unconfirmed ? "unconfirmed" : got && "by" in got ? got.by : got ? "cancel" : signal?.aborted ? "abort" : autoCancel || s.autoOn() ? "auto" : "local", won);
 		}
-		const doubt = unconfirmed ? " The sb server that records the question did not confirm it as the first answer: if the boss also answered on the page or the phone, ask him which stands." : "";
-		if (got && "answer" in got) return { kind: "answered", text: `The boss ${got.typed ? "answered" : "chose"}: ${JSON.stringify(got.answer)}${got.note ? `. His note: ${JSON.stringify(got.note)}` : ""}. This is the boss's answer, asked in this pane; nothing was sent to the tower.${doubt}` };
+		if (got && unconfirmed) return { kind: "unconfirmed", text: `Not confirmed: the sb server that records the question did not confirm ${"answer" in got ? `the answer ${JSON.stringify(got.answer)}` : "the cancel"} as the boss's first answer, and he may have answered first on the page or the phone. It is not his decision: do not act on it. Go on with work that does not need it; once sb_doctor finds the server, ask again with call_tower boss. Nothing was sent to the tower.` };
+		if (got && "answer" in got) return { kind: "answered", text: `The boss ${got.typed ? "answered" : "chose"}: ${JSON.stringify(got.answer)}${got.note ? `. His note: ${JSON.stringify(got.note)}` : ""}. This is the boss's answer, asked in this pane; nothing was sent to the tower.` };
 		if (autoCancel || s.autoOn()) return { kind: "tower", note: `Auto mode started while the boss was asked, so the dialog closed. ${AUTO_NOTE}` };
 		return { kind: "none", text: `The boss did not answer (${signal?.aborted ? "the turn was stopped" : "Esc"}): nothing was sent to the tower. Go on with work that does not need it; ask again only if it still blocks you.` };
 	};

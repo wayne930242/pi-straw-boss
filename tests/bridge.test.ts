@@ -10,6 +10,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Ack, type Dialogs, guiNamespace, type LocalHub, REGISTER, startBridge, type ToHub } from "../src/bridge.ts";
 import { secretDigest, selectDigest } from "../src/owners.ts";
 import { newKeys, seal } from "../src/seal.ts";
+import { askClient } from "../src/askclient.ts";
+import { createBossAsk } from "../src/bossask.ts";
+import { startAsks } from "../src/server/askops.ts";
+import type { Request } from "../src/server/socket.ts";
+import type { Kit } from "../src/state.ts";
 
 const dirs: string[] = [];
 after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
@@ -821,4 +826,40 @@ test("documents v2: an answer from G for a blocks document reaches the owner as 
 	owner.off();
 	v1.off();
 	s.fire("session_shutdown");
+});
+
+test("boss question: Escape reads back the phone's winner while the page's answer is still taken; the page's answer is stale, and the close names the phone's answerId (asks-r3-F001)", async () => {
+	const s = session(); s.own();
+	s.fire("tool_execution_start", { toolCallId: "c1", toolName: "call_tower", args: {} });
+	const ops = startAsks({ slot: { dir: s.dir }, now: Date.now, watch: () => undefined, log: () => {} });
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => { release = resolve; }); // the page's answer reaches the store, and its 409 is held until after Escape
+	const client = askClient(async (req) => {
+		const reply = await ops.reply(req as unknown as Request);
+		if (req.cmd === "ask-answer") await held;
+		return reply;
+	}, () => "S", () => "S");
+	const kit = { pi: { events: s.events }, cfg: { env: {}, face: { every: () => () => {} } }, s: { autoOn: () => false, branch: () => [] }, role: () => "main" } as unknown as Kit;
+	const boss = createBossAsk(kit, { attended: () => true, remote: () => false, asks: client });
+	let dismiss!: () => void;
+	const ui = { select: () => new Promise<undefined>((r) => { dismiss = () => r(undefined); }) };
+	const done = boss({ question: "Choose a colour", options: ["Blue", "Green"] }, undefined, { hasUI: true, ui: ui as never }, "c1");
+	try {
+		await tick();
+		const rec = ops.store.list({ open: true })[0]!, d = s.lists().at(-1)![0]!;
+		assert.equal(ops.answer(rec.id, { answerId: "p".repeat(16), digest: rec.digest, replies: [{ choices: [0] }] }, true).status, 200, "the phone's Blue first");
+		s.message({ version: 1, type: "answer", to: bridgeIdOf(s), id: d.id, digest: d.digest, answerId: "g".repeat(16), answers: [{ choices: [1] }] });
+		dismiss();
+		const result = await done;
+		assert.match("text" in result ? (result.text ?? "") : "", /^The boss chose: "Blue"\./, "the store's winner is the result");
+		release();
+		await tick();
+		assert.deepEqual([s.acks().at(-1)?.answerId, s.acks().at(-1)?.outcome, s.acks().at(-1)?.by], ["g".repeat(16), "stale", "remote"], "the page's Green is not told accepted");
+		const closed = s.published.filter((p) => p.payload.type === "dialogs").map((p) => (p.payload as Dialogs).closed ?? []).flat();
+		assert.equal(closed.find((c) => c.id === d.id)?.answerId, "p".repeat(16), "the close names the phone's answer as the one that won");
+	} finally {
+		release();
+		ops.stop();
+		s.fire("session_shutdown");
+	}
 });
