@@ -3798,7 +3798,7 @@ run token 不能啟動、離開或重啟對話，也不能以老闆的身分寫�
 
 #### `/boss send` 與 `/boss stop`
 
-`/boss send <name|key> [--after] <text>` 把 `sessions/<key>/input {text, as: "send" | "followUp", guarded: true}` 送到塔台、主智慧體、成員或子智慧體，如同頁面的輸入框做的（`--after` 是輸入框的**接在這之後**；單獨的 `--after` 而沒有文字是用法錯誤，不是訊息）。含空格的名稱要加引號（`/boss send "fix login" hi`）；兩個 session 共用的名稱會列出它們。 `#63` 或 todo uid（`t_` 加十個 base32 字元）指的是這個 session 自己清單裡的 todo，訊息送給它的負責者（`src/planowner.ts`：先用 Herdr 子智慧體的 run id，再用完整名稱；沒有負責者、負責者不在網上、或已離開的 todo 都會被拒絕）。子智慧體照 Herdr 顯示的方式指名：完整名稱、列上截短並以 `…` 結尾的名稱（只對得上一個名稱時），或 pi-intercom 列出的 `subagent-chat-<id>`。
+`/boss send <name|key> [--after] <text>` 把 `sessions/<key>/input {text, as: "send" | "followUp", guarded: true}` 送到塔台、主智慧體、成員或子智慧體，如同頁面的輸入框做的（`--after` 是輸入框的**接在這之後**；單獨的 `--after` 而沒有文字是用法錯誤，不是訊息）。含空格的名稱要加引號（`/boss send "fix login" hi`）；兩個 session 共用的名稱會列出它們。 `#63` 或 todo uid（`t_` 加十個 base32 字元）指的是這個 session 自己清單裡的 todo，訊息送給它的負責者（`src/planowner.ts`：先用 Herdr 子智慧體的 run id，再用完整名稱；沒有負責者、負責者不在網上、或已離開的 todo 都會被拒絕）。子智慧體照 Herdr 顯示的方式指名：列上的名稱或完整的啟動名稱（`PI_SUBAGENT_NAME`；列上顯示的是腳本檔名時，todo 的負責者存的是它）、列上截短並以 `…` 結尾的名稱（只對得上一個名稱時），或 pi-intercom 列出的 `subagent-chat-<id>`。
 
 <details>
 <summary>細節</summary>
