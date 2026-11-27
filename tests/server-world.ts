@@ -21,9 +21,12 @@ export async function until(check: () => unknown, what: string, ms = 5000): Prom
 	throw new Error(`Timed out waiting for ${what}`);
 }
 /**
- * How long this process stood still (beyond the tick) while a test ran, seen from a worker thread's timer: the thread sees the OS descheduling the whole process (a full run, other agents' work), which a
- * bound on the wall-clock gap between two things the process does itself cannot get around, but not a block of the main thread, which is what the code under test must never do (a synchronous `ps` or
- * PowerShell call in a touch loop). The test allows its bound plus the worst stall seen, which a touch that never came, or one held up by the code's own block, still exceeds.
+ * How long this process stood still (beyond the tick) while a test ran, which a bound on the wall-clock gap between two things the process does itself cannot get around, but not a block of the main thread by the
+ * code under test, which it must never do (a synchronous `ps` or PowerShell call in a touch loop). The test allows its bound plus the worst stall seen, which a touch that never came, or one held up by the code's
+ * own block, still exceeds. Two clocks see it:
+ * - a worker thread's timer: the whole process stopped (a laptop's sleep, a stop signal);
+ * - `sleep`, the requester's own (pass it as the `Ctx`'s): how late each of its waits woke. The OS schedules threads one by one, and under load the busy main thread waits far longer than the idle worker
+ *   (a load of 63: a requester's 100 ms wait woke after 274 ms while the worker saw 15 ms). A wait's lateness is time the thread waited to run, never time spent in the loop's own code between its waits.
  */
 export function stallWatch(tickMs = 5) {
 	const worst = new Int32Array(new SharedArrayBuffer(4));
@@ -33,7 +36,13 @@ export function stallWatch(tickMs = 5) {
 		{ eval: true, workerData: { worst, tickMs } },
 	);
 	worker.unref(); // an assert that throws before stop() must not keep the file running to its timeout
-	return { worst: () => Atomics.load(worst, 0), stop: () => void worker.terminate() };
+	let late = 0;
+	/** The `Ctx`'s sleep (client.ts `makeCtx`), timed: a signal that fires ends it at once, and only a wait that ran to its time counts. */
+	const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve) => {
+		const due = Date.now() + ms, timer = setTimeout(() => ((late = Math.max(late, Date.now() - due)), resolve()), ms);
+		signal?.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
+	});
+	return { worst: () => Math.max(Atomics.load(worst, 0), late), late: () => late, sleep, stop: () => void worker.terminate() };
 }
 export const FAST: Timers = { start: 5000, exit: 2000, supervisor: 400, touch: 40 };
 

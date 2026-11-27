@@ -232,8 +232,8 @@ test("the lock wait and the start wait share the deadline: a lock held for 250 m
 test("a restart under a deadline stops waiting for the old server to leave at the deadline, naming the wait `exit`", async () => {
 	const s = await world.start();
 	await s.handle.ready;
-	const ctx = world.ctx({ alive: (p) => p === s.pid || world.live.has(p), kill: () => {}, timers: { start: 5000, exit: 5000, supervisor: 400, touch: 40 } });
-	const began = Date.now(), stalls = stallWatch();
+	const stalls = stallWatch(), ctx = world.ctx({ alive: (p) => p === s.pid || world.live.has(p), kill: () => {}, timers: { start: 5000, exit: 5000, supervisor: 400, touch: 40 }, sleep: stalls.sleep });
+	const began = Date.now();
 	// A deadline of 1.5 s: the old server's answer to the restart has to come within it, and on a loaded machine a shorter one (0.4 s) went to the control call, not to the wait for the exit.
 	await assert.rejects(restart(ctx, { reason: "r", deadline: began + 1500 }), (e: unknown) => e instanceof ServerError && e.code === "exit-timeout" && e.wait === "exit");
 	stalls.stop();
@@ -244,8 +244,8 @@ test("a restart under a deadline stops waiting for the old server to leave at th
 test("F004: a restart of a serve server whose supervisor never returns ends at the deadline (it was 4.2 s past 300 ms; here 1.2 s, for the old server's answer on a loaded machine), without a spawn, naming the wait `start`", async () => {
 	const s = await world.start({ mode: "serve" });
 	await s.handle.ready;
-	const ctx = world.ctx({ timers: { start: 6000, exit: 6000, supervisor: 6000, touch: 40 } });
-	const began = Date.now(), stalls = stallWatch();
+	const stalls = stallWatch(), ctx = world.ctx({ timers: { start: 6000, exit: 6000, supervisor: 6000, touch: 40 }, sleep: stalls.sleep });
+	const began = Date.now();
 	// 1.2 s: the old server's answer to the restart comes within it even on a loaded machine (at 0.3 s the control call itself timed out as `unreachable`).
 	await assert.rejects(restart(ctx, { reason: "r", deadline: began + 1200 }), (e: unknown) => e instanceof ServerError && e.wait === "start");
 	stalls.stop();
@@ -398,7 +398,7 @@ test("the requester touches restarting.since from its ask until hello, so a slow
 	world.connectMs = 700;
 	const seen: { since: string; began: string; reason: string; by: string }[] = [], stalls = stallWatch();
 	const sampler = setInterval(() => { const r = world.record()?.restarting; if (r) seen.push({ ...r }); }, 20);
-	const done = await restart(world.ctx({ by: "session main (aaaa1111)" }), { reason: "slow one" });
+	const done = await restart(world.ctx({ by: "session main (aaaa1111)", sleep: stalls.sleep }), { reason: "slow one" });
 	clearInterval(sampler);
 	stalls.stop();
 	assert.equal(done.server, "restarted");
@@ -417,7 +417,7 @@ test("in the gap before the new server runs, only the requester keeps restarting
 	world.spawnMs = 600;
 	const seen: string[] = [], stalls = stallWatch();
 	const sampler = setInterval(() => { const since = world.record()?.restarting?.since; if (since && !seen.includes(since)) seen.push(since); }, 10);
-	await restart(world.ctx(), { reason: "cold start" });
+	await restart(world.ctx({ sleep: stalls.sleep }), { reason: "cold start" });
 	clearInterval(sampler);
 	stalls.stop();
 	const gaps = seen.slice(1).map((t, i) => Date.parse(t) - Date.parse(seen[i]!));
