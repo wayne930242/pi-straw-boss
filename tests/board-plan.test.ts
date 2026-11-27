@@ -8,6 +8,7 @@ import { PLAN } from "../src/boardplan.ts";
 import { deriveBoard } from "../src/boardauto.ts";
 import { seedBoard } from "../src/boardseed.ts";
 import { boardRows } from "../src/boardview.ts";
+import { capOfTodos } from "../src/capacity.ts";
 import { type Todo, todosOf } from "../src/items.ts";
 
 // The plan an auto entry carries beside its checklist (src/boardplan.ts): the open todos as graph data, capped, the defer read from `metadata.waitsOn`/`metadata.until`, scrubbed as the items are, kept local (allies get none), and read
@@ -73,6 +74,15 @@ test("todosOf reads the defer from metadata.waitsOn and metadata.until; an until
 	] })!;
 	assert.deepEqual([list[0]!.waitsOn, list[0]!.until], ["boss", "2026-11-27T06:00:00.000Z"]);
 	assert.deepEqual([list[1]!.waitsOn, list[1]!.until, list[2]!.waitsOn], [undefined, undefined, undefined]);
+});
+
+test("todosOf keeps a todo's open blockers before it caps the ids at 50: 50 done ones and a 51st still open leave it blocked on the plan and out of capacity's ready", () => {
+	const done = Array.from({ length: 50 }, (_, i) => ({ id: i + 1, subject: `done ${i + 1}`, status: "completed" }));
+	const list = todosOf({ nextId: 101, tasks: [...done, { id: 51, subject: "still open", status: "in_progress" }, { id: 100, subject: "join", status: "pending", blockedBy: Array.from({ length: 51 }, (_, i) => i + 1) }] })!;
+	assert.equal(list.find((t) => t.id === 100)!.blockedBy!.length, 50, "still capped at 50");
+	assert.ok(list.find((t) => t.id === 100)!.blockedBy!.includes(51), "the open blocker survives the cap");
+	assert.deepEqual(deriveBoard({ name: "n", todos: list })!.plan!.nodes.find((n) => n.id === 100)!.after, [51]);
+	assert.deepEqual(capOfTodos(list).ready, [], "a todo that waits on an open one is not ready");
 });
 
 test("the file carries the plan for an auto entry only; a board_set entry never does, and the reader cuts a hostile plan again", () => {

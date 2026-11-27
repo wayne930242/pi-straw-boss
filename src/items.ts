@@ -46,17 +46,18 @@ export function stepInfo(metadata: unknown): StepInfo | undefined {
 }
 /** Capacity points: a number from 0 to 10, else none. */
 const pointsOf = (v: unknown) => (typeof v === "number" && v >= 0 && v <= 10 ? v : undefined);
-/** The open tasks of a todo snapshot (`{ tasks, nextId }`), checked field by field; anything else is no list. */
+/** The tasks of a todo snapshot (`{ tasks, nextId }`), checked field by field; anything else is no list. A todo's blockers keep the open ones first, then the rest in their order, before the cap: a cut never turns a blocked todo ready. */
 export function todosOf(snapshot: unknown): Todo[] | undefined {
 	const s = snapshot as { tasks?: unknown; nextId?: unknown } | undefined;
 	if (!s || !Array.isArray(s.tasks) || typeof s.nextId !== "number") return undefined;
-	return s.tasks.slice(0, 200).flatMap((t: Json) => {
+	const tasks: Json[] = s.tasks.slice(0, 200), open = new Set(tasks.flatMap((t) => (typeof t?.id === "number" && (t.status === "pending" || t.status === "in_progress") ? [t.id] : [])));
+	return tasks.flatMap((t) => {
 		if (!(typeof t?.id === "number" && typeof t.subject === "string" && STATUSES.has(t.status))) return [];
 		const sb = stepInfo(t.metadata), graph = isGraph(t.graph) ? t.graph : obj(t.metadata) ? graphOf(t.metadata.graph) : undefined, points = pointsOf(obj(t.metadata) ? t.metadata.points : undefined) ?? pointsOf(t.points);
 		const e = Array.isArray(t.evidence) ? t.evidence.at(-1) : undefined;
 		const evidence = e && typeof e.command === "string" && (e.result === "pass" || e.result === "fail") && typeof e.at === "string" && Number.isFinite(Date.parse(e.at)) ? { command: e.command.slice(0, 500), result: e.result, at: e.at, ...(typeof e.sha === "string" && { sha: e.sha.slice(0, 7) }) } : undefined;
 		const md = obj(t.metadata) ? t.metadata : {}, herdr = obj(md.herdr) ? md.herdr : {}, owner = typeof t.owner === "string" ? t.owner.trim() : "", agent = owner && typeof herdr.name === "string" && herdr.name.trim() === owner && typeof herdr.id === "string" && AGENT.test(herdr.id) ? herdr.id : undefined, waitsOn = typeof md.waitsOn === "string" ? md.waitsOn.trim().slice(0, 64) : "", until = typeof md.until === "string" && md.until.length <= 64 && Number.isFinite(Date.parse(md.until)) ? new Date(Date.parse(md.until)).toISOString() : undefined;
-		return [{ ...(typeof t.anchor === "string" && t.anchor && { anchor: t.anchor.slice(0, 500) }), ...(evidence && { evidence }), id: t.id, subject: t.subject.slice(0, 300), status: t.status, ...(typeof t.activeForm === "string" && { activeForm: t.activeForm.slice(0, 120) }), ...(sb && { sb }), ...(graph && { graph }), ...(owner && { owner: owner.slice(0, 64) }), ...(owner.length > 64 && { ownerCut: true as const }), ...(typeof t.uid === "string" && UID.test(t.uid) && { uid: t.uid }), ...(agent && { agent }), ...(Array.isArray(t.blockedBy) && { blockedBy: t.blockedBy.filter(Number.isSafeInteger).slice(0, 50) }), ...(points !== undefined && { points }), ...(waitsOn && { waitsOn }), ...(until && { until }) }];
+		return [{ ...(typeof t.anchor === "string" && t.anchor && { anchor: t.anchor.slice(0, 500) }), ...(evidence && { evidence }), id: t.id, subject: t.subject.slice(0, 300), status: t.status, ...(typeof t.activeForm === "string" && { activeForm: t.activeForm.slice(0, 120) }), ...(sb && { sb }), ...(graph && { graph }), ...(owner && { owner: owner.slice(0, 64) }), ...(owner.length > 64 && { ownerCut: true as const }), ...(typeof t.uid === "string" && UID.test(t.uid) && { uid: t.uid }), ...(agent && { agent }), ...(Array.isArray(t.blockedBy) && { blockedBy: t.blockedBy.filter(Number.isSafeInteger).sort((a: number, b: number) => Number(open.has(b)) - Number(open.has(a))).slice(0, 50) }), ...(points !== undefined && { points }), ...(waitsOn && { waitsOn }), ...(until && { until }) }];
 	});
 }
 export interface Item {

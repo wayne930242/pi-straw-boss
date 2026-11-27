@@ -409,8 +409,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// Train steps (docs/specs/2026-11-07-train-workers.md §11.1, todo #125 task 4) to 148: `Todo.sb` and `stepInfo`, the `metadata.sb` of a todo kept field by field and cut, so a card can show a train's steps without a command, a path or an evidence text.
 	// The todo list through pi-todo-ledger's contract (2026-11-24, docs/specs/2026-11-24-todo-ledger.md; measured) to 153: the ledger's own `points` when `metadata.points` has none.
 	// 2026-11-24: measured local todo details in the reader, bar, and chat bundle.
-	// Plan on the board (2026-11-27; measured) to 155: a todo's defer (`metadata.waitsOn`, `metadata.until`), its uid, and its Herdr child (`metadata.herdr`).
-	assert.ok(count("src/items.ts") <= 155, `src/items.ts has ${count("src/items.ts")} lines`);
+	// Plan on the board (2026-11-27; measured) to 155: a todo's defer (`metadata.waitsOn`, `metadata.until`), its uid, and its Herdr child (`metadata.herdr`). Review P2 (measured) to 156: the open ids of the snapshot, so a todo's open blockers come before its cap of 50.
+	assert.ok(count("src/items.ts") <= 156, `src/items.ts has ${count("src/items.ts")} lines`);
 	// 0.20.0 to 106 for an entry's images served one by one as their bytes (image).
 	// Operate transcripts (docs/specs/2026-11-07-link-operate.md §9) to 111: the hub's `Transcripts`, `foundOf` (a `t<id>` key from the ledger, else the registry) and the `transcripts` list in `api`.
 	// F round 2, headless runs in the GUI (2026-11-24, docs/specs/2026-11-23-lite-b2-d-e-f.md §4.4 and docs/specs/2026-11-23-f-entry.md §2.7–2.8; measured): watch.ts 111 to 123 (a tower key's stream carries the run's `live` text to every page and its dialogs to this computer's page only, each sent once per change).
