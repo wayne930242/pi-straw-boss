@@ -71,10 +71,32 @@ test("a bridge's todo summary carries the todo in progress and the open todos' H
 		{ id: 1, subject: "done", status: "completed", metadata: { herdr: { id: "run-old", name: "w0" } } },
 		{ id: 2, subject: "build", status: "in_progress", owner: "w2", metadata: { herdr: { id: "run-b", name: "w2", runs: [{ id: "run-a", name: "w1" }, { id: "run-b", name: "w2" }] } } },
 		{ id: 3, subject: "review", status: "pending" },
+		{ id: 4, subject: "handed on", status: "pending", owner: "w5", metadata: { herdr: { id: "run-c", name: "w4" } } },
 	];
-	const sum = todoOfBranch([{ type: "message", message: { role: "toolResult", toolName: "todo", details: { tasks, nextId: 4 } } }])!;
+	const sum = todoOfBranch([{ type: "message", message: { role: "toolResult", toolName: "todo", details: { tasks, nextId: 5 } } }])!;
 	assert.equal(sum.doing, 2);
-	assert.deepEqual(sum.runs, [{ id: 2, run: "run-a" }, { id: 2, run: "run-b" }], "a completed todo binds no question");
+	// A run binds the todo only while it is its owner's (asks-r2-F006): w1's run-a was the todo's before w2 took it over, and #4's owner changed alone, so w4's run-c is no longer its.
+	assert.deepEqual(sum.runs, [{ id: 2, run: "run-b" }], "a completed todo binds no question, nor a run of a former owner");
 	assert.equal(todoOk(sum), true);
 	assert.equal(todoOk({ ...sum, runs: [{ id: 2, run: "bad\nrun" }] }), false);
+});
+
+test("the head tower's own waits are mirrored too, opened on the head's card, a main's on its raiser (asks-r2-F005)", () => {
+	const n = net(), service = n.bases[0]!.tower!.service!;
+	n.head = { key: "sb-head", name: "head tower", mark: "idle", state: "standing", asks: [], service: { ...service, memory: { ...service.memory!, bossWaits: [
+		{ id: "W1", text: "Merge the train?", at: "1970-01-01T00:00:01.000Z" },
+		{ id: "W2", text: "Rotate the key", at: "1970-01-01T00:00:02.000Z", card: { type: "action", lang: "en", happened: "h", do: "Rotate the key", from: { key: "main-2", name: "api-main", role: "main" } } },
+		{ id: "W3", text: "resolved", at: "1970-01-01T00:00:02.000Z", state: "resolved" },
+	] } } };
+	const seen = asksOfNet(n, { now: 9000 }), by = Object.fromEntries(seen.entries.map((e) => [e.mirror, e]));
+	assert.deepEqual(Object.keys(by).filter((k) => k.startsWith("wait:@head:")).sort(), ["wait:@head:W1", "wait:@head:W2"]);
+	assert.deepEqual([by["wait:@head:W1"]!.asker.session, by["wait:@head:W1"]!.kind], ["sb-head", "wait"]);
+	assert.equal(by["wait:@head:W2"]!.asker.session, "main-2");
+	assert.ok(seen.live.has("sb-head"), "the head is on the net");
+	const store = createAskStore(join(root, "asks"), () => 9000);
+	store.sync(seen.entries, seen.live);
+	const views = viewsOf(store.list({ open: true }), n), head = views.find((v) => v.wait === "W1" && v.ws === "@head")!;
+	assert.deepEqual([head.unit, head.ws, head.wait], ["sb-head", "@head", "W1"], "its card is the head's");
+	store.sync(asksOfNet(net(), { now: 9500 }).entries, asksOfNet(net(), { now: 9500 }).live);
+	assert.equal(store.list({ open: true }).some((r) => r.mirror?.startsWith("wait:@head:")), false, "gone with the head's waits");
 });
