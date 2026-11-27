@@ -45,8 +45,12 @@ test("the plan is capped at PLAN.nodes; cut says how many open todos were left o
 	assert.equal(plan.nodes.length, PLAN.nodes);
 	assert.equal(plan.cut, 27 - PLAN.nodes);
 	assert.deepEqual(plan.nodes.map((n) => n.id), Array.from({ length: PLAN.nodes }, (_, i) => i + 1));
-	const many = deriveBoard({ name: "n", todos: [...Array.from({ length: 12 }, (_, i) => todo(i + 1, `x${i}`, "pending")), todo(20, "join", "pending", { blockedBy: Array.from({ length: 12 }, (_, i) => i + 1) })] })!.plan!;
-	assert.equal(many.nodes.at(-1)!.after!.length, PLAN.after, "a node's blockers are capped");
+	const many = deriveBoard({ name: "n", todos: [todo(99, "join", "in_progress", { blockedBy: Array.from({ length: 30 }, (_, i) => 30 - i) }), ...Array.from({ length: 30 }, (_, i) => todo(i + 1, `x${i}`, "pending"))] })!.plan!;
+	const join = many.nodes.find((n) => n.id === 99)!;
+	assert.equal(join.after!.length, PLAN.after, "a node's blockers are capped");
+	assert.deepEqual(join.after!.slice(0, 19).sort((a, b) => a - b), Array.from({ length: 19 }, (_, i) => i + 1), "the shown blockers come first, so the cap never drops one that places the node");
+	const fanIn = deriveBoard({ name: "n", todos: [...Array.from({ length: 9 }, (_, i) => todo(i + 1, `p${i}`, "pending", i === 8 ? { blockedBy: [10] } : {})), todo(10, "first", "in_progress"), todo(11, "merge", "pending", { blockedBy: [1, 2, 3, 4, 5, 6, 7, 8, 9] })] })!.plan!;
+	assert.deepEqual(fanIn.nodes.find((n) => n.id === 11)!.after, [1, 2, 3, 4, 5, 6, 7, 8, 9], "a fan-in's ninth predecessor stays: the merge sits below the deepest");
 });
 
 test("the plan's text goes through the board's scrub: paths outside the project, secrets, and addresses never leave; a mostly hidden subject is a hidden node", () => {

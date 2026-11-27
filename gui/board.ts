@@ -11,6 +11,7 @@ import type { Mark } from "../src/netdata.ts";
 import { iconRef, unitIcon } from "./icons.ts";
 import { alliesOf, colsHead, fillMini, fillTray, icon, rowSupply } from "./supply.ts";
 import { graphed, planLine, planView } from "./plangraph.ts";
+import { ownerOf } from "../src/planowner.ts";
 
 // The work board on the head page (docs/specs/2026-11-09-board-view.md): this computer's board as the net snapshot carries it (`net.board`), folded to one line by default, opened to the rows grouped by workspace in tab order. Every field of a row is
 // model-written text, so it is drawn as text only (`h` makes text nodes; a value goes into an attribute only as a title) and nothing a row says becomes a link or a route: the one link is a live main's name, whose route is made from the net's own unit key.
@@ -145,7 +146,8 @@ export function fillBoard(box: HTMLElement, net: Net | undefined, force = false,
 		if (net?.capacity) fillTray(tray, net.capacity, rows);
 		tray.hidden = !net?.capacity;
 	}
-	const sig = JSON.stringify([rows, [...asked].filter(([, until]) => until > now).map(([s]) => s), [...sending], [...clearing], net?.bases.map((b) => b.id), net?.capacity ? 1 : 0, net?.link?.allies.map((a) => [a.device, a.label, a.online]), voice]);
+	const owners = rows.flatMap((r) => r.plan?.nodes.flatMap((n) => (n.agent ? [ownerOf(net, r.session, n, false)] : [])) ?? []); // a plan owner that comes, goes, or ends redraws its row
+	const sig = JSON.stringify([rows, owners, [...asked].filter(([, until]) => until > now).map(([s]) => s), [...sending], [...clearing], net?.bases.map((b) => b.id), net?.capacity ? 1 : 0, net?.link?.allies.map((a) => [a.device, a.label, a.online]), voice]);
 	if (force || box.dataset.sig !== sig) {
 		box.dataset.sig = sig;
 		const keep = unfolded.get(box) ?? unfolded.set(box, new Set()).get(box)!, body = box.querySelector<HTMLElement>(".board-rows");

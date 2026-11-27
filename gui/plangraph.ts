@@ -60,9 +60,11 @@ function ownerEl(n: PlanNode, at: PlanAt): HTMLElement[] {
 	if (hit === "ambiguous") return [h("span", { class: "plan-owner", title }, name)]; // two of one name: no guess
 	if (hit === "gone" || (hit && !hit.live)) return [h("span", { class: "plan-owner", "data-gone": "", title }, name, h("small", null, ` ${m.plan_gone()}`))];
 	if (!hit) return [h("span", { class: "plan-owner", title }, name)];
-	const route = formatRoute({ view: "session", ws: hit.ws, key: hit.key }), focus = h("button", { type: "button", class: "plan-focus", title: m.plan_focus_title({ owner: name }) }, m.plan_focus());
+	const route = formatRoute({ view: "session", ws: hit.ws, key: hit.key }), link = h("a", { class: "plan-owner", href: route, "data-route": route, title: m.plan_open_title({ owner: name }) }, name);
+	if (at.net?.bases.find((b) => b.id === hit.ws)?.box) return [link]; // an operated box's pane is not this computer's to bring forward (the operate routes refuse focus)
+	const focus = h("button", { type: "button", class: "plan-focus", title: m.plan_focus_title({ owner: name }) }, m.plan_focus());
 	focus.onclick = () => void io.post(`sessions/${encodeURIComponent(hit.key)}/focus`, {}).catch(() => undefined);
-	return [h("a", { class: "plan-owner", href: route, "data-route": route, title: m.plan_open_title({ owner: name }) }, name), focus];
+	return [link, focus];
 }
 function nodeOf(n: PlanNode, now: number, at: PlanAt): HTMLElement {
 	const state = nodeState(n), wait = n.wait && [n.wait.on && m.plan_wait_on({ who: n.wait.on }), n.wait.until && m.plan_wait_until({ time: whenText(n.wait.until, now) })].filter(Boolean).join(" · ");

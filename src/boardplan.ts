@@ -10,7 +10,7 @@ export interface PlanNode { id: number; t: string; status: "pending" | "in_progr
 /** At most `PLAN.nodes` open todos, the plan's graph, and `cut`, the open todos left out. */
 export interface Plan { nodes: PlanNode[]; graph?: Graph; cut?: number }
 /** `text` is a board item's cap (`BOARD.item`). */
-export const PLAN = { nodes: 20, after: 8, label: 40, text: 80 } as const;
+export const PLAN = { nodes: 20, after: 20, label: 40, text: 80 } as const; // `after` as many as the nodes: every shown blocker of a node fits, so its layer is right
 
 /** The graph of the newest plan: that of the open todo (pending or in progress, not a train step) with the highest id that names one. A finished plan, a bare anchor, and a train step name none. */
 export const planGraph = (list: readonly Todo[]): Graph | undefined => list.filter((t) => t.status !== "completed" && !t.sb && t.graph).reduce<Todo | undefined>((top, t) => (!top || t.id > top.id ? t : top), undefined)?.graph;
@@ -21,10 +21,10 @@ export const planGraph = (list: readonly Todo[]): Graph | undefined => list.filt
  */
 export function planOf(todos: readonly Todo[], say: (text: string, max: number) => string): Plan | undefined {
 	const open = todos.filter((t) => t.status !== "completed"), ids = new Set(open.map((t) => t.id));
-	const shown = [...open].sort((a, b) => (a.status === b.status ? a.id - b.id : a.status === "in_progress" ? -1 : 1)).slice(0, PLAN.nodes), graph = planGraph(todos);
+	const shown = [...open].sort((a, b) => (a.status === b.status ? a.id - b.id : a.status === "in_progress" ? -1 : 1)).slice(0, PLAN.nodes), graph = planGraph(todos), drawn = new Set(shown.map((t) => t.id));
 	if (!shown.length) return undefined;
 	const nodes = shown.map((t): PlanNode => {
-		const owner = t.owner ? say(t.owner, PLAN.label) : "", on = t.waitsOn ? say(t.waitsOn, PLAN.label) : "", after = [...new Set((t.blockedBy ?? []).filter((b) => b !== t.id && ids.has(b)))].slice(0, PLAN.after);
+		const owner = t.owner ? say(t.owner, PLAN.label) : "", on = t.waitsOn ? say(t.waitsOn, PLAN.label) : "", held = [...new Set((t.blockedBy ?? []).filter((b) => b !== t.id && ids.has(b)))], after = [...held.filter((b) => drawn.has(b)), ...held.filter((b) => !drawn.has(b))].slice(0, PLAN.after); // the shown blockers first: they place the node
 		return { id: t.id, t: say(t.subject, PLAN.text), status: t.status as PlanNode["status"], ...(owner ? { owner } : {}), ...(t.agent ? { agent: t.agent } : {}), ...(after.length ? { after } : {}), ...(on || t.until ? { wait: { ...(on ? { on } : {}), ...(t.until ? { until: t.until } : {}) } } : {}) };
 	});
 	return { nodes, ...(graph ? { graph } : {}), ...(open.length > shown.length ? { cut: open.length - shown.length } : {}) };

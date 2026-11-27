@@ -186,3 +186,22 @@ test("T1-F002: a name never routes across mains or devices, nor from the board's
 	const page = planView({ nodes: [{ id: 1, t: "x", status: "pending", owner: LONG }] }, Date.now(), { net, main: "lm", byName: true }) as unknown as El;
 	assert.equal(page.querySelector("a.plan-owner"), null, "an exact name no unit bears: text, though two names begin with it");
 });
+
+test("an owner on an operated box gets its link but no Focus (the operate routes refuse it); the board row redraws when a plan owner comes, goes, or ends", async () => {
+	const box = { id: "xbox", label: "Box", box: { device: "d" }, mark: "idle", tower: null, outposts: [], outside: [], tabs: [{ id: "xbox:t", label: "work", units: [unit("xm1", "box-main", "main", { subs: [unit("xr1", "review", "subagent")] })] }] };
+	const v = planView({ nodes: [{ id: 1, t: "x", status: "pending", owner: "review", agent: "xr1" }] }, Date.now(), { net: { bases: [box] } as unknown as Net, main: "xm1" }) as unknown as El;
+	assert.equal(v.querySelector("a.plan-owner")!.getAttribute("href"), "w/xbox/s/xr1");
+	assert.equal(v.querySelector(".plan-focus"), null);
+	const { fillBoard } = await import("../gui/board.ts");
+	const row = { session: "m1", workspace: "Alpha", tab: "work", main: "api-main", state: "working", items: [], now: "n", src: "todo" as const, updated: Date.now(), plan: { nodes: [{ id: 1, t: "x", status: "pending" as const, owner: "worker-api", agent: "run-api-1" }] } };
+	const b = new El("details"), summary = new El("summary"), body = new El("div");
+	body.className = "board-rows";
+	summary.append(new El("b"), new El("span"));
+	b.append(summary, body);
+	const withKid = (ended: boolean) => ({ ...NET, bases: NET.bases.map((base, i) => (i ? base : { ...base, tabs: [{ ...base.tabs[0]!, units: [{ ...base.tabs[0]!.units[0]!, subs: [unit("run-api-1", "worker-api", "subagent", ended ? { ended: true, control: false } : {})] }] }] })), board: [row] }) as unknown as Net;
+	fillBoard(b as never, withKid(false));
+	assert.ok(b.querySelector("a.plan-owner"), "live: a link");
+	fillBoard(b as never, withKid(true));
+	assert.equal(b.querySelector("a.plan-owner"), null, "ended: the row was drawn again, gone");
+	assert.ok(b.querySelector(".plan-owner")!.hasAttribute("data-gone"));
+});
