@@ -29,6 +29,7 @@ function world() {
 for (const order of ["before sb", "after sb"] as const) {
 	test(`with pi-herdr-agents loaded ${order}, sb's host stands down at session start, registers nothing, and says so once`, async () => {
 		const w = world(), herdr = fakePackage("pi-herdr-agents");
+		w.ctx.hasUI = true;
 		if (order === "before sb") w.foreign(herdr, { tool: "subagent", command: "subagent" });
 		createHost({ choice: on, engine: w.engine, root: ROOT })(w.pi);
 		if (order === "after sb") w.foreign(herdr, { tool: "subagent", command: "subagent" });
@@ -41,7 +42,32 @@ for (const order of ["before sb", "after sb"] as const) {
 		assert.equal(w.loads(), 0, "the engine never loaded");
 		assert.equal(w.tools.filter((t) => t.path === SELF).length, 0, "sb registered no tool");
 		assert.equal(w.notices.length, 1, "told once");
-		assert.match(w.notices[0]!.text, /pi-herdr-agents/);
+		assert.equal(w.notices[0]!.level, "warning");
+		assert.ok(w.notices[0]!.text.includes(`pi remove ${state!.others![0]}`));
+		assert.match(w.notices[0]!.text, /\/reload$/);
+	});
+}
+
+for (const [lang, scope, source] of [["en", "user", "npm:pi-herdr-agents@1.2.3"], ["zh-TW", "project", "git:github.com/wayne930242/pi-herdr-agents#main"]] as const) {
+	test(`headless ${lang}: name the configured ${scope} removal once per session`, async t => {
+		const w = world(), path = fakePackage("pi-herdr-agents"), stderr = t.mock.method(console, "error", () => {});
+		w.foreign(path, { tool: "subagent" });
+		const get = w.pi.getAllTools.bind(w.pi);
+		w.pi.getAllTools = () => get().map(tool => ({ ...tool, sourceInfo: { path, scope, source, origin: "package" } }));
+		const before = process.env.LC_ALL;
+		process.env.LC_ALL = lang;
+		t.after(() => { if (before === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = before; });
+		createHost({ choice: on, engine: w.engine, root: ROOT })(w.pi);
+		await w.emit("session_start");
+		await w.emit("session_start");
+		w.ctx.sessionManager.getSessionId = () => "second";
+		await w.emit("session_start");
+		assert.equal(stderr.mock.callCount(), 2);
+		assert.equal(w.notices.length, 0);
+		const text = String(stderr.mock.calls[0]!.arguments[0]);
+		assert.ok(text.includes(`pi remove ${source}${scope === "project" ? " --local" : ""}`));
+		assert.match(text, lang === "en" ? /now hosts subagents.*then \/reload$/ : /現在負責執行子代理.*再執行 \/reload$/);
+		t.diagnostic(text);
 	});
 }
 

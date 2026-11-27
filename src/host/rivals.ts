@@ -9,8 +9,8 @@ import { dirname, join, sep } from "node:path";
 // A path resolves to its package by the nearest package.json above it (symlinks resolved), so a checkout, an npm install and a `-e` path all name
 // pi-herdr-agents the same way. Load order, the shared load stamp and the runtime slot a previous load left are never read.
 
-export interface Registered { name: string; source?: string; sourceInfo?: { path?: string } }
-export interface Rival { /** The registering extension's resolved path. */ path: string; /** Its package's name, when a package.json above it has one. */ pkg?: string; via: ("tool" | "command")[] }
+export interface Registered { name: string; source?: string; sourceInfo?: { path?: string; source?: string; scope?: string; origin?: string } }
+export interface Rival { /** The registering extension's resolved path. */ path: string; /** Its package's name, when a package.json above it has one. */ pkg?: string; configured?: { source: string; local: boolean }; via: ("tool" | "command")[] }
 
 const real = (path: string) => {
 	try {
@@ -41,15 +41,18 @@ const COMMAND = /^subagent(:\d+)?$/;
 export function rivalsOf(commands: readonly Registered[], tools: readonly Registered[], selfRoot: string): Rival[] {
 	const self = real(selfRoot), mine = (path: string) => real(path) === self || real(path).startsWith(self + sep);
 	const found = new Map<string, Rival>();
-	const add = (path: string | undefined, via: "tool" | "command") => {
+	const add = (info: Registered["sourceInfo"], via: "tool" | "command") => {
+		const path = info?.path;
 		if (!path || path.startsWith("builtin:") || path.startsWith("<") || mine(path)) return;
 		const key = real(path), was = found.get(key);
 		if (was) return void (was.via.includes(via) || was.via.push(via));
 		const pkg = packageOf(path);
-		found.set(key, { path: key, ...(pkg ? { pkg } : {}), via: [via] });
+		// Pi's package resolver records the verbatim settings entry (including version/ref) and its scope.
+		const configured = info.origin === "package" && info.source && (info.scope === "user" || info.scope === "project") ? { source: info.source, local: info.scope === "project" } : undefined;
+		found.set(key, { path: key, ...(configured ? { configured } : {}), ...(pkg ? { pkg } : {}), via: [via] });
 	};
-	for (const c of commands) if (c.source === "extension" && COMMAND.test(c.name)) add(c.sourceInfo?.path, "command");
-	for (const t of tools) if (t.name === "subagent") add(t.sourceInfo?.path, "tool");
+	for (const c of commands) if (c.source === "extension" && COMMAND.test(c.name)) add(c.sourceInfo, "command");
+	for (const t of tools) if (t.name === "subagent") add(t.sourceInfo, "tool");
 	return [...found.values()];
 }
 

@@ -1323,7 +1323,7 @@ pi-straw-boss 自己當子代理的宿主，跑在 Maestro 引擎上（`@nubl/ma
 - **模型。** `<agent dir>/herdr-agents/config.json`（預設 `~/.pi/agent/herdr-agents/config.json`），也就是 pi-herdr-agents 讀的那個檔：`models.default`、`models.agents`、`models.tasks`、`models.tasksThinking`，以及 `status`、`supervision`、`panes`、`spawning` 各段。沒有這個檔時，套件的 `config.json.example` 提供模型以外的設定。手動編輯，然後 `/reload`。
 - **worker 失聯。** worker 的窗格關掉，或它的 pi 在回報前結束時，Maestro 會送出一則失敗結果。在模型讀到之前，Straw Boss 在裡面加一段，寫上 worker 的名稱、它的 session 檔與 `subagent_resume` 的呼叫方式，其他什麼都不做：下面的催報、接手、還原與復活是給 pi-herdr-agents 的 run 用的，對 sb 宿主的 run 一律讓開。
 - **選擇。** 先看 `PI_STRAW_BOSS_HOST`（`sb` 或 `off`），再看 `<agent dir>/straw-boss/host.json`（`{ "host": "sb" }` 或 `{ "host": "off" }`），再看 `~/.pi/agent/straw-boss/host.json`；都沒有就開啟。
-- **只有一個宿主。** pi 載入期間，宿主什麼都不註冊。到了 session 開始時，每個擴充都已註冊完畢，所以它讀 pi 自己的紀錄：`pi.getCommands()` 在任何去重之前列出每個擴充的 `/subagent`，`pi.getAllTools()` 列出勝出的那個 `subagent` 來自哪個擴充，兩者都附上註冊它的擴充的解析後路徑，再由上方最近的 package.json 認出套件。若 pi-herdr-agents 或另一份 pi-straw-boss 已經註冊了，sb 的宿主就退讓：什麼都不註冊，只說一次，doctor 也會說明原因。載入順序、pi-herdr-agents 的載入戳記、先前載入留下的 runtime 槽位一律不讀。否則它就載入 Maestro 並註冊工具。
+- **只有一個宿主。** pi 載入期間，宿主什麼都不註冊。到了 session 開始時，每個擴充都已註冊完畢，所以它讀 pi 自己的紀錄：`pi.getCommands()` 在任何去重之前列出每個擴充的 `/subagent`，`pi.getAllTools()` 列出勝出的那個 `subagent` 來自哪個擴充，兩者都附上註冊它的擴充的解析後路徑，再由上方最近的 package.json 認出套件。若 pi-herdr-agents 或另一份 pi-straw-boss 已經註冊了，sb 的宿主就退讓：什麼都不註冊，doctor 會說明原因。如果是 pi-herdr-agents，sb 在每個 session 警告一次（沒有介面時寫到 stderr），列出載入路徑和 `pi remove` 指令，並提醒移除後執行 `/reload`。載入順序、pi-herdr-agents 的載入戳記、先前載入留下的 runtime 槽位一律不讀。否則它就載入 Maestro 並註冊工具。
 - **打包。** 每次啟動用 `-e` 傳入的子代理入口是 `src/host/child.ts`，這個路徑在每個版本都保持不變。sb server 需要 pi-intercom，一般安裝不會帶它（`pi install npm:pi-intercom`）；宿主沒有它也能運作。操作指南是套件附的 skill `pi-straw-boss-subagents`。
 
 ## 孤立的子智慧體

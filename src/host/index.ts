@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { localeOf } from "../locale.ts";
+import { retiredWarning } from "./retired.ts";
 import { lateApi } from "./late.ts";
 import { rivalsOf, rivalText } from "./rivals.ts";
 import { setHostState } from "./state.ts";
@@ -65,14 +67,29 @@ export function createHost(deps: HostDeps = {}) {
 		setHostState({ state: "pending", from });
 		const late = lateApi(pi);
 		let decided: "active" | "down" | undefined;
+		let retired: ReturnType<typeof rivalsOf> = [];
+		const warned = new Set<string>();
 		pi.on("session_start", async (event, ctx) => {
+			const tell = (text: string) => {
+				if (ctx.hasUI && ctx.ui?.notify) ctx.ui.notify(text, "warning");
+				else console.error(text);
+			};
+			const warnRetired = () => {
+				const session = ctx.sessionManager.getSessionId();
+				if (warned.has(session)) return;
+				warned.add(session);
+				tell(retiredWarning(retired, localeOf(process.env, join(getAgentDir(), "straw-boss"))));
+			};
+			if (retired.length) return warnRetired();
 			if (!decided) {
 				const rivals = rivalsOf(pi.getCommands(), pi.getAllTools(), deps.root ?? ROOT);
 				if (rivals.length) {
 					decided = "down";
 					const why = `${rivalText(rivals)}, so sb's subagent host registered nothing in this pi`;
 					setHostState({ state: "stood-down", from, why, others: rivals.map((r) => r.path) });
-					ctx.ui.notify(`Straw Boss: ${why}. Remove one of the two hosts (see /boss doctor).`, "warning");
+					retired = rivals.filter(r => r.pkg === "pi-herdr-agents");
+					if (retired.length) warnRetired();
+					else tell(`Straw Boss: ${why}. Remove one of the two hosts (see /boss doctor).`);
 					return;
 				}
 				try {
