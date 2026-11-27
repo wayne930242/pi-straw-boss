@@ -65,7 +65,7 @@ for (const [lang, scope, source] of [["en", "user", "npm:pi-herdr-agents@1.2.3"]
 		assert.equal(stderr.mock.callCount(), 2);
 		assert.equal(w.notices.length, 0);
 		const text = String(stderr.mock.calls[0]!.arguments[0]);
-		assert.ok(text.includes(`pi remove ${source}${scope === "project" ? " --local" : ""}`));
+		assert.ok(text.includes(`pi remove ${scope === "project" ? `'${source}' --local` : source}`));
 		assert.match(text, lang === "en" ? /now hosts subagents.*then \/reload$/ : /現在負責執行子代理.*再執行 \/reload$/);
 		t.diagnostic(text);
 	});
