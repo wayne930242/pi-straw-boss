@@ -32,6 +32,7 @@ import { runApprover } from "./runapprove.ts";
 import type { Asks } from "./asks.ts";
 import { ageOf, allyTools, buildAllyBrief, buildBrief, gatherMains, heldFlag, localTools } from "./towerbrief.ts";
 import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
+import { createStow, type StowTimers } from "./towerstow.ts";
 import { createKids, type KidsPort } from "./runkids.ts";
 import { resolvePi } from "./runchild.ts";
 import { digestOf, headLabel, openCards, type WaitDigest, type WaitList, waitList, waitRows } from "./waitlist.ts";
@@ -120,8 +121,8 @@ export interface TowersOptions {
 	promptCommand?: (workspace: string) => string | undefined;
 	/** Whether this device has no boss at it (main.ts): its stand-ins stay idle whatever cards wait. */
 	unattended?: () => boolean;
-	/** The timers of the standing pane (standing.ts), for tests, and `standingWait`: */
-	standing?: Partial<StandingTimers>; standingWait?: /* the clock of a run's wait for the prompt's exit (tests) */ { now: () => number; sleep: (ms: number) => Promise<void> };
+	/** The timers of the standing pane (standing.ts) and of the look that closes it between runs (towerstow.ts), for tests, and `standingWait`: */
+	standing?: Partial<StandingTimers>; stow?: Partial<StowTimers>; standingWait?: /* the clock of a run's wait for the prompt's exit (tests) */ { now: () => number; sleep: (ms: number) => Promise<void> };
 	/** A request to the link holder as a tower identity (main.ts; absent in a world without one). `served`: the server's own request as that identity, as the link service's `request` takes it. */
 	link?: (body: unknown, from: string, served?: boolean) => Promise<unknown>;
 	/** The server's own part of `boss_server` for a run. */
@@ -188,7 +189,7 @@ export interface Towers extends Returns {
 		event(text: string, requester?: Requester, door?: "pane" | "viewer" | "page"): Promise<{ workspace: string; id: string }>;
 	};
 	/** The tower prompt in a standing pane (standing.ts): its poll, Ctrl+D, and exit. */
-	prompt(cmd: "prompt-poll" | "prompt-leave" | "prompt-gone", workspace: string, pid: number, answering?: boolean): Promise<PromptReply | { ok: true }>;
+	prompt(cmd: "prompt-poll" | "prompt-leave" | "prompt-gone", workspace: string, pid: number, answering?: boolean, draft?: boolean): Promise<PromptReply | { ok: true }>;
 	/** Messages wait in the link inbox for this tower identity: ally runs are started for them. */
 	allyWaiting(identity: string): void;
 	/** The GUI panel's request on a workspace's memory (`POST tower/<workspace>/memory`, towermemory.ts `memoryRequest`). */
@@ -305,7 +306,7 @@ export function createTowers(o: TowersOptions): Towers {
 		freed: (over) => standing.freed(l.record.workspace, over?.fresh, over?.keepParked),
 		clearDigest: (keys) => digest.drop(l.record.workspace, keys),
 		renewPane: (runId) => renew(l, runId),
-		renewing: () => l.renewing === true,
+		renewing: () => l.renewing === true, seat: (why) => void stow.open(l.record.workspace, why).catch((cause: Error) => error("tower-seat", cause.message)),
 		// The run that was shown an expired wait has polled: it will not be shown again (towermemory.ts).
 		shown: (ids) => { try { markShown(slot, l.record.workspace, now(), ids); } catch (cause) { error("memory", (cause as Error).message); } },
 		memory: () => {
@@ -820,6 +821,11 @@ export function createTowers(o: TowersOptions): Towers {
 		if (l.client) await release(l).then(() => services.set(l.record.workspace, adopt(l.record, false, true)));
 	};
 	const look = () => (looking = looking.then(reconcile).catch((cause: Error) => error("reconcile", cause.message)));
+	/** The service moves to another record (its pane closed or made between runs, a viewer made): written, its identity registered again with it, and the standing pane's state begun anew. `fresh`: the pane was just made. */
+	const reseat = async (l: Live, record: ServiceRecord, fresh: boolean): Promise<Live> => { l.record = record; writeService(slot, record); await release(l); await standing.detach(record.workspace); if (services.get(record.workspace) === l) services.delete(record.workspace); return adopt(record, fresh, true); };
+	const stow = createStow<Live>({ run, api: cfg.api, log, now, stateDir: slot.stateDir, ...(o.stow ? { timers: o.stow } : {}), list: () => [...services.values()].filter((l) => !l.stopped), current: (ws) => ((l) => (l && !l.stopped ? l : undefined))(services.get(ws)), record: (l) => l.record, place: (l, record) => void (l.record = record), head: isHeadL, seated: (l) => l.seated, recovering: () => now() < recoverUntil,
+		ready: (l) => l.state === "live" && l.seated && !l.stopped && !l.renewing && Boolean(l.client?.isConnected()), seat: async (l) => void ((l.seated = true), await publish(l)), hold: (l) => ((was) => ((l.state = "registering"), (l.renewing = true), () => void ((l.state = was), (l.renewing = false))))(l.state),
+		headless, status: (ws) => runs.status(ws), queued: (ws) => runs.queue(ws).filter((e) => !e.quiet).length, soon: (ws, ms) => runs.startsWithin(ws, ms), cards: (l) => cardsFor(l), prompt: (ws) => standing.here(ws), reseat, lose });
 
 	// --- the start ------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -971,7 +977,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const poll = o.recoverPollMs ?? RECOVER_POLL_MS;
 		timers.push(setInterval(() => { if (now() < recoverUntil + poll) look(); }, poll));
 		timers.forEach((t) => t.unref());
-		standing.start();
+		standing.start(); stow.start();
 		await Promise.race([Promise.all([...adopted, ...adoptedHead].map((l) => l.starting)), sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 		await look();
 		loadedAll = true;
@@ -1045,6 +1051,8 @@ export function createTowers(o: TowersOptions): Towers {
 			},
 			typed: () => standing.typedSince(claim!.pane, seen.terminal, claim!.at),
 		});
+		// A tower whose pane closed between runs (towerstow.ts) gets it again; one whose workspace proved a stranger's ended, and a tower is made anew below.
+		if (existing && !existing.stopped && tabless(existing) && !hint && !claim) { const l = await stow.open(ws, "ensure"); if (l) return (await Promise.race([l.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]), answer(l, false)); }
 		if (existing && !existing.stopped) {
 			// A pane list that fails is unknown: the ask fails, the service stays.
 			const here = await locate(existing, false);
@@ -1116,14 +1124,7 @@ export function createTowers(o: TowersOptions): Towers {
 			await cfg.api("tab.move", { tab_id: tab.tabId, insert_index: 0 }).catch((cause: Error) => error("tab-move", cause.message));
 			record = { ...record, pane: tab.paneId, tab: tab.tabId };
 		}
-		writeService(slot, record);
-		if (existing) {
-			existing.record = record;
-			await release(existing);
-			await standing.detach(ws);
-			services.delete(ws);
-		}
-		const l = adopt(record, view, true);
+		const l = existing ? await reseat(existing, record, view) : (writeService(slot, record), adopt(record, view, true));
 		log.line(existing ? "tower-viewer" : "tower-opened", { workspace: ws, id: record.id, ...(view ? { pane: record.pane, tab: record.tab } : { tab: "none" }) });
 		await Promise.race([l.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 		return answer(l, !existing);
@@ -1458,9 +1459,9 @@ export function createTowers(o: TowersOptions): Towers {
 			},
 		},
 		runs,
-		async prompt(cmd, workspace, pid, answering = false) {
+		async prompt(cmd, workspace, pid, answering = false, draft = false) {
 			if (cmd === "prompt-poll") {
-				const polled = standing.poll(workspace, pid);
+				const polled = standing.poll(workspace, pid, draft);
 				// The boss answers wait cards at this prompt (its poll says so): the tower's wake is held meanwhile (runs.ts `answering`). A prompt that is told to leave holds nothing.
 				return polled.ok ? { ...polled, ...api.waitDigest(workspace), ...(runs.answering(workspace, answering && !polled.leave) ? { holding: true as const } : {}) } : polled;
 			}
@@ -1469,7 +1470,7 @@ export function createTowers(o: TowersOptions): Towers {
 		async stop(opts) {
 			stopped = true;
 			offAuto?.();
-			await standing.stop();
+			await Promise.all([standing.stop(), stow.stop()]);
 			await runs.stop(opts);
 			timers.forEach(clearInterval);
 			clearTimeout(republishTimer);

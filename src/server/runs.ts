@@ -200,6 +200,8 @@ export interface ServiceRef {
 	renewPane?(runId: string): Promise<string | undefined>;
 	/** Whether the standing pane is being replaced: a pi that turns up in it meanwhile is not admitted. */
 	renewing?(): boolean;
+	/** A service whose pane closed between runs (towerstow.ts) gets it made again before a run starts: once its identity has registered with the new pane, it pokes again. */
+	seat?(why: "run" | "ally"): void;
 	/** The tower's memory in counts for the GUI's snapshot (towermemory.ts). */
 	memory?(): MemorySummary;
 }
@@ -476,6 +478,7 @@ export function createRuns(o: RunsOptions) {
 	const begin = async (svc: Svc) => {
 		if (stopped || svc.run || svc.state !== "standing" || !o.enabled() || !waitingOf(svc).some((e) => !e.quiet)) return;
 		if (!svc.ref.live()) return; // the identity registers first: runs reply under it. The service pokes again when it is live.
+		if (!headlessOn() && !svc.ref.record().pane) return void svc.ref.seat?.("run"); // its pane closed between runs: made first
 		if (slots >= o.max()) return void blocked.add(svc);
 		slots++;
 		svc.state = "waking";
@@ -725,6 +728,7 @@ export function createRuns(o: RunsOptions) {
 		for (const { device, items } of devicesWaiting(svc)) {
 			if (stopped || !o.enabled() || svc.refusedAt !== undefined && now() - svc.refusedAt < t.refuse) return;
 			if (!svc.ref.live()) return; // the identity registers first; the service pokes again when it is live
+			if (!headlessOn() && !svc.ref.record().pane) return void svc.ref.seat?.("ally"); // the ally pane is split off the standing pane, which is made first
 			if (slots >= o.max()) return void blocked.add(svc);
 			await beginAlly(svc, device, items).catch((cause: Error) => error("ally-begin", cause.message));
 		}

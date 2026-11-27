@@ -105,6 +105,8 @@ export type PromptReply = { ok: true; label: string; state: ServiceStatus["state
 interface Mine {
 	target: StandingTarget;
 	seen?: { pid: number; at: number };
+	/** The prompt's last poll said the boss has words on its line (towerstow.ts keeps the pane open for them). */
+	draft?: boolean;
 	/** The prompt that announced it is leaving (`gone`): its process may not have exited yet. */
 	leaver?: number;
 	/** A run is about to start or holds the pane: the prompt is told to leave. */
@@ -394,13 +396,14 @@ export function createStanding(o: StandingOptions) {
 			await unreport(m);
 		},
 		/** The prompt's poll: it is there; the answer is what its screen shows and whether it must leave. */
-		poll(workspace: string, pid: number): PromptReply {
+		poll(workspace: string, pid: number, draft = false): PromptReply {
 			const m = mines.get(workspace);
 			if (!m) return { ok: false, error: `The sb server stands in for no tower of workspace ${workspace}`, gone: true };
 			const status = m.target.status(), answer = (leave: boolean): PromptReply => ({ ok: true, label: m.target.label(), state: status?.state ?? "standing", queued: status?.queued ?? 0, leave, ...(m.target.agent === STANDIN_HEAD ? { head: true as const } : {}) });
 			// The last poll of the prompt that took the boss's Ctrl+D, read after its leave, is no prompt there: it changes nothing and is told to leave.
 			if (pollGate({ parked: m.parked, parkedBy: m.parkedBy, pid }) === "left") return answer(true);
 			m.seen = { pid, at: now() };
+			m.draft = draft;
 			m.polled = true;
 			// A prompt that polls is the current one: the pid of an earlier prompt that left is no longer the one to wait for.
 			if (m.leaver !== undefined && m.leaver !== pid) m.leaver = undefined;
@@ -493,6 +496,11 @@ export function createStanding(o: StandingOptions) {
 			m.giveUp = false;
 			m.failures = 0;
 			void tick(workspace);
+		},
+		/** What the stow look (towerstow.ts) asks of the pane: whether the tower prompt polls there (not leaving), whether its line holds the boss's words, and whether the boss took the shell with Ctrl+D. */
+		here(workspace: string): { prompt: boolean; draft: boolean; parked: boolean; pid?: number } | undefined {
+			const m = mines.get(workspace);
+			return m && { prompt: present(m) && !m.leaving, draft: present(m) && m.draft === true, parked: m.parked, ...(m.seen ? { pid: m.seen.pid } : {}) };
 		},
 		/** Whether the command was typed into the pane in this terminal (a typing in flight counts); where Herdr lists no terminal, whether it was at or after `at`. */
 		typedSince: (pane: string, terminal: string | undefined, at: number): boolean => {

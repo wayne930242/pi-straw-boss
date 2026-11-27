@@ -295,7 +295,7 @@ export async function runPrompt(o: PromptOptions): Promise<number> {
 		if (finished) return;
 		polling = true;
 		try {
-			const polled = await source.poll(cards?.answering() ?? false).catch((cause: Error) => ({ kind: "wait" as const, why: cause.message }));
+			const polled = await source.poll(cards?.answering() ?? false, Boolean(rl && !closed && ((rl.line ?? "") !== "" || batch.length || pasting || posting || pick.active() || cards?.engaged()))).catch((cause: Error) => ({ kind: "wait" as const, why: cause.message }));
 			if (finished || !(await handle(polled))) return;
 		} finally {
 			polling = false;

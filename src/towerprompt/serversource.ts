@@ -75,10 +75,10 @@ export function serverSource(ctx: Ctx, workspace: string, pid: number = process.
 	};
 	return {
 		pick,
-		async poll(answering = false): Promise<Polled> {
+		async poll(answering = false, draft = false): Promise<Polled> {
 			let reply;
 			try {
-				reply = await ask({ cmd: "prompt-poll", workspace, pid, ...(answering ? { answering: true } : {}), ...(cursor !== undefined ? { cursor } : {}) }, POLL_MS);
+				reply = await ask({ cmd: "prompt-poll", workspace, pid, ...(answering ? { answering: true } : {}), ...(draft ? { draft: true } : {}), ...(cursor !== undefined ? { cursor } : {}) }, POLL_MS);
 			} catch (cause) {
 				return { kind: "wait", why: (cause as Error).message };
 			}

@@ -10,6 +10,7 @@ import { createAllows } from "../src/server/allows.ts";
 import type { Proc } from "../src/server/lineage.ts";
 import type { AllyItem, AllyPort, Timers } from "../src/server/runs.ts";
 import type { StandingTimers } from "../src/server/standing.ts";
+import type { StowTimers } from "../src/server/towerstow.ts";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
@@ -153,6 +154,8 @@ export class TowerWorld extends ServerWorld {
 	signals: import("../src/server/runs.ts").RunSignal[] = [];
 	runTimers: Partial<Timers> = {};
 	standingTimers: Partial<StandingTimers> = {};
+	/** The stow look's timers (towerstow.ts): by default a tower's pane stands an hour before it closes, so the tests of other things never see it go; a test of the stow shortens them. */
+	stowTimers: Partial<StowTimers> = { idleMs: 3_600_000 };
 	/** The clock of a run's wait for the prompt's exit and the settle after it (`standing.ts` `wait`). A world's fake prompt never polls or leaves, so by default the wait costs no machine time and a run starts when its wake is acted on; a test of the wait sets a held clock. */
 	standingWait: { now: () => number; sleep: (ms: number) => Promise<void> } | undefined = fakeClock();
 	/** The device has no boss at it (main.ts `unattended`, from the link holder): set to stand for an unattended device. */
@@ -215,7 +218,7 @@ export class TowerWorld extends ServerWorld {
 			} }),
 			herdr: { run: this.herdr.runFor("none"), events: this.herdr.events, api: this.herdr.api, watch: (cb: () => void, lost?: () => void) => (this.takeovers.push(cb), lost && this.losts.push(lost), () => {}) },
 			towers: {
-				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.refreshMs ? { refreshMs: this.refreshMs } : {}), ...(this.revokeMs ? { revokeMs: this.revokeMs } : {}), standing: { ...FAST_STANDING, ...this.standingTimers }, ...(this.standingWait ? { standingWait: this.standingWait } : {}), ...(this.serverAllows ? {} : { allows: this.allows }), ...(this.unattended ? { unattended: this.unattended } : {}), expose: (t: Towers) => void (this.expose = t),
+				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.refreshMs ? { refreshMs: this.refreshMs } : {}), ...(this.revokeMs ? { revokeMs: this.revokeMs } : {}), standing: { ...FAST_STANDING, ...this.standingTimers }, stow: this.stowTimers, ...(this.standingWait ? { standingWait: this.standingWait } : {}), ...(this.serverAllows ? {} : { allows: this.allows }), ...(this.unattended ? { unattended: this.unattended } : {}), expose: (t: Towers) => void (this.expose = t),
 				link: async (body, from, served) => {
 					const b = body as Record<string, unknown>;
 					this.linkCalls.push({ body: b, from });

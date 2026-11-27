@@ -29,8 +29,11 @@ class FakeSource implements PromptSource {
 	left = 0;
 	gones = 0;
 	failPost: Error | undefined;
-	async poll(): Promise<Polled> {
+	/** What each poll said of the line: whether the boss has words on it (the server keeps the pane open for them, towerstow.ts). */
+	drafts: boolean[] = [];
+	async poll(_answering?: boolean, draft?: boolean): Promise<Polled> {
 		this.polls++;
+		this.drafts.push(draft === true);
 		return this.answers.length > 1 ? this.answers.shift()! : this.answers[0]!;
 	}
 	async post(text: string) {
@@ -69,6 +72,18 @@ function terminal(source: PromptSource, over: { pasteCapMs?: number } = {}) {
 	const done = runPrompt({ workspace: "wA", source, input, output, signal: stop(), locale: "en", pollMs: 15, ...over });
 	return { input, done, text: () => text };
 }
+
+test("a poll says when the boss has words on the line, so the server does not close the pane under them; an emptied line says so again", async () => {
+	const source = new FakeSource();
+	const p = terminal(source);
+	await until(() => p.text().includes("tower> "), "the prompt");
+	assert.equal(source.drafts.includes(true), false, "an empty line is no draft");
+	p.input.write("half a thought");
+	await until(() => source.drafts.at(-1) === true, "the polls to say the boss is writing");
+	p.input.write("\x15"); // Ctrl+U empties the line
+	await until(() => source.drafts.at(-1) === false, "the polls to say the line is empty again");
+	assert.deepEqual(source.posted, [], "nothing was posted");
+});
 
 test("on a terminal, Ctrl+D leaves the pane to the shell without touching the closed line (a real pane threw ERR_USE_AFTER_CLOSE and exited 1)", async () => {
 	const source = new FakeSource();

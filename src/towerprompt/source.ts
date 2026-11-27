@@ -45,8 +45,8 @@ export interface PickSource {
 export interface PromptSource {
 	/** The picker's source; a source with none cannot press cards. */
 	pick?: PickSource;
-	/** `answering`: the boss is at the card view's keys (cardview.ts); the server holds the tower's wake while the polls say so. */
-	poll(answering?: boolean): Promise<Polled>;
+	/** `answering`: the boss is at the card view's keys (cardview.ts); the server holds the tower's wake while the polls say so. `draft`: the boss has words on the line (or in a card's field, or the picker): the server keeps the pane open (towerstow.ts). */
+	poll(answering?: boolean, draft?: boolean): Promise<Polled>;
 	/** Posts the boss's words to the tower as a `boss` event; rejects with the server's own words when it does not take them. */
 	post(text: string): Promise<void>;
 	/** The boss typed `/new`: the next boss conversation is a new session (the server's `tower-new`, the function `/boss tower new` and the GUI's New reach); rejects with the server's own words. */

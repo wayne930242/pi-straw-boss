@@ -544,8 +544,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 				const pid = request.pid;
 				if (!towers || !towers.loaded()) return Promise.resolve({ ok: false, error: "the server is still starting" });
 				if (!workspace || typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return Promise.resolve({ ok: false, error: `${request.cmd} needs a workspace and the prompt's pid` });
-				// `answering`: the boss is at the prompt's wait cards, so the tower's wake is held (runs.ts). An unattended device has no boss at it: its prompt is told, and shows no card on its own.
-				return towers.prompt(request.cmd, workspace, pid, request.answering === true && !unattended()).then((reply) => withLines(towers!, workspace, request.cursor, unattended() && "label" in reply ? { ...reply, unattended: true } : reply));
+				// `answering`: the boss is at the prompt's wait cards, so the tower's wake is held (runs.ts). An unattended device has no boss at it: its prompt is told, and shows no card on its own. `draft`: words on its line keep the pane (towerstow.ts).
+				return towers.prompt(request.cmd, workspace, pid, request.answering === true && !unattended(), request.draft === true).then((reply) => withLines(towers!, workspace, request.cursor, unattended() && "label" in reply ? { ...reply, unattended: true } : reply));
 			}
 			// The boss's memory (towermemory.ts `memoryRequest`): `/boss memory` in a pi session is the GUI panel's request on the same function. A run's token never gets here (rungate.ts refuses it).
 			// `via: "ask"` is the press of a dialog sb drew for an agent's `boss_wait_ask` (waitask.ts); the GUI's door is its own route's, never a client's word (`doorOf`).

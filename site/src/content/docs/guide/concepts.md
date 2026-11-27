@@ -117,7 +117,8 @@ The rules are in [Review threads](/pi-straw-boss/docs/reference/how-it-works/the
 ## How a tower runs
 
 A tower is a service of the [sb server](#the-sb-server), not a long-lived pi.
-Its pane stands by, and the server wakes it for each event with a **run**: a pi session that does the work and ends with a **handoff note** for the next run.
+The server wakes it for each event with a **run** in the tower's pane: a pi session that does the work and ends with a **handoff note** for the next run.
+Once the tower is idle and no card waits for you, its pane closes; the next event, your message, or a new card opens it again ([When the pane closes](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/#when-the-pane-closes)).
 
 ```mermaid
 flowchart TD

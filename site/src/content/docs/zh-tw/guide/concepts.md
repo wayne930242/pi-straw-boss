@@ -117,7 +117,8 @@ Straw Boss 從子智慧體啟動時用的 pi-herdr-agents 角色名稱，讀出�
 ## 塔台怎麼運作
 
 塔台是 [sb server](#sb-server) 的一項服務，不是一個長期活著的 pi。
-它的 pane 平時待命，server 每有事件就喚醒它跑一次 **run**：一個 pi session 做完事，再留下一份給下一次 run 的**交接筆記**。
+server 每有事件，就在塔台的 pane 裡喚醒它跑一次 **run**：一個 pi session 做完事，再留下一份給下一次 run 的**交接筆記**。
+塔台閒下來、又沒有卡片在等你時，它的 pane 就會關掉；下一個事件、你的訊息或新的卡片會再把它打開（[pane 何時關閉](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#pane-何時關閉)）。
 
 ```mermaid
 flowchart TD

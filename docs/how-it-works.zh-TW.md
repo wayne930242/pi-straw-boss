@@ -2733,7 +2733,7 @@ sb 把工作項目的等待與審查串上發生的事，附加到一本它從�
 
 ### 兩次執行之間的塔台
 
-由 sb server 執行的塔台，即使沒有任何執行中的 run，也保有它的那一列：只要塔台提示在常駐 pane 上執行（[常駐 pane](#常駐-pane)），server 就會在該 pane 上回報一個替身智慧體 `tower`（閒置，訊息為 `standing by`、`3 queued` 或 `held`；工作區有 run 正在處理事情、而提示留在 pane 裡時（例如無介面的 run）是 working，訊息為 `working`；有等待卡片在等老闆時則是 blocked，訊息以 `2 cards wait` 開頭；主塔台的 pane 只計自己的卡片），所以這一列會排在其工作區的第一個位置，作為塔台的標記，`agent.list` 也看得到它。它只是一列，沒有別的作用：網、儀表板、收起、closer 或 reaper 的檢查都不把它算作智慧體、主智慧體或成員，閒置回報本身也不會觸發 toast、音效或注意力計數；接在 `working` 或 `blocked` 之後的閒置回報，在老闆看過之前是 Herdr 的 done，和任何做完的智慧體一樣。blocked 的替身就是 Herdr 自己的等待狀態，Herdr 給它什麼注意力就是什麼，工作區的彙總也跟著它，所以儀表板的塔台列與頁面的據點都顯示等待中；頁面上的塔台單位在 run 之間仍是閒置，不另外發警示（卡片本身就是它的警示）。run 的 pi 在 pane 裡啟動時，由 pi 自己的那一列取代它；run 結束後它會再回來。隊友 run 的 pane 也是一列，就在塔台的正下方（`[ally] <device label>`，見[隊友 run](#隊友-run)）。
+由 sb server 執行的塔台，只要它的常駐 pane 還在，不論有沒有執行中的 run，都保有它的那一列（塔台閒下來、又沒有卡片等老闆時，pane 就會關掉：[pane 何時關閉](#pane-何時關閉)）：只要塔台提示在常駐 pane 上執行（[常駐 pane](#常駐-pane)），server 就會在該 pane 上回報一個替身智慧體 `tower`（閒置，訊息為 `standing by`、`3 queued` 或 `held`；工作區有 run 正在處理事情、而提示留在 pane 裡時（例如無介面的 run）是 working，訊息為 `working`；有等待卡片在等老闆時則是 blocked，訊息以 `2 cards wait` 開頭；主塔台的 pane 只計自己的卡片），所以這一列會排在其工作區的第一個位置，作為塔台的標記，`agent.list` 也看得到它。它只是一列，沒有別的作用：網、儀表板、收起、closer 或 reaper 的檢查都不把它算作智慧體、主智慧體或成員，閒置回報本身也不會觸發 toast、音效或注意力計數；接在 `working` 或 `blocked` 之後的閒置回報，在老闆看過之前是 Herdr 的 done，和任何做完的智慧體一樣。blocked 的替身就是 Herdr 自己的等待狀態，Herdr 給它什麼注意力就是什麼，工作區的彙總也跟著它，所以儀表板的塔台列與頁面的據點都顯示等待中；頁面上的塔台單位在 run 之間仍是閒置，不另外發警示（卡片本身就是它的警示）。run 的 pi 在 pane 裡啟動時，由 pi 自己的那一列取代它；run 結束後它會再回來。隊友 run 的 pane 也是一列，就在塔台的正下方（`[ally] <device label>`，見[隊友 run](#隊友-run)）。
 
 <details>
 <summary>細節</summary>
@@ -3395,7 +3395,7 @@ flowchart TD
 <details>
 <summary>細節</summary>
 
-`openTower`（升任、會派工的成員、兩位成員規則、`/boss tower`、主智慧體的 `call_tower`）會透過控制 socket 對 server 詢問 `ensure-tower {workspace}`，而不是啟動 pi；存活的塔台 token 就是塔台，不會被詢問。server 會重用已標記的塔台分頁或空白的分頁（無線電塔圖示、一個 shell pane、沒有智慧體），否則建立沒有 Straw Boss 環境的分頁，把它移到最前面，把它的 pane 標為 `sb_role=tower`（**常駐 pane**，停在它的 shell 提示符號），向 pi-intercom 註冊**塔台身分**（id `sb-tower-<workspace id in lowercase>`，在次要 slot 上是 `sb-tower-<slot8>-<id>`；名稱 `tower · <label>`；cwd `<slot>/tower/<workspace id>`，沒有 pi 在其中執行的資料夾；`herdrPaneId` = 常駐 pane），並寫入工作區 token `tower` 與 `tower/<workspace id>/service.json`。
+`openTower`（升任、會派工的成員、兩位成員規則、`/boss tower`、主智慧體的 `call_tower`）會透過控制 socket 對 server 詢問 `ensure-tower {workspace}`，而不是啟動 pi；存活的塔台 token 就是塔台，不會被詢問。server 會重用已標記的塔台分頁或空白的分頁（無線電塔圖示、一個 shell pane、沒有智慧體），否則建立沒有 Straw Boss 環境的分頁，把它移到最前面，把它的 pane 標為 `sb_role=tower`（**常駐 pane**，停在它的 shell 提示符號），向 pi-intercom 註冊**塔台身分**（id `sb-tower-<workspace id in lowercase>`，在次要 slot 上是 `sb-tower-<slot8>-<id>`；名稱 `tower · <label>`；cwd `<slot>/tower/<workspace id>`，沒有 pi 在其中執行的資料夾；`herdrPaneId` = 常駐 pane），並寫入工作區 token `tower` 與 `tower/<workspace id>/service.json`。常駐 pane 在兩次 run 之間關掉的塔台，也照同樣的方式重新建立它的分頁（[pane 何時關閉](#pane-何時關閉)）。
 
 子工作區由它父層的塔台回應。`/boss tower` 是老闆自己的指令，所以它也會啟動被刻意停止的 server；對已停止 server 的自動開啟會以「the sb server was stopped on purpose; /boss server starts it again」失敗。
 
@@ -3437,7 +3437,7 @@ server 絕不為它建立工作區或基地，不移動任何焦點，也不在�
 
 #### 塔台何時結束
 
-在 Herdr 中關閉塔台的分頁（或 pane，或工作區），或 `close-tower`，會結束服務：身分離開，token 隨著 `sb_tower_quit=<members it left>` 消失（就像結束中的塔台所寫的那樣），而 `service.json` 被刪除；佇列保留 24 小時，給在那段時間內重新開啟的塔台。Herdr 沒有回應的 pane 或分頁清單是未知，不是已消失的分頁：服務留著，也不降級任何人。停止或重啟的 server 只釋放它的身分：token 與檔案留著，而守衛在它那個 slot 的 `server.json` 有開始不到 30 秒的新 `restarting` 時，會把自己 slot 的塔台身分算作存活。
+在 Herdr 中關閉塔台的分頁（或 pane，或工作區），或 `close-tower`，會結束服務（server 自己關掉閒置的常駐 pane 則不會：[pane 何時關閉](#pane-何時關閉)）：身分離開，token 隨著 `sb_tower_quit=<members it left>` 消失（就像結束中的塔台所寫的那樣），而 `service.json` 被刪除；佇列保留 24 小時，給在那段時間內重新開啟的塔台。Herdr 沒有回應的 pane 或分頁清單是未知，不是已消失的分頁：服務留著，也不降級任何人。停止或重啟的 server 只釋放它的身分：token 與檔案留著，而守衛在它那個 slot 的 `server.json` 有開始不到 30 秒的新 `restarting` 時，會把自己 slot 的塔台身分算作存活。
 
 #### Herdr 重啟
 
@@ -3486,7 +3486,7 @@ Herdr 以短計數器為工作區、分頁與 pane 編號，這些計數器在�
 
 ### 常駐 pane
 
-兩次 run 之間，塔台的 pane（**常駐 pane**）不是空白的 shell。server 把塔台提示輸入它閒置的 shell，而提示在那裡執行期間，它會在該 pane 上回報一個替身智慧體 `tower`（[規格](specs/2026-10-26-sb-backend.md)，**The standing pane**）。於是塔台在兩次 run 之間，保有它在 Herdr 的 Agents 清單與[網檢視](#側邊欄網檢視)中的那一列，位於它的工作區最前面。
+兩次 run 之間只要還在，塔台的 pane（**常駐 pane**）就不是空白的 shell。server 把塔台提示輸入它閒置的 shell，而提示在那裡執行期間，它會在該 pane 上回報一個替身智慧體 `tower`（[規格](specs/2026-10-26-sb-backend.md)，**The standing pane**）。於是只要 pane 還在，塔台就保有它在 Herdr 的 Agents 清單與[網檢視](#側邊欄網檢視)中的那一列，位於它的工作區最前面；閒置而沒有卡片在等的 pane 會關掉（[pane 何時關閉](#pane-何時關閉)）。
 
 #### 提示
 
@@ -3552,6 +3552,14 @@ Herdr 拒絕的輸入（`pane run` 失敗）不算一次嘗試：server 記錄 `
 Herdr 失敗的啟動記為 `herdr <code>: <stderr> | <message>`；run 結束，而下一次查看會再次輸入提示，如同它在 Herdr 重啟（每個 pane 都是全新的 shell）或提示崩潰之後所做的。
 
 </details>
+
+#### pane 何時關閉
+
+常駐 pane 只在需要時才留著（老闆 2026-11-28 的決定：有卡片等他時才留）。每 3 秒一次的查看（`src/server/towerstow.ts` 的 `idleGate` 與 `paneGate`，由 `tests/towerstow.test.ts` 固定）會在連續 30 秒都滿足下列條件時關掉它：塔台沒有執行中的 run 或隊友 run、沒有等著喚醒 run 的事件（安靜事件不算）也沒有到期的喚醒、塔台沒有等老闆的等待卡片，而且服務沒有暫停。它只關 pane，絕不關分頁：分頁空了，Herdr 自己會把它拿掉。服務在沒有 pane 的情況下繼續：身分仍然註冊著（沒有 `herdrPaneId`），`tower` token 仍然寫著，佇列、記憶與帳本都留著，主智慧體照舊找得到它。
+
+不論時間到了沒，下列情況 pane 都會留著：它和另一個 pane 共用分頁（老闆自己的分割、隊友 run 的 pane）；它是工作區最後一個 pane（Herdr 會連工作區一起關掉，而塔台的佇列、記憶與帳本都以工作區 id 保存，重新建立的工作區拿不到同一個 id）；老闆用 Ctrl+D 接手了它，或裡面跑著不屬於 run 的 pi；塔台提示沒有在那裡輪詢（只有它的輪詢能證明 pane 裡有什麼，Windows 也一樣）；提示最近一次輪詢說老闆的輸入列、卡片欄位或選單裡還有字；以及它的前景除了 shell 和那個提示之外還有別的東西。主塔台的 pane 從不關閉：它是主塔台工作區唯一的 pane。pane 關掉時日誌寫 `tower-stowed`；由 pane 本身留下時寫 `tower-stow-kept` 並附上原因（`last`、`tab`、`draft`、`parked`、`agent`、`prompt`、`program`）。
+
+pane 會照第一次開啟的方式回來（一個帶無線電塔圖示的分頁，移到最前面，它的 pane 標為 `sb_role=tower`，身分隨之重新註冊）：在 run 或隊友 run 啟動之前、塔台有卡片開啟時（好讓 `N cards wait` 那一列顯示出來），以及 `ensure-tower` 時（單獨的 `/boss tower`、升任、`up`）；日誌寫 `tower-unstowed`，附 `why=run`、`ally`、`cards` 或 `ensure`。老闆可以用 `/boss tower <message>` 和頁面的輸入區找到沒有 pane 的塔台，它們會在新的 pane 裡喚醒一次 run。Herdr 重啟後，沒有 pane 的塔台只有在其 id 下的工作區仍帶著它原本的標籤時，才仍是那個工作區的塔台：這時會重新寫入它的 token；重啟後那一分鐘過了以後，標籤不同的工作區就是別人的，服務會像結束的塔台那樣結束，不在那裡建立或標記任何東西。無介面的 run 維持它自己的規則（觀看分頁會自行關閉），`towerRuns.enabled: false` 什麼都不變。
 
 #### 一道閘門
 
