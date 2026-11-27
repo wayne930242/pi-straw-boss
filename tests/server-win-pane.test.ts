@@ -535,10 +535,13 @@ test("RV2-M7: a run started again after a timeout whose leftovers were signalled
 
 test("RV2-M8: a claim that does not come in time is the run's crash, not a start to try again in another pane", async () => {
 	world.runTimers = { claim: 150 };
-	const { s } = await setup();
+	await setup();
 	tower().incoming(from, msg("m1", "one"));
-	await until(async () => (await outcomeOf(s)) === "crashed", "the run to end");
-	assert.equal(starts(), 1);
+	const id = await nthRun();
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "crashed", "the run to end");
+	// The event it never took stays queued, so the next run starts 40 ms later: counted by run id, its start is not this run's (a full suite at a load of 64 counted three starts by the service's last run).
+	await until(() => world.pis.size >= 2, "the next run to start");
+	assert.equal(world.herdr.commands("agent", "start").filter((a) => a.includes(id)).length, 1, "one start of the run whose claim did not come");
 });
 
 test("RV2-M15: a win32 stop records a run whose tower_done is in as done, and signals nothing", async () => {
