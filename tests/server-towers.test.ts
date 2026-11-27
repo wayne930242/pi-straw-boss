@@ -72,7 +72,8 @@ test("a marked tower tab is reused and a bare one (the glyph, one shell pane) to
 	assert.equal(reply.pane, "wA:p7");
 	assert.equal(reply.opened, true);
 	assert.deepEqual(world.herdr.commands("tab", "create"), []);
-	assert.deepEqual(world.herdr.commands("tab", "close"), [["tab", "close", "wA:t8"]]);
+	assert.deepEqual(world.herdr.commands("tab", "close"), [], "a leftover goes by its one pane, never by a tab close");
+	assert.deepEqual(world.herdr.commands("pane", "close"), [["pane", "close", "wA:p8"]]);
 	assert.equal(pane("wA:p7").tokens.sb_role, "tower");
 	assert.deepEqual(world.herdr.moves, [{ tab_id: "wA:t7", insert_index: 0 }]);
 	// A tab only labelled like a tower, with an agent in it, is someone else's.
@@ -331,13 +332,16 @@ test("the page's tower panel has no service for a workspace while its service wa
 	assert.equal(panel.owns?.("old-tower"), false);
 });
 
-test("the page's Quit tower for the server's tower is the boss closing it: the tab goes, the service ends, and the mains become members; a workspace with no service is refused in words", async () => {
+test("the page's Quit tower for the server's tower is the boss closing it: its standing pane closes (never its tab), the service ends, and the mains become members; a workspace with no service is refused in words", async () => {
 	const s = await started();
 	const reply = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	world.herdr.addPane("wA:p77", String(reply.tab), "shell"); // the boss's split in the tower's tab
 	const panel = towerPanel(() => world.expose);
 	assert.equal(typeof panel.close, "function");
 	assert.deepEqual(await panel.close!("wA"), { ok: true });
-	assert.deepEqual(world.herdr.commands("tab", "close"), [["tab", "close", String(reply.tab)]]);
+	assert.deepEqual(world.herdr.commands("tab", "close"), [], "no tab close");
+	assert.deepEqual(world.herdr.commands("pane", "close"), [["pane", "close", String(reply.pane)]]);
+	assert.ok(world.herdr.panes.some((p) => p.pane_id === "wA:p77") && world.herdr.tabs.some((t) => t.tab_id === String(reply.tab)), "the boss's split and the tab stay");
 	assert.equal(readService(world.slot, "wA"), undefined);
 	assert.equal(tokens().tower, undefined);
 	assert.equal(panel.has("wA"), false);
@@ -359,13 +363,15 @@ const pagePost = (path: string, body: unknown) => {
 };
 const located = (paneId: string, tabId: string) => ({ status: "ok" as const, paneId, workspace: { id: "wA", label: "Alpha" }, tab: { id: tabId, label: TOWER_LABEL } });
 
-test("Quit tower on the page (close/unit with the tower unit's key) ends the server's tower: the tab closes and the service goes, where no bridge exists to ask", async () => {
+test("Quit tower on the page (close/unit with the tower unit's key) ends the server's tower: its pane closes, Herdr takes the emptied tab, and the service goes, where no bridge exists to ask", async () => {
 	const s = await started();
 	const reply = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
 	world.sessions = [{ id: "sb-tower-wa", name: "tower · Alpha", herdrLocation: located(String(reply.pane), String(reply.tab)) }];
 	const done = await pagePost("close/unit", { key: "sb-tower-wa" });
 	assert.deepEqual([done.status, done.body], [200, { closing: true }]);
-	assert.deepEqual(world.herdr.commands("tab", "close"), [["tab", "close", String(reply.tab)]]);
+	assert.deepEqual(world.herdr.commands("tab", "close"), []);
+	assert.deepEqual(world.herdr.commands("pane", "close"), [["pane", "close", String(reply.pane)]]);
+	assert.ok(!world.herdr.tabs.some((t) => t.tab_id === String(reply.tab)), "the emptied tab went with its pane");
 	await until(() => !readService(world.slot, "wA") && tokens().tower === undefined, "the service to end");
 });
 

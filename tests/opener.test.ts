@@ -141,32 +141,35 @@ test("a sender that is not a live session fails before anything opens", async ()
 	assert.deepEqual(world.herdr.commands("tab", "create"), []);
 });
 
-test("a failed agent start closes the tab it created and is reported; the same request is not tried again", async () => {
+test("a failed agent start closes the pane it created (Herdr takes the emptied tab) and is reported; the same request is not tried again", async () => {
 	world.herdr.onAgentStart = () => {
 		throw new Error("herdr agent start failed: readiness timeout");
 	};
 	const { tower } = await net();
 	await assert.rejects(tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1" }), /readiness timeout/);
-	assert.deepEqual(world.herdr.closed, [NEW.tab]);
+	assert.deepEqual(world.herdr.closed, [NEW.pane]);
+	assert.ok(!world.herdr.tabs.some((t) => t.tab_id === NEW.tab), "Herdr closed the emptied tab");
 	await assert.rejects(tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1" }), /already tried for this request and is not opened again: .*readiness timeout/);
 	assert.equal(world.herdr.commands("tab", "create").length, 1);
 	assert.equal(world.herdr.commands("agent", "start").length, 1);
 });
 
-test("a pi that never becomes the tab's main fails with the pane, closes the tab, and hands over nothing", async () => {
+test("a pi that never becomes the tab's main fails with the pane, closes that pane (never the tab), and hands over nothing", async () => {
 	world.herdr.onAgentStart = (pane) => void (pane.agent = "pi"); // pi runs but joins nothing
 	const { tower } = await net();
 	await assert.rejects(tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1" }), new RegExp(`pane ${NEW.pane} did not become the main agent of its tab within 60 s`));
-	assert.deepEqual(world.herdr.closed, [NEW.tab]);
+	assert.deepEqual(world.herdr.closed, [NEW.pane]);
+	assert.ok(!world.herdr.tabs.some((t) => t.tab_id === NEW.tab), "Herdr closed the emptied tab");
 	assert.deepEqual(world.broker.delivered, []);
 });
 
-test("a main that refuses the request closes the tab and reports the refusal", async () => {
+test("a main that refuses the request closes its pane (never the tab) and reports the refusal", async () => {
 	world.autoMains();
 	world.broker.failing.add(NEW.main);
 	const { tower } = await net();
 	await assert.rejects(tower.tool("boss_open_main", { request: REQUEST, sender: "sender-1" }), /did not take the request: failed delivery_failed/);
-	assert.deepEqual(world.herdr.closed, [NEW.tab]);
+	assert.deepEqual(world.herdr.closed, [NEW.pane]);
+	assert.ok(!world.herdr.tabs.some((t) => t.tab_id === NEW.tab), "Herdr closed the emptied tab");
 });
 
 test("only the tower has the tool; a pi started with the main role promotes itself, and one whose tab has a main stays a member and says so", async () => {

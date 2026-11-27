@@ -100,7 +100,8 @@ export class FakeHerdr {
 	/** What `pane send-keys`, `send-text` and `agent start` were asked, and what `pane read` answers. */
 	keys: string[][] = [];
 	screen = "";
-	onTabClose?: (paneIds: string[]) => void;
+	/** Called with the panes a `tab close` or `pane close` took: Herdr ends the process in a closed pane. */
+	onPanesGone?: (paneIds: string[]) => void;
 	/** Herdr's event stream, as `events.subscribe` delivers it: workspace token changes, closed panes, and agents detected in a pane. */
 	private listeners = new Set<{ types: string[]; on: (e: { event: string; data: Record<string, unknown> } | null) => void }>();
 	events = (types: string[], on: (e: { event: string; data: Record<string, unknown> } | null) => void) => {
@@ -278,6 +279,7 @@ export class FakeHerdr {
 			const tab = this.panes.find((p) => p.pane_id === args[2])?.tab_id;
 			this.panes = this.panes.filter((p) => p.pane_id !== args[2]);
 			if (!this.panes.some((p) => p.tab_id === tab)) this.tabs = this.tabs.filter((t) => t.tab_id !== tab); // as Herdr closes an emptied tab
+			this.onPanesGone?.([args[2]!]);
 			return out({});
 		}
 		if (group === "workspace" && cmd === "close") {
@@ -352,7 +354,7 @@ export class FakeHerdr {
 			const gone = this.panes.filter((p) => p.tab_id === args[2]).map((p) => p.pane_id);
 			this.panes = this.panes.filter((p) => p.tab_id !== args[2]);
 			this.tabs = this.tabs.filter((t) => t.tab_id !== args[2]);
-			this.onTabClose?.(gone);
+			this.onPanesGone?.(gone);
 			return out({});
 		}
 		if (group === "tab" && cmd === "focus") return out({});
@@ -742,8 +744,8 @@ export class World {
 	})();
 
 	constructor() {
-		// Closing a tab kills the pi inside it.
-		this.herdr.onTabClose = (paneIds) => this.agents.filter((a) => paneIds.includes(a.pane)).forEach((a) => void a.stop());
+		// Closing a tab or a pane kills the pi inside it.
+		this.herdr.onPanesGone = (paneIds) => this.agents.filter((a) => paneIds.includes(a.pane)).forEach((a) => void a.stop());
 	}
 	/** Adds a session in `pane`; the pane is created in `tab` unless it exists. */
 	agent(options: AgentOptions & { tab?: string }): Agent {

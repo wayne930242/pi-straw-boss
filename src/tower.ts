@@ -52,9 +52,10 @@ export function createTower({ pi, cfg, s, guiDir, me, tell }: Kit, { membership,
 		// A second tower in one workspace yields before it publishes: the live token holder wins, otherwise the lower tab id.
 		if ((holder && holder !== me() && sessions.some((x) => x.id === holder)) || (rival && rival.tab_id < s.at.tabId)) {
 			await report(run, "pane", s.at.paneId, { sb_role: null });
-			s.closing = { keepPane: true }; // its tab goes with it already
+			s.closing = { keepPane: true }; // its pane goes with it already
 			roles.forget();
-			await run(["tab", "close", s.at.tabId]);
+			// Its own pane only, never the tab: a split beside it is not this tower's, and Herdr closes a tab its last pane leaves (boss 2026-11-27).
+			await run(["pane", "close", s.at.paneId]);
 			return;
 		}
 		s.holdsTower = true;

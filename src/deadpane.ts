@@ -66,7 +66,7 @@ export const paneWhat = (p: Pane) => {
 	const t = p.tokens ?? {}, kind = t.sb_role ?? (t.sb_train ? "train" : Object.keys(t).some((k) => k.startsWith("piha_")) ? "subagent" : "pi"), name = t.sb_main_tab ?? t.sb_name ?? t.sb_tab ?? t.sb_member_tab;
 	return name ? `${kind} ${name}` : kind;
 };
-export interface DeadPane { pane: string; tab: string; what: string; /** The tab's only pane: the tab closes with it. */ alone: boolean }
+export interface DeadPane { pane: string; tab: string; what: string; /** The tab's only pane: Herdr closes the tab with it. */ alone: boolean }
 /** The list `boss_close_main` gives with neither main nor pane. */
 export const deadList = (rows: DeadPane[]) => ({
 	text: rows.length ? `Dead agent panes of this workspace (close one with boss_close_main pane):\n${rows.map((r) => `- ${r.pane} (tab ${r.tab}${r.alone ? ", its only pane" : ""}): ${r.what}`).join("\n")}` : "No dead agent pane in this workspace.",
@@ -110,18 +110,18 @@ export function createDeadPanes(env: DeadPaneEnv) {
 			}
 			return rows;
 		},
-		/** Closes one dead agent pane, its tab with it when it is the tab's only pane; refused with the table's reason otherwise. */
+		/**
+		 * Closes one dead agent pane, and only the pane: Herdr closes a tab its last pane leaves (and a workspace its last tab leaves), so a pane split into the tab since the look is never taken with it (boss 2026-11-27).
+		 * Refused with the table's reason otherwise.
+		 */
 		async close(query: string): Promise<ClosedPane> {
 			onWindows();
 			const { all, facts } = await look();
 			const f = facts(query), refused = await why(f);
 			if (refused) throw new Error(refused);
 			const p = f.pane!, alone = all.filter((x) => x.tab_id === p.tab_id).length === 1;
-			if (alone) {
-				await run(["tab", "close", p.tab_id]);
-				return { text: `Closed tab ${p.tab_id} with its only pane ${p.pane_id} (${paneWhat(p)}), whose pi was gone.`, pane: p.pane_id, tab: p.tab_id };
-			}
 			await run(["pane", "close", p.pane_id]);
+			if (alone) return { text: `Closed pane ${p.pane_id} (${paneWhat(p)}), whose pi was gone; it was the only pane of its tab, so its tab ${p.tab_id} closes with it.`, pane: p.pane_id, tab: p.tab_id };
 			return { text: `Closed pane ${p.pane_id} (${paneWhat(p)}), whose pi was gone; its tab ${p.tab_id} keeps its other panes.`, pane: p.pane_id };
 		},
 	};

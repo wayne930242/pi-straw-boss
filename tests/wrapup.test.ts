@@ -334,6 +334,24 @@ test("boss_wrap asks the boss in the pane: no closes nothing and holds the nudge
 	await until(() => world.herdr.calls.some((c) => c[0] === "pane" && c[1] === "close" && c[2] === "wA:p1"), "its pane closed");
 });
 
+test("boss_wrap closes only its own pane: a sibling pane and the tab stay (boss 2026-11-27: Herdr closes a tab its last pane leaves)", async () => {
+	const tower = world.tower("tower-wA", "wA:t9", "wA:p9");
+	await tower.start();
+	const r = await mainRig();
+	world.herdr.addPane("wA:p5", "wA:t1", "shell"); // the boss's split beside the main
+	const done = r.a.tool("boss_wrap", { summary: "Shipped MP-2." });
+	await until(() => r.a.dialogs.length === 1, "the boss is asked");
+	r.a.dialogs[0]!.settle(true);
+	assert.match(textOf(await done), /Wrapped up/);
+	await until(() => r.a.stopped, "the session quit");
+	await until(() => world.herdr.commands("pane", "close").some((c) => c[2] === "wA:p1"), "its pane closed");
+	await settle();
+	assert.deepEqual(world.herdr.commands("tab", "close"), [], "no tab close");
+	assert.deepEqual(world.herdr.commands("workspace", "close"), [], "no workspace close");
+	assert.ok(world.herdr.panes.some((p) => p.pane_id === "wA:p5"), "the sibling pane stays");
+	assert.ok(world.herdr.tabs.some((t) => t.tab_id === "wA:t1"), "the tab stays");
+});
+
 test("RV-F001: a message queued or a monitor started while the boss was asked: his yes closes nothing and sends nothing", async () => {
 	const tower = world.tower("tower-wA", "wA:t9", "wA:p9");
 	await tower.start();

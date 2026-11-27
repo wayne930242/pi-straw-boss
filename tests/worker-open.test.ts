@@ -71,9 +71,10 @@ test("a resume starts pi --session <file> with no --name (and --model only when 
 	assert.deepEqual(world.herdr.commands("agent", "start").at(-1)!.slice(-4), ["--session", file, "--model", "m/x"]);
 	for (const a of world.agents.filter((x) => x.id === SID)) await a.stop();
 	joinAs = "0199a1b2-0000-7000-8000-000000000009";
-	const tabs = world.herdr.commands("tab", "close").length;
+	const closes = world.herdr.commands("pane", "close").length, tabs = world.herdr.commands("tab", "close").length;
 	await assert.rejects(resume(), /joined as session 0199a1b2, not 0199a1b2: it is no resume of that worker/);
-	assert.equal(world.herdr.commands("tab", "close").length, tabs + 1, "its tab was closed");
+	assert.equal(world.herdr.commands("pane", "close").length, closes + 1, "its pane was closed (Herdr closes the emptied tab)");
+	assert.equal(world.herdr.commands("tab", "close").length, tabs, "never by a tab close");
 	for (const a of world.agents) await a.stop();
 	joinAs = SID;
 	world.herdr.addTab("wA:t90", "busy", "wA:p90");

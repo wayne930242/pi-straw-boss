@@ -190,7 +190,8 @@ test("close ends the service and keeps the conversation, the memory, the asks, a
 	const client = world.client("sb-head")!;
 	const closed = await head().close();
 	assert.deepEqual(closed, { workspace: first.workspace, id: "sb-head" });
-	assert.deepEqual(world.herdr.commands("tab", "close"), [["tab", "close", first.tab]]);
+	assert.deepEqual(world.herdr.commands("tab", "close"), [], "the head's pane closes, never its tab");
+	assert.deepEqual(world.herdr.commands("pane", "close"), [["pane", "close", first.pane]]);
 	assert.equal(existsSync(join(headDir(world.slot), "service.json")), false);
 	assert.equal(head().status(), undefined);
 	assert.equal(client.connected, false, "the identity left the broker");

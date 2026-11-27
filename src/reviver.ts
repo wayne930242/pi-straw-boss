@@ -110,7 +110,7 @@ export async function reviveMain(env: OpenerEnv, { session, reason, origin }: Re
 			const closedOld = await closeOldTab(env, row, paneId).catch(() => undefined);
 			return { tab: tabId, pane: paneId, main: main.id, file: row.file, ...(row.name ? { name: row.name } : {}), ...(row.kind ? { kind: row.kind } : {}), ...(train ? { train } : {}), ...(row.openedBy ? { openedBy: row.openedBy } : {}), ...(closedOld ? { closedOld } : {}) };
 		} catch (error) {
-			await run(["tab", "close", tabId]).catch(() => {});
+			await run(["pane", "close", paneId]).catch(() => {}); // the pane it made, never the tab: a split the boss made there meanwhile stays (Herdr closes an emptied tab)
 			if (!(error instanceof ReviveRefused)) attempt("failed", { error: (error as Error).message.slice(0, 300) });
 			throw error;
 		}
@@ -120,6 +120,7 @@ export async function reviveMain(env: OpenerEnv, { session, reason, origin }: Re
 }
 /**
  * D3: the old tab is closed only when the tower opened it (the record names an opener) and its one pane is the dead pane, sitting at a bare shell: `process-info` lists the shell alone in the foreground. Anything else stays for the boss.
+ * It closes by its pane, never by a tab close: Herdr takes the tab its last pane leaves, and a pane split into it since the look stays (boss 2026-11-27).
  */
 async function closeOldTab(env: OpenerEnv, row: DeadRow, newPane: string): Promise<string | undefined> {
 	if (!row.openedBy || row.record.tab === undefined) return undefined;
@@ -128,7 +129,7 @@ async function closeOldTab(env: OpenerEnv, row: DeadRow, newPane: string): Promi
 	const info = JSON.parse(await env.run(["pane", "process-info", "--pane", row.record.pane])).result?.process_info as { shell_pid?: number; foreground_processes?: { pid?: number }[] } | undefined;
 	const fg = info?.foreground_processes ?? [];
 	if (!(fg.length === 1 && typeof info?.shell_pid === "number" && fg[0]!.pid === info.shell_pid)) return undefined;
-	await env.run(["tab", "close", row.record.tab]);
+	await env.run(["pane", "close", row.record.pane]);
 	return row.record.tab;
 }
 /** What a main's own handover needs (docs/specs/2026-11-23-tower-revive.md §8): the same safe start as an open, in the main's own workspace. */
@@ -174,7 +175,7 @@ export async function openSuccessor(env: SuccessorEnv, r: SuccessorRequest): Pro
 		if (sent.status !== "sent") throw new Error(`The successor ${main.name ?? main.id} did not take the handoff: ${sent.status} ${sent.code ?? ""} ${sent.detail ?? ""}`.trim());
 		return { tab: tabId, pane: paneId, main: main.id, name: r.from.name };
 	} catch (error) {
-		await run(["tab", "close", tabId]).catch(() => {});
+		await run(["pane", "close", paneId]).catch(() => {}); // the pane it made, never the tab (Herdr closes an emptied tab)
 		throw error;
 	}
 }

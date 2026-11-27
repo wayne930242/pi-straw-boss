@@ -172,10 +172,17 @@ test("a main a tower opens waits past 60 s while its pi asks for trust, and the 
 	const result = await opening;
 	assert.match(result.content.map((c) => (c.type === "text" ? c.text : "")).join(""), /Opened tab/);
 });
-test("a main a tower opens fails after ten minutes of an unanswered trust question, and its tab is closed", async () => {
+test("a main a tower opens fails after ten minutes of an unanswered trust question, and the pane it made is closed, never its tab", async () => {
 	const dir = trustDir(world.stateDir);
-	world.herdr.onAgentStart = (pane) => void put(dir, pane.pane_id);
+	let made = "";
+	world.herdr.onAgentStart = (pane) => {
+		made = pane.pane_id;
+		world.herdr.addPane(`${pane.pane_id}x`, pane.tab_id, "shell"); // the boss splits the new tab while pi waits on its trust question
+		void put(dir, pane.pane_id);
+	};
 	const t = await tower();
 	await assert.rejects(t.tool("boss_open_main", { request: "Fix the thing", sender: "docs-main" }), /No trust decision for \/work\/demo within 10 minutes/);
-	assert.equal(world.herdr.commands("tab", "close").length, 1, "the tab it created is closed");
+	assert.deepEqual(world.herdr.commands("tab", "close"), [], "no tab close");
+	assert.deepEqual(world.herdr.commands("pane", "close").map((c) => c[2]), [made], "the pane it created is closed");
+	assert.ok(world.herdr.panes.some((p) => p.pane_id === `${made}x`), "the boss's split stays");
 });

@@ -46,7 +46,7 @@ async function open({ run, sleep, live, moveFirst, model, trustDir }: TowerEnv, 
 		if (!marked) await report(run, "pane", paneId, { sb_role: "tower" });
 		await moveFirst(reused.tab_id);
 		// Other shell-only leftovers are closed; failing to close one leaves a harmless tab, so it does not stop the tower.
-		for (const extra of bare.slice(1)) await run(["tab", "close", extra.tab_id]).catch(() => {});
+		for (const extra of bare.slice(1)) await run(["pane", "close", extra.pane_id]).catch(() => {}); // its one pane, never the tab: Herdr closes the emptied tab, and a pane split there since the look stays
 	} else {
 		const dir = workspace.worktree?.checkout_path ?? cwd;
 		await assertSettingsSafe([dir]);
@@ -67,7 +67,7 @@ async function open({ run, sleep, live, moveFirst, model, trustDir }: TowerEnv, 
 	}
 	// A trust question the tower waits on is not counted (trust/wait.ts); one nobody answers fails the opening, and a tab this opening made goes with it (a leftover tab is the user's to keep).
 	const id = await waitPastTrust(sleep, held, TOWER_WAIT_MS, 1000, trustDir ? { dir: trustDir, pane: paneId } : undefined).catch(async (error: unknown) => {
-		if (created) await run(["tab", "close", created]).catch(() => {});
+		if (created) await run(["pane", "close", paneId]).catch(() => {}); // the pane it made, never the tab (Herdr closes an emptied tab)
 		throw error;
 	});
 	if (!id) throw new Error(`The tower of ${workspace.label} did not publish its token within ${TOWER_WAIT_MS / 1000} s (pane ${paneId})`);

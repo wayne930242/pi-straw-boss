@@ -294,7 +294,7 @@ test("a main that quit is listed as quit; a revive is still the run's call when 
 	assert.equal(world.herdr.commands("tab", "create").length, 1);
 });
 
-test("D3: the old tab closes when the tower opened it and its one pane is the dead pane at a bare shell, and stays otherwise", async () => {
+test("D3: the old tab closes (its one pane closed, Herdr takes the tab) when the tower opened it and its one pane is the dead pane at a bare shell, and stays otherwise", async () => {
 	const w = await setup();
 	world.herdr.shellPids = true;
 	revives(w);
@@ -303,7 +303,9 @@ test("D3: the old tab closes when the tower opened it and its one pane is the de
 	world.herdr.addPane("wA:p40", "wA:t40");
 	const first = await w.tower.tool("boss_revive_main", { action: "revive", session: DEAD, reason: "back" });
 	assert.equal((first.details as { closedOld?: string }).closedOld, "wA:t40");
-	assert.ok(world.herdr.commands("tab", "close").some((c) => c[2] === "wA:t40"));
+	assert.ok(world.herdr.commands("pane", "close").some((c) => c[2] === "wA:p40"), "the dead pane is closed");
+	assert.ok(!world.herdr.commands("tab", "close").some((c) => c[2] === "wA:t40"), "never by a tab close: Herdr closes the emptied tab");
+	assert.ok(!world.herdr.tabs.some((t) => t.tab_id === "wA:t40"), "the emptied tab went with its pane");
 	// The boss opened it: its old tab stays.
 	crashed(w, { id: "c0000000-0000-4000-8000-000000000001", name: "boss main", record: { tab: "wA:t41", pane: "wA:p41" } });
 	world.herdr.addPane("wA:p41", "wA:t41");

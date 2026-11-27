@@ -279,8 +279,8 @@ export function opener(env: OpenerEnv) {
 			if (sent.status !== "sent") throw new Error(`The new ${train ? "train" : integ ? "integrator" : "main"} ${main.name ?? main.id} did not take the ${integ ? "handoff" : "request"}: ${sent.status} ${sent.code ?? ""} ${sent.detail ?? ""}`.trim());
 			return { tab: tabId, pane: paneId, main: main.id, sender: sender.id, ...(train ? { train } : {}), ...(integ ? { integrator: integ } : {}) };
 		} catch (error) {
-			// Nothing was handed over, so no work is lost with the tab.
-			await run(["tab", "close", tabId]).catch(() => {});
+			// Nothing was handed over, so no work is lost with the pane it made; it closes alone, never the tab: a split the boss made there during the waits stays, and Herdr closes the tab its last pane leaves.
+			await run(["pane", "close", paneId]).catch(() => {});
 			throw error;
 		}
 	};

@@ -710,7 +710,7 @@ export function createTowers(o: TowersOptions): Towers {
 		let made: Awaited<ReturnType<typeof createTab>> | undefined;
 		// The service was closed (or retired) while this ran: the new tab is not left standing.
 		const abandon = async () => {
-			if (made) await run(["tab", "close", made.tabId]).catch(() => {});
+			if (made) await run(["pane", "close", made.paneId]).catch(() => {}); // the pane it made, never the tab (Herdr closes an emptied tab)
 			return undefined;
 		};
 		try {
@@ -1083,7 +1083,7 @@ export function createTowers(o: TowersOptions): Towers {
 			made = true;
 		} else {
 			// Other shell-only leftovers are closed; failing to close one leaves a harmless tab.
-			for (const extra of bare.slice(1)) await run(["tab", "close", extra.tab_id]).catch(() => {});
+			for (const extra of bare.slice(1)) await run(["pane", "close", extra.pane_id]).catch(() => {}); // its one pane, never the tab: Herdr closes the emptied tab, and a pane split there since the look stays
 			if (given && (await tabs(run, ws)).find((t) => t.tab_id === given.tab_id)?.label !== TOWER_LABEL) await run(["tab", "rename", given.tab_id, TOWER_LABEL]).catch(() => {});
 		}
 		// Marked at once, so a tab left without its identity is recognised (while the marker lasts); the label stays display only.
@@ -1398,8 +1398,9 @@ export function createTowers(o: TowersOptions): Towers {
 		async close(workspace) {
 			const l = services.get(workspace);
 			if (!l) throw new Error(`The sb server stands in for no tower of workspace ${workspace}`);
-			// The tab is closed only while it is proven the tower's own (a new Herdr may have given its id to a tab of the boss's); an unproven one is left, and the service ends all the same.
-			if (l.seated || (await prove(l)) === "ours") if (await proven(l)) await run(["tab", "close", l.record.tab]).catch(() => {});
+			// The standing pane is closed only while it is proven the tower's own (a new Herdr may have given its id to a pane of the boss's); an unproven one is left, and the service ends all the same.
+			// The pane alone, never the tab (boss 2026-11-27): a split of the boss's there stays, the panes of its ally runs close with their runs (`lose` ends them), and Herdr closes the tab its last pane leaves.
+			if (!tabless(l) && (l.seated || (await prove(l)) === "ours")) if (await proven(l)) await run(["pane", "close", l.record.pane]).catch(() => {});
 			await lose(l, "closed by the boss");
 			return { workspace, id: l.record.id };
 		},

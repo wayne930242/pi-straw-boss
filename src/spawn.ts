@@ -180,7 +180,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		}
 		if (prompt) return deliver(d, paneId, prompt, track);
 	}
-	/** Runs `open` on what was just created, and closes it again when the open fails: nothing was typed into it yet, so nothing is lost with it. */
+	/** Runs `open` on what was just created, and closes it again when the open fails: nothing was typed into it yet, so nothing is lost with it. A new tab goes by its one pane (Herdr closes the emptied tab), so a split the boss made there during the join wait stays. */
 	const orClose = async (close: string[], open: () => Promise<Reply | undefined>) => {
 		try {
 			return await open();
@@ -198,7 +198,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 		const name = basename(dir) || dir;
 		await assertSettingsSafe([dir]);
 		const { tabId, paneId } = await createTab(run, ws.workspace_id, dir, ["STRAW_BOSS_ROLE=main"], name);
-		const failed = await orClose(["tab", "close", tabId], async () => {
+		const failed = await orClose(["pane", "close", paneId], async () => {
 			// sb_open_main authorises exactly one pi in this shell to promote itself (index.ts consumes it).
 			await report(run, "pane", paneId, { sb_open_main: "1" });
 			return boot(d, paneId, `main · ${name}`, prompt, "main");
@@ -216,7 +216,7 @@ export function createSpawn({ run, sleep, call, live, sessionAt, home = homedir(
 			if (!dir) return OUTSIDE;
 			await assertSettingsSafe([dir]);
 			const opened = await createTab(run, ws.workspace_id, dir, ["STRAW_BOSS_ROLE=member"], basename(dir) || dir);
-			created = { ...opened, close: ["tab", "close", opened.tabId] };
+			created = { ...opened, close: ["pane", "close", opened.paneId] };
 		} else {
 			// The new member sits beside the tab's main, or its first pane, in the picked folder, else in that pane's.
 			const lead = await leadOf(ws.workspace_id, tabId);

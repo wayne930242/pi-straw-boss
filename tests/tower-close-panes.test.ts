@@ -121,7 +121,7 @@ const deadPane = (tab: string, pane: string, tokens: Record<string, string>, lab
 	Object.assign(world.herdr.pane(pane), { agent: undefined, agent_status: undefined, tokens: { ...tokens } });
 };
 
-test("the tower closes a dead agent pane (sb marks, no pi): the tab with it when it was the tab's only pane, the pane alone otherwise", async () => {
+test("the tower closes a dead agent pane (sb marks, no pi): the pane alone, never its tab; Herdr closes a tab its last pane leaves", async () => {
 	const { towerA } = await town();
 	deadPane("wA:t40", "wA:p40", { sb_role: "main", sb_duty: "coordinator", sb_main_tab: "old work" });
 	deadPane("wA:t41", "wA:p41", { piha_delegated_v1: "live", sb_name: "kid-review" });
@@ -132,10 +132,12 @@ test("the tower closes a dead agent pane (sb marks, no pi): the tab with it when
 	assert.match(listed, /wA:p41/);
 	assert.doesNotMatch(listed, /wA:p42|wA:p1\b|wA:p7/);
 	const one = await towerA.tool("boss_close_main", { pane: "wA:p40" });
-	assert.deepEqual(world.herdr.commands("tab", "close").map((c) => c[2]), ["wA:t40"], "its tab closed with it");
-	assert.match(textOf(one), /Closed tab wA:t40/);
+	assert.deepEqual(world.herdr.commands("pane", "close").map((c) => c[2]), ["wA:p40"], "the pane alone is closed");
+	assert.ok(!world.herdr.tabs.some((t) => t.tab_id === "wA:t40"), "Herdr closed the emptied tab");
+	assert.match(textOf(one), /Closed pane wA:p40 .*its tab wA:t40 closes with it/);
 	const two = await towerA.tool("boss_close_main", { pane: "wA:p41" });
-	assert.deepEqual(world.herdr.commands("pane", "close").map((c) => c[2]), ["wA:p41"]);
+	assert.deepEqual(world.herdr.commands("pane", "close").map((c) => c[2]), ["wA:p40", "wA:p41"]);
+	assert.deepEqual(world.herdr.commands("tab", "close"), [], "no tab is closed by sb");
 	assert.ok(world.herdr.tabs.some((t) => t.tab_id === "wA:t41"), "the tab with another pane stays");
 	assert.ok(world.herdr.panes.some((p) => p.pane_id === "wA:p42"));
 	assert.match(textOf(two), /Closed pane wA:p41/);

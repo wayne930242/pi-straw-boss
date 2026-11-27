@@ -101,7 +101,8 @@ test("several leftover glyph tabs: one is reused and the other shell-only ones a
 	await a.tool("call_tower", { message: "hi" });
 	assert.deepEqual(world.herdr.commands("tab", "create"), []);
 	assert.deepEqual(world.herdr.commands("agent", "start").map((args) => args[6]), ["wA:p8"]);
-	assert.deepEqual(world.herdr.closed, ["wA:t9"]);
+	assert.deepEqual(world.herdr.closed, ["wA:p9"], "a leftover goes by its one pane, never by a tab close");
+	assert.ok(!world.herdr.tabs.some((t) => t.tab_id === "wA:t9"), "Herdr closed the emptied tab");
 });
 
 test("a glyph tab that runs an agent or holds other panes is not a leftover: it is never typed into and a new tab opens", async () => {
@@ -225,12 +226,15 @@ test("the tower registers its tab channel as not owner-eligible, writes both tok
 	assert.equal(resumed.entries.length, 1, "no second role entry on resume");
 });
 
-test("a second tower yields: the lower tab id wins a race, and its tab closes before it publishes", async () => {
+test("a second tower yields: the lower tab id wins a race, and its own pane closes before it publishes, never its tab", async () => {
 	const first = world.tower("first", "wA:t5", "wA:p5");
 	const second = world.tower("second", "wA:t9", "wA:p9");
+	world.herdr.addPane("wA:p10", "wA:t9", "shell"); // the boss's split beside the second tower
 	await Promise.all([first.start(), second.start()]);
 	await settle();
-	assert.deepEqual(world.herdr.closed, ["wA:t9"]);
+	assert.deepEqual(world.herdr.closed, ["wA:p9"]);
+	assert.deepEqual(world.herdr.commands("tab", "close"), [], "no tab close");
+	assert.ok(world.herdr.panes.some((p) => p.pane_id === "wA:p10") && world.herdr.tabs.some((t) => t.tab_id === "wA:t9"), "the sibling pane and its tab stay");
 	assert.equal(world.herdr.workspace("wA").tokens.tower, "first");
 	assert.ok(!world.herdr.wsTokenHistory.includes("second"), "the yielding tower never wrote the workspace token");
 	assert.equal(second.stopped, true);
@@ -243,7 +247,7 @@ test("an existing token holder wins even when the newcomer has the lower tab id"
 	const fresh = world.tower("fresh", "wA:t5", "wA:p5");
 	await fresh.start();
 	await settle();
-	assert.deepEqual(world.herdr.closed, ["wA:t5"]);
+	assert.deepEqual(world.herdr.closed, ["wA:p5"]);
 	assert.equal(world.herdr.workspace("wA").tokens.tower, "old");
 });
 

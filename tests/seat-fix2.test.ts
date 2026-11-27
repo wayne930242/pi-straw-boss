@@ -49,15 +49,16 @@ test("RVSEAT2-D3: the boss's close of the tower closes no tab that is not proven
 	h.calls.length = 0;
 	await ask(s, { cmd: "close-tower", workspace: "wA" });
 	assert.deepEqual(h.calls.filter((a) => a[0] === "tab" && a[1] === "close"), []);
-	assert.deepEqual(h.closed.filter((c) => c === ensured.tab), []);
+	assert.deepEqual(h.closed.filter((c) => c === ensured.tab || c === ensured.pane), [], "neither the tab nor the pane under the reused ids");
 });
 
-test("RVSEAT2-D3 control: a proven tower's tab is closed", async () => {
+test("RVSEAT2-D3 control: a proven tower's standing pane is closed, and Herdr takes the emptied tab", async () => {
 	const s = await world.start();
 	await s.handle.ready;
 	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
 	await ask(s, { cmd: "close-tower", workspace: "wA" });
-	assert.ok(world.herdr.closed.includes(String(ensured.tab)));
+	assert.ok(world.herdr.closed.includes(String(ensured.pane)));
+	assert.ok(!world.herdr.tabs.some((t) => t.tab_id === String(ensured.tab)));
 });
 
 // After a Herdr restart the server never touches an old ally pane (no close, mark, start or key); a lost session's stranger under a reused id is left as well.
