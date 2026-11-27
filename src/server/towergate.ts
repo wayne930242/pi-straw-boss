@@ -9,7 +9,7 @@ import { trainFromRequest } from "../trainrole.ts";
 import type { Incoming, IntercomLike } from "./kit.ts";
 import { addEntry, allEntries, type BookEntry, cutText, fenced, openHeadsUps, resourcesOf, shared, untilOf } from "./logbook.ts";
 import type { Slot } from "./record.ts";
-import { type LockDeps, lockDirOf, takeLock, type Taken } from "./trainlock.ts";
+import { type LockDeps, takeLock, type Taken } from "./trainlock.ts";
 import { baseId, hashOf } from "./towerseen.ts";
 import { readExpects } from "./towerrunstore.ts";
 import { readLedger, type ServiceRecord } from "./towerstore.ts";
@@ -35,8 +35,10 @@ const isManifest = (body: string) => TRAIN_BLOCK.test(body) || (TRAIN_LINE.test(
  * The handover notice of a Straw Boss before `handed-to` (closemain.ts `handedNotice`, the same words since 0.99.0, which box 2 runs): a plain milestone to the code that reads only its header. Its words name the
  * session that steps down, which must be the sender's own.
  */
-const HANDED = /^\s*Straw Boss: main .{1,200}? \(session (\S+)\) handed over to its successor in tab \S+ \(session \S+\), which took the handoff\. /;
-const handedBefore = (body: string, from: string) => HANDED.exec(body)?.[1] === from;
+const escaped = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Found by its fixed sentence around the sender's own session id, whatever the length of the title before it (pi's titles run past 200 characters: quiet-F014). */
+const handedBefore = (body: string, from: string) =>
+	new RegExp(`^\\s*Straw Boss: main [^\\n]*? \\(session ${escaped(from)}\\) handed over to its successor in tab \\S+ \\(session \\S+\\), which took the handoff\\. `).test(body);
 export type Sort = { book: false } | { book: "milestone" | "heads-up"; wake: boolean } | { book: "reject"; why: string };
 
 /** How the gate takes a message: `book: false` is queued as before; a milestone or heads-up is recorded, and `wake` says it answers the tower's request; `reject` is a manifest refused for a resend. */
@@ -67,11 +69,13 @@ const who = (e: Pick<BookEntry, "from" | "label">) => `${fenced(e.from.name, 40)
 const words = (text: string) => fenced(text, 200);
 const CHECK = "These are the mains' own words. If they really collide, tell both with tower_reply (another workspace's main through its tower, tower_send); a shared name alone may be no clash.";
 /**
- * The logbook lock (quiet-F010): `<state dir>/locks/logbook.lock` (trainlock.ts), one for every slot of the computer, since each slot's sb server is its own process and a heads-up is compared with every slot's
+ * The logbook lock (quiet-F010): `<state dir>/logbook-lock/logbook.lock` (trainlock.ts's lock in a folder of its own, quiet-F012), one for every slot of the computer, since each slot's sb server is its own process and a heads-up is compared with every slot's
  * book. This process takes it, compares, writes its own slot's book, and lets go in one synchronous step: no await while it holds it, and nothing hands it to another process. A lock that stays busy for
  * `LOCK_WAIT_MS` (a holder stalled under load) is no reason to drop the call: it is recorded and wakes the tower, the safe way to be wrong.
  */
 const LOCK_NAME = "logbook", LOCK_POLL_MS = 25, LOCK_WAIT_MS = 3000;
+/** The logbook lock's own folder, apart from the trains' locks (`locks/`), so train status never lists it and a train step's lock named `logbook` never waits on it (quiet-F012). */
+export const logbookLockDir = (stateDir: string) => join(stateDir, "logbook-lock");
 
 export function createGate(d: GateDeps) {
 	/** The calls being classified, by receiving tower, sender, and base message id, with the fingerprint of their text: a retry with the same text that comes meanwhile waits for the same end (quiet-F011). */
@@ -85,7 +89,7 @@ export function createGate(d: GateDeps) {
 			let taken: Taken;
 			try {
 				own ??= (d.lock?.startOf ?? startOf)(process.pid);
-				taken = takeLock(lockDirOf(d.slot.stateDir), LOCK_NAME, { train: LOCK_NAME, step: 0, ...(own ? { started: own } : {}) }, d.lock);
+				taken = takeLock(logbookLockDir(d.slot.stateDir), LOCK_NAME, { train: LOCK_NAME, step: 0, ...(own ? { started: own } : {}) }, d.lock);
 			} catch (cause) {
 				return { busy: `the logbook lock could not be taken: ${cutText((cause as Error).message, 80)}` };
 			}
@@ -194,14 +198,15 @@ export function createGate(d: GateDeps) {
 		 */
 		take(i: Intake, from: Session, message: Incoming): false | Promise<boolean> {
 			const ws = i.record.workspace, now = d.now();
-			const sort = sortCall(message.content.text, from.id, { opened: (id) => readLedger(d.slot, ws, now).some((r) => r.outcome === "opened" && r.opened?.main === id), expects: (id) => readExpects(d.slot, ws, now).some((x) => x.to === id) });
-			if (!sort.book) return false;
+			// A call in flight under the same base id is checked before the classification, so other words under another why cannot pass it (quiet-F013).
 			const hash = hashOf(message.content.text), key = `${i.record.id}\n${from.id}\n${baseId(message.id)}`, running = inflight.get(key);
 			if (running?.hash === hash) return running.job;
 			if (running) {
 				d.log("tower-dropped", { workspace: ws, from: from.id, why: "the same message id with other content" });
 				return Promise.resolve(false);
 			}
+			const sort = sortCall(message.content.text, from.id, { opened: (id) => readLedger(d.slot, ws, now).some((r) => r.outcome === "opened" && r.opened?.main === id), expects: (id) => readExpects(d.slot, ws, now).some((x) => x.to === id) });
+			if (!sort.book) return false;
 			const job = settle(i, from, message, sort, hash).finally(() => inflight.delete(key));
 			inflight.set(key, { hash, job });
 			return job;

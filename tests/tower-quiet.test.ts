@@ -15,7 +15,7 @@ import type { IntercomLike } from "../src/server/kit.ts";
 import { addEntry, BOOK_KEEP_MS, bookSection, bookText, entryLine, markRead, openHeadsUps, readBook, resourcesOf, shared, unreadOf, untilOf } from "../src/server/logbook.ts";
 import type { Slot } from "../src/server/record.ts";
 import { buildBrief } from "../src/server/towerbrief.ts";
-import { createGate, sortCall } from "../src/server/towergate.ts";
+import { createGate, logbookLockDir, sortCall } from "../src/server/towergate.ts";
 import { addText, updateMemory } from "../src/server/towermemory.ts";
 import { addExpect, readExpects, readRun } from "../src/server/towerrunstore.ts";
 import { putLedger, readQueue, type ServiceRecord } from "../src/server/towerstore.ts";
@@ -454,10 +454,10 @@ test("quiet-F010: two heads-ups whose net reads overlap still see each other's c
 });
 
 test("quiet-F010: a heads-up waits while another slot's server holds the logbook lock, and is compared and written once it has it", async () => {
-	const { takeLock, lockDirOf } = await import("../src/server/trainlock.ts");
+	const { takeLock } = await import("../src/server/trainlock.ts");
 	const naps: (() => void)[] = [], one = slotAt(), two = slotAt("0123456789abcdef");
 	const notices: string[] = [], g = createGate({ slot: two, now: () => Date.now(), log: () => {}, notice: (_ws, text) => (notices.push(text), true), sleep: () => new Promise<void>((r) => naps.push(r)) });
-	const other = takeLock(lockDirOf(world.stateDir), "logbook", { train: "logbook", step: 0 });
+	const other = takeLock(logbookLockDir(world.stateDir), "logbook", { train: "logbook", step: 0 });
 	assert.equal(other.ok, true);
 	const b = at("main-2", "db-main", "w1", "w1:p1"), it = intake("w1", netOf([b], [pane("w1:p1")]));
 	const taken = g.take(it.i, b, call(b, "h2", "restoring ws01 for 30 min", "shared", false));
@@ -473,12 +473,12 @@ test("quiet-F010: a heads-up waits while another slot's server holds the logbook
 });
 
 test("quiet-F010: a logbook lock that stays busy past its wait records the heads-up and wakes the tower, the safe way to be wrong", async () => {
-	const { takeLock, lockDirOf } = await import("../src/server/trainlock.ts");
+	const { takeLock } = await import("../src/server/trainlock.ts");
 	let clock = Date.now();
 	// The holder's start time is told, not read with ps at each look.
 	const lock = { startOf: () => "T-1" }, logs: string[] = [];
 	const g = createGate({ slot: slotAt(), now: () => clock, log: (event, facts) => void logs.push(`${event} ${facts.why ?? facts.wake ?? ""}`), notice: () => true, sleep: async (ms) => void (clock += ms), lock });
-	const other = takeLock(lockDirOf(world.stateDir), "logbook", { train: "logbook", step: 0, started: "T-1" }, lock);
+	const other = takeLock(logbookLockDir(world.stateDir), "logbook", { train: "logbook", step: 0, started: "T-1" }, lock);
 	assert.equal(other.ok, true);
 	const m = at("main-1", "ops-main", "wA", "wA:p1"), it = intake("wA", netOf([m], [pane("wA:p1")]));
 	await g.take(it.i, m, call(m, "h1", "restarting ws01 for 10 min", "shared", false));
@@ -546,4 +546,47 @@ test("quiet-F011: at the intake, a retry of a call in flight is receipted with i
 	assert.deepEqual(t.receipts.filter((r) => r.status === "queued").map((r) => r.messageId).sort(), ["m1", "m1~r1"]);
 	assert.equal(book().length, 1);
 	assert.equal(readQueue(world.slot, "wA").filter((e) => e.kind === "intercom").length, 1, "queued once");
+});
+
+test("quiet-F012: the logbook lock lives apart from the trains' locks: train status never lists it, and a train step's lock named logbook is free while it is held", async () => {
+	const { heldLocks, lockDirOf, takeLock } = await import("../src/server/trainlock.ts");
+	let naps = 0;
+	const g = createGate({ slot: slotAt(), now: () => Date.now(), log: () => {}, notice: () => true, sleep: async () => void naps++ });
+	const m = at("main-1", "ops-main", "wA", "wA:p1"), it = intake("wA", netOf([m], [pane("wA:p1")]));
+	// A train step holds a lock named logbook in the trains' folder; the gate does not wait on it.
+	const train = takeLock(lockDirOf(world.stateDir), "logbook", { train: "2026-11-28-a", step: 3 });
+	assert.equal(train.ok, true);
+	await g.take(it.i, m, call(m, "h1", "restarting ws01 for 10 min", "shared", false));
+	assert.equal(naps, 0, "the gate never waited on the train's lock");
+	if (train.ok) train.release();
+	// While the gate holds its own, the trains' folder lists nothing.
+	const own = takeLock(logbookLockDir(world.stateDir), "logbook", { train: "logbook", step: 0 });
+	assert.equal(own.ok, true);
+	assert.deepEqual(heldLocks(lockDirOf(world.stateDir)), [], "train status lists no logbook lock");
+	const step = takeLock(lockDirOf(world.stateDir), "logbook", { train: "2026-11-28-b", step: 1 });
+	assert.equal(step.ok, true, "a train step's logbook lock does not wait on the gate's");
+	if (step.ok) step.release();
+	if (own.ok) own.release();
+});
+
+test("quiet-F013: other words under the base id of a call in flight are dropped whatever their why, blocked included", async () => {
+	const one = slotAt(), g = gateOf(one), m = at("main-1", "docs-main", "wA", "wA:p1");
+	let release!: () => void;
+	const held = new Promise<void>((r) => (release = r)), net = { sessions: [m], ps: [pane("wA:p1")] };
+	const it = intake("wA", async () => (await held, net));
+	const first = g.gate.take(it.i, m, call(m, "m1", "done: api landed", "milestone", false));
+	const other = g.gate.take(it.i, m, call(m, "m1~r1", "stuck: need the db password", "blocked", false));
+	release();
+	assert.notEqual(other, false, "not queued as a fresh call");
+	assert.deepEqual(await Promise.all([first, other]), [true, false]);
+});
+
+test("quiet-F014: an old handover notice is found by its sentence and the sender's id, whatever the length of its title", () => {
+	const none = { opened: () => false, expects: () => false };
+	const head = "[straw net from=docs-main id=main-1 role=main workspace=Alpha kind=call_tower scope=tower to=\"tower (tower of Alpha)\" reply=none why=milestone]";
+	const title = "docs-main ".repeat(25).trim();
+	const text = (id: string) => `Straw Boss: main ${title} (session ${id}) handed over to its successor in tab wA:t2 (session opened-wA:p101), which took the handoff. ${title} steps down now.`;
+	assert.ok(title.length > 200);
+	assert.deepEqual(sortCall(`${head} ${text("main-1")}`, "main-1", none), { book: false });
+	assert.deepEqual(sortCall(`${head} ${text("main-9")}`, "main-1", none), { book: "milestone", wake: false });
 });
