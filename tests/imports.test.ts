@@ -608,7 +608,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The ward's review (2026-11-27, ward-review F002; measured) 4558 to 4560: bosswatch.ts answers a `watch-ping` from its tower identity, which a ward from the shell asks first. Then 4560 to 4563 (F004): bosswatch.ts
 	// takes a change sent again with the id it already took (a restart lost the answer) without showing it twice.
 	// F003 (boss decision (a); measured) 4563 to 4565: bosswatch.ts drops the `watch-ping` answer (-1) and sends a ward's stop and list with sb_ward's registration secret (+2); traincar.ts's client gets `forget` (+2) for the retry after a server restart; closemain.ts unchanged in lines.
-	assert.ok(rest <= 4565, `the rest of src has ${rest} lines`);
+	// ward-review F011 (measured) 4565 to 4579: traincar.ts keeps one registration in flight per process for all its clients (train_car's, its check, sb_ward's) and drops a refused secret only while it is still the held one.
+	assert.ok(rest <= 4579, `the rest of src has ${rest} lines`);
 	// Unreleased (settings check, probe): settings.ts is the lstat gate, the child's program (refuses a link it cannot follow, stats before opening; review SR5), and its runner (160); it no longer walks links. settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
 	// Unreleased raised trust/ask.ts from 182 to 183 (RC3-F001): the recorded server's start time is read when the handler registers.
 	// Unreleased raised trust/ask.ts from 183 to 201 (RC4-F001, F002): `warmServerStart` (the early read only for a live server that reads trust requests) and `guiUp` (what the handler's `up` asks) are exported for their tests, and `registerTrust` takes the terminal it answers on.

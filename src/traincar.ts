@@ -24,6 +24,14 @@ import { integrationOff } from "./trainswitch.ts";
 const CARS_SET_WAIT_MS = 15 * 60_000;
 const HELD = Symbol.for("pi-straw-boss.cars.secrets");
 const heldSecrets = (): Map<string, string> => ((globalThis as { [HELD]?: Map<string, string> })[HELD] ??= new Map());
+/** The registration in flight per secret store and session: every client of the process (train_car's, its background check, sb_ward's) waits on the one registration, never makes a second (ward-review F011). */
+const INFLIGHT = Symbol.for("pi-straw-boss.cars.registering");
+const inflightOf = (held: Map<string, string>): Map<string, Promise<string>> => {
+	const all = ((globalThis as { [INFLIGHT]?: WeakMap<Map<string, string>, Map<string, Promise<string>>> })[INFLIGHT] ??= new WeakMap());
+	let m = all.get(held);
+	if (!m) all.set(held, (m = new Map()));
+	return m;
+};
 
 export type ServerCall = (request: Record<string, unknown>, timeoutMs?: number) => Promise<Reply | undefined>;
 
@@ -57,12 +65,16 @@ export interface SetAnswer { state: CarState; at: string; file: string; coordina
 export function createCarClient(d: CarClientDeps) {
 	const pid = d.pid ?? process.pid, held = d.held ?? heldSecrets();
 	const keyOf = () => `${d.session() ?? ""}|${pid}`;
-	let registering: Promise<string> | undefined;
+	const inflight = inflightOf(held);
+	/** Drops the secret only while the store still holds the one the server refused: a late refusal of an old secret never erases a newer one (ward-review F011). */
+	const drop = (refused: string) => void (held.get(keyOf()) === refused && held.delete(keyOf()));
 	const failure = (reply: Reply | undefined, what: string) => new Error(reply ? String(reply.error ?? `${what} was refused`) : "sb: the sb server did not answer (is it running?)");
 	async function ensure(): Promise<string> {
 		const key = keyOf(), kept = held.get(key);
 		if (kept) return kept;
-		return (registering ??= (async () => {
+		const flying = inflight.get(key);
+		if (flying) return flying;
+		const run = (async () => {
 			const session = d.session(), pane = d.pane();
 			if (!session || !pane) throw new Error("sb: this session has not joined the net yet; try again in a moment");
 			const started = d.started?.(pid) ?? startOf(pid);
@@ -70,22 +82,24 @@ export function createCarClient(d: CarClientDeps) {
 			if (!reply?.ok || typeof reply.secret !== "string") throw failure(reply, "registering");
 			held.set(key, reply.secret);
 			return reply.secret;
-		})().finally(() => { registering = undefined; }));
+		})().finally(() => void (inflight.get(key) === run && inflight.delete(key)));
+		inflight.set(key, run);
+		return run;
 	}
 	return {
 		ensure,
 		/** Registers if it has not (the extension tries early, before a shell can: see carbook.ts). Resolves quietly when it cannot. */
 		async register(): Promise<boolean> { try { await ensure(); return true; } catch { return false; } },
 		registered: () => held.has(keyOf()),
-		/** Drops the secret this process holds, after the server said it does not know it (a restart): the next `ensure` registers again. */
-		forget: () => void held.delete(keyOf()),
+		/** Drops `refused`, the secret the server said it does not know (a restart), if the store still holds it: the next `ensure` registers again. */
+		forget: drop,
 		async set(request: CarSet): Promise<SetAnswer> {
 			for (let attempt = 0; ; attempt++) {
 				const secret = await ensure();
 				const reply = await d.call({ cmd: "cars-set", secret, state: request.state, car: request.car, fields: request.fields }, CARS_SET_WAIT_MS);
 				if (reply?.ok) return reply as unknown as SetAnswer;
 				// A server that started again knows no secret: register again, once.
-				if (attempt === 0 && reply && /not from a registered session/.test(String(reply.error))) { held.delete(keyOf()); continue; }
+				if (attempt === 0 && reply && /not from a registered session/.test(String(reply.error))) { drop(secret); continue; }
 				throw failure(reply, "the state");
 			}
 		},
@@ -96,7 +110,7 @@ export function createCarClient(d: CarClientDeps) {
 			const reply = await d.call({ cmd: "cars-check", secret });
 			if (reply?.ok) return true;
 			if (!reply) return false; // no answer: the server may be starting; the secret stays
-			held.delete(keyOf());
+			drop(secret);
 			return this.register();
 		},
 		/** The cars of a project the server shows this session (the guard's source): a train's own, the integrator's own. */
@@ -105,7 +119,7 @@ export function createCarClient(d: CarClientDeps) {
 				const secret = await ensure();
 				const reply = await d.call({ cmd: "cars-read", project, secret });
 				if (reply?.ok && Array.isArray(reply.cars)) return reply.cars as CarView[];
-				if (attempt === 0 && reply && /not from a registered session/.test(String(reply.error))) { held.delete(keyOf()); continue; }
+				if (attempt === 0 && reply && /not from a registered session/.test(String(reply.error))) { drop(secret); continue; }
 				throw failure(reply, "reading the cars");
 			}
 		},

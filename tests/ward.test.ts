@@ -6,7 +6,7 @@ import { after, test } from "node:test";
 import type { Net } from "../src/net.ts";
 import type { Pane } from "../src/herdr.ts";
 import { parseArgs } from "../src/server/cli.ts";
-import { judgeWard, QUIET_MS, readSession, sessionReader, WARD_LOOK_MS, type WardRec, wardOf } from "../src/server/ward.ts";
+import { createWardRead, judgeWard, QUIET_MS, readSession, sessionReader, WARD_LOOK_MS, type WardRec, wardOf } from "../src/server/ward.ts";
 import { runWard, WARD_CLI_REFUSED } from "../src/server/wardcli.ts";
 import type { WatchNet } from "../src/server/watchread.ts";
 import { startWatches, watchReply } from "../src/server/watchesops.ts";
@@ -45,17 +45,19 @@ function world() {
 	const reading = { done: 0 };
 	const net: WatchNet = { onRead: () => () => {}, last: () => ({ bases: [] }) as Net, lookup: (key) => (reading.done && units[key] ? { key, name: key.slice(0, 8), ...units[key]! } : undefined), read: async () => (reading.done++, { bases: [] }) as Net };
 	// The registration secrets the car book handed (carbook.ts `sessionOf`): one per session's pi process.
+	// The role the car book reads now (its live look), which may differ from the net's last reading.
+	const bookRole: Record<string, string> = {};
 	const secrets: Record<string, string> = { [`s-${MAIN}`]: MAIN, [`s-${MEMBER}`]: MEMBER, [`s-${WORKER}`]: WORKER };
 	const timer = (ms: number, fn: () => void) => { let live = true; clock.at(clock.elapsed() + ms, () => live && fn()); return () => void (live = false); };
 	const sent: { session: string; text: string; key: string; state: string; id?: string }[] = [];
 	const stops: (() => void)[] = [];
 	// `lost`: the main takes the line, but its answer never reaches the server.
 	const takes = { now: true, lost: false };
-	const start = () => startWatches({ net, now: clock.now, send: async (to, text, facts) => (takes.lost ? (sent.push({ session: to.session, text, ...facts }), false) : takes.now ? (sent.push({ session: to.session, text, ...facts }), true) : false), log: () => {}, stops, slot: { dir } as never, over: { timer }, ward: { run, monitorPanes: () => monitors, loopsDir: loops, owner: async (secret) => (typeof secret === "string" && secrets[secret] ? { session: secrets[secret]! } : "sb: this request is not from a registered session") } });
+	const start = () => startWatches({ net, now: clock.now, send: async (to, text, facts) => (takes.lost ? (sent.push({ session: to.session, text, ...facts }), false) : takes.now ? (sent.push({ session: to.session, text, ...facts }), true) : false), log: () => {}, stops, slot: { dir } as never, over: { timer }, ward: { run, monitorPanes: () => monitors, loopsDir: loops, owner: async (secret) => (typeof secret === "string" && secrets[secret] ? { session: secrets[secret]!, role: bookRole[secrets[secret]!] ?? units[secrets[secret]!]?.role ?? "train" } : "sb: this request is not from a registered session") } });
 	let routes = start();
 	after(() => stops.forEach((s) => s()));
 	return {
-		clock, file, pane, sent, monitors, loops, units, takes, dir, reading, hold, get routes() { return routes; },
+		clock, file, pane, sent, monitors, loops, units, bookRole, takes, dir, reading, hold, get routes() { return routes; },
 		/** Another pane in another workspace that runs pi. */
 		other: () => void list.push({ pane_id: "%9", tab_id: "t9", workspace_id: "w2", agent: "pi", agent_status: "working", agent_session: { value: file } }),
 		/** The server stops and a new one starts from `watches.json`. */
@@ -486,4 +488,37 @@ test("ward-review F008: a ward lets go of its reader on every end: a stop, a rep
 	await short.looks(5);
 	assert.deepEqual(short.sent.map((x) => x.state), ["expired"]);
 	assert.equal(short.routes.ward!.held(), 0, "its expiry");
+});
+
+test("F003 review: list and stop take the role the car book reads now: a session the net last read as main but whose registration is a train's now is no main", async () => {
+	const w = world();
+	assert.equal((await w.add()).ok, true);
+	w.bookRole[MAIN] = "train";
+	assert.deepEqual((await w.list()).map((x) => x.ward), [{ pane: "%7" }], "no file");
+	assert.match(String((await w.stop()).error), /only a tab's main wards a worker; your session is a train now/);
+	assert.match(String((await w.add()).error), /your session is a train now/);
+	delete w.bookRole[MAIN];
+	assert.equal((await w.stop()).ok, true);
+});
+
+test("ward-review F008: a ward's reader is kept per watch instance: a look in flight of an ended instance keeps nothing, however many other wards ended meanwhile", async () => {
+	let open!: () => void;
+	const gate = new Promise<void>((r) => (open = r));
+	const dir = mkdtempSync(join(tmpdir(), "sb-ward-live-")), file = join(dir, "s.jsonl");
+	dirs.push(dir);
+	writeFileSync(file, line({ type: "session", id: WORKER }) + said("done"));
+	const pane: Pane = { pane_id: "%7", tab_id: "t2", workspace_id: "w1", agent: "pi", agent_status: "idle", agent_session: { value: file } };
+	const ward = createWardRead({ run: async () => (await gate, JSON.stringify({ result: { panes: [pane] } })), now: () => 0, monitorPanes: () => new Set(), loopsDir: dir });
+	const rec: WardRec = { pane: "%7", file, worker: WORKER, offset: 0, main: { id: MAIN } };
+	const live = { ended: false };
+	const look = ward.read({ ward: rec, live });
+	live.ended = true;
+	ward.forget(live);
+	for (let i = 0; i < 1100; i++) ward.forget({ ended: true }); // many other wards end
+	open();
+	assert.equal((await look).ok, true);
+	assert.equal(ward.held(), 0);
+	const next = { ended: false };
+	await ward.read({ ward: rec, live: next });
+	assert.equal(ward.held(), 1, "a live instance keeps its reader");
 });

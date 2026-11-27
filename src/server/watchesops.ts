@@ -15,7 +15,7 @@ export const REPORT_RETIRED = "watch-report is retired in pi-straw-boss 0.83.0 w
 /** `main`: the live main a session id is in the server's own reading of the net, with its workspace and pane, or why it is none (ward-review F003). */
 /** `fresh`: the server reads the net now first, as a ward's add does (ward-review F009: with no page and no watch, nothing else reads it); a list or a stop reads it only when the last reading does not show a live main. */
 /** `owner`: the session a registration secret is (carbook.ts `sessionOf`, the secret `cars-register` handed the pi process), or why none (F003, boss decision (a)): a ward is added, listed with its file, and stopped only by its main's own pi process. */
-export interface WardRoutes extends Pick<WardRead, "resolve" | "held"> { main(session: string, fresh?: boolean): Promise<{ workspace: string; pane?: string } | string>; owner(secret: unknown): Promise<{ session: string } | string> }
+export interface WardRoutes extends Pick<WardRead, "resolve" | "held"> { main(session: string, fresh?: boolean): Promise<{ workspace: string; pane?: string } | string>; owner(secret: unknown): Promise<{ session: string; role: string } | string> }
 export interface WatchRoutes { read: { read(q: WatchQuery): Promise<Reply> }; watches: Pick<Watches, "add" | "stop" | "list" | "has">; ward?: WardRoutes }
 const no = (error: string): Promise<Reply> => Promise.resolve({ ok: false, error });
 const number = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -44,6 +44,7 @@ export function watchReply(routes: WatchRoutes | undefined, request: Request, en
 		const owner = await routes.ward.owner(request.secret);
 		if (typeof owner === "string") return owner;
 		if (owner.session !== session) return "sb: the registration secret is not this session's: a ward is its main's own, set, listed, and stopped with sb_ward";
+		if (owner.role !== "main") return `only a tab's main wards a worker; your session is a ${owner.role} now`; // the role the car book reads now, not the net's last reading
 		const m = await routes.ward.main(session);
 		return typeof m === "string" ? m : undefined;
 	};
@@ -72,6 +73,7 @@ async function wardAdd(routes: WatchRoutes, session: string, key: string, reques
 	const ward = routes.ward, owner = await ward.owner(request.secret);
 	if (typeof owner === "string") return { ok: false, error: owner };
 	if (owner.session !== session) return { ok: false, error: "sb: the registration secret is not this session's: a ward is its main's own, set with sb_ward" };
+	if (owner.role !== "main") return { ok: false, error: `only a tab's main wards a worker; your session is a ${owner.role} now` };
 	const me = await ward.main(session, true);
 	if (typeof me === "string") return { ok: false, error: me };
 	const rec = await ward.resolve({ pane: key.slice(WARD.length), session, workspace: me.workspace, ...(w.item !== undefined ? { item: w.item as string } : {}), ...(me.pane ? { here: me.pane } : {}) });
@@ -105,7 +107,7 @@ export function startWatches(o: StartWatches): WatchRoutes {
 	const ward = o.ward ? createWardRead({ ...o.ward, now: o.now, watching: (session) => watches.has(session) }) : undefined;
 	// The trusted identity of a ward's main is the server's reading of the net: the session's pane carries `sb_role=main` (the net's role), and the unit is live; its workspace is the unit's base.
 	const judgeMain = (session: string): { workspace: string; pane?: string } | string => ((f) => (!f || !f.live ? "your session is not a live unit of the net the server reads (a ward is a main's; join the net, or wait for the next reading)" : f.role !== "main" ? `only a tab's main wards a worker; your session is a ${f.role}` : { workspace: f.base, ...(f.pane ? { pane: f.pane } : {}) }))(o.net.lookup(session));
-	const watches = createWatches({ read: (q) => (q.ward && ward ? ward.read({ ...q, ward: q.ward }) : read.read(q)), now: o.now, timer, send: o.send, owner, file: join(slot.dir, "watches.json"), log: o.log, ended: (w) => void (w.ward && ward?.forget(w.ward)) });
+	const watches = createWatches({ read: (q) => (q.ward && ward ? ward.read({ ...q, ward: q.ward, ...(q.live ? { live: q.live } : {}) }) : read.read(q)), now: o.now, timer, send: o.send, owner, file: join(slot.dir, "watches.json"), log: o.log, ended: (w) => void (w.ward && ward?.forget(w.live)) });
 	watches.start();
 	o.stops.push(() => (watches.stopAll(), read.stop()));
 	const mainOf = async (session: string, fresh = false) => {

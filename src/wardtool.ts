@@ -17,14 +17,14 @@ export const WARD_DESCRIPTION = "Ward a worker in a plain pane instead of a herd
 export function createWard({ pi, cfg, s, guiDir, me, role }: Kit, d: { ask?: Ask; control: Pick<Control, "register">; openTower: Reach["openTower"]; remote(): boolean; client?: CarClient }) {
 	// The car book's client over this session's way to the server; its secret is kept where train_car's is, per session and process.
 	const client: CarClient = d.client ?? createCarClient({ call: async (request) => (d.ask ? d.ask(request, { start: "auto" }).catch(() => undefined) : undefined) as never, session: () => me() || undefined, pane: () => s.at?.paneId });
-	const secret = () => client.ensure().catch((error: Error) => (client.registered() ? client.ensure() : Promise.reject(error))); // a registration of train_car's client that won the race is the same secret
 	/** A request with the secret; a server that started again knows none, so it is asked once more after registering again. */
 	const owned = async (request: Record<string, unknown>) => {
 		if (!d.ask) throw new Error("No sb server answers this session");
 		for (let attempt = 0; ; attempt++) {
-			const reply = await d.ask({ ...request, secret: await secret() }, { start: "auto" });
+			const secret = await client.ensure(); // one registration per process, shared with train_car's client (traincar.ts)
+			const reply = await d.ask({ ...request, secret }, { start: "auto" });
 			if (reply.ok) return reply;
-			if (attempt === 0 && /not from a registered session/.test(String(reply.error))) { client.forget(); continue; }
+			if (attempt === 0 && /not from a registered session/.test(String(reply.error))) { client.forget(secret); continue; }
 			throw new Error(String(reply.error ?? "the sb server refused"));
 		}
 	};

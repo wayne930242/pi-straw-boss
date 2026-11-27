@@ -6,6 +6,7 @@ import { subagents } from "../netdata.ts";
 import { sessionHeader } from "../revive.ts";
 import { armedLoop } from "./capops.ts";
 import type { Reply } from "./socket.ts";
+import type { Live } from "./watches.ts";
 
 // `sb_ward` (docs/how-it-works.md#ward-a-plain-pane): a main hands the sb server a worker that runs in a plain pane (no subagent row, so no completion of its own), and the server wakes the main only when the worker
 // really ended: finished (it reported to the main over call_peer, or its last turn ended and nothing of its runs, for two looks 60 s apart), blocked (Herdr shows the pane blocked, or the worker waits on a dialog), or dead
@@ -154,13 +155,9 @@ export const wardLine = (rec: WardRec, state: WardState, why: string) => `ward $
 
 export function createWardRead(d: WardDeps) {
 	/** One look at the worker, with what still runs for it: a monitor in its pane, an active loop of its session, a running subagent of its pane. */
-	/** A reader per ward, which goes on where its last look stopped (F008). */
-	const readers = new Map<string, { read: ReturnType<typeof sessionReader>; used: number }>();
-	const idOf = (rec: WardRec) => `${rec.file}\n${rec.offset}\n${rec.main.id}`;
-	/** A count per ward's id of its ends (`forget`): a look that began before an end (a stop, a replace, the expiry) keeps no reader when it finishes after it, so nothing outlives the ward (ward-review F008). */
-	const ends = new Map<string, number>();
-	const look = async (rec: WardRec): Promise<WardLook> => {
-		const began = ends.get(idOf(rec)) ?? 0;
+	/** A reader per ward instance, keyed by its cancel signal (watches.ts `Live`), which goes on where its last look stopped (F008); a look whose ward ended meanwhile keeps none. */
+	const readers = new Map<Live, { read: ReturnType<typeof sessionReader>; used: number }>();
+	const look = async (rec: WardRec, live?: Live): Promise<WardLook> => {
 		// The worker is the pi pane that holds its session file, wherever Herdr moved it; else its terminal, which a move keeps; else its pane id, unless that id now names another terminal (ward-review F006).
 		const all = await panes(d.run), other = (p: Pane) => Boolean(rec.terminal && p.terminal_id && p.terminal_id !== rec.terminal);
 		const pane = all.find((p) => p.agent === "pi" && p.agent_session?.value === rec.file) ?? (rec.terminal ? all.find((p) => p.terminal_id === rec.terminal) : undefined) ?? all.find((p) => p.pane_id === rec.pane && !other(p));
@@ -176,32 +173,27 @@ export function createWardRead(d: WardDeps) {
 		if (kids) runs.push(`${kids} subagent${kids > 1 ? "s" : ""} of it run${kids > 1 ? "" : "s"}`);
 		// The file at the path must still be the worker's: another session's file there is not read as its (ward-review F006).
 		if (sessionHeader(rec.file)?.id !== rec.worker) return { pane, turn: "unknown", runs, foreign: true };
-		const id = idOf(rec), now = d.now();
+		const now = d.now();
 		// A reader not used for an hour is a ward that was stopped or ended; one whose ward ended goes at once (read below).
 		for (const [k, r] of readers) if (now - r.used > 3_600_000) readers.delete(k);
-		let reader = readers.get(id);
-		if (!reader) (reader = { read: sessionReader(rec.file, rec.offset, rec.main), used: now }), (ends.get(id) ?? 0) === began && readers.set(id, reader); // a ward that ended meanwhile reads once, keeping nothing
+		let reader = live ? readers.get(live) : undefined;
+		if (!reader) (reader = { read: sessionReader(rec.file, rec.offset, rec.main), used: now }), live && !live.ended && readers.set(live, reader); // a ward that ended meanwhile (or a look of no watch) reads once, keeping nothing
 		reader.used = now;
 		return { pane, ...(await reader.read()), runs };
 	};
 	return {
 		/** One look and its verdict, as watch-read answers: `since` carries what was told. A Herdr list that does not answer is no verdict. */
-		async read(q: { since?: string; deadline?: number; ward: WardRec }): Promise<Reply> {
+		async read(q: { since?: string; deadline?: number; ward: WardRec; live?: Live }): Promise<Reply> {
 			const at = d.now(), was = toldOf(q.since);
 			if (q.deadline !== undefined && at >= q.deadline) return { ok: true, state: "expired", since: stampOf(was), ward: `ward ${q.ward.pane}: expired; the ward ended` };
 			let seen: WardLook;
-			try { seen = await look(q.ward); } catch (error) { return { ok: false, error: `Herdr's pane list did not answer: ${(error as Error).message}` }; }
+			try { seen = await look(q.ward, q.live); } catch (error) { return { ok: false, error: `Herdr's pane list did not answer: ${(error as Error).message}` }; }
 			const v = judgeWard(q.ward, seen, was, at);
-			if (v.state === "finished" || v.state === "dead") readers.delete(idOf(q.ward));
+			if ((v.state === "finished" || v.state === "dead") && q.live) readers.delete(q.live);
 			return { ok: true, state: v.state, since: stampOf(v.told), now: at, unit: { pane: q.ward.pane, state: v.state, why: v.why, ...(q.ward.item ? { item: q.ward.item } : {}) }, ward: wardLine(q.ward, v.state, v.why) };
 		},
 		/** The ward ended (watches.ts `ended`, from every path that ends it): its reader goes (ward-review F008). */
-		forget: (rec: WardRec) => {
-			const id = idOf(rec);
-			readers.delete(id);
-			ends.set(id, (ends.get(id) ?? 0) + 1);
-			if (ends.size > 1024) ends.delete(ends.keys().next().value!); // the oldest: a look of it in flight sees a count that differs, and keeps nothing
-		},
+		forget: (live: Live) => void readers.delete(live),
 		/** How many readers are kept (the server's status, a test). */
 		held: () => readers.size,
 		/** The record of a new ward: the pane runs pi with a session file, it is not the caller's own pane or session, and the item (if any) is a plain key. */

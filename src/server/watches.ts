@@ -24,7 +24,8 @@ const VOLATILE = new Set(["ageMs", "last", "note", "load"]);
 export interface WatchAdd { session: string; workspace: string; key: string; quietMs?: number; idleMs?: number; untilMs?: number; ward?: WardRec }
 export interface WatchesDeps {
 	/** One hold of watch-read (watchread.ts `read`). */
-	read(q: WatchQuery & { ward?: WardRec }): Promise<Reply>;
+	/** `live`: the watch instance's cancel signal (ended at its end), which a ward's look checks before it keeps anything (ward-review F008). */
+	read(q: WatchQuery & { ward?: WardRec; live?: Live }): Promise<Reply>;
 	now(): number;
 	/** Runs `fn` after `ms` and returns its cancel; a test gives one on a clock it moves. */
 	timer(ms: number, fn: () => void): () => void;
@@ -33,13 +34,15 @@ export interface WatchesDeps {
 	/** Whether the session is on the net now, and its workspace; none while the server has not read it. */
 	owner(session: string): { live: boolean; workspace?: string } | undefined;
 	/** A watch ended, by any path (its ending, a stop, a replace, its owner gone): a ward lets go of what it kept for its looks. */
-	ended?(w: { key: string; ward?: WardRec }): void;
+	ended?(w: { key: string; ward?: WardRec; live: Live }): void;
 	/** `watches.json`; none keeps the watches in memory only. */
 	file?: string;
 	log?(event: string, facts: Record<string, string | number | boolean>): void;
 }
 interface Told { state: string; facts: string; at: number }
-interface Watch extends WatchAdd { deadline: number; added: number; since?: string; told?: Told; sentAt: number; pending?: Told & { line: string; id: string; heldBy?: Bucket }; newest?: { state: string; line: string; at: number }; away?: number; fails: number; ended: boolean; sending?: boolean; timer?: () => void; restarted?: boolean; recheck?: boolean }
+/** One watch instance's cancel signal: `ended` turns true once, at any end of that instance (a replace makes a new one). */
+export interface Live { ended: boolean }
+interface Watch extends WatchAdd { live: Live; deadline: number; added: number; since?: string; told?: Told; sentAt: number; pending?: Told & { line: string; id: string; heldBy?: Bucket }; newest?: { state: string; line: string; at: number }; away?: number; fails: number; ended: boolean; sending?: boolean; timer?: () => void; restarted?: boolean; recheck?: boolean }
 interface Bucket { from: number; count: number; held: number; keys: Map<string, string>; timer?: () => void }
 
 const no = (error: string): Reply => ({ ok: false, error });
@@ -97,6 +100,7 @@ export function createWatches(d: WatchesDeps) {
 	const end = (w: Watch, why: string) => {
 		if (w.ended) return;
 		w.ended = true;
+		w.live.ended = true;
 		w.timer?.();
 		if (watches.get(idOf(w.session, w.key)) === w) watches.delete(idOf(w.session, w.key));
 		d.ended?.(w);
@@ -188,7 +192,7 @@ export function createWatches(d: WatchesDeps) {
 	const loop = async (w: Watch) => {
 		while (!w.ended && !stopped && !(w.pending && ENDS.has(w.pending.state))) {
 			const began = d.now();
-			const r = await d.read({ key: w.key, ...(w.since ? { since: w.since } : {}), ...(w.quietMs ? { quietMs: w.quietMs } : {}), ...(w.idleMs ? { idleMs: w.idleMs } : {}), deadline: w.deadline, ...(w.ward ? { ward: w.ward } : {}) }).catch((error: Error): Reply => no(error.message));
+			const r = await d.read({ key: w.key, ...(w.since ? { since: w.since } : {}), ...(w.quietMs ? { quietMs: w.quietMs } : {}), ...(w.idleMs ? { idleMs: w.idleMs } : {}), deadline: w.deadline, ...(w.ward ? { ward: w.ward, live: w.live } : {}) }).catch((error: Error): Reply => no(error.message));
 			if (w.ended || stopped) return;
 			owned(w);
 			if (w.ended) return;
@@ -225,12 +229,13 @@ export function createWatches(d: WatchesDeps) {
 			if (all.filter((w) => w.session === q.session && w.key !== q.key).length >= PER_SESSION) return no(`at most ${PER_SESSION} watches per session: stop one first (boss_watch with stop)`);
 			if (all.length - (watches.has(id) ? 1 : 0) >= PER_SERVER) return no(`at most ${PER_SERVER} watches on this server`);
 			const at = d.now(), deadline = at + (q.untilMs ?? UNTIL_MS);
-			const first = await d.read({ key: q.key, ...(q.quietMs ? { quietMs: q.quietMs } : {}), ...(q.idleMs ? { idleMs: q.idleMs } : {}), deadline, ...(q.ward ? { ward: q.ward } : {}) }).catch((error: Error): Reply => no(error.message));
-			if (!first.ok) return first;
-			if (ENDS.has(String(first.state))) return no(`${q.key} is ${String(first.state)}: there is nothing to watch`);
+			const live: Live = { ended: false }, dropped = () => ((live.ended = true), d.ended?.({ key: q.key, ...(q.ward ? { ward: q.ward } : {}), live }));
+			const first = await d.read({ key: q.key, ...(q.quietMs ? { quietMs: q.quietMs } : {}), ...(q.idleMs ? { idleMs: q.idleMs } : {}), deadline, ...(q.ward ? { ward: q.ward, live } : {}) }).catch((error: Error): Reply => no(error.message));
+			if (!first.ok) return (dropped(), first);
+			if (ENDS.has(String(first.state))) return (dropped(), no(`${q.key} is ${String(first.state)}: there is nothing to watch`));
 			const old = watches.get(id);
 			if (old) end(old, "replaced");
-			const w: Watch = { session: q.session, workspace: q.workspace, key: q.key, ...(q.quietMs ? { quietMs: q.quietMs } : {}), ...(q.idleMs ? { idleMs: q.idleMs } : {}), ...(q.ward ? { ward: q.ward } : {}), deadline, added: at, ...(typeof first.since === "string" ? { since: first.since } : {}), told: { state: String(first.state), facts: factsOf(first), at }, sentAt: 0, fails: 0, ended: false };
+			const w: Watch = { live, session: q.session, workspace: q.workspace, key: q.key, ...(q.quietMs ? { quietMs: q.quietMs } : {}), ...(q.idleMs ? { idleMs: q.idleMs } : {}), ...(q.ward ? { ward: q.ward } : {}), deadline, added: at, ...(typeof first.since === "string" ? { since: first.since } : {}), told: { state: String(first.state), facts: factsOf(first), at }, sentAt: 0, fails: 0, ended: false };
 			w.newest = { state: String(first.state), line: lineOf(q.key, first, w), at };
 			watches.set(id, w);
 			save();
@@ -259,7 +264,7 @@ export function createWatches(d: WatchesDeps) {
 				const ward = wardOf(row.ward);
 				if (row.key.startsWith("ward:") && !ward) continue;
 				const p = row.pending, pending = p && typeof p.state === "string" && typeof p.facts === "string" && typeof p.line === "string" && typeof p.id === "string" && typeof p.at === "number" ? { state: p.state, facts: p.facts, line: p.line, id: p.id, at: p.at } : undefined;
-				const w: Watch = { session: row.session, workspace: row.workspace, key: row.key, ...(ward ? { ward } : {}), ...(pending ? { pending } : {}), ...(typeof row.quietMs === "number" ? { quietMs: row.quietMs } : {}), ...(typeof row.idleMs === "number" ? { idleMs: row.idleMs } : {}), deadline: row.deadline, added: typeof row.added === "number" ? row.added : d.now(), ...(typeof row.since === "string" ? { since: row.since } : {}), ...(told ? { told } : {}), sentAt: typeof row.sentAt === "number" ? row.sentAt : 0, fails: 0, ended: false, restarted: true };
+				const w: Watch = { live: { ended: false }, session: row.session, workspace: row.workspace, key: row.key, ...(ward ? { ward } : {}), ...(pending ? { pending } : {}), ...(typeof row.quietMs === "number" ? { quietMs: row.quietMs } : {}), ...(typeof row.idleMs === "number" ? { idleMs: row.idleMs } : {}), deadline: row.deadline, added: typeof row.added === "number" ? row.added : d.now(), ...(typeof row.since === "string" ? { since: row.since } : {}), ...(told ? { told } : {}), sentAt: typeof row.sentAt === "number" ? row.sentAt : 0, fails: 0, ended: false, restarted: true };
 				// A pending ending goes out as it was found; any other pending change waits for the first reading (`recheck`).
 				if (pending && !ENDS.has(pending.state)) w.recheck = true;
 				watches.set(idOf(w.session, w.key), w);
