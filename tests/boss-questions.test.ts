@@ -170,11 +170,12 @@ test("auto mode's own transition cancelling the relayed dialog first: the questi
 /** The page's side of the relay: the questionnaire the bridge would relay (owners.ts `bossQuestion`), and an answer checked as the hub checks it, handed to the owner. */
 function page(a: Agent) {
 	const bus: Bus = { on: (c, h) => a.on(c, h), emit: (c, d) => a.emit(c, d) }, open: Dialog[] = [];
+	let sent = 0; // each answer has its own id, as the hub mints them: two answers at once are two answers, not one sent twice
 	bossQuestion.listen(bus, { open: (_ad, d) => void open.push(d), closed: () => {} });
 	const answer = (json: Record<string, unknown>) => new Promise<{ accepted: boolean; reason?: string }>((resolve) => {
 		const d = open.at(-1)!, checked = checkAnswer({ dialog: d.id, digest: d.digest, questions: d.questions, cancel: true }, json);
 		if (typeof checked === "string") throw new Error(checked);
-		bossQuestion.answer(bus, d, { id: d.id, answerId: `ans-${open.length}`, digest: d.digest, ...checked }, resolve);
+		bossQuestion.answer(bus, d, { id: d.id, answerId: `ans-${open.length}-${++sent}`, digest: d.digest, ...checked }, resolve);
 	});
 	return { open, answer };
 }

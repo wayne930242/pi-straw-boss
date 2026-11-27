@@ -39,9 +39,10 @@ test("a main's always-on sb tools stay within their budget, and boss_status is g
 	assert.ok(a.active?.includes("call_peer"), "a main carries call_peer");
 	assert.ok(!a.tools.has("boss_status"), "folded into board_read");
 	const trimmed = tools.filter((t) => t.name !== "boss_server" && t.name !== "boss_watch" && t.name !== "boss_pair" && t.name !== "boss_wrap" && t.name !== "sb_doctor" && t.name !== "sb_ward").reduce((n, t) => n + size(t), 0);
-	assert.ok(trimmed <= 7_908, `the trimmed tools hold ${trimmed} characters (10,634 before B2)`);
+	// The boss asks (docs/specs/2026-11-28-boss-asks.md; measured): call_tower's `boss.item`, the todo the question blocks, with no description (+26): trimmed 7,908 to 7,934 and all 11,962 to 11,988.
+	assert.ok(trimmed <= 7_934, `the trimmed tools hold ${trimmed} characters (10,634 before B2)`);
 	const all = tools.reduce((n, t) => n + size(t), 0);
-	assert.ok(all <= 11_962, `all of sb's tools hold ${all} characters (11,594 before B2 and E; 8,753 before D; 9,601 before boss_wrap; 10,161 before call_tower boss; 10,328 before 0.92.0; 10,664 before standing.md; 10,771 before note; 10,798 before call_peer; 11,233 before sb_doctor; 11,493 before sb_ward)`);
+	assert.ok(all <= 11_988, `all of sb's tools hold ${all} characters (11,594 before B2 and E; 8,753 before D; 9,601 before boss_wrap; 10,161 before call_tower boss; 10,328 before 0.92.0; 10,664 before standing.md; 10,771 before note; 10,798 before call_peer; 11,233 before sb_doctor; 11,493 before sb_ward)`);
 });
 
 test("the trimmed descriptions keep the sentences that carry a rule: board_set's privacy line, call_tower's three points, boss_wait_ask over ask_user_question", async () => {

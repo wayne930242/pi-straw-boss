@@ -261,7 +261,7 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 			push();
 		};
 		try {
-			off = r.adapter.answer(bus, r.d, { id: r.d.id, answerId: a.answerId, digest: a.digest, choice: a.choice, answers: Array.isArray(a.answers) ? a.answers : undefined, ...(a.cancel === true ? { cancel: true as const } : {}) }, finish);
+			off = r.adapter.answer(bus, r.d, { id: r.d.id, answerId: a.answerId, digest: a.digest, choice: a.choice, answers: Array.isArray(a.answers) ? a.answers : undefined, ...(a.cancel === true ? { cancel: true as const } : {}), ...(a.remote === true ? { remote: true as const } : {}) }, finish);
 		} catch {
 			finish({ accepted: false, reason: "malformed" }); // an answer an adapter could not even map; the owner never saw it
 		}
