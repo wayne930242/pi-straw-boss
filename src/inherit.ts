@@ -19,6 +19,8 @@ import { plain } from "./safetext.ts";
 // Each run is handled once: its entry (`{ inherited: id }`) is written before the message goes, and orphan.ts and restored.ts read the same entries, so nothing repeats after a /reload.
 
 export const RESULT = "straw-boss-orphan-result";
+/** Why an inherited `.exit` is held (the ownership table in docs/how-it-works.md): the host writes a resume's script before its snapshot shows the run. */
+const HELD = "a resume script names its session file";
 const MAX_TEXT = 16_000, SCAN_MAX = 8 * 1024 * 1024;
 export const FOLLOW_UP_REVIVE = "Your launcher's pi died while you were working and was revived; your run was cut off. Read your session so far, check the current state before re-running anything that changes state, finish the task you were given, and report your result.";
 
@@ -33,7 +35,7 @@ export interface Inherit extends RunHost {
 	deliver(text: string, details: unknown): void;
 	tell(text: string, level?: "info" | "warning"): void;
 }
-type Kind = "finished" | "ping" | "cut" | "running" | "idle" | "worktree" | "persistent";
+type Kind = "finished" | "ping" | "cut" | "running" | "idle" | "worktree" | "persistent" | "held";
 export interface Run { id: string; name: string; session: string; kind: Kind; pane?: string; worktree?: { path?: string; branch?: string }; exit?: { type: string; message?: string; errorMessage?: string }; cut?: Cut }
 
 /** The child's last assistant text: the result pi-herdr-agents would have delivered. Read from the end of the file, at most 8 MB. */
@@ -122,6 +124,7 @@ export function message(runs: Run[], first: boolean): string {
 	if (idle.length) parts.push(`Idle at their prompt: ${idle.map((r) => `${r.name} (run ${r.id}, pane ${r.pane})`).join(", ")}. Straw Boss asks each once over intercom to send you its report.`);
 	const worktree = of("worktree");
 	if (worktree.length) parts.push(["Managed worktree runs: subagent_resume refuses them, so do not call it; worktree_list shows them, and their pane (if any) is the retained workspace's:", ...worktree.map((r) => `- ${r.name} (run ${r.id}): worktree ${r.worktree?.path ?? "unknown"}, branch ${r.worktree?.branch ?? "unknown"}${r.pane ? `, pane ${r.pane}` : ", no pane"}`)].join("\n"));
+	for (const r of of("held")) parts.push(`Held: ${r.name} (run ${r.id}). Straw Boss holds its result: ${HELD}, so another attempt may own the ${r.session}.exit there. Straw Boss neither delivers nor deletes it, and does not decide this by time. Tell the boss, who can read ${r.session}.exit and deliver it by hand; do not resume it meanwhile.`);
 	const persistent = of("persistent");
 	if (persistent.length) parts.push(`Persistent specialists: ${persistent.map((r) => `${r.name} (run ${r.id}${r.pane ? `, pane ${r.pane}` : ""})`).join(", ")}. They cannot be re-adopted: close their pane or let them idle, and spawn a new one if you need it. Straw Boss sends them nothing.`);
 	return parts.join("\n\n");
@@ -131,6 +134,8 @@ export function message(runs: Run[], first: boolean): string {
 export function inherited(d: Inherit) {
 	const done = new Set<string>();
 	for (const e of d.entries()) if (e.type === "custom" && e.customType === d.type && typeof (e.data as { inherited?: unknown } | undefined)?.inherited === "string") done.add((e.data as { inherited: string }).inherited);
+	// Held runs, listed for sb_doctor from the session's entries: a hold is never resolved by time.
+	const held = (): string[] => d.entries().flatMap((e) => ((x) => (e.type === "custom" && e.customType === d.type && typeof x?.held === "string" ? [`${plain(String(x.name ?? "")).replace(/\n/g, " ").slice(0, 60)} (sessionPath ${String(x.session ?? "")}): result held: ${x.held}`] : []))(e.data as Record<string, unknown> | undefined));
 	let busy = false, stopped = false, first = done.size === 0, watching = true;
 	async function poll(): Promise<void> {
 		const file = d.file();
@@ -145,14 +150,16 @@ export function inherited(d: Inherit) {
 			// A run of its session the host tracks under any run id (a resume takes it over under a new one) is the host's, and so is its `.exit`; unknown keeps the look going (review F007).
 			let unsure = false;
 			const hostHas = (session: string) => ((owner) => ((unsure ||= owner === null), owner !== undefined))(sessionRuns(file, session, d.events).owner);
-			const runs = sortRuns(file, ps, (id, session) => done.has(id) || live.has(id) || reported.some((f) => ownFile(f, id)) || (session !== undefined && hostHas(session)));
+			const runs = sortRuns(file, ps, (id, session) => done.has(id) || live.has(id) || reported.some((f) => ownFile(f, id)) || (session !== undefined && hostHas(session)))
+				// An `.exit` of a session a resume script names may be that attempt's, which the snapshot does not show yet: held, never told as inherited (review F007b).
+				.map((r) => ((r.kind === "finished" || r.kind === "ping") && sessionRuns(file, r.session, d.events).resumed ? { ...r, kind: "held" as const, exit: undefined } : r));
 			// What is told now: everything but a run that still works, or one orphan.ts asks (idle); those are told once, in the first message, and the running ones again when they finish.
 			const told = runs.filter((r) => first || (r.kind !== "running" && r.kind !== "idle"));
 			const settled = told.filter((r) => r.kind !== "running" && r.kind !== "idle");
 			watching = unsure || runs.some((r) => r.kind === "running" || r.kind === "idle");
 			if (!told.length || stopped) return;
 			// Written before the message goes: a run is handled once, whatever happens to the send.
-			for (const r of settled) (done.add(r.id), d.remember({ inherited: r.id }));
+			for (const r of settled) (done.add(r.id), d.remember(r.kind === "held" ? { inherited: r.id, held: HELD, session: r.session, name: r.name } : { inherited: r.id }));
 			try {
 				d.deliver(message(told, first), { runs: told.map((r) => ({ id: r.id, name: r.name, sessionPath: r.session, kind: r.kind, ...(r.pane ? { pane: r.pane } : {}), ...(r.worktree ? { worktree: r.worktree } : {}) })) });
 				d.tell(`Straw Boss: told this session of ${told.length} subagent run${told.length === 1 ? "" : "s"} it launched before it was revived`);
@@ -164,5 +171,5 @@ export function inherited(d: Inherit) {
 			busy = false;
 		}
 	}
-	return { poll, stop: () => void (stopped = true) };
+	return { poll, stop: () => void (stopped = true), waits: held };
 }

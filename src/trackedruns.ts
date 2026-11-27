@@ -43,12 +43,13 @@ const RUN = /_([^_]+?)(?:-[0-9a-f]{1,8}-[0-9a-f]{1,8}-[0-9a-f]{1,4})?\.jsonl$/, 
 /**
  * The host's runs of session `file` (docs/how-it-works.md#a-subagent-that-dies-is-revived, the ownership table): every launch or resume script of `launcher` whose header names it, its newest, and
  * `owner`, the run id of any of them the host tracks (a resume takes a session over under a new id, review F007). Undefined: none; null: the runs cannot be read, or a script that may name the file
- * cannot while a tracked id is placed on no other session (review F009). Only the run's own first launch and the resumes can name its file, so a thousand scripts cost a few reads.
+ * cannot while a tracked id is placed on no other session, or the script folder cannot be listed (review F009). `resumed`: a resume script names it. Only the run's own first launch and the resumes can name its file, so a thousand scripts cost a few reads.
  */
-export function sessionRuns(launcher: string, file: string, events?: RunEvents): { owner: string | undefined | null; newest?: Attempt } {
+export function sessionRuns(launcher: string, file: string, events?: RunEvents): { owner: string | undefined | null; newest?: Attempt; resumed?: boolean } {
 	const dir = join(artifacts(launcher), "subagent-scripts"), run = RUN.exec(basename(file))?.[1], named: Attempt[] = [], elsewhere = new Set<string>();
 	let names: string[] = [], unread = false;
-	try { names = readdirSync(dir).filter((n) => n.endsWith(".sh")); } catch { /* no script folder */ }
+	// Only a folder that is not there is no script; any other error (ENOTDIR, EACCES) leaves who runs it unknown (review F009).
+	try { names = readdirSync(dir).filter((n) => n.endsWith(".sh")); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return { owner: null }; }
 	for (const name of names.filter((n) => !run || n.endsWith(`-${run}.sh`) || n.includes("-resume-"))) {
 		let text: string;
 		try { text = readFileSync(join(dir, name), "utf8"); } catch { unread = true; continue; } // one file, not the scan
@@ -57,11 +58,12 @@ export function sessionRuns(launcher: string, file: string, events?: RunEvents):
 		else if (id) elsewhere.add(id);
 	}
 	const newest = named.reduce<Attempt | undefined>((a, b) => (!a || b.at >= a.at ? b : a), undefined), live = tracked(events);
-	if (!live) return { owner: null, newest };
+	const resumed = named.some((a) => basename(a.path).includes("-resume-"));
+	if (!live) return { owner: null, newest, resumed };
 	// A first launch's script is `<name>-<id>.sh` and names its own run's session: a tracked id with one of those, or read on another session, cannot be the unreadable script's.
 	const placed = (id: string) => elsewhere.has(id) || (id !== run && names.some((n) => n.endsWith(`-${id}.sh`) && !n.includes("-resume-")));
 	const owner = named.find((a) => a.id !== undefined && live.has(a.id))?.id;
-	return { owner: owner ?? (unread && [...live].some((id) => !placed(id)) ? null : undefined), newest };
+	return { owner: owner ?? (unread && [...live].some((id) => !placed(id)) ? null : undefined), newest, resumed };
 }
 
 export function runCount(events?: RunEvents): RunCount {

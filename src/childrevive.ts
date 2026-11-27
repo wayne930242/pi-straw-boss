@@ -1,5 +1,5 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { classify, type Death, deathOf } from "./childdead.ts";
 import { cutOf, describe } from "./cut.ts";
 import { CONFIRM_MS, LOOKS } from "./dead.ts";
@@ -21,9 +21,9 @@ const TAIL = "; echo '__SUBAGENT_DONE_'$?'__'";
 const FOLLOW = "Your pi died while you were working and was not revived. Read your session so far, check the current state before re-running anything that changes state, finish the task you were given, and report your result.";
 
 export interface Entry { type: string; id?: string; timestamp?: string; customType?: string; data?: unknown; details?: unknown; content?: unknown }
-/** `deferred`: who runs its session could not be told after the split, so it is looked at again. `since`: when the script it runs again was generated. `ended`: the look that found its own pi
- * ended with no `.exit`, after which an `.exit` is another run's. */
-type Step = "reviving" | "revived" | "delivered" | "failed" | "skipped" | "deferred";
+/** `deferred`: who runs its session could not be told after the split, so it is looked at again. `held`: an `.exit` is there that another attempt may own, kept for the boss and never
+ * taken. `since`: when the script it runs again was generated. `ended`: the look that found its own pi ended (its pane gone, or no pi in it) with no `.exit`, after which an `.exit` is not its own. */
+type Step = "reviving" | "revived" | "delivered" | "failed" | "skipped" | "deferred" | "held";
 interface Mark { death: string; file: string; step: Step; at: number; name: string; pane?: string; why?: string; since?: number; ended?: number }
 interface Open { id: string; at: number; death: Death; index: number }
 /** A run as its newest launch or resume script says: the folder and the command a revive runs again. */
@@ -170,12 +170,13 @@ export function childRevive(d: ChildRevive) {
 		return undefined;
 	};
 	const mark = (m: Mark) => d.remember({ [KEY]: m });
-	/** Who else has a revive's session now, read after the last wait (the ownership table): another pane, a later report, or a run of the host under any run id; null: unknown. */
-	const ownerOf = (m: Mark, ps: Pane[]): string | undefined | null => {
-		const p = ps.find((x) => x.agent_session?.value === m.file && x.pane_id !== m.pane), all = d.entries(), from = all.findIndex((e) => e.id === m.death), owner = sessionRuns(d.file() ?? "", m.file, d.events).owner;
-		if (p) return `pane ${p.pane_id} runs its session now`;
-		if (from >= 0 && all.slice(from + 1).some((e) => reports(e, m.file))) return "a later result or ping names its session file";
-		return owner && `pi-herdr-agents runs it again (run ${owner})`;
+	/** Who else has a revive's session now, read after the last wait (the ownership table): another pane, a later report, or a run of the host under any run id; null: unknown.
+	 * `newer`: a launch or resume script newer than the one the revive ran again, which another attempt may run before the host's snapshot shows it. */
+	const ownerOf = (m: Mark, ps: Pane[]): { other: string | undefined | null; newer?: string } => {
+		const p = ps.find((x) => x.agent_session?.value === m.file && x.pane_id !== m.pane), all = d.entries(), from = all.findIndex((e) => e.id === m.death), runs = sessionRuns(d.file() ?? "", m.file, d.events);
+		const newer = runs.newest && runs.newest.at > (m.since ?? -Infinity) ? `a newer ${basename(runs.newest.path).includes("-resume-") ? "resume" : "launch"} script names its session file` : undefined;
+		const other = p ? `pane ${p.pane_id} runs its session now` : from >= 0 && all.slice(from + 1).some((e) => reports(e, m.file)) ? "a later result or ping names its session file" : runs.owner && `pi-herdr-agents runs it again (run ${runs.owner})`;
+		return { other, ...(newer ? { newer } : {}) };
 	};
 	const send = (customType: string, text: string, details: Record<string, unknown>, wake: boolean) => {
 		try {
@@ -257,15 +258,33 @@ export function childRevive(d: ChildRevive) {
 		send(REVIVED, `Straw Boss: leaves subagent ${said(m.name)} (sessionPath ${m.file}), which it revived after its pi died, to whoever runs it now: ${why}. Its result goes to that run.`, { name: m.name, sessionFile: m.file }, false);
 	}
 
-	/** A revived run: its `.exit` delivered, or its second death told, while no one else has its session (the ownership table); a newer script alone changes nothing (review F007). */
+	/** An `.exit` another attempt may own (the ownership table): Straw Boss neither delivers nor deletes it, lists it for sb_doctor, and tells the launcher once, so the boss can deliver it by hand. */
+	function hold(m: Mark, why: string, ps: Pane[], now: number): void {
+		gone.delete(m.death);
+		const own = m.pane ? ps.find((x) => x.pane_id === m.pane) : undefined;
+		if (own) closing.set(m.file, { pane: own.pane_id, looks: 0 }); // closed once no pi is in it
+		mark({ ...m, step: "held", at: now, why });
+		wait({ ...m, step: "held" }, `result held: ${why}`);
+		send(REVIVED, `Straw Boss: holds the result of subagent ${said(m.name)}, which it revived after its pi died: ${why}, so another attempt may own the ${m.file}.exit there. Straw Boss neither delivers nor deletes it, and does not decide this by time. Tell the boss, who can read ${m.file}.exit and deliver it by hand; do not resume it meanwhile.`, { name: m.name, sessionFile: m.file, held: true }, true);
+		d.tell(`Straw Boss: holds the result of subagent ${m.name}: ${why}`, "warning");
+	}
+
+	/** A revived run: its `.exit` delivered, or its second death told, while no one else has its session (the ownership table). An `.exit` is taken only when no script is newer than the one
+	 * the revive ran again and a readable snapshot tracks no other attempt, read after the last wait: the host writes a resume's script before its pi starts (review F007b). */
 	async function watch(m: Mark, ps: Pane[], list: Session[] | undefined, now: number): Promise<void> {
-		const other = ownerOf(m, ps), exit = `${m.file}.exit`, runs = inOwnPane(m, ps), there = existsSync(exit);
+		const { other, newer } = ownerOf(m, ps), exit = `${m.file}.exit`, own = m.pane ? ps.find((x) => x.pane_id === m.pane) : undefined, runs = inOwnPane(m, ps), there = existsSync(exit);
+		// Its own pi ended: its pane is gone or runs no pi. A pane that shows another session runs the same pi, which may switch back (review RV4-F001).
+		const ended = !own || !own.agent;
+		// Unknown is no proof either way: the rule is read whole at a later look, when a host attempt started meanwhile shows by its script.
 		if (other === null) return wait(m, "who runs its session cannot be told now");
+		if (there) {
+			const why = other ?? newer ?? (m.ended !== undefined ? "an .exit appeared after its own pi had ended without one" : undefined);
+			if (why) return hold(m, why, ps, now);
+			if (runs) return wait(m, "an .exit is there while its own pi still runs");
+		}
 		if (other) return (gone.delete(m.death), leave(m, other, ps, now));
 		// Its own `.exit` is the one there at the first look that finds its own pi ended: its pi writes it before it exits (review F007).
-		if (there && runs) return wait(m, "an .exit is there while its own pi still runs");
-		if (there && m.ended !== undefined) return (gone.delete(m.death), leave(m, "an .exit appeared after its own pi had ended without one", ps, now));
-		if (!there && !runs && m.ended === undefined) mark({ ...m, ended: now });
+		if (!there && ended && m.ended === undefined) mark({ ...m, ended: now });
 		if (there) {
 			const x = readJson(exit) as { type?: unknown; message?: unknown; errorMessage?: unknown };
 			if (typeof x.type !== "string") return; // read mid-write: the next look reads it whole (review RV-F007)
@@ -303,6 +322,7 @@ export function childRevive(d: ChildRevive) {
 			// A revive a reload cut off: back when the pane it made runs the file, left to whoever else runs it, given up when no one does.
 			const cutOff = [...marks.values()].filter((m) => m.step === "reviving");
 			const revived = [...marks.values()].filter((m) => m.step === "revived");
+			for (const m of marks.values()) if (m.step === "held") wait(m, `result held: ${m.why ?? "another attempt may own its .exit"}`); // never by time
 			if (!open.length && !cutOff.length && !revived.length && !closing.size) return;
 			const ps = await panes(d.run);
 			const list = open.length || revived.length ? await d.sessions().catch(() => undefined) : undefined;
@@ -313,7 +333,7 @@ export function childRevive(d: ChildRevive) {
 			}
 			for (const m of cutOff) {
 				// Only the pane it made is its own (review snapshot-F002), and pi in it on the file is the proof it started, which no newer script undoes (review F007).
-				const other = ownerOf(m, ps);
+				const { other } = ownerOf(m, ps);
 				if (other === null) wait(m, "who runs its session cannot be told now");
 				else if (other) await leave(m, other, ps, now);
 				else if (inOwnPane(m, ps)) mark({ ...m, step: "revived", at: now });

@@ -159,3 +159,19 @@ test("F009 sibling: a script that may be a tracked run's and cannot be read keep
 	assert.equal(p.delivered.length, 2, "the look went on, and tells it once the owner is known");
 	assert.match(p.delivered[1]!.text, /Finished: worker-h/);
 });
+
+test("F007b inherit: a ping whose session a newer resume script names, while the host tracks none of it, is held: not told as inherited, one notice, listed for sb_doctor", async () => {
+	const p = parent();
+	const session = p.child("r-ping", "worker-b", { exit: { type: "ping", message: "Which branch?" } });
+	writeFileSync(join(p.art, "subagent-scripts", "worker-b-resume-r-ping-2.sh"), `#!/bin/bash\n# Subagent resume script for worker-b\n# Generated: 2026-11-23T01:00:00.000Z\n# Session: ${session}\ncd '/x' && PI_SUBAGENT_ID='r-ping-2' pi --session '${session}'; echo '__SUBAGENT_DONE_'$?'__'\n`);
+	const w = p.make();
+	await w.poll();
+	assert.equal(p.delivered.length, 1);
+	assert.doesNotMatch(p.delivered[0]!.text, /Asked for help/);
+	assert.match(p.delivered[0]!.text, /holds its result/);
+	assert.ok(p.delivered[0]!.text.includes(session));
+	assert.match(w.waits().join("\n"), /worker-b \(sessionPath .*\): result held: a resume script names its session file/);
+	await w.poll();
+	assert.equal(p.delivered.length, 1, "one notice");
+	assert.equal(p.make().waits().length, 1, "listed again after a reload");
+});

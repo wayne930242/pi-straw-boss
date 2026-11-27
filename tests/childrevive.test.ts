@@ -486,8 +486,8 @@ test("snapshot-F002: a revived run's .exit is taken only while no one else runs 
 	writeFileSync(`${file}.exit`, JSON.stringify({ type: "done" }));
 	await q2.poll();
 	assert.ok(existsSync(`${file}.exit`));
-	assert.deepEqual(v.steps(), ["reviving", "reviving", "revived", "skipped"]);
-	assert.ok(v.sent.every((s) => s.type !== RESULT && !s.wake));
+	assert.deepEqual(v.steps(), ["reviving", "reviving", "revived", "held"], "held for the boss, not handed off");
+	assert.ok(v.sent.every((s) => s.type !== RESULT));
 });
 
 test("RV-F007: an .exit read before it holds a type waits for the next look", async () => {
@@ -536,7 +536,7 @@ test("RV2-F001: a noted death the model resumed anyway, running or finished, is 
 	assert.ok(v.sent.every((s) => !s.wake && !/subagent_resume/.test(s.text)), "finished: no wake, no resume advice");
 });
 
-test("F007: a newer resume script the host never started changes nothing: the revive's .exit waits while its own pi runs, and is delivered once it has ended", async () => {
+test("F007: a newer resume script the host never started holds the revive's .exit: never taken, whether its own pi runs or has ended", async () => {
 	const w = world({ events: runBus(() => []) }), session = w.child("r1", "worker-a");
 	w.result(session, "worker-a");
 	const p = w.make();
@@ -546,13 +546,14 @@ test("F007: a newer resume script the host never started changes nothing: the re
 	w.resume(session, "worker-a", "r1-b"); // written; its Herdr dispatch failed, so the snapshot stays empty
 	w.tick(6000);
 	await p.poll();
-	assert.deepEqual(w.steps().at(-1), "revived", "its own pi still runs: not taken, however old the script");
+	assert.deepEqual(w.steps().at(-1), "held", "another attempt may own it");
 	assert.ok(existsSync(`${session}.exit`));
 	Object.assign(w.herdr.panes.at(-1)!, { agent: undefined, agent_session: undefined });
 	await p.poll();
-	assert.deepEqual(w.steps().at(-1), "delivered", "its own pi ended, and nothing else has the session");
-	assert.ok(w.sent.some((s) => s.type === RESULT && s.wake));
-	// A newer run that did start, by a pane of its own, still takes it over.
+	assert.deepEqual(w.steps().at(-1), "held", "its own pi ended: still held");
+	assert.ok(w.sent.every((s) => s.type !== RESULT));
+	assert.ok(existsSync(`${session}.exit`));
+	// A newer run that did start, by a pane of its own: held too.
 	const v = world({ events: runBus(() => []) }), file = v.child("r1", "worker-a");
 	v.result(file, "worker-a");
 	const q2 = v.make();
@@ -561,7 +562,7 @@ test("F007: a newer resume script the host never started changes nothing: the re
 	v.herdr.addPane("wA:p8", "wA:t1", "pi").agent_session = { value: file };
 	writeFileSync(`${file}.exit`, JSON.stringify({ type: "done" }));
 	await q2.poll();
-	assert.deepEqual(v.steps().at(-1), "skipped");
+	assert.deepEqual(v.steps().at(-1), "held");
 	assert.ok(existsSync(`${file}.exit`));
 });
 
@@ -591,7 +592,7 @@ test("F008: a deferred revive whose pane would not close keeps its pane, and the
 const since = Date.parse("2026-11-24T00:11:00.000Z");
 const reviving = (file: string, at: number, pane = "wA:p5") => ({ type: "custom", customType: "straw-boss", data: { workerRevive: { death: "e0", file, name: "worker-a", step: "reviving", at, pane, since } } });
 
-test("F007a: a reload mid-revive whose own pane is seen on the session keeps that start, and delivers its .exit once, whatever script is newer", async () => {
+test("F007a: a reload mid-revive whose own pane is seen on the session keeps that start, and holds its .exit when a newer script names the session; with none it delivers once", async () => {
 	const w = world({ events: runBus(() => []) }), session = w.child("r1", "worker-a");
 	w.result(session, "worker-a");
 	const own = w.herdr.addPane("wA:p5", "wA:t1", "pi");
@@ -604,13 +605,27 @@ test("F007a: a reload mid-revive whose own pane is seen on the session keeps tha
 	Object.assign(own, { agent: undefined, agent_session: undefined });
 	w.tick(61_000);
 	await p.poll(); await p.poll();
-	assert.equal(w.sent.filter((s) => s.type === RESULT).length, 1, "its own pane ran it: its .exit is delivered once");
-	assert.ok(!existsSync(`${session}.exit`));
-	assert.ok(!w.steps().includes("failed"));
-	assert.equal(w.steps().at(-1), "delivered");
+	assert.equal(w.sent.filter((s) => s.type === RESULT).length, 0, "a newer script: held");
+	assert.ok(existsSync(`${session}.exit`));
+	assert.ok(w.steps().includes("revived") && !w.steps().includes("failed"), "the start is kept");
+	assert.equal(w.steps().at(-1), "held");
+	const v = world({ events: runBus(() => []) }), file = v.child("r1", "worker-a");
+	v.result(file, "worker-a");
+	const mine = v.herdr.addPane("wA:p5", "wA:t1", "pi");
+	mine.agent_session = { value: file };
+	v.entries.push(reviving(file, v.now()));
+	const q2 = v.make(60_000);
+	await q2.poll();
+	writeFileSync(`${file}.exit`, JSON.stringify({ type: "done" }));
+	Object.assign(mine, { agent: undefined, agent_session: undefined });
+	v.tick(61_000);
+	await q2.poll(); await q2.poll();
+	assert.equal(v.sent.filter((s) => s.type === RESULT).length, 1, "its own pane ran it: its .exit is delivered once");
+	assert.ok(!existsSync(`${file}.exit`));
+	assert.equal(v.steps().at(-1), "delivered");
 });
 
-test("F007b: an .exit that appears while the revive's own pi still runs is not taken, however old a newer script is, and the wait is listed for sb_doctor", async () => {
+test("F007b: an .exit that appears while a newer script names the session is held, whether or not the host's run shows, and listed for sb_doctor", async () => {
 	let rows: ReturnType<typeof runRow>[] = [];
 	const w = world({ events: runBus(() => rows) }), session = w.child("r1", "worker-a");
 	w.result(session, "worker-a");
@@ -623,13 +638,22 @@ test("F007b: an .exit that appears while the revive's own pi still runs is not t
 	await p.poll();
 	assert.ok(existsSync(`${session}.exit`), "not taken");
 	assert.ok(w.sent.every((s) => s.type !== RESULT));
-	assert.equal(w.steps().at(-1), "revived");
-	assert.match(p.waits().join("\n"), /^worker-a \(sessionPath .*\): an \.exit is there while its own pi still runs$/);
-	rows = [runRow("r1-b")]; // the host's run shows: it has the session, and the .exit
+	assert.equal(w.steps().at(-1), "held");
+	assert.match(p.waits().join("\n"), /^worker-a \(sessionPath .*\): result held: a newer resume script names its session file$/);
+	rows = [runRow("r1-b")]; // the host's run shows
 	await p.poll();
-	assert.equal(w.steps().at(-1), "skipped");
+	assert.equal(w.steps().at(-1), "held", "stays held");
 	assert.ok(existsSync(`${session}.exit`));
-	assert.deepEqual(p.waits(), []);
+	assert.equal(p.waits().length, 1);
+	// No newer script, its own pi still running: the .exit waits for its pi to end.
+	const v = world({ events: runBus(() => []) }), file = v.child("r1", "worker-a");
+	v.result(file, "worker-a");
+	const q2 = v.make();
+	await q2.poll(); v.tick(); await q2.poll();
+	writeFileSync(`${file}.exit`, JSON.stringify({ type: "done" }));
+	await q2.poll();
+	assert.equal(v.steps().at(-1), "revived");
+	assert.match(q2.waits().join("\n"), /an \.exit is there while its own pi still runs$/);
 });
 
 test("F007c: an earlier resume the host still tracks has the session, even when a newer script never started", async () => {
@@ -644,8 +668,8 @@ test("F007c: an earlier resume the host still tracks has the session, even when 
 	w.tick(10_000);
 	writeFileSync(`${session}.exit`, JSON.stringify({ type: "done" }));
 	await p.poll();
-	assert.equal(w.steps().at(-1), "skipped", "handed off to the tracked run");
-	assert.ok(existsSync(`${session}.exit`), "its .exit is that run's");
+	assert.equal(w.steps().at(-1), "held", "the tracked run may own it");
+	assert.ok(existsSync(`${session}.exit`), "never deleted");
 	assert.ok(w.sent.every((s) => s.type !== RESULT));
 });
 
@@ -673,5 +697,49 @@ test("F007 sibling: an .exit that appears after the revive's own pi ended withou
 	await p.poll();
 	assert.ok(existsSync(`${session}.exit`), "left to the run that wrote it");
 	assert.ok(w.sent.every((s) => s.type !== RESULT));
-	assert.equal(w.steps().at(-1), "skipped");
+	assert.equal(w.steps().at(-1), "held");
+});
+
+// The hold (docs/how-it-works.md, the ownership table): a revived run's .exit is taken only while no resume script of its session is newer than the one Straw Boss ran again, and a readable snapshot tracks no other attempt; else it is held for the boss.
+test("F007b-2: a revived pi that crashed without .exit, while a newer resume script and a ping appear between the pane list and the broker's reply, holds the ping: not delivered, not deleted, listed, one notice", async () => {
+	let race: (() => void) | undefined;
+	const w = world({ events: runBus(() => []), onSessions: () => (race?.(), (race = undefined)) }), session = w.child("r1", "worker-a");
+	w.result(session, "worker-a");
+	const p = w.make();
+	await p.poll(); w.tick(); await p.poll();
+	assert.deepEqual(w.steps(), ["reviving", "reviving", "revived"]);
+	Object.assign(w.herdr.panes.at(-1)!, { agent: undefined, agent_session: undefined }); // crashed, no .exit
+	race = () => { w.resume(session, "worker-a", "r1-b", w.now() + 1); writeFileSync(`${session}.exit`, JSON.stringify({ type: "ping", message: "Which?" })); };
+	w.tick(15_000);
+	await p.poll();
+	assert.ok(existsSync(`${session}.exit`), "not deleted");
+	assert.ok(w.sent.every((s) => s.type !== RESULT), "not delivered");
+	assert.equal(w.steps().at(-1), "held");
+	const notices = w.sent.filter((s) => /holds the result/.test(s.text));
+	assert.equal(notices.length, 1);
+	assert.ok(notices[0]!.text.includes(session), "names the session file");
+	assert.match(p.waits().join("\n"), /^worker-a \(sessionPath .*\): result held: a newer resume script names its session file/);
+	w.tick(3600_000); await p.poll(); await p.poll();
+	assert.equal(w.sent.filter((s) => /holds the result/.test(s.text)).length, 1, "one notice, and time does not resolve it");
+	assert.ok(existsSync(`${session}.exit`));
+	assert.equal(w.steps().at(-1), "held");
+	assert.equal(p.waits().length, 1, "still listed");
+});
+
+test("RV4-F001: a revived interactive pi that shows another session for a look and comes back keeps its own .exit", async () => {
+	const w = world({ events: runBus(() => []) }), session = w.child("r1", "worker-a");
+	w.result(session, "worker-a");
+	const p = w.make();
+	await p.poll(); w.tick(); await p.poll();
+	const own = w.herdr.panes.at(-1)!;
+	own.agent_session = { value: join(w.dir, "other.jsonl") }; // switched session: same pi
+	w.tick(15_000); await p.poll();
+	own.agent_session = { value: session }; // back
+	w.tick(15_000); await p.poll();
+	writeFileSync(`${session}.exit`, JSON.stringify({ type: "done" }));
+	Object.assign(own, { agent: undefined, agent_session: undefined });
+	w.tick(15_000); await p.poll();
+	assert.equal(w.steps().at(-1), "delivered");
+	assert.equal(w.sent.filter((s) => s.type === RESULT).length, 1);
+	assert.ok(!existsSync(`${session}.exit`));
 });

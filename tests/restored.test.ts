@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -895,4 +895,16 @@ test("F009: an unreadable script beside the tracked resume's own does not hide i
 	await polls(2);
 	assert.equal(state.resumed.length, 0, "no second resume");
 	assert.deepEqual(state.transcript.slice(1).map((e) => e.data), [{ closing: KID }, { resumed: KID }]);
+});
+
+test("F009: a script folder that cannot be listed after the close (ENOTDIR) is unknown: nothing is asked, and the next start looks again", async () => {
+	registry();
+	const { state, polls, art } = rig();
+	state.onClose = () => {
+		renameSync(join(art, "subagent-scripts"), join(art, "subagent-scripts.moved"));
+		writeFileSync(join(art, "subagent-scripts"), "not a folder");
+	};
+	await polls(2);
+	assert.equal(state.resumed.length, 0, "no resume on a guess");
+	assert.deepEqual(state.transcript.slice(1).map((e) => e.data), [{ closing: KID }]);
 });
