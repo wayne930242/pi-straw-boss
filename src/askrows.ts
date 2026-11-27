@@ -8,7 +8,8 @@ import { callServer, type ServerCall } from "./traincar.ts";
 // A session's rows of the open questions to the boss (docs/specs/2026-11-28-boss-asks.md, The probe): it asks the sb server every 15 s (`asks-rows`), answers `straw-boss:ask-rows:v1` from the last answer at once (the
 // probe is synchronous), and prints the same rows for `/boss asks`. The rows are every open Ask of this computer; `mine` and `item` let the reader put a row under the todo it blocks.
 
-export const ASK_MS = 15_000;
+/** Between two asks of the server; the probe's rows stand for what waits now only this long after the server's last answer (three asks), then the probe answers none (asks-r2-F007). */
+export const ASK_MS = 15_000, STALE_MS = 45_000;
 export interface AskRowsDeps {
 	pi: Pick<ExtensionAPI, "on" | "events">;
 	me(): string;
@@ -32,18 +33,21 @@ const WORDS = {
 
 export function registerAskRows(d: AskRowsDeps) {
 	const every = d.every ?? ASK_MS;
-	let rows: AskRowV1[] = [], answered: number | undefined, timer: ReturnType<typeof setInterval> | undefined, running: Promise<void> | undefined;
+	let rows: AskRowV1[] = [], answered: number | undefined, fresh = false, timer: ReturnType<typeof setInterval> | undefined, running: Promise<void> | undefined;
+	/** `fresh`: the last ask was answered; a failed one keeps the rows for the probe until they are `STALE_MS` old, and `/boss asks` says the server did not answer. */
 	async function look(): Promise<void> {
 		if (!d.enabled() || !d.me()) return;
 		const reply = await d.call({ cmd: "asks-rows", session: d.me() }).catch(() => undefined);
-		if (!reply?.ok || !Array.isArray(reply.rows)) return;
-		rows = (reply.rows as AskRowV1[]).filter(valid);
+		fresh = Boolean(reply?.ok && Array.isArray(reply.rows));
+		if (!fresh) return;
+		rows = (reply!.rows as AskRowV1[]).filter(valid);
 		answered = d.now();
 	}
+	const current = () => (answered !== undefined && d.now() - answered <= STALE_MS ? rows : []);
 	const refresh = () => (running ??= look().finally(() => { running = undefined; }));
 	d.pi.events.on(ASK_ROWS_EVENT, (raw) => {
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-		Object.assign(raw, { rows: { version: 1, rows: rows.map((r) => ({ ...r })) } });
+		Object.assign(raw, { rows: { version: 1, rows: current().map((r) => ({ ...r })) } });
 	});
 	if (every > 0) {
 		d.pi.on("session_start", () => {
@@ -58,7 +62,7 @@ export function registerAskRows(d: AskRowsDeps) {
 	async function text(): Promise<string> {
 		await refresh();
 		const w = WORDS[d.lang()], now = d.now();
-		if (answered === undefined) return w.off;
+		if (!fresh) return w.off;
 		if (!rows.length) return w.none;
 		const todos = (() => { try { return todosOfBranch(d.branch()) ?? []; } catch { return []; } })();
 		const line = (r: AskRowV1) => {

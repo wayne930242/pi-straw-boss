@@ -6,11 +6,11 @@ import { ASK_ROWS_EVENT, type AskRowV1 } from "../src/asktypes.ts";
 
 // `straw-boss:ask-rows:v1` (docs/specs/2026-11-28-boss-asks.md, The probe): the session asks its server for the rows, answers the probe from the last answer synchronously, and prints the same rows for `/boss asks`.
 
-function rig(answer: () => Record<string, unknown> | undefined, lang: "en" | "zh-TW" = "en") {
+function rig(answer: () => Record<string, unknown> | undefined, lang: "en" | "zh-TW" = "en", clock = { now: 600_000 }) {
 	const events = new EventEmitter(), asked: Record<string, unknown>[] = [];
 	const pi = { on: () => {}, events: { emit: (c: string, d: unknown) => void events.emit(c, d), on: (c: string, h: (d: unknown) => void) => (events.on(c, h), () => void events.off(c, h)) } };
 	const tasks = [{ id: 12, subject: "Ship the docs", status: "in_progress" }];
-	const rows = registerAskRows({ pi: pi as never, me: () => "main-1", enabled: () => true, call: async (r) => (asked.push(r), answer() as never), branch: () => [{ type: "message", message: { role: "toolResult", toolName: "todo", details: { tasks, nextId: 13 } } }], lang: () => lang, now: () => 600_000, every: 0 });
+	const rows = registerAskRows({ pi: pi as never, me: () => "main-1", enabled: () => true, call: async (r) => (asked.push(r), answer() as never), branch: () => [{ type: "message", message: { role: "toolResult", toolName: "todo", details: { tasks, nextId: 13 } } }], lang: () => lang, now: () => clock.now, every: 0 });
 	const probe = () => { const p: { rows?: { version: number; rows: AskRowV1[] } } = {}; events.emit(ASK_ROWS_EVENT, p); return p.rows; };
 	return { rows, probe, asked };
 }
@@ -34,4 +34,21 @@ test("/boss asks prints this session's first, with the time and the todo each bl
 	assert.equal(await r.rows.text(), ["Questions waiting on you (2):", "From this session and its subagents:", "  Q3 · 5m · docs-main · Alpha › docs · Deploy MP-1 now?  — blocks #12 Ship the docs", "Elsewhere on this computer:", "  Q4 · 1m · box-2 · Approve the key"].join("\n"));
 	assert.equal(await rig(() => ({ ok: true, rows: [] }), "zh-TW").rows.text(), "沒有在等你回答的問題。");
 	assert.match(await rig(() => undefined).rows.text(), /^The sb server did not answer/);
+});
+
+test("a failed read after a good one: /boss asks says the questions are not known now, and the probe's rows expire with their age (asks-r2-F007)", async () => {
+	let up = true;
+	const clock = { now: 600_000 }, r = rig(() => (up ? { ok: true, rows: ROWS } : undefined), "en", clock);
+	await r.rows.refresh();
+	assert.equal(r.probe()?.rows.length, 2);
+	up = false;
+	assert.match(await r.rows.text(), /^The sb server did not answer/, "not the old list");
+	assert.equal(r.probe()?.rows.length, 2, "kept a while: one missed ask is no reason to drop them");
+	clock.now += 45_001;
+	assert.deepEqual(r.probe(), { version: 1, rows: [] }, "too old to stand for what waits now");
+	up = true;
+	await r.rows.refresh();
+	assert.equal(r.probe()?.rows.length, 2);
+	const bad = rig(() => ({ ok: false, error: "unknown command asks-rows" }), "en", clock);
+	assert.match(await bad.rows.text(), /^The sb server did not answer/, "a server with no asks-rows");
 });
