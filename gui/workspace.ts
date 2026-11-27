@@ -61,5 +61,5 @@ export function drawWorkspace(host: HTMLElement, scene: Readonly<Scene>) {
 		sync(el.querySelector(".formation")!, list, tokenEl, (t, u) => fillToken(t, u, base.id));
 	};
 	camp("outposts", base.outposts.map((o) => ({ id: o.id, name: o.label, role: "outpost", mark: o.mark, note: o.mark === "unknown" ? m.no_agent() : undefined })));
-	camp("outside", base.outside);
+	camp("outside", base.outside.flatMap((u) => [u, ...u.subs])); // a session outside the tabs shows its workers after it
 }

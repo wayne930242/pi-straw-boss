@@ -130,10 +130,14 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, servi
 	const claimed = new Set([...rowsOf.values()].flat().map((r) => r.workspace));
 	const held = new Set([...joined.map((j) => j.pane?.pane_id), ...[...rowsOf.values()].flat().map((r) => r.pane)]);
 	const keep = (r: Ref) => (refs.set(r.key, r), r.key);
-	const subsOf = (launcher: string, base: string) => (rowsOf.get(launcher) ?? []).map((r): Unit => {
+	// A session that did not join still dispatches the simple way (sb's host takes any session): its workers hang under it as a main's do, and their panes are no outside units of their own.
+	const outsideKids = new Map(ps.filter((p) => p.agent === "pi" && !held.has(p.pane_id)).map((p) => [p.pane_id, children(p)] as const));
+	for (const rows of outsideKids.values()) for (const r of rows) if (r.pane) held.add(r.pane);
+	const unitsOf = (rows: Row[], launcher: string, base: string) => rows.map((r): Unit => {
 		const key = keep({ key: r.id ?? `${launcher}/${r.text}`, base, name: r.text, role: "subagent", file: readable(r.file), pane: r.pane });
 		return { id: key, key, control: Boolean(r.pane), name: r.text, ...(r.alias ? { alias: r.alias } : {}), role: "subagent", ...(r.duty ? { duty: r.duty } : {}), mark: r.mark, note: r.note, subs: [], ...(r.ended && { ended: true }) };
 	});
+	const subsOf = (launcher: string, base: string) => unitsOf(rowsOf.get(launcher) ?? [], launcher, base);
 	const towerKeys = new Map<string, string>();
 	const bases = all.filter((w) => !isSub(w) && !isHead(w)).flatMap((w): Base[] => {
 		const mine = joined.filter((j) => j.base === w.workspace_id && j.tab);
@@ -152,9 +156,9 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, servi
 			const s = sessions.find((x) => x.herdrLocation?.paneId === p.pane_id), file = p.agent_session?.value;
 			const key = s?.id ?? (file && basename(file, ".jsonl").split("_").pop());
 			if (!key) return [];
-			const name = s?.name ?? p.label ?? key.slice(0, 8), mark = s ? sessionMark(s, p) : markOf(p.agent_status);
+			const subs = unitsOf(outsideKids.get(p.pane_id) ?? [], key, w.workspace_id), name = s?.name ?? p.label ?? key.slice(0, 8), mark = commanding(s ? sessionMark(s, p) : markOf(p.agent_status), subs.map((c) => c.mark));
 			keep({ key, base: w.workspace_id, name, role: "outside", file: readable(file, s?.id), pane: p.pane_id });
-			return [{ id: key, key, control: true, name, role: "outside", mark, note: note(mark, s?.status), subs: [] }];
+			return [{ id: key, key, control: true, name, role: "outside", mark, note: note(mark, s?.status), subs }];
 		});
 		const marks = [...towerSubs.map((c) => c.mark), ...tabs.flatMap((t) => t.units.flatMap((u) => [u.mark, ...u.subs.map((c) => c.mark)])), ...outposts.map((o) => o.mark)]; // a commanding unit has a working or waiting subagent here, which the base shows already
 		// A base shows what needs attention most: a waiting unit, then a working one, else the workspace's own status.

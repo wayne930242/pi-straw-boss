@@ -125,6 +125,23 @@ test("a base also lists its other pi panes as outside the net (D1), keyed by int
 	assert.deepEqual(net.bases[1]!.outside, []);
 });
 
+// sb's subagent host takes any session (boss 2026-11-27: 「應該說他還是有進入，因為 gui 上還是有，只是他會走最簡單的工作流」): a session that never joined, and a main's quick scout that no todo
+// names (「這不是錯誤樣態」), are drawn the way a main's bound worker is, under the session that launched them; the worker's pane is no outside unit of its own.
+test("a session outside the tabs shows the workers it launched under it, like a main's; a worker with no todo is drawn as any other", () => {
+	const more = [...panes, pane("wA:p6", "wA:t1", {}, { workspace_id: "wA", agent: "pi", agent_status: "idle", agent_session: { value: "/s/2026_sess-6.jsonl" }, label: "scratch" }),
+		pane("wA:p7", "wA:t1", {}, { workspace_id: "wA", agent: "pi", agent_status: "working", agent_session: { value: "/s/2026_kid-a.jsonl" } }),
+		pane("wA:p9", "wA:t1", {}, { workspace_id: "wA", agent: "pi", agent_session: { value: "/s/2026_kid-m.jsonl" } })];
+	const known = more.map((p) => (p.pane_id === "wA:p1" ? { ...p, workspace_id: "wA", agent: "pi" } : p));
+	const kids: Record<string, Row[]> = { "wA:p6": [child("scout-quick", "working", { id: "kid-a", pane: "wA:p7" })], "wA:p1": [child("scout-api", "working", { id: "kid-m", pane: "wA:p9" })] };
+	const net = buildNet({ sessions: [...sessions, session("sess-6", "scratch", { ws: "wA", tab: "wA:t1", pane: "wA:p6" })], panes: known, workspaces, sessionDir: "/s", children: (p) => kids[p?.pane_id ?? ""] ?? [] });
+	const alpha = net.bases[0]!, outside = alpha.outside;
+	assert.deepEqual(outside.map((u) => [u.key, u.role, u.mark, u.subs.map((s) => [s.key, s.name, s.role, s.mark])]), [["sess-6", "outside", "commanding", [["kid-a", "scout-quick", "subagent", "working"]]]]);
+	const main = alpha.tabs.flatMap((t) => t.units).find((u) => u.key === "m1")!;
+	assert.deepEqual(main.subs.map((s) => [s.key, s.name, s.role]), [["kid-m", "scout-api", "subagent"]]);
+	const shape = (u: (typeof outside)[number]) => Object.keys(u).sort();
+	assert.deepEqual(shape(outside[0]!.subs[0]!), shape(main.subs[0]!), "the outside session's worker carries what a main's worker does, and nothing that marks it");
+});
+
 // A main closed on purpose (the GUI's Quit, /boss close, the tower's boss_close_main) leaves intercom while pi shuts down, and its pane stays in Herdr's list, still a pi, until pi has exited. Read as it is,
 // that pane is an unjoined pi that finished: a green card under "outside the net" for a moment. The closing session marks its pane `sb_closing` first (closing.ts), and the net leaves a marked pane out.
 test("a main that is being closed goes from its tab to nothing, never through a finished card outside the net; a real unjoined pi that finished stays", async () => {
