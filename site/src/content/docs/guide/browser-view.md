@@ -67,6 +67,15 @@ A card from the head tower says so in its own words (主塔台 in Traditional Ch
 
 <p align="center"><img src="/pi-straw-boss/docs/img/gui-wait-answer.png" width="49%" alt="The dialog for a tower's wait: the question, the answer box with a reply typed, Send, the link to the tower's comms, Later, and Dismiss"> <img src="/pi-straw-boss/docs/img/gui-settings.png" width="49%" alt="The settings page: this device's view, reminders, sound and volume, and language, with the sections for phones and devices, teams, and the server below"></p>
 
+### Questions waiting on you
+
+Every question that waits on you is listed in one place: a main's boss question, a tower's wait card, a teammate's wait raised to you, and an agent's `ask_user_question`.
+The head page lists them all, and each workspace page lists its own: number, kind, subject, who asks and where, the todo it blocks, and how long it has waited.
+Tap a row to open its card (the question's dialog, or the wait card), else the asker's comms; **Terminal** opens the asker's pane.
+A unit's plate carries a gold count of its open questions. In pi, `/boss asks` prints the same list.
+
+<p align="center"><img src="/pi-straw-boss/docs/img/gui-asks.png" width="80%" alt="A workspace page with the questions waiting on you: a gold count on each asker's plate, and the list with each question's number, kind, subject, asker, place, the todo it blocks, its time, and Terminal"></p>
+
 ### Notices and reminders
 A unit that fails or finishes, and a monitor that fails or goes quiet, raises a quiet notice under the header's Notices button; only a unit waiting on you raises the prominent alert.
 Switches in the settings page (the gear) raise a system notification when a unit waits on you, fails, or finishes; a sound plays only for what waits on you.
