@@ -88,7 +88,15 @@ The review of `07a463cf..3a0cce5d` (P0 0, P1 4) and its fixes, each with a test 
 
 The review of `8cf3e232..8029f609` (P0 0, P1 1) and its fixes, each with a test in `tests/tower-quiet.test.ts` that failed first:
 
-- quiet-F010 (P1): two heads-ups whose net reads overlapped both compared before either was written, so both heard "go ahead" and no run woke. The compare with the open heads-ups now runs after the reads, in one synchronous step with the write, under `locks/logbook.lock` (`src/server/trainlock.ts`, one for every slot: each slot's sb server is its own process). The process that writes holds the lock across that step and awaits nothing while it does. A lock that stays busy for 3 s records the heads-up and wakes the run.
+- quiet-F010 (P1): two heads-ups whose net reads overlapped both compared before either was written, so both heard "go ahead" and no run woke. The compare with the open heads-ups now runs after the reads, in one synchronous step with the write, under the logbook lock (`src/server/trainlock.ts`, one for every slot: each slot's sb server is its own process). The process that writes holds the lock across that step and awaits nothing while it does. A lock that stays busy for 3 s records the heads-up and wakes the run.
 - quiet-F011 (P2): a retry under `~r<n>` while its first try was still being classified was a new call, so it was recorded and queued twice. The gate keys a call in flight by receiving tower, sender, and base id, and an entry by its workspace, sender, and base id; a retry with the same text shares the first try's end and receipt, and the same base id with other words is dropped without a receipt.
 - quiet-F006 rest (P2): a `train:` block with neither `project:` nor `code:` became a heads-up, and a bad manifest that carried its slips was queued as a car slip. A manifest (a `train:` block, or a `train:` line beside a `project:` or `code:`) is now recognised first, then read, then queued or refused. A `train:` line with words after it and no such key is a train's own heads-up.
 - quiet-F007 rest (P2): a main on 0.99.0 sends its handover notice with no `handed-to=`, so it was recorded only. The gate also recognises the words `handedNotice` has written since 0.99.0 when the session they name as stepping down is the sender's own.
+
+## Third review round
+
+The review of `8029f609..be739e6e` (P0 0, P1 0) and its fixes, each with a test in `tests/tower-quiet.test.ts` that failed first:
+
+- quiet-F012 (P2): the logbook lock lived in the trains' lock folder under the name `logbook`, so `train status` listed `logbook #0` with no train, and a train step that chose the lock `logbook` waited on it. It now lives in `logbook-lock/logbook.lock` in the state folder.
+- quiet-F013 (P2): a call with other words under the base id of a call in flight skipped the in-flight check when it sorted differently (a `blocked` one is queued as before), so both were queued and receipted. The gate checks the base id and fingerprint before it sorts the call.
+- quiet-F014 (P3): the 0.99.0 handover notice was recognised only with a title of at most 200 characters. It is now found by its fixed sentence around the sender's own session id, whatever the title's length.
