@@ -10,6 +10,8 @@ English | [繁體中文](https://github.com/wayne930242/pi-straw-boss/blob/main/
 
 ![An expanded chat todo list shows points beside the task](docs/gui-todo.png)
 
+<p align="center"><img src="docs/gui-plan-board.png" width="57%" alt="A main's plan on the head page's work board: its open todos in steps by dependency, each with its state in words, its owner with a link and Focus, what it comes after, and what it waits on until when"> <img src="docs/gui-plan-session.png" width="41%" alt="The same plan in the session page's todo box, with the whole checklist folded under it: finished tasks with their points, and each task's anchor and last run"></p>
+
 <p align="center"><img src="docs/gui-board-capacity.png" width="49%" alt="The situation board in the Standard view: the device budget as 1-point slots, each deployed unit a chip over its points, the free slots, the barracks with the ready work, and each commander's units and ready count"> <img src="docs/gui-board-raven.png" width="49%" alt="The same board in Raven Keep: candle graves lit by the deployed bats, empty graves in mist, the keep's gate with the waiting bats, a pause as a shut coffin and a stale main as circling crows"></p>
 
 <p align="center"><img src="docs/gui-storybook-day.png" width="80%" alt="The Storybook map by day, with animal icons on paper cards"></p>

@@ -21,6 +21,11 @@ The tower and the head tower keep their own icons, and a unit with no known kind
 ### A unit's comms
 
 It shows its chat, the messages queued for its next turn, its todo list, its background monitors, and the documents it shows.
+When a main's todos carry a plan (a dependency, an owner, a defer, or a graph name), its todo box draws them as steps by dependency, each with its state in words, its owner (a link to that agent's session, with **Focus** to bring its pane forward), what it comes after, and what it waits on until when.
+The whole checklist folds under the plan, so finished tasks, points, anchors, and the last run stay a tap away. The head page's work board draws the same plan for each main.
+
+<p align="center"><img src="/pi-straw-boss/docs/img/gui-plan-board.png" width="57%" alt="A main's plan on the head page's work board: its open todos in steps by dependency, each with its state in words, its owner with a link and Focus, what it comes after, and what it waits on until when"> <img src="/pi-straw-boss/docs/img/gui-plan-session.png" width="41%" alt="The same plan in the session page's todo box, with the whole checklist folded under it"></p>
+
 Type into the session from its composer; a file pasted, dropped, or picked with **+** (20 MB at most) is stored in a private temp folder and its path goes into the message.
 On a desktop, click into a unit's terminal and it takes your keyboard.
 Each message has a **Copy** button that copies the whole message (an agent's message as the markdown it wrote), also over plain http on your Wi-Fi, where the browser has no clipboard API; if even that is refused, the message is selected, the button says Selected, and you use the browser's own Copy.

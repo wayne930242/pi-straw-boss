@@ -10,6 +10,8 @@
 
 ![展開對話中的待辦清單，任務旁會顯示點數](docs/gui-todo.png)
 
+<p align="center"><img src="docs/gui-plan-board.png" width="57%" alt="主塔台頁面工作板上的主智慧體計畫：未完成的 todo 依依賴分成步驟，每項寫出狀態、負責者（附連結和「切過去」）、接在哪些之後，以及在等誰、等到何時"> <img src="docs/gui-plan-session.png" width="41%" alt="同一份計畫畫在 session 頁面的 todo 區，完整清單收合在圖下方：已完成的任務和點數，以及每項的驗收條件和最近一次執行紀錄"></p>
+
 <p align="center"><img src="docs/gui-board-capacity.png" width="49%" alt="標準檢視的戰況板：裝置預算畫成每格 1 點的補給格，每個已部署的單位橫跨它的點數，旁邊是空格、放待命工作的兵營，以及每位指揮官的單位與可接件數"> <img src="docs/gui-board-raven.png" width="49%" alt="鴉閣檢視的同一張板：已部署的蝙蝠點亮燭火墓位，空墓泛霧，閣門前有待命的蝙蝠，額度停機是合上的棺木，停滯的主智慧體上方群鴉盤旋"></p>
 
 <p align="center"><img src="docs/gui-storybook-day.png" width="80%" alt="白天的繪本地圖，每張紙卡上都有代表角色的動物圖示"></p>

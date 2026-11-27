@@ -25,10 +25,10 @@ export function demoPlan(now: number): Plan {
 		{ id: 10, t: said("問財務新的進位規則", "Ask finance about the new rounding rule"), status: "pending", wait: { on: said("財務", "finance"), until: at(1, 10) } },
 	] };
 }
-/** `?plan`: a session page's todo list carries the same plan (owners, blockers, defers), so its todo box draws the graph in place of the checklist. */
+/** `?plan`: a session page's todo list carries the same plan (owners, blockers, defers), so its todo box draws the graph with the checklist folded under it; the finished todos keep their points, anchor, and last run there. */
 export function demoTodos(): Todo[] | undefined {
 	if (!new URLSearchParams(location.search).has("plan")) return undefined;
-	const done: Todo[] = [{ id: 1, subject: said("找出進位的位置", "Find where the rounding happens"), status: "completed" }, { id: 2, subject: said("重現錯誤", "Reproduce the error"), status: "completed" }];
+	const run = (command: string, sha: string): Todo["evidence"] => ({ command, result: "pass", sha, at: new Date(Date.now() - 40 * 60_000).toISOString() }), done: Todo[] = [{ id: 1, subject: said("找出進位的位置", "Find where the rounding happens"), status: "completed", points: 1, anchor: said("找到進位的函式", "the rounding call is found"), evidence: run("rg -n round src/ledger", "3f1c2aa") }, { id: 2, subject: said("重現錯誤", "Reproduce the error"), status: "completed", points: 2, anchor: said("紅燈測試重現 0.01 誤差", "a red test shows the 0.01 drift"), evidence: run("npm test -- ledger", "8d04e1b") }];
 	return [...done, ...demoPlan(Date.now()).nodes.map((n): Todo => ({ id: n.id, subject: n.t, status: n.status, ...(n.owner ? { owner: n.owner } : {}), ...(n.agent ? { agent: n.agent } : {}), ...(n.after ? { blockedBy: n.after } : {}), ...(n.wait?.on ? { waitsOn: n.wait.on } : {}), ...(n.wait?.until ? { until: n.wait.until } : {}), graph: "fan-out/fan-in" }))];
 }
 
