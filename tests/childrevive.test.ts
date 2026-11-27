@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { runBus, runRow } from "./run-probe.ts";
+import { replyBus, runBus, runRow } from "./run-probe.ts";
 import { FakeHerdr } from "./fakes.ts";
 import { classify, deathOf, HOST_DEATHS } from "../src/childdead.ts";
 import { childRevive, type Entry, launchOf, REVIVED, reviveCommand } from "../src/childrevive.ts";
@@ -18,7 +18,7 @@ afterEach(() => void ((globalThis as Record<symbol, unknown>)[REGISTRY] = undefi
 const q = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 const MINUTE = 61_000;
 
-function world(o: { boot?: boolean; events?: ReturnType<typeof runBus> } = {}) {
+function world(o: { boot?: boolean; events?: ReturnType<typeof replyBus>; onSessions?: () => void } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "psb-childrevive-")), launcherId = "7a7a7a7a-0000-4000-8000-000000000001";
 	const launcher = join(dir, `2026-11-24T00-10-00-000Z_${launcherId}.jsonl`), art = join(dir, "artifacts", launcherId), folder = join(dir, "work it's");
 	mkdirSync(join(art, "subagent-scripts"), { recursive: true });
@@ -57,11 +57,13 @@ function world(o: { boot?: boolean; events?: ReturnType<typeof runBus> } = {}) {
 	};
 	const make = (startMs = 5000, note: (t: string) => void = (t) => void notes.push(t), onSplit?: () => void) => childRevive({ events: o.events,
 		run: ((run) => async (args: string[]) => { const out = await run(args); if (args[0] === "pane" && args[1] === "split") onSplit?.(); return out; })(herdr.runFor("wA:p1")), sleep: async (ms) => void ((clock += ms), started()), now: () => clock, file: () => launcher, entries: () => entries, pane: () => "wA:p1",
-		sessions: async () => sessions, active: () => true, type: "straw-boss", remember: (data) => void entries.push({ type: "custom", customType: "straw-boss", data }),
+		sessions: async () => (o.onSessions?.(), sessions), active: () => true, type: "straw-boss", remember: (data) => void entries.push({ type: "custom", customType: "straw-boss", data }),
 		deliver: (type, text, details, wake) => void sent.push({ type, text, details, wake }), tell: (t) => void told.push(t), note, startMs,
 	});
+	/** The host's resume of a run: its script, generated `at`, under a new run id. */
+	const resume = (session: string, name: string, run: string, at = clock) => writeFileSync(join(art, "subagent-scripts", `${name}-resume-${run}.sh`), `#!/bin/bash\n# Subagent resume script for ${name}\n# Generated: ${new Date(at).toISOString()}\n# Session: ${session}\ncd ${q(folder)} && PI_SUBAGENT_ID=${q(run)} pi --session ${q(session)} -e '/x/subagent-done.ts'; echo '__SUBAGENT_DONE_'$?'__'\n`);
 	const steps = () => entries.flatMap((e) => (e.type === "custom" ? [((e.data as { workerRevive?: { step: string } }).workerRevive?.step)] : []));
-	return { dir, art, folder, launcher, herdr, entries, sent, told, notes, sessions, child, result, make, steps, now: () => clock, tick: (ms = MINUTE) => void (clock += ms), noBoot: () => void (boot = false), track: (run: string) => (globalThis as Record<symbol, { runningSubagents: Map<string, unknown> }>)[REGISTRY]!.runningSubagents.set(run, {}) };
+	return { dir, art, folder, launcher, herdr, entries, sent, told, notes, sessions, child, result, make, steps, resume, now: () => clock, tick: (ms = MINUTE) => void (clock += ms), noBoot: () => void (boot = false), track: (run: string) => (globalThis as Record<symbol, { runningSubagents: Map<string, unknown> }>)[REGISTRY]!.runningSubagents.set(run, {}) };
 }
 
 test("the death table: a pi that exited non-zero with no report is a death; a cancel, a completion, a child's own error, a persistent crash, and a Ctrl-C are not; a pane gone is not either", () => {
@@ -256,11 +258,11 @@ test("a revived run that ends again without a report is told once and not revive
 	assert.equal(w.sent.length, 2);
 });
 
-test("a reload during the start: a revive left at `reviving` is revived when a pane runs the file, else given up and told", async () => {
-	const w = world(), a = w.child("r1", "worker-a"), b = w.child("r2", "worker-b");
+test("a reload during the start: a revive left at `reviving` is revived when the pane it made runs the file, else given up and told", async () => {
+	const w = world(), a = w.child("r1", "worker-a"), b = w.child("r2", "worker-b"), at = w.now() - 600_000;
 	w.result(a, "worker-a");
 	w.result(b, "worker-b");
-	w.entries.push({ type: "custom", customType: "straw-boss", data: { workerRevive: { death: "e0", file: a, name: "worker-a", step: "reviving", at: 0 } } }, { type: "custom", customType: "straw-boss", data: { workerRevive: { death: "e1", file: b, name: "worker-b", step: "reviving", at: 0 } } });
+	w.entries.push({ type: "custom", customType: "straw-boss", data: { workerRevive: { death: "e0", file: a, name: "worker-a", step: "reviving", at, pane: "wA:p5" } } }, { type: "custom", customType: "straw-boss", data: { workerRevive: { death: "e1", file: b, name: "worker-b", step: "reviving", at } } });
 	w.herdr.addPane("wA:p5", "wA:t1", "pi").agent_session = { value: a };
 	await w.make().poll();
 	assert.deepEqual(w.steps().slice(2), ["revived", "failed"]);
@@ -385,6 +387,105 @@ test("a snapshot acquired between the look and the start prevents a second pi, a
 	const watcher = v.make();
 	await watcher.poll(); v.tick(); await watcher.poll();
 	assert.deepEqual(v.steps(), []);
+});
+
+test("snapshot-F001: a resume the host starts while the broker answers the last look stops the revive, by its newer script or by its snapshot", async () => {
+	for (const change of ["script", "snapshot"] as const) {
+		let rows: ReturnType<typeof runRow>[] = [], armed = false;
+		const w = world({ events: runBus(() => rows), onSessions: () => {
+			if (!armed) return;
+			armed = false;
+			if (change === "script") w.resume(session, "worker-a", "r1-b");
+			else rows = [runRow("r1")];
+		} });
+		const session = w.child("r1", "worker-a");
+		w.result(session, "worker-a");
+		const p = w.make(5000, undefined, () => void (armed = true)); // the broker's answer after the split is the last wait before the typing
+		await p.poll(); w.tick(); await p.poll();
+		assert.equal(w.herdr.typed.length, 0, change);
+		assert.deepEqual(w.steps(), ["reviving", "reviving", "skipped"], change);
+		assert.equal(w.herdr.closed.length, 1, "its pane closed");
+	}
+});
+
+test("snapshot-F004: after the split, an owner that cannot be read takes the pane back and waits, with no failure and no resume advice", async () => {
+	for (const cannot of ["snapshot", "panes"] as const) {
+		let reply: unknown = { version: 1, runs: [] }, once = true;
+		const w = world({ events: replyBus(() => reply) }), session = w.child("r1", "worker-a");
+		w.result(session, "worker-a");
+		const p = w.make(5000, undefined, () => {
+			if (!once) return;
+			once = false;
+			if (cannot === "snapshot") reply = { version: 2, runs: [] }; // a host this sb cannot read
+			else w.herdr.failPanes = true;
+		});
+		await p.poll(); w.tick(); await p.poll();
+		assert.equal(w.herdr.typed.length, 0, cannot);
+		assert.equal(w.herdr.closed.length, 1, "the pane it made is taken back");
+		assert.deepEqual(w.steps(), ["reviving", "reviving", "deferred"], cannot);
+		assert.deepEqual(w.sent, [], "the model is neither woken nor told to resume it");
+		w.tick(11 * 60_000); // long enough for a death first seen now to count as one from before Straw Boss looked
+		reply = { version: 1, runs: [] };
+		w.herdr.failPanes = false;
+		await p.poll(); w.tick(); await p.poll();
+		assert.deepEqual(w.steps().slice(3), ["reviving", "reviving", "revived"], "still a candidate, never too old: confirmed again, then revived");
+		assert.equal(w.herdr.typed.length, 1);
+	}
+});
+
+test("snapshot-F002: after a reload a revive left at `reviving` takes back only the pane it made, never another pane on its session nor a run the host supervises now", async () => {
+	const mark = (file: string, at: number) => ({ type: "custom", customType: "straw-boss", data: { workerRevive: { death: "e0", file, name: "worker-a", step: "reviving", at, pane: "wA:p5" } } });
+	const w = world(), a = w.child("r1", "worker-a");
+	w.result(a, "worker-a");
+	w.herdr.addPane("wA:p5", "wA:t1", "shell"); // the pane the revive made; its pi never started
+	w.herdr.addPane("wA:p7", "wA:t1", "pi").agent_session = { value: a }; // someone resumed it there
+	w.entries.push(mark(a, w.now()));
+	writeFileSync(`${a}.exit`, JSON.stringify({ type: "done" }));
+	const p = w.make();
+	await p.poll(); await p.poll();
+	assert.deepEqual(w.steps(), ["reviving", "skipped"]);
+	assert.ok(existsSync(`${a}.exit`), "that run's .exit is not consumed");
+	assert.ok(w.sent.every((s) => s.type !== RESULT && !s.wake));
+	assert.deepEqual(w.herdr.closed, ["wA:p5"], "only the pane it made");
+	// The host resumed it and its pane does not show the file yet: not given up with advice to resume it again.
+	const v = world({ events: runBus(() => [runRow("r1-b")]) }), b = v.child("r1", "worker-a");
+	v.result(b, "worker-a");
+	v.herdr.addPane("wA:p5", "wA:t1", "shell");
+	v.entries.push(mark(b, v.now() - 600_000));
+	v.resume(b, "worker-a", "r1-b", v.now() - 60_000);
+	await v.make().poll();
+	assert.deepEqual(v.steps(), ["reviving", "skipped"]);
+	assert.ok(v.sent.every((s) => !s.wake && !/subagent_resume/.test(s.text)), "no wake, no resume advice");
+});
+
+test("snapshot-F002: a revived run's .exit is taken only while no one else runs its session, and an unknown owner waits", async () => {
+	let reply: unknown = { version: 1, runs: [] };
+	const w = world({ events: replyBus(() => reply) }), session = w.child("r1", "worker-a");
+	w.result(session, "worker-a");
+	const p = w.make();
+	await p.poll(); w.tick(); await p.poll();
+	assert.deepEqual(w.steps(), ["reviving", "reviving", "revived"]);
+	writeFileSync(`${session}.exit`, JSON.stringify({ type: "done" }));
+	reply = { version: 2, runs: [] };
+	await p.poll();
+	assert.ok(existsSync(`${session}.exit`), "unknown: not taken");
+	assert.equal(w.sent.length, 1, "only the revive's line");
+	reply = { version: 1, runs: [] };
+	await p.poll();
+	assert.deepEqual(w.steps().at(-1), "delivered");
+	// The host resumed it meanwhile: the .exit is that run's, delivered by the host.
+	let rows: ReturnType<typeof runRow>[] = [];
+	const v = world({ events: runBus(() => rows) }), file = v.child("r1", "worker-a");
+	v.result(file, "worker-a");
+	const q2 = v.make();
+	await q2.poll(); v.tick(); await q2.poll();
+	v.resume(file, "worker-a", "r1-b");
+	rows = [runRow("r1-b")];
+	writeFileSync(`${file}.exit`, JSON.stringify({ type: "done" }));
+	await q2.poll();
+	assert.ok(existsSync(`${file}.exit`));
+	assert.deepEqual(v.steps(), ["reviving", "reviving", "revived", "skipped"]);
+	assert.ok(v.sent.every((s) => s.type !== RESULT && !s.wake));
 });
 
 test("RV-F007: an .exit read before it holds a type waits for the next look", async () => {

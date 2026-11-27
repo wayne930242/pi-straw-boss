@@ -6,7 +6,7 @@ import { CONFIRM_MS, LOOKS } from "./dead.ts";
 import { type HerdrRun, type Pane, panes, result, type Session, type Sleep } from "./herdr.ts";
 import { encoded, lastText, RESULT } from "./inherit.ts";
 import { artifacts, readJson } from "./netdata.ts";
-import { tracked, type RunHost } from "./trackedruns.ts";
+import { type RunEvents, tracked, type RunHost } from "./trackedruns.ts";
 import { DAY_MS, LOOP_MS, sessionHeader } from "./revive.ts";
 import { line } from "./safetext.ts";
 
@@ -23,8 +23,9 @@ const RUN = /_([^_]+?)(?:-[0-9a-f]{1,8}-[0-9a-f]{1,8}-[0-9a-f]{1,4})?\.jsonl$/;
 const FOLLOW = "Your pi died while you were working and was not revived. Read your session so far, check the current state before re-running anything that changes state, finish the task you were given, and report your result.";
 
 export interface Entry { type: string; id?: string; timestamp?: string; customType?: string; data?: unknown; details?: unknown; content?: unknown }
-type Step = "reviving" | "revived" | "delivered" | "failed" | "skipped";
-interface Mark { death: string; file: string; step: Step; at: number; name: string; pane?: string; why?: string }
+/** `deferred`: who runs its session could not be told after the split, so it is looked at again. `since`: when the script it runs again was generated; a newer one is someone else's run. */
+type Step = "reviving" | "revived" | "delivered" | "failed" | "skipped" | "deferred";
+interface Mark { death: string; file: string; step: Step; at: number; name: string; pane?: string; why?: string; since?: number }
 interface Open { id: string; at: number; death: Death; index: number }
 /** A run as its newest launch or resume script says: the folder and the command a revive runs again. */
 export interface Launch { name: string; id?: string; /** When its script was generated. */ at: number; folder: string; command: string; worktree?: { path?: string; branch?: string } }
@@ -57,8 +58,8 @@ const isDir = (path: string) => { try { return statSync(path).isDirectory(); } c
 const safeName = (name: string) => name.replace(/[^\w.-]+/g, "-").slice(0, 48) || "subagent";
 const said = (name: string) => JSON.stringify(line(name).slice(0, 60));
 
-/** The newest launch or resume script of `launcher` whose header names `file`, read for a revive; a string is why it cannot be. */
-export function launchOf(launcher: string, file: string): Launch | string {
+/** The newest launch or resume script of `launcher` whose header names `file`. */
+function newest(launcher: string, file: string): { path: string; at: number } | undefined {
 	// Only the run's own first launch and the resumes can name its file: a launcher with a thousand scripts reads a few headers, not every script.
 	const dir = join(artifacts(launcher), "subagent-scripts"), run = RUN.exec(basename(file))?.[1];
 	let found: { path: string; at: number } | undefined;
@@ -71,6 +72,22 @@ export function launchOf(launcher: string, file: string): Launch | string {
 			if (!found || at >= found.at) found = { path: join(dir, name), at };
 		}
 	} catch { /* no script folder */ }
+	return found;
+}
+
+/** Why pi-herdr-agents runs `file` now: a script newer than `since` names it, or the host tracks the newest one's run id (or `also`). Null: its runs cannot be read, which proves nothing. */
+function hostRuns(launcher: string, file: string, since: number, events?: RunEvents, also?: string): string | undefined | null {
+	const script = newest(launcher, file), live = tracked(events);
+	if (script && script.at > since) return "a newer launch or resume script names its session file";
+	if (!live) return null;
+	let text = "";
+	try { text = script ? readFileSync(script.path, "utf8") : ""; } catch { /* gone */ }
+	return [/\bPI_SUBAGENT_ID='([^']*)'/.exec(text)?.[1], also].some((x) => x && live.has(x)) ? "pi-herdr-agents runs it again" : undefined;
+}
+
+/** The newest launch or resume script of `launcher` whose header names `file`, read for a revive; a string is why it cannot be. */
+export function launchOf(launcher: string, file: string): Launch | string {
+	const found = newest(launcher, file);
 	if (!found) return "no launch script of this session names its session file";
 	let text: string;
 	try { text = readFileSync(found.path, "utf8"); } catch { return "its launch script cannot be read"; }
@@ -178,7 +195,7 @@ export function childRevive(d: ChildRevive) {
 	};
 
 	async function revive(o: Open, launcher: string, launch: Launch): Promise<void> {
-		const { death } = o, base = { death: o.id, file: death.file, name: launch.name };
+		const { death } = o, base = { death: o.id, file: death.file, name: launch.name, since: launch.at };
 		mark({ ...base, step: "reviving", at: d.now() });
 		let pane: string | undefined;
 		const close = async () => void (pane && (await d.run(["pane", "close", pane]).catch(() => {})));
@@ -188,16 +205,10 @@ export function childRevive(d: ChildRevive) {
 			send(REVIVED, `Straw Boss: could not revive subagent ${said(launch.name)} (sessionPath ${death.file}), whose pi died (${death.why}): ${why}. Straw Boss does not try again.${resumeWords(launch.name, death.file, launch)}`, { name: launch.name, sessionFile: death.file }, true);
 			d.tell(`Straw Boss: could not revive subagent ${launch.name}: ${why}`, "warning");
 		};
-		const holder = async () => {
-			const p = (await panes(d.run)).find((x) => x.agent_session?.value === death.file && x.pane_id !== pane);
-			const id = sessionHeader(death.file)?.id, fresh = launchOf(launcher, death.file);
-			// A resume pi-herdr-agents started since the look is in its registry before its pane shows the file (review RV-F006).
-			if (typeof fresh !== "string" && fresh.at > launch.at) return "a newer launch or resume script names its session file";
-			const ids = [launch.id, typeof fresh === "string" ? undefined : fresh.id].filter((x): x is string => Boolean(x));
-			const live = tracked(d.events);
-			if (!live) throw new Error("tracked runs are unknown; cannot confirm the session is free");
-			if (ids.some((x) => live.has(x))) return "pi-herdr-agents runs it again";
-			return p ? `pane ${p.pane_id} runs its session now` : id && (await d.sessions().catch(() => [])).some((s) => s.id === id) ? "the broker lists its session now" : undefined;
+		/** A pane or the broker that holds the session; null when Herdr cannot list its panes. */
+		const holder = async (): Promise<string | undefined | null> => {
+			const ps = await panes(d.run).catch(() => undefined), id = sessionHeader(death.file)?.id, p = ps?.find((x) => x.agent_session?.value === death.file && x.pane_id !== pane);
+			return !ps ? null : p ? `pane ${p.pane_id} runs its session now` : id && (await d.sessions().catch(() => [])).some((s) => s.id === id) ? "the broker lists its session now" : undefined;
 		};
 		try {
 			const lead = d.pane();
@@ -205,8 +216,15 @@ export function childRevive(d: ChildRevive) {
 			pane = (await result(d.run, ["pane", "split", lead, "--direction", "right", "--cwd", launch.folder, "--no-focus"])).pane.pane_id as string;
 			await d.run(["pane", "rename", pane, launch.name]).catch(() => {});
 			mark({ ...base, step: "reviving", at: d.now(), pane }); // a reload can close it (review RV-F005)
-			// Once more, just before pi starts: two pis on one session file corrupt it.
-			const other = await holder();
+			// Once more, just before pi starts: two pis on one session file corrupt it. The host is read after the last wait, with none before the typing: a resume it started while Herdr or the
+			// broker answered is in its script and snapshot before its pane shows the file (review RV-F006, snapshot-F001).
+			const seen = await holder(), other = seen === undefined ? hostRuns(launcher, death.file, launch.at, d.events, launch.id) : seen;
+			if (other === null) {
+				// Not known free is not free: the pane goes, the model is told nothing, and the death is looked at again (review snapshot-F004).
+				await close();
+				mark({ ...base, step: "deferred", at: d.now() });
+				return d.tell(`Straw Boss: waits to revive subagent ${launch.name}: who runs its session cannot be told now`);
+			}
 			if (other) {
 				await close();
 				mark({ ...base, step: "skipped", at: d.now(), why: other });
@@ -238,8 +256,21 @@ export function childRevive(d: ChildRevive) {
 		for (const tell of [() => d.tell(`Straw Boss: revived subagent ${launch.name} in pane ${pane} after its pi died (${death.why})`), () => d.note?.(`subagent ${line(launch.name).slice(0, 60)} died (${death.why}) and was revived in pane ${pane}`)]) try { tell(); } catch { /* a notice only */ }
 	}
 
-	/** A revived run: its `.exit` delivered, or its second death told. */
-	function watch(m: Mark, ps: Pane[], list: Session[] | undefined, now: number): void {
+	/** Someone else runs a revive's session (review snapshot-F002): Straw Boss neither takes it back nor takes its `.exit`, and its own pane goes once no pi is in it. */
+	async function leave(m: Mark, why: string, ps: Pane[], now: number): Promise<void> {
+		const own = m.pane ? ps.find((x) => x.pane_id === m.pane) : undefined;
+		if (own && !own.agent) await d.run(["pane", "close", own.pane_id]).catch(() => {});
+		else if (own?.agent_session?.value === m.file) closing.set(m.file, { pane: own.pane_id, looks: 0 });
+		mark({ ...m, step: "skipped", at: now, why });
+		send(REVIVED, `Straw Boss: leaves subagent ${said(m.name)} (sessionPath ${m.file}), which it revived after its pi died, to whoever runs it now: ${why}. Its result goes to that run.`, { name: m.name, sessionFile: m.file }, false);
+	}
+
+	/** A revived run: its `.exit` delivered, or its second death told, while no one else runs its file. */
+	async function watch(m: Mark, ps: Pane[], list: Session[] | undefined, now: number): Promise<void> {
+		// A resume the host started since is that run's, and so is the `.exit` (review snapshot-F002); unknown waits.
+		const other = hostRuns(d.file() ?? "", m.file, m.since ?? m.at, d.events);
+		if (other === null) return;
+		if (other) return (gone.delete(m.death), leave(m, other, ps, now));
 		const exit = `${m.file}.exit`;
 		if (existsSync(exit)) {
 			const x = readJson(exit) as { type?: unknown; message?: unknown; errorMessage?: unknown };
@@ -273,8 +304,8 @@ export function childRevive(d: ChildRevive) {
 		busy = true;
 		try {
 			const marks = marksOf(), now = d.now(), all = d.entries();
-			const open = deaths(all).filter((o) => !marks.has(o.id));
-			// A revive a reload cut off: back when a pane runs the file, given up when none does.
+			const open = deaths(all).filter((o) => (marks.get(o.id)?.step ?? "deferred") === "deferred");
+			// A revive a reload cut off: back when the pane it made runs the file, left to whoever else runs it, given up when no one does.
 			const cutOff = [...marks.values()].filter((m) => m.step === "reviving");
 			const revived = [...marks.values()].filter((m) => m.step === "revived");
 			if (!open.length && !cutOff.length && !revived.length && !closing.size) return;
@@ -286,8 +317,12 @@ export function childRevive(d: ChildRevive) {
 				else if (!p.agent) (closing.delete(file), await d.run(["pane", "close", c.pane]).catch(() => {}));
 			}
 			for (const m of cutOff) {
-				const p = ps.find((x) => x.agent_session?.value === m.file);
-				if (p) mark({ ...m, step: "revived", at: now, pane: p.pane_id });
+				// Only the pane it made is its own: another pane on the file, or a run the host supervises now, is someone else's, which a reload must not take over (review snapshot-F002).
+				const p = ps.find((x) => x.agent_session?.value === m.file), mine = p !== undefined && p.pane_id === m.pane;
+				const other = p && !mine ? `pane ${p.pane_id} runs its session now` : hostRuns(launcher, m.file, m.since ?? m.at, d.events);
+				if (other === null) continue; // unknown: the next look
+				if (other) await leave(m, other, ps, now);
+				else if (mine) mark({ ...m, step: "revived", at: now, pane: m.pane });
 				else if (now - m.at < (d.startMs ?? START_MS)) continue; // its pi may still be starting
 				else {
 					if (m.pane) await d.run(["pane", "close", m.pane]).catch(() => {});
@@ -295,7 +330,7 @@ export function childRevive(d: ChildRevive) {
 					send(REVIVED, `Straw Boss: the revive of subagent ${said(m.name)} (sessionPath ${m.file}) was cut off before its pi started (this session reloaded). Straw Boss does not try again.${resumeWords(m.name, m.file)}`, { name: m.name, sessionFile: m.file }, true);
 				}
 			}
-			for (const m of revived) watch(m, ps, list, now);
+			for (const m of revived) await watch(m, ps, list, now);
 			const live = tracked(d.events);
 			if (!live) return;
 			for (const o of open) {
@@ -309,7 +344,7 @@ export function childRevive(d: ChildRevive) {
 					continue;
 				}
 				// Old when first seen: a transcript from before this version (review RV-F001).
-				const old = counted(seen, o.id, now).first - o.at > LOOP_MS ? "its death is older than 10 minutes, from before Straw Boss looked" : undefined;
+				const old = !marks.has(o.id) && counted(seen, o.id, now).first - o.at > LOOP_MS ? "its death is older than 10 minutes, from before Straw Boss looked" : undefined; // a deferred one was looked at in time
 				const why = old ?? refusal(o.death, o.at, marks, launch) ?? (facts.mtimeMs === undefined ? "its session file is gone" : undefined);
 				// pi-herdr-agents tracking the run's id again (a resume of its own) holds it as a pane does.
 				const owned = typeof launch !== "string" && launch.id !== undefined && live.has(launch.id);

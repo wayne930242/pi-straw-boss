@@ -6,7 +6,7 @@ import { afterEach, test } from "node:test";
 import { capDir, writeDevice } from "../src/capacity.ts";
 import { createReservations, RES_EXPIRE_MS, type Reservations } from "../src/capres.ts";
 import { admitPoints, createWorkerCap, deviceRoom, type Room } from "../src/workercap.ts";
-import { runBus, runRow } from "./run-probe.ts";
+import { replyBus, runBus, runRow } from "./run-probe.ts";
 import { fakeClock } from "./fake-clock.ts";
 
 // docs/specs/2026-11-24-capacity.md, The cap: sb holds back no worker by count. On an attended device (the boss's own) nothing gates a worker; on an unattended one the device's points gate it,
@@ -43,6 +43,14 @@ test("an unsampled main counts its snapshot workers by duty and todo weight; no 
 	const cap = createWorkerCap(side, runBus(() => [runRow("api"), runRow("ui", "reviewer")]));
 	assert.match(cap.admit("call", worker("next"), todos([{ id: 1, owner: "api", points: 2 }]))?.reason ?? "", /runs 3 of its 3 capacity points/);
 	assert.match(createWorkerCap(side, runBus()).admit("call", worker())?.reason ?? "", /unknown/);
+	assert.equal(held(), 0);
+});
+
+test("snapshot-F005: an unsampled main whose snapshot has holes or an incomplete row is refused as unknown, not counted as running no worker", () => {
+	delete (globalThis as Record<symbol, unknown>)[REGISTRY];
+	const { d, held } = device({ points: 0 }, 3);
+	const side = { room: () => d.row, store: createReservations(d.dir, d.clock.now), session: () => "unlisted", budget: () => 3, attended: () => false };
+	for (const runs of [new Array(2), [{ id: "api", name: "api", agent: "worker" }]]) assert.match(createWorkerCap(side, replyBus(() => ({ version: 1, runs }))).admit("call", worker())?.reason ?? "", /unknown/, JSON.stringify(runs));
 	assert.equal(held(), 0);
 });
 

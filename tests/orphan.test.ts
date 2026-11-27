@@ -6,7 +6,7 @@ import { afterEach, test } from "node:test";
 import type { Pane, Session } from "../src/herdr.ts";
 import { type Entry, orphans } from "../src/orphan.ts";
 import { tracked } from "../src/trackedruns.ts";
-import { runBus, runRow } from "./run-probe.ts";
+import { replyBus, runBus, runRow } from "./run-probe.ts";
 import { until, World } from "./fakes.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "psb-orphan-test-"));
@@ -36,6 +36,8 @@ function rig(phase = "waiting", status = "done") {
 		/** What `herdr pane process-info` lists for the child's pane: pi, and the launch script that started it. */
 		processes: [{ argv0: "pi", name: "node" }, { argv: ["bash", files.script("launcher-1", kidId)], argv0: "bash", name: "bash" }] as { argv?: string[]; argv0?: string; name?: string }[],
 		infos: 0,
+		/** Runs while Herdr lists the pane's processes, the last wait before the nudge. */
+		onInfo: undefined as (() => void) | undefined,
 		hold: undefined as Promise<void> | undefined,
 		transcript: [] as Entry[],
 		sent: [] as { to: string; message: string }[],
@@ -46,7 +48,7 @@ function rig(phase = "waiting", status = "done") {
 	};
 	const watch = (events?: ReturnType<typeof runBus>) => orphans({ events,
 		run: async (args) => {
-			if (args[1] === "process-info") return state.infos++, await state.hold, JSON.stringify({ result: { process_info: { foreground_processes: state.processes } } });
+			if (args[1] === "process-info") return state.infos++, state.onInfo?.(), await state.hold, JSON.stringify({ result: { process_info: { foreground_processes: state.processes } } });
 			return state.lists++, JSON.stringify({ result: { panes: state.panes } });
 		},
 		file: () => files.launcher,
@@ -141,6 +143,32 @@ test("after reload the new owner's tracked run is not orphaned, even with an emp
 	rows = []; // a real empty answer still wins over the stale Map
 	await polls(2, afterReload);
 	assert.equal(state.sent.length, 1);
+});
+
+test("snapshot-F003: a run the host lists again, or whose result lands, while Herdr lists its processes is not nudged; an unknown answer keeps it for the next look", async () => {
+	/** A watcher whose host answers `set`'s reply (an empty v1 snapshot at first); `during` changes the world once, while Herdr lists the processes. */
+	const runs = () => {
+		let reply: () => unknown = () => ({ version: 1, runs: [] });
+		const o = rig(), w = o.watch(replyBus(() => reply()));
+		return { ...o, w, set: (next: () => unknown) => void (reply = next), during: (change: () => void) => void (o.state.onInfo = () => (change(), (o.state.onInfo = undefined))) };
+	};
+	const back = runs();
+	back.during(() => back.set(() => ({ version: 1, runs: [runRow("kid-1")] })));
+	await back.polls(2, back.w);
+	assert.equal(back.state.sent.length, 0, "the host tracks it again");
+	assert.equal(back.transcript().length, 0);
+	const landed = runs();
+	landed.during(() => landed.state.transcript.push({ type: "custom_message", customType: "subagent_result", details: { sessionFile: landed.kidFile } }));
+	await landed.polls(4, landed.w);
+	assert.equal(landed.state.sent.length, 0, "its result reached the transcript");
+	const unknown = runs();
+	unknown.during(() => unknown.set(() => ({ version: 2, runs: [] })));
+	await unknown.polls(2, unknown.w);
+	assert.equal(unknown.state.sent.length, 0, "an owner that cannot be read proves nothing");
+	assert.equal(unknown.transcript().length, 0);
+	unknown.set(() => ({ version: 1, runs: [] }));
+	await unknown.polls(1, unknown.w);
+	assert.equal(unknown.state.sent.length, 1, "kept as a candidate: asked at the next look, with no miss counted");
 });
 
 test("a child the launcher still tracks is never asked, and Herdr is not even read", async () => {

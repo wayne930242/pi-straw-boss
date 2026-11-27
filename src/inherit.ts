@@ -133,13 +133,15 @@ export function inherited(d: Inherit) {
 	for (const e of d.entries()) if (e.type === "custom" && e.customType === d.type && typeof (e.data as { inherited?: unknown } | undefined)?.inherited === "string") done.add((e.data as { inherited: string }).inherited);
 	let busy = false, stopped = false, first = done.size === 0, watching = true;
 	async function poll(): Promise<void> {
-		const file = d.file(), live = tracked(d.events);
-		if (busy || stopped || !watching || !file || !live) return;
+		const file = d.file();
+		if (busy || stopped || !watching || !file || !tracked(d.events)) return;
 		busy = true;
 		try {
-			const reported = d.entries().flatMap((e) => (e.type === "custom_message" && FINAL.includes(e.customType ?? "") ? [String((e.details as { sessionFile?: unknown } | undefined)?.sessionFile ?? "")] : []));
 			const ps = await panes(d.run).catch(() => undefined);
-			if (!ps) return;
+			// The host's runs and the transcript are read after the last wait, right before the runs are written down and told (review snapshot-F003); unknown waits for the next look.
+			const live = tracked(d.events);
+			if (!ps || !live) return;
+			const reported = d.entries().flatMap((e) => (e.type === "custom_message" && FINAL.includes(e.customType ?? "") ? [String((e.details as { sessionFile?: unknown } | undefined)?.sessionFile ?? "")] : []));
 			const runs = sortRuns(file, ps, (id) => done.has(id) || live.has(id) || reported.some((f) => ownFile(f, id)));
 			// What is told now: everything but a run that still works, or one orphan.ts asks (idle); those are told once, in the first message, and the running ones again when they finish.
 			const told = runs.filter((r) => first || (r.kind !== "running" && r.kind !== "idle"));

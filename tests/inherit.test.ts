@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { runBus, runRow } from "./run-probe.ts";
+import { replyBus, runBus, runRow } from "./run-probe.ts";
 import { FakeHerdr } from "./fakes.ts";
 import { inherited } from "../src/inherit.ts";
 
@@ -34,8 +34,9 @@ function parent() {
 		if (o.worktree) writeFileSync(join(art, "worktree-runs", `${run}.json`), JSON.stringify(o.worktree));
 		return session;
 	};
-	const make = (events?: ReturnType<typeof runBus>) => inherited({ events,
-		run: herdr.runFor("none"), file: () => file, entries: () => entries, type: "straw-boss",
+	/** `onList` runs while Herdr lists the panes, the last wait before the message. */
+	const make = (events?: ReturnType<typeof runBus>, onList?: () => void) => inherited({ events,
+		run: async (args) => { const out = await herdr.runFor("none")(args); onList?.(); return out; }, file: () => file, entries: () => entries, type: "straw-boss",
 		remember: (data) => void entries.push({ type: "custom", customType: "straw-boss", data }),
 		deliver: (text, details) => void delivered.push({ text, details }), tell: () => {},
 	});
@@ -75,6 +76,29 @@ test("a reloaded watcher leaves a finished run to the new owner when its snapsho
 	await p.make(runBus(() => [runRow("kept")])).poll();
 	assert.deepEqual(p.delivered, []);
 	assert.deepEqual(p.entries, []);
+});
+
+test("snapshot-F003: a finished run the host lists again, or whose result lands, while Herdr lists the panes is not told; an unknown answer keeps it for the next look", async () => {
+	const back = parent();
+	let rows = [] as ReturnType<typeof runRow>[];
+	back.child("r-done", "scout-a", { exit: { type: "done" } });
+	await back.make(runBus(() => rows), () => void (rows = [runRow("r-done")])).poll();
+	assert.deepEqual(back.delivered, [], "the host tracks it again");
+	assert.deepEqual(back.entries, []);
+	const landed = parent(), session = landed.child("r-done", "scout-a", { exit: { type: "done" } });
+	await landed.make(runBus(() => []), () => void landed.entries.push({ type: "custom_message", customType: "subagent_result", details: { sessionFile: session } })).poll();
+	assert.deepEqual(landed.delivered, [], "its result reached the transcript");
+	const unknown = parent();
+	let reply: unknown = { version: 1, runs: [] };
+	unknown.child("r-done", "scout-a", { exit: { type: "done" } });
+	const look = unknown.make(replyBus(() => reply), () => void (reply &&= { version: 2, runs: [] }));
+	await look.poll();
+	assert.equal(unknown.delivered.length, 0, "an owner that cannot be read proves nothing");
+	assert.deepEqual(unknown.entries, []);
+	reply = undefined; // no answer, and the legacy Map is empty: no run is tracked
+	await look.poll();
+	assert.equal(unknown.delivered.length, 1, "kept for the next look");
+	assert.match(unknown.delivered[0]!.text, /Finished: scout-a/);
 });
 
 test("a running child is watched and delivered when its .exit appears; nothing repeats after a /reload", async () => {

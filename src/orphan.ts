@@ -66,7 +66,8 @@ export function orphans(d: Orphans) {
 				ids = readdirSync(dir).filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -5));
 			} catch {} // no subagent was ever launched from this session
 			ids = ids.filter((id) => !live.has(id) && !nudged.has(id) && (misses.get(id) ?? 0) < GIVE_UP);
-			const reported = ids.length ? d.entries().flatMap((e) => (e.type === "custom_message" && FINAL.includes(e.customType ?? "") ? [String((e.details as { sessionFile?: unknown } | undefined)?.sessionFile ?? "")] : [])) : [];
+			const finals = () => d.entries().flatMap((e) => (e.type === "custom_message" && FINAL.includes(e.customType ?? "") ? [String((e.details as { sessionFile?: unknown } | undefined)?.sessionFile ?? "")] : []));
+			const reported = ids.length ? finals() : [];
 			const open = ids.filter((id) => !reported.some((f) => ownFile(f, id)));
 			// Only a child whose own activity says it ended its turn and waits is looked up, and the broker has to list this session under its own
 			// id first (the report is asked for there): that is cheaper than Herdr.
@@ -94,8 +95,9 @@ export function orphans(d: Orphans) {
 				if (kid.status !== "idle" || stopped) continue;
 				const own = await runs(c.pane, c.id, basename(artifacts(file)));
 				if (!own) miss(c.id);
-				// The session may have ended while Herdr was asked.
-				if (!own || stopped) continue;
+				// The session may have ended while Herdr was asked, and the host may track the run again or its result land meanwhile: read both after the last wait (review snapshot-F003). Unknown waits for the next look.
+				const now = tracked(d.events);
+				if (!own || stopped || !now || now.has(c.id) || finals().some((f) => ownFile(f, c.id))) continue;
 				// Written down before it is sent: a nudge is sent at most once per run, even when the send fails or this process ends meanwhile.
 				nudged.add(c.id);
 				d.remember(c.id);

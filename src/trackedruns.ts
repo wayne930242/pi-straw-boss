@@ -5,8 +5,12 @@ interface Run { id: string; name: string; agent?: string }
 type Runs = { source: "snapshot" | "legacy"; runs: Run[] } | { source: "unknown"; runs?: undefined };
 export type RunCount = { source: "snapshot" | "legacy"; count: number } | { source: "unknown" };
 
-const CHANNEL = "pi-herdr-agents:runs:v1", SLOT = Symbol.for("pi-subagents/runtime");
-const isRun = (row: unknown): row is Run => typeof row === "object" && row !== null && "id" in row && typeof row.id === "string" && "name" in row && typeof row.name === "string" && (!("agent" in row) || row.agent === undefined || typeof row.agent === "string");
+const CHANNEL = "pi-herdr-agents:runs:v1", SLOT = Symbol.for("pi-subagents/runtime"), DELIVERY = ["pending", "delivered", "suppressed"];
+/** A whole v1 row (maestro/core/tracked-runs.ts `TrackedRun`); a row missing a field is no proof of what the owner tracks (review snapshot-F005). */
+const isRun = (row: unknown): row is Run => {
+	const r = typeof row === "object" && row !== null ? (row as Record<string, unknown>) : undefined;
+	return !!r && typeof r.id === "string" && typeof r.name === "string" && (r.agent === undefined || typeof r.agent === "string") && typeof r.persistent === "boolean" && DELIVERY.includes(r.delivery as string);
+};
 
 /** A synchronous reply wins even when empty. An unreadable reply proves nothing; only an absent reply selects the old host's process-wide Map. */
 export function readRuns(events?: RunEvents): Runs {
@@ -14,7 +18,8 @@ export function readRuns(events?: RunEvents): Runs {
 	events?.emit(CHANNEL, probe);
 	if (probe.snapshot !== undefined) {
 		const rows = probe.snapshot?.runs;
-		return probe.snapshot?.version === 1 && Array.isArray(rows) && rows.every(isRun) ? { source: "snapshot", runs: rows } : { source: "unknown" };
+		// Array.from reads a hole as undefined, which is no run: `every` alone skips holes.
+		return probe.snapshot?.version === 1 && Array.isArray(rows) && Array.from(rows).every(isRun) ? { source: "snapshot", runs: rows } : { source: "unknown" };
 	}
 	const map = (globalThis as Record<symbol, { runningSubagents?: unknown } | undefined>)[SLOT]?.runningSubagents;
 	if (!(map instanceof Map)) return { source: "unknown" };
