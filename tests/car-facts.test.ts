@@ -98,11 +98,19 @@ test("a received car in a forming train waits with the departure rule; a landed 
 	assert.equal(m.since, NOW - 37 * MIN, "its receipt");
 	assert.deepEqual(m.departs, { maxCars: 4, maxWaitMin: 60, oldest: iso(37 * MIN) });
 	assert.equal(facts.find((c) => c.head === SHA_F), undefined, "zj landed 20 hours ago: its car shows no more");
+	writeBoard(dir, board(ZJ, { writer: writer(9999), updated: iso(10 * MIN), round: 2, steps: ZJ_STEPS, cars: [car({ head: SHA_F, tickets: ["MP-5303"] })] }));
 	putCar(dir, SHA_F, "MP-5303", [["received", { train: ZJ, departs: "next" }, 60 * MIN], ["landed", { version: "1.62.0-beta.24", commit: "1".repeat(40) }, 10 * MIN]]);
 	const zj = carsOf(dir).find((c) => c.head === SHA_F)!;
 	assert.deepEqual([zj.phase, zj.version, zj.since, zj.train], ["landed", "1.62.0-beta.24", NOW - 10 * MIN, ZJ]);
 	putCar(dir, SHA_F, "MP-5303", [["received", { train: ZJ, departs: "next" }, 60 * MIN], ["landed", { version: "1.62.0-beta.24", commit: "1".repeat(40) }, KEEP_ENDED_MS + MIN]]);
 	assert.equal(carsOf(dir).find((c) => c.head === SHA_F), undefined);
+	writeBoard(dir, board(ZJ, { writer: writer(9999), updated: iso(KEEP_ENDED_MS + 2 * MIN), round: 2, steps: ZJ_STEPS, cars: [car({ head: SHA_F, tickets: ["MP-5303"] })] }));
+	putCar(dir, SHA_F, "MP-5303", [["received", { train: ZJ, departs: "next" }, 60 * MIN], ["landed", { version: "1.62.0-beta.24", commit: "1".repeat(40) }, 5 * MIN]]);
+	const book = { viewOf: () => undefined, read: () => [] };
+	assert.equal(carsOf(dir, { book }).find((c) => c.head === SHA_F), undefined, "a train that ended over 30 minutes ago reads no car file: the server's book speaks for a car it ended later");
+	let late = emptyCar({ project: P, app: APP, tickets: ["MP-5303"], branch: "agent/mp-5303", head: SHA_F, coordinator: COORD });
+	late = addState(late, { state: "landed", fields: { version: "1.62.0-beta.24", commit: "1".repeat(40) }, by: SETTER, at: iso(5 * MIN) });
+	assert.equal(carsOf(dir, { book: { viewOf: () => undefined, read: () => [{ file: late }] } }).find((c) => c.head === SHA_F)?.phase, "landed");
 });
 
 test("the book speaks before the journal: a car returned at receipt, on no board, shows with the first line of its reason and the count of its lives", () => {

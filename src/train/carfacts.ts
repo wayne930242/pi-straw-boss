@@ -89,9 +89,13 @@ export function carFacts(input: FactInput): CarFact[] {
 	/** The boards that carry a head, newest first. */
 	const boardsOf = (app: string, head: string) => input.trains.filter((t) => t.view.app === app && t.view.state !== "unreadable" && t.cars.some((c) => c.head === head)).sort((a, b) => compareCodes(b.view.code, a.view.code));
 	const formingOf = (app: string, head: string) => input.yard?.trains.find((t) => t.app === app && t.status !== "opened" && t.cars.some((c) => c.head === head));
-	const one = (app: string, head: string, row?: CarRow) => {
+	const old = (v: YardTrainRow) => v.state === "ended" && now - (ms(v.updated) ?? 0) > KEEP_ENDED_MS;
+	/** `from`: the board whose cars or removed heads name the car. One whose boards all ended over `KEEP_ENDED_MS` ago, and that forms no train, is not looked up (a reading reads no car file of an old train); a car the book still holds comes again from `others`. */
+	const one = (app: string, head: string, row?: CarRow, from?: YardTrainRow) => {
 		const key = `${app}\n${head}`;
 		if (done.has(key)) return;
+		const boards = boardsOf(app, head), forming = formingOf(app, head);
+		if (from && !forming && old(from) && boards.every((b) => old(b.view))) return;
 		done.add(key);
 		const life = input.life(app, head), file = life?.file, received = file?.states.find((s) => s.state === "received");
 		const coordinator = file?.coordinator ?? row?.coordinator, tickets = file?.car.tickets ?? row?.tickets;
@@ -105,21 +109,21 @@ export function carFacts(input: FactInput): CarFact[] {
 			const word = end.state === "landed" ? { ...(typeof end.version === "string" ? { version: end.version.slice(0, 128) } : {}) } : ((r) => (r ? { reason: r } : {}))(firstLine(end.reason));
 			return void out.push({ ...base, phase: end.state as CarPhase, ...(code ? { train: code } : {}), since: at, ...word });
 		}
-		const boards = boardsOf(app, head), board = boards.find((b) => b.view.code === code) ?? boards[0];
-		if (board) {
-			const view = board.view, ended = view.state === "ended";
+		const riding = boards.find((b) => b.view.code === code) ?? boards[0];
+		if (riding) {
+			const view = riding.view, ended = view.state === "ended";
 			if (ended && now - (ms(view.updated) ?? 0) > KEEP_ENDED_MS) return;
 			const { stage, since, waits } = stageOf(view, ladder(app), input.seen, project);
 			return void out.push({ ...base, phase: "riding", train: view.code, since: since ?? ms(received?.at) ?? input.seen(`${project}/${view.code}`), ...(stage ? { stage } : {}), ...(view.state === "stale" ? { stale: true as const } : {}), ...(waits ? { waits } : {}) });
 		}
-		const forming = formingOf(app, head), arrived = ms(forming?.cars.find((c) => c.head === head)?.arrived);
+		const arrived = ms(forming?.cars.find((c) => c.head === head)?.arrived);
 		if (!forming && !received) return;
 		out.push({ ...base, phase: "waiting", ...(forming ? { train: forming.code } : code ? { train: code } : {}), since: ms(received?.at) ?? arrived ?? input.seen(`${project}/${app}-${head}`), ...(forming?.departs ? { departs: { ...forming.departs } } : {}) });
 	};
-	for (const t of input.trains) if (t.view.app) for (const c of t.cars) one(t.view.app, c.head, c);
+	for (const t of input.trains) if (t.view.app) for (const c of t.cars) one(t.view.app, c.head, c, t.view);
 	for (const t of input.yard?.trains ?? []) for (const c of t.cars) one(t.app, c.head, c);
 	// A car a round left out is told by its own life (dropped, with the reason), which the book or the journal holds.
-	for (const t of input.trains) if (t.view.app) for (const head of t.removed ?? []) one(t.view.app, head);
+	for (const t of input.trains) if (t.view.app) for (const head of t.removed ?? []) one(t.view.app, head, undefined, t.view);
 	for (const l of input.others) one(l.file.app, l.file.car.head);
 	return out;
 }
