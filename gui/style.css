@@ -1469,6 +1469,16 @@ html:not([data-view="raven"])[data-calm] :is([data-slot], [data-slot] > i), html
    A step's state is a glyph and a colour, so colour is never the only sign (Geek turns the glyph into its text tag). The text in it is a model's: nothing here reads it as anything but text. */
 .pair-btn.yard-chip-btn { position: relative; z-index: 2; margin-top: 6px; text-transform: none; letter-spacing: 0.02em; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .yard-chip-btn[hidden], .yard-open[hidden], .yard-loose[hidden] { display: none; }
+/* A main's cars on its card (render.ts, docs/specs/2026-11-28-car-rows.md): one small card each, the ladder or the phase, the time, what it waits on, and the way to its train in the yard. */
+.cars { display: grid; gap: 4px; margin: 5px 0 0; padding: 0; list-style: none; } .cars[hidden] { display: none; }
+.car-card { position: relative; z-index: 2; display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; padding: 4px 8px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--panel) 70%, transparent); font-size: 11.5px; }
+.car-card[data-tone="wait"] { border-left-color: var(--gold); } .car-card[data-tone="warn"] { border-left-color: var(--amber, var(--gold)); } .car-card[data-tone="bad"] { border-left-color: var(--err); } .car-card[data-tone="ok"] { border-left-color: var(--ok); }
+.car-head { display: flex; gap: 5px; align-items: baseline; min-width: 0; font-weight: 600; } .car-tickets { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.car-line { grid-column: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 11px var(--mono); } .car-time { color: var(--dim); }
+.car-wait { grid-column: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--gold); font-size: 11px; } .car-wait[hidden] { display: none; }
+.car-card[data-tone="bad"] .car-wait { color: var(--err-text, var(--err)); }
+.car-see { grid-column: 2; grid-row: 1 / span 3; align-self: center; padding: 1px 7px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 8px; background: none; color: var(--accent); font: 600 11px var(--sans); cursor: pointer; white-space: nowrap; }
+.yard-row[data-focus] { outline: 2px solid var(--accent); outline-offset: 2px; }
 .yard-open { position: relative; z-index: 2; flex: none; margin-top: 4px; padding: 2px 9px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 8px; background: none; color: var(--accent); font: 600 12px var(--sans); cursor: pointer; }
 .yard-loose { --c: var(--accent); text-transform: none; letter-spacing: 0.02em; }
 dialog.sheet.yard { padding: 0; width: min(980px, calc(100vw - 24px)); max-width: none; max-height: calc(100dvh - 32px); overflow: hidden; }
@@ -1516,7 +1526,7 @@ summary.yard-chip { display: inline-block; cursor: pointer; list-style: none; } 
 @media (max-width: 640px) {
 	dialog.sheet.yard { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; border: 0; border-radius: 0; }
 	.yard-body { padding: 12px; }
-	:is(.yard-close, .yard-chip-btn, .yard-open, .yard-loose) { min-height: 44px; min-width: 44px; }
+	:is(.yard-close, .yard-chip-btn, .yard-open, .yard-loose, .car-see) { min-height: 44px; min-width: 44px; }
 	a.yard-code, a.yard-integrator { display: inline-block; min-width: 44px; padding-block: 14px; margin-block: -14px; } /* a 44 px target by padding the row takes back, so a row with a link has no empty band above its pills */
 	a.yard-integrator { margin-top: -10px; }
 	summary.yard-chip { position: relative; } summary.yard-chip::before { content: ""; position: absolute; inset: -11px -4px; } /* a 44 px target for the chip without growing its outline */

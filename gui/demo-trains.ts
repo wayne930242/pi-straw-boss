@@ -1,4 +1,5 @@
 import type { Net, Unit } from "../src/net.ts";
+import type { CarFact } from "../src/train/carfacts.ts";
 import type { ProjectYard, YardCar, YardStep, YardTrainRow } from "../src/train/yardview.ts";
 import { getLocale } from "./paraglide/runtime.js";
 
@@ -48,7 +49,14 @@ export function trainsDemo(net: Net, state: TrainState, now: number): void {
 		forming: { trains: [], waiting: [], forming }, running: { trains: [running], waiting: [] }, waiting: { trains: [running, waiting], waiting: [] }, mutual: { trains: [running, waiting, mutualA, mutualB], waiting: [code("p"), code("q")] },
 		round2: { trains: [round2], waiting: [] }, notices: { trains: [notices], waiting: [] }, stale: { trains: [stale], waiting: [] }, ended: { trains: [ended], waiting: [] }, unreadable: { trains: [bad], waiting: [] }, empty: { trains: [], waiting: [] }, loose: { trains: [], waiting: [] },
 	};
-	const part = parts[state], acme: ProjectYard = { project: "acme", integrator: { key: "integ-acme", live: true }, forming: [], waiting: [], ...part };
+	// The cars of billing-main (a1) and ops-main (a3) on their unit cards (docs/specs/2026-11-28-car-rows.md): riding, waiting on another train's load, forming, landed and dropped. The ladder is train e's, which landed.
+	const fact = (ticket: string, coordinator: string, over: Partial<CarFact>): CarFact => ({ id: `acme/web-${ticket}#1`, project: "acme", app: "web", head: SHA, tickets: [ticket], coordinator, integrator: "integ-acme", phase: "riding", since: now - 12 * MIN, ...over });
+	const cars: CarFact[] = [
+		fact("T-15", "a1", { train: code("m"), stage: { kind: "full-check", at: 3, of: 6, attempt: 2 } }), fact("T-31", "a1", { app: "api", train: code("n"), since: now - 4 * MIN, stage: { kind: "full-check", at: 3, of: 6, attempt: 1 }, waits: [{ load: { max: 30, now: 42 } }] }),
+		fact("T-51", "a1", { phase: "landed", train: code("t"), since: now - 2 * MIN, version: "2.4.0" }),
+		fact("T-20", "a3", { phase: "waiting", train: code("s"), since: now - 37 * MIN, departs: { maxCars: 4, maxWaitMin: 60, oldest: ago(37) } }), fact("T-12", "a3", { phase: "dropped", train: code("r"), since: now - 8 * MIN, reason: said("unit 測試失敗", "unit tests failed") }),
+	];
+	const part = parts[state], acme: ProjectYard = { project: "acme", integrator: { key: "integ-acme", live: true }, forming: [], waiting: [], ...(state === "all" || state === "running" ? { cars } : {}), ...part };
 	net.yards = { projects: state === "loose" ? [{ project: "orphan", forming: [], trains: [{ ...running, key: undefined }], waiting: [] }] : [acme] };
 	net.load = { now: 42, cores: 14 };
 	if (state === "loose") return;

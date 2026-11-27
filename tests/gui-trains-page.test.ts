@@ -155,7 +155,7 @@ test("the yard sheet returns the focus to the control that was clicked even when
 	dialog.close();
 	assert.equal(page.focused, chip, "the chip that was clicked, never focused, has the focus after the sheet closes");
 	const main = readFileSync(new URL("../gui/main.ts", import.meta.url), "utf8");
-	assert.match(main, /yard\.open\(.*, opener\)/, "main.ts hands the clicked element to the sheet");
+	assert.match(main, /yard\.open\(.*, opener(?:, opener\.dataset\.yardCode)?\)/, "main.ts hands the clicked element to the sheet (and a car card's train code)");
 });
 
 test("the phone's yard header keeps each count with its word, and the map's wait note does not break inside a name (V2-F002, V2-F003)", async () => {

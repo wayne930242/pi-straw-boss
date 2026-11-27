@@ -1390,5 +1390,19 @@
 	"plan_gone": "（已離開）",
 	"plan_focus": "切過去",
 	"plan_focus_title": "在 Herdr 把 {owner} 的窗格切到前面",
-	"plan_open_title": "開啟 {owner} 的對話：查看並以老闆身分傳訊"
+	"plan_open_title": "開啟 {owner} 的對話：查看並以老闆身分傳訊",
+	"car_waiting": "{app} 等發車",
+	"car_departed": "已出發",
+	"car_landed": "已落地 {version}",
+	"car_landed_bare": "已落地",
+	"car_returned": "退回",
+	"car_dropped": "剔除",
+	"car_try": "（第 {n} 次）",
+	"car_waits": "等 {holder}",
+	"car_stale": "火車停滯",
+	"car_see": "看這班火車 ›",
+	"car_see_title": "打開調車場，捲到 {code}",
+	"car_load": "等負載 ≤{max}（現在 {now}）",
+	"car_lock": "等鎖 {name}",
+	"car_cards": "這個主代理的車廂"
 }

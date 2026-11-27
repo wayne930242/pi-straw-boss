@@ -1572,5 +1572,19 @@
 	"plan_gone": "(gone)",
 	"plan_focus": "Focus",
 	"plan_focus_title": "Bring {owner}'s pane forward in Herdr",
-	"plan_open_title": "Open {owner}'s session: read it and write to it as the boss"
+	"plan_open_title": "Open {owner}'s session: read it and write to it as the boss",
+	"car_waiting": "{app} waiting to depart",
+	"car_departed": "departed",
+	"car_landed": "landed {version}",
+	"car_landed_bare": "landed",
+	"car_returned": "returned",
+	"car_dropped": "dropped",
+	"car_try": " (try {n})",
+	"car_waits": "waits {holder}",
+	"car_stale": "train stalled",
+	"car_see": "See this train ›",
+	"car_see_title": "Open the yard at train {code}",
+	"car_load": "waits load ≤{max} (now {now})",
+	"car_lock": "waits lock {name}",
+	"car_cards": "Cars of this main"
 }

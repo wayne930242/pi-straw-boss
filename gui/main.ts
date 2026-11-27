@@ -356,7 +356,7 @@ document.addEventListener("click", (event) => {
 let yard: ReturnType<typeof import("./yard.ts").mountYard> | undefined;
 document.addEventListener("click", (event) => {
 	const opener = (event.target as Element | null)?.closest?.<HTMLElement>("[data-yard]");
-	if (opener) void import("./yard.ts").then(({ mountYard }) => ((yard ??= mountYard()), core.latest && yard.net(core.latest), yard.open((opener.dataset.yard ?? "").split(" ").filter(Boolean), opener)));
+	if (opener) void import("./yard.ts").then(({ mountYard }) => ((yard ??= mountYard()), core.latest && yard.net(core.latest), yard.open((opener.dataset.yard ?? "").split(" ").filter(Boolean), opener, opener.dataset.yardCode)));
 });
 for (const event of ["focus", "pageshow", "online"]) window.addEventListener(event, () => !document.hidden && resume());
 report(CONNECTING);

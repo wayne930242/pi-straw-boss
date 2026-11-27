@@ -20,7 +20,7 @@ const car = (c: CarView) => h("li", { class: "yard-car" },
 );
 const cars = (list: CarView[]) => list.length ? h("ul", { class: "yard-cars" }, ...list.map(car)) : null;
 
-const forming = (f: FormingView) => h("li", { class: "yard-row yard-forming-row", "data-status": f.status },
+const forming = (f: FormingView) => h("li", { class: "yard-row yard-forming-row", "data-status": f.status, "data-code": f.short },
 	h("div", { class: "yard-top" }, h("span", { class: "yard-code" }, f.short), h("span", { class: "yard-app" }, f.app), h("span", { class: "yard-state" }, f.word), f.condition && h("span", { class: "yard-depart" }, f.condition)),
 	cars(f.cars),
 );
@@ -28,7 +28,7 @@ const forming = (f: FormingView) => h("li", { class: "yard-row yard-forming-row"
 const code = (t: TrainView) => t.route
 	? h("a", { class: "yard-code", href: formatRoute({ view: "session", ws: t.route.ws, key: t.route.key }) || "./", "data-route": formatRoute({ view: "session", ws: t.route.ws, key: t.route.key }), "aria-label": m.yard_open_comms({ code: t.short }) }, t.short)
 	: h("span", { class: "yard-code" }, t.short);
-const train = (t: TrainView) => h("li", { class: "yard-row", "data-status": t.status },
+const train = (t: TrainView) => h("li", { class: "yard-row", "data-status": t.status, "data-code": t.short },
 	h("div", { class: "yard-top" }, code(t), h("span", { class: "yard-app" }, t.app), t.status === "stale" && h("span", { class: "yard-state" }, m.yard_state_stale()), t.status === "ended" && h("span", { class: "yard-state" }, m.yard_state_ended()), t.round && h("span", { class: "yard-round" }, t.round), t.tickets.length ? h("span", { class: "yard-tickets-line" }, t.tickets.join(m.yard_sep_list())) : null),
 	t.reason && h("p", { class: "yard-reason", ...(t.reasonTitle ? { title: t.reasonTitle } : {}) }, t.reason),
 	t.pills.length ? h("ol", { class: "yard-pills" }, ...t.pills.map((p) => h("li", { class: "yard-pill", "data-state": p.state, "data-round": String(p.round), ...(p.current ? { "data-current": "" } : {}), title: p.title }, p.text))) : null,
@@ -58,7 +58,7 @@ export function drawProject(v: ProjectView): HTMLElement {
 	);
 }
 
-export interface Yard { open(projects: string[], from?: HTMLElement): void; net(net: Net): void; isOpen(): boolean }
+export interface Yard { /** `code`: the short code of a train to scroll to and mark (a car card's "See this train"). */ open(projects: string[], from?: HTMLElement, code?: string): void; net(net: Net): void; isOpen(): boolean }
 /**
  * The sheet: a modal dialog (so the page's keys rest while it is open, Escape closes it), redrawn with each snapshot only when what it shows changed. `projects` are the sections it shows, by name; one the net no longer has shows as an empty yard.
  * A click on a train's link to its comms closes the sheet first; the router takes the click.
@@ -94,10 +94,13 @@ export function mountYard(): Yard {
 	dialog.append(h("div", { class: "yard-bar" }, close), body);
 	document.body.append(dialog);
 	return {
-		open(projects, clicked) {
+		open(projects, clicked, code) {
 			shown = projects;
 			sig = "";
 			draw();
+			for (const row of body.querySelectorAll<HTMLElement>(".yard-row[data-focus]")) row.removeAttribute("data-focus");
+			const row = code ? [...body.querySelectorAll<HTMLElement>(".yard-row")].find((r) => r.dataset.code === code) : undefined;
+			if (row) (row.closest("details")?.setAttribute("open", ""), row.setAttribute("data-focus", ""), requestAnimationFrame(() => row.scrollIntoView({ block: "center" })));
 			if (!dialog.open) {
 				const from = document.activeElement as HTMLElement | null;
 				opener = clicked ?? (from && from !== document.body && from !== close ? from : opener); // the clicked element first: Safari leaves a clicked button unfocused

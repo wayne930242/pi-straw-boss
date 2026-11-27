@@ -1,4 +1,5 @@
 import type { Net } from "../src/net.ts";
+import type { CarFact } from "../src/train/carfacts.ts";
 import type { CarState } from "../src/train/cars.ts";
 import { shortCode } from "../src/train/spec.ts";
 import type { Wait } from "../src/train/waits.ts";
@@ -241,4 +242,29 @@ export function trainWaits(net: Pick<Net, "yards">): Set<string> {
 export function zenTrains(net: Partial<Pick<Net, "yards">> | undefined): { count: number; waiting: number } {
 	const all = (net?.yards?.projects ?? []).map(countsOf);
 	return { count: all.reduce((n, c) => n + c.trains, 0), waiting: all.reduce((n, c) => n + c.waiting, 0) };
+}
+
+/** A car on its coordinator's unit card (docs/specs/2026-11-28-car-rows.md): its tickets, the ladder or the phase (the stage is the train's English id, boss 2026-11-28), the time in it, what it waits on, and where its train is in the yard. */
+export interface CarCardView { id: string; tickets: string; tone: "ok" | "wait" | "warn" | "bad"; mark: string; line: string; time: string; wait?: string; project: string; short?: string }
+const span = (ms: number) => { const s = Math.max(0, Math.floor(ms / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`; };
+const cardWait = (w: Wait) => ("load" in w ? m.car_load({ max: w.load.max, now: w.load.now }) : "lock" in w ? (w.lock.holder ? m.car_waits({ holder: short(w.lock.holder.train) }) : m.car_lock({ name: w.lock.name })) : m.car_waits({ holder: short("lane" in w ? w.lane.holder : w.target.holder) }));
+export function carCard(f: CarFact, now: number): CarCardView {
+	const code = f.train ? short(f.train) : undefined, base = { id: f.id, tickets: list(f.tickets), project: f.project, time: span(now - f.since), ...(code ? { short: code } : {}) };
+	const st = f.stage, cells = st?.at && st.of ? ((done) => `${"▰".repeat(done)}${"▱".repeat(st.of! - done)} `)(st.between ? st.at : st.at - 1) : "";
+	switch (f.phase) {
+		case "riding": {
+			const wait = f.stale ? m.car_stale() : list([...new Set((f.waits ?? []).map(cardWait))]);
+			return { ...base, mark: "🚂", tone: f.stale ? "warn" : wait ? "wait" : "ok", line: `${code ?? ""} ${st ? `${cells}${st.kind}${st.attempt > 1 ? m.car_try({ n: st.attempt }) : ""}${st.between ? " ✓" : ""}` : m.car_departed()}`.trim(), ...(wait ? { wait } : {}) };
+		}
+		case "waiting": { const condition = f.departs ? formingWords({ departs: f.departs }, now) : undefined; return { ...base, mark: "🚉", tone: "wait", line: m.car_waiting({ app: f.app }), ...(condition ? { wait: condition } : {}) }; }
+		case "landed": return { ...base, mark: "✅", tone: "ok", line: `${code ?? ""} ${f.version ? m.car_landed({ version: f.version }) : m.car_landed_bare()}`.trim() };
+		case "returned": return { ...base, mark: "↩", tone: "bad", line: m.car_returned(), ...(f.reason ? { wait: f.reason } : {}) };
+		case "dropped": return { ...base, mark: "✖", tone: "bad", line: `${code ?? ""} ${m.car_dropped()}`.trim(), ...(f.reason ? { wait: f.reason } : {}) };
+	}
+}
+/** The cars of each main's card, by unit key: the cars it coordinates, from every project's facts. */
+export function carCards(net: Pick<Net, "yards">, now: number): Map<string, CarCardView[]> {
+	const out = new Map<string, CarCardView[]>();
+	for (const p of net.yards?.projects ?? []) for (const f of p.cars ?? []) out.set(f.coordinator, [...(out.get(f.coordinator) ?? []), carCard(f, now)]);
+	return out;
 }

@@ -3,6 +3,7 @@ import type { DeviceUnits, LinkSummary } from "../src/link/holder.ts";
 import type { Base, Net, Unit } from "../src/net.ts";
 import type { HeadUnit } from "../src/nethead.ts";
 import { mountCalm } from "./calm.ts";
+import type { CarCardView } from "./trains.ts";
 import { menuAround, nameMenu } from "./menu.ts";
 import { replay } from "./dom.ts";
 import { m } from "./sentences.ts"; import { repoint, iconRef, ICON, unitIcon } from "./icons.ts"; import { type NounKey, noun } from "./nouns.ts";
@@ -155,11 +156,11 @@ function ticks(card: HTMLElement, list: Unit["ticks"] = []) {
 }
 
 /** The note line of each train's unit card and the integrators' unit keys with their project, from the net being drawn (trains.ts); set by `show` before the cards are filled. */
-let trainNote = new Map<string, string>(), integrators = new Map<string, string>(), trainWait = new Set<string>();
-export const useYards = (notes: Map<string, string>, owners: Map<string, string>, waits = new Set<string>()) => void ([trainNote, integrators, trainWait] = [notes, owners, waits]);
+let trainNote = new Map<string, string>(), integrators = new Map<string, string>(), trainWait = new Set<string>(), carsOf = new Map<string, CarCardView[]>();
+export const useYards = (notes: Map<string, string>, owners: Map<string, string>, waits = new Set<string>(), cars = new Map<string, CarCardView[]>()) => void ([trainNote, integrators, trainWait, carsOf] = [notes, owners, waits, cars]);
 // The yards' model (trains.ts: the counts, the chips, the wait words) is a chunk of its own, fetched with the first snapshot that carries yards; until it is here the chips and notes wait, and the map is drawn again as it arrives.
 let yardsModel: typeof import("./trains.ts") | undefined, loadingYards: Promise<void> | undefined;
-export const unitEl = () => html(`<div class="unit"><div class="card"><a class="hit"></a>${PLATE}<div class="meta"><span class="name"></span><span class="line"><em class="role"></em><span class="note"></span><span class="age"></span></span><span class="todo" hidden><b></b><span></span></span><button type="button" class="yard-open" hidden></button></div><button type="button" class="quit-btn" data-close="unit" hidden></button><span class="ticks" aria-hidden="true"></span></div><div class="subs"></div></div>`);
+export const unitEl = () => html(`<div class="unit"><div class="card"><a class="hit"></a>${PLATE}<div class="meta"><span class="name"></span><span class="line"><em class="role"></em><span class="note"></span><span class="age"></span></span><span class="todo" hidden><b></b><span></span></span><button type="button" class="yard-open" hidden></button><ul class="cars" hidden></ul></div><button type="button" class="quit-btn" data-close="unit" hidden></button><span class="ticks" aria-hidden="true"></span></div><div class="subs"></div></div>`);
 /** A card draws what the chat's live line and the dossier draw: a unit that is not live (an ended subagent) keeps no working mark and no tool (liveMark, liveNote). */
 export function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control" | "role" | "subs"> & { key?: string; control?: boolean; role: Unit["role"] | "outpost"; subs?: Unit[] }) {
 	const ws = el.closest<HTMLElement>(".base")?.dataset.key, hit = el.querySelector(".hit")!, mk = liveMark(u, undefined, u.mark), note = closed(u) ? undefined : u.note;
@@ -184,9 +185,32 @@ export function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control"
 	const todo = el.querySelector<HTMLElement>(":scope > .card .todo")!;
 	todo.hidden = !u.todo;
 	if (u.todo) (text(todo, "b", `${u.todo.done < u.todo.total ? "◐" : "✓"} ${u.todo.done}/${u.todo.total}`), text(todo, "span", u.todo.now ?? ""));
+	// A main's cars (docs/specs/2026-11-28-car-rows.md): each where it is now, with the way to its train in the yard.
+	const cars = el.querySelector<HTMLElement>(":scope > .card .cars")!, mine = (u.key && carsOf.get(u.key)) || [];
+	cars.hidden = !mine.length;
+	cars.setAttribute("aria-label", m.car_cards());
+	sync(cars, mine, carEl, fillCar);
 	ticks(el.querySelector(":scope > .card")!, u.ticks);
 	aimUnit(el.querySelector(":scope > .card > .quit-btn")!, u, (a) => canIn(el, a)); // a unit of a remote base has Quit and Dismiss only when its box lists them (boxmodel.ts)
 	sync(el.querySelector(".subs")!, u.subs ?? [], unitEl, fillUnit);
+}
+
+const carEl = () => html(`<li class="car-card"><span class="car-head"><b class="car-mark"></b><span class="car-tickets"></span></span><span class="car-line"><span class="car-step"></span> <span class="car-time"></span></span><span class="car-wait"></span><button type="button" class="car-see"></button></li>`);
+function fillCar(el: HTMLElement, c: CarCardView) {
+	el.dataset.tone = c.tone;
+	text(el, ".car-mark", c.mark);
+	text(el, ".car-tickets", c.tickets);
+	text(el, ".car-step", c.line);
+	text(el, ".car-time", c.time);
+	const wait = el.querySelector<HTMLElement>(".car-wait")!;
+	wait.hidden = !c.wait;
+	text(el, ".car-wait", c.wait ?? "");
+	const see = el.querySelector<HTMLElement>(".car-see")!;
+	see.dataset.yard = c.project; // main.ts opens the yard for a [data-yard], scrolled to [data-yard-code]
+	if (c.short) see.dataset.yardCode = c.short;
+	else delete see.dataset.yardCode;
+	see.title = c.short ? m.car_see_title({ code: c.short }) : m.yard_chip_title();
+	text(el, ".car-see", m.car_see());
 }
 
 /** Points an opening button at its base (main.ts opens the tile): a base with a tower takes mains, one without takes members, a squad only members. */
@@ -418,7 +442,7 @@ export function mountPage(): Page {
 			if (net.yards && !yardsModel) loadingYards ??= import("./trains.ts").then((x) => ((yardsModel = x), shown && (api.show(shown), api.stats(shown))), () => void (loadingYards = undefined));
 			shown = net;
 			const map = T?.yardMap(net), counts = new Map((net.yards?.projects ?? []).map((p) => [p.project, T?.countsOf(p)]));
-			useYards(T?.trainNotes(net, ctx) ?? new Map(), map?.integrators ?? new Map(), T?.trainWaits(net));
+			useYards(T?.trainNotes(net, ctx) ?? new Map(), map?.integrators ?? new Map(), T?.trainWaits(net), T?.carCards(net, ctx.now));
 			const yardOf = (id: string) => ((projects) => (T && projects?.length ? { projects, chip: T.chipWords(T.sumCounts(projects.map((p) => counts.get(p)!))) } : undefined))(map?.byBase.get(id));
 			const { bases: ordered, loose, under } = arrange(net, mergeAllies(net.link?.allies ?? [])), allies = loose.map((a) => ({ ...a, id: `ally/${a.id}`, ally: true as const })); // local bases, remote bases, then the ally cards no live remote base holds
 			fillHeadNode(byId("head-node", HTMLElement), net.head);
