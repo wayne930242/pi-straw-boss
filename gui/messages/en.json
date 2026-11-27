@@ -1586,5 +1586,16 @@
 	"car_see_title": "Open the yard at train {code}",
 	"car_load": "waits load ≤{max} (now {now})",
 	"car_lock": "waits lock {name}",
-	"car_cards": "Cars of this main"
+	"car_cards": "Cars of this main",
+	"asks_badge": "{n} open question(s) to you",
+	"asks_title": "Waiting on you",
+	"asks_count": "{n} open",
+	"asks_terminal": "Terminal",
+	"asks_terminal_title": "Open the asker's terminal",
+	"asks_open_title": "Open its question",
+	"asks_blocks": "blocks #{id}",
+	"ask_kind_boss": "decision",
+	"ask_kind_dialog": "question",
+	"ask_kind_wait": "wait card",
+	"ask_kind_link": "teammate"
 }

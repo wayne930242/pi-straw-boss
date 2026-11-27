@@ -459,7 +459,7 @@ html:not([data-view="zen"]) .wait-box:focus { outline: none; border-color: color
 .tower-notices .tnote + .tnote { padding-top: 8px; border-top: 1px solid var(--line); }
 .wait-card[data-host="row"][data-folded="true"] { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 0; border: 0; background: none; } .wait-card[data-host="row"][data-folded="true"] > .ask-head { flex: 1 1 16em; min-width: 0; } .wait-card[data-host="row"][data-folded="true"] > .ask-note { flex: 1 1 100%; }
 /* In the comms the same rows sit between the log and the composer. */
-.tower-notes { margin: 0 16px 8px; } .tower-notes:has(> .tower-notices:empty):not(:has(> .tower-memory:not([hidden]))):not(:has(> .tower-conv:not([hidden]))):not(:has(> .head-log:not([hidden]))):not(:has(> .head-board:not([hidden]))):not(:has(> .head-auto:not([hidden]))):not(:has(> .head-absent:not([hidden]))) { display: none; } .tower-notes .tower-notices { display: grid; gap: 6px; min-width: 0; }
+.tower-notes { margin: 0 16px 8px; } .tower-notes:has(> .tower-notices:empty):not(:has(> .tower-memory:not([hidden]))):not(:has(> .tower-conv:not([hidden]))):not(:has(> .head-log:not([hidden]))):not(:has(> .head-board:not([hidden]))):not(:has(> .head-auto:not([hidden]))):not(:has(> .head-absent:not([hidden]))):not(:has(> .boss-asks:not([hidden]))) { display: none; } .tower-notes .tower-notices { display: grid; gap: 6px; min-width: 0; }
 /* The tower's queue on its map card, and the sentence that stands where a standing tower's terminal would be. */
 /* The state line may be long (state, last run, failures), so a base's own line wraps instead of cutting the queue count off. */
 .base:not(.ally) > header .title p { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; white-space: normal; overflow: visible; }
@@ -1344,6 +1344,20 @@ html:not([data-view="raven"])[data-calm] :is([data-slot], [data-slot] > i), html
 .head-asks { --ask-tag: 62px; display: grid; gap: 6px; margin: 0 0 8px; min-width: 0; } /* one length for the label column: the tag's width and the when line's indent (the tag is 11 px and the line 12 px, so `em` would not agree) */
 .ask-group, .ask-older, .ask-replaced { min-width: 0; border: 1px solid var(--line); border-radius: 12px; }
 /* The log is one folded line until the boss opens it; open, its cards scroll in a share of the panel, so the conversation always has the rest (the notes box is a grid row of its own, sized by its content). */
+/* The open questions to the boss (gui/asklist.ts, docs/specs/2026-11-28-boss-asks.md): a gold pill with the count on a plate or a tower, and one list on the head and workspace pages. */
+.plate > .asks, .tower > .asks { position: absolute; right: -7px; top: -7px; z-index: 2; min-width: 18px; height: 18px; box-sizing: border-box; padding: 0 5px; border-radius: 9px; background: var(--gold); color: var(--ink); font: 700 11px/18px var(--mono); text-align: center; box-shadow: 0 0 0 2px var(--plate); pointer-events: none; }
+:is(.plate, .tower) > .asks[hidden], .boss-asks[hidden] { display: none; }
+.boss-asks { min-width: 0; margin: 0 0 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--gold) 7%, transparent); }
+.boss-asks > h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 6px; font-size: 13px; } .boss-asks > h3 b { color: var(--gold); } .boss-asks > h3 span { color: var(--dim); font-weight: 400; }
+.ask-rows { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; max-height: calc(var(--vvh, 100vh) * 0.3); overflow-y: auto; overscroll-behavior: contain; }
+.ask-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ask-open { flex: 1 1 auto; display: grid; grid-template-columns: auto auto 1fr auto; grid-template-areas: "id kind subject age" ". who who blocks"; gap: 1px 8px; min-width: 0; padding: 6px 8px; border-radius: 8px; color: var(--text); text-decoration: none; cursor: pointer; }
+.ask-open:hover, .ask-open:focus-visible { background: color-mix(in srgb, var(--gold) 14%, transparent); }
+.ask-id { grid-area: id; font: 700 12px/1.4 var(--mono); color: var(--gold); } .ask-kind { grid-area: kind; font-style: normal; font-size: 11px; color: var(--dim); align-self: center; }
+.ask-subject { grid-area: subject; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; }
+.ask-who { grid-area: who; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: var(--dim); } .ask-blocks:empty { display: none; } .ask-blocks { grid-area: blocks; justify-self: end; white-space: nowrap; font-size: 11px; color: var(--gold); }
+.ask-open > .age { grid-area: age; font: 11px/1.4 var(--mono); color: var(--dim); }
+.ask-term { flex: none; min-height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--text); font-size: 12px; cursor: pointer; } .ask-term[hidden] { display: none; }
 .head-log { min-width: 0; margin: 0 0 8px; border: 1px solid var(--line); border-radius: 12px; }
 .head-log > summary { display: flex; align-items: center; gap: 4px 12px; box-sizing: border-box; min-height: 44px; padding: 6px 12px; font-size: 13px; cursor: pointer; list-style: none; }
 .head-log > summary::-webkit-details-marker { display: none; }

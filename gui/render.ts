@@ -92,10 +92,11 @@ export const hang = (pop: HTMLElement, button: HTMLElement) => {
 	pop.style.left = `${Math.max(8, Math.min(at.right - width, innerWidth - width - 8))}px`;
 };
 /** The round unit token: icon, spinning ring, ping, and state badge. */
-export const PLATE = `<div class="plate"><i class="ring"></i><svg><use data-icon="main"/></svg><b class="badge"></b></div>`;
+export const PLATE = `<div class="plate"><i class="ring"></i><svg><use data-icon="main"/></svg><b class="badge"></b><b class="asks" hidden></b></div>`;
 /** `docs`: the unit's documents; those on screen in its terminal show as a scroll badge with their count. `duty`: the unit's kind, which picks its icon (a unit with none keeps its position's). */
-export function fillPlate(plate: HTMLElement, role: string, m: Mark, docs?: { onScreen: boolean }[], duty?: string) {
+export function fillPlate(plate: HTMLElement, role: string, m: Mark, docs?: { onScreen: boolean }[], duty?: string, asks?: number) {
 	mark(plate, m);
+	asksBadge(plate, asks);
 	const use = plate.querySelector("use")!, icon = unitIcon(role, duty), href = iconRef(icon), n = docs?.filter((d) => d.onScreen).length;
 	use.dataset.icon = icon;
 	if (use.getAttribute("href") !== href) use.setAttribute("href", href);
@@ -103,6 +104,13 @@ export function fillPlate(plate: HTMLElement, role: string, m: Mark, docs?: { on
 	else delete plate.dataset.docs;
 }
 
+/** The count of the open questions to the boss a unit (its plate) or a tower holds (docs/specs/2026-11-28-boss-asks.md): its `.asks` pill, hidden at none. */
+export function asksBadge(host: HTMLElement, n = 0) {
+	const pill = host.querySelector<HTMLElement>(":scope > .asks");
+	if (!pill) return;
+	pill.hidden = !n;
+	if (n && pill.textContent !== String(n)) [pill.textContent, pill.title] = [String(n), m.asks_badge({ n: String(n) })];
+}
 /** The theme's eight stable variations: FNV-1a over the key's UTF-8 bytes, never the item's position. */
 const utf8 = new TextEncoder();
 export function keyed(el: HTMLElement, key: string): HTMLElement {
@@ -168,7 +176,7 @@ export function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control"
 	hit.setAttribute("aria-label", `${u.name}: ${doing(note, mk)}`);
 	hit.toggleAttribute("data-alert", urgent(mk));
 	mark(el, mk);
-	fillPlate(el.querySelector(".plate")!, u.role, mk, u.docs, u.duty);
+	fillPlate(el.querySelector(".plate")!, u.role, mk, u.docs, u.duty, u.asks);
 	text(el, ".name", u.name);
 	text(el, ".role", roleWord(u.role, u.duty, u.todo?.graph));
 	const line = (u.key && !closed(u) && trainNote.get(u.key)) || undefined, noteEl = el.querySelector<HTMLElement>(".note")!;
@@ -223,7 +231,7 @@ export function aimOpening(button: HTMLElement, b: Base, tab?: string) {
 	if (button.textContent !== (kind === "main" ? m.open_main() : m.open_member())) button.textContent = kind === "main" ? m.open_main() : m.open_member();
 }
 
-const baseMarkup = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use data-icon="tower"/></svg><b class="badge"></b></div><div class="title"><h2><a class="enter-base"></a></h2><p><span class="tstate"></span><span class="tqueue"></span><span class="age"></span></p><div class="allies" hidden></div><button type="button" class="pair-btn yard-chip-btn" hidden></button><p class="box-line" hidden><b class="box-dev"></b><span class="box-team"></span><span class="box-seen" hidden><span class="bs-state"></span><span class="bs-when"> · <span class="bs-pre"></span><span class="age"></span><span class="bs-post"></span></span></span></p><button type="button" class="quit-btn tower-quit" data-close="unit" hidden></button></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="subs tower-subs"></div><div class="tower-notices"></div><div class="spawn-btns"><button type="button" class="pair-btn"></button><button type="button" class="pair-btn" data-close="stash"></button></div><div class="tabs"></div><div class="outposts" data-label="${noun("outposts")}"></div><p class="box-ended" role="status" hidden></p><details class="box-runs" hidden><summary></summary><ul class="box-run-list"></ul></details><details class="box-truns" hidden><summary></summary><ul class="box-run-list box-trun-list"></ul></details><button type="button" class="pair-btn box-more" hidden></button><details class="box-ally" hidden><summary></summary><div class="box-ally-in"></div></details></section>`);
+const baseMarkup = () => html(`<section class="base"><header><div class="tower"><i class="sweep"></i><i class="pulse"></i><svg><use data-icon="tower"/></svg><b class="badge"></b><b class="asks" hidden></b></div><div class="title"><h2><a class="enter-base"></a></h2><p><span class="tstate"></span><span class="tqueue"></span><span class="age"></span></p><div class="allies" hidden></div><button type="button" class="pair-btn yard-chip-btn" hidden></button><p class="box-line" hidden><b class="box-dev"></b><span class="box-team"></span><span class="box-seen" hidden><span class="bs-state"></span><span class="bs-when"> · <span class="bs-pre"></span><span class="age"></span><span class="bs-post"></span></span></span></p><button type="button" class="quit-btn tower-quit" data-close="unit" hidden></button></div><button type="button" class="quit-btn" data-close="base"></button></header><div class="subs tower-subs"></div><div class="tower-notices"></div><div class="spawn-btns"><button type="button" class="pair-btn"></button><button type="button" class="pair-btn" data-close="stash"></button></div><div class="tabs"></div><div class="outposts" data-label="${noun("outposts")}"></div><p class="box-ended" role="status" hidden></p><details class="box-runs" hidden><summary></summary><ul class="box-run-list"></ul></details><details class="box-truns" hidden><summary></summary><ul class="box-run-list box-trun-list"></ul></details><button type="button" class="pair-btn box-more" hidden></button><details class="box-ally" hidden><summary></summary><div class="box-ally-in"></div></details></section>`);
 /** A phone keeps a base's Quit behind a `⋯` in its header (style.css, "A phone's menus"); above 640 px the menu is `display: contents`, so the button stays where it was. */
 const baseEl = () => {
 	const el = baseMarkup();
@@ -248,6 +256,7 @@ export function fillBase(el: HTMLElement, b: Base, { under, link, yard }: { unde
 	const tower = el.querySelector<HTMLElement>(".tower")!;
 	tower.classList.toggle("ghost", !b.tower);
 	mark(tower, b.tower?.mark ?? "unknown");
+	asksBadge(tower, b.tower?.asks);
 	text(el, "h2 a", b.label);
 	aim(el.querySelector("h2 a")!, { view: "workspace", ws: b.id });
 	text(el, ".title .tstate", b.tower ? m.control_tower({ state: towerLine(b.tower) }) : m.no_tower());

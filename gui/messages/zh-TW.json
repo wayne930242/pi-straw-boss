@@ -1404,5 +1404,16 @@
 	"car_see_title": "打開調車場，捲到 {code}",
 	"car_load": "等負載 ≤{max}（現在 {now}）",
 	"car_lock": "等鎖 {name}",
-	"car_cards": "這個主代理的車廂"
+	"car_cards": "這個主代理的車廂",
+	"asks_badge": "{n} 個問題在等你",
+	"asks_title": "等你回答",
+	"asks_count": "{n} 個",
+	"asks_terminal": "終端機",
+	"asks_terminal_title": "打開發問者的終端機",
+	"asks_open_title": "打開這個問題",
+	"asks_blocks": "卡住 #{id}",
+	"ask_kind_boss": "要你決定",
+	"ask_kind_dialog": "提問",
+	"ask_kind_wait": "等待卡",
+	"ask_kind_link": "隊友"
 }

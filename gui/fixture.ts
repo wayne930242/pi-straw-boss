@@ -18,6 +18,7 @@ import type { Answer } from "./post.ts";
 import { type Source, WATCHDOG_MS } from "./stream.ts";
 import { openThen } from "./terminalthen.ts";
 import { kindsFromUrl } from "./demo-kinds.ts";
+import { asksFromUrl } from "./demo-asks.ts";
 import { trainsFromUrl } from "./demo-trains.ts";
 import { installAutoDemo } from "./demo-auto.ts";
 import { RUN_STATES, runsFromUrl, runsHeadless } from "./demo-runs.ts";
@@ -160,6 +161,7 @@ export function createFixture({ resume, tick = 2500 }: { resume(): void; tick?: 
 	boardFromUrl(net, Date.now(), (change) => ((net = structuredClone(net)), change(net), current?.send("message", net))); // `?board` (demo-board.ts)
 	trainsFromUrl(net, Date.now()); // `?trains=<state>` (demo-trains.ts)
 	kindsFromUrl(net); // `?kinds`: one unit of every kind (demo-kinds.ts)
+	asksFromUrl(net, Date.now()); // `?asks`: the open questions to the boss (demo-asks.ts)
 	const allyParam = new URLSearchParams(location.search).get("ally"), allyScenes = (allyParam ?? "").split(","); allyDemo(net.link!, allyParam, Date.now(), (ms, change) => void setTimeout(() => ((net = structuredClone(net)), change(net.link!), (net.link!.units[0]!.at = Date.now() - 5_000), current?.send("message", net)), ms)); // `?ally=idle|crashed|trust|held|closing|rerun|stale|long|gone|mate|units|teams`, a comma list (`ask,teams`): the states of the ci-box ally base's unit card (demo-ally.ts)
 	// `?ally=ask`: the ci-box ally base hosts a question that waits (two questions with Send answer and Cancel), for the panel on its card in Standard (gui/allyasks.ts).
 	if (allyScenes.includes("ask")) Object.assign(net.link!.alerts.find((x) => x.id === "dialog/d1/D1")!.data, { answered: undefined, closed: undefined, dialog: JSON.stringify({ cancel: true, questions: [{ question: "Deploy to staging?", header: "Deploy", multiple: false, options: [{ title: "Yes" }, { title: "No" }] }, { question: "Which region?", header: "Region", multiple: false, options: [{ title: "eu-west" }, { title: "us-east" }] }] }) });

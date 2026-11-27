@@ -1,7 +1,7 @@
 import type { Mark } from "../src/netdata.ts";
 import type { Unit } from "../src/net.ts";
 import { m } from "./sentences.ts"; import { noun } from "./nouns.ts";
-import { aim, aimOpening, html, LABEL, mark, PLATE, sync, text, urgent } from "./render.ts";
+import { aim, aimOpening, asksBadge, html, LABEL, mark, PLATE, sync, text, urgent } from "./render.ts"; import { fillAskList } from "./asklist.ts";
 import { type Scene, wsOf } from "./scene.ts";
 import { baseTitle } from "./boxmodel.ts"; import { fillToken, tokenEl } from "./tokens.ts";
 import { fillAllies } from "./towerallies.ts";
@@ -12,7 +12,7 @@ import { queueChip, statusLine } from "./towermodel.ts";
 // workspace's other pi panes as unaligned units.
 
 const colEl = () => html(`<div class="col"><a class="token">${PLATE}<span class="name"></span><span class="line"><em class="role"></em><span class="note"></span></span></a><div class="say"><p></p></div><div class="drones"></div></div>`);
-const ZOOM = () => `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use data-icon="tower"/></svg><b class="badge"></b></a><div class="title"><h2></h2><p><span class="tstate"></span><span class="tqueue"></span></p><div class="allies" hidden></div></div><dl class="tally"><div><dt>${m.squads()}</dt><dd></dd></div><div><dt>${m.units()}</dt><dd></dd></div><div data-mark="working"><dt>${m.stat_working()}</dt><dd></dd></div><div data-mark="waiting"><dt>${m.stat_waiting()}</dt><dd></dd></div></dl></header><div class="tower-notices"></div><div class="drones tower-drones"></div><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use data-icon="outpost"/></svg><b data-m="outposts">${noun("outposts")}</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use data-icon="outside"/></svg><b data-m="outside_net">${noun("outside_net")}</b><small>${m.outside_note()}</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
+const ZOOM = () => `<div class="zoom-in"><header class="base keep"><a class="tower big"><i class="sweep"></i><i class="pulse"></i><svg><use data-icon="tower"/></svg><b class="badge"></b><b class="asks" hidden></b></a><div class="title"><h2></h2><p><span class="tstate"></span><span class="tqueue"></span></p><div class="allies" hidden></div></div><dl class="tally"><div><dt>${m.squads()}</dt><dd></dd></div><div><dt>${m.units()}</dt><dd></dd></div><div data-mark="working"><dt>${m.stat_working()}</dt><dd></dd></div><div data-mark="waiting"><dt>${m.stat_waiting()}</dt><dd></dd></div></dl></header><div class="tower-notices"></div><section class="boss-asks" hidden></section><div class="drones tower-drones"></div><div class="spawn-btns"><button type="button" class="pair-btn"></button></div><div class="squads"></div><div class="camps"><section class="tab squad camp" data-group="outposts"><h3><svg><use data-icon="outpost"/></svg><b data-m="outposts">${noun("outposts")}</b><small></small></h3><div class="formation"></div></section><section class="tab squad camp" data-group="outside"><h3><svg><use data-icon="outside"/></svg><b data-m="outside_net">${noun("outside_net")}</b><small>${m.outside_note()}</small></h3><div class="formation"></div></section></div><p class="lost" hidden></p></div>`;
 
 export function drawWorkspace(host: HTMLElement, scene: Readonly<Scene>) {
 	if (!host.firstElementChild) host.append(html(ZOOM()));
@@ -27,6 +27,8 @@ export function drawWorkspace(host: HTMLElement, scene: Readonly<Scene>) {
 	const tower = root.querySelector<HTMLElement>(".tower")!;
 	tower.classList.toggle("ghost", !base.tower);
 	mark(tower, base.tower?.mark ?? "unknown");
+	asksBadge(tower, base.tower?.asks);
+	fillAskList(root.querySelector(".boss-asks")!, net?.asks?.filter((a) => a.ws === base.id));
 	aim(tower, base.tower ? { view: "session", ws: base.id, key: base.tower.key } : undefined);
 	tower.toggleAttribute("hidden", false);
 	tower.toggleAttribute("data-alert", Boolean(base.tower && urgent(base.tower.mark)));

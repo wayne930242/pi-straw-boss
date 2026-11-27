@@ -306,6 +306,16 @@ document.addEventListener("click", (event) => {
 	event.preventDefault();
 	core.openAlert(alert);
 }, true);
+// A row of the open questions to the boss (asklist.ts): its card when the page has one, else the asker's comms; Terminal opens the asker's pane.
+document.addEventListener("click", (event) => {
+	const row = (event.target as Element | null)?.closest?.<HTMLElement>("[data-ask-unit], [data-ask-term]");
+	if (!row || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+	event.preventDefault();
+	const { askWs = "", askUnit, askTerm, askAlert } = row.dataset, alert = askAlert ? core.alertOf(askAlert) : undefined;
+	if (askTerm) return core.openSession(askWs, askTerm, { mode: "term" });
+	if (alert) return core.openAlert(alert);
+	if (askUnit) core.openSession(askWs, askUnit);
+}, true);
 const router = createRouter((route) => core.route(route));
 const stream = createStream({
 	open,
