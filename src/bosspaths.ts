@@ -14,6 +14,8 @@ import type { ServerLook } from "./server-look.ts";
 import { newer } from "./semver.ts";
 import { nameFor, nameOk, stashFile } from "./stash.ts";
 import type { Kit } from "./state.ts";
+import { ownerOf, todoRef } from "./planowner.ts";
+import { todosOfBranch } from "./todo.ts";
 
 // The boss's typed twins of GUI buttons that had no pi path (/boss close <name>, close all <workspace>, stash --workspace, dismiss, gui devices, gui unpair, server logs). Each posts to the
 // route the page posts to (`gui.json`, as stashing.ts does), so the server keeps every permission and safety check; this side resolves a name, asks the boss to confirm anything that quits
@@ -57,6 +59,9 @@ const WORDS = {
 		noStop: "Nothing was stopped: name the session: /boss stop <name|key> (quote a name that has spaces: /boss stop \"fix login\")",
 		oldServer: (have: string | undefined, need: string) => `Nothing was sent: the sb server runs pi-straw-boss ${have ?? "(unknown)"}, which does not hold /boss send to a remote write's guards. Restart it on pi-straw-boss ${need} or newer (/boss server restart).`,
 		sendSelf: "That is this session: type it here instead",
+		noTodo: (q: string) => `This session's todo list has no ${q}`,
+		noOwner: (q: string, owner?: string) => (owner ? `The owner of ${q}, "${owner}", is not on the net: nothing was sent` : `${q} names no owner: nothing was sent`),
+		ownerGone: (q: string, owner: string) => `The owner of ${q}, "${owner}", has left the net: nothing was sent`,
 		sent: (n: string, after: boolean) => `Sent to ${n}${after ? " as a follow-up" : ""}`,
 		notSent: "Nothing was sent",
 		confirmSend: "Send it?", confirmSendBody: (n: string, text: string) => `${n} would end or replace its session with this: ${text}`,
@@ -107,6 +112,9 @@ const WORDS = {
 		noStop: "沒有停止：請指定工作階段：/boss stop <名稱|key>（名稱含空白時加引號：/boss stop \"fix login\"）",
 		oldServer: (have: string | undefined, need: string) => `沒有送出：sb server 是 pi-straw-boss ${have ?? "（未知）"}，不會讓 /boss send 受遠端寫入的防護約束。請重啟成 pi-straw-boss ${need} 以上（/boss server restart）。`,
 		sendSelf: "這就是目前的工作階段：直接在這裡輸入",
+		noTodo: (q: string) => `這個工作階段的待辦清單沒有 ${q}`,
+		noOwner: (q: string, owner?: string) => (owner ? `${q} 的負責者「${owner}」不在網路上：沒有送出` : `${q} 沒有負責者：沒有送出`),
+		ownerGone: (q: string, owner: string) => `${q} 的負責者「${owner}」已離開網路：沒有送出`,
 		sent: (n: string, after: boolean) => `已送給 ${n}${after ? "（排在目前工作之後）" : ""}`,
 		notSent: "沒有送出",
 		confirmSend: "要送出嗎？", confirmSendBody: (n: string, text: string) => `${n} 會因為這段話結束或換掉它的工作階段：${text}`,
@@ -171,7 +179,9 @@ export function createBossPaths(kit: Kit, { host, server, closeSelf, post = post
 	/** `kind:name` narrows to one kind; a name or a key (or its start, from six characters) picks. */
 	function pick(all: Target[], query: string): Target | string {
 		const m = /^(unit|squad|base):(.+)$/.exec(query), kind = m?.[1], q = (m?.[2] ?? query).trim(), low = q.toLowerCase();
-		const hit = all.filter((x) => (!kind || x.kind === kind) && (x.name.toLowerCase() === low || x.key === q || (q.length >= 6 && x.key.startsWith(q)) || (x.kind === "base" && x.workspace === q)));
+		// A name Herdr's row cut (`sb_name`, 23 characters and `…`) picks the one full name it begins.
+		const cut = q.length > 1 && q.endsWith("…") ? low.slice(0, -1) : undefined;
+		const hit = all.filter((x) => (!kind || x.kind === kind) && (x.name.toLowerCase() === low || (cut !== undefined && x.name.length > cut.length && x.name.toLowerCase().startsWith(cut)) || x.key === q || (q.length >= 6 && x.key.startsWith(q)) || (x.kind === "base" && x.workspace === q)));
 		return hit.length === 1 ? hit[0]! : hit.length ? t().many(query, hit.map(label)) : t().none(query);
 	}
 
@@ -184,8 +194,17 @@ export function createBossPaths(kit: Kit, { host, server, closeSelf, post = post
 		return out;
 	}
 	/** `/boss send <name|key> [--after] <text>` and `/boss stop <name|key>`: the composer's Send, After this, and Stop (the same routes, so the server keeps its guards). `post1` gets the session and the words that name it. */
+	/** A todo of this session named by `#<id>` or its uid: the unit of its owner (planowner.ts: the Herdr child's run id, then its full name), or why there is none. */
+	function ownerTarget(n: Net, query: string, ref: { id: number } | { uid: string }): Target | string {
+		const todo = (todosOfBranch(s.branch()) ?? []).find((x) => ("id" in ref ? x.id === ref.id : x.uid === ref.uid)), named = todo?.owner ?? todo?.agent;
+		if (!todo) return t().noTodo(query);
+		const hit = ownerOf(n, me(), todo);
+		if (hit === "gone") return t().ownerGone(query, named!);
+		return sendables(n).find((x) => x.key === hit?.key) ?? t().noOwner(query, named);
+	}
 	async function toSession(query: string, post1: (key: string, named: string) => Promise<Reply>, said: (name: string) => string) {
-		const found = pick(sendables(await net()), query);
+		// `#63` or a todo uid names this session's todo and goes to its owner; `subagent-chat-<id>` (a child as pi-intercom lists it) is its key.
+		const n = await net(), ref = todoRef(query), found = ref ? ownerTarget(n, query, ref) : pick(sendables(n), /^subagent-chat-(.+)$/.exec(query)?.[1] ?? query);
 		if (typeof found === "string") return tell(found, "error");
 		if (found.key === me()) return tell(t().sendSelf, "error");
 		const reply = await post1(found.key, `${found.name} (in ${found.base}) [${found.key}]`);

@@ -6,7 +6,8 @@ import type { Todo } from "./items.ts";
 // Local only: `forAllies` sends allies none of it (docs/specs/2026-10-25-straw-link.md, Sharing with allies).
 
 /** One open todo of a plan: its id, its subject (cut to a board item's 80), `in_progress` or `pending`, who works on it, the open todos it waits on (`after`), and its defer (who it waits on, until when, as ISO). */
-export interface PlanNode { id: number; t: string; status: "pending" | "in_progress"; owner?: string; after?: number[]; wait?: { on?: string; until?: string } }
+/** `agent`: the Herdr child that works on it (its run id, the net's key: src/planowner.ts finds it); a local key, never a pane id. */
+export interface PlanNode { id: number; t: string; status: "pending" | "in_progress"; owner?: string; agent?: string; after?: number[]; wait?: { on?: string; until?: string } }
 /** At most `PLAN.nodes` open todos, the plan's graph, and `cut`, the open todos left out. */
 export interface Plan { nodes: PlanNode[]; graph?: Graph; cut?: number }
 /** `text` is a board item's cap (`BOARD.item`). */
@@ -25,7 +26,7 @@ export function planOf(todos: readonly Todo[], say: (text: string, max: number) 
 	if (!shown.length) return undefined;
 	const nodes = shown.map((t): PlanNode => {
 		const owner = t.owner ? say(t.owner, PLAN.label) : "", on = t.waitsOn ? say(t.waitsOn, PLAN.label) : "", after = [...new Set((t.blockedBy ?? []).filter((b) => b !== t.id && ids.has(b)))].slice(0, PLAN.after);
-		return { id: t.id, t: say(t.subject, PLAN.text), status: t.status as PlanNode["status"], ...(owner ? { owner } : {}), ...(after.length ? { after } : {}), ...(on || t.until ? { wait: { ...(on ? { on } : {}), ...(t.until ? { until: t.until } : {}) } } : {}) };
+		return { id: t.id, t: say(t.subject, PLAN.text), status: t.status as PlanNode["status"], ...(owner ? { owner } : {}), ...(t.agent ? { agent: t.agent } : {}), ...(after.length ? { after } : {}), ...(on || t.until ? { wait: { ...(on ? { on } : {}), ...(t.until ? { until: t.until } : {}) } } : {}) };
 	});
 	return { nodes, ...(graph ? { graph } : {}), ...(open.length > shown.length ? { cut: open.length - shown.length } : {}) };
 }

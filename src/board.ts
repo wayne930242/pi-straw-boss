@@ -63,16 +63,16 @@ export function clean(text: unknown, max: number): string {
 	const out = fold(text.replace(/\s+/gu, " ").replace(BAD_ALL, ""));
 	return Array.from(out).length > max ? Array.from(out).slice(0, max).join("").trimEnd() : out;
 }
-const id = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
+const id = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0, AGENT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 /** The reader's check of a plan: known fields only, the caps again by cutting, a node without an id, a subject, or a status left out, `until` only as a date; nothing for anything but a plan with a node. A file without one (an older main's) has none. */
 export function cleanPlan(raw: unknown): Plan | undefined {
 	const p = raw as { nodes?: unknown; graph?: unknown; cut?: unknown } | null;
 	if (typeof p !== "object" || p === null || !Array.isArray(p.nodes)) return undefined;
-	const nodes = p.nodes.slice(0, PLAN.nodes).flatMap((n: { id?: unknown; t?: unknown; status?: unknown; owner?: unknown; after?: unknown; wait?: { on?: unknown; until?: unknown } } | null): PlanNode[] => {
-		const t = clean(n?.t, PLAN.text), owner = clean(n?.owner, PLAN.label), after = Array.isArray(n?.after) ? [...new Set(n.after.filter(id))].slice(0, PLAN.after) : [];
+	const nodes = p.nodes.slice(0, PLAN.nodes).flatMap((n: { id?: unknown; t?: unknown; status?: unknown; owner?: unknown; agent?: unknown; after?: unknown; wait?: { on?: unknown; until?: unknown } } | null): PlanNode[] => {
+		const t = clean(n?.t, PLAN.text), owner = clean(n?.owner, PLAN.label), agent = typeof n?.agent === "string" && AGENT.test(n.agent) ? n.agent : undefined, after = Array.isArray(n?.after) ? [...new Set(n.after.filter(id))].slice(0, PLAN.after) : [];
 		const on = clean(n?.wait?.on, PLAN.label), at = typeof n?.wait?.until === "string" && n.wait.until.length <= 64 ? Date.parse(n.wait.until) : NaN, until = Number.isFinite(at) ? new Date(at).toISOString() : undefined;
 		if (!id(n?.id) || !t || (n.status !== "pending" && n.status !== "in_progress")) return [];
-		return [{ id: n.id, t, status: n.status, ...(owner ? { owner } : {}), ...(after.length ? { after } : {}), ...(on || until ? { wait: { ...(on ? { on } : {}), ...(until ? { until } : {}) } } : {}) }];
+		return [{ id: n.id, t, status: n.status, ...(owner ? { owner } : {}), ...(agent ? { agent } : {}), ...(after.length ? { after } : {}), ...(on || until ? { wait: { ...(on ? { on } : {}), ...(until ? { until } : {}) } } : {}) }];
 	});
 	return nodes.length ? { nodes, ...(isGraph(p.graph) ? { graph: p.graph } : {}), ...(id(p.cut) && p.cut > 0 && p.cut <= 200 ? { cut: p.cut } : {}) } : undefined;
 }

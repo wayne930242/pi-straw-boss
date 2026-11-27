@@ -225,7 +225,10 @@ body:has(#remind[data-state="blocked"]) .prefs-btn { color: var(--err-soft); } /
 .plan-node[data-state="blocked"] .plan-badge { background: var(--dim); } .plan-node[data-state="waiting"] .plan-badge { background: var(--gold); }
 .plan-text { margin: 0; overflow-wrap: anywhere; color: var(--text); }
 .plan-meta { display: flex; flex-wrap: wrap; gap: 2px 8px; margin: 0; font-size: 11px; color: var(--dim); }
-.plan-owner { color: var(--violet); } .plan-owner::before { content: "@"; } .plan-wait { color: var(--gold); } .plan-wait::before { content: "⏳ "; }
+.plan-owner { color: var(--violet); overflow-wrap: anywhere; } .plan-owner::before { content: "@"; } a.plan-owner { text-decoration: none; } a.plan-owner:hover, a.plan-owner:focus-visible { text-decoration: underline; }
+.plan-owner[data-gone] { color: var(--dim); text-decoration: line-through; } .plan-owner[data-gone] small { text-decoration: none; }
+.plan-focus { padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--dim); font: inherit; font-size: 11px; cursor: pointer; } .plan-focus:hover, .plan-focus:focus-visible { color: var(--text); border-color: var(--accent); }
+@media (pointer: coarse) { a.plan-owner, .plan-focus { display: inline-flex; align-items: center; min-height: 44px; } } /* a tap target on a phone */ .plan-wait { color: var(--gold); } .plan-wait::before { content: "⏳ "; }
 .plan-cut { margin: 0 2px; font-size: 11px; color: var(--dim); }
 .board-plan > .plan { margin: 0 0 6px; }
 .in-term .todos, .in-term .monitors { display: none; }

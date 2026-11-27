@@ -185,7 +185,7 @@ export function mountSession(scene: Readonly<Scene>, { view, data, openTile, emb
 			if (headUnit?.said) remember(headUnit.said); // the head page shows its newest words: the header's dot is for what comes after
 			const dialogs = view.querySelector<HTMLElement>(".run-dialogs");
 			if (dialogs) fillRunDialogs(dialogs, isHead ? HEAD_KEY : hit?.base.id ?? wsOf(scene), scene.info?.dialogs);
-			drawTodos(view, scene.info?.todos);
+			drawTodos(view, scene.info?.todos, { net: scene.net, main: u?.key });
 			drawMonitors(view, u?.monitors);
 			drawQueued(view, u?.queued, u?.key, Boolean(u?.service));
 			foldQueue(view, u?.queued?.length ?? 0);

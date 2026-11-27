@@ -1,17 +1,28 @@
 import { type Plan, type PlanNode, planOf } from "../src/boardplan.ts";
 import type { Todo } from "../src/items.ts";
+import type { Net } from "../src/net.ts";
+import { ownerOf } from "../src/planowner.ts";
 import { h } from "./dom.ts";
+import { type Answer, post } from "./post.ts";
+import { formatRoute } from "./router.ts";
 import { m } from "./sentences.ts";
 
 // A main's plan as a graph (src/boardplan.ts): its open todos in layers by dependency (a node sits one step below the deepest open todo it waits on), each with its state in words and a tint, its owner, its defer (who, until when),
 // and the ids it comes after, so the layers read on a phone without lines between boxes. The board row draws an auto line's plan (gui/board.ts); the session page draws the plan of the todo list it has, an operate box's too (gui/bars.ts).
 // A plan with no graph data (no dependency, owner, defer, or graph name) stays the checklist. Every field is a model's text: drawn as text only.
+// An owner the net has (src/planowner.ts: the Herdr child's run id, then its full name) is a link to its session page, whose composer writes to it as the boss, and a Focus button that brings its pane forward (the routes the page
+// and `/boss send` use); an owner whose child left the net, or whose pane is gone, is marked gone.
+
+/** The seam a test replaces: the page's post. */
+export const io = { post: (path: string, body: Record<string, unknown>): Promise<Answer> => post(path, body) };
+/** Where a plan is drawn: the net, for its owners, and the main whose plan it is (its own subagents are looked at first). */
+export interface PlanAt { net?: Net | undefined; main?: string | undefined }
 
 export type NodeState = "doing" | "ready" | "blocked" | "waiting";
 /** In progress wins; a deferred todo waits; one with an open blocker is blocked; else it is ready to start. */
 export const nodeState = (n: PlanNode): NodeState => (n.status === "in_progress" ? "doing" : n.wait ? "waiting" : n.after?.length ? "blocked" : "ready");
 /** Whether the plan says more than the checklist: a dependency, an owner, a defer, or the plan's graph. */
-export const graphed = (p: Plan | undefined): p is Plan => Boolean(p && (p.graph || p.nodes.some((n) => n.after?.length || n.owner || n.wait)));
+export const graphed = (p: Plan | undefined): p is Plan => Boolean(p && (p.graph || p.nodes.some((n) => n.after?.length || n.owner || n.agent || n.wait)));
 /** A session's todo list as a plan, its text as the session page shows it. */
 export const planOfTodos = (list: readonly Todo[] | null | undefined): Plan | undefined => (list?.length ? planOf(list, (t) => t) : undefined);
 
@@ -42,19 +53,29 @@ export function whenText(iso: string, now: number): string {
 /** The plan's one line for a fold: `3 open · fan-out`. */
 export const planLine = (p: Plan): string => [m.plan_open({ count: p.nodes.length + (p.cut ?? 0) }), ...(p.graph && GRAPH[p.graph] ? [GRAPH[p.graph]!()] : [])].join(" · ");
 
-function nodeOf(n: PlanNode, now: number): HTMLElement {
+/** A node's owner: a link and a Focus button for a unit the net has in a pane, the name marked gone for one that left, else the name as text. */
+function ownerEl(n: PlanNode, at: PlanAt): HTMLElement[] {
+	if (!n.owner && !n.agent) return [];
+	const hit = at.net ? ownerOf(at.net, at.main, n) : undefined, name = n.owner ?? (hit && hit !== "gone" ? hit.name : n.agent!), title = m.plan_owner({ owner: name });
+	if (hit === "gone" || (hit && !hit.live)) return [h("span", { class: "plan-owner", "data-gone": "", title }, name, h("small", null, ` ${m.plan_gone()}`))];
+	if (!hit) return [h("span", { class: "plan-owner", title }, name)];
+	const route = formatRoute({ view: "session", ws: hit.ws, key: hit.key }), focus = h("button", { type: "button", class: "plan-focus", title: m.plan_focus_title({ owner: name }) }, m.plan_focus());
+	focus.onclick = () => void io.post(`sessions/${encodeURIComponent(hit.key)}/focus`, {}).catch(() => undefined);
+	return [h("a", { class: "plan-owner", href: route, "data-route": route, title: m.plan_open_title({ owner: name }) }, name), focus];
+}
+function nodeOf(n: PlanNode, now: number, at: PlanAt): HTMLElement {
 	const state = nodeState(n), wait = n.wait && [n.wait.on && m.plan_wait_on({ who: n.wait.on }), n.wait.until && m.plan_wait_until({ time: whenText(n.wait.until, now) })].filter(Boolean).join(" · ");
 	return h("li", { class: "plan-node", "data-state": state, "data-id": String(n.id) },
 		h("p", { class: "plan-top" }, h("span", { class: "plan-badge" }, STATE[state]()), h("small", { class: "plan-id" }, `#${n.id}`)),
 		h("p", { class: "plan-text" }, n.t),
-		...(n.owner || wait || n.after?.length ? [h("p", { class: "plan-meta" },
-			...(n.owner ? [h("span", { class: "plan-owner", title: m.plan_owner({ owner: n.owner }) }, n.owner)] : []),
+		...(n.owner || n.agent || wait || n.after?.length ? [h("p", { class: "plan-meta" },
+			...ownerEl(n, at),
 			...(wait ? [h("span", { class: "plan-wait" }, wait)] : []),
 			...(n.after?.length ? [h("span", { class: "plan-after" }, m.plan_after({ ids: n.after.map((id) => `#${id}`).join(", ") }))] : []))] : []));
 }
-/** The plan's section: the layers top to bottom, each a step with its nodes side by side as the width allows, and the count of what was cut. `now`: the page's clock, for a defer's time. */
-export function planView(p: Plan, now = Date.now()): HTMLElement {
+/** The plan's section: the layers top to bottom, each a step with its nodes side by side as the width allows, and the count of what was cut. `now`: the page's clock, for a defer's time; `at`: the net and the main, for the owners. */
+export function planView(p: Plan, now = Date.now(), at: PlanAt = {}): HTMLElement {
 	return h("section", { class: "plan", "aria-label": m.plan_label(), ...(p.graph ? { "data-graph": p.graph } : {}) },
-		h("ol", { class: "plan-layers" }, ...layersOf(p.nodes).map((layer, i) => h("li", { class: "plan-layer" }, h("h5", null, m.plan_step({ n: String(i + 1) })), h("ul", { class: "plan-nodes" }, ...layer.map((n) => nodeOf(n, now)))))),
+		h("ol", { class: "plan-layers" }, ...layersOf(p.nodes).map((layer, i) => h("li", { class: "plan-layer" }, h("h5", null, m.plan_step({ n: String(i + 1) })), h("ul", { class: "plan-nodes" }, ...layer.map((n) => nodeOf(n, now, at)))))),
 		...(p.cut ? [h("p", { class: "plan-cut" }, m.plan_cut({ count: p.cut }))] : []));
 }

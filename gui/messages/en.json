@@ -1567,5 +1567,9 @@
 	"plan_wait_on": "waits on {who}",
 	"plan_wait_until": "until {time}",
 	"plan_cut": "{count} more open not shown",
-	"plan_open": "{count} open"
+	"plan_open": "{count} open",
+	"plan_gone": "(gone)",
+	"plan_focus": "Focus",
+	"plan_focus_title": "Bring {owner}'s pane forward in Herdr",
+	"plan_open_title": "Open {owner}'s session: read it and write to it as the boss"
 }

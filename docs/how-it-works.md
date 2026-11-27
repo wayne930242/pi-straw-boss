@@ -657,7 +657,7 @@ A main says what it is doing in one place, and a tower reads it before it routes
 <details>
 <summary>Details</summary>
 
-The file also says who wrote it (`src`: `set` for `board_set`, `todo` for the auto-fill, with the todo list's `count` of tasks done and in all); `src` and `count` stay on this computer and are not in the `board` message.
+The file also says who wrote it (`src`: `set` for `board_set`, `todo` for the auto-fill, with the todo list's `count` of tasks done and in all); `src` and `count` stay on this computer and are not in the `board` message. An auto entry also carries its `plan` (`src/boardplan.ts`): its open todos, in progress first, at most 20 with the count of the rest (`cut`), each with its id, subject (scrubbed as an item is), status, `owner`, the Herdr child that works on it (`agent`: pi-todo-ledger's `metadata.herdr.id`, the net's key of that subagent; never a pane id), the open todos it comes `after`, and its defer (`wait`: `metadata.waitsOn` and `metadata.until`), and the plan's graph. The reader checks it again (`cleanPlan`); a file an older main wrote has none and reads as before, and an older reader ignores it. The plan is local as `src` is: allies get no part of it. The head page's work board draws a line's plan in place of its checklist, layered by dependency, and the session page's todo box does the same from the session's own list, an operate box's too (its todos keep `owner`, `agent` as a rewritten key, `blockedBy`, `graph`, `waitsOn`, and `until`), when the plan says more than the checklist (a dependency, an owner, a defer, or a graph name); an owner the net has (`src/planowner.ts`: its run id, then its full name) links to its session and has Focus, and one that left the net reads gone.
 
 </details>
 
@@ -3798,7 +3798,7 @@ A live run is given a **newer brief** (a `brief` in the poll's answer) when the 
 
 #### `/boss send` and `/boss stop`
 
-`/boss send <name|key> [--after] <text>` posts `sessions/<key>/input {text, as: "send" | "followUp", guarded: true}` to a tower, main, member, or subagent, as the page's composer does (`--after` is the composer's **After this**; a bare `--after` with no text is usage, not a message). A name with spaces is quoted (`/boss send "fix login" hi`); a name two sessions share lists them.
+`/boss send <name|key> [--after] <text>` posts `sessions/<key>/input {text, as: "send" | "followUp", guarded: true}` to a tower, main, member, or subagent, as the page's composer does (`--after` is the composer's **After this**; a bare `--after` with no text is usage, not a message). A name with spaces is quoted (`/boss send "fix login" hi`); a name two sessions share lists them. `#63` or a todo uid (`t_` and ten base32 characters) names a todo of this session's own list and sends to its owner (`src/planowner.ts`: the Herdr child's run id, then its full name; a todo with no owner, an owner not on the net, and one that left are refused). A subagent is named as Herdr shows it: its full name, the row's cut name ending in `…` when it begins one name only, or `subagent-chat-<id>` as pi-intercom lists it.
 
 <details>
 <summary>Details</summary>

@@ -16,9 +16,9 @@ export function demoPlan(now: number): Plan {
 	const at = (days: number, hour: number) => { const d = new Date(now); d.setDate(d.getDate() + days); d.setHours(hour, 0, 0, 0); return d.toISOString(); };
 	return { graph: "fan-out/fan-in", nodes: [
 		{ id: 3, t: said("稅前進位修正", "Fix the rounding before tax"), status: "in_progress", owner: "api-fix" },
-		{ id: 4, t: said("退款情境測試", "Credit-note regression test"), status: "pending", owner: "worker-api", after: [3] },
-		{ id: 5, t: said("發票 PDF 金額核對", "Check the invoice PDF totals"), status: "pending", owner: "worker-web", after: [3] },
-		{ id: 6, t: said("帳本匯出核對", "Check the ledger export"), status: "pending", owner: "worker-db", after: [3] },
+		{ id: 4, t: said("退款情境測試", "Credit-note regression test"), status: "pending", owner: "worker-api", agent: "bd-kid-api", after: [3] },
+		{ id: 5, t: said("發票 PDF 金額核對", "Check the invoice PDF totals"), status: "pending", owner: "worker-web", agent: "bd-kid-web", after: [3] },
+		{ id: 6, t: said("帳本匯出核對", "Check the ledger export"), status: "pending", owner: "worker-db", agent: "bd-kid-db", after: [3] },
 		{ id: 7, t: said("合併三項檢查", "Merge the three checks"), status: "pending", after: [4, 5, 6] },
 		{ id: 8, t: said("老闆簽核上線", "Boss signs off the release"), status: "pending", after: [7], wait: { on: said("老闆", "boss"), until: at(0, 14) } },
 		{ id: 9, t: said("更新 changelog", "Update the changelog"), status: "pending", after: [8] },
@@ -29,7 +29,7 @@ export function demoPlan(now: number): Plan {
 export function demoTodos(): Todo[] | undefined {
 	if (!new URLSearchParams(location.search).has("plan")) return undefined;
 	const done: Todo[] = [{ id: 1, subject: said("找出進位的位置", "Find where the rounding happens"), status: "completed" }, { id: 2, subject: said("重現錯誤", "Reproduce the error"), status: "completed" }];
-	return [...done, ...demoPlan(Date.now()).nodes.map((n): Todo => ({ id: n.id, subject: n.t, status: n.status, ...(n.owner ? { owner: n.owner } : {}), ...(n.after ? { blockedBy: n.after } : {}), ...(n.wait?.on ? { waitsOn: n.wait.on } : {}), ...(n.wait?.until ? { until: n.wait.until } : {}), graph: "fan-out/fan-in" }))];
+	return [...done, ...demoPlan(Date.now()).nodes.map((n): Todo => ({ id: n.id, subject: n.t, status: n.status, ...(n.owner ? { owner: n.owner } : {}), ...(n.agent ? { agent: n.agent } : {}), ...(n.after ? { blockedBy: n.after } : {}), ...(n.wait?.on ? { waitsOn: n.wait.on } : {}), ...(n.wait?.until ? { until: n.wait.until } : {}), graph: "fan-out/fan-in" }))];
 }
 
 export function boardRows(now: number): BoardViewRow[] {
@@ -52,6 +52,8 @@ export function boardFromUrl(net: Net, now: number, update: (change: (n: Net) =>
 	const rows = boardRows(now), mark = (r: BoardViewRow) => (r.state === "working" ? "working" : "idle") as Unit["mark"];
 	const base = (id: string, label: string, tab: string, keys: string[]) => ({ id, label, mark: "working" as const, tower: null, tabs: [{ id: `${id}:${tab}`, label: tab, units: keys.map((k) => { const r = rows.find((x) => x.session === k)!; return unit(k, r.main, r.role ?? "main", mark(r)); }) }], outposts: [], outside: [] });
 	net.bases.push(base("bw-alpha", "Board Alpha", "api", ["bd-work", "bd-long", "bd-idle", "bd-bare"]), base("bw-beta", "Board Beta", "mobile", ["bd-markup", "bd-train"]));
+	// api-fix's plan names three workers: two run (their names open their sessions, Focus brings their panes forward), worker-db has left the net, so its node reads gone.
+	net.bases[net.bases.length - 2]!.tabs[0]!.units[0]!.subs.push(unit("bd-kid-api", "worker-api", "subagent", "working"), unit("bd-kid-web", "worker-web", "subagent", "idle"));
 	// The supply board (docs/specs/2026-11-24-capacity-supply/spec.md): api-fix runs three units of 2 points with 5 ready, docs-pass waits on its quota, web-polish is stale, the others run nothing; a teammate device is out of touch. `?board=unset`: no budget.
 	const zero = { points: 0, ready: 0, units: [] };
 	Object.assign(rows[0]!, { points: 6, ready: 5, units: ["api-build", "web-test", "db-check"].map((name) => ({ name, points: 2 })) });

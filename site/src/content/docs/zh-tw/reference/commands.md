@@ -71,7 +71,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 
 | 指令 | 做什麼 |
 | --- | --- |
-| `/boss send <name\|key> [--after] <text>` | 以老闆的身分寫給網上任何 session，如同頁面的輸入框所做的。`--after` 讓它排到該 session 閒下來時。名稱有空格要加引號：`/boss send "fix login" hi`。 |
+| `/boss send <name\|key\|#todo> [--after] <text>` | 以老闆的身分寫給網上任何 session，如同頁面的輸入框所做的。`#63` 或 todo uid 寫給這個 session 清單中那項 todo 的負責者；子智慧體照 Herdr 顯示的名稱指名。`--after` 讓它排到該 session 閒下來時。名稱有空格要加引號：`/boss send "fix login" hi`。 |
 | `/boss stop <name\|key>` | 在 session 裡按 Esc，如同頁面的停止（會先在 pi 裡詢問）。 |
 | `/boss answer` | 列出其他 session 正在等的對話框（select、confirm 或問卷，附編號的選項）。 |
 | `/boss answer <name\|key> [<choice number \| text> \| --cancel]` | 回答其中一個，如同頁面所做的，經過同樣的 server 檢查。沒有輸入選項時，pi 會問。祕密絕不從這裡回答：請在那個 session 的終端機輸入。 |

@@ -1385,5 +1385,9 @@
 	"plan_wait_on": "等 {who}",
 	"plan_wait_until": "到 {time}",
 	"plan_cut": "另有 {count} 項未完成沒列出",
-	"plan_open": "{count} 項未完成"
+	"plan_open": "{count} 項未完成",
+	"plan_gone": "（已離開）",
+	"plan_focus": "切過去",
+	"plan_focus_title": "在 Herdr 把 {owner} 的窗格切到前面",
+	"plan_open_title": "開啟 {owner} 的對話：查看並以老闆身分傳訊"
 }

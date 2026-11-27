@@ -161,7 +161,7 @@ You still talk to a main in its own pane as before; the head's viewer is for zen
 
 ## What a tower knows
 
-- **The work board.** A main's entry fills itself from its todo list and its name; `board_set` overrides it. A tower reads every main's entry with `board_read`, here and on teammates' computers. Teammates see only an automatic entry's name and progress. See [The work board](/pi-straw-boss/docs/reference/how-it-works/how-it-works/#the-work-board).
+- **The work board.** A main's entry fills itself from its todo list and its name; `board_set` overrides it. A tower reads every main's entry with `board_read`, here and on teammates' computers. Teammates see only an automatic entry's name and progress. The boss's head page draws an automatic entry's open todos as a plan: steps by dependency, each todo's state in words, its owner (a link to that agent's session, with Focus), and what it waits on and until when. Teammates never get the plan. See [The work board](/pi-straw-boss/docs/reference/how-it-works/how-it-works/#the-work-board).
 - **The digest.** Joins, subagent launches, and renames in its workspace since its last run, read once and cleared.
 - **Its memory.** See above.
 - **The dashboard.** A live view in the tower's tab of who joined and what they and their subagents are doing.

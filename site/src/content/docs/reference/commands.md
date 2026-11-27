@@ -71,7 +71,7 @@ The full table, with every argument, is in [Tools](/pi-straw-boss/docs/reference
 
 | Command | What it does |
 | --- | --- |
-| `/boss send <name\|key> [--after] <text>` | Write to any session on the net as the boss, as the page's composer does. `--after` queues it for when the session is idle. Quote a name that has spaces: `/boss send "fix login" hi`. |
+| `/boss send <name\|key\|#todo> [--after] <text>` | Write to any session on the net as the boss, as the page's composer does. `#63` or a todo uid writes to the owner of that todo of this session's list; a subagent is named as Herdr shows it. `--after` queues it for when the session is idle. Quote a name that has spaces: `/boss send "fix login" hi`. |
 | `/boss stop <name\|key>` | Press Esc in a session, as the page's Stop does (asked in pi first). |
 | `/boss answer` | List the dialogs other sessions wait on (a select, a confirm, or questions, with numbered choices). |
 | `/boss answer <name\|key> [<choice number \| text> \| --cancel]` | Answer one, as the page does, through the same server checks. With no choice typed, pi asks. A secret is never answered from here: enter it in that session's terminal. |
