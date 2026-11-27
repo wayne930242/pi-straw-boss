@@ -257,7 +257,7 @@ export function carCard(f: CarFact, now: number): CarCardView {
 			return { ...base, mark: "🚂", tone: f.stale ? "warn" : wait ? "wait" : "ok", line: `${code ?? ""} ${st ? `${cells}${st.kind}${st.attempt > 1 ? m.car_try({ n: st.attempt }) : ""}${st.between ? " ✓" : ""}` : m.car_departed()}`.trim(), ...(wait ? { wait } : {}) };
 		}
 		case "waiting": { const condition = f.departs ? formingWords({ departs: f.departs }, now) : undefined; return { ...base, mark: "🚉", tone: "wait", line: m.car_waiting({ app: f.app }), ...(condition ? { wait: condition } : {}) }; }
-		case "landed": return { ...base, mark: "✅", tone: "ok", line: `${code ?? ""} ${f.version ? m.car_landed({ version: f.version }) : m.car_landed_bare()}`.trim() };
+		case "landed": return { ...base, mark: "✅", tone: "ok", line: `${code ?? ""} ${f.version ? m.car_landed({ version: f.version.length > 32 ? `${f.version.slice(0, 31)}…` : f.version }) : m.car_landed_bare()}`.trim() };
 		case "returned": return { ...base, mark: "↩", tone: "bad", line: m.car_returned(), ...(f.reason ? { wait: f.reason } : {}) };
 		case "dropped": return { ...base, mark: "✖", tone: "bad", line: `${code ?? ""} ${m.car_dropped()}`.trim(), ...(f.reason ? { wait: f.reason } : {}) };
 	}

@@ -33,6 +33,7 @@ test("the other phases: waiting with the departure rule, landed with its version
 	assert.deepEqual(factLine(waiting, "zh-TW", NOW), { line: "🚉 fe2 等發車", wait: "滿 4 節或 60 分（還 23 分）", tone: "wait" });
 	assert.deepEqual(factLine({ ...waiting, departs: { ...waiting.departs!, oldest: new Date(NOW - 61 * MIN).toISOString() } }, "en", NOW).wait, "leaves at 4 cars or 60 min (time is up)");
 	assert.deepEqual(factLine(fact({ phase: "landed", version: "1.62.0-beta.24", stage: undefined }), "zh-TW", NOW), { line: "✅ 1127l 已落地 1.62.0-beta.24", tone: "ok" });
+	assert.equal(factLine(fact({ phase: "landed", version: "none (refactor-only: no release cut; rides the next develop release)", stage: undefined }), "en", NOW).line, "✅ 1127l landed none (refactor-only: no release…", "a long version is cut (a real one of 2026-11-27-j)");
 	assert.deepEqual(factLine(fact({ phase: "returned", train: undefined, reason: "head is not the tip", stage: undefined }), "zh-TW", NOW), { line: "↩ 退回", wait: "head is not the tip", tone: "bad" });
 	assert.deepEqual(factLine(fact({ phase: "dropped", reason: "unit red", stage: undefined }), "en", NOW), { line: "✖ 1127l dropped", wait: "unit red", tone: "bad" });
 	assert.deepEqual([duration(42_000), duration(12 * MIN + 5_000), duration(65 * MIN)], ["42s", "12m", "1h05m"]);

@@ -35,6 +35,8 @@ const W = {
 	},
 };
 
+/** A model's word cut for a row: a version or a reason may run long (`none (refactor-only: no release cut; …)`). */
+export const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 const short = (code: string | undefined) => { if (!code) return undefined; try { return shortCode(code); } catch { return code; } };
 /** As the worker rows say it: `42s`, `12m`, `1h05m`. */
 export function duration(ms: number): string {
@@ -73,9 +75,9 @@ export function factLine(f: CarFact, lang: Locale, now: number): { line: string;
 			const d = f.departs, left = d ? Math.ceil((Date.parse(d.oldest) + d.maxWaitMin * 60_000 - now) / 60_000) : 0;
 			return out(t.waiting(f.app), "wait", d ? t.departs(d.maxCars, d.maxWaitMin, left) : undefined);
 		}
-		case "landed": return out(`✅${at} ${t.landed}${f.version ? ` ${f.version}` : ""}`, "ok");
-		case "returned": return out(t.returned, "bad", f.reason);
-		case "dropped": return out(`✖${at} ${t.dropped}`, "bad", f.reason);
+		case "landed": return out(`✅${at} ${t.landed}${f.version ? ` ${cut(f.version, 32)}` : ""}`, "ok");
+		case "returned": return out(t.returned, "bad", f.reason && cut(f.reason, 120));
+		case "dropped": return out(`✖${at} ${t.dropped}`, "bad", f.reason && cut(f.reason, 120));
 	}
 }
 
