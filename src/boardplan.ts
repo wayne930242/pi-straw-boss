@@ -5,8 +5,7 @@ import type { Todo } from "./items.ts";
 // (gui/plangraph.ts). On the board the text goes through the entry's own gate (`say`, boardauto.ts), so a subject, an owner, and a waits-on name leave as the checklist's items do; the reader checks it again (`cleanPlan`, board.ts).
 // Local only: `forAllies` sends allies none of it (docs/specs/2026-10-25-straw-link.md, Sharing with allies).
 
-/** One open todo of a plan: its id, its subject (cut to a board item's 80), `in_progress` or `pending`, who works on it, the open todos it waits on (`after`), and its defer (who it waits on, until when, as ISO). */
-/** `agent`: the Herdr child that works on it (its run id, the net's key: src/planowner.ts finds it); a local key, never a pane id. */
+/** One open todo of a plan: its id, its subject (cut to a board item's 80), `in_progress` or `pending`, who works on it (`owner`, and `agent`, the Herdr child's run id, the net's key: src/planowner.ts finds it; never a pane id), the open todos it waits on (`after`), and its defer (who it waits on, until when, as ISO). */
 export interface PlanNode { id: number; t: string; status: "pending" | "in_progress"; owner?: string; agent?: string; after?: number[]; wait?: { on?: string; until?: string } }
 /** At most `PLAN.nodes` open todos, the plan's graph, and `cut`, the open todos left out. */
 export interface Plan { nodes: PlanNode[]; graph?: Graph; cut?: number }
