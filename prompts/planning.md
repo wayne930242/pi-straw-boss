@@ -1,7 +1,5 @@
 # Planning work
 
-Revise the plan when the work changes.
-
 ## 1. Name the graph
 
 The page shows it beside your kind. Take the first case that matches:
@@ -26,24 +24,24 @@ For fan-out and orchestrator-worker, one todo per task:
 
 ## 3. Name the anchors
 
-Each anchor is the lightest check that can fail before the change and still reach what changed:
+Use the lightest check that reaches the change and can fail before it:
 
-- **testing**: the default for code changes. Use the smallest test that goes red first. Repo-wide suites, lint, and type checks run once, at the shared checkpoint or before merge, never inside each task.<!-- integration --> In an `integration` app, see below.<!-- /integration -->
-- **pseudo-human**: a browser or computer operates the real interface and records screenshots and measurements.
-- **human**: the boss operates or judges the result: UI feel, wording, a business rule.
-- **adversarial-review**: a fresh-context agent challenges the result against the requirement. Use it for read-only work that has no executable checkpoint.
+- **testing** (code): smallest red-first test. Run repo-wide suites, lint and type checks once at the shared checkpoint or before merge.<!-- integration --> In an `integration` app, see below.<!-- /integration -->
+- **pseudo-human**: operate the real interface; capture screenshots and measurements.
+- **human**: the boss tests or judges feel, wording or a business rule.
+- **adversarial-review**: fresh-context challenge against requirements for read-only work without an executable check.
 
-Tasks that share one anchor share one checkpoint. Give each such group one checkpoint todo, `blockedBy` every task it covers, and tell those workers to hand it their evidence. A task whose check is distinct, or plainly cheaper in place, keeps its own.
+Tasks with one anchor share one checkpoint todo, `blockedBy` all contributors; workers hand it evidence. Keep distinct or cheaper local checks in place.
 
 <!-- integration -->
-In an app that declares `integration`, follow `integrating`'s Principle: your anchor before handoff is your review (P0 and P1 clear), behaviour tests aimed at your own change, and the project skill's `Light checks`; repo-wide quality gates run once, by the integrator, on the integrated pre-dev head (its `Full gates`). Run the app's `integration.accept` on your branch before the slip, as the project skill's `## Acceptance` says, get the boss's nod, and write the evidence file (absolute paths in `accept:` and `evidence`); check it with the `train check` command in your main prompt (`--accept none` when `integration.accept` is empty): `--accept <file> --app-accept <integration.accept> --slip <slip>` before you send the slip; a `human` anchor is this acceptance, not the train's.
+For `integration`, follow `integrating`'s Principle: before handoff clear P0/P1 review, test your change and run the project skill's `Light checks`. `Full gates` run once, by the integrator, on the integrated pre-dev head. Before sending the slip, run `integration.accept` on your branch per `## Acceptance`, get the boss's nod, write absolute paths in `accept:` and `evidence`, and use the main prompt's `train check`: `--accept <file> --app-accept <integration.accept> --slip <slip>` (`--accept none` for empty `integration.accept`); a `human` anchor is this acceptance, not the train's.
 
 <!-- /integration -->
-A change-set that touches a shared contract, authorization or permission data, or a migration gets one fresh-context reviewer after its anchor passes. Other change-sets take the author's own read of the diff against the brief.
+After a passing anchor, get one fresh-context reviewer for shared contracts, authorization or permission data, or migrations. Otherwise review your diff against the brief.
 
 ## 4. Start
 
-Dispatch without asking the boss to confirm the plan, and change it the same way: the todos record it. Before offering the boss a design choice, read the owning app's instructions and the UI and architecture rules they name; drop the options they forbid, and quote the rule that settles the design in the brief. Through your question tool, bring the boss only the decisions the plan cannot settle, before the task they block: a requirement that is unclear or contradicts the architecture, and an authorization the work needs, such as a merge to a shared branch or a deploy.
+Dispatch and revise todos without asking the boss to confirm the plan. Before offering choices, read the owning app's instructions and its UI and architecture rules; exclude forbidden options and quote the rule that settles the design in the brief. Ask via question tool before blocked work: a requirement is unclear or contradicts the architecture, or you need authorization (shared merge, deploy).
 
 ## 5. When the boss adds work mid-plan
 
