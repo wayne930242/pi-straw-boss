@@ -1,10 +1,14 @@
-// Copied from pi-herdr-agents f1590cb (MIT, Copyright (c) 2026 Giuseppe Rodriguez); see NOTICE.md.
+// Copied from pi-herdr-agents f1590cb (MIT, Copyright (c) 2026 Giuseppe Rodriguez); see NOTICE.md. sb: herdr is started by the path exe.mjs resolves.
 import { spawn, execFileSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { join, posix, win32 } from "node:path";
 import { isString } from "@nubl/maestro/core/config/type-guards";
 import { Deadline } from "@nubl/maestro/core/deadline";
 import { gitEnvironment } from "@nubl/maestro/core/git-environment";
+import { resolveExe } from "../../exe.mjs";
+
+/** The herdr program by its full path (`HERDR_BIN_PATH`, else PATH), as sb starts every program; a bare name is never started. */
+const herdrBin = () => resolveExe(process.env.HERDR_BIN_PATH || "herdr");
 
 export const HERDR_RPC_TIMEOUT_MS = 10_000;
 export const HERDR_PLACEMENT_TIMEOUT_MS = 30_000;
@@ -14,7 +18,7 @@ export const HERDR_COSMETIC_TIMEOUT_MS = 1_000;
 export const HERDR_OUTPUT_BYTES = 1024 * 1024;
 
 /**
- * Names `spawn("herdr")` can start. Without a shell, Windows resolves a bare
+ * Names a bare `herdr` resolves to. Without a shell, Windows resolves a bare
  * command only to `.exe` or `.com`, never to a script or an extensionless file.
  */
 function herdrExecutableNames(platform: NodeJS.Platform): string[] {
@@ -103,7 +107,8 @@ export function herdrExec(
 			throw new Error("Synchronous Herdr test exec returned a Promise");
 		return result;
 	}
-	return execFileSync("herdr", args, {
+	const bin = herdrBin();
+	return execFileSync(bin, args, {
 		stdio: "pipe",
 		encoding: "utf8",
 		timeout,
@@ -147,8 +152,14 @@ export async function herdrExecAsync(
 		return output;
 	}
 	const remaining = deadline.remainingMs();
+	let bin: string;
+	try {
+		bin = herdrBin();
+	} catch (error) {
+		throw new HerdrClientError("not-spawned", (error as Error).message, "", "");
+	}
 	return new Promise((resolve, reject) => {
-		const child = spawn("herdr", args, {
+		const child = spawn(bin, args, {
 			stdio: ["ignore", "pipe", "pipe"],
 			detached: process.platform !== "win32",
 			env: args[0] === "worktree" ? gitEnvironment() : process.env,

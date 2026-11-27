@@ -162,8 +162,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 			void inherits.poll();
 		};
 		if (typeof s.saved.revived === "number") startInherit();
-		// Runs sb's own host launched are not revived, inherited, nudged or restored: a lost one is said once on its result (src/host/lost.ts), and the launcher resumes it.
-		nudgeTimer = setInterval(() => void (hostOwnsRuns() || Promise.allSettled([nudges?.poll(), restores?.poll(), revives?.poll(), inherits?.poll()])), cfg.nudgeMs).unref();
+		nudgeTimer = setInterval(() => void (hostOwnsRuns() || Promise.allSettled([nudges?.poll(), restores?.poll(), revives?.poll(), inherits?.poll()])), cfg.nudgeMs).unref(); // sb's own host's runs are not revived, inherited, nudged or restored (src/host/lost.ts)
 		// Starting runs in the background: pi awaits session_start handlers in turn, and pi-intercom connects in its own, after this one.
 		const asTower = () => {
 			s.trainSettled = true; // a tower is no train
@@ -332,8 +331,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	pi.on("session_info_changed", (event) => void (!runMode.active() && mainDuty.migrate((event as { name?: string }).name)));
 	pi.on("agent_settled", () => void (!runMode.active() && briefing.settled()));
 	pi.on("message_end", (event) => void (!runMode.active() && briefing.delivered(event.message))); // a role steer counts as told once pi delivers it (briefing.ts `told`)
-	// A subagent's death says, before the model reads it, that it comes back; under sb's own host, that it is lost and how to resume it.
-	pi.on("message_end", (event) => ((message) => (message ? { message } : undefined))(hostOwnsRuns() ? annotateLost(event.message) : revives?.annotate(event.message)));
+	pi.on("message_end", (event) => ((message) => (message ? { message } : undefined))(hostOwnsRuns() ? annotateLost(event.message) : revives?.annotate(event.message))); // a subagent's death says, before the model reads it, that it comes back; under sb's own host, that it is lost and how to resume it
 	// Compaction and tree navigation can remove earlier steers. Resend current guidance without touching the role section.
 	pi.on("session_compact", (event) => void (!runMode.active() && briefing.fresh(event.willRetry)));
 	pi.on("session_tree", () => void (!runMode.active() && briefing.fresh()));

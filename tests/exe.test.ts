@@ -135,6 +135,8 @@ test("no source file starts a program by a bare name: every child_process call i
 	// server/runchild.ts (headless tower runs, 0.85.0): `o.pi.node`, from exe.mjs `searchPath("node")` (`resolvePi`), else `process.execPath`; taskkill is `system32Path`.
 	const passes: Record<string, RegExp> = {
 		"src/closing.ts": /^cmd$/, "src/hidden.ts": /^file$/, "src/server/acl.ts": /^file$/, "src/server/breakaway.ts": /^file$/, "src/server/client.ts": /^(spec: SpawnSpec|spec\.command)$/,
+		// src/host/herdr/herdr-cli.ts (sb's subagent host, 0.110.0): `bin`, from `herdrBin()`, exe.mjs `resolveExe` of HERDR_BIN_PATH or herdr.
+		"src/host/herdr/herdr-cli.ts": /^bin$/,
 		"src/server/lineage.ts": /^file$/, "src/server/traingate.ts": /^file$/, "src/server/winprep.ts": /^file$/, "src/startof.ts": /^file$/, "src/trust/settings.ts": /^node$/, "src/server/runchild.ts": /^(o\.pi\.node|file)$/,
 	};
 	const offenders: string[] = [];
