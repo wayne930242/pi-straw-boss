@@ -178,7 +178,8 @@ test("T1-F002: a name never routes across mains or devices, nor from the board's
 	const box = { id: "xbox", label: "Box", box: { device: "d" }, mark: "idle", tower: null, outposts: [], outside: [], tabs: [{ id: "xbox:t", label: "work", units: [unit("xm1", "box-main", "main", { subs: [unit("xr1", "review", "subagent")] }), unit("xm2", "box-other", "main")] }] };
 	const local = { id: "wL", label: "Local", mark: "idle", tower: null, outposts: [], outside: [], tabs: [{ id: "wL:t", label: "work", units: [unit("lm", "local-main", "main", { subs: [unit("lr", "review", "subagent"), unit("lx1", `${LONG}-a`, "subagent"), unit("lx2", `${LONG}-b`, "subagent")] })] }] };
 	const net = { bases: [box, local] } as unknown as Net;
-	assert.equal((ownerOf(net, "xm1", { owner: "review" }) as { key: string }).key, "xr1", "the box main's own review");
+	assert.equal(ownerOf(net, "xm1", { owner: "review" }), undefined, "a box's todos came through the operate sanitizer (cut, cleaned): never routed by name, even to the box main's own review");
+	assert.equal((ownerOf(net, "xm1", { owner: "review", agent: "xr1" }) as { key: string }).key, "xr1", "its rewritten run id still is");
 	assert.equal(ownerOf(net, "xm2", { owner: "review" }), undefined, "a box main with none does not reach this computer's review");
 	assert.equal(ownerOf(net, "lm", { owner: "review" }) !== undefined && (ownerOf(net, "lm", { owner: "review" }) as { key: string }).key, "lr");
 	const board = planView({ nodes: [{ id: 1, t: "x", status: "pending", owner: `${LONG}-a`.slice(0, 40) }] }, Date.now(), { net, main: "lm" }) as unknown as El;
@@ -204,4 +205,30 @@ test("an owner on an operated box gets its link but no Focus (the operate routes
 	fillBoard(b as never, withKid(true));
 	assert.equal(b.querySelector("a.plan-owner"), null, "ended: the row was drawn again, gone");
 	assert.ok(b.querySelector(".plan-owner")!.hasAttribute("data-gone"));
+});
+
+test("T1-F002: an owner longer than 64 characters is cut and names nobody: a real 65-character owner whose first 64 are another live child's name reaches neither, by /boss send or on the session page", async () => {
+	const full = `${"r".repeat(60)}-api-x`, short = full.slice(0, 64); // 66 and 64 characters
+	assert.equal(full.length > 64 && short.length, 64);
+	const net = { bases: [{ id: "wC", label: "C", mark: "idle", tower: null, outposts: [], outside: [], tabs: [{ id: "wC:t", label: "work", units: [unit("m1", "api-main", "main", { subs: [unit("run-short", short, "subagent"), unit("run-full", "long-kid", "subagent", { alias: full })] })] }] }] } as unknown as Net;
+	const tasks = [{ id: 12, subject: "long owner", status: "pending", owner: full }];
+	const list = todosOf({ nextId: 13, tasks })!;
+	assert.deepEqual([list[0]!.owner, list[0]!.ownerCut], [short, true]);
+	const { drawTodos } = await import("../gui/bars.ts");
+	const view = new El("div"), d = new El("details"), summary = new El("summary"), ol = new El("ol");
+	d.className = "todos";
+	summary.append(new El("b"), new El("span"));
+	d.append(summary, ol);
+	view.append(d);
+	drawTodos(view as never, list, { net, main: "m1" });
+	assert.equal(d.querySelector("a.plan-owner"), null, "the session page links neither child");
+	assert.equal(d.querySelector(".plan-owner")!.textContent, short);
+	const dir = mkdtempSync(join(tmpdir(), "sb-owner-"));
+	const told: string[] = [], posted: string[] = [];
+	const kit = { cfg: { env: { LANG: "en" } }, s: { ui: undefined, branch: () => [{ type: "custom", customType: "rpiv-todo-state", data: { nextId: 13, tasks } }] }, guiDir: dir, me: () => "m1", tell: (text: string) => void told.push(text) } as unknown as Kit;
+	const paths = createBossPaths(kit, { host: { ensure: async () => ({ record: { port: 1, token: "t", pid: 1, version: "0.108.0" } as never }), sessions: async () => [] }, closeSelf: () => undefined, here: (fn) => fn(), post: async (_r, path) => (posted.push(path), { status: 200, body: {} }), read: async () => net });
+	await paths.send("#12", false, "x");
+	assert.deepEqual(posted, []);
+	assert.match(told.at(-1)!, /longer than 64 characters/);
+	rmSync(dir, { recursive: true, force: true });
 });

@@ -12,24 +12,24 @@ export function todoRef(q: string): { id: number } | { uid: string } | undefined
 }
 /** The unit that owns a todo, with its workspace (the route's), and whether it runs in a pane now. */
 export interface OwnerHit { key: string; name: string; ws: string; live: boolean }
-type Place = { u: Unit; ws: string };
-const flat = (u: Unit, ws: string): Place[] => [{ u, ws }, ...u.subs.flatMap((s) => flat(s, ws))];
+type Place = { u: Unit; ws: string; box?: true };
+const flat = (u: Unit, ws: string, box?: true): Place[] => [{ u, ws, ...(box ? { box } : {}) }, ...u.subs.flatMap((s) => flat(s, ws, box))];
 /** Every unit of the net with its workspace: the towers' subagents, the tabs' units and theirs, and the base's other panes. */
-const places = (net: Pick<Net, "bases"> | undefined): Place[] => (net?.bases ?? []).flatMap((b) => [...(b.tower?.subs ?? []).flatMap((s) => flat(s, b.id)), ...b.tabs.flatMap((t) => t.units.flatMap((u) => flat(u, b.id))), ...b.outside.flatMap((u) => flat(u, b.id))]);
+const places = (net: Pick<Net, "bases"> | undefined): Place[] => (net?.bases ?? []).flatMap((b, _i, _a, box = b.box ? (true as const) : undefined) => [...(b.tower?.subs ?? []).flatMap((s) => flat(s, b.id, box)), ...b.tabs.flatMap((t) => t.units.flatMap((u) => flat(u, b.id, box))), ...b.outside.flatMap((u) => flat(u, b.id, box))]);
 const hitOf = ({ u, ws }: Place): OwnerHit => ({ key: u.key, name: u.name, ws, live: u.control && !u.ended });
 
 /**
  * The owner of a todo on the net: by `agent` (the Herdr child's run id) when the todo names one, `gone` when no unit has that key (the child left the net); else, with `byName`, by the exact `owner` among the subagents under `main` (a row name, or the
- * launch name, `Unit.alias`, when the row shows the script's file name): the one unit of that name, `ambiguous` for two or more (an old run and its successor too). Undefined otherwise: the owner is text.
+ * launch name, `Unit.alias`, when the row shows the script's file name): the one unit of that name, `ambiguous` for two or more (an old run and its successor too); never for an owner cut to its 64 characters, nor under an operated box's main. Undefined otherwise: the owner is text.
  */
-export function ownerOf(net: Pick<Net, "bases"> | undefined, main: string | undefined, ref: { owner?: string | undefined; agent?: string | undefined }, byName = true): OwnerHit | "gone" | "ambiguous" | undefined {
+export function ownerOf(net: Pick<Net, "bases"> | undefined, main: string | undefined, ref: { owner?: string | undefined; agent?: string | undefined; ownerCut?: true | undefined }, byName = true): OwnerHit | "gone" | "ambiguous" | undefined {
 	const all = places(net);
 	if (ref.agent) {
 		const hit = all.find((p) => p.u.key === ref.agent);
 		return hit ? hitOf(hit) : "gone";
 	}
 	const top = main ? all.find((p) => p.u.key === main) : undefined;
-	if (!byName || !ref.owner || !top) return undefined;
+	if (!byName || !ref.owner || ref.ownerCut || !top || top.box) return undefined; // a cut owner names nobody exactly; a box's todos came through the operate sanitizer, cut and cleaned
 	const found = flat(top.u, top.ws).filter((p) => p.u.key !== main && (p.u.name === ref.owner || p.u.alias === ref.owner));
 	return found.length === 1 ? hitOf(found[0]!) : found.length ? "ambiguous" : undefined;
 }

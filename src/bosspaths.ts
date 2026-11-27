@@ -63,6 +63,7 @@ const WORDS = {
 		noOwner: (q: string, owner?: string) => (owner ? `The owner of ${q}, "${owner}", is not a subagent of this main on the net: nothing was sent; name it by its key` : `${q} names no owner: nothing was sent`),
 		ownerGone: (q: string, owner: string) => `The owner of ${q}, "${owner}", has left the net: nothing was sent`,
 		ownerTwice: (q: string, owner: string) => `More than one subagent under this main is named "${owner}", the owner of ${q}: nothing was sent; name it by its key`,
+		ownerLong: (q: string) => `The owner of ${q} is longer than 64 characters, so its name is cut and names nobody for sure: nothing was sent; name it by its key`,
 		sent: (n: string, after: boolean) => `Sent to ${n}${after ? " as a follow-up" : ""}`,
 		notSent: "Nothing was sent",
 		confirmSend: "Send it?", confirmSendBody: (n: string, text: string) => `${n} would end or replace its session with this: ${text}`,
@@ -117,6 +118,7 @@ const WORDS = {
 		noOwner: (q: string, owner?: string) => (owner ? `${q} 的負責者「${owner}」不是這個主智慧體在網上的子智慧體：沒有送出；請用 key 指定` : `${q} 沒有負責者：沒有送出`),
 		ownerGone: (q: string, owner: string) => `${q} 的負責者「${owner}」已離開網路：沒有送出`,
 		ownerTwice: (q: string, owner: string) => `這個主智慧體底下有不只一個子智慧體叫「${owner}」（${q} 的負責者）：沒有送出；請用 key 指定`,
+		ownerLong: (q: string) => `${q} 的負責者名稱超過 64 個字元而被截斷，無法確定是誰：沒有送出；請用 key 指定`,
 		sent: (n: string, after: boolean) => `已送給 ${n}${after ? "（排在目前工作之後）" : ""}`,
 		notSent: "沒有送出",
 		confirmSend: "要送出嗎？", confirmSendBody: (n: string, text: string) => `${n} 會因為這段話結束或換掉它的工作階段：${text}`,
@@ -200,6 +202,7 @@ export function createBossPaths(kit: Kit, { host, server, closeSelf, post = post
 	function ownerTarget(n: Net, query: string, ref: { id: number } | { uid: string }): Target | string {
 		const todo = (todosOfBranch(s.branch()) ?? []).find((x) => ("id" in ref ? x.id === ref.id : x.uid === ref.uid)), named = todo?.owner ?? todo?.agent;
 		if (!todo) return t().noTodo(query);
+		if (todo.ownerCut && !todo.agent) return t().ownerLong(query);
 		const hit = ownerOf(n, me(), todo);
 		if (hit === "gone") return t().ownerGone(query, named!);
 		if (hit === "ambiguous") return t().ownerTwice(query, named!);

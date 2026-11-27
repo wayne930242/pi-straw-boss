@@ -657,7 +657,7 @@ relay 給 live 流量自己的限制（每位寄件者和團隊每分鐘 1,200 �
 <details>
 <summary>細節</summary>
 
-檔案也記下是誰寫的（`src`：`board_set` 是 `set`，自動填入是 `todo`，附上 todo 清單中已完成和全部任務的 `count`）；`src` 和 `count` 留在這台電腦上，不在 `board` 訊息裡。 自動條目也帶著它的 `plan`（`src/boardplan.ts`）：未完成的 todo，進行中的在前，最多 20 項，其餘只記數量（`cut`）；每項有 id、主旨（如同清單項目一樣清洗）、狀態、`owner`、負責它的 Herdr 子智慧體（`agent`：pi-todo-ledger 的 `metadata.herdr.id`，也就是網上那個子智慧體的 key，只在 `metadata.herdr.name` 仍是負責者時保留，因為只改負責者的更新會留下舊的綁定；從不放窗格 id）、它要接在哪些未完成 todo 之後（`after`），以及它的延後條件（`wait`：`metadata.waitsOn` 和 `metadata.until`），還有計畫的 graph。讀取端會再檢查一次（`cleanPlan`）；較舊的主智慧體寫的檔案沒有它，照舊讀取，較舊的讀取端則略過它。計畫和 `src` 一樣只留在本機：盟友拿不到任何一部分。主塔台頁面的工作板在計畫比清單說得更多時（有依賴、負責者、延後條件或 graph 名稱），用依賴分層的圖取代該條目的清單；session 頁面的 todo 區也照 session 自己的清單這樣畫，被操作的 box 也一樣（它的 todo 保留 `owner`、改寫成 key 的 `agent`、`blockedBy`、`graph`、`waitsOn` 和 `until`）；網上找得到的負責者（`src/planowner.ts`：用 run id；在 session 頁面也可用名稱，但只找該主智慧體底下名稱完全相同的那一個子智慧體，從不找別的主智慧體、box 或工作板上截短的標籤，同名兩個時也不猜）連到它的 session 並有「切過去」，已離開網路的標示為已離開。
+檔案也記下是誰寫的（`src`：`board_set` 是 `set`，自動填入是 `todo`，附上 todo 清單中已完成和全部任務的 `count`）；`src` 和 `count` 留在這台電腦上，不在 `board` 訊息裡。 自動條目也帶著它的 `plan`（`src/boardplan.ts`）：未完成的 todo，進行中的在前，最多 20 項，其餘只記數量（`cut`）；每項有 id、主旨（如同清單項目一樣清洗）、狀態、`owner`、負責它的 Herdr 子智慧體（`agent`：pi-todo-ledger 的 `metadata.herdr.id`，也就是網上那個子智慧體的 key，只在 `metadata.herdr.name` 仍是負責者時保留，因為只改負責者的更新會留下舊的綁定；從不放窗格 id）、它要接在哪些未完成 todo 之後（`after`），以及它的延後條件（`wait`：`metadata.waitsOn` 和 `metadata.until`），還有計畫的 graph。讀取端會再檢查一次（`cleanPlan`）；較舊的主智慧體寫的檔案沒有它，照舊讀取，較舊的讀取端則略過它。計畫和 `src` 一樣只留在本機：盟友拿不到任何一部分。主塔台頁面的工作板在計畫比清單說得更多時（有依賴、負責者、延後條件或 graph 名稱），用依賴分層的圖取代該條目的清單；session 頁面的 todo 區也照 session 自己的清單這樣畫，被操作的 box 也一樣（它的 todo 保留 `owner`、改寫成 key 的 `agent`、`blockedBy`、`graph`、`waitsOn` 和 `until`）；網上找得到的負責者（`src/planowner.ts`：用 run id；在 session 頁面也可用名稱，但只找該主智慧體底下名稱完全相同的那一個子智慧體，從不找別的主智慧體、被操作的 box（它的 todo 經過 operate 清理）、截到 64 字元的負責者或工作板上截短的標籤，同名兩個時也不猜）連到它的 session 並有「切過去」，已離開網路的標示為已離開。
 
 </details>
 
@@ -3798,7 +3798,7 @@ run token 不能啟動、離開或重啟對話，也不能以老闆的身分寫�
 
 #### `/boss send` 與 `/boss stop`
 
-`/boss send <name|key> [--after] <text>` 把 `sessions/<key>/input {text, as: "send" | "followUp", guarded: true}` 送到塔台、主智慧體、成員或子智慧體，如同頁面的輸入框做的（`--after` 是輸入框的**接在這之後**；單獨的 `--after` 而沒有文字是用法錯誤，不是訊息）。含空格的名稱要加引號（`/boss send "fix login" hi`）；兩個 session 共用的名稱會列出它們。 `#63` 或 todo uid（`t_` 加十個 base32 字元）指的是這個 session 自己清單裡的 todo，訊息送給它的負責者（`src/planowner.ts`：用 Herdr 子智慧體的 run id，否則用這個主智慧體底下名稱與負責者完全相同的那一個子智慧體；沒有負責者、這個主智慧體底下沒有該名稱、同名兩個、或已離開的 todo 都會被拒絕）。子智慧體照 Herdr 顯示的方式指名：列上的名稱或完整的啟動名稱（`PI_SUBAGENT_NAME`；列上顯示的是腳本檔名時，todo 的負責者存的是它）、列上截短並以 `…` 結尾的名稱（只對得上一個名稱時），或 pi-intercom 列出的 `subagent-chat-<id>`。
+`/boss send <name|key> [--after] <text>` 把 `sessions/<key>/input {text, as: "send" | "followUp", guarded: true}` 送到塔台、主智慧體、成員或子智慧體，如同頁面的輸入框做的（`--after` 是輸入框的**接在這之後**；單獨的 `--after` 而沒有文字是用法錯誤，不是訊息）。含空格的名稱要加引號（`/boss send "fix login" hi`）；兩個 session 共用的名稱會列出它們。 `#63` 或 todo uid（`t_` 加十個 base32 字元）指的是這個 session 自己清單裡的 todo，訊息送給它的負責者（`src/planowner.ts`：用 Herdr 子智慧體的 run id，否則用這個主智慧體底下名稱與負責者完全相同的那一個子智慧體；沒有負責者、負責者被截到 64 字元、這個主智慧體底下沒有該名稱、同名兩個、或已離開的 todo 都會被拒絕）。子智慧體照 Herdr 顯示的方式指名：列上的名稱或完整的啟動名稱（`PI_SUBAGENT_NAME`；列上顯示的是腳本檔名時，todo 的負責者存的是它）、列上截短並以 `…` 結尾的名稱（只對得上一個名稱時），或 pi-intercom 列出的 `subagent-chat-<id>`。
 
 <details>
 <summary>細節</summary>

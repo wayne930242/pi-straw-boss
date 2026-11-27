@@ -72,7 +72,7 @@ export function cleanPlan(raw: unknown): Plan | undefined {
 		const t = clean(n?.t, PLAN.text), owner = clean(n?.owner, PLAN.label), agent = typeof n?.agent === "string" && AGENT.test(n.agent) ? n.agent : undefined, after = Array.isArray(n?.after) ? [...new Set(n.after.filter(id))].slice(0, PLAN.after) : [];
 		const on = clean(n?.wait?.on, PLAN.label), at = typeof n?.wait?.until === "string" && n.wait.until.length <= 64 ? Date.parse(n.wait.until) : NaN, until = Number.isFinite(at) ? new Date(at).toISOString() : undefined;
 		if (!id(n?.id) || !t || (n.status !== "pending" && n.status !== "in_progress")) return [];
-		return [{ id: n.id, t, status: n.status, ...(owner ? { owner } : {}), ...(agent ? { agent } : {}), ...(after.length ? { after } : {}), ...(on || until ? { wait: { ...(on ? { on } : {}), ...(until ? { until } : {}) } } : {}) }];
+		return [{ id: n.id, t, status: n.status, ...(owner ? { owner } : {}), ...(owner && (n as { ownerCut?: unknown }).ownerCut === true ? { ownerCut: true as const } : {}), ...(agent ? { agent } : {}), ...(after.length ? { after } : {}), ...(on || until ? { wait: { ...(on ? { on } : {}), ...(until ? { until } : {}) } } : {}) }];
 	});
 	return nodes.length ? { nodes, ...(isGraph(p.graph) ? { graph: p.graph } : {}), ...(id(p.cut) && p.cut > 0 && p.cut <= 200 ? { cut: p.cut } : {}) } : undefined;
 }
