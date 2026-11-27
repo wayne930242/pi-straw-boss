@@ -27,7 +27,7 @@ Windows 支援還在實驗階段。
 
 | 套件 | Straw Boss 怎麼用它 |
 | --- | --- |
-| [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) | 子智慧體顯示在啟動它們的 session 底下，包括塔台儀表板、側邊欄與 GUI。派出子智慧體的成員會升任主智慧體，並開出它的塔台。 |
+| [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) | 不需要：Straw Boss 自己當子代理的宿主（[子代理宿主](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-subagent-host/)）。裝了它的話，sb 的宿主會退讓，改由 pi-herdr-agents 派出子智慧體；顯示方式相同，都在啟動它們的 session 底下，包括塔台儀表板、側邊欄與 GUI。不論哪個宿主，派出子智慧體的成員都會升任主智慧體，並開出它的塔台。 |
 | [@juicesharp/rpiv-ask-user-question](https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question) 2.13 或更新版本 | `ask_user_question` 的問卷可以從 GUI 回答或取消，等待中的問卷會把它的單位標示為等待中。 |
 | [pi-robot-hand](https://www.npmjs.com/package/pi-robot-hand) 0.3.0 或更新版本 | `robot_hand` 的選擇器可以從 GUI 回答。 |
 | pi-code（hooks 擴充套件，含它的對話框事件） | 它的 hook 確認（「Allow bash?」）可以從 GUI 回答。 |

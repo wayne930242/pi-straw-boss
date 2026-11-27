@@ -1307,6 +1307,19 @@ sb server 在啟動時及之後每 24 小時檢查自己的資料目錄。
 
 各種清單（`pane list`、`workspace list`、`tab list --workspace`）是對 Herdr socket 的請求（`pane.list`、`workspace.list`、`tab.list`），不是另外啟動的 `herdr` 指令；回覆與 CLI 的相同，所以每個讀取者都一樣。每一個寫入（`report-metadata`、`tab create`、`agent start`、關閉等）仍然執行 CLI。清單失敗時，會以 Herdr 自己的錯誤拒絕，不會退回 CLI。只讀取的請求（各種清單、`pane.current`、`pane.get`、`pane.read`、`pane.process_info`、`pane.layout`、`session.snapshot`）逾時或連線在回答前關閉時，會在 250 ms 後再問一次；會改變東西的請求只送一次。儀表板和瀏覽器檢視從同一個 `session.snapshot` 一併讀取 panes 與 workspaces。瀏覽器檢視的輪詢（有頁面在監聽時每 2 秒一次）仍然是輪詢：它的網還包含只有 session 檔和 intercom 才知道的內容（單位在等什麼、它的佇列、它的對話框），這些沒有任何 Herdr 事件會告知。
 
+## 子代理宿主
+
+pi-straw-boss 自己當子代理的宿主，跑在 Maestro 引擎上（`@nubl/maestro`，釘在 weihung fork 的一個 commit），用簡單模式：每個子代理一件任務，開在 Herdr 的分割窗格，結果以一則訊息送回來。一般的 `pi install npm:pi-straw-boss` 就會裝好它；除了 Herdr 不需要別的。
+
+- **工具。** `subagent`（`name`、`task`、`agent`、`model`：精確 id、備援清單或 `task:<category>`、`thinking`、`cwd`、`item`、`solutionSpace`、`systemPrompt`、`skills`、`tools`、`fork`、`interactive`）、`subagent_cancel`、`subagent_resume`、`subagents_list` 與 `/subagent`；子代理有 `caller_ping`，不會自己結束的子代理還有 `subagent_done`。名稱和參數都沿用 pi-herdr-agents，所以 prompt 和 skill 不必改。不註冊的有：常駐專員（`subagent_send`、`subagent_stop`）、`subagent_interrupt`、受管 worktree（`worktree_list`、`worktree_remove`、`/worktree`）、任務模型寫入器（`subagents_write_task_models`、`/subagents-init`）、Herdr Core 與 Herdr 側欄外掛。帶了 `persistent`、`notify`、`worktree` 或 `accept` 的呼叫，或指名一個定義成常駐的角色，會被拒絕，並說明改用什麼做法。
+- **誰可以派工。** 任何 pi session：main、member、train，或從沒加入網的 session，有沒有 todo 都可以。沒帶 `item` 就派出去的 worker（臨時的 scout、計畫外的檢查）是一般的 worker：沒有任何地方會對它發出警告，它的顯示也和綁了 todo 的一樣。
+- **worker 顯示在哪裡。** 在 pi 裡，透過 `pi.events` 上的 `pi-herdr-agents:run-rows:v1`，事件名稱、內容與認領方式都照 pi-herdr-agents 的定義：pi-todo-ledger 把 run 畫在它的 todo 底下，沒有 todo 的畫在「其他 worker」群組。沒有被任何呈現者認領的列，顯示在編輯器上方的 Subagents 方框，一個 worker 一列：名稱 · 模型 · 狀態 · 時間。在 GUI 和看板上，worker 顯示在派它出去的 session 底下，分頁以外的 session 也一樣。
+- **模型。** `<agent dir>/herdr-agents/config.json`（預設 `~/.pi/agent/herdr-agents/config.json`），也就是 pi-herdr-agents 讀的那個檔：`models.default`、`models.agents`、`models.tasks`、`models.tasksThinking`，以及 `status`、`supervision`、`panes`、`spawning` 各段。沒有這個檔時，套件的 `config.json.example` 提供模型以外的設定。手動編輯，然後 `/reload`。
+- **worker 失聯。** worker 的窗格關掉，或它的 pi 在回報前結束時，Maestro 會送出一則失敗結果。在模型讀到之前，Straw Boss 在裡面加一段，寫上 worker 的名稱、它的 session 檔與 `subagent_resume` 的呼叫方式，其他什麼都不做：下面的催報、接手、還原與復活是給 pi-herdr-agents 的 run 用的，對 sb 宿主的 run 一律讓開。
+- **選擇。** 先看 `PI_STRAW_BOSS_HOST`（`sb` 或 `off`），再看 `<agent dir>/straw-boss/host.json`（`{ "host": "sb" }` 或 `{ "host": "off" }`），再看 `~/.pi/agent/straw-boss/host.json`；都沒有就開啟。
+- **只有一個宿主。** pi 載入期間，宿主什麼都不註冊。到了 session 開始時，每個擴充都已註冊完畢，所以它讀 pi 自己的紀錄：`pi.getCommands()` 在任何去重之前列出每個擴充的 `/subagent`，`pi.getAllTools()` 列出勝出的那個 `subagent` 來自哪個擴充，兩者都附上註冊它的擴充的解析後路徑，再由上方最近的 package.json 認出套件。若 pi-herdr-agents 或另一份 pi-straw-boss 已經註冊了，sb 的宿主就退讓：什麼都不註冊，只說一次，doctor 也會說明原因。載入順序、pi-herdr-agents 的載入戳記、先前載入留下的 runtime 槽位一律不讀。否則它就載入 Maestro 並註冊工具。
+- **打包。** 每次啟動用 `-e` 傳入的子代理入口是 `src/host/child.ts`，這個路徑在每個版本都保持不變。sb server 需要 pi-intercom，一般安裝不會帶它（`pi install npm:pi-intercom`）；宿主沒有它也能運作。操作指南是套件附的 skill `pi-straw-boss-subagents`。
+
 ## 孤立的子智慧體
 
 ```mermaid
@@ -1316,6 +1329,8 @@ flowchart TD
     m --> r["報告抵達啟動它的 session"]
     s -->|"沒有"| n["不送任何東西"]
 ```
+
+本節與接下來三節是給 pi-herdr-agents 的 run 用的：[sb 自己的宿主](#子代理宿主)的 run 一律不催報、不接手、不還原、也不復活。
 
 子智慧體的結果只有在啟動它的 session 自己的行程持有 pi-herdr-agents 的 watcher 與已啟動子層的登記簿（`runningSubagents`，位於行程全域的槽位 `globalThis[Symbol.for("pi-subagents/runtime")]`）時，才會送達那個 session。`/reload`、`/new`、`/resume` 和 `/fork` 會保留它們，結束 pi 會抑制送達，崩潰或重新啟動則會永久丟失：pi-herdr-agents 在完全重新啟動後不會恢復 watcher。完成後仍保持開啟的子智慧體（例如互動式的）就此被擱置：它完成後停在自己的 pane 裡，沒有人被告知。
 
@@ -4125,6 +4140,8 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 **它讀什麼。** 每個角色預期 settings 所列套件的工具：main、member、train 和尚未加入的 session 預期六個 `subagent*` 工具、`intercom`、`todo` 和 `MonitorCreate`；塔台預期後三個（它不執行 subagent）；子代理預期以上全部再加 `caller_ping` 和 `subagent_done`，扣掉啟動時被拒絕的（`PI_DENY_TOOLS`）。工具沒有註冊，或註冊為 `direct` 卻沒有啟用，就算缺少；`deferred` 工具不必啟用也能取用。pi-herdr-agents 每次載入都寫一個載入戳記（`globalThis[Symbol.for("pi-herdr-agents/load-stamp")]`：它的版本、根目錄和 HEAD、Maestro 的 build、時間、世代，以及載入拋錯時的 `failed`），doctor 拿它和 settings 的 pin 及安裝目錄的 HEAD 比對。
 
 **在 session 裡。** `sb_doctor`（已加入的 session 和塔台，與其他網路工具相同）和 `/boss doctor`（窗格裡每個不是子代理的 session）回報結論、缺少的工具及其狀態、戳記、pi 版本和模型。每次 session 開始（啟動、`/reload`、new、resume、fork）後的第一個回合，窗格裡每個不是子代理的 session 都做一次同樣的檢查：缺少預期的工具時，它顯示警告，並在那個回合加入一則訊息，說不要用一般窗格繞過它，要執行 `sb_doctor` 並交接。子代理不會收到這則訊息：它的工具由啟動方式決定（角色的工具清單會略去 `intercom`、`todo` 或 `subagent`；自動結束的啟動沒有 `subagent_done`），由父代理監看，而被叫去交接的子代理還沒開工就停了（2026-11-26）。
+
+**宿主。** 報告會寫出子代理宿主是誰：sb 的（`active`，附上 Maestro 的版本與它的 lock 解析出的 commit）、`stood down`（是誰、從哪裡註冊了 `subagent`）、`off`，或 `failed to load`。在 sb 的宿主下，各角色預期的是 pi-straw-boss 的四個工具，而不是 pi-herdr-agents 的六個；缺少 pi-intercom 時，會標明那是 sb server 需要的，宿主並不需要。
 
 **從 shell。** `cli.mjs doctor --session <id|prefix|pane> [--json]` 檢查另一個 session，例如工具不見的那一個。它讀不到那個程序，所以讀得到的都讀：用 pi 自己的 loader 對同一個資料夾和 settings 做一次新的載入（在一個沒有該 session 的 Herdr、subagent 和 intercom 環境變數的子 `node` 裡），錯誤就是 pi 的錯誤；session 檔，找出 pi 程序啟動後 provider 回答「No such tool available」的預期工具；以及 Herdr 裡的窗格，拿它的 pi 啟動時間對照 pi-herdr-agents 的安裝時間。新的載入有、session 卻被拒絕的工具就是 `H1-or-H3`：故障在那個程序裡，在它裡面執行 `sb_doctor` 就分得出是哪一種。健康時結束碼是 0，有故障或無法查看時是 1。
 
