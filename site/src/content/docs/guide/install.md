@@ -27,7 +27,7 @@ When one is installed, Straw Boss picks it up; without it, the rest works as bef
 
 | Package | What Straw Boss does with it |
 | --- | --- |
-| [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) | Not needed: Straw Boss hosts subagents itself ([The subagent host](/pi-straw-boss/docs/reference/how-it-works/the-subagent-host/)). With it installed, sb's host stands down and pi-herdr-agents launches them; they show the same way, under the session that launched them, in the tower dashboard, the sidebar, and the GUI. Under either host, a member that dispatches one is promoted to main, and its tower opens. |
+| [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) | Not needed: Straw Boss hosts subagents itself ([The subagent host](/pi-straw-boss/docs/reference/how-it-works/the-subagent-host/)). If pi-herdr-agents launches your subagents, the startup warning shows the command to remove it. Run that command and then `/reload` to switch to Straw Boss. With either host, subagents appear under the session that launched them, in the tower dashboard, the sidebar, and the GUI. Under either host, a member that dispatches one is promoted to main, and its tower opens. |
 | [@juicesharp/rpiv-ask-user-question](https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question) 2.13 or newer | `ask_user_question` questionnaires can be answered or cancelled from the GUI, and a waiting one marks its unit as waiting. |
 | [pi-robot-hand](https://www.npmjs.com/package/pi-robot-hand) 0.3.0 or newer | `robot_hand` selectors can be answered from the GUI. |
 | pi-code (hooks extension, with its dialog events) | Its hook confirmation ("Allow bash?") can be answered from the GUI. |
