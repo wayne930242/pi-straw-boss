@@ -3614,9 +3614,9 @@ Routine progress is on the work board and wakes nothing. The code writes the rea
 
 #### The logbook
 
-Since 0.112.0 (boss 2026-11-28: 「塔台只要有辦法查帳就好」, [spec](specs/2026-11-28-tower-quiet.md)) the sb server's intake records every `milestone` and `shared` call in the logbook, `logbook.json` in the folder of its Herdr slot (the state folder for the default Herdr, `servers/<hash>` for another), and wakes a run only where a run has something to do. A woken run's brief lists the entries no run has read, before the rest (`Logbook since your last run:`); `board_read` section `logbook` and `/boss board log` list them for a tower, a main, and the boss.
+Since 0.113.0 (boss 2026-11-28: 「塔台只要有辦法查帳就好」, [spec](specs/2026-11-28-tower-quiet.md)) the sb server's intake records every `milestone` and `shared` call in the logbook, `logbook.json` in the folder of its Herdr slot (the state folder for the default Herdr, `servers/<hash>` for another), and wakes a run only where a run has something to do. A woken run's brief lists the entries no run has read, before the rest (`Logbook since your last run:`); `board_read` section `logbook` and `/boss board log` list them for a tower, a main, and the boss.
 
-| What reaches the tower identity | Before 0.112.0 | Now |
+| What reaches the tower identity | Before 0.113.0 | Now |
 |---|---|---|
 | `call_tower` `blocked`, or no `why` (`unspecified`) | wakes at 1 s | the same |
 | `call_tower` `milestone` from a main a tower opened (its pane's `sb_opened_by`, or the opener's ledger), or a `milestone` or `shared` from a session this tower asked (`expects.json`) | a `milestone` waits up to 30 s (the hold), then wakes | the same, and recorded as having woken it |
@@ -3638,7 +3638,7 @@ Each sb server writes only its own slot's file, so two Herdr servers on one comp
 
 #### The hold
 
-An intercom event whose header says `why=milestone` and `reply=none` (since 0.112.0 only a milestone that answers the tower's request is queued at all), with no local run live, waits up to 30 seconds (`hold`) for others, counted from the first such event, so mains that finish together land in one run. Every other event (`shared`, `blocked`, unspecified, a reply expected, the boss, a notice, a timer) wakes at 1 second as before and takes any held milestones with it. A live run gets each event at its next idle moment, with no hold. The server reads the header at the very start of the event text only, so a message that spells out `why=milestone` further in, or in a quoted name, is not held.
+An intercom event whose header says `why=milestone` and `reply=none` (since 0.113.0 only a milestone that answers the tower's request is queued at all), with no local run live, waits up to 30 seconds (`hold`) for others, counted from the first such event, so mains that finish together land in one run. Every other event (`shared`, `blocked`, unspecified, a reply expected, the boss, a notice, a timer) wakes at 1 second as before and takes any held milestones with it. A live run gets each event at its next idle moment, with no hold. The server reads the header at the very start of the event text only, so a message that spells out `why=milestone` further in, or in a quoted name, is not held.
 
 <details>
 <summary>Details</summary>

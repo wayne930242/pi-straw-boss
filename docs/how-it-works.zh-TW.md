@@ -3614,9 +3614,9 @@ Herdr（0.9.5）會在一秒內，丟掉它不認得標籤的已回報智慧體�
 
 #### 帳本
 
-從 0.112.0 起（老闆 2026-11-28：「塔台只要有辦法查帳就好」，[規格](specs/2026-11-28-tower-quiet.md)），sb server 的收件處把每一則 `milestone` 與 `shared` 呼叫記進帳本，也就是它的 Herdr slot 資料夾裡的 `logbook.json`（預設 Herdr 是 state folder，其他 Herdr 是 `servers/<hash>`），只在 run 有事可做時才喚醒它。被喚醒的 run 的簡報會在其他內容之前列出還沒有 run 讀過的條目（`Logbook since your last run:`）；`board_read` 的 `logbook` 區段與 `/boss board log` 則為塔台、主智慧體與老闆列出它們。
+從 0.113.0 起（老闆 2026-11-28：「塔台只要有辦法查帳就好」，[規格](specs/2026-11-28-tower-quiet.md)），sb server 的收件處把每一則 `milestone` 與 `shared` 呼叫記進帳本，也就是它的 Herdr slot 資料夾裡的 `logbook.json`（預設 Herdr 是 state folder，其他 Herdr 是 `servers/<hash>`），只在 run 有事可做時才喚醒它。被喚醒的 run 的簡報會在其他內容之前列出還沒有 run 讀過的條目（`Logbook since your last run:`）；`board_read` 的 `logbook` 區段與 `/boss board log` 則為塔台、主智慧體與老闆列出它們。
 
-| 到達塔台身分的東西 | 0.112.0 之前 | 現在 |
+| 到達塔台身分的東西 | 0.113.0 之前 | 現在 |
 |---|---|---|
 | `call_tower` `blocked`，或沒有 `why`（`unspecified`） | 1 秒時喚醒 | 相同 |
 | 塔台開啟的主智慧體（它的 pane 有 `sb_opened_by`，或開啟者的帳裡有它）送來的 `call_tower` `milestone`，或這個塔台問過的 session（`expects.json`）送來的 `milestone` 或 `shared` | `milestone` 最多等 30 秒（保留），然後喚醒 | 相同，並記下它喚醒了塔台 |
@@ -3638,7 +3638,7 @@ Herdr（0.9.5）會在一秒內，丟掉它不認得標籤的已回報智慧體�
 
 #### 保留
 
-標頭說 `why=milestone` 與 `reply=none`（從 0.112.0 起，只有回應塔台請求的里程碑才會排入）、而且沒有本機 run 存活的 intercom 事件，會從第一個這樣的事件起算，最多等 30 秒（`hold`）等其他事件，所以一起完成的主智慧體會落在同一個 run 裡。其他每個事件（`shared`、`blocked`、未指定、預期回覆、老闆、通知、計時器）像以前一樣在 1 秒時喚醒，並帶著任何被保留的 milestone 一起。存活的 run 在它的下一個閒置時刻取得每個事件，不保留。server 只讀事件文字最開頭的標頭，所以在更後面或引用的名稱裡拼出 `why=milestone` 的訊息不會被保留。
+標頭說 `why=milestone` 與 `reply=none`（從 0.113.0 起，只有回應塔台請求的里程碑才會排入）、而且沒有本機 run 存活的 intercom 事件，會從第一個這樣的事件起算，最多等 30 秒（`hold`）等其他事件，所以一起完成的主智慧體會落在同一個 run 裡。其他每個事件（`shared`、`blocked`、未指定、預期回覆、老闆、通知、計時器）像以前一樣在 1 秒時喚醒，並帶著任何被保留的 milestone 一起。存活的 run 在它的下一個閒置時刻取得每個事件，不保留。server 只讀事件文字最開頭的標頭，所以在更後面或引用的名稱裡拼出 `why=milestone` 的訊息不會被保留。
 
 <details>
 <summary>細節</summary>
