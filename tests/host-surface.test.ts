@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { createHost } from "../src/host/index.ts";
+import { DROPPED_PARAMS, droppedParamError } from "../src/host/surface.ts";
+import { hostState } from "../src/host/state.ts";
+import { fakePi } from "./host-fake.ts";
+
+// The simple surface (surface.ts) over the real Maestro engine: the four kept tools under their names and parameters, `/subagent`, and nothing of
+// persistent specialists, interrupts, worktrees, accept checks or the task-model writer. A call that passes a dropped parameter is refused clearly.
+
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+async function loaded() {
+	const f = fakePi(`${ROOT}src/host/index.ts`);
+	createHost({ choice: () => ({ host: "sb", from: "default" }), root: ROOT })(f.pi);
+	await f.emit("session_start");
+	assert.equal(hostState()?.state, "active", JSON.stringify(hostState()));
+	const tool = (name: string) => f.tools.findLast((t) => t.name === name)!.tool!;
+	return { ...f, tool };
+}
+
+test("the real engine registers subagent, subagent_cancel, subagent_resume and subagents_list, and /subagent, and nothing else of Maestro's", async () => {
+	const w = await loaded();
+	assert.deepEqual([...new Set(w.tools.map((t) => t.name))].sort(), ["subagent", "subagent_cancel", "subagent_resume", "subagents_list"]);
+	assert.deepEqual(w.commands.map((c) => c.name), ["subagent"]);
+	const props = Object.keys((w.tool("subagent").parameters as { properties: object }).properties);
+	for (const kept of ["name", "task", "agent", "model", "thinking", "cwd", "item", "solutionSpace"]) assert.ok(props.includes(kept), kept);
+	for (const dropped of Object.keys(DROPPED_PARAMS.subagent!)) assert.ok(!props.includes(dropped), dropped);
+	assert.deepEqual(Object.keys((w.tool("subagent_resume").parameters as { properties: object }).properties).sort(), ["autoExit", "message", "name", "sessionPath"]);
+	assert.doesNotMatch(w.tool("subagent").description ?? "", /worktree|Core|persistent/i);
+});
+
+for (const [param, value, hint] of [["worktree", { branch: "x" }, /git worktree add/], ["persistent", true, /subagent_resume/], ["notify", true, /no notices/], ["accept", { run: "true" }, /verify the result yourself/]] as const) {
+	test(`a subagent call with \`${param}\` is refused with what to do instead, before Maestro sees it`, async () => {
+		const w = await loaded();
+		await assert.rejects(Promise.resolve().then(() => w.tool("subagent").execute("c1", { name: "x", task: "t", [param]: value }, undefined, undefined, w.ctx)), (error: Error) => {
+			assert.match(error.message, new RegExp(`simple mode and does not take \`${param}\``));
+			assert.match(error.message, hint);
+			return true;
+		});
+	});
+}
+
+test("a dropped parameter passed as null or false is no use of it, and a call without one reaches Maestro", async () => {
+	assert.equal(droppedParamError("subagent", { name: "x", task: "t", worktree: null, persistent: false, notify: false }), undefined);
+	const w = await loaded();
+	// Outside Herdr Maestro answers that it needs Herdr: the call got past the simple surface.
+	const result = (await w.tool("subagent").execute("c2", { name: "scout-1", task: "look", worktree: null }, undefined, undefined, w.ctx)) as { content: { text: string }[] };
+	assert.match(result.content[0]!.text, /herdr|session file/i);
+});

@@ -1,4 +1,5 @@
-// Copied from pi-herdr-agents f1590cb (MIT, Copyright (c) 2026 Giuseppe Rodriguez); see NOTICE.md.
+// Copied from pi-herdr-agents f1590cb, with the run-row changes of 2045e55 (branch feat/run-rows-probe; MIT, Copyright (c) 2026 Giuseppe Rodriguez); see NOTICE.md. sb: one row per worker, name · model · state · time.
+import type { RunRows } from "./run-rows.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { SupervisionConfig } from "@nubl/maestro/core/config/supervision-config";
@@ -149,13 +150,16 @@ interface WidgetDeps {
 }
 
 /** Widget and status refresh timers for one extension instance. */
-export function createWidgetController({
-	runtime,
-	statusConfig,
-	supervisionConfig,
-	observeRunningSubagent,
-	evaluateNoProgressAdvisory,
-}: WidgetDeps) {
+export function createWidgetController(
+	{
+		runtime,
+		statusConfig,
+		supervisionConfig,
+		observeRunningSubagent,
+		evaluateNoProgressAdvisory,
+	}: WidgetDeps,
+	presenters = new WeakMap<ExtensionAPI, RunRows>(),
+) {
 	const runningSubagents = runtime.runningSubagents;
 
 	/** Interval timer for widget re-renders. */
@@ -167,9 +171,15 @@ export function createWidgetController({
 	function renderSubagentWidgetLines(
 		agents: RunningSubagent[],
 		width: number,
+		presenter: RunRows | null | undefined = runtime.pi &&
+			presenters.get(runtime.pi),
 	): string[] {
 		const now = Date.now();
-		const rendered = agents.map((agent) => ({
+		const claimed = presenter?.claimed();
+		const visible = agents.filter((a) => !claimed?.has(a.id));
+		const hidden = agents.length - visible.length;
+		if (hidden && !visible.length) return [];
+		const rendered = visible.map((agent) => ({
 			agent,
 			projection: projectLifecycle(agent.lifecycle, now),
 		}));
@@ -180,7 +190,7 @@ export function createWidgetController({
 				projection.kind === "running" ||
 				projection.kind === "blocked",
 		).length;
-		const openCount = agents.length - activeCount;
+		const openCount = visible.length - activeCount;
 		const info =
 			activeCount > 0
 				? openCount > 0
@@ -189,29 +199,34 @@ export function createWidgetController({
 				: `${openCount} open`;
 		const accent = activeCount > 0 ? ACTIVE_ACCENT : OPEN_ACCENT;
 
-		const lines: string[] = [borderTop("Subagents", info, width, accent)];
+		const lines: string[] = [
+			borderTop(
+				"Subagents",
+				hidden ? `${info} · ${hidden} on todos` : info,
+				width,
+				accent,
+			),
+		];
 
 		for (const { agent, projection } of rendered) {
 			const elapsed = formatElapsedMMSS(
 				agent.startTime,
 				projection.runtimeEndedAt ?? now,
 			);
-			const agentTag = agent.agent ? ` (${encodeHostValue(agent.agent)})` : "";
-			const left = ` ${elapsed}  ${encodeHostValue(agent.name)}${agentTag} `;
-			const runtimeTag = agent.runtimePlan
-				? `${encodeHostValue(agent.runtimePlan.modelId)}|${agent.runtimePlan.thinking} · `
+			// sb: one row per worker, name · model · state · time; the name is cut first when the box is narrow.
+			const model = agent.runtimePlan
+				? ` · ${encodeHostValue(agent.runtimePlan.modelId)}`
 				: "";
-			const label =
+			const left = ` ${encodeHostValue(agent.name)}`;
+			const state =
 				agent.cancelState === "unconfirmed"
 					? "cancel unconfirmed"
 					: agent.cancelState
 						? "cancelling…"
-						: undefined;
-			const right = label
-				? ` ${runtimeTag}${label} `
-				: statusConfig.enabled
-					? ` ${runtimeTag}${formatLifecycleWidgetLabel(projection, now).trim()} `
-					: ` ${runtimeTag}starting… `;
+						: statusConfig.enabled
+							? formatLifecycleWidgetLabel(projection, now).trim()
+							: "starting…";
+			const right = `${model} · ${state} · ${elapsed} `;
 
 			lines.push(borderLine(left, right, width, accent));
 		}
@@ -237,6 +252,12 @@ export function createWidgetController({
 			return;
 		}
 
+		// A widget can render again after another API becomes live.
+		// Maestro's deferred and error-encoding tool APIs inherit from the
+		// registered API. Follow that chain, not the last registered runtime.pi.
+		let api: ExtensionAPI | null = runtime.liveApi ?? null;
+		while (api && !presenters.has(api)) api = Object.getPrototypeOf(api);
+		const presenter = api && presenters.get(api);
 		latestCtx.ui.setWidget(
 			"subagent-status",
 			(_tui: any, _theme: any) => {
@@ -246,6 +267,7 @@ export function createWidgetController({
 						return renderSubagentWidgetLines(
 							Array.from(runningSubagents.values()),
 							width,
+							presenter ?? null,
 						);
 					},
 				};

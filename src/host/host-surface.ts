@@ -1,15 +1,9 @@
-// Copied from pi-herdr-agents f1590cb (MIT, Copyright (c) 2026 Giuseppe Rodriguez); see NOTICE.md.
-import { join } from "node:path";
-import {
-	loadHerdrConfig,
-	selectHerdrBinding,
-	type HerdrBinding,
-} from "@nubl/maestro/core/config/herdr-config";
+// Copied from pi-herdr-agents f1590cb, without the Core provider (MIT, Copyright (c) 2026 Giuseppe Rodriguez); see NOTICE.md.
+import type { HerdrBinding } from "@nubl/maestro/core/config/herdr-config";
 import type { PaneConfig } from "@nubl/maestro/core/config/pane-config";
 import type { SurfaceProvider } from "@nubl/maestro/core/surface-provider";
 import type { ScriptShellResolver } from "@nubl/maestro/core/script-launch";
 import { HerdrSurfaceProvider } from "./herdr/herdr-surface-provider.ts";
-import { HerdrCoreSurfaceProvider } from "./herdr/herdr-core-surface-provider.ts";
 import { createPiScriptShellResolver } from "@nubl/maestro/adapters/pi/script-shell";
 import type { PiLaunchSnapshot } from "@nubl/maestro/runtime/pi-run-session-types";
 import type { HostSurfaceBinding } from "@nubl/maestro/runtime/host-surface-binding";
@@ -18,25 +12,16 @@ import {
 	herdrMarkerSessionReader,
 } from "./marker-transport.ts";
 
-export function resolveHerdrBinding(
-	configDir: string,
-	examplePath: string,
-	platform: NodeJS.Platform = process.platform,
-): HerdrBinding {
-	return selectHerdrBinding(
-		loadHerdrConfig(join(configDir, "herdr-agents"), examplePath),
-		process.env,
-		platform,
-	);
+/** sb's host runs the legacy Herdr surface only (split panes): a `herdr.backend` of `core` in the config is not read. */
+export function resolveHerdrBinding(): HerdrBinding {
+	return { backend: "legacy" };
 }
 export function createHerdrProvider(
-	binding: HerdrBinding,
+	_binding: HerdrBinding,
 	paneConfig: PaneConfig,
 	resolveScriptShell?: ScriptShellResolver,
 ): SurfaceProvider {
-	return binding.backend === "core"
-		? new HerdrCoreSurfaceProvider(binding)
-		: new HerdrSurfaceProvider({ paneConfig, resolveScriptShell });
+	return new HerdrSurfaceProvider({ paneConfig, resolveScriptShell });
 }
 
 /**
@@ -59,7 +44,7 @@ export function createLaunchSurfaceProvider(
 }
 
 /**
- * The terminal host's runtime composition: Herdr/Core selection, the owning
+ * The terminal host's runtime composition: the legacy Herdr binding, the owning
  * provider, the per-launch legacy pane provider, and this pane's socket marker
  * transport. The run session never discovers any of these itself.
  */

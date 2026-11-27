@@ -164,7 +164,7 @@ SOFTWARE.
 
 ## pi-herdr-agents (`src/host/`, `config.json.example`)
 
-The Maestro host under `src/host/` (the Herdr legacy and Core surface providers, the surface binding, the marker transport, the widgets and renderers, the child entry, the engine-build hook and the load stamp) and `config.json.example` are copied from [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) at commit `f1590cb` (the weihung fork, `wayne930242/pi-herdr-agents`). Each copied file names its source in its first line; `src/host/engine.ts` and `src/host/child.ts` are adapted from its `pi-extension/subagents/index.ts` and `child.ts`.
+The Maestro host under `src/host/` (the Herdr legacy surface provider, the surface binding, the marker transport, the widgets and renderers, the child entry, the engine-build hook and the load stamp) and `config.json.example` are copied from [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) at commit `f1590cb` (the weihung fork, `wayne930242/pi-herdr-agents`); `src/host/run-rows.ts` and the run-row changes in `src/host/widgets.ts` come from that fork's branch `feat/run-rows-probe` at `2045e55`, and `skills/pi-straw-boss-subagents/SKILL.md` is adapted from its `skills/pi-herdr-agents/SKILL.md`. Each copied file names its source in its first line; `src/host/engine.ts` and `src/host/child.ts` are adapted from its `pi-extension/subagents/index.ts` and `child.ts`.
 
 ```text
 MIT License

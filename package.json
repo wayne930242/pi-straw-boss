@@ -25,6 +25,7 @@
     "dist/server",
     "prompts",
     "roles",
+    "skills",
     "README.md",
     "NOTICE.md",
     "config.json.example",
@@ -38,6 +39,9 @@
       "./src/hygiene.ts",
       "./src/rolepack.ts",
       "./src/host/index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "scripts": {
@@ -74,7 +78,7 @@
     "vite": "8.3.4"
   },
   "dependencies": {
-    "@nubl/maestro": "git+https://github.com/wayne930242/maestro.git#201a0f9467b43cbeb47d48c500efb1358d40a19d",
+    "@nubl/maestro": "git+https://github.com/wayne930242/maestro.git#0e1dd78c71ccb353a5fa954b4d40d6dc1e8a312c",
     "tsx": "^4.23.15"
   }
 }

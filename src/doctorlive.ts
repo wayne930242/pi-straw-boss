@@ -3,13 +3,15 @@ import { join } from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getPackageDir, VERSION as PI_VERSION } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { execFileSyncExe } from "./exe.mjs";
+import { maestroPin, pinText } from "./host/pin.ts";
+import { hostState } from "./host/state.ts";
 import { agentDirOf, diagnose, type DoctorFacts, type DoctorReport, type DoctorRole, gitInstallDir, LOAD_STAMP_KEY, type LoadStamp, packageName, pinOf, renderDoctor, selfCheckText, settingsPackages } from "./doctor.ts";
 
 // The doctor in this process (docs/how-it-works.md#the-doctor): the sb_doctor tool, /boss doctor (boss.ts), and the self-check at each session start. Every session in a pane gets the
 // self-check, a child too, which never warns (doctor.ts selfCheckText); the tool and the command go to the sessions that are no child. What this process has is read here; what it means is doctor.ts's.
 
 export const DOCTOR_MESSAGE = "sb-doctor";
-const DESCRIPTION = "Check this session's own tools and loads: whether subagent, intercom, todo and MonitorCreate are registered and active, whether pi-herdr-agents loaded and is current, and what to do. Call it before concluding a tool is missing.";
+const DESCRIPTION = "Check this session's own tools and loads: whether subagent, intercom, todo and MonitorCreate are registered and active, which subagent host registered (sb's own, stood down for pi-herdr-agents, or off) with its Maestro build, whether it is current, and what to do. Call it before concluding a tool is missing.";
 
 export interface DoctorDeps {
 	env: NodeJS.ProcessEnv;
@@ -52,6 +54,7 @@ export function liveFacts(pi: ExtensionAPI, ctx: Pick<ExtensionContext, "model">
 		...(deep ? { installed: { pin: pinOf(herdr), head: install ? (d.headOf ?? gitHead)(install) : undefined }, pi: { running: PI_VERSION, installed: (d.piInstalled ?? diskPi)() } } : {}),
 		provider: ctx?.model?.provider,
 		model: ctx?.model?.id,
+		host: { state: hostState(), ...(deep ? { maestro: pinText(maestroPin()) } : {}) },
 	};
 }
 

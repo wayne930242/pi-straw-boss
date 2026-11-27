@@ -30,9 +30,10 @@ test("the module loads, its factory runs, and outside Herdr it registers nothing
 	assert.deepEqual(registered, []);
 });
 
-test("the manifest ships only src, the built GUI and server bundles, prompts, the role pack (roles/), README, NOTICE (the QR encoder's and pi-herdr-agents' MIT notices), the Maestro host's config example, and LICENSE, has tsx and the Maestro engine as its runtime dependencies, builds the bundles before packing and the page before testing, and points at a real entry", () => {
+test("the manifest ships only src, the built GUI and server bundles, prompts, the role pack (roles/), the subagent host's skill (skills/), README, NOTICE (the QR encoder's and pi-herdr-agents' MIT notices), the Maestro host's config example, and LICENSE, has tsx and the Maestro engine as its runtime dependencies, builds the bundles before packing and the page before testing, and points at a real entry", () => {
 	const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-	assert.deepEqual(manifest.files, ["src", "dist/gui", "dist/server", "prompts", "roles", "README.md", "NOTICE.md", "config.json.example", "LICENSE"]);
+	assert.deepEqual(manifest.files, ["src", "dist/gui", "dist/server", "prompts", "roles", "skills", "README.md", "NOTICE.md", "config.json.example", "LICENSE"]);
+	assert.deepEqual(manifest.pi.skills, ["./skills"], "the subagent host's operating skill");
 	// tsx: the server loads pi-intercom's TypeScript client through it (docs/specs/2026-10-26-sb-backend.md, Process model). @nubl/maestro: the subagent engine src/host/ hosts, a git dependency with committed dist/ (spike 0a).
 	assert.deepEqual(Object.keys(manifest.dependencies).sort(), ["@nubl/maestro", "tsx"]);
 	assert.match(manifest.dependencies["@nubl/maestro"], /^git\+https:\/\/github\.com\/wayne930242\/maestro\.git#[0-9a-f]{40}$/, "Maestro is pinned to a full commit over https");
@@ -135,7 +136,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// 0.83.1 (RV4-F001, measured) 588 to 595 (+7): net.ts runs `netSource.read()` in request order through a queue, so a late reading never overwrites a newer one.
 	// F round 2, headless runs in the GUI (2026-11-24, docs/specs/2026-11-23-lite-b2-d-e-f.md §4.4 and docs/specs/2026-11-23-f-entry.md §2.7–2.8; measured) 595 to 607 (+12): net.ts `RunDialog` and the service's `headless` and `viewer`; gui.ts the run dialogs, the viewer and the head's `to` routes wired to the tower panel.
 	// Zen under headless runs (2026-11-24, docs/specs/2026-11-24-zen-f.md §7.1, §7.3; measured) 607 to 623 (+16): net.ts `RunDialog` gains `at`, `run`, `label`, and `wait` (one line each, with their words); gui.ts the `run-dialogs` event to this computer's streams and `pages()` for ZF-2.
-	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 623, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
+	// sb's subagent host (2026-11-27, boss 「應該說他還是有進入，因為 gui 上還是有」; measured) 623 to 627 (+4): net.ts hangs the workers of a session outside the tabs under it, and holds their panes.
+	assert.ok(sum("src", ["net.ts", "gui.ts"]) <= 627, `src/net.ts and src/gui.ts have ${sum("src", ["net.ts", "gui.ts"])} lines`);
 	// Input (the spec's figure), remote access over Tailscale, its terminal pairing panel (QR, c copies, o opens), and the QR encoder each have their own.
 	// What a waiting session waits on (0.5.0, read for display only; answering is deferred) has its own as well.
 	// 0.5.1 raised remote.ts from 165 to 185 (a recorded server counts as running only if its process started when the entry says: a reused PID

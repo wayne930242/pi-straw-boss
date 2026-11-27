@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { describeHost, type HostState } from "./host/state.ts";
 
 // The doctor (docs/how-it-works.md#the-doctor): what a session's tools and loads are, and what to do when a tool the role needs is missing. It separates the three ways a tool goes
 // missing that look the same from inside the model: the package never loaded in this process (H1), it registered the tool and something left it inactive (H2), or pi has it active and
@@ -15,6 +16,9 @@ export const TOOL_PACKAGE: Readonly<Record<string, string>> = {
 	caller_ping: "pi-herdr-agents", subagent_done: "pi-herdr-agents", intercom: "pi-intercom", todo: "pi-todo-ledger", MonitorCreate: "pi-loop-monitor",
 };
 const DISPATCH = ["subagent", "subagent_cancel", "subagent_send", "subagent_resume", "subagent_interrupt", "subagents_list"];
+/** The tools of sb's own simple host (src/host/surface.ts), its child protocol too: pi-straw-boss owns them when its host registered. */
+const SB_DISPATCH = ["subagent", "subagent_cancel", "subagent_resume", "subagents_list"];
+const SB_CHILD = ["caller_ping", "subagent_done"];
 const SHARED = ["intercom", "todo", "MonitorCreate"];
 /** What each role must have active. pi-herdr-agents gives every session in a pane the same tools, so a member, a train and an unjoined session need what a main does; a tower runs
  * no subagent (runmode.ts blocks it), and a child has the child protocol on top, minus what its launch denied (PI_DENY_TOOLS). */
@@ -45,6 +49,8 @@ export interface DoctorFacts {
 	model?: string;
 	/** Load errors pi named (a fresh load's `getExtensions().errors`). */
 	errors?: readonly { path: string; error: string }[];
+	/** sb's subagent host in this process (src/host/state.ts), and the Maestro build it pins; undefined out of process. */
+	host?: { state?: HostState; maestro?: string };
 }
 
 export type ToolState = "active" | "inactive" | "unregistered";
@@ -65,6 +71,10 @@ export interface DoctorReport {
 	model?: string;
 	errors: { path: string; error: string }[];
 	verdict: VerdictCode;
+	/** Who hosts subagents: sb's host (its state and Maestro build), or pi-herdr-agents. */
+	host: { owner: "pi-straw-boss" | "pi-herdr-agents"; line?: string; maestro?: string };
+	/** pi-intercom is not in the settings: the sb server cannot start, the host works. */
+	intercom?: string;
 	/** One line: what is wrong. */
 	finding: string;
 	/** One line: what to do next. */
@@ -110,8 +120,18 @@ export function gitInstallDir(agentDir: string, entry: unknown): string | undefi
 const DIRECT = new Set(["direct", "model-only", undefined]);
 const short = (sha: string | undefined) => sha?.slice(0, 7);
 
+/** Who registered the dispatch tools: sb's host when its state says it did (or, out of process, when `subagent` came from pi-straw-boss), else pi-herdr-agents. */
+export function hostOwner(f: Pick<DoctorFacts, "host" | "tools">): "pi-straw-boss" | "pi-herdr-agents" {
+	const state = f.host?.state?.state;
+	if (state) return state === "off" || state === "stood-down" ? "pi-herdr-agents" : "pi-straw-boss";
+	return f.tools.some((t) => t.name === "subagent" && t.source && packageName(t.source) === "pi-straw-boss") ? "pi-straw-boss" : "pi-herdr-agents";
+}
+const sbExpected = (role: DoctorRole) => (role === "tower" ? EXPECTED_TOOLS.tower : [...SB_DISPATCH, ...SHARED, ...(role === "child" ? SB_CHILD : [])]);
+
 export function diagnose(f: DoctorFacts): DoctorReport {
-	const installed = new Set(f.packages), denied = new Set(f.role === "child" ? f.denied ?? [] : []);
+	const owner = hostOwner(f), sb = owner === "pi-straw-boss";
+	const installed = new Set([...f.packages, ...(sb ? ["pi-straw-boss"] : [])]), denied = new Set(f.role === "child" ? f.denied ?? [] : []);
+	const packageOf = (name: string) => (sb && (SB_DISPATCH.includes(name) || SB_CHILD.includes(name)) ? "pi-straw-boss" : TOOL_PACKAGE[name]!);
 	const byName = new Map(f.tools.map((t) => [t.name, t]));
 	const active = f.active ? new Set(f.active) : undefined;
 	const loaded: Record<string, number> = {};
@@ -122,25 +142,28 @@ export function diagnose(f: DoctorFacts): DoctorReport {
 		// A deferred or codemode tool is reachable without being active; out of process nothing is active, and a registered tool is all a fresh load can show.
 		return !active || active.has(name) || !DIRECT.has(tool.exposure) ? "active" : "inactive";
 	};
-	const expected = EXPECTED_TOOLS[f.role].filter((name) => installed.has(TOOL_PACKAGE[name]!) && !denied.has(name)).map((name) => ({ name, package: TOOL_PACKAGE[name]!, state: stateOf(name) }));
+	const expected = (sb ? sbExpected(f.role) : EXPECTED_TOOLS[f.role]).filter((name) => installed.has(packageOf(name)) && !denied.has(name)).map((name) => ({ name, package: packageOf(name), state: stateOf(name) }));
 	const missing = expected.filter((t) => t.state !== "active");
 	const owners = new Set(expected.map((t) => t.package));
-	const sourceOf = (pkg: string) => (t: ToolFact) => TOOL_PACKAGE[t.name] === pkg || Boolean(t.source && packageName(t.source) === pkg);
+	const sourceOf = (pkg: string) => (t: ToolFact) => packageOf(t.name) === pkg || Boolean(t.source && packageName(t.source) === pkg);
 	const silent = [...owners].filter((pkg) => !f.tools.some(sourceOf(pkg)));
 	const stamp = f.stamp, pin = f.installed?.pin, head = f.installed?.head;
 	let stale: string | undefined;
-	if (installed.has("pi-herdr-agents") && stamp?.wrapperHead && (pin || head)) {
+	if (!sb && installed.has("pi-herdr-agents") && stamp?.wrapperHead && (pin || head)) {
 		const want = pin ?? head!;
 		if (!stamp.wrapperHead.startsWith(want) && !want.startsWith(stamp.wrapperHead)) stale = `pi-herdr-agents ${short(stamp.wrapperHead)} is loaded, ${short(want)} is installed`;
 	}
 	if (!stale && f.pi?.running && f.pi.installed && f.pi.running !== f.pi.installed) stale = `pi ${f.pi.running} runs, ${f.pi.installed} is installed`;
 	const errors = [...(f.errors ?? [])];
-	const base = { role: f.role, expected, missing, loaded, silent, stamp, stale, pi: f.pi, provider: f.provider, model: f.model, errors };
+	const host = { owner, ...(f.host?.state || f.host ? { line: describeHost(f.host?.state) } : {}), ...(f.host?.maestro ? { maestro: f.host.maestro } : {}) };
+	// The sb server needs pi-intercom (its sessions, the net, the GUI); the subagent host does not. A plain npm install brings no pi-intercom.
+	const intercom = f.host && !f.packages.includes("pi-intercom") && !f.tools.some((t) => t.name === "intercom") ? "pi-intercom is not installed: the sb server, the net and the GUI need it (pi install npm:pi-intercom); the subagent host works without it." : undefined;
+	const base = { role: f.role, expected, missing, loaded, silent, stamp, stale, pi: f.pi, provider: f.provider, model: f.model, errors, host, ...(intercom ? { intercom } : {}) };
 	const list = (ts: { name: string }[]) => ts.map((t) => t.name).join(", ");
 	const unregistered = missing.filter((t) => t.state === "unregistered"), inactive = missing.filter((t) => t.state === "inactive");
 	if (unregistered.length || stamp?.failed) {
 		const why = stamp?.failed ? `its load threw: ${stamp.failed}` : silent.length ? `${silent.join(", ")} registered nothing in this process` : "its package registered other tools but not these";
-		return { ...base, verdict: "H1", finding: `${list(unregistered) || "pi-herdr-agents"} not registered: ${why}${errors.length ? `; pi names ${errors.length} load error${errors.length > 1 ? "s" : ""}` : ""}.`, next: "Hand this work over to a fresh session (a /reload does not cure state a process keeps); do not route around it with plain panes." };
+		return { ...base, verdict: "H1", finding: `${list(unregistered) || owner} not registered: ${why}${errors.length ? `; pi names ${errors.length} load error${errors.length > 1 ? "s" : ""}` : ""}.`, next: "Hand this work over to a fresh session (a /reload does not cure state a process keeps); do not route around it with plain panes." };
 	}
 	if (inactive.length) return { ...base, verdict: "H2", finding: `${list(inactive)} registered but not active: an extension's setActiveTools left ${inactive.length > 1 ? "them" : "it"} out.`, next: "Run /boss doctor fix to make them active again, or /reload." };
 	if (stale) return { ...base, verdict: "stale", finding: `Stale load: ${stale}.`, next: "Finish the turn, then /reload, or hand over to a fresh session if a reload already failed." };
@@ -153,8 +176,12 @@ export function renderDoctor(r: DoctorReport): string {
 	const lines = [`sb doctor: ${r.verdict} (${r.role})`, r.finding, `Next: ${r.next}`];
 	if (r.note) lines.push(r.note);
 	if (r.missing.length) lines.push(`Missing: ${r.missing.map((t) => `${t.name} ${t.state} (${t.package})`).join("; ")}`);
-	if (r.stamp) lines.push(`pi-herdr-agents load: ${r.stamp.wrapperVersion ?? "?"} @${short(r.stamp.wrapperHead) ?? "?"}, maestro ${r.stamp.maestroVersion ?? "?"}, generation ${r.stamp.generation ?? "?"}, at ${r.stamp.loadedAt ?? "?"}${r.stamp.failed ? `, failed: ${r.stamp.failed}` : ""}`);
-	else if (r.expected.some((t) => t.package === "pi-herdr-agents")) lines.push("pi-herdr-agents load: no stamp (a build before the stamp, or it never loaded)");
+	if (r.host.line) lines.push(`Subagent host: ${r.host.line}`);
+	if (r.host.maestro) lines.push(r.host.maestro);
+	if (r.intercom) lines.push(r.intercom);
+	const loader = r.host.owner === "pi-straw-boss" ? "sb host" : "pi-herdr-agents";
+	if (r.stamp) lines.push(`${loader} load: ${r.stamp.wrapperVersion ?? "?"} @${short(r.stamp.wrapperHead) ?? "?"}, maestro ${r.stamp.maestroVersion ?? "?"}, generation ${r.stamp.generation ?? "?"}, at ${r.stamp.loadedAt ?? "?"}${r.stamp.failed ? `, failed: ${r.stamp.failed}` : ""}`);
+	else if (r.expected.some((t) => t.package === r.host.owner && DISPATCH.includes(t.name))) lines.push(`${loader} load: no stamp (a build before the stamp, or it never loaded)`);
 	if (r.stale) lines.push(`Stale: ${r.stale}`);
 	if (r.pi?.running || r.pi?.installed) lines.push(`pi: ${r.pi.running ?? "?"} running, ${r.pi.installed ?? "?"} installed`);
 	if (r.provider || r.model) lines.push(`Model: ${r.provider ?? "?"}/${r.model ?? "?"}`);
@@ -167,7 +194,7 @@ export function renderDoctor(r: DoctorReport): string {
 export function selfCheckText(r: DoctorReport): string | undefined {
 	if (r.role === "child" || (!r.missing.length && r.verdict !== "H1")) return undefined;
 	const first = r.missing[0];
-	const what = first ? `\`${first.name}\` is not active (registered: ${first.state === "unregistered" ? "no" : "yes"}${r.silent.length ? `; ${r.silent.join(", ")} loaded nothing` : ""})` : `pi-herdr-agents failed to load (${r.stamp?.failed})`;
+	const what = first ? `\`${first.name}\` is not active (registered: ${first.state === "unregistered" ? "no" : "yes"}${r.silent.length ? `; ${r.silent.join(", ")} loaded nothing` : ""})` : `${r.host.owner} failed to load (${r.stamp?.failed})`;
 	const more = r.missing.length > 1 ? `, with ${r.missing.slice(1).map((t) => t.name).join(", ")}` : "";
 	return `sb self-check: ${what}${more}. Do not route around it with plain panes; run sb_doctor (or /boss doctor) and ${r.verdict === "H2" ? "follow its next step" : "hand over to a fresh session"}.`;
 }
