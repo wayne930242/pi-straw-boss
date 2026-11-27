@@ -25,20 +25,20 @@
   },
   "eager": {
     "ceiling": 180000,
-    "raw": 140227,
-    "gz": 50789,
-    "sha": "e67961c4e9cf92663135e7b242e5860a4f2d132b"
+    "raw": 142319,
+    "gz": 51483,
+    "sha": "64f9fb9823290b1e69dedf3315ada5f71f4f0b4b"
   },
   "chat": {
     "ceiling": 700000,
-    "raw": 537907,
-    "gz": 200932,
-    "sha": "e67961c4e9cf92663135e7b242e5860a4f2d132b"
+    "raw": 544104,
+    "gz": 202899,
+    "sha": "64f9fb9823290b1e69dedf3315ada5f71f4f0b4b"
   },
   "stylesheet": {
     "ceiling": 200000,
-    "raw": 154188,
-    "gz": 31276,
-    "sha": "e67961c4e9cf92663135e7b242e5860a4f2d132b"
+    "raw": 158031,
+    "gz": 31955,
+    "sha": "64f9fb9823290b1e69dedf3315ada5f71f4f0b4b"
   }
 }

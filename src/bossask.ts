@@ -7,7 +7,8 @@ import { type Got, hubRelay } from "./bossrelay.ts";
 import type { Bus } from "./owners.ts";
 import type { Kit } from "./state.ts";
 import { todosOfBranch } from "./todo.ts";
-import { callServer, type ServerCall } from "./traincar.ts";
+import { callServer } from "./traincar.ts";
+import { type AskClient, askClient, type AskState, gotOf, repliesOf } from "./askclient.ts";
 
 // A decision only the boss can make, asked by code (docs/specs/2026-11-25-idle-wrap-up.md part 2; boss 2026-11-25: 「「自己問我」應該做成程式碼，直接從程式碼發出」). `call_tower` with `why: blocked` and `boss`
 // draws the question in this main's own pane with pi's dialog (a select with the options and a typed answer, or an input), so Herdr shows the pane waiting and the GUI relays the select as any dialog; the answer is the tool's
@@ -40,31 +41,6 @@ export const withBoss = (message: string, q: BossQuestion) => `${message}\nFor t
 export type Asked = { kind: "answered"; text: string } | { kind: "none"; text: string } | { kind: "tower"; note?: string };
 export type BossAsk = (q: BossQuestion, signal: AbortSignal | undefined, ctx: Pick<ExtensionContext, "hasUI" | "ui"> | undefined, callId?: string) => Promise<Asked>;
 type Opts = { signal: AbortSignal };
-
-/** The sb server's Asks as the asker uses them (server/askops.ts); every call answers undefined when no server does. */
-export interface AskClient {
-	open(a: { subject: string; questions: { question: string; options: string[] }[]; toolCallId?: string; item?: number }): Promise<{ id: string; digest: string } | undefined>;
-	answer(id: string, a: { answerId: string; digest: string; replies?: { choices?: number[]; text?: string; note?: string }[]; cancel?: true; by: "terminal" | "gui" | "phone" }): Promise<{ status: number; body: Record<string, unknown> } | undefined>;
-	get(id: string): Promise<AskState | undefined>;
-	close(id: string, why: "esc" | "abort" | "auto"): Promise<void>;
-}
-type AskState = { state: string; answer?: { by: string; replies?: { choices?: number[]; text?: string; note?: string }[]; cancel?: true } };
-export function askClient(call: ServerCall, me: () => string, name: () => string | undefined): AskClient {
-	const asked = async (r: Record<string, unknown>) => { const reply = await call(r, 5000); return reply?.ok ? reply : undefined; };
-	return {
-		open: async (a) => ((r) => (r && typeof (r.ask as { id?: unknown })?.id === "string" ? (r.ask as { id: string; digest: string }) : undefined))(await asked({ cmd: "ask-open", session: me(), name: name(), ask: a })),
-		answer: async (id, a) => ((r) => (r ? { status: Number(r.status), body: (r.body ?? {}) as Record<string, unknown> } : undefined))(await asked({ cmd: "ask-answer", id, ...a })),
-		get: async (id) => (await asked({ cmd: "ask-get", id }))?.ask as AskState | undefined,
-		close: async (id, why) => void (await asked({ cmd: "ask-close", id, session: me(), why })),
-	};
-}
-/** The winner the store holds, as the dialog's result. */
-function gotOf(q: BossQuestion, a: NonNullable<AskState["answer"]>): Got {
-	if (a.cancel) return { cancel: true };
-	const r = a.replies?.[0], pick = r?.choices?.length ? q.options?.[r.choices[0]!] : undefined;
-	return { answer: pick ?? r?.text ?? "", typed: !pick, by: a.by === "terminal" ? "local" : "remote", ...(r?.note ? { note: r.note } : {}) };
-}
-const repliesOf = (q: BossQuestion, g: Exclude<Got, { cancel: true }>) => [{ ...(g.typed ? { text: g.answer } : { choices: [q.options!.indexOf(g.answer)] }), ...(g.note ? { note: g.note } : {}) }];
 
 /** The dialog in this pane: a select with the options and a typed answer, or an input. Auto mode starting between the pick and the typed answer opens no input (it would be answered as Escape and marked refused). */
 async function paneDialog(ui: ExtensionContext["ui"], q: BossQuestion, title: string, opts: Opts, away: () => boolean): Promise<Got | undefined> {
