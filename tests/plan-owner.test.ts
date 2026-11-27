@@ -24,7 +24,7 @@ const unit = (key: string, name: string, role: Unit["role"], extra: Partial<Unit
 const LONG = "worker-reconcile-ledger-exports";
 const NET = { bases: [
 	{ id: "wA", label: "Alpha", mark: "idle", tower: null, outposts: [], outside: [], tabs: [{ id: "wA:t1", label: "work", units: [
-		unit("m1", "api-main", "main", { subs: [unit("run-api-1", "worker-api", "subagent"), unit("run-old", "worker-web", "subagent", { ended: true, control: false }), unit("run-web-2", "worker-web", "subagent"), unit("run-long", LONG, "subagent")] }),
+		unit("m1", "api-main", "main", { subs: [unit("run-api-1", "worker-api", "subagent"), unit("run-old", "worker-web", "subagent", { ended: true, control: false }), unit("run-web-2", "worker-web", "subagent"), unit("run-long", LONG, "subagent"), unit("run-cap", "api-worker", "subagent", { alias: "API Worker 2" })] }),
 		unit("b1", "api-member", "member"),
 	] }] },
 	{ id: "wB", label: "Beta", mark: "idle", tower: null, outposts: [], outside: [], tabs: [{ id: "wB:t1", label: "work", units: [unit("m3", "other-main", "main", { subs: [unit("run-x", "worker-api", "subagent"), unit("run-solo", "reviewer-x", "subagent")] })] }] },
@@ -126,5 +126,17 @@ test("/boss send names a subagent as Herdr shows it: its full name, the row's cu
 	assert.deepEqual(w.posted.map((p) => p.path), ["sessions/run-long/input", "sessions/run-long/input", "sessions/run-api-1/input"]);
 	await w.paths.send("worker…", false, "d");
 	assert.match(w.told.at(-1)!.text, /more than one/, "a cut name that begins two names picks neither");
+	w.done();
+});
+
+test("a subagent whose row shows its script's file name answers to its full launch name (spaces, capitals): the page's owner, ownerOf, and /boss send", async () => {
+	assert.equal((ownerOf(NET, "m1", { owner: "API Worker 2" }) as { key: string }).key, "run-cap");
+	const v = planView({ nodes: [{ id: 1, t: "x", status: "pending", owner: "API Worker 2" }] }, Date.now(), { net: NET, main: "m1" }) as unknown as El;
+	assert.equal(v.querySelector("a.plan-owner")!.getAttribute("href"), "w/wA/s/run-cap");
+	const w = world([{ id: 8, subject: "cap", status: "pending", owner: "API Worker 2" }]);
+	await w.paths.send("API Worker 2", false, "a");
+	await w.paths.send("#8", false, "b");
+	await w.paths.send("api-worker", false, "c");
+	assert.deepEqual(w.posted.map((p) => p.path), ["sessions/run-cap/input", "sessions/run-cap/input", "sessions/run-cap/input"]);
 	w.done();
 });

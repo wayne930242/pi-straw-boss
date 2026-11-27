@@ -132,7 +132,7 @@ const WORDS = {
 } as const;
 
 type Kind = "unit" | "squad" | "base";
-interface Target { kind: Kind; key: string; workspace: string; tab?: string; name: string; base: string; members: string[] }
+interface Target { kind: Kind; key: string; workspace: string; tab?: string; name: string; /** A subagent's full launch name (Unit.alias). */ alias?: string; base: string; members: string[] }
 type Reply = { status: number; body: Record<string, unknown> };
 export type Post = (record: GuiRecord, path: string, json: Record<string, unknown>, timeoutMs: number) => Promise<Reply>;
 
@@ -181,7 +181,7 @@ export function createBossPaths(kit: Kit, { host, server, closeSelf, post = post
 		const m = /^(unit|squad|base):(.+)$/.exec(query), kind = m?.[1], q = (m?.[2] ?? query).trim(), low = q.toLowerCase();
 		// A name Herdr's row cut (`sb_name`, 23 characters and `…`) picks the one full name it begins.
 		const cut = q.length > 1 && q.endsWith("…") ? low.slice(0, -1) : undefined;
-		const hit = all.filter((x) => (!kind || x.kind === kind) && (x.name.toLowerCase() === low || (cut !== undefined && x.name.length > cut.length && x.name.toLowerCase().startsWith(cut)) || x.key === q || (q.length >= 6 && x.key.startsWith(q)) || (x.kind === "base" && x.workspace === q)));
+		const hit = all.filter((x) => (!kind || x.kind === kind) && (x.name.toLowerCase() === low || x.alias?.toLowerCase() === low || (cut !== undefined && x.name.length > cut.length && x.name.toLowerCase().startsWith(cut)) || x.key === q || (q.length >= 6 && x.key.startsWith(q)) || (x.kind === "base" && x.workspace === q)));
 		return hit.length === 1 ? hit[0]! : hit.length ? t().many(query, hit.map(label)) : t().none(query);
 	}
 
@@ -189,7 +189,7 @@ export function createBossPaths(kit: Kit, { host, server, closeSelf, post = post
 	function sendables(n: Net): Target[] {
 		const out: Target[] = [];
 		for (const b of n.bases) for (const u of [...(b.tower ? [b.tower, ...flat(b.tower.subs)] : []), ...b.tabs.flatMap((tab) => flat(tab.units)), ...flat(b.outside)]) {
-			if (!("role" in u) || u.role !== "outside") out.push({ kind: "unit", key: u.key, workspace: b.id, name: u.name, base: b.label, members: [] });
+			if (!("role" in u) || u.role !== "outside") out.push({ kind: "unit", key: u.key, workspace: b.id, name: u.name, ...("alias" in u && u.alias ? { alias: u.alias } : {}), base: b.label, members: [] });
 		}
 		return out;
 	}

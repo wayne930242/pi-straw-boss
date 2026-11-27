@@ -28,7 +28,7 @@ type Lately = { since?: number; ticks?: Tick[]; todo?: TodoSum };
 /** `start`: an event of a tower the sb server has not started yet; it waits for the run to start and is queued behind no turn (a pi's own queue says `steer` or `followUp`). */
 export interface Queued { text: string; as: "steer" | "followUp" | "start"; /** Why a tower's message waits with no start under way (as `followUp`): the service is off, a start was refused a moment ago, the run slots are full, the tower's pi is not live, or the standing seat is not proven. */ why?: "off" | "refused" | "full" | "offline" | "unproven" }
 /** `ended`: a subagent whose run is over (Row.ended); the page clears its finished alert. */
-export interface Unit extends Shelf, Lately { queued?: Queued[]; monitors?: Monitor[]; id: string; key: string; control: boolean; name: string; role: "main" | "member" | "train" | "subagent" | "outside"; /** A main's kind, from its pane's `sb_duty` token (docs/specs/2026-11-09-agent-kinds.md §2); a launched subagent's, from the agent role its launch script names (D16). */ duty?: Duty; /** A train's project and code (its pane's `sb_train` token). */ train?: TrainId; mark: Mark; note?: string; subs: Unit[]; pending?: Pending; ended?: boolean }
+export interface Unit extends Shelf, Lately { queued?: Queued[]; monitors?: Monitor[]; id: string; key: string; control: boolean; name: string; /** A subagent's full name when its row shows another (Row.alias): a todo's owner and `/boss send` name it so. */ alias?: string; role: "main" | "member" | "train" | "subagent" | "outside"; /** A main's kind, from its pane's `sb_duty` token (docs/specs/2026-11-09-agent-kinds.md §2); a launched subagent's, from the agent role its launch script names (D16). */ duty?: Duty; /** A train's project and code (its pane's `sb_train` token). */ train?: TrainId; mark: Mark; note?: string; subs: Unit[]; pending?: Pending; ended?: boolean }
 export interface Tab { id: string; label: string; units: Unit[] }
 export interface Outpost extends Lately { id: string; label: string; mark: Mark }
 /** A run's proposal the boss has not answered; `cites` is the boss message it comes from. */ export interface MemoryProposal { id: string; op: "add" | "retire"; kind: "standing" | "decision"; text: string; target?: string; cites?: string }
@@ -132,7 +132,7 @@ export function buildNet({ sessions, panes: ps, workspaces: all, children, servi
 	const keep = (r: Ref) => (refs.set(r.key, r), r.key);
 	const subsOf = (launcher: string, base: string) => (rowsOf.get(launcher) ?? []).map((r): Unit => {
 		const key = keep({ key: r.id ?? `${launcher}/${r.text}`, base, name: r.text, role: "subagent", file: readable(r.file), pane: r.pane });
-		return { id: key, key, control: Boolean(r.pane), name: r.text, role: "subagent", ...(r.duty ? { duty: r.duty } : {}), mark: r.mark, note: r.note, subs: [], ...(r.ended && { ended: true }) };
+		return { id: key, key, control: Boolean(r.pane), name: r.text, ...(r.alias ? { alias: r.alias } : {}), role: "subagent", ...(r.duty ? { duty: r.duty } : {}), mark: r.mark, note: r.note, subs: [], ...(r.ended && { ended: true }) };
 	});
 	const towerKeys = new Map<string, string>();
 	const bases = all.filter((w) => !isSub(w) && !isHead(w)).flatMap((w): Base[] => {

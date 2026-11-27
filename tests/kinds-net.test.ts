@@ -254,3 +254,12 @@ test("the across-parents join drops a loser before the limit, and a parent's own
 	assert.deepEqual(subagentsOfAll(all, Date.now(), 1)(first).map((r) => r.text), ["other"], "the loser does not take the one slot of its parent's limit");
 	assert.deepEqual(subagentsOfAll(all, Date.now())(first).map((r) => r.text), subagents(first, all, Date.now()).filter((r) => r.file !== file).map((r) => r.text));
 });
+
+test("a child's full launch name (PI_SUBAGENT_NAME, spaces, capitals, and a quote) is the row's alias when the row shows the script's file name; none when they agree", () => {
+	const file = kidFile("k-alias");
+	const parent = artifacts("palias", [{ id: "k-alias", scriptName: "api-worker-k-alias.sh", session: file, name: "API worker'\\''s run" }, { id: "k-same", scriptName: "look-k-same.sh", session: kidFile("k-same"), name: "look" }]);
+	const rows = subagents(parent, [parent, pane("wA:pa", { agent_status: "working", agent_session: { value: file } }), pane("wA:pb", { agent_status: "working", agent_session: { value: kidFile("k-same") } })], Date.now());
+	const by = new Map(rows.map((r) => [r.id, r]));
+	assert.deepEqual([by.get("k-alias")!.text, by.get("k-alias")!.alias], ["api-worker", "API worker's run"]);
+	assert.equal(by.get("k-same")!.alias, undefined);
+});

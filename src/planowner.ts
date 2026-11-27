@@ -20,7 +20,7 @@ function places(net: Pick<Net, "bases"> | undefined): Place[] {
 const hitOf = ({ u, ws }: Place): OwnerHit => ({ key: u.key, name: u.name, ws, live: u.control && !u.ended });
 
 /**
- * The owner of a todo on the net: by `agent` (the Herdr child's run id) when the todo names one, and then `gone` when no unit has that key, since the child it names has left the net; else by the full `owner` name, a unit under `main`
+ * The owner of a todo on the net: by `agent` (the Herdr child's run id) when the todo names one, and then `gone` when no unit has that key, since the child it names has left the net; else by the full `owner` name (a subagent's row name, or its launch name, `Unit.alias`, when the row shows the script's file name), a unit under `main`
  * first (its own subagents, the nearest), then anywhere; of two of one name, the one that runs. Undefined when nothing on the net bears the name: an owner that is no agent (a person, a team) is text.
  */
 export function ownerOf(net: Pick<Net, "bases"> | undefined, main: string | undefined, ref: { owner?: string | undefined; agent?: string | undefined }): OwnerHit | "gone" | undefined {
@@ -30,7 +30,7 @@ export function ownerOf(net: Pick<Net, "bases"> | undefined, main: string | unde
 		return hit ? hitOf(hit) : "gone";
 	}
 	if (!ref.owner) return undefined;
-	const named = (p: Place) => p.u.name === ref.owner && p.u.key !== main, top = all.find((p) => p.u.key === main);
+	const named = (p: Place) => (p.u.name === ref.owner || p.u.alias === ref.owner) && p.u.key !== main, top = all.find((p) => p.u.key === main);
 	const mine = top ? flat(top.u, top.ws).filter(named) : [], found = mine.length ? mine : all.filter(named), live = found.filter((p) => hitOf(p).live);
 	const pick = found.length === 1 ? found[0] : live.length === 1 ? live[0] : undefined; // a name launched again: the one that runs
 	return pick && hitOf(pick);

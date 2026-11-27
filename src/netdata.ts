@@ -14,7 +14,7 @@ import type { Pane, Session } from "./herdr.ts";
 export type Mark = "working" | "waiting" | "idle" | "done" | "error" | "unknown" | "commanding";
 /** One line of the tree. `net` rows are tab (0) > session (1) > subagent (2); `towers` rows are flat. */
 /** `ended`: a subagent whose run is over (pi-herdr-agents recorded it done, or its pane is gone or back at a shell); its parent has the result. */
-export interface Row { group: "net" | "towers"; depth: number; mark: Mark; text: string; kind?: string; note?: string; workspace?: string; id?: string; file?: string; pane?: string; ended?: boolean; finished?: boolean; /** A subagent's kind (D16): the agent role its launch script names, or a main's `sb_duty` (dashboard.ts). */ duty?: Duty }
+export interface Row { group: "net" | "towers"; depth: number; mark: Mark; text: string; /** A subagent's full name as pi-herdr-agents launched it (`PI_SUBAGENT_NAME`), when its row shows another (the script's file name): what a todo's `owner` holds. */ alias?: string; kind?: string; note?: string; workspace?: string; id?: string; file?: string; pane?: string; ended?: boolean; finished?: boolean; /** A subagent's kind (D16): the agent role its launch script names, or a main's `sb_duty` (dashboard.ts). */ duty?: Duty }
 
 const HERDR_MARK: Record<string, Mark> = { working: "working", blocked: "waiting", idle: "idle", done: "done" };
 const RECENT_MS = 10 * 60_000;
@@ -59,8 +59,8 @@ interface Scripts { names: string[]; reads: Map<string, Launch & { mtimeMs: numb
 const folders = new Map<string, Scripts>();
 /** How many launch scripts were read from disk: the cost tests/kinds-net.test.ts bounds for a parent with many old launches. */
 export const scriptReads = { count: 0 };
-/** What a launch script says: the child's id, its session file, the agent role of a first launch (a resume names none), and whether it is a persistent specialist. */
-interface Launch { id?: string; session?: string; persistent: boolean; agent?: string }
+/** What a launch script says: the child's id, its session file, the agent role of a first launch (a resume names none), whether it is a persistent specialist, and its full name. */
+interface Launch { id?: string; session?: string; persistent: boolean; agent?: string; name?: string }
 const SUFFIX = /^(.*)-[0-9a-f]{1,8}-[0-9a-f]{1,8}-[0-9a-f]{1,4}$/;
 
 /** The child ids a pane's session file can belong to: `ownFile` read from the file's side, so one pass over the panes replaces a match per child and pane. */
@@ -117,7 +117,7 @@ function scriptRead(folder: Scripts, path: string): Launch | undefined {
 		const { mtimeMs } = statSync(path), cached = folder.reads.get(path);
 		if (cached?.mtimeMs === mtimeMs) return cached;
 		scriptReads.count++;
-		const text = readFileSync(path, "utf8"), read = { mtimeMs, id: text.match(/\bPI_SUBAGENT_ID='([^']+)'/)?.[1], session: text.match(/PI_SUBAGENT_SESSION='([^']+)'/)?.[1], persistent: /\bPI_SUBAGENT_PERSISTENT=1\b/.test(text), agent: text.match(/\bPI_SUBAGENT_AGENT='([^']+)'/)?.[1] };
+		const text = readFileSync(path, "utf8"), read = { mtimeMs, id: text.match(/\bPI_SUBAGENT_ID='([^']+)'/)?.[1], session: text.match(/PI_SUBAGENT_SESSION='([^']+)'/)?.[1], persistent: /\bPI_SUBAGENT_PERSISTENT=1\b/.test(text), agent: text.match(/\bPI_SUBAGENT_AGENT='([^']+)'/)?.[1], name: text.match(/\bPI_SUBAGENT_NAME='((?:[^']|'\\'')+)'/)?.[1]?.replaceAll("'\\''", "'").slice(0, 120) };
 		folder.reads.set(path, read);
 		return read;
 	} catch {
@@ -261,7 +261,7 @@ function candidates(parent: Pane | undefined, all: Pane[], now: number): Candida
 			const name = pane?.label || (found?.name ?? id.slice(0, 8));
 			const doing = activity.toolActive ? String(activity.toolName) : String(activity.phase ?? "");
 			const ended = pane?.agent !== "pi" || recordedDone, duty = dutyOfAgent(agentOfSession(file) ?? launch?.agent ?? firstLaunchAgent(file));
-			return { at, resumed: found?.script.includes("-resume-") ?? false, launch: `${dir}/${id}`, row: { group: "net" as const, depth: 2, mark, text: name, kind: "subagent", ...(duty ? { duty } : {}), workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, ...(ended && { ended }), ...(recordedDone && { finished: true }), note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] } };
+			return { at, resumed: found?.script.includes("-resume-") ?? false, launch: `${dir}/${id}`, row: { group: "net" as const, depth: 2, mark, text: name, ...(launch?.name && launch.name !== name ? { alias: launch.name } : {}), kind: "subagent", ...(duty ? { duty } : {}), workspace: pane?.workspace_id, id, file, pane: pane?.agent === "pi" ? pane.pane_id : undefined, ...(ended && { ended }), ...(recordedDone && { finished: true }), note: { working: doing, waiting: "waiting on a question", done: "finished" }[mark as "working"] } };
 		});
 	return rows;
 }
