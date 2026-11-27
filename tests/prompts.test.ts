@@ -39,7 +39,7 @@ import { PROMPT_DIR } from "./fakes.ts";
 // moment (a capacity notice, idle with ready todos, boss_pair's steps, boss_duty, board_set, call_tower's details, wait_card and wait_returned, the opened main's report, the car slip and its notices) moved to
 // the notice, message, tool description, or result that arrives at that moment; main.md keeps the triggers.
 // Its review RV-F001 (measured): main.md off 388 to 394, on 620 to 626: "Idle with ready todos: dispatch them." stays, since under auto mode with no capacity budget nothing else says it.
-const BUDGETS: Record<string, number> = { "main.md": 394, "tower.md": 516, "member.md": 140, "member-no-main.md": 150 };
+const BUDGETS: Record<string, number> = { "main.md": 399, "tower.md": 516, "member.md": 140, "member-no-main.md": 150 };
 // Its review fixes (SB-F001, F003, F005: the Approval line quotes words already given and asks only when they are missing, the tower reports nothing back on a forwarded slip): main.md 680 to 700, tower.md 390 to 395, integrator.md 320 to 340 (SB-F002 and F006: the deploy gate before `Merge`, a subagent briefed for one step).
 // Train workers (docs/specs/2026-11-07-train-workers.md §13.1, task 8): tower.md on 424 to 471 (forward with `forward`, open a train with `role: "train"`, a car notice's `blocked`; off stays 402); main.md on 715 to 720 (Batch owner, Handoff route, Record and Approval say who schedules, who departs, who notifies, and where the boss's nod is quoted); integrator.md 340 to 380 and train.md ~450 have their own budgets below.
 // Fix round of task 8 (prompts-review.md, TP-F001 to F018): budgets = measured: main.md on 720 to 725, tower.md on 471 to 469 (the resident tower forwards nothing), planning.md on 670 to 681 (the check command), integrator.md 380 to 412 (todo lifecycle, legacy trains), train.md 450 to 511 (holds, load and lock, the Record file, the metadata.sb keys).
@@ -50,7 +50,8 @@ const BUDGETS: Record<string, number> = { "main.md": 394, "tower.md": 516, "memb
 // 2026-11-23 (the tower closes agent panes, docs/specs/2026-11-23-tower-close-panes.md §5): measured: tower.md on 508 to 538 and off 438 to 468 (close a main that handed over once its successor is live, whoever opened it; list and close dead agent panes).
 // 2026-11-23 (lite main, as for BUDGETS above; measured): main.md on 743 to 786.
 // 2026-11-23 (D, review threads, docs/specs/2026-11-23-lite-b2-d-e-f.md §2.5; measured): main.md on 786 to 808 (a reviewed change: boss_pair, both briefs, Thread: T<n>, relay nothing).
-const ON_BUDGETS: Record<string, number> = { "main.md": 626, "tower.md": 586 };
+// 2026-11-27 (sb's subagent host; boss 「就算一般 agent 都可能臨時派一個不再 todo 上面的 agent 出去 scout」; measured): main.md on 626 to 631, off 394 to 399: "a quick scout needs none" (no todo).
+const ON_BUDGETS: Record<string, number> = { "main.md": 631, "tower.md": 586 };
 // 2026-11-08 (todo #125 task 5, TP-F004): `{{cli}}` is the command that runs cli.mjs.
 const PLACEHOLDERS = new Set(["tab", "workspace", "main", "tower", "head", "dir", "state", "cli", "duty"]);
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
