@@ -18,6 +18,8 @@
 
 <p align="center"><img src="docs/gui-comms.png" width="49%" alt="單位的通訊畫面：即時的對話紀錄、排隊等下一輪的訊息、待辦清單、背景 Monitor，以及單位檔案"> <img src="docs/gui-zen-item.png" width="49%" alt="禪檢視裡的一件待辦：墨色畫面上是一個 robot_hand 問題，選項是一行行的字"></p>
 
+<p align="center"><img src="docs/gui-car-card.png" width="34%" alt="主代理單位卡上的車廂：一節在第二次全檢查、畫在 app 關卡的梯子上，一節在等另一班火車占用的負載，一節已落地並附版本號，每張都有「看這班火車」"> <img src="docs/gui-car-yard.png" width="64%" alt="從車廂小卡打開的調車場，捲到那節車廂的火車並加上標示：步驟畫成膠囊、需要的負載，以及每節車廂的驗收與通知"></p>
+
 ## 為什麼需要它
 
 同一個專案跑上幾個智慧體，它們很快就會互相干擾：兩個 dev server 搶同一個 port、兩條分支改同一個 migration，而且沒有一個智慧體知道其他智慧體存在。

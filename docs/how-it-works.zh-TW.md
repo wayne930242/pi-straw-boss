@@ -1221,6 +1221,12 @@ e2e 和 UAT 在送出車廂單之前，在協調者自己的分支上進行，�
 
 </details>
 
+##### 車廂列
+
+四則通知之間不再多發任何訊息（boss 2026-11-28）：每節車廂在哪裡，改成一列來顯示（[規格](specs/2026-11-28-car-rows.md)）。sb server 把車廂帳本和火車看板合併成每節車廂一筆事實（`src/train/carfacts.ts`），用 `cars-rows` 回答某個 session 由它協調或由它收車的車廂。每個 session 每 15 秒問一次，並在 `pi.events` 上回答 `straw-boss:car-rows:v1`；pi-todo-ledger 讀它，把一列畫在標題寫著該車廂單號的未完成 todo 底下，找不到就畫在「其他車廂」；調度員的火車放在「火車」。一列是 sb 語言寫的「梯子」，中間的關卡用火車自己的英文關卡 id：`🚂 1127l ▰▰▰▱▱▱▱ merge 12m · waits 1127j`，格子是同一個 app 上一班落地火車走過的關卡，重跑的關卡寫成 `merge (try 2)`（中文介面是 `merge（第 2 次）`）。編組中火車裡的車廂顯示發車規則，結束的車廂顯示版本號或原因的第一行，在結束後再留 30 分鐘。
+
+`/boss cars` 印出同樣的列和時間。GUI 裡主代理的單位卡顯示同樣的車廂，附 `See this train ›`（看這班火車），點了開調車場並捲到那班火車。session 用 `call_tower`（`why: "shared"`）送出的車廂單，在 server 持有那節車廂之前顯示為 `📮 sent`（已送出）；送出 15 分鐘還沒有調度員收車，sb 會提醒 session 的模型一次，並說該怎麼做（問調度員，或重送車廂單）。這份記憶是 pi 行程自己的，`/reload` 會保留，也不寫任何檔案。
+
 ##### 指令
 
 `cli.mjs train gate|check|status|clear|end|notices`。`status` 顯示每列火車、它的步驟、等待、鎖和車廂（`--state live,stale,ended,unreadable` 只留下處於這些狀態的列，文字和 `--json` 都一樣；被 `train end` 結束的火車會顯示它的結果、commit、原因和證據；`--watch [--every <seconds>]` 預設 60、至少 10、至多 2147483（計時器能等的最長時間），每隔這段時間再看一次，直到被停止，每看一次印一行 JSONL，不論有沒有變化：`{"progress":{"message":…}}`，第一次以及火車或鎖有變化的那幾次再加上 `--json` 的狀態，所以開在它上面的 `MonitorCreate` 每看一次就續期一次，而不是只在有變化時，因為 pi-loop-monitor 一看到 `progress` 行就重算閒置逾時；某次查看失敗時，也印一行說明，監看照樣繼續；它等 stdout 收下一行之後才看下一次，stdout 關閉或出錯時以結束碼 1 結束）；`clear` 釋放 session 已經消失的火車仍然持有的東西（在讀取目標的版本之後）；`end` 結束一列不會再有 land 步驟來結束的過時火車，因為它的車廂都離開了，或它的 session 在合併之後死掉：`--outcome landed --commit <sha>` 或 `--outcome none`，加上 `--reason` 和 `--evidence`，對存活、已結束或讀不到的火車會像 `clear` 一樣拒絕，對仍持有部署目標的火車也是（先讀目標跑的版本，再 `clear --target`；車道隨結束一起釋放）；結束寫進 `board.json` 旁的 `end.json`，`board.json` 的 schema 維持舊版讀得懂的樣子，從此火車讀成已結束，不持有任何東西，監看也不再回報它（回來的 session 會重寫它的看板，比結束還新，結束就被忽略）；`notices` 從磁碟上的 journal 列出每個車廂的狀態（`--project`、`--pending`、`--json`）。

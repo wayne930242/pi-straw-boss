@@ -60,6 +60,7 @@ The full table, with every argument, is in [Tools](/pi-straw-boss/docs/reference
 | --- | --- |
 | `/boss` | Take over as this tab's main agent, even when it has one. |
 | `/boss status` | Each tab's main agent and the towers. |
+| `/boss cars` | Where this session's cars are: each under its todo (or Other cars; an integrator's trains under Trains), as `📮 sent`, waiting to depart with its rule, on its train's stage (`🚂 1127l ▰▰▰▱▱▱▱ merge 12m · waits 1127j`, the stage as the train names it), or ended in the last 30 minutes. The same rows the todo panel draws through `straw-boss:car-rows:v1`; see [Car rows](/pi-straw-boss/docs/reference/how-it-works/how-it-works/#car-rows). |
 | `/boss tower` | Open this workspace's tower if none runs, and focus its tab. |
 | `/boss tower <prompt>` | Write to this workspace's tower. |
 | `/boss tower -w <workspace\|head> <subcommand>` | Act on another workspace's tower, as the tower's card and composer do. A write at another tower asks first. |
