@@ -30,7 +30,8 @@ import { boxesOf, createOperateHost, type OperateHost } from "./operatehost.ts";
 import { operateOff } from "./operateoff.ts";
 import { operateWire, type OperateWire } from "./operatewire.ts";
 import { createLog, tailLog } from "./log.ts";
-import { type Cars, carsReply, startCars } from "./carops.ts"; import { type AskOps, startAsks } from "./askops.ts";
+import { type Cars, carsReply, startCars } from "./carops.ts";
+import { type AskOps, startAsks } from "./askops.ts";
 import { procsReply, startProcs, type StartProcs } from "./procsops.ts";
 import { type StartWatches, startWatches, type WatchRoutes, watchReply } from "./watchesops.ts";
 import { type StartThreads, startThreads, threadReply } from "./threadsops.ts";
@@ -456,7 +457,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		const followed = follower?.reply(request); if (followed) return followed;
 		const autoAnswer = autoReply(auto, request, unattended); if (autoAnswer) return autoAnswer;
 		const owners = procsReply(procs, request) ?? watchReply(dog, request, () => towerRuns().enabled) ?? threadReply(threads?.threads, request, threads?.sessionsDir ?? ""); if (owners) return owners;
-		const carsAnswer = carsReply(cars, request) ?? bossAsks?.reply(request); if (carsAnswer) return carsAnswer;
+		const carsAnswer = carsReply(cars, request); if (carsAnswer) return carsAnswer;
+		const asksAnswer = bossAsks?.reply(request); if (asksAnswer) return asksAnswer;
 		const tower = entryReply(towers, cfg.run, request) ?? towerCommand(request);
 		if (tower) return tower;
 		return { ok: false, error: `unknown command ${String(request.cmd)}` };
@@ -672,7 +674,8 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 	dog = startWatches({ net: guiHost.watchNet(), now, slot, holder: () => link?.holder, send: async (to, text, facts) => Boolean(await towers?.watchSend(to.workspace, to.session, text, facts).catch(() => false)), log: (event, facts) => log.line(event, facts), stops, ...(o.watches ? { over: o.watches } : {}),
 		ward: { run: cfg.run, monitorPanes: () => new Set(guiHost!.dialogs().hub.monitors().map((m) => m.pane)), loopsDir: join(homedir(), ".pi", "loops"), owner: async (secret) => (cars ? cars.book.sessionOf(secret) : "the server is still starting") } });
 	threads = startThreads({ slot, env, now, log: (event, facts) => log.line(event, facts), stops, ...(o.threads ? { over: o.threads } : {}) }); // the review threads (threadsops.ts, docs/specs/2026-11-23-lite-b2-d-e-f.md §2)
-	bossAsks = startAsks({ stateDir: slot.stateDir, now, watch: () => guiHost?.watchNet(), log: (event, facts) => log.line(event, facts) }); stops.push(() => bossAsks?.stop()); // the questions to the boss (askops.ts, docs/specs/2026-11-28-boss-asks.md)
+	bossAsks = startAsks({ slot, now, watch: () => guiHost?.watchNet(), log: (event, facts) => log.line(event, facts) }); // the questions to the boss (askops.ts, docs/specs/2026-11-28-boss-asks.md), in the slot's own folder
+	stops.push(() => bossAsks?.stop());
 	cars = startCars({ slot, run: cfg.run, now, startedAt, client: () => (client?.isConnected() ? client : undefined), startOf, log: (event, facts) => log.line(event, facts), stops });
 	waitsHub = startLinkWaits({ slot, env, now, log: (event, facts) => log.line(event, facts), run: cfg.run, sessions: () => (client?.isConnected() ? client.listSessions() : Promise.reject(new Error("pi-intercom is not connected"))), towers: () => towers, link: () => link, stops, asks, autoOn: () => auto?.view().on === true, ...(o.waits !== undefined ? { tickMs: o.waits } : {}) });
 	towers = createTowers({

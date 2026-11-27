@@ -1,11 +1,13 @@
 import { join } from "node:path";
 import type { AskView } from "../asktypes.ts";
 import type { Found, Net } from "../net.ts";
+import { openCalls } from "../ask.ts";
 import { asksOfNet, countOn, rowsFor, viewsOf } from "./askmirror.ts";
-import { type AnswerBy, type AskQuestion, type AskRecord, type CloseWhy, createAskStore, type Judged, oneLine } from "./askstore.ts";
+import { type AnswerBy, type AskQuestion, type AskRecord, type CloseWhy, createAskStore, GONE_MS, type Judged, oneLine } from "./askstore.ts";
+import type { Slot } from "./record.ts";
 import type { Reply, Request } from "./socket.ts";
 
-// The server's side of the Asks (docs/specs/2026-11-28-boss-asks.md): the store under <state>/asks/, kept in step with every reading of the net (askmirror.ts), the control socket's commands, and the page's
+// The server's side of the Asks (docs/specs/2026-11-28-boss-asks.md): the store under the slot's asks/, kept in step with every reading of the net (askmirror.ts), the control socket's commands, and the page's
 // answer route. Kept out of main.ts, which carries a line budget.
 //
 //   ask-open {session, name, ask: {subject, questions, toolCallId?, item?}}   a blocking Ask of `call_tower`'s boss question; answers the record
@@ -17,7 +19,8 @@ import type { Reply, Request } from "./socket.ts";
 /** How old the last reading may be when a session asks for its rows; an older one is read again first. */
 const FRESH_MS = 10_000, SWEEP_MS = 3600_000, CLOSE_WHY = new Set<CloseWhy>(["esc", "abort", "auto"]), BY = new Set<AnswerBy>(["terminal", "gui", "phone"]);
 export interface NetWatch { onRead(cb: (net: Net) => void): () => void; read(): Promise<Net>; lookup(key: string): Found | undefined }
-export interface AskOpsDeps { stateDir: string; now(): number; watch(): NetWatch | undefined; log(event: string, facts: Record<string, string | number | boolean>): void }
+/** `slot`: the server's slot (record.ts), whose own folder holds the store, so two Herdr servers of one account never write one (asks-r2-F003). `openCalls`: the open tool calls of a session file (ask.ts; a test gives its own). */
+export interface AskOpsDeps { slot: Pick<Slot, "dir">; now(): number; watch(): NetWatch | undefined; log(event: string, facts: Record<string, string | number | boolean>): void; openCalls?(file: string): Promise<{ id: string }[] | "cut"> }
 
 const str = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() && v.length <= max ? v : undefined);
 /** The questions of an `ask-open`: one to four, each with up to eight options of one line. */
@@ -28,14 +31,30 @@ function questionsOf(raw: unknown): AskQuestion[] | undefined {
 }
 
 export function startAsks(d: AskOpsDeps) {
-	const store = createAskStore(join(d.stateDir, "asks"), d.now);
+	const store = createAskStore(join(d.slot.dir, "asks"), d.now);
 	let last: { net: Net; at: number } | undefined, off: (() => void) | undefined;
 	const seenIn = (net: Net) => asksOfNet(net, { now: d.now(), paneOf: (key) => d.watch()?.lookup(key)?.pane });
+	// A blocking Ask whose asker is on the net but whose tool call ended (the asker's close never reached the store): two readings `GONE_MS` apart that found the call no longer open in the session file end it as
+	// `asker-ended`; a file not read through says nothing (asks-r2-F002).
+	const ended = new Map<string, number>(), callsOf = d.openCalls ?? openCalls;
+	let checking = false;
+	const orphans = () => {
+		if (checking) return;
+		checking = true;
+		const asking = store.list({ open: true }).filter((r) => r.blocking && r.toolCallId);
+		void Promise.all(asking.map(async (r) => {
+			const file = d.watch()?.lookup(r.asker.session)?.file, on = file ? await callsOf(file).then((c) => (Array.isArray(c) ? c.some((x) => x.id === r.toolCallId) : undefined), () => undefined) : undefined;
+			if (on !== false) return void ended.delete(r.id);
+			const first = ended.get(r.id) ?? (ended.set(r.id, d.now()), d.now());
+			if (d.now() - first >= GONE_MS && store.get(r.id)?.state === "open") (ended.delete(r.id), store.close(r.id, "asker-ended"), d.log("ask-ended", { n: r.n, why: "call-ended" }));
+		})).catch(() => {}).finally(() => void (checking = false));
+	};
 	const synced = (net: Net) => {
 		last = { net, at: d.now() };
 		try {
 			const seen = seenIn(net);
 			store.sync(seen.entries, seen.live, seen.place);
+			orphans();
 		} catch (error) {
 			d.log("error", { code: "asks", text: oneLine((error as Error).message) });
 		}

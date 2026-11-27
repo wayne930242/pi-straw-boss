@@ -6,7 +6,7 @@ import { type Question, questionsDigest, type Reply } from "../owners.ts";
 import type { AskItem, AskKind } from "../asktypes.ts";
 import { writeDurable } from "./towerstore.ts";
 
-// The Ask store (docs/specs/2026-11-28-boss-asks.md): every open question to the boss, one file per Ask under <state>/asks/, written by this server only and each write a rename, loaded at the start so an
+// The Ask store (docs/specs/2026-11-28-boss-asks.md): every open question to the boss, one file per Ask under the slot's asks/ (askops.ts), written by this server only and each write a rename, loaded at the start so an
 // open Ask outlives a restart. The store owns the answer path of the questions it owns (`call_tower`'s boss question): the first valid answer wins, a late one gets 409 naming where it was answered,
 // and a resent answerId replays the first result. The other questions sb can see are mirrors (askmirror.ts): opened and closed from the net's readings, never answered here.
 
