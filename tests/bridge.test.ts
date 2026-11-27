@@ -144,7 +144,7 @@ test("the session's todo list in short goes with the dialogs: read from the bran
 	s.fire("session_start");
 	s.own();
 	const lists = () => s.published.filter((p) => p.payload.type === "dialogs").map((p) => (p.payload as Dialogs).todo);
-	assert.deepEqual(lists().at(-1), { done: 0, total: 2, now: "Fix rounding" });
+	assert.deepEqual(lists().at(-1), { done: 0, total: 2, now: "Fix rounding", doing: 1 }); // `doing`: the todo an Ask blocks (docs/specs/2026-11-28-boss-asks.md)
 	const sent = lists().length;
 	s.fire("turn_end");
 	assert.equal(lists().length, sent, "the same list is not sent again");
@@ -153,7 +153,7 @@ test("the session's todo list in short goes with the dialogs: read from the bran
 	assert.deepEqual(lists().at(-1), { done: 1, total: 2 });
 	branch.splice(1);
 	s.fire("session_tree");
-	assert.deepEqual(lists().at(-1), { done: 0, total: 2, now: "Fix rounding" }, "a move in the tree reads the branch it moved to");
+	assert.deepEqual(lists().at(-1), { done: 0, total: 2, now: "Fix rounding", doing: 1 }, "a move in the tree reads the branch it moved to");
 	s.fire("session_shutdown");
 	assert.equal(lists().at(-1), undefined, "the last list has none");
 });
