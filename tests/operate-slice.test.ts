@@ -46,6 +46,17 @@ test("what is not the session's never travels: link, stashed, trust, head, other
 	assert.equal(JSON.stringify(out).includes('"cap"'), false, "no capability anywhere");
 });
 
+test("the Asks never cross: neither the net's list nor a unit's, a subagent's or a tower's count (asks-r3-F002)", () => {
+	const input = net(), b = input.bases[0]!;
+	input.asks = [{ id: "k1", n: 1, kind: "boss", subject: "Deploy?", asker: "a-1", where: "work", since: 1, ws: "w1", unit: "a-1" }] as Net["asks"];
+	(b.tower!.asks = 2), (b.tower!.subs[0]!.asks = 1), (b.tabs[0]!.units[0]!.asks = 1), (b.tabs[0]!.units[0]!.subs[0]!.asks = 1), (b.outside[0]!.asks = 1);
+	for (const out of [sliceNet(input, scopeOf(A)), sliceNet(input, scopeOf(["tw", "box-sub", "out-a"], true))]) {
+		assert.equal("asks" in out, false, "the list");
+		assert.equal(JSON.stringify(out).includes('"asks"'), false, "no count anywhere");
+	}
+	assert.equal(b.tabs[0]!.units[0]!.asks, 1, "the input net keeps its counts");
+});
+
 test("the box part: with `box` the box's tower and its outpost stay, the tower with its document names and no capability", () => {
 	const out = sliceNet(net(), scopeOf(["tw", "tw2", "box-sub", "box-1", "out-box"], true));
 	assert.deepEqual(keysOf(out), ["tw", "box-sub", "box-1", "out-box", "tw2"], "both towers, whatever workspace");
