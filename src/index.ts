@@ -46,6 +46,7 @@ import { mainWaitAsk } from "./waitask.ts";
 import { createTower } from "./tower.ts";
 import { registerTrainGuard, registerTrainSigns, type TrainGuard } from "./trainguard.ts";
 import { carLink, trainCarTool } from "./traincar.ts";
+import { carRowsOf } from "./carrows.ts";
 import { hasIntegrationApp } from "./train/appsconfig.ts";
 import { registerTrust } from "./trust/ask.ts";
 import { registerRunTrust } from "./trust/runtrust.ts";
@@ -104,7 +105,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const guard = createGuard(kit, { ...election, openTower: reach.openTower, roles });
 		// A join adds the tools of a joined session, and the tools promote through the membership: each is built with the other's hook.
 		// The cars' way to the sb server (traincar.ts): the integrator's and the trains' `train_car` tool, added at the join, and the guard's source for notices.
-		const cars = carLink(kit);
+		const cars = carLink(kit), carRows = carRowsOf(kit, cars.enabled); // and where each car of this session is (carrows.ts): the todo panel's probe and /boss cars
 		pi.on("session_start", () => void (kit.s.toolSet ??= { link: link.inUse() && link.attended(), cars: cars.enabled(), carApp: hasIntegrationApp(cfg.cwd()) }));
 		let trainGuard: TrainGuard | undefined;
 		const addPeer = createPeerTool(kit, { post: reach.post, read: reach.read, openTower: reach.openTower, sync: () => membership.sync() }); // call_peer (callpeer.ts)
@@ -126,7 +127,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		registerSession(kit, { mainDuty, attended: () => link.attended(), integration: createIntegrationWatch(kit), runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools: { ...tools, addNetTools: netTools }, control, digest, roles, reach }) });
 		trainGuard = registerTrainGuard(kit, cars.client, mainDuty);
 		mainDuty.trainOn(() => Boolean(trainGuard)); // a train's todo and MonitorCreate calls, and the integrator's train todos (nothing loads with the merge train off)
-		registerBoss(kit, { runMode, host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look, paths: createBossPaths(kit, { host, server: look, closeSelf, here: host.here }), doctor });
+		registerBoss(kit, { runMode, host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look, paths: createBossPaths(kit, { host, server: look, closeSelf, here: host.here }), doctor, cars: carRows });
 	};
 }
 
