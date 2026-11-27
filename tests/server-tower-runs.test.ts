@@ -62,6 +62,24 @@ const drain = async (s: Running, token: string) => {
 	}
 };
 const exit = (id: string) => world.live.delete(world.pis.get(id)!.pid);
+/** Two whole watcher ticks: what a tick does at the clock's frozen time it has done before the check after it. */
+const watcherTicks = async () => {
+	const from = world.aliveCalls;
+	await until(() => world.aliveCalls >= from + 2, "two watcher ticks", 20_000);
+};
+/**
+ * Awake time on the runs' clock: steps shorter than `lost` (60 s in FAST_RUNS) with the watcher ticking and the run polling after each, so no step reads as the computer asleep (runs.ts `giveBack`). Stops at the first command the run is
+ * told and returns its type.
+ */
+const awakeFor = async (clock: ReturnType<typeof fakeClock>, s: Running, token: string, ms: number, idle = true) => {
+	for (let left = ms; left > 0; left -= 30_000) {
+		clock.advance(Math.min(30_000, left));
+		await watcherTicks();
+		const got = (await poll(s, token, idle)).command as { type: string } | undefined;
+		if (got) return got.type;
+	}
+	return undefined;
+};
 const setup = async (over: Parameters<TowerWorld["start"]>[0] = {}) => {
 	const s = await started(over);
 	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
@@ -248,11 +266,6 @@ test("a run past the steer time is told to wrap up, past the cap it is told to q
 	const token = await claimed(s, id);
 	await drain(s, token);
 	const seen: string[] = [];
-	const commandsUntil = (done: () => boolean, what: string) => until(async () => {
-		const command = (await poll(s, token, false)).command as { type: string } | undefined;
-		if (command) seen.push(command.type);
-		return done();
-	}, what, 20_000);
 	// Whole watcher ticks at the clock's frozen age: what a tick would do at that age it has done before the check after it.
 	const ticks = async () => {
 		const from = world.aliveCalls;
@@ -260,13 +273,12 @@ test("a run past the steer time is told to wrap up, past the cap it is told to q
 	};
 	await ticks();
 	assert.equal((await poll(s, token, false)).command, undefined, "nothing is told before the steer time");
-	clock.advance(600_001);
-	await commandsUntil(() => seen.length > 0, "the steer");
+	// Awake time, in steps: one jump past `lost` would be the computer asleep, which is no part of the run's age.
+	seen.push((await awakeFor(clock, s, token, 600_001, false))!);
 	assert.deepEqual(seen, ["steer"]);
 	await ticks();
 	assert.equal((await poll(s, token, false)).command, undefined, "the steer is told once");
-	clock.advance(600_000);
-	await commandsUntil(() => seen.includes("quit"), "the quit command");
+	seen.push((await awakeFor(clock, s, token, 600_000, false))!);
 	assert.deepEqual(seen, ["steer", "quit"]);
 	await ticks();
 	assert.deepEqual([...world.herdr.keys], [], "pi has had no grace yet");
@@ -310,8 +322,7 @@ test("a run idle with nothing pending and no tower_done gets one steer, then is 
 	assert.equal(await nextCommand("the steer"), "steer");
 	await ticks();
 	assert.equal((await poll(s, token)).command, undefined, "the idle steer is told once");
-	clock.advance(300_000);
-	assert.equal(await nextCommand("the quit"), "quit");
+	assert.equal(await awakeFor(clock, s, token, 300_000), "quit", "awake time, in steps: one jump past `lost` would be the computer asleep");
 	exit(id);
 	// The watcher notices the exit at one of its ticks (real I/O on a timer): a process that the machine starved for seconds needs more than the default five.
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "quit", "the outcome", 20_000);
@@ -337,7 +348,7 @@ test("the computer slept: a clock step longer than `lost` between two watcher ti
 	await ticks();
 	const awake = await poll(s, token);
 	assert.equal(awake.ok, true, "the run's next poll finds the server there");
-	assert.notEqual((awake.command as { type: string } | undefined)?.type, "quit", "and is not told to quit: the server did not take it for lost (it may be told to wrap up: it was idle for five minutes)");
+	assert.equal(awake.command, undefined, "and is told nothing: the server did not take it for lost, and the five minutes asleep are no idle time of its own");
 	// A run that really stopped polling while the clock ran in ordinary steps is lost once `lost` has passed (60 s here), as before.
 	clock.advance(40_000);
 	await ticks();
@@ -346,6 +357,32 @@ test("the computer slept: a clock step longer than `lost` between two watcher ti
 	assert.equal(((await poll(s, token)).command as { type: string } | undefined)?.type, "quit", "80 s without a poll: the server is ending it");
 	exit(id);
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "crashed", "the lost run's outcome", 20_000);
+});
+
+test("the computer slept past the run cap: the sleep is no part of the run's age, so it is not timed out and its event is not charged a crash; a run that really runs past the cap awake still times out", async () => {
+	const clock = (world.runClock = fakeClock());
+	// The idle rules are out of reach: only the cap (20 min here) and the lost rule can end the run.
+	world.runTimers = { idleSteer: 1e9, idleEnd: 1e9, steerAt: 600_000, quitAt: 1_200_000 };
+	const { s } = await setup();
+	tower().incoming(from, msg("m1", "due"));
+	const id = await nthRun();
+	const token = await claimed(s, id);
+	assert.equal((await drain(s, token)).length, 1);
+	const ticks = watcherTicks;
+	await ticks();
+	// The Mac sleeps for 50 minutes (the lid closed), and wakes: the run has been awake for seconds, not past its cap.
+	clock.advance(3_000_000);
+	await ticks();
+	assert.equal((await poll(s, token, false)).command, undefined, "no quit and no wrap-up steer: the run has not run for 50 minutes");
+	await ticks();
+	assert.equal(readRun(world.slot, "wA", id)?.outcome, undefined, "the run is live");
+	assert.equal(readQueue(world.slot, "wA")[0]?.crashes, undefined, "its event is charged nothing");
+	// Awake, the cap counts again: the steer at 10 minutes of its life, the quit at 20.
+	assert.equal(await awakeFor(clock, s, token, 600_000, false), "steer");
+	assert.equal(await awakeFor(clock, s, token, 600_000, false), "quit");
+	exit(id);
+	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the awake run's timeout", 20_000);
+	assert.equal(readQueue(world.slot, "wA")[0]?.crashes, 1, "a real timeout is charged to its event");
 });
 
 test("RV8-F002: a slow watcher tick is not a sleep: two runs, one silent and one whose pid check takes 70 s of the clock inside each tick, and the silent one is still lost after the second tick", async () => {

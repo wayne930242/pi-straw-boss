@@ -57,6 +57,10 @@ function ends(rows: WorkerRow[], look: { listed: boolean; pane: boolean | undefi
 	});
 	return { e, clock, calls };
 }
+/** Awake idle time: sweeps a minute apart, as the 15-s timer's are close enough; one step past `SWEEP_SLEPT_MS` would be the computer asleep. */
+const idleFor = async (h: { e: { sweep(): Promise<void> }; clock: ReturnType<typeof fakeClock> }, ms: number) => {
+	for (let left = ms; left > 0; left -= 60_000) (h.clock.advance(Math.min(60_000, left)), await h.e.sweep());
+};
 
 test("a final row is closed and forgotten; a worker gone two sweeps in a row gets a receipt; one idle 60 minutes is interrupted with a receipt and kept", async () => {
 	const done = ends([{ workspace: "wA", route: route({ final: 1 }) }], { listed: true, pane: true, working: false });
@@ -70,13 +74,25 @@ test("a final row is closed and forgotten; a worker gone two sweeps in a row get
 	assert.ok(gone.calls.includes("forget w-1"));
 	const idle = ends([{ workspace: "wA", route: route() }], { listed: true, pane: true, working: false });
 	await idle.e.sweep();
-	idle.clock.advance(WORKER_STOP_MS - 1);
-	await idle.e.sweep();
+	await idleFor(idle, WORKER_STOP_MS - 1);
 	assert.equal(idle.calls.length, 0);
 	idle.clock.advance(1);
 	await idle.e.sweep();
 	assert.deepEqual(idle.calls.slice(0, 2), ["close w-1 interrupt", "stopped w-1"]);
 	assert.match(idle.calls[2]!, /idle 60 minutes without a final report: the box stopped it; its worktree \/nowhere\/feat-x stays unless it is clean and pushed\.$/);
+});
+
+test("the computer slept: a worker idle when the lid closed is not stopped at the wake, since the time asleep is no idle time of its own; awake, its 60 minutes still run out", async () => {
+	const idle = ends([{ workspace: "wA", route: route() }], { listed: true, pane: true, working: false });
+	await idle.e.sweep();
+	await idleFor(idle, 10 * 60_000);
+	idle.clock.advance(2 * 3600_000);
+	await idle.e.sweep();
+	assert.deepEqual(idle.calls, [], "ten minutes idle and two hours asleep: not stopped");
+	await idleFor(idle, WORKER_STOP_MS - 10 * 60_000 - 60_000);
+	assert.deepEqual(idle.calls, [], "59 minutes idle awake");
+	await idleFor(idle, 60_000);
+	assert.deepEqual(idle.calls.slice(0, 2), ["close w-1 interrupt", "stopped w-1"], "60 minutes idle awake: stopped");
 });
 
 test("a revoke ends a worker with interrupt", async () => {
@@ -113,8 +129,7 @@ test("the final report, the gone receipt and the idle receipt end with the Sessi
 	assert.ok(marks.some((m) => /^true \{"ended":\{"at":\d+,"how":"gone"\}\} true$/.test(m)), marks.join("; "));
 	const idle = mk({ listed: true, pane: true, working: false, file: "/s/x.jsonl" });
 	await idle.e.sweep();
-	idle.clock.advance(WORKER_STOP_MS);
-	await idle.e.sweep();
+	await idleFor(idle, WORKER_STOP_MS);
 	assert.ok(idle.calls[0]!.endsWith(line));
 	assert.ok(marks.includes('true {"file":"/s/x.jsonl"} false'));
 	assert.ok(marks.some((m) => m.includes('"how":"idle"') && m.endsWith("true")));

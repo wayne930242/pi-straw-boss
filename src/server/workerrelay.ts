@@ -8,6 +8,8 @@ import { type BookEntry, markBook, sessionLine } from "./workerbook.ts";
 // handles it; the sweep then closes its tab and removes its worktree when nothing would be lost. A worker gone without a report, or idle 60 minutes without one, gets a code receipt instead.
 
 export const WORKER_STOP_MS = 60 * 60_000;
+/** A sweep this long after the last (they come every 15 s) means the computer slept or the server stood still: the gap is no worker's idle time (runs.ts `giveBack`). */
+export const SWEEP_SLEPT_MS = 5 * 60_000;
 const REPORT_MAX = 48_000;
 
 export interface RelayDeps {
@@ -64,6 +66,7 @@ export interface EndDeps {
 
 export function createWorkerEnds(d: EndDeps) {
 	const idleFrom = new Map<string, number>(), goneSeen = new Map<string, number>();
+	let lastSweep: number | undefined;
 	/** The worktree at the end: removed when clean and pushed or untouched, else kept and the tower told. The line says which, for a receipt. */
 	const tidy = async (row: WorkerRow): Promise<string> => {
 		const w = row.route.worker!; // git finds the repository from the worktree itself
@@ -117,10 +120,13 @@ export function createWorkerEnds(d: EndDeps) {
 	};
 	return {
 		async sweep(): Promise<void> {
-			const rows = d.rows(), live = new Set(rows.map((r) => r.route.to));
+			const at = d.now(), rows = d.rows(), live = new Set(rows.map((r) => r.route.to));
+			// A worker idle when the lid closed is not stopped at the wake: the time asleep moves its idle clock on (measured from the end of the last sweep, so a slow sweep is no sleep).
+			if (lastSweep !== undefined && at - lastSweep > SWEEP_SLEPT_MS) for (const [k, v] of idleFrom) idleFrom.set(k, v + at - lastSweep);
 			for (const k of [...idleFrom.keys()]) if (!live.has(k)) idleFrom.delete(k);
 			tidied = new Map([...tidied].filter(([k]) => live.has(k)));
 			for (const row of rows) await one(row).catch((e: Error) => d.log("worker-sweep-failed", { main: row.route.to, error: e.message.slice(0, 160) }));
+			lastSweep = d.now();
 		},
 	};
 }

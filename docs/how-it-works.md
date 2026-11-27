@@ -3694,7 +3694,7 @@ The run ends when the boss quits it (`/quit` ends it as done with the note `(the
 
 #### Limits
 
-A run that has not polled for 30 seconds is lost and ended as crashed, unless the computer slept: when the server's own watch finds a gap of more than that between the end of one of its ticks and the start of the next (a slow tick is no sleep), no run could poll in it, so every run's silence is counted from that tick.
+A run that has not polled for 30 seconds is lost and ended as crashed, unless the computer slept: when the server's own watch finds a gap of more than that between the end of one of its ticks and the start of the next (a slow tick is no sleep), no run could poll in it, so every run's silence is counted from that tick. The gap is no part of any run's life either: its age (the cap), its idle and the boss's silence, its wrap-up grace, and the waits after a quit count awake time only, so a lid closed over a live run neither times it out nor charges its events a crash. A Node clock cannot say this: on macOS `process.hrtime` runs on through a sleep. The worker sweep does the same for a worker's 60 idle minutes (a sweep more than 5 minutes after the last).
 
 <details>
 <summary>Details</summary>

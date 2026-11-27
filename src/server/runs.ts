@@ -237,6 +237,8 @@ interface Active {
 	unbound?: true;
 	idleSince?: number;
 	started: number;
+	/** Time the computer slept (or the server stood still) while this run was live: no part of its age (`giveBack`). */
+	slept?: number;
 	closing?: number;
 	steeredLong?: boolean;
 	steeredIdle?: boolean;
@@ -1136,6 +1138,15 @@ export function createRuns(o: RunsOptions) {
 		watcher = setInterval(() => void tick().catch((cause: Error) => error("run-watch", cause.message)), t.watch);
 		watcher.unref();
 	};
+	/**
+	 * The computer slept, or the server stood still as long, for `ms` of the run's life: the time goes back to the run. Its age (the cap), its idle and the boss's silence, its wrap-up grace, and the waits after a quit all count
+	 * awake time only, so a lid closed over a live run neither times it out nor charges its events a crash (a wakeAfter timer that fired in a dark wake was parked after two such runs). No Node clock does this: on macOS
+	 * `process.hrtime` and `performance.now` run on through a sleep (measured 2026-11-27: both equal the wall time since boot), so the gap between ticks is the measure.
+	 */
+	const giveBack = (a: Active, ms: number) => {
+		a.slept = (a.slept ?? 0) + ms;
+		for (const k of ["idleSince", "closing", "terminating", "escalated", "recovering", "boss", "bossSince", "graceUntil"] as const) if (a[k] !== undefined) a[k] = a[k]! + ms;
+	};
 	let ticking = false, lastTick: number | undefined;
 	const tick = async () => {
 		if (ticking) return;
@@ -1145,10 +1156,19 @@ export function createRuns(o: RunsOptions) {
 			// silence counted from now, and the poll that follows is what shows it alive; a run that is really gone is still found, one `lost` later. The gap is measured from the end of the last tick: a tick that was slow
 			// (Herdr hanging, calls of 5 s one after another) is no sleep, and slow ticks in a row must not keep a hung pi from ever being lost (RV8-F002).
 			const at = now();
-			if (lastTick !== undefined && at - lastTick > Math.max(t.lost, 10 * t.watch)) for (const a of byRun.values()) if (!a.ended && a.lastPoll < at) a.lastPoll = at;
+			if (lastTick !== undefined && at - lastTick > Math.max(t.lost, 10 * t.watch)) {
+				for (const a of byRun.values()) {
+					if (a.ended) continue;
+					if (a.lastPoll < at) a.lastPoll = at;
+					// Of the gap, a run begun in it lived only its own part; one watch interval of it was awake.
+					const ms = at - Math.max(lastTick, a.started) - t.watch;
+					if (ms > 0) giveBack(a, ms);
+				}
+				log.line("run-slept", { ms: at - lastTick, runs: byRun.size });
+			}
 			for (const a of [...byRun.values()]) {
 				if (a.ended) continue;
-				const age = now() - a.started;
+				const age = now() - a.started - (a.slept ?? 0);
 				const exited = gone(a) || (a.rec.pid === undefined && a.token !== undefined && (await panes(o.run, a.rec.workspace).catch(() => undefined))?.every((p) => p.pane_id !== a.rec.pane) === true);
 				if (!exited) a.goneSeen = false; // a sighting counts only with the next tick's (RVAE-F002)
 				if (exited) {
@@ -1239,7 +1259,8 @@ export function createRuns(o: RunsOptions) {
 			}
 			if (!byRun.size) (clearInterval(watcher), (watcher = undefined));
 		} finally {
-			lastTick = now();
+			// A watcher that stops forgets its last tick: the next one starts with a run that was not live in the time between.
+			lastTick = watcher ? now() : undefined;
 			ticking = false;
 		}
 	};
@@ -1626,7 +1647,7 @@ export function createRuns(o: RunsOptions) {
 		return {
 			since: a.rec.startedAt, resumed: c.resumed, ...(c.why ? { why: c.why } : {}), turns: a.turns ?? c.turns, idle,
 			...(idle && a.boss !== undefined ? { idleAt: Math.max(a.boss, a.idleSince!) + t.bossAway } : {}),
-			idleMs: t.bossAway, capAt: (a.bossSince ?? a.started) + t.bossMax,
+			idleMs: t.bossAway, capAt: (a.bossSince ?? a.started + (a.slept ?? 0)) + t.bossMax,
 			...(a.closing !== undefined || a.terminating !== undefined ? { closing: true as const } : {}),
 		};
 	};
