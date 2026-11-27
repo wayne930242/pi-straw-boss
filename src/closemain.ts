@@ -14,7 +14,7 @@ import { TRAIN } from "./trainrole.ts";
 //   {type: "close-main", to: <main session id>, reqId, interrupt?: true}       tower → main
 //   {type: "close-main-result", to: <tower session id>, reqId, accepted, reason?}   main → tower
 //   {type: "watch", to: <main session id>, reqId, key, state, text}   tower identity → main: a `boss_watch` line of the sb server (bosswatch.ts judges the sender)
-//   {type: "watch-result", to: <tower session id>, reqId, accepted}   main → tower; also the answer to {type: "watch-ping", to, reqId}, whether this main takes watch lines from that tower identity now (a ward from the shell)
+//   {type: "watch-result", to: <tower session id>, reqId, accepted}   main → tower
 //   {type: "took-over", to: <old main session id>, reqId} / {type: "took-over-result", to: <successor id>, reqId, accepted}   a successor → the main that handed over to it (rotclose.ts)
 
 export const CONTROL = "straw-boss/control";
@@ -109,7 +109,7 @@ export function createCloseMain({ pi, cfg, s, me, guiDir }: Kit, { closeSelf, ch
 		const p = event.payload, from = event.fromSessionId;
 		if (event.type !== "message" || p?.version !== 1 || !from || typeof p.reqId !== "string" || p.reqId.length > 64) return;
 		if (p.type === "close-main" && p.to === me()) void answer(from, p.reqId, p.interrupt === true);
-		if ((p.type === "watch" || p.type === "watch-ping") && p.to === me()) void (onWatch?.(from, p) ?? Promise.resolve(false)).catch(() => false).then((accepted) => send({ type: "watch-result", to: from, reqId: p.reqId, accepted }));
+		if (p.type === "watch" && p.to === me()) void (onWatch?.(from, p) ?? Promise.resolve(false)).catch(() => false).then((accepted) => send({ type: "watch-result", to: from, reqId: p.reqId, accepted }));
 		if (p.type === "took-over" && p.to === me()) send({ type: "took-over-result", to: from, reqId: p.reqId, accepted: onTook?.(from) === true });
 		if ((p.type === "close-main-result" || p.type === "watch-result" || p.type === "took-over-result") && p.to === me() && typeof p.accepted === "boolean") answers.set(p.reqId, { from, accepted: p.accepted, ...(typeof p.reason === "string" ? { reason: p.reason.slice(0, 300) } : {}), ...(p.busy === true ? { busy: true } : {}) });
 	};

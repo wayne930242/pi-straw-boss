@@ -28,12 +28,11 @@ const span = (name: string, text: string | undefined): number | undefined => {
 	return ms;
 };
 
-export function createBossWatch({ pi, cfg, s, guiDir, me, role }: Kit, d: { ask?: Ask; control: Pick<Control, "register" | "onWatch">; openTower: Reach["openTower"]; remote(): boolean }) {
+export function createBossWatch({ pi, cfg, s, guiDir, me, role }: Kit, d: { ask?: Ask; control: Pick<Control, "register" | "onWatch">; openTower: Reach["openTower"]; remote(): boolean; owned?(request: Record<string, unknown>): Promise<Record<string, unknown>> }) {
 	const seen = new Set<string>();
 	d.control.onWatch(async (from, p) => {
 		const mine = (await workspaces(cfg.run)).find((w) => w.workspace_id === s.at.workspaceId);
 		if (!mine?.tokens?.tower || mine.tokens.tower !== from) return false;
-		if (p.type === "watch-ping") return true; // a ward from the shell asks whether this main listens (server/watchesops.ts)
 		if (typeof p.text !== "string") return false;
 		// A change the server sends again after a restart lost the answer carries the same id: taken, not shown twice.
 		if (typeof p.id === "string") { if (seen.has(p.id)) return true; seen.add(p.id); if (seen.size > 200) seen.delete(seen.values().next().value!); }
@@ -65,10 +64,11 @@ export function createBossWatch({ pi, cfg, s, guiDir, me, role }: Kit, d: { ask?
 					if (s.remoteOrigin || d.remote()) throw new Error("A teammate's turn cannot set this main's watches");
 					const reply = (text: string, details: unknown) => ({ content: [{ type: "text" as const, text }], details });
 					if (key === undefined) {
-						const rows = (await ask({ cmd: "watch-list", session: me() })).watches as { key: string; until: number; newest?: { line: string } }[];
+						// With the registration secret when it can be had, so a main sees its wards' files (sb_ward's, wardtool.ts); else the plain list.
+						const rows = (await (d.owned && role() === "main" ? d.owned({ cmd: "watch-list", session: me() }).catch(() => ask({ cmd: "watch-list", session: me() })) : ask({ cmd: "watch-list", session: me() }))).watches as { key: string; until: number; newest?: { line: string } }[];
 						return reply(rows.length ? rows.map((r) => `- ${r.newest?.line ?? `watch ${r.key}`} (until ${new Date(r.until).toTimeString().slice(0, 5)})`).join("\n") : "You watch nothing.", { watches: rows });
 					}
-					if (stop) return (await ask({ cmd: "watch-stop", session: me(), key }), reply(`Stopped watching ${key}.`, { key, stopped: true }));
+					if (stop) return (await (key.startsWith("ward:") && d.owned ? d.owned : ask)({ cmd: "watch-stop", session: me(), key }), reply(`Stopped watching ${key}.`, { key, stopped: true }));
 					if (!towerRunsEnabled(cfg.stateDir ?? guiDir)) throw new Error("tower runs are off on this computer (towerRuns.enabled is false): boss_watch needs the workspace's tower identity of the sb server, which sends the wakes. Watch with MonitorCreate instead");
 					const quietMs = span("quiet", quiet), idleMs = span("idle", idle), untilMs = span("until", until);
 					await d.openTower(undefined, true); // the workspace's tower identity sends the lines, as it carries call_tower

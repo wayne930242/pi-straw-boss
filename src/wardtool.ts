@@ -4,21 +4,31 @@ import type { Ask } from "./host.ts";
 import type { Reach } from "./reach.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
 import type { Kit } from "./state.ts";
+import { type CarClient, createCarClient } from "./traincar.ts";
 
 // `sb_ward` (docs/how-it-works.md#ward-a-plain-pane): a main hands the sb server a worker that runs in a plain pane, and the server wakes it only when the worker finished, is blocked, or is dead (server/ward.ts). The ward is a
 // watch of the server's (key `ward:<pane>`), so its line comes as boss_watch's do (bosswatch.ts takes it on the control channel), boss_watch lists it, and boss_watch with stop ends it as sb_ward with stop does. The main's
-// session keeps a `sb-ward` entry of each ward it set: the pane, the worker's session file, and the item.
+// session keeps a `sb-ward` entry of each ward it set: the pane, the worker's session file, and the item. Every request of a ward carries the registration secret the server handed this pi process (`cars-register`, the train_car
+// client's, traincar.ts): the server sets, lists, and stops a ward only for its main's own process (ward-review F003, boss decision (a)).
 
 export const WARD_ENTRY = "sb-ward";
 export const WARD_DESCRIPTION = "Ward a worker in a plain pane instead of a herdr monitor: the sb server wakes you once when it finished (reported to you, or its turn ended and nothing of it ran for a minute), is blocked (a dialog, or Herdr blocked), or is dead (pane gone, pi left). Read only.";
 
-export function createWard({ pi, cfg, s, guiDir, me, role }: Kit, d: { ask?: Ask; control: Pick<Control, "register">; openTower: Reach["openTower"]; remote(): boolean }) {
-	const ask = async (request: Record<string, unknown>) => {
+export function createWard({ pi, cfg, s, guiDir, me, role }: Kit, d: { ask?: Ask; control: Pick<Control, "register">; openTower: Reach["openTower"]; remote(): boolean; client?: CarClient }) {
+	// The car book's client over this session's way to the server; its secret is kept where train_car's is, per session and process.
+	const client: CarClient = d.client ?? createCarClient({ call: async (request) => (d.ask ? d.ask(request, { start: "auto" }).catch(() => undefined) : undefined) as never, session: () => me() || undefined, pane: () => s.at?.paneId });
+	const secret = () => client.ensure().catch((error: Error) => (client.registered() ? client.ensure() : Promise.reject(error))); // a registration of train_car's client that won the race is the same secret
+	/** A request with the secret; a server that started again knows none, so it is asked once more after registering again. */
+	const owned = async (request: Record<string, unknown>) => {
 		if (!d.ask) throw new Error("No sb server answers this session");
-		const reply = await d.ask(request, { start: "auto" });
-		if (!reply.ok) throw new Error(String(reply.error ?? "the sb server refused"));
-		return reply;
+		for (let attempt = 0; ; attempt++) {
+			const reply = await d.ask({ ...request, secret: await secret() }, { start: "auto" });
+			if (reply.ok) return reply;
+			if (attempt === 0 && /not from a registered session/.test(String(reply.error))) { client.forget(); continue; }
+			throw new Error(String(reply.error ?? "the sb server refused"));
+		}
 	};
+	const ask = owned;
 	let registered = false;
 	// Registered at the join with the other net tools, and active only while the session is a main (as call_peer follows its roles, callpeer.ts).
 	pi.on("before_agent_start", () => {
@@ -27,6 +37,8 @@ export function createWard({ pi, cfg, s, guiDir, me, role }: Kit, d: { ask?: Ask
 		if (want.length !== active.length) pi.setActiveTools(want);
 	});
 	return {
+		/** A ward's request with this process's registration secret (boss_watch's stop of a ward, and its list, which shows a ward's file only to its main). */
+		owned,
 		/** With the net tools of a joined session that is no tower. */
 		addTool() {
 			if (registered) return;

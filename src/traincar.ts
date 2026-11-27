@@ -77,6 +77,8 @@ export function createCarClient(d: CarClientDeps) {
 		/** Registers if it has not (the extension tries early, before a shell can: see carbook.ts). Resolves quietly when it cannot. */
 		async register(): Promise<boolean> { try { await ensure(); return true; } catch { return false; } },
 		registered: () => held.has(keyOf()),
+		/** Drops the secret this process holds, after the server said it does not know it (a restart): the next `ensure` registers again. */
+		forget: () => void held.delete(keyOf()),
 		async set(request: CarSet): Promise<SetAnswer> {
 			for (let attempt = 0; ; attempt++) {
 				const secret = await ensure();

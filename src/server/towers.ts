@@ -174,8 +174,6 @@ export interface Towers extends Returns {
 	/** The wait router's seams (linkwaits.ts): a workspace's tower identity, and a code-written line from it to local sessions. */
 	/** A watch line to a session (watches.ts), on the control channel as the workspace's tower identity: whether the session took it. */
 	watchSend(workspace: string, session: string, text: string, facts: { key: string; state: string; id?: string }): Promise<boolean>;
-	/** Whether the session takes watch lines from the workspace's tower identity now (a `watch-ping` on the control channel): a ward from the shell asks it first. */
-	watchPing(workspace: string, session: string): Promise<boolean>;
 	identityOf(workspace: string): string | undefined; post(workspace: string, to: string[], text: string, kind: "link_wait" | "link_wait_state" | "link_notice", extra: Pick<import("../header.ts").Stamp, "wait" | "peer">): Promise<boolean>;
 	/** The runs of the services (runs.ts): claims, the run's requests, the boss's events. */
 	runs: Runs;
@@ -1440,7 +1438,6 @@ export function createTowers(o: TowersOptions): Towers {
 		},
 		owns: (id) => [...services.values()].some((l) => l.record.id === id),
 		watchSend: async (workspace, session, text, facts) => ((l) => (l && l.state === "live" && !l.stopped && !isHeadL(l) && l.control ? l.control.notify(session, { text, ...facts }) : Promise.resolve(false)))(services.get(workspace)),
-		watchPing: async (workspace, session) => ((l) => (l && l.state === "live" && !l.stopped && !isHeadL(l) && l.control ? l.control.notify(session, {}, "watch-ping") : Promise.resolve(false)))(services.get(workspace)),
 		identityOf: (workspace) => ((l) => (l && l.state === "live" && !l.stopped && !isHeadL(l) ? l.record.id : undefined))(services.get(workspace)),
 		post: async (workspace, to, text, kind, extra) => ((l) => (l?.reach && !l.stopped ? Promise.all(to.map((id) => l.reach!.post(id, text, kind, "session", false, undefined, undefined, extra))).then((r) => r.every((x) => x.status === "sent")) : false))(services.get(workspace)),
 		status: () => [...services.values()].filter((l) => !isHeadL(l)).map(row),

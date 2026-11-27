@@ -12,9 +12,10 @@ import { createWardRead, WARD, type WardDeps, type WardRead } from "./ward.ts";
 // (watchread.ts). Kept out of main.ts, which carries a line budget. `watch-read` is still answered for one release (0.83.0), for a watchdog child of an older build; `watch-report` is retired.
 
 export const REPORT_RETIRED = "watch-report is retired in pi-straw-boss 0.83.0 with the watchdog: the main watches with boss_watch, and the sb server wakes it";
-/** `main`: the live main a session id is in the server's own reading of the net, with its workspace and pane, or why it is none (ward-review F003); `ready`: whether that main's control channel answers its workspace's tower identity now (F002). */
+/** `main`: the live main a session id is in the server's own reading of the net, with its workspace and pane, or why it is none (ward-review F003). */
 /** `fresh`: the server reads the net now first, as a ward's add does (ward-review F009: with no page and no watch, nothing else reads it); a list or a stop reads it only when the last reading does not show a live main. */
-export interface WardRoutes extends Pick<WardRead, "resolve" | "held"> { main(session: string, fresh?: boolean): Promise<{ workspace: string; pane?: string } | string>; ready(workspace: string, session: string): Promise<boolean> }
+/** `owner`: the session a registration secret is (carbook.ts `sessionOf`, the secret `cars-register` handed the pi process), or why none (F003, boss decision (a)): a ward is added, listed with its file, and stopped only by its main's own pi process. */
+export interface WardRoutes extends Pick<WardRead, "resolve" | "held"> { main(session: string, fresh?: boolean): Promise<{ workspace: string; pane?: string } | string>; owner(secret: unknown): Promise<{ session: string } | string> }
 export interface WatchRoutes { read: { read(q: WatchQuery): Promise<Reply> }; watches: Pick<Watches, "add" | "stop" | "list" | "has">; ward?: WardRoutes }
 const no = (error: string): Promise<Reply> => Promise.resolve({ ok: false, error });
 const number = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -37,7 +38,15 @@ export function watchReply(routes: WatchRoutes | undefined, request: Request, en
 	const session = text(request.session, 128);
 	if (!session) return no(`${request.cmd} needs session`);
 	// A ward's paths and its stop are the main's alone: the session must be a live main of the server's own reading (ward-review F003).
-	const mainOf = () => (routes.ward ? routes.ward.main(session) : Promise.resolve("this server keeps no wards"));
+	// ...and the request must carry the registration secret of that session's own pi process (F003, boss decision (a)): a shell of the same user names any session id, but holds no secret of it.
+	const mainOf = async (): Promise<string | undefined> => {
+		if (!routes.ward) return "this server keeps no wards";
+		const owner = await routes.ward.owner(request.secret);
+		if (typeof owner === "string") return owner;
+		if (owner.session !== session) return "sb: the registration secret is not this session's: a ward is its main's own, set, listed, and stopped with sb_ward";
+		const m = await routes.ward.main(session);
+		return typeof m === "string" ? m : undefined;
+	};
 	if (request.cmd === "watch-list") {
 		const list = routes.watches.list(session), wards = (list.watches as { ward?: { pane: string } }[]).some((r) => r.ward);
 		return (wards ? mainOf() : Promise.resolve(undefined)).then((m) => (typeof m === "string" ? { ...list, watches: (list.watches as { ward?: { pane: string } }[]).map((r) => (r.ward ? { ...r, ward: { pane: r.ward.pane }, newest: undefined } : r)) } : list)); // a ward's line names its file too
@@ -47,23 +56,25 @@ export function watchReply(routes: WatchRoutes | undefined, request: Request, en
 	if (request.cmd === "watch-stop") return (key.startsWith(WARD) ? mainOf() : Promise.resolve(undefined)).then((m) => (typeof m === "string" ? { ok: false, error: m } : routes.watches.stop(session, key)));
 	if (!enabled()) return no("tower runs are off on this computer (towerRuns.enabled is false): boss_watch needs the workspace's tower identity of the sb server, which sends the wakes");
 	const ms = (v: unknown) => (number(v) ? v : undefined), [quietMs, idleMs, untilMs] = [ms(request.quietMs), ms(request.idleMs), ms(request.untilMs)];
-	// A ward (`sb_ward`, `cli.mjs ward`) has a command of its own, which a server of an older build refuses instead of keeping it as a plain watch (ward-review F005).
+	// A ward (`sb_ward`) has a command of its own, which a server of an older build refuses instead of keeping it as a plain watch (ward-review F005).
 	if (request.cmd === "ward-add") return wardAdd(routes, session, key, request, untilMs);
-	if (key.startsWith(WARD)) return no("a ward is set with sb_ward or cli.mjs ward");
+	if (key.startsWith(WARD)) return no("a ward is set with sb_ward");
 	const workspace = text(request.workspace, 200);
 	if (!workspace) return no("watch-add needs workspace");
 	return routes.watches.add({ session, workspace, key, ...(quietMs !== undefined ? { quietMs } : {}), ...(idleMs !== undefined ? { idleMs } : {}), ...(untilMs !== undefined ? { untilMs } : {}) });
 }
-/** A ward of a live main on a pane of its own workspace: the workspace and the main's pane are the server's reading, never the request's; from the shell (`cli`) the main's control channel must answer first, or the wake would reach nobody (F002). The pane is read now for its session file, which the ward keeps. */
+/** A ward of a live main on a pane of its own workspace, asked by that main's own pi process (its registration secret): the workspace and the main's pane are the server's reading, never the request's. The pane is read now for its session file, which the ward keeps. */
 async function wardAdd(routes: WatchRoutes, session: string, key: string, request: Request, untilMs: number | undefined): Promise<Reply> {
 	if (!routes.ward) return { ok: false, error: "this server keeps no wards" };
 	if (!key.startsWith(WARD)) return { ok: false, error: "ward-add takes ward:<pane>" };
-	const w = (request.ward ?? {}) as { item?: unknown; names?: unknown; cli?: unknown };
-	if ((w.item !== undefined && typeof w.item !== "string") || (w.names !== undefined && !(Array.isArray(w.names) && w.names.every((n) => typeof n === "string" && n.length <= 200)))) return { ok: false, error: "ward is { item?, names?, cli? }: item a string, names strings" };
-	const ward = routes.ward, me = await ward.main(session, true);
+	const w = (request.ward ?? {}) as { item?: unknown };
+	if (w.item !== undefined && typeof w.item !== "string") return { ok: false, error: "ward is { item? }: item a string" };
+	const ward = routes.ward, owner = await ward.owner(request.secret);
+	if (typeof owner === "string") return { ok: false, error: owner };
+	if (owner.session !== session) return { ok: false, error: "sb: the registration secret is not this session's: a ward is its main's own, set with sb_ward" };
+	const me = await ward.main(session, true);
 	if (typeof me === "string") return { ok: false, error: me };
-	if (w.cli === true && !(await ward.ready(me.workspace, session).catch(() => false))) return { ok: false, error: "your session does not answer on the control channel, so the ward's wake would reach nobody: call sb_ward from the main instead (it listens first), or run this again after boss_watch or a /reload" };
-	const rec = await ward.resolve({ pane: key.slice(WARD.length), session, workspace: me.workspace, ...(w.item !== undefined ? { item: w.item as string } : {}), ...(w.names ? { names: w.names as string[] } : {}), ...(me.pane ? { here: me.pane } : {}) });
+	const rec = await ward.resolve({ pane: key.slice(WARD.length), session, workspace: me.workspace, ...(w.item !== undefined ? { item: w.item as string } : {}), ...(me.pane ? { here: me.pane } : {}) });
 	if (typeof rec === "string") return { ok: false, error: rec };
 	const r = await routes.watches.add({ session, workspace: me.workspace, key, ...(untilMs !== undefined ? { untilMs } : {}), ward: rec });
 	return r.ok ? { ...r, ward: { pane: rec.pane, file: rec.file, ...(rec.item ? { item: rec.item } : {}) } } : r;
@@ -79,8 +90,8 @@ export interface StartWatches {
 	/** `watches.json` goes in this server's own folder; the `link:` keys and `waiting` read the waits' ledgers of its state folder and the Link holder (linkwatch.ts). */
 	slot: Slot;
 	holder?(): Pick<LinkHolder, "unitsSeen" | "boards"> | undefined;
-	/** What a ward reads besides the session file (ward.ts), and whether a main's control channel answers its workspace's tower identity (towers.ts `watchSend` with `watch-ping`); none keeps no wards. */
-	ward?: Omit<WardDeps, "now"> & Pick<WardRoutes, "ready">;
+	/** What a ward reads besides the session file (ward.ts), and the session a registration secret is (carbook.ts `sessionOf`); none keeps no wards. */
+	ward?: Omit<WardDeps, "now"> & Pick<WardRoutes, "owner">;
 	/** The seams of a test: the hold's length, the read interval, the timer. */
 	over?: Partial<Pick<WatchReadDeps, "holdMs" | "readMs" | "timer">>;
 }
@@ -103,5 +114,5 @@ export function startWatches(o: StartWatches): WatchRoutes {
 		try { await o.net.read(); } catch (error) { return `the server could not read the net: ${(error as Error).message}`; }
 		return judgeMain(session);
 	};
-	return { read, watches, ...(ward && o.ward ? { ward: { resolve: ward.resolve, held: ward.held, main: mainOf, ready: o.ward.ready } } : {}) };
+	return { read, watches, ...(ward && o.ward ? { ward: { resolve: ward.resolve, held: ward.held, main: mainOf, owner: o.ward.owner } } : {}) };
 }

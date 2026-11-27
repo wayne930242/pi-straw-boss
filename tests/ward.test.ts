@@ -6,8 +6,8 @@ import { after, test } from "node:test";
 import type { Net } from "../src/net.ts";
 import type { Pane } from "../src/herdr.ts";
 import { parseArgs } from "../src/server/cli.ts";
-import { judgeWard, QUIET_MS, readSession, sessionReader, WARD_LOOK_MS, type WardRec } from "../src/server/ward.ts";
-import { runWard } from "../src/server/wardcli.ts";
+import { judgeWard, QUIET_MS, readSession, sessionReader, WARD_LOOK_MS, type WardRec, wardOf } from "../src/server/ward.ts";
+import { runWard, WARD_CLI_REFUSED } from "../src/server/wardcli.ts";
 import type { WatchNet } from "../src/server/watchread.ts";
 import { startWatches, watchReply } from "../src/server/watchesops.ts";
 import { fakeClock } from "./fake-clock.ts";
@@ -34,25 +34,28 @@ function world() {
 	const pane: Pane = { pane_id: "%7", tab_id: "t2", workspace_id: "w1", terminal_id: "T7", agent: "pi", agent_status: "working", agent_session: { value: file } };
 	let list: Pane[] = [{ pane_id: "%1", tab_id: "t1", workspace_id: "w1", agent: "pi", agent_status: "working" }, pane];
 	const monitors = new Set<string>();
+	// `hold.list`: Herdr's pane list waits until the test lets it answer (a look in flight).
+	const hold: { list?: Promise<void> } = {};
 	const run = async (args: string[]) => {
-		if (args[0] === "pane" && args[1] === "list") return JSON.stringify({ result: { panes: list } });
+		if (args[0] === "pane" && args[1] === "list") return (await hold.list, JSON.stringify({ result: { panes: list } }));
 		throw new Error(`unexpected herdr ${args.join(" ")}`);
 	};
 	const units: Record<string, { role: string; base: string; pane?: string; live: boolean }> = { [MAIN]: { role: "main", base: "w1", pane: "%1", live: true }, [MEMBER]: { role: "member", base: "w1", pane: "%3", live: true } };
 	// The registry is empty until a reading (no page, no watch): only `read` fills it (ward-review F009).
 	const reading = { done: 0 };
 	const net: WatchNet = { onRead: () => () => {}, last: () => ({ bases: [] }) as Net, lookup: (key) => (reading.done && units[key] ? { key, name: key.slice(0, 8), ...units[key]! } : undefined), read: async () => (reading.done++, { bases: [] }) as Net };
-	const listening = { now: true };
+	// The registration secrets the car book handed (carbook.ts `sessionOf`): one per session's pi process.
+	const secrets: Record<string, string> = { [`s-${MAIN}`]: MAIN, [`s-${MEMBER}`]: MEMBER, [`s-${WORKER}`]: WORKER };
 	const timer = (ms: number, fn: () => void) => { let live = true; clock.at(clock.elapsed() + ms, () => live && fn()); return () => void (live = false); };
 	const sent: { session: string; text: string; key: string; state: string; id?: string }[] = [];
 	const stops: (() => void)[] = [];
 	// `lost`: the main takes the line, but its answer never reaches the server.
 	const takes = { now: true, lost: false };
-	const start = () => startWatches({ net, now: clock.now, send: async (to, text, facts) => (takes.lost ? (sent.push({ session: to.session, text, ...facts }), false) : takes.now ? (sent.push({ session: to.session, text, ...facts }), true) : false), log: () => {}, stops, slot: { dir } as never, over: { timer }, ward: { run, monitorPanes: () => monitors, loopsDir: loops, ready: async (workspace, session) => listening.now && workspace === units[session]?.base } });
+	const start = () => startWatches({ net, now: clock.now, send: async (to, text, facts) => (takes.lost ? (sent.push({ session: to.session, text, ...facts }), false) : takes.now ? (sent.push({ session: to.session, text, ...facts }), true) : false), log: () => {}, stops, slot: { dir } as never, over: { timer }, ward: { run, monitorPanes: () => monitors, loopsDir: loops, owner: async (secret) => (typeof secret === "string" && secrets[secret] ? { session: secrets[secret]! } : "sb: this request is not from a registered session") } });
 	let routes = start();
 	after(() => stops.forEach((s) => s()));
 	return {
-		clock, file, pane, sent, monitors, loops, units, listening, takes, dir, reading, get routes() { return routes; },
+		clock, file, pane, sent, monitors, loops, units, takes, dir, reading, hold, get routes() { return routes; },
 		/** Another pane in another workspace that runs pi. */
 		other: () => void list.push({ pane_id: "%9", tab_id: "t9", workspace_id: "w2", agent: "pi", agent_status: "working", agent_session: { value: file } }),
 		/** The server stops and a new one starts from `watches.json`. */
@@ -62,10 +65,11 @@ function world() {
 		back: () => void (list.includes(pane) || list.push(pane)),
 		push: (p: Pane) => void list.push(p),
 		write: (text: string) => appendFileSync(file, text),
-		add: (ward: Record<string, unknown> = {}, session = MAIN, key = "ward:%7") => watchReply(routes, { cmd: "ward-add", session, key, ward }, () => true)!,
+		add: (ward: Record<string, unknown> = {}, session = MAIN, key = "ward:%7", secret: string | null = `s-${session}`) => watchReply(routes, { cmd: "ward-add", session, key, ward, ...(secret ? { secret } : {}) }, () => true)!,
+		stop: (session = MAIN, secret: string | null = `s-${session}`, key = "ward:%7") => watchReply(routes, { cmd: "watch-stop", session, key, ...(secret ? { secret } : {}) }, () => true)!,
 		/** `n` looks of the ward, one WARD_LOOK_MS apart. */
 		async looks(n: number) { for (let i = 0; i < n; i++) { await settle(); clock.advance(WARD_LOOK_MS); await settle(); } },
-		list: async () => (await watchReply(routes, { cmd: "watch-list", session: MAIN }, () => true)!).watches as { key: string; ward?: unknown }[],
+		list: async (secret: string | null = `s-${MAIN}`) => (await watchReply(routes, { cmd: "watch-list", session: MAIN, ...(secret ? { secret } : {}) }, () => true)!).watches as { key: string; ward?: unknown }[],
 	};
 }
 
@@ -177,7 +181,7 @@ test("a dialog or a pane Herdr shows blocked is blocked: one wake per blocked sp
 
 test("a ward is refused on the caller's own pane, a pane that runs no pi, an unknown pane, and a bad item", async () => {
 	const w = world();
-	const no = async (over: Record<string, unknown>, key = "ward:%7") => (await watchReply(w.routes, { cmd: "ward-add", session: MAIN, key, ward: over }, () => true)!);
+	const no = async (over: Record<string, unknown>, key = "ward:%7") => (await watchReply(w.routes, { cmd: "ward-add", session: MAIN, secret: `s-${MAIN}`, key, ward: over }, () => true)!);
 	assert.match(String((await no({}, "ward:%1")).error), /your own pane/);
 	assert.match(String((await no({}, "ward:%99")).error), /no pane %99/);
 	assert.match(String((await no({ item: "bad item!" })).error), /item is a plain key/);
@@ -188,7 +192,7 @@ test("a ward is refused on the caller's own pane, a pane that runs no pi, an unk
 test("judgeWard and readSession: the turn from the session file, reports only from the ward's start", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "sb-ward-unit-")), file = join(dir, "s.jsonl");
 	dirs.push(dir);
-	const main = { id: MAIN, names: ["boss-main"] };
+	const main = { id: MAIN };
 	writeFileSync(file, line({ type: "session", id: WORKER }) + user("go"));
 	assert.equal((await readSession(file, 0, main)).turn, "working");
 	appendFileSync(file, said("done"));
@@ -209,19 +213,12 @@ test("judgeWard and readSession: the turn from the session file, reports only fr
 	assert.equal(judgeWard(rec, { pane: { ...pane, agent_session: { value: "/other.jsonl" } }, turn: "ended", runs: [] }, {}, 0).state, "dead");
 });
 
-test("cli.mjs ward: parsed, and sent as the session's ward in the workspace of its pane", async () => {
+test("cli.mjs ward is retired (F003, boss decision (a)): parsed, then refused with a pointer to sb_ward, asking the server nothing", () => {
 	assert.deepEqual(parseArgs(["ward", "%7", "--item", "MP-1", "--until", "2h"]), { command: "ward", flags: { pane: "%7", item: "MP-1", until: "2h" } });
-	assert.throws(() => parseArgs(["ward", "--item", "MP-1"]), /ward needs the pane/);
-	const asked: Record<string, unknown>[] = [];
-	let out = "", err = "";
-	const run = async () => { throw new Error("the CLI reads no Herdr: the server takes the workspace from its own reading"); };
-	const io = { out: (t: string) => void (out += t), err: (t: string) => void (err += t), run, env: { PI_INTERCOM_SESSION_ID: MAIN }, ask: async (r: Record<string, unknown>) => (asked.push(r), { ok: true as const, reply: { ward: { pane: "%7", file: "/f" }, watch: { until: 5, line: "ward %7: unchanged: it works." } } }) };
-	assert.equal(await runWard({} as never, { pane: "%7", item: "MP-1", until: "2h" }, io), 0, err);
-	assert.deepEqual(asked[0], { cmd: "ward-add", session: MAIN, key: "ward:%7", untilMs: 7_200_000, ward: { item: "MP-1", cli: true } });
-	assert.match(out, /"pane":"%7"/);
-	assert.equal(await runWard({} as never, { pane: "%7", stop: true }, io), 0);
-	assert.deepEqual(asked[1], { cmd: "watch-stop", session: MAIN, key: "ward:%7" });
-	assert.equal(await runWard({} as never, { pane: "%7" }, { ...io, env: {} }), 1);
+	let err = "";
+	assert.equal(runWard({ err: (t) => void (err += t) }), 1);
+	assert.equal(err, `${WARD_CLI_REFUSED}\n`);
+	assert.match(err, /sb_ward/);
 });
 
 test("a ward is kept in watches.json: a restarted server keeps it, does not tell a blocked spell again, and wakes on the next ending", async () => {
@@ -240,36 +237,66 @@ test("a ward is kept in watches.json: a restarted server keeps it, does not tell
 	assert.deepEqual(w.sent.map((s) => s.state), ["blocked", "dead"]);
 });
 
-test("ward-review F002: a ward from the shell is refused while the main does not answer on the control channel, and set once it does", async () => {
-	const w = world();
-	w.listening.now = false;
-	const r = await w.add({ cli: true });
-	assert.equal(r.ok, false);
-	assert.match(String(r.error), /does not answer on the control channel.*sb_ward/);
-	assert.deepEqual((await w.list()), []);
-	w.listening.now = true;
-	assert.equal((await w.add({ cli: true })).ok, true);
-});
-
 test("ward-review F003: only a live main of the server's reading wards, only a pane of its own workspace, and only it lists the ward's file or stops it", async () => {
 	const w = world();
 	assert.match(String((await w.add({}, MEMBER)).error), /only a tab's main wards a worker; your session is a member/);
-	assert.match(String((await w.add({}, "0199eeee-none")).error), /not a live unit of the net/);
+	assert.match(String((await w.add({}, "0199eeee-none")).error), /not from a registered session/, "no pi process of it registered");
 	w.units[MAIN]!.live = false;
 	assert.match(String((await w.add()).error), /not a live unit of the net/);
 	w.units[MAIN]!.live = true;
 	w.other();
 	assert.match(String((await w.add({}, MAIN, "ward:%9")).error), /not in your workspace/);
 	// The workspace and the main's own pane are the server's reading, whatever the request says.
-	assert.match(String((await watchReply(w.routes, { cmd: "ward-add", session: MAIN, workspace: "w2", key: "ward:%1", ward: { here: "%5" } }, () => true)!).error), /your own pane/);
+	assert.match(String((await watchReply(w.routes, { cmd: "ward-add", session: MAIN, secret: `s-${MAIN}`, workspace: "w2", key: "ward:%1", ward: { here: "%5" } }, () => true)!).error), /your own pane/);
 	assert.match(String((await watchReply(w.routes, { cmd: "watch-add", session: MAIN, workspace: "w1", key: "ward:%7" }, () => true)!).error), /set with sb_ward/);
 	assert.equal((await w.add()).ok, true);
 	w.units[MAIN]!.role = "member";
 	assert.deepEqual((await w.list()).map((x) => [x.ward, (x as { newest?: unknown }).newest]), [[{ pane: "%7" }, undefined]], "no file, nor the line that names it, for a session that is no main now");
-	assert.match(String((await watchReply(w.routes, { cmd: "watch-stop", session: MAIN, key: "ward:%7" }, () => true)!).error), /only a tab's main/);
+	assert.match(String((await w.stop()).error), /only a tab's main/);
 	w.units[MAIN]!.role = "main";
 	assert.deepEqual((await w.list()).map((x) => x.ward), [{ pane: "%7", file: w.file }]);
-	assert.equal((await watchReply(w.routes, { cmd: "watch-stop", session: MAIN, key: "ward:%7" }, () => true)!).ok, true);
+	assert.equal((await w.stop()).ok, true);
+});
+
+test("F003 (boss decision (a)): a ward is added, listed with its file, and stopped only with the registration secret of its main's own pi process", async () => {
+	const w = world();
+	assert.match(String((await w.add({}, MAIN, "ward:%7", null)).error), /not from a registered session/, "no secret: a shell that names the main's id");
+	assert.match(String((await w.add({}, MAIN, "ward:%7", "s-forged")).error), /not from a registered session/);
+	assert.match(String((await w.add({}, MAIN, "ward:%7", `s-${MEMBER}`)).error), /not this session's/, "another live session's secret");
+	assert.deepEqual(await w.list(), [], "nothing was set");
+	assert.equal((await w.add()).ok, true);
+	assert.deepEqual((await w.list()).map((x) => x.ward), [{ pane: "%7", file: w.file }], "its main sees the file");
+	assert.deepEqual((await w.list(null)).map((x) => [x.ward, (x as { newest?: unknown }).newest]), [[{ pane: "%7" }, undefined]], "without the secret: no file, nor the line that names it");
+	assert.deepEqual((await w.list(`s-${WORKER}`)).map((x) => x.ward), [{ pane: "%7" }], "nor with another's");
+	assert.match(String((await w.stop(MAIN, null)).error), /not from a registered session/);
+	assert.match(String((await w.stop(MAIN, `s-${WORKER}`)).error), /not this session's/);
+	assert.equal((await w.list()).length, 1, "still warded");
+	assert.equal((await w.stop()).ok, true);
+	assert.deepEqual(await w.list(), []);
+});
+
+test("F003: a ward row an older build stored (main.names, set by the retired shell path) still reads, and the field is dropped", () => {
+	const row = { pane: "%7", file: "/f.jsonl", worker: WORKER, offset: 3, item: "MP-1", main: { id: MAIN, names: ["boss-main"] } };
+	assert.deepEqual(wardOf(row), { pane: "%7", file: "/f.jsonl", worker: WORKER, offset: 3, item: "MP-1", main: { id: MAIN } });
+	assert.deepEqual(wardOf({ ...row, main: { id: MAIN } }), { pane: "%7", file: "/f.jsonl", worker: WORKER, offset: 3, item: "MP-1", main: { id: MAIN } });
+});
+
+test("ward-review F008: a look in flight when its ward is stopped keeps no reader when it finishes", async () => {
+	const w = world();
+	const held = () => w.routes.ward!.held();
+	assert.equal((await w.add()).ok, true);
+	assert.equal(held(), 1);
+	let open!: () => void;
+	w.hold.list = new Promise<void>((r) => (open = r));
+	await settle();
+	w.clock.advance(WARD_LOOK_MS); // the next look starts and waits on Herdr's list
+	await settle();
+	assert.equal((await w.stop()).ok, true);
+	assert.equal(held(), 0);
+	delete w.hold.list;
+	open();
+	await settle();
+	assert.equal(held(), 0, "the look that ends after the stop recreates no reader");
 });
 
 test("ward-review F004: a change found but not taken before a restart is sent after it, with the same id; one taken is not sent again", async () => {
@@ -340,7 +367,7 @@ test("ward-review F006: a moved worker whose old pane id now names another pane 
 });
 
 test("ward-review F008: the reader goes on where it stopped, keeps a line not yet ended, and reads the first line at the ward's start however much came after it", async () => {
-	const dir = mkdtempSync(join(tmpdir(), "sb-ward-read-")), file = join(dir, "s.jsonl"), main = { id: MAIN, names: [] };
+	const dir = mkdtempSync(join(tmpdir(), "sb-ward-read-")), file = join(dir, "s.jsonl"), main = { id: MAIN };
 	dirs.push(dir);
 	writeFileSync(file, line({ type: "session", id: WORKER }) + user("go"));
 	const offset = readFileSync(file).length;
@@ -369,7 +396,7 @@ test("ward-review F007: a worker that waits on its own watch of the server, or w
 	const w = world();
 	w.set({ agent_status: "idle" });
 	w.write(said("waiting on my watch"));
-	const own = await w.routes.watches.add({ session: WORKER, workspace: "w1", key: "ward:%1", ward: { pane: "%1", file: "/none.jsonl", worker: "0199ffff", offset: 0, main: { id: WORKER, names: [] } } });
+	const own = await w.routes.watches.add({ session: WORKER, workspace: "w1", key: "ward:%1", ward: { pane: "%1", file: "/none.jsonl", worker: "0199ffff", offset: 0, main: { id: WORKER } } });
 	assert.equal(own.ok, true, JSON.stringify(own));
 	assert.equal((await w.add()).ok, true);
 	await w.looks(12);
@@ -386,7 +413,7 @@ test("ward-review F007: a worker that waits on its own watch of the server, or w
 test("ward-review F009: the first ward on a server with no page and no watch reads the net itself before it checks the main", async () => {
 	const w = world();
 	assert.equal(w.reading.done, 0);
-	const r = await w.add({ cli: true });
+	const r = await w.add();
 	assert.equal(r.ok, true, JSON.stringify(r));
 	assert.ok(w.reading.done >= 1);
 });
@@ -429,7 +456,7 @@ test("ward-review F006, F008: another session's file at the worker's path is not
 	await w.looks(12);
 	assert.deepEqual(w.sent, [], "nothing is judged from another session's file");
 
-	const dir = mkdtempSync(join(tmpdir(), "sb-ward-cap-")), file = join(dir, "s.jsonl"), main = { id: MAIN, names: [] };
+	const dir = mkdtempSync(join(tmpdir(), "sb-ward-cap-")), file = join(dir, "s.jsonl"), main = { id: MAIN };
 	dirs.push(dir);
 	writeFileSync(file, line({ type: "session", id: WORKER }));
 	const read = sessionReader(file, readFileSync(file).length, main, 64, 256);
@@ -446,7 +473,7 @@ test("ward-review F008: a ward lets go of its reader on every end: a stop, a rep
 	const held = () => w.routes.ward!.held();
 	assert.equal((await w.add()).ok, true);
 	assert.equal(held(), 1);
-	assert.equal((await watchReply(w.routes, { cmd: "watch-stop", session: MAIN, key: "ward:%7" }, () => true)!).ok, true);
+	assert.equal((await w.stop()).ok, true);
 	assert.equal(held(), 0, "a stop");
 	assert.equal((await w.add()).ok, true);
 	w.write(said("more"));
@@ -454,7 +481,7 @@ test("ward-review F008: a ward lets go of its reader on every end: a stop, a rep
 	assert.equal(held(), 1, "a replace keeps only the new ward's");
 	const short = world();
 	assert.equal((await short.add({}, MAIN, "ward:%7")).ok, true);
-	const r = await watchReply(short.routes, { cmd: "ward-add", session: MAIN, key: "ward:%7", untilMs: 60_000, ward: {} }, () => true)!;
+	const r = await watchReply(short.routes, { cmd: "ward-add", session: MAIN, secret: `s-${MAIN}`, key: "ward:%7", untilMs: 60_000, ward: {} }, () => true)!;
 	assert.equal(r.ok, true);
 	await short.looks(5);
 	assert.deepEqual(short.sent.map((x) => x.state), ["expired"]);

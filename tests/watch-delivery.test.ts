@@ -78,16 +78,6 @@ test("a main with no watch on the server does not listen; boss_watch registers t
 	await assert.rejects(m.tool("boss_watch", { key: "u1", quiet: "30s" }), /quiet is at least 1m/);
 });
 
-test("a ward from the shell asks first (watch-ping): the main answers its own tower identity that it listens, and nobody else; no message lands", async () => {
-	const { m } = await town();
-	const ping = (from: string, reqId: string) => m.regs.get(CONTROL)!.onEvent({ type: "message", fromSessionId: from, payload: { version: 1, type: "watch-ping", to: m.id, reqId } });
-	ping("tower-wA", "p1");
-	ping("tower-wB", "p2");
-	await until(() => result("p1") !== undefined && result("p2") !== undefined, "the answers");
-	assert.deepEqual([result("p1")!.accepted, result("p2")!.accepted], [true, false]);
-	assert.equal(m.sent.filter((x) => x.customType === WATCH_MESSAGE).length, 0, "a ping is no line");
-});
-
 test("a change sent again with the same id (a restart lost the answer) is taken and not shown twice", async () => {
 	const { m } = await town();
 	const send = (reqId: string, id: string) => m.regs.get(CONTROL)!.onEvent({ type: "message", fromSessionId: "tower-wA", payload: { version: 1, type: "watch", to: m.id, reqId, key: "ward:%7", state: "blocked", id, text: "ward %7: blocked: it waits on a dialog." } });

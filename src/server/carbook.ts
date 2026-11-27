@@ -382,6 +382,14 @@ export class CarBook {
 	/** Whether the server holds this secret (a pi asks, to register again after a restart). */
 	check(secret: unknown): boolean { return typeof secret === "string" && this.regs.has(secret); }
 
+	/**
+	 * The session a secret is, when it is the registration of a live process of a main or a train (`who`), else why not: a ward's add, list and stop ask it (watchesops.ts, docs/how-it-works.md#ward-a-plain-pane). Defense in depth, not proof,
+	 * as above: a process of the same user can read another's memory.
+	 */
+	async sessionOf(secret: unknown): Promise<{ session: string; role: "main" | "train" } | string> {
+		if (!this.check(secret)) return "sb: this request is not from a registered session: a ward is set, listed, and stopped from the main's own pi session with the sb_ward tool";
+		try { const { setter } = await this.who(secret); return { session: setter.session, role: setter.role as "main" | "train" }; } catch (error) { return (error as Error).message; }
+	}
 	/** Who a secret is: the registration, checked against what Herdr and the broker say now. */
 	private async who(secret: unknown): Promise<{ reg: Registration; setter: Setter; look: Look; train?: { project: string; code: string } }> {
 		const reg = typeof secret === "string" ? this.regs.get(secret) : undefined;

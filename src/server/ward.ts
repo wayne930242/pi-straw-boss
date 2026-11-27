@@ -7,7 +7,7 @@ import { sessionHeader } from "../revive.ts";
 import { armedLoop } from "./capops.ts";
 import type { Reply } from "./socket.ts";
 
-// `sb ward <pane>` and `sb_ward` (docs/how-it-works.md#ward-a-plain-pane): a main hands the sb server a worker that runs in a plain pane (no subagent row, so no completion of its own), and the server wakes the main only when the worker
+// `sb_ward` (docs/how-it-works.md#ward-a-plain-pane): a main hands the sb server a worker that runs in a plain pane (no subagent row, so no completion of its own), and the server wakes the main only when the worker
 // really ended: finished (it reported to the main over call_peer, or its last turn ended and nothing of its runs, for two looks 60 s apart), blocked (Herdr shows the pane blocked, or the worker waits on a dialog), or dead
 // (the pane is gone, or pi left it). A worker that is idle while its own monitor, loop, or subagent runs is not finished. The ward is one of the server's watches (watches.ts): its key is `ward:<pane>`, it is kept in `watches.json`, its
 // line goes out on the same tower identity as boss_watch's lines, and the main's boss_watch listener takes it. The ward is read only: it never closes the pane, sends it keys, or signals a process.
@@ -25,7 +25,7 @@ const ITEM = /^[A-Za-z0-9][A-Za-z0-9._:#/-]{0,63}$/;
 
 /** What a ward watches: the pane, the session file pi held there at the ward's start, the worker's session id, where that file ended then, and the main the worker reports to. */
 /** `terminal`: Herdr's terminal id of the pane at the start, which stays with the terminal when Herdr moves the pane, while a pane id may be given to another pane. */
-export interface WardRec { pane: string; file: string; worker: string; offset: number; terminal?: string; item?: string; main: { id: string; names: string[] } }
+export interface WardRec { pane: string; file: string; worker: string; offset: number; terminal?: string; item?: string; main: { id: string } }
 export type WardState = "finished" | "blocked" | "dead" | "unchanged";
 /** The worker's turn as its session file says: `ended` (the last message is the assistant's and called no tool), `dialog` (it waits on a question tool), `working`, or `unknown` (no message yet, or the file cannot be read). */
 export type Turn = "ended" | "dialog" | "working" | "unknown";
@@ -133,7 +133,7 @@ export interface WardDeps {
 	watching?(session: string): boolean;
 }
 /** `workspace` and `here`: the main's workspace and pane as the server reads them, never as a request says (ward-review F003). */
-export interface WardAsk { pane: string; session: string; workspace: string; item?: string; names?: string[]; here?: string }
+export interface WardAsk { pane: string; session: string; workspace: string; item?: string; here?: string }
 
 const stampOf = (t: WardTold) => Buffer.from(JSON.stringify(t)).toString("base64url");
 const toldOf = (since: string | undefined): WardTold => {
@@ -157,7 +157,10 @@ export function createWardRead(d: WardDeps) {
 	/** A reader per ward, which goes on where its last look stopped (F008). */
 	const readers = new Map<string, { read: ReturnType<typeof sessionReader>; used: number }>();
 	const idOf = (rec: WardRec) => `${rec.file}\n${rec.offset}\n${rec.main.id}`;
+	/** A count per ward's id of its ends (`forget`): a look that began before an end (a stop, a replace, the expiry) keeps no reader when it finishes after it, so nothing outlives the ward (ward-review F008). */
+	const ends = new Map<string, number>();
 	const look = async (rec: WardRec): Promise<WardLook> => {
+		const began = ends.get(idOf(rec)) ?? 0;
 		// The worker is the pi pane that holds its session file, wherever Herdr moved it; else its terminal, which a move keeps; else its pane id, unless that id now names another terminal (ward-review F006).
 		const all = await panes(d.run), other = (p: Pane) => Boolean(rec.terminal && p.terminal_id && p.terminal_id !== rec.terminal);
 		const pane = all.find((p) => p.agent === "pi" && p.agent_session?.value === rec.file) ?? (rec.terminal ? all.find((p) => p.terminal_id === rec.terminal) : undefined) ?? all.find((p) => p.pane_id === rec.pane && !other(p));
@@ -177,7 +180,7 @@ export function createWardRead(d: WardDeps) {
 		// A reader not used for an hour is a ward that was stopped or ended; one whose ward ended goes at once (read below).
 		for (const [k, r] of readers) if (now - r.used > 3_600_000) readers.delete(k);
 		let reader = readers.get(id);
-		if (!reader) readers.set(id, (reader = { read: sessionReader(rec.file, rec.offset, rec.main), used: now }));
+		if (!reader) (reader = { read: sessionReader(rec.file, rec.offset, rec.main), used: now }), (ends.get(id) ?? 0) === began && readers.set(id, reader); // a ward that ended meanwhile reads once, keeping nothing
 		reader.used = now;
 		return { pane, ...(await reader.read()), runs };
 	};
@@ -193,7 +196,12 @@ export function createWardRead(d: WardDeps) {
 			return { ok: true, state: v.state, since: stampOf(v.told), now: at, unit: { pane: q.ward.pane, state: v.state, why: v.why, ...(q.ward.item ? { item: q.ward.item } : {}) }, ward: wardLine(q.ward, v.state, v.why) };
 		},
 		/** The ward ended (watches.ts `ended`, from every path that ends it): its reader goes (ward-review F008). */
-		forget: (rec: WardRec) => void readers.delete(idOf(rec)),
+		forget: (rec: WardRec) => {
+			const id = idOf(rec);
+			readers.delete(id);
+			ends.set(id, (ends.get(id) ?? 0) + 1);
+			if (ends.size > 1024) ends.delete(ends.keys().next().value!); // the oldest: a look of it in flight sees a count that differs, and keeps nothing
+		},
 		/** How many readers are kept (the server's status, a test). */
 		held: () => readers.size,
 		/** The record of a new ward: the pane runs pi with a session file, it is not the caller's own pane or session, and the item (if any) is a plain key. */
@@ -210,14 +218,14 @@ export function createWardRead(d: WardDeps) {
 			if (worker === a.session) return `${a.pane} runs your own session`;
 			let offset = 0;
 			try { offset = statSync(file).size; } catch { return `the session file of ${a.pane} cannot be read: ${file}`; }
-			return { pane: a.pane, file, worker, offset, ...(pane.terminal_id ? { terminal: pane.terminal_id } : {}), ...(a.item ? { item: a.item } : {}), main: { id: a.session, names: (a.names ?? []).filter((n) => typeof n === "string" && n.trim()).map((n) => n.trim()).slice(0, 4) } };
+			return { pane: a.pane, file, worker, offset, ...(pane.terminal_id ? { terminal: pane.terminal_id } : {}), ...(a.item ? { item: a.item } : {}), main: { id: a.session } };
 		},
 	};
 }
 export type WardRead = ReturnType<typeof createWardRead>;
-/** A stored ward as read back from `watches.json`; undefined for anything else. */
+/** A stored ward as read back from `wards.json`; undefined for anything else. A row an older build wrote carries `main.names` too, which is read past (F003 dropped the shell's ward, the only user of it). */
 export function wardOf(v: unknown): WardRec | undefined {
 	const r = v as Partial<WardRec> | undefined;
-	if (!r || typeof r.pane !== "string" || typeof r.file !== "string" || typeof r.worker !== "string" || typeof r.offset !== "number" || typeof r.main?.id !== "string" || !Array.isArray(r.main.names)) return undefined;
-	return { pane: r.pane, file: r.file, worker: r.worker, offset: r.offset, ...(typeof r.terminal === "string" ? { terminal: r.terminal } : {}), ...(typeof r.item === "string" ? { item: r.item } : {}), main: { id: r.main.id, names: r.main.names.filter((n): n is string => typeof n === "string") } };
+	if (!r || typeof r.pane !== "string" || typeof r.file !== "string" || typeof r.worker !== "string" || typeof r.offset !== "number" || typeof r.main?.id !== "string") return undefined;
+	return { pane: r.pane, file: r.file, worker: r.worker, offset: r.offset, ...(typeof r.terminal === "string" ? { terminal: r.terminal } : {}), ...(typeof r.item === "string" ? { item: r.item } : {}), main: { id: r.main.id } };
 }
