@@ -17,7 +17,10 @@ import { fakeClock } from "./fake-clock.ts";
 
 const dirs: string[] = [];
 after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
-const settle = async () => { for (let i = 0; i < 10; i++) await new Promise<void>((r) => setImmediate(r)); };
+// A look reads the session file through fs/promises, whose requests libuv runs on its thread pool, so a count of event-loop turns does not wait for one: on Linux a read outlasts ten turns, and the look's verdict and its next
+// timer came after the test moved the clock and asserted (0.107.0's Publish run). A settle ends once ten turns in a row hold no file request of this process; a look's steps between its reads are microtasks, so no turn falls between two.
+const fileBusy = () => process.getActiveResourcesInfo().some((r) => r.startsWith("FSReq") || r === "CloseReq");
+const settle = async () => { for (let quiet = 0; quiet < 10; quiet = fileBusy() ? 0 : quiet + 1) await new Promise<void>((r) => setImmediate(r)); };
 const MAIN = "0199aaaa-main-0000-0000-000000000001", WORKER = "0199bbbb-work-0000-0000-000000000002", MEMBER = "0199dddd-memb-0000-0000-000000000003";
 const line = (o: unknown) => `${JSON.stringify(o)}\n`;
 const user = (text: string) => line({ type: "message", id: "u", timestamp: "2026-11-27T00:00:00Z", message: { role: "user", content: [{ type: "text", text }] } });
