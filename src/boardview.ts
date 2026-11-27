@@ -1,6 +1,7 @@
 import { statSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { type BoardItem, clean, type Count, type Entry, joinLocal, type LiveMain, readEntries, type Src } from "./board.ts";
+import type { Plan } from "./boardplan.ts";
 import { capDir, capLine, type DeviceCap, readDevice, rowCap, underFor } from "./capacity.ts";
 import { isCoordinatorDuty } from "./duty.ts";
 import { readHold, readHolding } from "./hold.ts";
@@ -26,6 +27,8 @@ export interface BoardViewRow {
 	state: string;
 	now?: string;
 	items: BoardItem[];
+	/** An auto line's plan (boardplan.ts): its open todos as a graph; the page draws it in place of the checklist. An older main's line has none. */
+	plan?: Plan;
 	src?: Src;
 	count?: Count;
 	updated?: number;
@@ -65,12 +68,12 @@ export function openSessions(net: Pick<Net, "bases">): Set<string> {
 
 /** The rows: every live main in net order (the entry it wrote, if any), then the ended entries, newest first. `open`: the sessions that are open; an ended row among them is marked `open`. `dev`: the device row, whose numbers and stale mark the live rows take (Clear keeps the board's own rule). */
 export function boardRows(entries: Entry[], mains: LiveMain[], now: number, open: ReadonlySet<string> = new Set(), dev?: DeviceCap): BoardViewRow[] {
-	const written = new Map(entries.map((e) => [e.session, e.updated])), all = joinLocal(entries, mains, now, { keepEnded: true });
+	const written = new Map(entries.map((e) => [e.session, e.updated])), plans = new Map(entries.flatMap((e) => (e.plan ? [[e.session, e.plan] as const] : []))), all = joinLocal(entries, mains, now, { keepEnded: true });
 	const live = all.filter((r) => r.state !== "ended"), ended = all.filter((r) => r.state === "ended").sort((a, b) => (written.get(b.session) ?? 0) - (written.get(a.session) ?? 0)).slice(0, MAX_ENDED);
 	return [...live, ...ended].map((r): BoardViewRow => {
-		const updated = r.now === undefined ? undefined : written.get(r.session), { stale, ...cap } = rowCap(dev, r.session, now), mr = dev?.mains.find((x) => x.session === r.session), until = mr?.paused?.until, units = unitsOf(mr?.units);
+		const updated = r.now === undefined ? undefined : written.get(r.session), plan = r.now === undefined ? undefined : plans.get(r.session), { stale, ...cap } = rowCap(dev, r.session, now), mr = dev?.mains.find((x) => x.session === r.session), until = mr?.paused?.until, units = unitsOf(mr?.units);
 		return {
-			session: r.session, workspace: r.workspace, tab: r.tab, main: r.main || r.who || "", ...(r.role ? { role: r.role } : {}), state: r.state, ...(r.now !== undefined ? { now: r.now } : {}), items: r.items,
+			session: r.session, workspace: r.workspace, tab: r.tab, main: r.main || r.who || "", ...(r.role ? { role: r.role } : {}), state: r.state, ...(r.now !== undefined ? { now: r.now } : {}), items: r.items, ...(plan ? { plan } : {}),
 			...(r.src ? { src: r.src } : {}), ...(r.count ? { count: r.count } : {}), ...(updated !== undefined ? { updated } : {}), ...((stale ?? r.stale) ? { stale: true as const } : {}), ...(r.state === "ended" || r.stale ? { clearable: true as const } : {}), ...(r.state === "ended" && open.has(r.session) ? { open: true as const } : {}), ...cap, ...(until !== undefined ? { pausedUntil: until } : {}), ...(units ? { units } : {}),
 		};
 	});

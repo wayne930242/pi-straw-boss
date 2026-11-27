@@ -22,14 +22,14 @@ export interface Seed { last?: string; doneAt?: number }
 
 /**
  * - a `board_set` line stands until the todo list or the name moves;
- * - an auto line that says what the list says is kept as it stands, with its own age (a finished one is not made fresh for another 30 minutes);
+ * - an auto line that says what the list says (its plan too: a line an older build wrote without one is written again) is kept as it stands, with its own age (a finished one is not made fresh for another 30 minutes);
  * - no line and the entry withdrawn for this very key: it stays withdrawn;
  * - at a session start only: no line and a finished list in the branch (a /reload): a tower's read purged it after 30 minutes, so it is not written again unless the list moves. A list that finishes during the session is written.
  */
 export function seedBoard({ own, derived, key, withdrawn, atStart = false }: { own: Entry | undefined; derived: Derived | undefined; key: string; withdrawn: string | undefined; atStart?: boolean }): Seed {
 	if (own) {
 		if (own.src === "set") return { last: key };
-		if (derived && own.now === derived.text.now && JSON.stringify(own.items) === JSON.stringify(derived.text.items)) return finished(own) ? { last: key, doneAt: own.updated } : { last: key };
+		if (derived && own.now === derived.text.now && JSON.stringify(own.items) === JSON.stringify(derived.text.items) && JSON.stringify(own.plan ?? null) === JSON.stringify(derived.plan ?? null)) return finished(own) ? { last: key, doneAt: own.updated } : { last: key };
 		return {};
 	}
 	if (withdrawn === key) return { last: key };

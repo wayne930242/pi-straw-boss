@@ -1554,5 +1554,18 @@
 	"zen_target_placeholder": "Write to the {name} tower",
 	"direct_sent": "Sent to {name}",
 	"direct_open": "Open the conversation",
-	"placeholder_direct": "Write straight to the {name} tower"
+	"placeholder_direct": "Write straight to the {name} tower",
+	"plan_label": "Plan graph",
+	"plan_title": "Plan",
+	"plan_step": "Step {n}",
+	"plan_state_doing": "In progress",
+	"plan_state_ready": "Ready",
+	"plan_state_blocked": "Blocked",
+	"plan_state_waiting": "Waiting",
+	"plan_after": "after {ids}",
+	"plan_owner": "Owner: {owner}",
+	"plan_wait_on": "waits on {who}",
+	"plan_wait_until": "until {time}",
+	"plan_cut": "{count} more open not shown",
+	"plan_open": "{count} open"
 }

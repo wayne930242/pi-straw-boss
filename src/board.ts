@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { MainKind } from "./duty.ts";
+import { isGraph, type MainKind } from "./duty.ts";
+import { PLAN, type Plan, type PlanNode } from "./boardplan.ts";
 
 // The work board (docs/specs/2026-10-25-straw-link.md, Work board): each main writes one small entry about its own work, and towers read them all.
 // This file holds the entry rules, the files under `<state dir>/board/`, and the reader's join with the live net. It knows nothing of Straw Link: the
@@ -22,8 +23,8 @@ export interface BoardText { now: string; items: BoardItem[] }
 export type Src = "todo" | "set";
 /** The todo list's tasks done and in all, kept with an auto entry. */
 export interface Count { done: number; total: number }
-/** What the file holds. `count` and `who` (the scrubbed session name, the only text an ally gets of an auto entry) go with `src: "todo"` only. */
-export interface Entry extends BoardText { v: 1; session: string; updated: number; src: Src; count?: Count; who?: string }
+/** What the file holds. `count`, `who` (the scrubbed session name, the only text an ally gets of an auto entry), and `plan` go with `src: "todo"` only. */
+export interface Entry extends BoardText { v: 1; session: string; updated: number; src: Src; count?: Count; who?: string; plan?: Plan }
 
 // Control and format characters (escapes, bidi overrides, zero-width joiners) are refused on write and removed on read.
 const BAD = /[\p{Cc}\p{Cf}]/u;
@@ -62,6 +63,19 @@ export function clean(text: unknown, max: number): string {
 	const out = fold(text.replace(/\s+/gu, " ").replace(BAD_ALL, ""));
 	return Array.from(out).length > max ? Array.from(out).slice(0, max).join("").trimEnd() : out;
 }
+const id = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
+/** The reader's check of a plan: known fields only, the caps again by cutting, a node without an id, a subject, or a status left out, `until` only as a date; nothing for anything but a plan with a node. A file without one (an older main's) has none. */
+export function cleanPlan(raw: unknown): Plan | undefined {
+	const p = raw as { nodes?: unknown; graph?: unknown; cut?: unknown } | null;
+	if (typeof p !== "object" || p === null || !Array.isArray(p.nodes)) return undefined;
+	const nodes = p.nodes.slice(0, PLAN.nodes).flatMap((n: { id?: unknown; t?: unknown; status?: unknown; owner?: unknown; after?: unknown; wait?: { on?: unknown; until?: unknown } } | null): PlanNode[] => {
+		const t = clean(n?.t, PLAN.text), owner = clean(n?.owner, PLAN.label), after = Array.isArray(n?.after) ? [...new Set(n.after.filter(id))].slice(0, PLAN.after) : [];
+		const on = clean(n?.wait?.on, PLAN.label), at = typeof n?.wait?.until === "string" && n.wait.until.length <= 64 ? Date.parse(n.wait.until) : NaN, until = Number.isFinite(at) ? new Date(at).toISOString() : undefined;
+		if (!id(n?.id) || !t || (n.status !== "pending" && n.status !== "in_progress")) return [];
+		return [{ id: n.id, t, status: n.status, ...(owner ? { owner } : {}), ...(after.length ? { after } : {}), ...(on || until ? { wait: { ...(on ? { on } : {}), ...(until ? { until } : {}) } } : {}) }];
+	});
+	return nodes.length ? { nodes, ...(isGraph(p.graph) ? { graph: p.graph } : {}), ...(id(p.cut) && p.cut > 0 && p.cut <= 200 ? { cut: p.cut } : {}) } : undefined;
+}
 /** The reader's second check of an entry or board row: the same caps, applied by cutting. */
 export function cleanText(input: { now?: unknown; items?: unknown }): BoardText {
 	const items = Array.isArray(input.items) ? input.items.slice(0, BOARD.items).flatMap((i): BoardItem[] => {
@@ -76,9 +90,9 @@ export const safeSession = (session: string) => SAFE_SESSION.test(session);
 const fileOf = (dir: string, session: string) => join(dir, `${session}.json`);
 
 /** Writes the whole entry of `session`, atomically (a temporary file renamed over it), in a folder only this user can open. A `board_set` entry is `src: "set"`, the default. */
-export function writeEntry(dir: string, session: string, text: BoardText, now: number, meta: { src?: Src; count?: Count; who?: string } = {}): Entry {
+export function writeEntry(dir: string, session: string, text: BoardText, now: number, meta: { src?: Src; count?: Count; who?: string; plan?: Plan } = {}): Entry {
 	if (!safeSession(session)) throw new Error("This session has no id a board file can be named for");
-	const src = meta.src ?? "set", entry: Entry = { v: 1, session, now: text.now, items: text.items, updated: now, src, ...(src === "todo" && meta.count ? { count: meta.count } : {}), ...(src === "todo" && meta.who ? { who: meta.who } : {}) };
+	const src = meta.src ?? "set", entry: Entry = { v: 1, session, now: text.now, items: text.items, updated: now, src, ...(src === "todo" && meta.count ? { count: meta.count } : {}), ...(src === "todo" && meta.who ? { who: meta.who } : {}), ...(src === "todo" && meta.plan ? { plan: meta.plan } : {}) };
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	try { chmodSync(dir, 0o700); } catch { /* a file system without modes */ }
 	const file = fileOf(dir, session), temp = `${file}.${process.pid}.tmp`;
@@ -113,8 +127,8 @@ function readOne(dir: string, name: string): Entry[] {
 		if (!raw.items.every((i) => typeof i === "object" && i !== null && typeof (i as BoardItem).t === "string" && typeof (i as BoardItem).done === "boolean")) return [];
 		const c = raw.count as Partial<Count> | undefined, src: Src = raw.src === "todo" ? "todo" : "set"; // a file without `src` is a board_set entry
 		const count = src === "todo" && Number.isSafeInteger(c?.done) && Number.isSafeInteger(c?.total) && c!.done! >= 0 && c!.done! <= c!.total! && c!.total! <= 200 ? { done: c!.done!, total: c!.total! } : undefined;
-		const who = src === "todo" ? clean(raw.who, BOARD.label) : "";
-		return [{ v: 1, session, updated: raw.updated, src, ...(count ? { count } : {}), ...(who ? { who } : {}), ...cleanText(raw) }];
+		const who = src === "todo" ? clean(raw.who, BOARD.label) : "", plan = src === "todo" ? cleanPlan(raw.plan) : undefined;
+		return [{ v: 1, session, updated: raw.updated, src, ...(count ? { count } : {}), ...(who ? { who } : {}), ...(plan ? { plan } : {}), ...cleanText(raw) }];
 	} catch {
 		return [];
 	}

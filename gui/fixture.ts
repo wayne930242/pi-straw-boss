@@ -9,7 +9,7 @@ import { isLinkState, linkDemo } from "./demo-link.ts";
 import { demoOpen } from "./demo-open.ts";
 import { DEMO_BLOCKS_DOC, demoImage } from "./demo-blocks.ts";
 import { DEMO_DOC, DEMO_PAGE, demoHistory, demoScreen, WHOLE } from "./demo-chat.ts";
-import { boardFromUrl } from "./demo-board.ts";
+import { boardFromUrl, demoTodos } from "./demo-board.ts";
 import { headDemo, headDraft, headHistory, headInput, headReport, type HeadState, isHeadState } from "./demo-head.ts";
 import { answeredHooks } from "./answered.ts";
 import { cardsReply, cardWaits, headCardWait } from "./demo-waits.ts";
@@ -183,7 +183,7 @@ export function createFixture({ resume, tick = 2500 }: { resume(): void; tick?: 
 			if (dropped) return;
 			if (watch?.startsWith("w:")) this.timers.push(setTimeout(() => this.send("cards", { a1: "I merged the billing branch and the tests pass.", a3: "Waiting for your answer about the deploy window." }), 250));
 			else if (watch) {
-				this.timers.push(setTimeout(() => this.send("history", { key: watch, state: "live", reset: true, ...page(undefined, watch), ...(watch.startsWith("run-") ? { role: "run", name: watch.slice(4, 12) } : {}), ...boxes.info(watch), header: { id: watch, ...(watch === "sb-head" ? {} : { cwd: "/work/harbor-api" }) }, unreadable: 0, todos: watch === "sb-head" ? undefined : [{ id: 1, subject: "Find where the rounding happens", status: "completed" }, { id: 2, subject: "Fix the ledger rounding before tax", status: "in_progress", activeForm: "fixing the ledger rounding", points: 2, anchor: "Credit notes round before tax", evidence: { command: "npm test -- rounding", result: "pass", sha: "a13b21c", at: "2026-11-24T09:40:00Z" } }, { id: 3, subject: "Add a regression test for credit notes", status: "pending" }] }), 250));
+				this.timers.push(setTimeout(() => this.send("history", { key: watch, state: "live", reset: true, ...page(undefined, watch), ...(watch.startsWith("run-") ? { role: "run", name: watch.slice(4, 12) } : {}), ...boxes.info(watch), header: { id: watch, ...(watch === "sb-head" ? {} : { cwd: "/work/harbor-api" }) }, unreadable: 0, todos: watch === "sb-head" ? undefined : demoTodos() ?? [{ id: 1, subject: "Find where the rounding happens", status: "completed" }, { id: 2, subject: "Fix the ledger rounding before tax", status: "in_progress", activeForm: "fixing the ledger rounding", points: 2, anchor: "Credit notes round before tax", evidence: { command: "npm test -- rounding", result: "pass", sha: "a13b21c", at: "2026-11-24T09:40:00Z" } }, { id: 3, subject: "Add a regression test for credit notes", status: "pending" }] }), 250));
 				// A new reply every few seconds, so the page shows a live chat.
 				if (watch !== "sb-head") this.timers.push(setInterval(() => {
 					const n = ++live, call = `live-c${n}`;

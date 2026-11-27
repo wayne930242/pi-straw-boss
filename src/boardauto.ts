@@ -1,5 +1,6 @@
 import { posix, win32 } from "node:path";
 import { BOARD, type BoardItem, type BoardText, clean, type Count } from "./board.ts";
+import { type Plan, planOf } from "./boardplan.ts";
 import type { Todo } from "./items.ts";
 
 // The work board's auto-fill (docs/specs/2026-10-25-straw-link.md, Work board, Auto-fill): a main's todo list and name as a `BoardText`, with the text scrubbed
@@ -87,8 +88,8 @@ export interface AutoInput {
 	/** The project: paths inside it are written relative to it. */
 	root?: string | undefined;
 }
-/** `who` is the scrubbed session name when there is one: what allies get of an auto entry, with the count. */
-export interface Derived { text: BoardText; count?: Count; who?: string }
+/** `who` is the scrubbed session name when there is one: what allies get of an auto entry, with the count. `plan`: the open todos as a graph (boardplan.ts), local only. */
+export interface Derived { text: BoardText; count?: Count; who?: string; plan?: Plan }
 
 /**
  * The entry the todo list and the name make, or undefined when there is nothing to say: no todo list (a name alone is not work, and would stay on the board after the work is gone). `now` is `<name>: <task in progress>`, else `<name>: next <first pending>`, else
@@ -114,5 +115,6 @@ export function deriveBoard({ name, todos, root }: AutoInput): Derived | undefin
 	// The note on hidden tasks takes the last of the eight places; it counts as done, so no reader counts it among the open tasks.
 	const shown = items.slice(0, hidden ? BOARD.items - 1 : BOARD.items);
 	if (hidden) shown.push({ t: `(${hidden} hidden)`, done: true });
-	return { text: { now, items: shown }, ...(list.length ? { count: { done: done.length, total: list.length } } : {}), ...(who ? { who } : {}) };
+	const plan = planOf(list, (t, max) => { const line = text(t, max); return line && !mostlyHidden(line) ? line : HIDDEN; }); // a node stays when its text is hidden: what waits on it still does
+	return { text: { now, items: shown }, ...(list.length ? { count: { done: done.length, total: list.length } } : {}), ...(who ? { who } : {}), ...(plan ? { plan } : {}) };
 }

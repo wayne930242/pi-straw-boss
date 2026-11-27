@@ -2,6 +2,7 @@ import { GRAPHS, type Graph } from "./duty.ts";
 import { newestOf } from "./branchscan.ts";
 import { type Todo, todosOf } from "./items.ts";
 import { v1Of } from "./todoledger.ts";
+import { planGraph } from "./boardplan.ts";
 
 // A session's todo list in short, for its card on the map: its bridge reads it from the todo snapshots on its branch (bridge.ts) and the hub
 // checks it (dialogs.ts) before it goes to the unit. A snapshot is pi-todo-ledger's `todo/v1` entry (its public contract, todoledger.ts), else rpiv-todo's records (docs/specs/2026-11-24-todo-ledger.md).
@@ -32,8 +33,7 @@ export function snapshotScan(): (entries: readonly unknown[]) => unknown {
 }
 /** The todo list from a branch's entries, oldest first. */
 export const todosOfBranch = (entries: readonly unknown[]): Todo[] | undefined => todosOf(snapshotOfBranch(entries));
-/** The graph of the newest plan: that of the open todo (pending or in progress, not a train step) with the highest id that names one. A finished plan, a bare anchor, and a train step name none. */
-export const planGraph = (list: readonly Todo[]): Graph | undefined => list.filter((t) => t.status !== "completed" && !t.sb && t.graph).reduce<Todo | undefined>((top, t) => (!top || t.id > top.id ? t : top), undefined)?.graph;
+export { planGraph }; // boardplan.ts owns it: the board's plan and the page share it
 /** The todo list in short from a branch's entries. */
 export function todoOfBranch(entries: readonly unknown[]): TodoSum | undefined {
 	const list = todosOfBranch(entries), doing = list?.find((t) => t.status === "in_progress");

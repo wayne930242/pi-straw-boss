@@ -10,6 +10,7 @@ import { locate } from "./scene.ts";
 import type { Mark } from "../src/netdata.ts";
 import { iconRef, unitIcon } from "./icons.ts";
 import { alliesOf, colsHead, fillMini, fillTray, icon, rowSupply } from "./supply.ts";
+import { graphed, planLine, planView } from "./plangraph.ts";
 
 // The work board on the head page (docs/specs/2026-11-09-board-view.md): this computer's board as the net snapshot carries it (`net.board`), folded to one line by default, opened to the rows grouped by workspace in tab order. Every field of a row is
 // model-written text, so it is drawn as text only (`h` makes text nodes; a value goes into an attribute only as a title) and nothing a row says becomes a link or a route: the one link is a live main's name, whose route is made from the net's own unit key.
@@ -102,7 +103,9 @@ function rowOf(box: HTMLElement, net: Net | undefined, r: BoardViewRow, now: num
 	askButton.onclick = () => void ask(box, r);
 	const clearButton = h("button", { type: "button", class: "pair-btn board-clear", title: m.board_clear_title({ name }), ...(clearing.has(r.session) ? { disabled: "" } : {}) }, m.board_clear());
 	clearButton.onclick = () => void clear(box, r);
-	const items = r.items.length ? h("details", { class: "board-items" }, h("summary", null, count ? m.board_done({ done: count.done, total: count.total }) : ""), h("ul", null, ...r.items.map((i) => h("li", { "data-done": String(i.done) }, i.t)))) : undefined;
+	// An auto line's plan with graph data takes the checklist's place (gui/plangraph.ts); an older main's line, and one with none, keeps the checklist.
+	const done = count ? m.board_done({ done: count.done, total: count.total }) : "", plan = graphed(r.plan) ? r.plan : undefined;
+	const items = plan ? h("details", { class: "board-items board-plan" }, h("summary", null, [done, planLine(plan)].filter(Boolean).join(m.board_cap_sep())), planView(plan, now)) : r.items.length ? h("details", { class: "board-items" }, h("summary", null, done), h("ul", null, ...r.items.map((i) => h("li", { "data-done": String(i.done) }, i.t)))) : undefined;
 	if (items) {
 		if (keep.has(r.session)) items.setAttribute("open", "");
 		items.addEventListener("toggle", () => void (items.hasAttribute("open") ? keep.add(r.session) : keep.delete(r.session)));

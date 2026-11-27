@@ -1372,5 +1372,18 @@
 	"zen_target_placeholder": "寫給 {name} 塔台",
 	"direct_sent": "已送到{name}",
 	"direct_open": "開啟對話",
-	"placeholder_direct": "直接寫給 {name} 塔台"
+	"placeholder_direct": "直接寫給 {name} 塔台",
+	"plan_label": "計畫圖",
+	"plan_title": "計畫",
+	"plan_step": "第 {n} 步",
+	"plan_state_doing": "進行中",
+	"plan_state_ready": "可開始",
+	"plan_state_blocked": "等前置",
+	"plan_state_waiting": "等待中",
+	"plan_after": "接在 {ids} 之後",
+	"plan_owner": "負責：{owner}",
+	"plan_wait_on": "等 {who}",
+	"plan_wait_until": "到 {time}",
+	"plan_cut": "另有 {count} 項未完成沒列出",
+	"plan_open": "{count} 項未完成"
 }

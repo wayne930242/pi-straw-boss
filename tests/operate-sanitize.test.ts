@@ -219,7 +219,7 @@ test("a history item's pictures are those four types under 1 MB; others are drop
 
 test("a history event is rebuilt: unknown kinds and fields go, text loses its controls, the unit's key is the page's", () => {
 	const told: string[] = [];
-	const out = sanitizeHistory({ key: "k1", state: "live", reset: true, successor: "../x", base: "wA", name: "n\u0007", role: "main", before: "e0", header: { id: "i", cwd: "/home/agent", extra: 1 }, unreadable: 0, todos: [{ id: 1, subject: "do", status: "pending", points: 2, anchor: "private", evidence: [{ command: "private", result: "pass" }], extra: 1 }, { id: 2, subject: "x", status: "weird" }], leak: "x",
+	const out = sanitizeHistory({ key: "k1", state: "live", reset: true, successor: "../x", base: "wA", name: "n\u0007", role: "main", before: "e0", header: { id: "i", cwd: "/home/agent", extra: 1 }, unreadable: 0, todos: [{ id: 1, subject: "do", status: "pending", points: 2, anchor: "private", evidence: [{ command: "private", result: "pass" }], extra: 1 }, { id: 2, subject: "x", status: "weird" }, { id: 3, subject: "plan", status: "in_progress", owner: "w\u0007eb", blockedBy: [1, -1, "2", 1.5], graph: "fan-out/fan-in", waitsOn: "boss", until: "2026-11-27T14:00:00+08:00" }, { id: 4, subject: "odd", status: "pending", graph: "star", until: "<b>soon</b>", blockedBy: "1" }], leak: "x",
 		items: [{ id: "e1", kind: "assistant", text: "hi\u001b[31m", tools: [{ id: "t", name: "bash", summary: "ls", args: "{}", extra: 1 }], model: "m", leak: "/etc/shadow" }, { id: "e2", kind: "rm" }, { kind: "user" }, "junk"] }, rw(told)) as Record<string, unknown>;
 	const items = out.items as Record<string, unknown>[];
 	assert.equal(out.key, "K:k1");
@@ -227,7 +227,7 @@ test("a history event is rebuilt: unknown kinds and fields go, text loses its co
 	assert.deepEqual(items.map((i) => i.id), ["e1"]);
 	assert.equal(items[0]!.text, "hi[31m");
 	assert.deepEqual(Object.keys((items[0]!.tools as object[])[0]!).sort(), ["args", "id", "name", "summary"]);
-	assert.deepEqual(out.todos, [{ id: 1, subject: "do", status: "pending" }]);
+	assert.deepEqual(out.todos, [{ id: 1, subject: "do", status: "pending" }, { id: 3, subject: "plan", status: "in_progress", owner: "w eb", blockedBy: [1], graph: "fan-out/fan-in", waitsOn: "boss", until: "2026-11-27T06:00:00.000Z" }, { id: 4, subject: "odd", status: "pending" }], "a todo's plan fields pass, checked; an unknown graph, a free-text until, and a blockedBy that is no list do not");
 	assert.ok(!JSON.stringify(out).includes("/etc/shadow") && !JSON.stringify(out).includes("leak"));
 	assert.equal(sanitizeHistory({ key: "../k", items: [], reset: true }, rw()), undefined, "an event for a key with `..` is refused");
 });

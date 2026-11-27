@@ -189,7 +189,10 @@ const item = shape({ id: str(200), kind: lit("user", "assistant", "result", "bas
 	at: str(64), text: str(1 << 20, true), more: bool, images: int(0, 1000), pics: list(pic, 16), thought: int(-1, 1e9), thoughtText: str(1 << 20, true), tools: list(tool, 100), model: str(200), stop: str(40), error: str(4000, true), ctx: num,
 	callId: str(200), name: str(200), isError: bool, bytes: num, command: str(400, true), exit: num, type: str(64), from: str(80), link: str(200), tokens: num, event: str(20), code: str(20),
 });
-const todo = shape({ id: int(0, 1e9), subject: str(300), status: lit("pending", "in_progress", "completed") }, { activeForm: str(120) });
+/** A date as ISO, from a string `Date.parse` reads: no other text passes as a todo's `until`. */
+const iso: P<string> = (v) => (typeof v === "string" && v.length <= 64 && Number.isFinite(Date.parse(v)) ? new Date(Date.parse(v)).toISOString() : undefined);
+// A todo keeps its plan fields (gui/plangraph.ts draws the box's plan from them; a box on an older build sends some or none, and the page draws the checklist): who works on it, the ids it waits on, the plan's graph, its defer.
+const todo = shape({ id: int(0, 1e9), subject: str(300), status: lit("pending", "in_progress", "completed") }, { activeForm: str(120), owner: str(64), blockedBy: list(int(0, 1e9), 50), graph: lit(...GRAPHS), waitsOn: str(64), until: iso });
 const itemList = list(item, 300);
 
 /** A history event for a unit's watch: a page of items (a reset, with the unit's state) or a change; `key` is the page's own key for it. */

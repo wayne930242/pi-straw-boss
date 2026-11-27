@@ -35,7 +35,7 @@ export function createBoardFill({ pi, cfg, s, guiDir, me, role, tell }: Kit): Bo
 	};
 	const withdraw = (key: string) => { try { pi.appendEntry(BOARD_ENTRY, { cleared: key }); } catch { /* a replaced session's pi throws */ } };
 	const write = (d: Derived) => {
-		writeEntry(dir, me(), d.text, cfg.now(), { src: "todo", ...(d.count ? { count: d.count } : {}), ...(d.who ? { who: d.who } : {}) });
+		writeEntry(dir, me(), d.text, cfg.now(), { src: "todo", ...(d.count ? { count: d.count } : {}), ...(d.who ? { who: d.who } : {}), ...(d.plan ? { plan: d.plan } : {}) });
 		s.boardId = me(); // remembered for the shutdown that deletes the file (session.ts)
 		doneAt = finished({ src: "todo", ...(d.count ? { count: d.count } : {}) }) ? cfg.now() : undefined;
 	};

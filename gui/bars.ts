@@ -3,6 +3,7 @@ import type { Monitor } from "../src/monitors.ts";
 import type { Todo } from "../src/items.ts";
 import { m } from "./sentences.ts";
 import { text } from "./render.ts";
+import { graphed, planOfTodos, planView } from "./plangraph.ts";
 
 // The bars between a session's log and its composer, each drawn from what the net says about the unit: the queue, the todo list, the monitors.
 
@@ -67,6 +68,8 @@ export function mountQueueEdit(view: HTMLElement, take: () => Promise<unknown>) 
 		void take().finally(() => (button.disabled = false));
 	};
 }
+/** The plan section each todo box shows now: after the checklist, which it hides (so `querySelector("ol")` still finds the checklist, not the plan's layers). */
+const plans = new WeakMap<HTMLElement, HTMLElement>();
 /** The session's todo list above the composer: folded to the count and the task in progress, unfolded to every task. */
 export function drawTodos(view: HTMLElement, list: Todo[] | null | undefined) {
 	const box = view.querySelector<HTMLDetailsElement>(".todos");
@@ -76,7 +79,11 @@ export function drawTodos(view: HTMLElement, list: Todo[] | null | undefined) {
 	const done = list.filter((t) => t.status === "completed").length, now = list.find((t) => t.status === "in_progress");
 	text(box, "summary b", m.todos_count({ done, total: list.length }));
 	text(box, "summary span", now ? (now.activeForm ?? now.subject) : done === list.length ? m.todos_done() : "");
-	box.querySelector("ol")!.replaceChildren(...list.map((t) => {
+	// A plan with graph data is drawn as the plan (gui/plangraph.ts) in the checklist's place; an operate box whose build sends no such field keeps the checklist.
+	const plan = planOfTodos(list), ol = box.querySelector("ol")!, old = plans.get(box), drawn = graphed(plan) ? planView(plan) : undefined;
+	(ol.hidden = Boolean(drawn)), old?.remove(), drawn ? (box.append(drawn), plans.set(box, drawn)) : plans.delete(box);
+	if (drawn) return;
+	ol.replaceChildren(...list.map((t) => {
 		const row = Object.assign(document.createElement("li"), { textContent: t.subject, className: t.status });
 		if (t.points !== undefined) row.append(" ", Object.assign(document.createElement("small"), { textContent: m.todos_points({ points: t.points }) }));
 		const e = t.evidence, detail = [t.anchor && m.todos_anchor({ anchor: t.anchor }), e && m.todos_recorded({ run: [e.command, e.result, e.sha, new Date(e.at).toLocaleString()].filter(Boolean).join(" · ") })].filter(Boolean).join("\n");
