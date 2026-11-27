@@ -232,10 +232,11 @@ export function readYards(deps: YardDeps, join_: YardJoin): Yards | undefined {
 			code: t.code, app: t.app, status: t.status as YardFormingRow["status"], cars: t.cars.slice(0, MAX_VIEW_CARS).map((c) => carView(c, t.app)), ...(t.departs ? { departs: { maxCars: t.departs.maxCars, maxWaitMin: t.departs.maxWaitMin, oldest: t.departs.oldest } } : {}),
 		})) : [];
 		const lives = lifeLookup(stateDir, project, budget, deps.book), seen = deps.seen ?? seenAt;
-		const cars = carFacts({
+		// The car rows are extra: a throw while they are joined leaves the yard as it was, with no rows (TY-F001's rule).
+		const cars = ((): CarFact[] => { try { return carFacts({
 			project, now, ...(yard.ok ? { yard: { writer: yard.yard.writer.session, trains: yard.yard.trains } } : {}), life: lives.life, others: lives.others, seen: (key) => seen(key, now),
 			trains: mine.flatMap(({ read }, i) => (read.ok ? [{ view: trains[i]!, cars: read.board.cars, removed: (read.board.removed ?? []).flatMap((r) => (r.head ? [r.head] : [])) }] : [])),
-		}).map((c): CarFact => ({ ...c, tickets: c.tickets.map((t) => clean(t, MAX_TICKET_CHARS)), coordinator: clean(c.coordinator, 128), ...(c.integrator ? { integrator: clean(c.integrator, 128) } : {}), ...(c.version ? { version: clean(c.version, 128) } : {}), ...(c.reason ? { reason: clean(c.reason, 200) } : {}) }));
+		}).map((c): CarFact => ({ ...c, tickets: c.tickets.map((t) => clean(t, MAX_TICKET_CHARS)), coordinator: clean(c.coordinator, 128), ...(c.integrator ? { integrator: clean(c.integrator, 128) } : {}), ...(c.version ? { version: clean(c.version, 128) } : {}), ...(c.reason ? { reason: clean(c.reason, 200) } : {}) })); } catch { return []; } })();
 		projects.push({
 			project, ...(yard.ok ? { integrator: { ...(join_.integrators.has(yard.yard.writer.session) ? { key: yard.yard.writer.session } : {}), live: isAlive(yard.yard.writer), ...(join_.mains.has(yard.yard.writer.session) && !join_.integrators.has(yard.yard.writer.session) ? { switched: true as const } : {}) } } : {}),
 			...(!yard.ok && !missing ? { problem: clean(`yard.json: ${yard.reason}`, 200), problemKind: reasonKind(yard.reason) } : {}), forming, trains, waiting: waitingTrains(mine.map((m) => m.fact)), ...(cars.length ? { cars } : {}),
