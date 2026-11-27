@@ -4,10 +4,8 @@ import type { BossWait, MemorySummary, WaitCardView } from "./net.ts";
 // their text sum is at most CARD_TEXTS UTF-16 units; any card after that goes as `{ id, text, at, answered?, cut: true }`, and the page reads its entry with the memory route's `read` when it draws or opens it. Pure: no node module.
 
 /** Router cards put the peer's request in happened; do only explains the buttons. */
-export function waitSubject(w: Pick<BossWait, "text" | "card">): string {
-	const card = w.card;
-	return card?.from?.role === "device" && !w.text.startsWith(card.happened) ? card.happened : w.text;
-}
+export const waitSubject = ({ text, card }: Pick<BossWait, "text" | "card">): string =>
+	card?.from?.role === "device" && !text.startsWith(card.happened) ? card.happened : text;
 
 export const CARD_TEXTS = 24_000;
 
@@ -18,18 +16,13 @@ export function cardTexts(card: WaitCardView, reason = ""): number {
 		+ (card.options ?? []).reduce((n, o) => n + o.label.length + o.then.length, 0) + (card.secret?.name.length ?? 0) + (f ? f.name.length + (f.workspace?.length ?? 0) + (f.tab?.length ?? 0) : 0) + reason.length;
 }
 
-/**
- * The summaries with the cards over the budget cut. Newest first by the wait's `at`; a card that does not fit is cut, and so is every one after it (an older card never takes the room a newer one was refused). The input is not changed.
- */
+/** Cut the first card that does not fit and all older cards. Leave the input unchanged. */
 export function cutCards(sums: MemorySummary[]): MemorySummary[] {
 	const rows = sums.flatMap((s, i) => s.bossWaits.flatMap((w, j) => (w.card ? [{ i, j, w, size: cardTexts(w.card, w.press?.reason), at: Date.parse(w.at) || 0 }] : [])));
 	rows.sort((a, b) => b.at - a.at || a.i - b.i || a.j - b.j);
 	const cut = new Set<BossWait>();
-	let used = 0, over = false;
-	for (const r of rows) {
-		if (!over && used + r.size <= CARD_TEXTS) used += r.size;
-		else (over = true, cut.add(r.w));
-	}
+	let used = 0;
+	for (const r of rows) if ((used += r.size) > CARD_TEXTS) cut.add(r.w);
 	if (!cut.size) return sums;
 	return sums.map((s) => (s.bossWaits.some((w) => cut.has(w)) ? { ...s, bossWaits: s.bossWaits.map((w): BossWait => (cut.has(w) ? { id: w.id, text: waitSubject(w), at: w.at, ...(w.answered ? { answered: w.answered } : {}), ...(w.parked ? { parked: true as const } : {}), ...(w.listed ? { listed: true as const } : {}), ...(w.state ? { state: w.state, ...(w.outcome ? { outcome: w.outcome } : {}), ...(w.ended ? { ended: w.ended } : {}), ...(w.returned ? { returned: w.returned } : {}) } : {}), cut: true } : w)) } : s));
 }
