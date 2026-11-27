@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import type { AskClient } from "../src/askclient.ts";
+import { askClient } from "../src/askclient.ts";
 import { createBossAsk } from "../src/bossask.ts";
 import { BOSS_PREFIX } from "../src/owners.ts";
 import { startAsks } from "../src/server/askops.ts";
@@ -23,28 +23,25 @@ async function until(ok: () => boolean, what: string) {
 	assert.ok(ok(), what);
 }
 
-function rig(todos?: { id: number; status: string }[]) {
-	const ops = startAsks({ stateDir: root, now: () => 1000, watch: () => undefined, log: () => {} });
+function rig(todos?: { id: number; status: string }[], o: { lose?: (r: Record<string, unknown>) => boolean; miss?: (r: Record<string, unknown>) => boolean; auto?: () => boolean } = {}) {
+	const ops = startAsks({ slot: { dir: root }, now: () => 1000, watch: () => undefined, log: () => {} });
 	stops.push(ops.stop);
-	const call = async (r: Record<string, unknown>) => (await ops.reply(r as unknown as Request))!;
-	const asks: AskClient = {
-		open: async (a) => ((r) => r.ask as { id: string; digest: string })(await call({ cmd: "ask-open", session: "main-1", name: "docs-main", ask: a })),
-		answer: async (id, a) => ((r) => ({ status: Number(r.status), body: r.body as Record<string, unknown> }))(await call({ cmd: "ask-answer", id, ...a })),
-		get: async (id) => (await call({ cmd: "ask-get", id })).ask as never,
-		close: async (id, why) => void (await call({ cmd: "ask-close", id, session: "main-1", why })),
-	};
+	// The asker's own client over the server's commands; `lose` drops a request's reply after the server handled it (the socket's reply never came), `miss` the request itself.
+	const sent: Record<string, unknown>[] = [];
+	const call = async (r: Record<string, unknown>) => { sent.push(r); if (o.miss?.(r)) return undefined; const reply = (await ops.reply(r as unknown as Request))!; return o.lose?.(r) ? undefined : reply; };
+	const asks = askClient(call, () => "main-1", () => "docs-main", async () => {});
 	const events = new EventEmitter(), bus = { emit: (c: string, d: unknown) => void events.emit(c, d), on: (c: string, h: (d: unknown) => void) => (events.on(c, h), () => void events.off(c, h)) };
 	const seen: { channel: string; data: Record<string, unknown> }[] = [];
 	for (const c of ["pending", "closed", "answer-result"]) events.on(`${BOSS_PREFIX}:${c}`, (data) => seen.push({ channel: c, data }));
 	const ticks = new Set<() => void>();
-	const kit = { pi: { events: bus }, cfg: { face: { every: (fn: () => void) => (ticks.add(fn), () => void ticks.delete(fn)) }, env: {} }, s: { isTrain: false, isTower: false, remoteOrigin: undefined, autoOn: () => false, branch: () => (todos ? [{ type: "message", message: { role: "toolResult", toolName: "todo", details: { tasks: todos.map((t) => ({ ...t, subject: `t${t.id}` })), nextId: 9 } } }] : []) }, role: () => "main", me: () => "main-1", guiDir: root } as unknown as Kit;
+	const kit = { pi: { events: bus }, cfg: { face: { every: (fn: () => void) => (ticks.add(fn), () => void ticks.delete(fn)) }, env: {} }, s: { isTrain: false, isTower: false, remoteOrigin: undefined, autoOn: () => o.auto?.() ?? false, branch: () => (todos ? [{ type: "message", message: { role: "toolResult", toolName: "todo", details: { tasks: todos.map((t) => ({ ...t, subject: `t${t.id}` })), nextId: 9 } } }] : []) }, role: () => "main", me: () => "main-1", guiDir: root } as unknown as Kit;
 	let settle: ((v: string | undefined) => void) | undefined;
 	const ui = { select: (_t: string, _o: string[], o: { signal: AbortSignal }) => new Promise<string | undefined>((resolve) => { settle = resolve; o.signal.addEventListener("abort", () => resolve(undefined)); }), input: async () => undefined };
 	const bossAsk = createBossAsk(kit, { attended: () => true, remote: () => false, asks });
 	const ask = (item?: number) => bossAsk({ question: "Deploy MP-1 now?", options: ["Deploy", "Wait"], ...(item ? { item } : {}) }, undefined, { hasUI: true, ui: ui as never }, "call-1");
 	const pending = () => seen.find((x) => x.channel === "pending")?.data as { id: string; digest: string } | undefined;
 	const relayAnswer = (choice: number, extra: Record<string, unknown> = {}) => bus.emit(`${BOSS_PREFIX}:answer`, { version: 1, id: pending()!.id, answerId: `page-${choice}-${"x".repeat(12)}`, digest: pending()!.digest, answers: [{ choices: [choice] }], ...extra });
-	return { ops, ask, seen, pick: (v: string | undefined) => settle!(v), opened: () => settle !== undefined, relayAnswer, tick: () => ticks.forEach((fn) => fn()), record: () => ops.store.list().at(-1)! };
+	return { ops, ask, seen, sent, bus, pick: (v: string | undefined) => settle!(v), opened: () => settle !== undefined, relayAnswer, tick: () => ticks.forEach((fn) => fn()), record: () => ops.store.list().at(-1)! };
 }
 const text = (a: { kind: string; text?: string }) => a.text ?? "";
 
@@ -110,4 +107,73 @@ test("Escape closes the Ask with its reason, and nothing is answered", async () 
 	assert.match(text(await done), /did not answer \(Esc\)/);
 	await until(() => r.record().state === "closed", "closed");
 	assert.deepEqual(r.record().closed?.why, "esc");
+});
+
+test("Escape after the phone's answer won in the store: the close hears the winner and the result is the phone's answer (asks-r2-F001)", async () => {
+	const r = rig();
+	const done = r.ask();
+	await until(() => r.opened(), "drawn");
+	const rec = r.record();
+	assert.equal(r.ops.answer(rec.id, { answerId: "p".repeat(16), digest: rec.digest, replies: [{ choices: [0] }] }, true).status, 200);
+	r.pick(undefined); // Escape before the look came round
+	assert.match(text(await done), /^The boss chose: "Deploy"\./);
+	assert.deepEqual([r.record().state, r.record().answer?.by], ["answered", "phone"]);
+	assert.equal(r.seen.find((x) => x.channel === "closed")?.data.by, "remote", "the page's panel goes as answered elsewhere");
+});
+
+test("the pane's answer whose reply was lost is sent again with the same answerId, and the store's winner is the result (asks-r2-F002)", async () => {
+	let drop = true;
+	const r = rig(undefined, { lose: (q) => q.cmd === "ask-answer" && q.by === "terminal" && drop && !(drop = false) });
+	const done = r.ask();
+	await until(() => r.opened(), "drawn");
+	const rec = r.record();
+	r.ops.answer(rec.id, { answerId: "p".repeat(16), digest: rec.digest, replies: [{ choices: [0] }] }, true); // the phone first
+	r.pick("Wait");
+	assert.match(text(await done), /^The boss chose: "Deploy"\./, "the phone's, not the pane's");
+	const terminal = r.sent.filter((x) => x.cmd === "ask-answer" && x.by === "terminal");
+	assert.equal(terminal.length, 2, "sent again");
+	assert.equal(terminal[0]!.answerId, terminal[1]!.answerId, "with the same answerId");
+});
+
+test("the pane's answer whose reply was lost after the store took it: the resend replays the acceptance and the pane's answer stands", async () => {
+	let drop = true;
+	const r = rig(undefined, { lose: (q) => q.cmd === "ask-answer" && drop && !(drop = false) });
+	const done = r.ask();
+	await until(() => r.opened(), "drawn");
+	r.pick("Wait");
+	assert.match(text(await done), /^The boss chose: "Wait"\./);
+	assert.deepEqual([r.record().state, r.record().answer?.by], ["answered", "terminal"]);
+});
+
+test("the store never answers after the Ask is open: the pane's answer is the result, said to be unconfirmed", async () => {
+	let gone = false;
+	const r = rig(undefined, { lose: () => gone });
+	const done = r.ask();
+	await until(() => r.opened(), "drawn");
+	gone = true;
+	r.pick("Wait");
+	assert.match(text(await done), /^The boss chose: "Wait"\..*not confirm/);
+});
+
+test("a lost close is sent again, so the Ask does not stay open for a late answer (asks-r2-F002)", async () => {
+	let drop = true;
+	const r = rig(undefined, { miss: (q) => q.cmd === "ask-close" && drop && !(drop = false) });
+	const done = r.ask();
+	await until(() => r.opened(), "drawn");
+	r.pick(undefined);
+	await done;
+	assert.deepEqual([r.record().state, r.record().closed?.why], ["closed", "esc"]);
+});
+
+test("auto mode's own cancel through the relay closes the Ask as auto, not as the page's cancel (asks-r2-F004)", async () => {
+	let auto = false;
+	const r = rig(undefined, { auto: () => auto });
+	const done = r.ask();
+	await until(() => Boolean(r.opened() && r.seen.length), "drawn and relayed");
+	auto = true;
+	const p = r.seen.find((x) => x.channel === "pending")!.data as { id: string; digest: string };
+	r.bus.emit(`${BOSS_PREFIX}:answer`, { version: 1, id: p.id, answerId: `auto-${"a".repeat(32)}`, digest: p.digest, cancel: true });
+	assert.equal((await done).kind, "tower");
+	await until(() => r.record().state !== "open", "ended");
+	assert.deepEqual([r.record().state, r.record().closed?.why, r.record().answer], ["closed", "auto", undefined]);
 });

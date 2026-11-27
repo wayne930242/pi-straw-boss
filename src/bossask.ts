@@ -41,6 +41,9 @@ export const withBoss = (message: string, q: BossQuestion) => `${message}\nFor t
 export type Asked = { kind: "answered"; text: string } | { kind: "none"; text: string } | { kind: "tower"; note?: string };
 export type BossAsk = (q: BossQuestion, signal: AbortSignal | undefined, ctx: Pick<ExtensionContext, "hasUI" | "ui"> | undefined, callId?: string) => Promise<Asked>;
 type Opts = { signal: AbortSignal };
+type Took = "won" | "lost" | "unconfirmed";
+/** The answerId bridge.ts gives the cancel auto mode's transition sends to every open dialog. */
+const AUTO_CANCEL = "auto-";
 
 /** The dialog in this pane: a select with the options and a typed answer, or an input. Auto mode starting between the pick and the typed answer opens no input (it would be answered as Escape and marked refused). */
 async function paneDialog(ui: ExtensionContext["ui"], q: BossQuestion, title: string, opts: Opts, away: () => boolean): Promise<Got | undefined> {
@@ -60,25 +63,33 @@ export function createBossAsk(kit: Kit, d: { attended(): boolean; remote(): bool
 		const title = `The boss decides: ${q.question}`, ac = new AbortController(), stop = watch(() => void (s.autoOn() && ac.abort()), WATCH_MS);
 		const opts = { signal: signal ? AbortSignal.any([signal, ac.signal]) : ac.signal };
 		// The first answer, here or there, wins: the store decides between the pane, the page and the phone; one from the page or a paired device ends the dialog here.
-		let got: Got | undefined, looking = false;
+		let got: Got | undefined, looking = false, unconfirmed = false, autoCancel = false;
 		const ask = await asks.open({ subject: q.question, questions: [{ question: title, options: q.options ?? [] }], ...(callId ? { toolCallId: callId } : {}), ...((q.item ?? doing()) ? { item: q.item ?? doing() } : {}) }).catch(() => undefined);
-		/** Takes an answer to the store: whether it won. A 409 means another came first, and that one is the result; no server lets this one stand, as before the store. */
-		const take = async (g: Got, by: "terminal" | "gui" | "phone", answerId: string = randomUUID()): Promise<boolean> => {
-			if (!ask) return true;
-			const r = await asks.answer(ask.id, { answerId: answerId.length >= 16 ? answerId : randomUUID(), digest: ask.digest, by, ...("cancel" in g ? { cancel: true as const } : { replies: repliesOf(q, g) }) }).catch(() => undefined);
-			if (!r || r.status === 200) return true;
-			const winner = (r.body.ask as AskState | undefined)?.answer;
-			if (r.status === 409 && winner && !got) ((got = gotOf(q, winner)), ac.abort());
-			return false;
+		const winner = (a: NonNullable<AskState["answer"]>) => void (!got && ((got = gotOf(q, a)), ac.abort()));
+		const judged = (r: Awaited<ReturnType<AskClient["answer"]>>): Took | undefined => (!r ? undefined : r.status === 200 ? "won" : (r.status === 409 && (r.body.ask as AskState | undefined)?.answer && winner((r.body.ask as AskState).answer!), "lost"));
+		/**
+		 * Takes an answer to the store: whether it won. A 409 means another came first, and that one is the result. No server at `ask-open` lets it stand, as before the store; once the Ask is open, an answer with no
+		 * reply is sent again with the same answerId and the Ask read back (asks-r2-F002), and only a store that never answers leaves it standing, said to be unconfirmed.
+		 */
+		const take = async (g: Got, by: "terminal" | "gui" | "phone", given?: string): Promise<Took> => {
+			if (!ask) return "won";
+			const answerId = given && given.length >= 16 ? given : randomUUID(), send = () => asks.answer(ask.id, { answerId, digest: ask.digest, by, ...("cancel" in g ? { cancel: true as const } : { replies: repliesOf(q, g) }) }).catch(() => undefined);
+			const first = judged(await send());
+			if (first) return first;
+			const now = await asks.get(ask.id).catch(() => undefined);
+			if (now?.state === "open") return judged(await send()) ?? "unconfirmed";
+			if (now?.answer?.answerId === answerId) return "won";
+			return now ? (now.answer && winner(now.answer), "lost") : "unconfirmed";
 		};
 		// One relayed answer is taken to the store at a time: a second that comes meanwhile hears the dialog closed, as it did before the store.
 		let claiming = false;
 		const relay = hubRelay(bus, q, title, callId, () => got !== undefined || claiming, async (g, answerId) => {
+			if ("cancel" in g && answerId.startsWith(AUTO_CANCEL)) return void ((autoCancel = true), ac.abort()); // auto mode's own cancel (bridge.ts cancelWaits): the Ask closes as auto, not as the page's cancel (asks-r2-F004)
 			claiming = true;
-			const won = await take(g, g.phone ? "phone" : "gui", answerId);
+			const took = await take(g, g.phone ? "phone" : "gui", answerId);
 			claiming = false;
-			if (!won || got) return "closed";
-			got = g;
+			if (took === "lost" || got) return "closed";
+			((got = g), (unconfirmed = took === "unconfirmed"));
 			ac.abort();
 			return undefined;
 		});
@@ -86,19 +97,23 @@ export function createBossAsk(kit: Kit, d: { attended(): boolean; remote(): bool
 		const look = ask ? watch(() => {
 			if (looking || got) return;
 			looking = true;
-			void asks.get(ask.id).then((r) => { if (!got && r?.answer && r.state !== "open") ((got = gotOf(q, r.answer)), ac.abort()); }, () => {}).finally(() => void (looking = false));
+			void asks.get(ask.id).then((r) => { if (r?.answer && r.state !== "open") winner(r.answer); }, () => {}).finally(() => void (looking = false));
 		}, LOOK_MS) : () => {};
 		try {
 			const local = await paneDialog(ctx.ui, q, title, opts, () => s.autoOn());
-			if (!got && local && (await take(local, "terminal")) && !got) got = local;
+			const took = !got && local ? await take(local, "terminal") : "lost";
+			if (took !== "lost" && !got) ((got = local), (unconfirmed = took === "unconfirmed"));
 		} finally {
 			stop();
 			look();
-			relay.close(got && "by" in got ? got.by : got ? "cancel" : signal?.aborted ? "abort" : s.autoOn() ? "auto" : "local");
-			if (ask && !got) void asks.close(ask.id, signal?.aborted ? "abort" : s.autoOn() ? "auto" : "esc").catch(() => {});
+			// Ended with no answer here: the close answers the Ask as it stands, so an answer the store took first (the phone's before Escape) is the result (asks-r2-F001).
+			const ended = ask && !got ? await asks.close(ask.id, signal?.aborted ? "abort" : autoCancel || s.autoOn() ? "auto" : "esc").catch(() => undefined) : undefined;
+			if (ended?.answer && ended.state !== "open") winner(ended.answer);
+			relay.close(got && "by" in got ? got.by : got ? "cancel" : signal?.aborted ? "abort" : autoCancel || s.autoOn() ? "auto" : "local");
 		}
-		if (got && "answer" in got) return { kind: "answered", text: `The boss ${got.typed ? "answered" : "chose"}: ${JSON.stringify(got.answer)}${got.note ? `. His note: ${JSON.stringify(got.note)}` : ""}. This is the boss's answer, asked in this pane; nothing was sent to the tower.` };
-		if (s.autoOn()) return { kind: "tower", note: `Auto mode started while the boss was asked, so the dialog closed. ${AUTO_NOTE}` };
+		const doubt = unconfirmed ? " The sb server that records the question did not confirm it as the first answer: if the boss also answered on the page or the phone, ask him which stands." : "";
+		if (got && "answer" in got) return { kind: "answered", text: `The boss ${got.typed ? "answered" : "chose"}: ${JSON.stringify(got.answer)}${got.note ? `. His note: ${JSON.stringify(got.note)}` : ""}. This is the boss's answer, asked in this pane; nothing was sent to the tower.${doubt}` };
+		if (autoCancel || s.autoOn()) return { kind: "tower", note: `Auto mode started while the boss was asked, so the dialog closed. ${AUTO_NOTE}` };
 		return { kind: "none", text: `The boss did not answer (${signal?.aborted ? "the turn was stopped" : "Esc"}): nothing was sent to the tower. Go on with work that does not need it; ask again only if it still blocks you.` };
 	};
 }
