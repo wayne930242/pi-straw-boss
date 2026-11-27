@@ -236,8 +236,8 @@ export function startBridge(pi: ExtensionAPI, { env, dir, local, close, platform
 		},
 	};
 	const ack = (r: Rec, a: Answer, outcome: Outcome, extra: { reason?: string; by?: string } = {}): Ack => ({ version: 1, type: "ack", bridgeId, id: r.d.id, answerId: a.answerId, outcome, ...extra });
-	/** The answer for a closed dialog: accepted only when this bridge's answer is the one that won; else stale, with who closed it. */
-	const ended = (r: Rec, a: Answer) => ack(r, a, r.by === "remote" && r.answerId === a.answerId && (r.won ?? a.answerId) === a.answerId ? "accepted" : "stale", { by: r.by });
+	/** The answer for a closed dialog: unknown when its owner closed it unconfirmed (the page keeps its recheck, asks-r4-F001); accepted only when this bridge's answer is the one that won; else stale, with who closed it. */
+	const ended = (r: Rec, a: Answer) => r.by === "unconfirmed" ? ack(r, a, "unknown") : ack(r, a, r.by === "remote" && r.answerId === a.answerId && (r.won ?? a.answerId) === a.answerId ? "accepted" : "stale", { by: r.by });
 	function deliver(a: AnswerMessage, reply: (ack: Ack) => void) {
 		if (typeof a.id !== "string" || typeof a.answerId !== "string" || typeof a.digest !== "string") return;
 		const r = recs.get(a.id);

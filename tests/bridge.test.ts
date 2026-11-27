@@ -245,6 +245,15 @@ test("refused answers reopen the dialog; the terminal first makes an answer stal
 	assert.deepEqual([t.acks().at(-1)!.outcome, t.acks().at(-1)!.by], ["stale", "local"], "answered in the terminal first");
 });
 
+test("a dialog closed unconfirmed tells a late answer it is unknown, so the page keeps its recheck (asks-r4-F001)", () => {
+	const t = session();
+	t.open();
+	t.own();
+	t.events.emit("robot-hand:closed", { version: 1, id: "d1", by: "unconfirmed" });
+	t.message(answer("a".repeat(16), { to: bridgeIdOf(t) }));
+	assert.equal(t.acks().at(-1)!.outcome, "unknown");
+});
+
 test("an owner that stays silent leaves the answer unknown after 2 s; meanwhile and after, the same answer waits or replays and another is busy", async () => {
 	const s = session();
 	s.open();

@@ -270,7 +270,7 @@ export function createHub(pi: ExtensionAPI, me: string, local: Bridge, onAllow?:
 		/** How a dialog that is no longer open here ended: `accepted` for the answer that won it, else `stale` with who closed it. */
 		ended(key, dialog, answerId) {
 			const c = bound.get(key)?.b.closed.find((x) => x.id === dialog);
-			return c && { status: 200, body: c.by === "remote" && c.answerId === answerId ? { outcome: "accepted" } : { outcome: "stale", by: c.by } };
+			return c && { status: 200, body: c.by === "unconfirmed" ? { outcome: "unknown" } : c.by === "remote" && c.answerId === answerId ? { outcome: "accepted" } : { outcome: "stale", by: c.by } };
 		},
 		target: (key) => targets.get(key),
 		replay(answerId, key) {

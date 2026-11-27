@@ -228,12 +228,13 @@ test("answers go to the bridge in-process or over the channel (ownerOnly, from t
 
 test("a dialog closed a moment ago tells a late answer who closed it, and a resent winning answer that it won", async () => {
 	const x = hub(), path = file([["c1", "robot_hand"]]);
-	x.h.receive("S", x.list([], { file: path, closed: [{ id: "d1", by: "local" }, { id: "d2", by: "remote", answerId: "w".repeat(16) }] }));
+	x.h.receive("S", x.list([], { file: path, closed: [{ id: "d1", by: "local" }, { id: "d2", by: "remote", answerId: "w".repeat(16) }, { id: "d3", by: "unconfirmed", answerId: "w".repeat(16) }] }));
 	const { unit } = await read(x, path);
 	assert.deepEqual([unit.mark, unit.pending], ["working", undefined], "closed dialogs do not make it wait");
 	assert.deepEqual(x.h.ended("S", "d1", "a".repeat(16)), { status: 200, body: { outcome: "stale", by: "local" } });
 	assert.deepEqual(x.h.ended("S", "d2", "w".repeat(16)), { status: 200, body: { outcome: "accepted" } });
 	assert.deepEqual(x.h.ended("S", "d2", "a".repeat(16)), { status: 200, body: { outcome: "stale", by: "remote" } });
+	assert.deepEqual(x.h.ended("S", "d3", "w".repeat(16)), { status: 200, body: { outcome: "unknown" } }, "closed unconfirmed: the page keeps its recheck (asks-r4-F001)");
 	assert.equal(x.h.ended("S", "d9", "a".repeat(16)), undefined);
 	assert.equal(x.h.ended("T", "d1", "a".repeat(16)), undefined);
 });
