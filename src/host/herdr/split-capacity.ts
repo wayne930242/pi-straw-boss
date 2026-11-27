@@ -1,0 +1,44 @@
+// Copied from pi-herdr-agents f1590cb (MIT, Copyright (c) 2026 Giuseppe Rodriguez); see NOTICE.md.
+import {
+	isFiniteNumber,
+	isRecord,
+} from "@nubl/maestro/core/config/type-guards";
+import { herdrExecAsync, parseHerdrJson } from "./herdr-cli.ts";
+
+/** Layout rectangles include the one-cell border on each edge. Herdr's
+ * default split is 50:50; round down rather than depending on which half
+ * receives an odd cell. A zoomed rectangle is not the unzoomed split area. */
+export async function canSplitParent(
+	parent: string,
+	direction: "right" | "down",
+	minimum: number,
+	timeout: number,
+): Promise<boolean> {
+	if (direction === "down") return true;
+	try {
+		const result = parseHerdrJson(
+			await herdrExecAsync(["pane", "layout", "--pane", parent], timeout),
+		)?.result;
+		const layout = result?.layout;
+		if (
+			result?.type !== "pane_layout" ||
+			layout?.zoomed !== false ||
+			!Array.isArray(layout.panes)
+		)
+			return false;
+		const panes: unknown[] = layout.panes;
+		const pane = panes.find(
+			(item) => isRecord(item) && item.pane_id === parent,
+		);
+		if (!isRecord(pane) || !isRecord(pane.rect)) return false;
+		const cells = pane.rect.width;
+		return (
+			isFiniteNumber(cells) &&
+			Number.isSafeInteger(cells) &&
+			Math.floor(cells / 2) - 2 >= minimum
+		);
+	} catch {
+		// No mutation was attempted. Unknown geometry selects grouped placement.
+		return false;
+	}
+}

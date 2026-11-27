@@ -30,10 +30,12 @@ test("the module loads, its factory runs, and outside Herdr it registers nothing
 	assert.deepEqual(registered, []);
 });
 
-test("the manifest ships only src, the built GUI and server bundles, prompts, the role pack (roles/), README, NOTICE (the QR encoder's MIT notice), and LICENSE, has tsx as its only runtime dependency, builds the bundles before packing and the page before testing, and points at a real entry", () => {
+test("the manifest ships only src, the built GUI and server bundles, prompts, the role pack (roles/), README, NOTICE (the QR encoder's and pi-herdr-agents' MIT notices), the Maestro host's config example, and LICENSE, has tsx and the Maestro engine as its runtime dependencies, builds the bundles before packing and the page before testing, and points at a real entry", () => {
 	const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-	assert.deepEqual(manifest.files, ["src", "dist/gui", "dist/server", "prompts", "roles", "README.md", "NOTICE.md", "LICENSE"]);
-	assert.deepEqual(Object.keys(manifest.dependencies), ["tsx"], "tsx is the one runtime dependency: the server loads pi-intercom's TypeScript client through it (docs/specs/2026-10-26-sb-backend.md, Process model)");
+	assert.deepEqual(manifest.files, ["src", "dist/gui", "dist/server", "prompts", "roles", "README.md", "NOTICE.md", "config.json.example", "LICENSE"]);
+	// tsx: the server loads pi-intercom's TypeScript client through it (docs/specs/2026-10-26-sb-backend.md, Process model). @nubl/maestro: the subagent engine src/host/ hosts, a git dependency with committed dist/ (spike 0a).
+	assert.deepEqual(Object.keys(manifest.dependencies).sort(), ["@nubl/maestro", "tsx"]);
+	assert.match(manifest.dependencies["@nubl/maestro"], /^git\+https:\/\/github\.com\/wayne930242\/maestro\.git#[0-9a-f]{40}$/, "Maestro is pinned to a full commit over https");
 	assert.ok(manifest.devDependencies.vite, "the page is built with Vite, as a development dependency only");
 	assert.equal(manifest.scripts.prepack, "npm run gui:build && npm run build:server");
 	assert.equal(manifest.scripts.pretest, "npm run gui:build");

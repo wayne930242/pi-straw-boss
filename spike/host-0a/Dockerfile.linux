@@ -1,0 +1,17 @@
+FROM ubuntu:24.04
+ARG HERDR_SHA=17d7536f2da50859523680ef279dffcac8e4a235f4e46fe8da6c2ec44141897c
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg git procps python3 less \
+ && install -d /etc/apt/keyrings \
+ && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /etc/apt/keyrings/nodesource.asc \
+ && echo "deb [signed-by=/etc/apt/keyrings/nodesource.asc] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+ && printf 'Package: nodejs\nPin: origin deb.nodesource.com\nPin-Priority: 600\n' > /etc/apt/preferences.d/nodesource-nodejs \
+ && apt-get update && apt-get install -y nodejs=24.* && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -s /bin/bash agent
+USER agent
+WORKDIR /home/agent
+ENV PATH=/home/agent/.local/bin:$PATH GIT_TERMINAL_PROMPT=0 TERM=xterm-256color
+RUN mkdir -p .local/bin && printf 'prefix=/home/agent/.local\n' > .npmrc \
+ && curl -fsSL -o .local/bin/herdr https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-aarch64 \
+ && echo "$HERDR_SHA  .local/bin/herdr" | sha256sum -c - && chmod 755 .local/bin/herdr \
+ && npm i -g @earendil-works/pi-coding-agent@1.6.1 --no-audit --no-fund \
+ && npm cache clean --force && rm -rf .npm
