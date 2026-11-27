@@ -3,6 +3,7 @@ import { availableParallelism, loadavg } from "node:os";
 import { dirname, join } from "node:path";
 import { integrationOff } from "../trainswitch.ts";
 import { type BoardRead, type BoardStep, type CarRow, factsOf, readJsonFile, type ReadBudget, readTrainboards, readYard, trainboardDir, type Writer, yardPath } from "../train/board.ts";
+import { carFacts, type CarFact, type Life } from "../train/carfacts.ts";
 import { carFileName, type CarState, type CarView, noticeStatus } from "../train/cars.ts";
 import { isName, isObject, isoTime, MAX_TICKET_CHARS, SHA_RE } from "../train/spec.ts";
 import { type FactStep, holding, stepWaits, type TrainFacts, type Wait, waitingTrains } from "../train/waits.ts";
@@ -29,7 +30,9 @@ export interface YardDeps {
 	/** The load now: waits on the load of a step are made only with a reading. */
 	load?: NetLoad;
 	/** The server's own book of cars (§5.5): a car it holds is told from its record, which a train cannot write. A car it has not seen (the server restarted) is told from the journal on disk and marked so. Left out, the journal alone is read. */
-	book?: { viewOf(project: string, app: string, head: string): CarView | undefined };
+	book?: { viewOf(project: string, app: string, head: string): CarView | undefined; /** Every life of every car of a project the book holds (the car rows' source of cars no board lists). */ read?(project: string): CarView[] };
+	/** When a step in progress was first seen, by key (a step whose gate recorded no start); the process's own memory when left out. */
+	seen?: (key: string, now: number) => number;
 	/** Bytes one reading may read from car, notice, evidence and gate files (`READ_BUDGET_BYTES`; tests give less). */
 	budget?: number;
 }
@@ -127,6 +130,39 @@ function cleanWait(wait: Wait, clean: (value: string, max: number) => string): W
 	return { target: { target: clean(wait.target.target, 128), holder: clean(wait.target.holder, 32), ...(wait.target.why ? { why: wait.target.why } : {}) } };
 }
 
+/** When this process first saw each step in progress (a review runs no command, so its gate records no start): kept a day, at most 4096 keys. */
+const firstSeen = new Map<string, number>();
+export function seenAt(key: string, now: number): number {
+	const at = firstSeen.get(key);
+	if (at !== undefined) return at;
+	if (firstSeen.size >= 4096) for (const [k, t] of firstSeen) if (now - t > 24 * 3600_000) firstSeen.delete(k);
+	if (firstSeen.size >= 4096) firstSeen.delete(firstSeen.keys().next().value!); // the oldest first: a Map keeps insertion order
+	firstSeen.set(key, now);
+	return now;
+}
+
+const latestAt = (v: CarView) => v.file.states.at(-1)?.at ?? "";
+/** The current life of a car for its row: the book's (with how many lives it has had), else the journal's own file, read once and within the budget; nothing for a file that fails. */
+function lifeLookup(stateDir: string, project: string, budget: ReadBudget, book?: YardDeps["book"]) {
+	const held = new Map<string, CarView[]>();
+	for (const v of book?.read?.(project) ?? []) held.set(`${v.file.app}\n${v.file.car.head}`, [...(held.get(`${v.file.app}\n${v.file.car.head}`) ?? []), v]);
+	const current = (lives: CarView[]) => lives.reduce((top, v) => (latestAt(v) > latestAt(top) ? v : top));
+	const others: Life[] = [...held.values()].map((lives) => ({ file: current(lives).file, lives: lives.length }));
+	const real = carsFolderOk(stateDir, project);
+	const life = (app: string, head: string): Life | undefined => {
+		const lives = held.get(`${app}\n${head}`);
+		if (lives?.length) return { file: current(lives).file, lives: lives.length };
+		const one = book?.viewOf(project, app, head);
+		if (one) return { file: one.file, lives: 1 };
+		if (!real) return undefined;
+		try {
+			const read = readCar(stateDir, project, carFileName(app, head), budget);
+			return read.ok && read.file.app === app && read.file.car.head === head ? { file: read.file, lives: 1 } : undefined;
+		} catch { return undefined; }
+	};
+	return { life, others };
+}
+
 /** Which unit of the net is a train: the one whose pane's token names it. With two claims the one that is the board's own writer wins; with no way to tell, none. */
 function unitOf(join: YardJoin, project: string, code: string, writer?: string): string | undefined {
 	const claims = join.trains.filter((u) => u.project === project && u.code === code);
@@ -195,9 +231,14 @@ export function readYards(deps: YardDeps, join_: YardJoin): Yards | undefined {
 		const forming = yard.ok ? yard.yard.trains.filter((t) => t.status !== "opened").map((t): YardFormingRow => ({
 			code: t.code, app: t.app, status: t.status as YardFormingRow["status"], cars: t.cars.slice(0, MAX_VIEW_CARS).map((c) => carView(c, t.app)), ...(t.departs ? { departs: { maxCars: t.departs.maxCars, maxWaitMin: t.departs.maxWaitMin, oldest: t.departs.oldest } } : {}),
 		})) : [];
+		const lives = lifeLookup(stateDir, project, budget, deps.book), seen = deps.seen ?? seenAt;
+		const cars = carFacts({
+			project, now, ...(yard.ok ? { yard: { writer: yard.yard.writer.session, trains: yard.yard.trains } } : {}), life: lives.life, others: lives.others, seen: (key) => seen(key, now),
+			trains: mine.flatMap(({ read }, i) => (read.ok ? [{ view: trains[i]!, cars: read.board.cars, removed: (read.board.removed ?? []).flatMap((r) => (r.head ? [r.head] : [])) }] : [])),
+		}).map((c): CarFact => ({ ...c, tickets: c.tickets.map((t) => clean(t, MAX_TICKET_CHARS)), coordinator: clean(c.coordinator, 128), ...(c.integrator ? { integrator: clean(c.integrator, 128) } : {}), ...(c.version ? { version: clean(c.version, 128) } : {}), ...(c.reason ? { reason: clean(c.reason, 200) } : {}) }));
 		projects.push({
 			project, ...(yard.ok ? { integrator: { ...(join_.integrators.has(yard.yard.writer.session) ? { key: yard.yard.writer.session } : {}), live: isAlive(yard.yard.writer), ...(join_.mains.has(yard.yard.writer.session) && !join_.integrators.has(yard.yard.writer.session) ? { switched: true as const } : {}) } } : {}),
-			...(!yard.ok && !missing ? { problem: clean(`yard.json: ${yard.reason}`, 200), problemKind: reasonKind(yard.reason) } : {}), forming, trains, waiting: waitingTrains(mine.map((m) => m.fact)),
+			...(!yard.ok && !missing ? { problem: clean(`yard.json: ${yard.reason}`, 200), problemKind: reasonKind(yard.reason) } : {}), forming, trains, waiting: waitingTrains(mine.map((m) => m.fact)), ...(cars.length ? { cars } : {}),
 		});
 	}
 	const cut = truncated || listed.names.length > MAX_PROJECTS;

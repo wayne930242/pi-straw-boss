@@ -9,12 +9,17 @@ import { trainFromToken } from "../trainrole.ts";
 import { CarBook, type Look, type PaneFacts } from "./carbook.ts";
 import { CarNotices } from "./carnotices.ts";
 import { type Slot, towerId } from "./record.ts";
+import { trainyardSeam } from "./trainyard.ts";
+import type { CarFact } from "../train/carfacts.ts";
 import type { Reply, Request } from "./socket.ts";
 
 // The server's side of the car book (carbook.ts) and the notice sender (carnotices.ts): the control-socket commands `cars-register`, `cars-check`, `cars-set`, `cars-read`, and the wiring of both to the broker, Herdr and a timer.
 // Kept out of main.ts, which carries a line budget.
 
-export interface Cars { book: CarBook; notices: CarNotices }
+export interface Cars { book: CarBook; notices: CarNotices; /** The car rows of a session (docs/specs/2026-11-28-car-rows.md): the cars it coordinates or received, from the yards the page reads. */ rows?(session: string): CarFact[] }
+
+/** How long one reading of the yards answers every session's `cars-rows` (each session asks every 15 s). */
+const ROWS_FRESH_MS = 5_000;
 
 // What git gets from the server's own environment (RR3-F002): an allow-list, so no GIT_* of the server (GIT_DEFAULT_HASH, GIT_DIR, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_CONFIG_*, GIT_EXEC_PATH, GIT_TRACE...), proxy or ssl setting reaches it.
 const KEEP_ENV = /^(?:PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TEMP|TMP|LANG|LC_[A-Z_]+|SSH_AUTH_SOCK|SSL_CERT_FILE|SSL_CERT_DIR|SystemRoot|SYSTEMROOT|USERPROFILE|APPDATA|LOCALAPPDATA|PATHEXT|COMSPEC)$/;
@@ -47,6 +52,10 @@ export function carsReply(cars: Cars | undefined, request: Request): Promise<Rep
 			return Promise.resolve(cars.book.check(request.secret) ? { ok: true } : { ok: false, error: "sb: this request is not from a registered session" });
 		case "cars-set":
 			return cars.book.set({ secret: request.secret, state: request.state as never, car: request.car as never, fields: request.fields as never }).then((r) => ({ ok: true, ...r }), reply);
+		// A read for display only: it grants nothing, and says what the page already shows anyone with the GUI, so it takes the session's id without its secret.
+		case "cars-rows":
+			if (typeof request.session !== "string" || !/^[\w.:-]{1,128}$/.test(request.session)) return Promise.resolve({ ok: false, error: "sb: cars-rows needs a session id" });
+			return Promise.resolve({ ok: true, cars: cars.rows?.(request.session) ?? [] });
 		case "cars-read":
 			return cars.book.readFor({ secret: request.secret, project: request.project }).then((list) => ({ ok: true, cars: list }), reply);
 		default:
@@ -113,5 +122,12 @@ export function startCars(o: StartCars): Cars {
 	notices = new CarNotices({ book, now: o.now, intercom: () => o.client(), tower: (workspace) => towerId(o.slot, workspace), log: o.log });
 	notices.start();
 	o.stops.push(() => notices?.stop());
-	return { book, notices };
+	const yards = trainyardSeam({ env: process.env, stateDir: o.slot.stateDir, now: o.now, book: () => book });
+	let read: { at: number; cars: CarFact[] } | undefined;
+	const rows = (session: string): CarFact[] => {
+		const now = o.now();
+		if (!read || now - read.at > ROWS_FRESH_MS || now < read.at) read = { at: now, cars: (yards.yards({ trains: [], mains: new Set(), integrators: new Set() })?.projects ?? []).flatMap((p) => p.cars ?? []) };
+		return read.cars.filter((c) => c.coordinator === session || c.integrator === session);
+	};
+	return { book, notices, rows };
 }

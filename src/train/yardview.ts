@@ -1,3 +1,4 @@
+import type { CarFact } from "./carfacts.ts";
 import type { CarState } from "./cars.ts";
 import type { Kind } from "./spec.ts";
 import type { StepStatus, Wait } from "./waits.ts";
@@ -68,6 +69,8 @@ export interface ProjectYard {
 	trains: YardTrainRow[];
 	/** The codes of the trains with a step that waits for a lane or target another train holds (「互相等待」). */
 	waiting: string[];
+	/** Where each car of the project is (docs/specs/2026-11-28-car-rows.md): a main's unit card shows those it coordinates; `cars-rows` answers a session with its own. */
+	cars?: CarFact[];
 }
 
 /** `yards` of the snapshot: this computer's only (the `board` message, a remote turn and the operate slice never carry it). `truncated`: more trains or projects than the 64 read. `problems`: folders that could not be listed. */
