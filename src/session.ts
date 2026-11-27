@@ -18,6 +18,8 @@ import { childRevive } from "./childrevive.ts";
 import { keyOf, REARM_TEXT, REVIVE_TOKEN } from "./revive.ts";
 import { armSignals, signalSeen } from "./signalseen.ts";
 import { restored } from "./restored.ts";
+import { annotateLost } from "./host/lost.ts";
+import { hostOwnsRuns } from "./host/state.ts";
 import type { RunMode } from "./runmode.ts";
 import type { Presence } from "./presence.ts";
 import { registerCarOff } from "./carslip.ts";
@@ -155,12 +157,13 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		revives = childRevive({ run, sleep: cfg.sleep, now: cfg.now, file: () => log.getSessionFile(), entries: () => log.getEntries(), pane: () => env.HERDR_PANE_ID, sessions: host.sessions, active: () => !s.isTower, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), deliver: (customType, text, details, wake) => pi.sendMessage({ customType, content: text, display: true, details }, wake ? { triggerTurn: true, deliverAs: "steer" } : { triggerTurn: false }), tell, note: (text) => void (s.at && note(text)) }); // a session that never joined has no workspace to note in
 		// A session a tower revived picks up the subagents it launched before it died (inherit.ts), at its claim and at every start after (a /reload), until none is left to watch.
 		startInherit = () => {
-			if (inherits || s.isTower) return;
+			if (inherits || s.isTower || hostOwnsRuns()) return;
 			inherits = inherited({ run, file: () => log.getSessionFile(), entries: () => log.getEntries(), type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), deliver: (text, details) => pi.sendMessage({ customType: RESULT, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
 			void inherits.poll();
 		};
 		if (typeof s.saved.revived === "number") startInherit();
-		nudgeTimer = setInterval(() => void Promise.allSettled([nudges?.poll(), restores?.poll(), revives?.poll(), inherits?.poll()]), cfg.nudgeMs).unref();
+		// Runs sb's own host launched are not revived, inherited, nudged or restored: a lost one is said once on its result (src/host/lost.ts), and the launcher resumes it.
+		nudgeTimer = setInterval(() => void (hostOwnsRuns() || Promise.allSettled([nudges?.poll(), restores?.poll(), revives?.poll(), inherits?.poll()])), cfg.nudgeMs).unref();
 		// Starting runs in the background: pi awaits session_start handlers in turn, and pi-intercom connects in its own, after this one.
 		const asTower = () => {
 			s.trainSettled = true; // a tower is no train
@@ -329,7 +332,8 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	pi.on("session_info_changed", (event) => void (!runMode.active() && mainDuty.migrate((event as { name?: string }).name)));
 	pi.on("agent_settled", () => void (!runMode.active() && briefing.settled()));
 	pi.on("message_end", (event) => void (!runMode.active() && briefing.delivered(event.message))); // a role steer counts as told once pi delivers it (briefing.ts `told`)
-	pi.on("message_end", (event) => ((message) => (message ? { message } : undefined))(revives?.annotate(event.message))); // a subagent's death says, before the model reads it, that it comes back
+	// A subagent's death says, before the model reads it, that it comes back; under sb's own host, that it is lost and how to resume it.
+	pi.on("message_end", (event) => ((message) => (message ? { message } : undefined))(hostOwnsRuns() ? annotateLost(event.message) : revives?.annotate(event.message)));
 	// Compaction and tree navigation can remove earlier steers. Resend current guidance without touching the role section.
 	pi.on("session_compact", (event) => void (!runMode.active() && briefing.fresh(event.willRetry)));
 	pi.on("session_tree", () => void (!runMode.active() && briefing.fresh()));
