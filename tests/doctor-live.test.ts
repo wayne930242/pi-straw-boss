@@ -77,6 +77,17 @@ test("sb_doctor reports the live tracked-run source and count, never zero for un
 	} finally { delete slot[key]; }
 });
 
+test("sb_doctor lists each worker revive that waits for proof of who has its run's session, and nothing when none waits", async () => {
+	const p = fakePi(ALL);
+	let waits: string[] = ["worker-a (sessionPath /s/x_r1.jsonl): an .exit is there while its own pi still runs"];
+	const doctor = registerDoctor({ ...p.api, events: runBus(() => []) } as never, { env, role: () => "main", headOf: () => undefined, revives: () => waits });
+	doctor.addTool();
+	const text = async () => (await p.tools.get("sb_doctor")!.execute!("id", {})).content[0]!.text;
+	assert.match(await text(), /^Revive waits: worker-a \(sessionPath \/s\/x_r1\.jsonl\): an \.exit is there while its own pi still runs$/m);
+	waits = [];
+	assert.doesNotMatch(await text(), /Revive waits/);
+});
+
 test("sb_doctor reports the load stamp and the stale check; /boss doctor fix makes an inactive tool active again", async () => {
 	const p = fakePi(ALL);
 	const slot = globalThis as Record<symbol, unknown>;

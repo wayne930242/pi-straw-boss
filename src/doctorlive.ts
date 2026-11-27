@@ -21,6 +21,8 @@ export interface DoctorDeps {
 	headOf?: (dir: string) => string | undefined;
 	/** The version of the pi installed on disk now (its package.json), against the one running. */
 	piInstalled?: () => string | undefined;
+	/** What this session's worker revives wait on (childrevive.ts `waits`). */
+	revives?: () => readonly string[];
 }
 
 const gitHead = (dir: string) => {
@@ -50,7 +52,7 @@ export function liveFacts(pi: ExtensionAPI, ctx: Pick<ExtensionContext, "model">
 		tools: pi.getAllTools().map((t) => ({ name: t.name, exposure: t.exposure, source: t.sourceInfo?.source })),
 		active: pi.getActiveTools(),
 		...(stamp ? { stamp } : {}),
-		...(deep ? { trackedRuns: runCount(pi.events), installed: { pin: pinOf(herdr), head: install ? (d.headOf ?? gitHead)(install) : undefined }, pi: { running: PI_VERSION, installed: (d.piInstalled ?? diskPi)() } } : {}),
+		...(deep ? { trackedRuns: runCount(pi.events), revives: d.revives?.() ?? [], installed: { pin: pinOf(herdr), head: install ? (d.headOf ?? gitHead)(install) : undefined }, pi: { running: PI_VERSION, installed: (d.piInstalled ?? diskPi)() } } : {}),
 		provider: ctx?.model?.provider,
 		model: ctx?.model?.id,
 	};

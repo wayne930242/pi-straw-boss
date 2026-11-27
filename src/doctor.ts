@@ -39,6 +39,8 @@ export interface DoctorFacts {
 	/** pi.getActiveTools(); undefined out of process, where nothing is active. */
 	active?: readonly string[];
 	trackedRuns?: RunCount;
+	/** The worker revives that wait for proof of who has their run's session (childrevive.ts `waits`). */
+	revives?: readonly string[];
 	stamp?: LoadStamp;
 	/** pi-herdr-agents as installed: the commit its settings entry pins and the checkout's HEAD. */
 	installed?: { pin?: string; head?: string };
@@ -54,6 +56,7 @@ export type VerdictCode = "healthy" | "H1" | "H2" | "stale";
 export interface DoctorReport {
 	role: DoctorRole;
 	trackedRuns?: RunCount;
+	revives?: readonly string[];
 	expected: { name: string; package: string; state: ToolState }[];
 	/** Expected tools not active, with their state. */
 	missing: { name: string; package: string; state: ToolState }[];
@@ -138,7 +141,7 @@ export function diagnose(f: DoctorFacts): DoctorReport {
 	}
 	if (!stale && f.pi?.running && f.pi.installed && f.pi.running !== f.pi.installed) stale = `pi ${f.pi.running} runs, ${f.pi.installed} is installed`;
 	const errors = [...(f.errors ?? [])];
-	const base = { role: f.role, expected, missing, loaded, silent, stamp, stale, trackedRuns: f.trackedRuns, pi: f.pi, provider: f.provider, model: f.model, errors };
+	const base = { role: f.role, expected, missing, loaded, silent, stamp, stale, trackedRuns: f.trackedRuns, revives: f.revives, pi: f.pi, provider: f.provider, model: f.model, errors };
 	const list = (ts: { name: string }[]) => ts.map((t) => t.name).join(", ");
 	const unregistered = missing.filter((t) => t.state === "unregistered"), inactive = missing.filter((t) => t.state === "inactive");
 	if (unregistered.length || stamp?.failed) {
@@ -156,6 +159,7 @@ export function renderDoctor(r: DoctorReport): string {
 	const lines = [`sb doctor: ${r.verdict} (${r.role})`, r.finding, `Next: ${r.next}`];
 	if (r.note) lines.push(r.note);
 	if (r.trackedRuns) lines.push(`Tracked runs: ${r.trackedRuns.source}${"count" in r.trackedRuns ? ` (${r.trackedRuns.count})` : ""}`);
+	for (const w of r.revives ?? []) lines.push(`Revive waits: ${w}`);
 	if (r.missing.length) lines.push(`Missing: ${r.missing.map((t) => `${t.name} ${t.state} (${t.package})`).join("; ")}`);
 	if (r.stamp) lines.push(`pi-herdr-agents load: ${r.stamp.wrapperVersion ?? "?"} @${short(r.stamp.wrapperHead) ?? "?"}, maestro ${r.stamp.maestroVersion ?? "?"}, generation ${r.stamp.generation ?? "?"}, at ${r.stamp.loadedAt ?? "?"}${r.stamp.failed ? `, failed: ${r.stamp.failed}` : ""}`);
 	else if (r.expected.some((t) => t.package === "pi-herdr-agents")) lines.push("pi-herdr-agents load: no stamp (a build before the stamp, or it never loaded)");

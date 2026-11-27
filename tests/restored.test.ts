@@ -871,3 +871,28 @@ test("F009: a run the host resumed under a new run id while the old pane closed 
 	assert.equal(state.resumed.length, 0, "no second resume");
 	assert.deepEqual(state.transcript.slice(1).map((e) => e.data), [{ closing: KID }, { resumed: KID }]);
 });
+
+test("F009: a script that cannot be read, and may be the tracked resume's, makes the owner unknown: nothing is asked, and the next start looks again", async () => {
+	registry();
+	const { state, polls, art } = rig();
+	state.onClose = () => {
+		mkdirSync(join(art, "subagent-scripts", "kid-one-resume-1760000000001.sh")); // listed as a script, unreadable
+		registry("kid-2"); // tracked; whose session it has cannot be read
+	};
+	await polls(2);
+	assert.equal(state.resumed.length, 0, "no resume on a guess");
+	assert.deepEqual(state.transcript.slice(1).map((e) => e.data), [{ closing: KID }], "`closing` without `resumed`: the next start asks again");
+});
+
+test("F009: an unreadable script beside the tracked resume's own does not hide it", async () => {
+	registry();
+	const { state, polls, art, kidFile } = rig();
+	state.onClose = () => {
+		for (const n of ["a", "b", "c", "d", "e", "f", "g", "h"]) mkdirSync(join(art, "subagent-scripts", `${n}-resume-1760000000001.sh`));
+		writeFileSync(join(art, "subagent-scripts", "kid-one-resume-1760000000002.sh"), `#!/bin/bash\n# Subagent resume script for kid-one\n# Generated: 2026-10-18T01:00:00.000Z\n# Session: ${kidFile}\ncd '/x' && PI_SUBAGENT_ID='kid-2' pi --session '${kidFile}'; echo '__SUBAGENT_DONE_'$?'__'\n`);
+		registry("kid-2");
+	};
+	await polls(2);
+	assert.equal(state.resumed.length, 0, "no second resume");
+	assert.deepEqual(state.transcript.slice(1).map((e) => e.data), [{ closing: KID }, { resumed: KID }]);
+});

@@ -60,6 +60,8 @@ export interface State {
 	barred: string | undefined;
 	/** While the sub workspace check has no definitive answer: asks Herdr again (or joins the one in flight) and settles `barred`. A caller that needs the net waits for it first (membership.ts). */
 	recheck: (() => Promise<void>) | undefined;
+	/** What this session's worker revives wait on (session.ts), for sb_doctor (index.ts). */
+	reviveWaits?: () => readonly string[];
 	/** Set at shutdown: a refresh still in flight must not write tokens after they are cleared. */
 	stopped: boolean;
 	// Where it is and what the tab's net says. `c` and `at` are set by the join (or the tower's start) before anything reads them.

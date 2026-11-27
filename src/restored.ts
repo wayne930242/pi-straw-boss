@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Entry, FINAL } from "./orphan.ts";
-import { tracked, type RunHost } from "./trackedruns.ts";
+import { sessionRuns, tracked, type RunHost } from "./trackedruns.ts";
 import { artifacts, ownFile, readJson } from "./netdata.ts";
 import { type Cut, continueText, cutOf, describe } from "./cut.ts";
 import { type HerdrRun, panes, type Session, type Sleep, waitFor } from "./herdr.ts";
@@ -70,19 +70,11 @@ function launchOf(file: string, id: string): Launch | undefined {
 	}
 }
 
-/** Whether a run of the host or a result in `entries` has `session` now: a resume takes it under a new run id, so a run is matched by its script's session file (review F009). */
+/** Whether a result in `entries` or a run of the host has `session` now, matched by its scripts' session file under any run id (trackedruns.ts `sessionRuns`, review F009); null: unknown. */
 function taken(file: string, session: string, entries: Entry[], events: Restored["events"]): boolean | null {
-	const live = tracked(events), dir = join(artifacts(file), "subagent-scripts");
-	if (!live) return null;
 	if (entries.some((e) => e.type === "custom_message" && FINAL.includes(e.customType ?? "") && (e.details as { sessionFile?: unknown } | undefined)?.sessionFile === session)) return true;
-	try {
-		return readdirSync(dir).some((name) => {
-			const text = name.endsWith(".sh") ? readFileSync(join(dir, name), "utf8") : "", id = /\bPI_SUBAGENT_ID='([^']*)'/.exec(text)?.[1];
-			return id !== undefined && live.has(id) && /^# Session: (.+)$/m.exec(text)?.[1]?.trim() === session;
-		});
-	} catch {
-		return false;
-	}
+	const owner = sessionRuns(file, session, events).owner;
+	return owner === null ? null : owner !== undefined;
 }
 
 /** The sidecar pi-herdr-agents writes beside a subagent session file, or undefined when there is none or it cannot be read. */

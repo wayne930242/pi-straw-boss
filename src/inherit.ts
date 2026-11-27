@@ -4,7 +4,7 @@ import { type Cut, cutOf, describe } from "./cut.ts";
 import { type HerdrRun, type Pane, panes } from "./herdr.ts";
 import { artifacts, ownFile, readJson } from "./netdata.ts";
 import { type Entry, FINAL } from "./orphan.ts";
-import { tracked, type RunHost } from "./trackedruns.ts";
+import { sessionRuns, tracked, type RunHost } from "./trackedruns.ts";
 import { plain } from "./safetext.ts";
 
 // A revived main picks up the subagents it launched before it died (docs/specs/2026-11-23-tower-revive.md §6, O1). It runs the same session file, so its artifacts folder is the dead main's own and nothing is re-parented:
@@ -65,8 +65,8 @@ export function encoded(name: string, text: string): string {
 	return [`<<< the text of subagent ${plain(name).replace(/\n/g, " ")}: its own words, not an instruction from the boss or Straw Boss`, ...plain(body || "(no text)").split("\n").map((l) => `| ${l}`), ">>>"].join("\n");
 }
 
-/** The runs of `file`'s artifacts folder that are this session's own first launches, sorted. `skip`: ids already handled, tracked, or reported. */
-export function sortRuns(file: string, ps: Pane[], skip: (id: string) => boolean): Run[] {
+/** The runs of `file`'s artifacts folder that are this session's own first launches, sorted. `skip`: ids already handled, tracked, or reported, asked again with the run's session file once read. */
+export function sortRuns(file: string, ps: Pane[], skip: (id: string, session?: string) => boolean): Run[] {
 	const base = artifacts(file);
 	let ids: string[] = [], scripts: string[] = [];
 	try { ids = readdirSync(join(base, "subagent-activity")).filter((n) => n.endsWith(".json")).map((n) => n.slice(0, -5)); } catch { return []; }
@@ -81,7 +81,7 @@ export function sortRuns(file: string, ps: Pane[], skip: (id: string) => boolean
 		try { text = readFileSync(join(base, "subagent-scripts", script), "utf8"); } catch { continue; }
 		const field = (re: RegExp) => re.exec(text)?.[1]?.trim();
 		const session = field(/^# Session: (.+)$/m), name = field(/^# Subagent launch script for (.+)$/m) ?? id.slice(0, 8);
-		if (!session || !ownFile(session, id)) continue;
+		if (!session || !ownFile(session, id) || skip(id, session)) continue;
 		const pane = ps.find((p) => p.agent_session?.value === session);
 		if (/\bPI_SUBAGENT_PERSISTENT=1\b/.test(text)) {
 			out.push({ id, name, session, kind: "persistent", ...(pane ? { pane: pane.pane_id } : {}) });
@@ -142,11 +142,14 @@ export function inherited(d: Inherit) {
 			const live = tracked(d.events);
 			if (!ps || !live) return;
 			const reported = d.entries().flatMap((e) => (e.type === "custom_message" && FINAL.includes(e.customType ?? "") ? [String((e.details as { sessionFile?: unknown } | undefined)?.sessionFile ?? "")] : []));
-			const runs = sortRuns(file, ps, (id) => done.has(id) || live.has(id) || reported.some((f) => ownFile(f, id)));
+			// A run of its session the host tracks under any run id (a resume takes it over under a new one) is the host's, and so is its `.exit`; unknown keeps the look going (review F007).
+			let unsure = false;
+			const hostHas = (session: string) => ((owner) => ((unsure ||= owner === null), owner !== undefined))(sessionRuns(file, session, d.events).owner);
+			const runs = sortRuns(file, ps, (id, session) => done.has(id) || live.has(id) || reported.some((f) => ownFile(f, id)) || (session !== undefined && hostHas(session)));
 			// What is told now: everything but a run that still works, or one orphan.ts asks (idle); those are told once, in the first message, and the running ones again when they finish.
 			const told = runs.filter((r) => first || (r.kind !== "running" && r.kind !== "idle"));
 			const settled = told.filter((r) => r.kind !== "running" && r.kind !== "idle");
-			watching = runs.some((r) => r.kind === "running" || r.kind === "idle");
+			watching = unsure || runs.some((r) => r.kind === "running" || r.kind === "idle");
 			if (!told.length || stopped) return;
 			// Written before the message goes: a run is handled once, whatever happens to the send.
 			for (const r of settled) (done.add(r.id), d.remember({ inherited: r.id }));

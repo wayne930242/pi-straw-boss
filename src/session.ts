@@ -153,6 +153,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		restores = restored({ events: pi.events, run, sleep: cfg.sleep, file: () => log.getSessionFile(), entries: () => log.getEntries(), active: () => !s.isTower, launcher: () => (me() ? { id: me(), name: who() } : undefined), sessions: host.sessions, send: reach.send, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), resume: (text, details) => pi.sendMessage({ customType: RESUME, content: text, display: true, details }, { triggerTurn: true, deliverAs: "steer" }), tell });
 		// A subagent whose own pi died while this session lives is revived from its session file, and its result brought here (childrevive.ts).
 		revives = childRevive({ events: pi.events, run, sleep: cfg.sleep, now: cfg.now, file: () => log.getSessionFile(), entries: () => log.getEntries(), pane: () => env.HERDR_PANE_ID, sessions: host.sessions, active: () => !s.isTower, type: ENTRY, remember: (data) => pi.appendEntry(ENTRY, data), deliver: (customType, text, details, wake) => pi.sendMessage({ customType, content: text, display: true, details }, wake ? { triggerTurn: true, deliverAs: "steer" } : { triggerTurn: false }), tell, note: (text) => void (s.at && note(text)) }); // a session that never joined has no workspace to note in
+		s.reviveWaits = revives.waits;
 		// A session a tower revived picks up the subagents it launched before it died (inherit.ts), at its claim and at every start after (a /reload), until none is left to watch.
 		startInherit = () => {
 			if (inherits || s.isTower) return;

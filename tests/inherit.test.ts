@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -40,7 +40,7 @@ function parent() {
 		remember: (data) => void entries.push({ type: "custom", customType: "straw-boss", data }),
 		deliver: (text, details) => void delivered.push({ text, details }), tell: () => {},
 	});
-	return { herdr, child, make, delivered, entries, track: (run: string) => ((globalThis as Record<symbol, { runningSubagents: Map<string, unknown> }>)[REGISTRY]!.runningSubagents.set(run, {})) };
+	return { herdr, art, child, make, delivered, entries, track: (run: string) => ((globalThis as Record<symbol, { runningSubagents: Map<string, unknown> }>)[REGISTRY]!.runningSubagents.set(run, {})) };
 }
 
 test("one message for the inherited runs: finished and ping delivered encoded, cut listed for subagent_resume, worktree and persistent listed, idle left to orphan.ts, tracked skipped", async () => {
@@ -122,4 +122,40 @@ test("a running child is watched and delivered when its .exit appears; nothing r
 	const again = p.make();
 	await again.poll();
 	assert.equal(p.delivered.length, 2);
+});
+
+test("F007 sibling: a running child whose session the host resumed under a new run id is the host's: its .exit is not told as the inherited run's", async () => {
+	const p = parent();
+	const running = p.child("r-run", "worker-h", { last: "All green." });
+	p.herdr.addPane("wA:p9", "wA:t9", "pi").agent_session = { value: running };
+	p.herdr.pane("wA:p9").agent_status = "working";
+	const look = p.make();
+	await look.poll();
+	assert.equal(p.delivered.length, 1, "told as still running");
+	writeFileSync(join(p.art, "subagent-scripts", "worker-h-resume-1764000000000.sh"), `#!/bin/bash\n# Subagent resume script for worker-h\n# Session: ${running}\nPI_SUBAGENT_ID='r-y' pi --session '${running}'; echo '__SUBAGENT_DONE_'$?'__'\n`);
+	p.track("r-y");
+	p.herdr.panes = [];
+	writeFileSync(`${running}.exit`, JSON.stringify({ type: "done" })); // the resumed run's, which its own watcher delivers
+	await look.poll();
+	assert.equal(p.delivered.length, 1, "not told twice");
+	assert.deepEqual(p.entries, []);
+});
+
+test("F009 sibling: a script that may be a tracked run's and cannot be read keeps a running child's look going, and tells nothing on the guess", async () => {
+	const p = parent();
+	const running = p.child("r-run", "worker-h", { last: "All green." });
+	p.herdr.addPane("wA:p9", "wA:t9", "pi").agent_session = { value: running };
+	const look = p.make();
+	await look.poll();
+	const odd = join(p.art, "subagent-scripts", "worker-h-resume-1764000000000.sh");
+	mkdirSync(odd); // listed as a script, unreadable
+	p.track("r-z");
+	p.herdr.panes = [];
+	writeFileSync(`${running}.exit`, JSON.stringify({ type: "done" }));
+	await look.poll();
+	assert.equal(p.delivered.length, 1, "unknown: not told");
+	rmdirSync(odd);
+	await look.poll();
+	assert.equal(p.delivered.length, 2, "the look went on, and tells it once the owner is known");
+	assert.match(p.delivered[1]!.text, /Finished: worker-h/);
 });

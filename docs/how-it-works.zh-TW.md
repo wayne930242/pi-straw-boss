@@ -1345,7 +1345,7 @@ Straw Boss 接著向該 session 送一則 intercom 訊息：啟動者的 session
 <details>
 <summary>細節</summary>
 
-在它認領時（窗格的 `sb_revive` 指名它的檔案），以及之後每次啟動時，救回的 main 會看它 `subagent-activity/` 裡每一個 pi-herdr-agents 沒在追蹤、結果也不在它對話紀錄裡的執行（兩者都在 Herdr 列出窗格之後、寫下或告知任何事之前才讀；讀不到 pi-herdr-agents 的執行時，等下一次查看），並交給它的模型一則引導訊息（`straw-boss-orphan-result`）：
+在它認領時（窗格的 `sb_revive` 指名它的檔案），以及之後每次啟動時，救回的 main 會看它 `subagent-activity/` 裡每一個 pi-herdr-agents 沒在追蹤（不論以它自己的 id，或以任何腳本指名它 session 檔的執行）、結果也不在它對話紀錄裡的執行（兩者都在 Herdr 列出窗格之後、寫下或告知任何事之前才讀；讀不到 pi-herdr-agents 的執行時，等下一次查看），並交給它的模型一則引導訊息（`straw-boss-orphan-result`）：
 
 - **已完成**（子智慧體的 `.exit` 附檔寫 `done` 或 `error`）：子智慧體的最後一則訊息，也就是它的報告，由 Straw Boss 讀出並逐行框起來（每一行加上 `| ` 前綴、控制與不可見字元寫成跳脫形式，最多 16,000 個字元），所以子智慧體的文字不會被當成 Straw Boss 或老闆說的話；
 - **求助**（`.exit` 寫 `ping`）：它的問題，用同樣方式框起來，以及回答它所需的 `subagent_resume` 參數；
@@ -1390,7 +1390,7 @@ sequenceDiagram
 - **啟動者本身不是子智慧體，而且這次執行是一般的執行。** 檔案旁有 `.pi-herdr-subagent-policy.json` 的 session（還原後的巢狀子智慧體）什麼都不做。由子層自己的 policy sidecar 決定：`persistent` 的執行不動，owner 不是 `public` 的執行按 worktree 執行處理。
 - **連續兩次都這樣判定，** 間隔 15 秒，因為 pane 在重新啟動後可能還在啟動中。沒有這種 pane 的執行，看過八次後就放棄，直到下一次 session 啟動。
 
-接著依序進行：把該次執行的 `closing` 鍵寫入啟動者的 session，用 `herdr pane close` 關閉還原的 pane（而且只關那個 pane；舊的 pi 不能和接手的那個同時持有 session 檔），Straw Boss 最多等五秒讓它消失，然後啟動者收到一則自訂訊息；session 接收之後，寫入 `resumed` 鍵。在關閉與訊息之間 reload 或結束，會留下沒有 `resumed` 的 `closing`：啟動者的下一個實例會找到這次執行，看到它的 pane 已不在，就在那時送出訊息。 送出訊息前，會再讀一次 pi-herdr-agents 的執行與 transcript，並以 session 檔而不只以 id 對應執行：接續會以新的執行 id 接手同一個 session，所以若 pi-herdr-agents 追蹤著某個腳本指名同一個 session 檔的執行，或有結果指名它，就不再請求一次（記為 `resumed`）；讀不到 pi-herdr-agents 的執行時，什麼都不送，由 `closing` 鍵在下一次啟動時把它找回來。
+接著依序進行：把該次執行的 `closing` 鍵寫入啟動者的 session，用 `herdr pane close` 關閉還原的 pane（而且只關那個 pane；舊的 pi 不能和接手的那個同時持有 session 檔），Straw Boss 最多等五秒讓它消失，然後啟動者收到一則自訂訊息；session 接收之後，寫入 `resumed` 鍵。在關閉與訊息之間 reload 或結束，會留下沒有 `resumed` 的 `closing`：啟動者的下一個實例會找到這次執行，看到它的 pane 已不在，就在那時送出訊息。 送出訊息前，會再讀一次 pi-herdr-agents 的執行與 transcript，並以 session 檔而不只以 id 對應執行：接續會以新的執行 id 接手同一個 session，所以若 pi-herdr-agents 追蹤著某個腳本指名同一個 session 檔的執行，或有結果指名它，就不再請求一次（記為 `resumed`）；讀不到 pi-herdr-agents 的執行，或讀不到一個可能屬於被追蹤執行的腳本時，什麼都不送，由 `closing` 鍵在下一次啟動時把它找回來。
 
 如果 pane 仍然開著，表示關閉從未生效（行程先死了）：`closing` 鍵會被收回（session 中的 `unclosed` 鍵，讓 reload 不會再讀它），這次執行從頭再經過一次還原的證明。之後不再符合資格的執行（沒有還原的 pane、同一個 terminal、不是一般 pi）會和其他任何情況一樣算作一次落空，第八次落空而放棄時，會有一則警告指名它的 session 路徑。這則訊息以 `sessionPath` 和名稱指名每次執行，引述要傳遞的後續指示（完成你拿到的任務，並回報結果），並告訴模型對每次執行呼叫一次 `subagent_resume`（以 `PI_SUBAGENT_AUTO_EXIT=0` 啟動的執行則設 `autoExit` 為 false）；接手後的執行隨後以一般的 `subagent_result` 回報。
 
@@ -1464,13 +1464,26 @@ sequenceDiagram
 
 **絕不救回。** 啟動者的 artifacts 裡沒有任何啟動或接續腳本指名它的檔案的執行、不是 pi-herdr-agents 自己格式的指令（`[cd '<folder>' && ]<environment> pi --session … ['@<message>']; echo '__SUBAGENT_DONE_'$?'__'`）、常駐專家、從沒開始過的 session（啟動失敗）、任務直接寫在指令裡而不是 `@file` 的首次啟動（fork 執行，救回會讓它從頭再做一次任務）、資料夾已經不在、最近 24 小時內救回失敗過的檔案，以及同一個檔案救回後 10 分鐘內又死掉。被更新的東西取代的死亡也不救：啟動者第一次查看時已超過 10 分鐘的（這個版本之前的對話紀錄），或之後有 `subagent_result`、`subagent_ping`，或死亡之後產生的啟動或接續腳本指名它的檔案。每一種都告訴老闆一次並記在 session 裡；啟動者的模型自己處理那則失敗，若那則失敗附有下面那段話，還會收到一則開始新一輪的說明；被取代的死亡則直接略過、不對它說什麼，因為跑著它的那次執行會回報。
 
-**救回。** 動手之前，先在啟動者的 session 寫一筆 `{workerRevive: {death, file, step}}` 條目，以失敗那則條目自己的 id 為鍵，所以一次死亡只處理一次，`/reload` 之後也一樣。Straw Boss 分割啟動者自己的窗格（`herdr pane split --direction right --cwd <folder> --no-focus`），把新窗格標上這次執行的名稱並記在第二筆條目裡，再確認一次沒有窗格在跑那個檔案、broker 沒列出它，接著在打字前不再等待，確認 pi-herdr-agents 沒在追蹤它，也沒有更新的腳本指名它，然後在新窗格裡打入 `bash '<script>'`。讀不到 pi-herdr-agents 的執行或 Herdr 列不出窗格時，就關掉那個窗格，步驟是 `deferred`，什麼都不告訴啟動者的模型，之後再以相隔一分鐘的兩次查看重新判斷這次死亡。這個腳本放在 `artifacts/<launcher>/straw-boss-revive/`，是這次執行最新的啟動或接續指令，只改兩處：第一則訊息是救回通知而不是任務，`PI_SUBAGENT_SURFACE` 指向新窗格。所以救回的 pi 有同一個 session 檔、資料夾（受管工作樹的 checkout 也是）、模型、thinking、工具、環境，以及 pi-herdr-agents 的子層擴充，它結束時會寫下自己的 `.exit`。通知說明它何時、怎麼死的，它的最後一輪是什麼狀態（[cut.ts](#回合中途被切斷的子層會被告知繼續)），啟動者在等它的報告，重跑任何會改變狀態的動作前先檢查現況，然後完成任務並回報。Straw Boss 最多等 60 秒讓 Herdr 列出新窗格裡跑著那個檔案的 pi：等到了，步驟就是 `revived`；等不到，就關掉那個窗格，步驟是 `failed`，並告訴啟動者去接續或重新派一個。 `deferred` 條目保留它開的窗格，要等 Herdr 不再列出那個窗格，才重新判斷這次死亡；在那之前，每次查看都再請 Herdr 關一次。
+**救回。** 動手之前，先在啟動者的 session 寫一筆 `{workerRevive: {death, file, step}}` 條目，以失敗那則條目自己的 id 為鍵，所以一次死亡只處理一次，`/reload` 之後也一樣。Straw Boss 分割啟動者自己的窗格（`herdr pane split --direction right --cwd <folder> --no-focus`），把新窗格標上這次執行的名稱並記在第二筆條目裡，再確認一次沒有窗格在跑那個檔案、broker 沒列出它，接著在打字前不再等待，確認 pi-herdr-agents 沒在追蹤任何腳本指名那個檔案的執行（不論執行 id），也沒有更新的腳本指名它，然後在新窗格裡打入 `bash '<script>'`。讀不到 pi-herdr-agents 的執行或 Herdr 列不出窗格時，就關掉那個窗格，步驟是 `deferred`，什麼都不告訴啟動者的模型，之後再以相隔一分鐘的兩次查看重新判斷這次死亡。這個腳本放在 `artifacts/<launcher>/straw-boss-revive/`，是這次執行最新的啟動或接續指令，只改兩處：第一則訊息是救回通知而不是任務，`PI_SUBAGENT_SURFACE` 指向新窗格。所以救回的 pi 有同一個 session 檔、資料夾（受管工作樹的 checkout 也是）、模型、thinking、工具、環境，以及 pi-herdr-agents 的子層擴充，它結束時會寫下自己的 `.exit`。通知說明它何時、怎麼死的，它的最後一輪是什麼狀態（[cut.ts](#回合中途被切斷的子層會被告知繼續)），啟動者在等它的報告，重跑任何會改變狀態的動作前先檢查現況，然後完成任務並回報。Straw Boss 最多等 60 秒讓 Herdr 列出新窗格裡跑著那個檔案的 pi：等到了，步驟就是 `revived`；等不到，就關掉那個窗格，步驟是 `failed`，並告訴啟動者去接續或重新派一個。 `deferred` 條目保留它開的窗格，要等 Herdr 不再列出那個窗格，才重新判斷這次死亡；在那之前，每次查看都再請 Herdr 關一次。
 
-**結果。** pi-herdr-agents 不再追蹤這次執行，所以在沒有別人跑它的檔案時，由 Straw Boss 看著它。比救回所用的腳本更新的啟動或接續腳本，或 pi-herdr-agents 追蹤著的這個檔案的執行，都是別人的：步驟是 `skipped`，它的 `.exit` 留給那次執行，啟動者收到一行說明；讀不到 pi-herdr-agents 的執行時，就等著。它的 `.exit` 出現且帶有 `type` 時（寫到一半被讀到的，等下一次查看），步驟變成 `delivered`，啟動者的模型收到一則引導訊息：這次執行的最後一則訊息（框法與[救回的 main 接回的執行](#救回的主智慧體接回它的子智慧體)相同：每一行加前綴、控制字元寫成跳脫形式、最多 16,000 個字元）、它的錯誤，或它的問題以及回答它所需的 `subagent_resume` 參數。`.exit` 會被移除，就像 pi-herdr-agents 的監看會取用它一樣，而 pi 離開那個窗格後窗格就會關掉。救回的 pi 又不見了、也沒留下 `.exit`，相隔一分鐘的兩次查看都如此時，會連同它的最後一則訊息告訴啟動者，而且不再救第二次。啟動者 `/reload` 時，這些都從條目讀回來；被 reload 打斷的救回，若它開的窗格在跑那個檔案就算 `revived`，若是別的窗格或 pi-herdr-agents 在跑，就交給在跑的一方（如上算 `skipped`）；開始 60 秒後仍沒有，就關掉它開的窗格，算 `failed` 並告知。 光是有更新的腳本只會讓這件事暫停：pi-herdr-agents 先寫好接續腳本才啟動執行，所以只有在 pi-herdr-agents 追蹤著它的執行 id、救回以外的窗格在跑那個檔案，或在腳本產生之後有指名那個檔案的 `subagent_result` 或 `subagent_ping` 進來時，那次更新的執行才算別人的；更新的腳本若 60 秒內都看不到這些，就是從未啟動，救回仍保有它的 `.exit`。
+**結果。** pi-herdr-agents 不再追蹤這次執行，所以由 Straw Boss 代它看著，而且只在能證明這個 session 最新的一次嘗試只屬於自己時，才取用它的 `.exit`：它自己的 pi 曾被看到在它開的窗格裡執行、那個 pi 已經結束，而且看不到其他嘗試。每次查看都在最後一次等待之後，才讀還有誰持有這個 session：它開的窗格以外、正在跑那個檔案的窗格，死亡之後指名那個檔案的 `subagent_result` 或 `subagent_ping`，或 pi-herdr-agents 追蹤著、而其啟動或接續腳本指名那個檔案的執行，不論執行 id 為何（接續會以新的 id 接手 session；見 `src/trackedruns.ts` 的 `sessionRuns`，還原和救回的 main 接回的執行也讀它）。第一個成立的列決定：
+
+| 查看時 | Straw Boss | 原因 |
+|---|---|---|
+| 別的窗格在跑那個檔案，或之後有 `subagent_result` 或 `subagent_ping` 指名它 | 交出去：`skipped`，給啟動者一行說明，`.exit` 留著 | 另一次嘗試持有這個 session |
+| pi-herdr-agents 追蹤著某個腳本指名那個檔案的執行，不論執行 id | 交出去 | 那次執行的監看會取用 `.exit` |
+| 讀不到 pi-herdr-agents 的執行，或讀不到一個可能屬於被追蹤執行的腳本 | 等著，列在 `sb_doctor` | 不知道是否空著，就不算空著 |
+| 它自己的 pi 還在跑，而 `.exit` 已經在了 | 等著，列在 `sb_doctor` | 可能是它的 pi 結束時正在寫，也可能是別的執行寫的 |
+| 它自己的 pi 已經結束，而且第一次發現它結束的那次查看時 `.exit` 就在 | 送出它：`delivered` | 它的 pi 會在結束前寫下 `.exit` |
+| 它自己的 pi 結束時沒有 `.exit`，之後才出現一個 | 交出去 | 不可能是它的 pi 寫的 |
+| 它自己的 pi 結束時沒有 `.exit`，相隔一分鐘的兩次查看都沒出現 | `failed`，連同它的最後一則訊息告知 | 它又死了 |
+| 有比救回所用的更新的啟動或接續腳本，而上面各列都不成立 | 什麼都不做：由上面各列決定 | pi-herdr-agents 在啟動執行之前就寫好腳本，而那次執行可能從未啟動：腳本的新舊證明不了什麼 |
+
+送出的 `.exit` 帶有 `type`（寫到一半被讀到的，等下一次查看），啟動者的模型收到一則引導訊息：這次執行的最後一則訊息（框法與[救回的 main 接回的執行](#救回的主智慧體接回它的子智慧體)相同：每一行加前綴、控制字元寫成跳脫形式、最多 16,000 個字元）、它的錯誤，或它的問題以及回答它所需的 `subagent_resume` 參數。`.exit` 會被移除，就像 pi-herdr-agents 的監看會取用它一樣，而 pi 離開那個窗格後窗格就會關掉。救回的 pi 又不見了、也沒留下 `.exit`，相隔一分鐘的兩次查看都如此時，會連同它的最後一則訊息告訴啟動者，而且不再救第二次。啟動者 `/reload` 時，這些都從條目讀回來，包括發現它自己的 pi 結束卻沒有 `.exit` 的那次查看。被 reload 打斷的救回（`reviving`）先過前三列；接著，若它開的窗格在跑那個檔案，不論有沒有更新的腳本都算 `revived`，因為那就是它已啟動的證明；若那個窗格沒在跑、而 `.exit` 已經在了，就等著並列在 `sb_doctor`，因為它的 pi 可能在 reload 期間跑完了；兩者都不是，開始 60 秒後就關掉它開的窗格，算 `failed` 並告知。打字之前還沒有任何東西屬於 Straw Boss，所以在那裡，更新的腳本確實會讓救回停下（見上）。
 
 **啟動者的模型看到什麼。** 那則失敗，加上 Straw Boss 在模型讀到之前附加的一段話（pi 的 `message_end`）：這不是這次執行自己的報告，Straw Boss 大約一分鐘後會救回它並帶回報告，所以不要接續、重新派或取消它。接著，執行回來時收到一行，不會開始新的一輪；它結束時收到報告，會開始一輪。救不回的執行不會被加上那段話。Straw Boss 沒能兌現的情形（啟動失敗、又死掉）會說出來，並說明該怎麼做。
 
-**限制。** 巢狀的子智慧體不會被救回：子智慧體不跑 Straw Boss 的 session。worker 上限算的是 pi-herdr-agents 的登記表，而救回的執行已不在其中。受管工作樹的 manifest 保留 pi-herdr-agents 在死亡時寫下的狀態。pi 當掉而它所在窗格的 shell 也死掉時，看起來跟被關掉的窗格一樣，不會被救回。失敗剛好在 Herdr 重新啟動前送達、而還原又在它的檔案上啟動了一般 pi 的執行，會維持 `live`、不被救回（上面的還原也不會接手，因為已有結果指名它的檔案）。Mac 睡眠不算死亡；重新開機也會結束啟動者，而[救回的 main](#救回的主智慧體接回它的子智慧體) 會自己接回它的子智慧體。設計紀錄：[docs/specs/2026-11-24-worker-revive.md](specs/2026-11-24-worker-revive.md)。
+**限制。** 巢狀的子智慧體不會被救回：子智慧體不跑 Straw Boss 的 session。worker 上限算的是 pi-herdr-agents 的登記表，而救回的執行已不在其中。受管工作樹的 manifest 保留 pi-herdr-agents 在死亡時寫下的狀態。pi 當掉而它所在窗格的 shell 也死掉時，看起來跟被關掉的窗格一樣，不會被救回。失敗剛好在 Herdr 重新啟動前送達、而還原又在它的檔案上啟動了一般 pi 的執行，會維持 `live`、不被救回（上面的還原也不會接手，因為已有結果指名它的檔案）。救回分辨不出自己的 pi 結束時寫的 `.exit`，和另一次嘗試在那個 pi 還在跑時寫下的 `.exit`：若那個 pi 隨後當掉、沒寫自己的，而 pi-herdr-agents 從未追蹤那次嘗試、也沒有窗格顯示它，它會送出那一個。Mac 睡眠不算死亡；重新開機也會結束啟動者，而[救回的 main](#救回的主智慧體接回它的子智慧體) 會自己接回它的子智慧體。設計紀錄：[docs/specs/2026-11-24-worker-revive.md](specs/2026-11-24-worker-revive.md)。
 
 </details>
 
@@ -4124,7 +4137,7 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 
 **它讀什麼。** 每個角色預期 settings 所列套件的工具：main、member、train 和尚未加入的 session 預期六個 `subagent*` 工具、`intercom`、`todo` 和 `MonitorCreate`；塔台預期後三個（它不執行 subagent）；子代理預期以上全部再加 `caller_ping` 和 `subagent_done`，扣掉啟動時被拒絕的（`PI_DENY_TOOLS`）。工具沒有註冊，或註冊為 `direct` 卻沒有啟用，就算缺少；`deferred` 工具不必啟用也能取用。pi-herdr-agents 每次載入都寫一個載入戳記（`globalThis[Symbol.for("pi-herdr-agents/load-stamp")]`：它的版本、根目錄和 HEAD、Maestro 的 build、時間、世代，以及載入拋錯時的 `failed`），doctor 拿它和 settings 的 pin 及安裝目錄的 HEAD 比對。
 
-**在 session 裡。** `sb_doctor`（已加入的 session 和塔台，與其他網路工具相同）和 `/boss doctor`（窗格裡每個不是子代理的 session）回報結論、缺少的工具及其狀態、戳記、pi 版本和模型。兩者也會說這個程序從哪裡讀 pi-herdr-agents 追蹤的執行（`Tracked runs:`）：擁有者以完整的 v1 快照回答 `pi-herdr-agents:runs:v1` 探詢時是 `snapshot (<n>)`，沒有人回答、改讀舊主機的登記簿時是 `legacy (<n>)`，兩者都讀不到或回答格式不對時是 `unknown`。`unknown` 不等於零：裝置列還沒列出的 main，worker 上限會拒絕放行，孤兒提醒、接回的執行和子代理救回都會等著。每次 session 開始（啟動、`/reload`、new、resume、fork）後的第一個回合，窗格裡每個不是子代理的 session 都做一次同樣的檢查：缺少預期的工具時，它顯示警告，並在那個回合加入一則訊息，說不要用一般窗格繞過它，要執行 `sb_doctor` 並交接。子代理不會收到這則訊息：它的工具由啟動方式決定（角色的工具清單會略去 `intercom`、`todo` 或 `subagent`；自動結束的啟動沒有 `subagent_done`），由父代理監看，而被叫去交接的子代理還沒開工就停了（2026-11-26）。
+**在 session 裡。** `sb_doctor`（已加入的 session 和塔台，與其他網路工具相同）和 `/boss doctor`（窗格裡每個不是子代理的 session）回報結論、缺少的工具及其狀態、戳記、pi 版本和模型。兩者也會說這個程序從哪裡讀 pi-herdr-agents 追蹤的執行（`Tracked runs:`）：擁有者以完整的 v1 快照回答 `pi-herdr-agents:runs:v1` 探詢時是 `snapshot (<n>)`，沒有人回答、改讀舊主機的登記簿時是 `legacy (<n>)`，兩者都讀不到或回答格式不對時是 `unknown`。`unknown` 不等於零：裝置列還沒列出的 main，worker 上限會拒絕放行，孤兒提醒、接回的執行和子代理救回都會等著。子代理救回在等待證明誰持有那次執行的 session 時（見[死掉的子智慧體會被救回](#死掉的子智慧體會被救回)的表），每次執行各有一行 `Revive waits:`，寫出它的 session 路徑和原因。每次 session 開始（啟動、`/reload`、new、resume、fork）後的第一個回合，窗格裡每個不是子代理的 session 都做一次同樣的檢查：缺少預期的工具時，它顯示警告，並在那個回合加入一則訊息，說不要用一般窗格繞過它，要執行 `sb_doctor` 並交接。子代理不會收到這則訊息：它的工具由啟動方式決定（角色的工具清單會略去 `intercom`、`todo` 或 `subagent`；自動結束的啟動沒有 `subagent_done`），由父代理監看，而被叫去交接的子代理還沒開工就停了（2026-11-26）。
 
 **從 shell。** `cli.mjs doctor --session <id|prefix|pane> [--json]` 檢查另一個 session，例如工具不見的那一個。它讀不到那個程序，所以讀得到的都讀：用 pi 自己的 loader 對同一個資料夾和 settings 做一次新的載入（在一個沒有該 session 的 Herdr、subagent 和 intercom 環境變數的子 `node` 裡），錯誤就是 pi 的錯誤；session 檔，找出 pi 程序啟動後 provider 回答「No such tool available」的預期工具；以及 Herdr 裡的窗格，拿它的 pi 啟動時間對照 pi-herdr-agents 的安裝時間。新的載入有、session 卻被拒絕的工具就是 `H1-or-H3`：故障在那個程序裡，在它裡面執行 `sb_doctor` 就分得出是哪一種。健康時結束碼是 0，有故障或無法查看時是 1。
 
