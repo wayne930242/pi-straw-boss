@@ -13,7 +13,7 @@ import { createCapFill } from "./capfill.ts";
 import { createBriefing } from "./briefing.ts";
 import { createBossWatch } from "./bosswatch.ts";
 import { createWard } from "./wardtool.ts";
-import { createBossAsk } from "./bossask.ts";
+import { createBossAsk } from "./bossask.ts"; import { askRowsOf } from "./askrows.ts";
 import { createBossPair } from "./bosspair.ts";
 import { createCloseMain } from "./closemain.ts";
 import { createDigest } from "./digest.ts";
@@ -127,7 +127,7 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		registerSession(kit, { mainDuty, attended: () => link.attended(), integration: createIntegrationWatch(kit), runMode, briefing, roles, presence, membership, guard, host, reach, digest, control, startTower: createTower(kit, { membership, presence, tools: { ...tools, addNetTools: netTools }, control, digest, roles, reach }) });
 		trainGuard = registerTrainGuard(kit, cars.client, mainDuty);
 		mainDuty.trainOn(() => Boolean(trainGuard)); // a train's todo and MonitorCreate calls, and the integrator's train todos (nothing loads with the merge train off)
-		registerBoss(kit, { runMode, host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look, paths: createBossPaths(kit, { host, server: look, closeSelf, here: host.here }), doctor, cars: carRows });
+		registerBoss(kit, { runMode, host, membership, reach, closeSelf, stashing: createStashing(kit, { host }), server: look, paths: createBossPaths(kit, { host, server: look, closeSelf, here: host.here }), doctor, cars: carRows, asks: askRowsOf(kit) }); // asks: the open questions to the boss, their probe and /boss asks (askrows.ts)
 	};
 }
 
