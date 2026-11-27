@@ -192,9 +192,9 @@ test("a heads-up that overlaps an open heads-up of another workspace wakes the t
 });
 
 test("blocked, unspecified, a car slip, a train manifest, and a waits-on cancel still wake a run as before", async () => {
-	const slip = "car: web | tickets: MP-1\nbase: develop";
+	const slip = "car: web | tickets: MP-1\nbase: develop", lines = "car: moldplan-frontend-2\ntickets: MP-5801\nbranch: agent/mp-5801";
 	const train = "train:\nproject: mp\ncode: 2026-11-28-a";
-	for (const [what, why, text] of [["blocked", "blocked", "need the db owner"], ["unspecified", undefined, "hello"], ["car slip", "shared", slip], ["train", "shared", train]] as const) {
+	for (const [what, why, text] of [["blocked", "blocked", "need the db owner"], ["unspecified", undefined, "hello"], ["car slip", "shared", slip], ["car slip on lines", "shared", lines], ["train", "shared", train]] as const) {
 		const w = new TowerWorld();
 		w.setFlag(true);
 		w.runTimers = { hold: 3000 };
@@ -247,7 +247,9 @@ test("a woken run's brief lists the logbook entries no run read, oldest first; a
 });
 
 test("the logbook: resources, ends, expiry, and the readers (board_read's section, /boss board log)", () => {
-	assert.deepEqual(resourcesOf("deploy v3 1.62.0-beta.29 to ws01 until 01:55, ~40 min; heads-up, port 5432, mig 193, https://atlas.moldplan.app/, origin/develop, follow-up 10 tests"), ["v3", "1.62.0-beta.29", "ws01", "5432", "193", "atlas.moldplan.app", "develop"]);
+	assert.deepEqual(resourcesOf("deploy v3 1.62.0-beta.29 to ws01 until 01:55, ~40 min; heads-up, port 5432, mig 193, https://atlas.moldplan.app/, origin/feat/x, follow-up 10 tests, push main, --include-all"), ["v3", "1.62.0-beta.29", "ws01", "5432", "193", "atlas.moldplan.app", "feat/x"]);
+	// A bare `main` names nothing: on the field's heads-ups (2026-11-26/27) it matched pushes to different repositories.
+	assert.deepEqual(resourcesOf("pushing skald main and deploying"), []);
 	assert.deepEqual(resourcesOf("nothing in particular, just a note"), []);
 	const at = new Date(2026, 10, 28, 1, 0).getTime();
 	assert.equal(untilOf("until ~01:55", at), new Date(2026, 10, 28, 1, 55).getTime());

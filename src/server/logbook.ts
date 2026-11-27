@@ -56,24 +56,24 @@ export const openHeadsUps = (book: Book, now: number): BookEntry[] => book.entri
 
 // --- what a heads-up names ---------------------------------------------------------------------------------------------------------------------------------------------
 
-/** Words of shared things that carry no digit or separator. */
-const SHARED_WORDS = new Set(["main", "master", "develop", "staging", "production", "prod", "release", "uat", "sit", "preview"]);
 /** Hyphenated words of plain English, which name nothing. */
-const PLAIN = new Set(["heads-up", "follow-up", "read-only", "re-run", "up-to-date", "long-running", "built-in", "sign-off", "set-up", "check-in", "one-off", "end-to-end", "in-flight", "no-op", "non-blocking", "auto-mode", "auto-fill", "self-check", "e.g", "i.e"]);
+const PLAIN = new Set(["heads-up", "follow-up", "read-only", "re-run", "up-to-date", "long-running", "built-in", "sign-off", "set-up", "check-in", "one-off", "end-to-end", "in-flight", "no-op", "non-blocking", "auto-mode", "auto-fill", "self-check", "boss-approved", "boss-authorized", "add-only", "dry-run", "skip-checks", "e.g", "i.e"]);
 /** Times, durations, and small numbers: shared by unrelated heads-ups (`until 01:55`, `~10 min`). */
 const NOISE = /^(?:\d{1,2}:\d{2}(?::\d{2})?|~?\d+(?:\.\d+)?(?:s|m|min|mins|h|hr|hrs|d)|\d{1,2})$/;
 /**
  * The names a heads-up's text gives the things it touches, as the code compares them: lowercased, a URL's scheme and an `origin/` cut. A word counts when it has a letter and a digit (`ws01`, `v3`, `mp-5827`,
- * `1.62.0-beta.29`), is a number of three digits or more (a port, a migration), has a separator inside it (`moldplan-center`, `atlas.moldplan.app`, `feat/x`, `~/.herdr/...`), or names a shared branch or stage
- * (`develop`, `staging`). Two heads-ups overlap when they share one; a false match wakes the tower, which is the safe way to be wrong.
+ * `1.62.0-beta.29`), is a number of three digits or more (a port, a migration), or has a separator inside it (`moldplan-center`, `atlas.moldplan.app`, `feat/x`, `~/.herdr/...`). A bare branch or stage word
+ * (`main`, `staging`) names nothing alone: every repository has one, and on the field's heads-ups it matched pushes to different repositories. Two heads-ups overlap when they share a name; a false match wakes the tower,
+ * which is the safe way to be wrong.
  */
 export function resourcesOf(text: string): string[] {
 	const out = new Set<string>();
 	for (const raw of fold(text).toLowerCase().split(/[\s,;()<>[\]{}"'`«»“”|=!?*]+/)) {
+		if (raw.startsWith("-")) continue; // a command's flag (`--include-all`), not a thing it touches
 		const t = raw.replace(/^[^a-z0-9~/.]+|[^a-z0-9/]+$/g, "").replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/\/+$/, "").replace(/^origin\//, "");
 		if (t.length < 2 || NOISE.test(t) || PLAIN.has(t)) continue;
 		const letters = /[a-z]/.test(t), digits = /\d/.test(t);
-		if ((letters && digits) || /^\d{3,}$/.test(t) || (letters && t.length >= 4 && /[/._:@-]/.test(t)) || SHARED_WORDS.has(t)) out.add(t);
+		if ((letters && digits) || /^\d{3,}$/.test(t) || (letters && t.length >= 4 && /[/._:@-]/.test(t))) out.add(t);
 	}
 	return [...out].slice(0, 40);
 }

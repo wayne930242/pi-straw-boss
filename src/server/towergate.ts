@@ -4,6 +4,7 @@ import { readEntries } from "../board.ts";
 import { SLIP } from "../carslip.ts";
 import { bodyOf, fieldsOf, type Party, ROLE_WORDS, stamp } from "../header.ts";
 import type { Pane, Session } from "../herdr.ts";
+import { slipLines, startsSlip } from "../train/accept.ts";
 import { trainFromRequest } from "../trainrole.ts";
 import type { Incoming, IntercomLike } from "./kit.ts";
 import { addEntry, type BookEntry, cutText, markWoke, openHeadsUps, readBook, resourcesOf, shared, untilOf } from "./logbook.ts";
@@ -26,7 +27,8 @@ export function sortCall(text: string, from: string, asked: { opened(id: string)
 	if (f?.kind !== "call_tower" || ROUTED.some((k) => f[k] !== undefined)) return { book: false };
 	if (f.why === "milestone") return { book: "milestone", wake: asked.opened(from) || asked.expects(from) };
 	const body = bodyOf(text);
-	if (f.why === "shared") return SLIP.test(body) || !("refusal" in trainFromRequest(body)) ? { book: false } : { book: "heads-up" };
+	// A car slip as the integrator reads one (a `car:` line, or `car: <app> | tickets:` inside a line) or a train manifest is the tower's to forward or open, not a heads-up.
+	if (f.why === "shared") return SLIP.test(body) || slipLines(body).split(/\r?\n/).some(startsSlip) || !("refusal" in trainFromRequest(body)) ? { book: false } : { book: "heads-up" };
 	return { book: false };
 }
 
