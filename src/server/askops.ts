@@ -50,7 +50,7 @@ export function startAsks(d: AskOpsDeps) {
 		attach();
 		if (last && d.now() - last.at < FRESH_MS) return last.net;
 		const w = d.watch();
-		return w ? await w.read().then((net) => (synced(net), net), () => last?.net) : last?.net;
+		return w ? await w.read().then((net) => (off ? net : (synced(net), net)), () => last?.net) : last?.net; // a reading the watch makes reaches `synced` through it
 	};
 	/** The page's answer route (`POST api/asks/<id>/answer`): this computer's page is `gui`, a paired device `phone`. */
 	const answer = (id: string, json: Record<string, unknown>, remote: boolean): Judged => store.answer(id, { answerId: json.answerId, digest: json.digest, replies: json.replies, cancel: json.cancel, by: remote ? "phone" : "gui" });

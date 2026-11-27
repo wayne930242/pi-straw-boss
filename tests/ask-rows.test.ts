@@ -31,7 +31,7 @@ test("the probe answers synchronously with the last rows: version 1, a malformed
 
 test("/boss asks prints this session's first, with the time and the todo each blocks; none, and no server, say so", async () => {
 	const r = rig(() => ({ ok: true, rows: ROWS }));
-	assert.equal(await r.rows.text(), ["Questions waiting on you (2):", "From this session and its subagents:", "  Q3 · 5m · docs-main · Alpha › docs · Deploy MP-1 now?  — blocks #12 Ship the docs", "Elsewhere on this computer:", "  Q4 · 1m · box-2 · box-2 · Approve the key"].join("\n"));
+	assert.equal(await r.rows.text(), ["Questions waiting on you (2):", "From this session and its subagents:", "  Q3 · 5m · docs-main · Alpha › docs · Deploy MP-1 now?  — blocks #12 Ship the docs", "Elsewhere on this computer:", "  Q4 · 1m · box-2 · Approve the key"].join("\n"));
 	assert.equal(await rig(() => ({ ok: true, rows: [] }), "zh-TW").rows.text(), "沒有在等你回答的問題。");
 	assert.match(await rig(() => undefined).rows.text(), /^The sb server did not answer/);
 });

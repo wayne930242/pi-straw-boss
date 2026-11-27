@@ -63,7 +63,7 @@ export function registerAskRows(d: AskRowsDeps) {
 		const todos = (() => { try { return todosOfBranch(d.branch()) ?? []; } catch { return []; } })();
 		const line = (r: AskRowV1) => {
 			const todo = r.item && r.item.session === d.me() ? todos.find((t) => t.id === r.item!.id) : undefined, blocks = r.item ? w.blocks(todo ? `#${todo.id} ${todo.subject}` : `#${r.item.id}`) : "";
-			return `  ${[r.id, since(now - r.since), r.asker, r.where, r.subject].filter(Boolean).join(" · ")}${blocks ? `  — ${blocks}` : ""}`;
+			return `  ${[r.id, since(now - r.since), r.asker, r.where !== r.asker ? r.where : "", r.subject].filter(Boolean).join(" · ")}${blocks ? `  — ${blocks}` : ""}`;
 		};
 		const mine = rows.filter((r) => r.mine), rest = rows.filter((r) => !r.mine);
 		return [w.head(rows.length), ...(mine.length ? [w.mine, ...mine.map(line)] : []), ...(rest.length ? [w.others, ...rest.map(line)] : [])].join("\n");
