@@ -81,6 +81,19 @@ test("a bare tower focuses a legacy resident without creating a service", async 
 
 });
 
+test("a sub-workspace focuses a live legacy resident without an sb server", async () => {
+	world.herdr.workspace("wA").worktree = { repo_key: "alpha", is_linked_worktree: false, checkout_path: "/a" };
+	world.herdr.workspaces.push({ workspace_id: "wS", label: "feature", tokens: {}, worktree: { repo_key: "alpha", is_linked_worktree: true, checkout_path: "/s" } });
+	world.herdr.addTab("wS:t1", "feature", "wS:p1");
+	world.herdr.workspace("wA").tokens.tower = "legacy";
+	world.herdr.addTab("wA:t7", "Tower"); const p = world.herdr.addPane("wA:p7", "wA:t7");
+	p.tokens.sb_role = "tower"; p.agent_session = { value: "/sessions/2026_legacy.jsonl" };
+	const a = world.agent({ id: "a", pane: "wS:p1", tab: "wS:t1", env: envOf(), deps: { server: server() } });
+	await a.start(); await a.command("tower");
+	assert.deepEqual(world.herdr.commands("tab", "focus").at(-1), ["tab", "focus", "wA:t7"]);
+	assert.deepEqual(sw.running, []); assert.deepEqual(world.herdr.workspace("wS").tokens, {});
+});
+
 for (const sub of [false, true]) test(`bare tower opens and focuses a managed tabless viewer (sub=${sub})`, async () => {
 	sw.setFlag(true, undefined, true); sw.unattended = () => true;
 	if (sub) {

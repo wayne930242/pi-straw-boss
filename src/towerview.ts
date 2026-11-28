@@ -1,6 +1,8 @@
 import { isSub, panes, parentOf, place, workspaces } from "./herdr.ts";
 import type { Kit } from "./state.ts";
 import type { createReach } from "./reach.ts";
+import { ownFile } from "./netdata.ts";
+import { slotOf, towerId } from "./server/record.ts";
 import { towerRunsEnabled } from "./server/towerruns.ts";
 import type { Request, Reply } from "./server/socket.ts";
 
@@ -11,11 +13,13 @@ export async function focusTower({ cfg, s, guiDir }: Kit, join: () => Promise<vo
 	if (own && isSub(own)) {
 		const parent = parentOf(all, own);
 		if (!parent?.tokens?.tower) throw new Error("The parent workspace has no live tower");
-		if (!towerRunsEnabled(cfg.stateDir ?? guiDir)) {
-			const resident = (await panes(cfg.run, parent.workspace_id)).find(p => p.agent_session?.value === parent.tokens?.tower && p.tokens?.sb_role === "tower");
+		const dir = cfg.stateDir ?? guiDir, holder = parent.tokens.tower;
+		if (holder !== towerId(slotOf(dir, cfg.env), parent.workspace_id)) {
+			const resident = (await panes(cfg.run, parent.workspace_id)).find(p => p.agent === "pi" && ownFile(p.agent_session?.value, holder) && p.tokens?.sb_role === "tower");
 			if (!resident) throw new Error("The parent workspace has no live resident tower");
 			await cfg.run(["tab", "focus", resident.tab_id]); return;
 		}
+		if (!towerRunsEnabled(dir)) throw new Error("The tower service is off");
 		const reply = await existing({ cmd: "view-existing-tower", workspace: parent.workspace_id, holder: parent.tokens.tower, view: true });
 		if (!reply.ok || typeof reply.tab !== "string" || !reply.tab) throw new Error(String(reply.error ?? "The parent tower has no viewer"));
 		tab = reply.tab;

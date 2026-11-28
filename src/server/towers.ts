@@ -1465,10 +1465,7 @@ export function createTowers(o: TowersOptions): Towers {
 			await activate();
 			const target = (await workspaces(run)).find(w => w.workspace_id === ws);
 			if (!target || isSub(target) || isHead(target) || target.tokens?.tower !== holder) throw new Error("The parent workspace has no live tower");
-			if (holder !== towerId(slot, ws)) {
-				const location = (await o.sessions()).find(s => s.id === holder)?.herdrLocation;
-				if (location?.workspace?.id === ws && location.tab?.id) return location.tab.id;
-			} else {
+			if (holder === towerId(slot, ws)) {
 				while (opening.has(ws)) await opening.get(ws);
 				const l = services.get(ws);
 				if (l && !l.stopped && l.state === "live" && l.record.id === holder) {
