@@ -13,6 +13,7 @@ import { callControl } from "../src/server/socket.ts";
 import { towerPanel } from "../src/server/towerpanel.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { TowerWorld } from "./tower-world.ts";
+import { fakeClock } from "./fake-clock.ts";
 
 // The boss conversation (docs/specs/2026-10-26-sb-backend.md, The boss conversation): a boss event written at the tower prompt or in the GUI's composer, with no local run live, starts a run that resumes the boss's last
 // session (`--session`), stays while the boss is there, and ends by /quit, tower_done, or the boss's silence. An event run is a fresh session and never moves the pointer. Driven over the control socket, as the pi would.
@@ -75,6 +76,13 @@ const quit = async (s: Running, run: { id: string; token: string }) => {
 	assert.equal((await ask(s, { cmd: "run-done", token: run.token, note: "ignored", left: true })).ok, true);
 	exit(run.id);
 	await until(() => readRun(world.slot, "wA", run.id)?.outcome === "done", "the conversation to end as done");
+};
+/** Moves the runs' clock (TowerWorld.runClock), lets the watcher tick twice at the new time, then polls (busy or quiet): the command the run is told, if any. */
+const awake = async (clock: ReturnType<typeof fakeClock>, s: Running, token: string, ms: number, idle = true) => {
+	clock.advance(ms);
+	const from = world.aliveCalls;
+	await until(() => world.aliveCalls >= from + 2, "two watcher ticks", 20_000);
+	return ((await poll(s, token, idle)).command as { type: string; text?: string } | undefined);
 };
 const service = async (s: Running) => ((await ask(s, { cmd: "status" })).towers as { service: Record<string, any> }[])[0]!.service;
 
@@ -212,33 +220,40 @@ test("the status says the conversation: since, resumed, turns, the idle wait wit
 });
 
 test("the boss's silence ends a conversation with a steer that says so and the note (ended idle), recorded quit, not a crash; the 4 h cap does the same with its own note and is no timeout", async () => {
+	// On the runs' clock, as the busy cap's case below: a window of the machine's time missed the quit when the process stood still.
+	const clock = (world.runClock = fakeClock());
 	world.runTimers = { bossAway: 150, idleSteer: 100, idleEnd: 200, bossMax: 60_000, steerAt: 60_000, quitAt: 120_000, quitGrace: 60, signal: 60 };
 	const s = await setup();
 	const c = await conversation(s, 1, sessionFile("2026-10-28_aaa.jsonl"));
-	const seen: { type: string; text?: string }[] = [];
-	for (const end = Date.now() + 1200; Date.now() < end && !seen.some((x) => x.type === "quit"); await sleep(15)) {
-		const command = (await poll(s, c.token)).command as { type: string; text?: string } | undefined;
-		if (command) seen.push(command);
-	}
-	assert.equal(seen.find((x) => x.type === "steer")?.text, "The boss has left: call tower_done with your handoff note.");
-	assert.ok(seen.some((x) => x.type === "quit"), JSON.stringify(seen));
+	// The drain polled idle at the claim's time: away at bossAway, the steer idleSteer later, the end idleEnd after it.
+	assert.equal(await awake(clock, s, c.token, 149), undefined, "the boss is still in it");
+	assert.equal(await awake(clock, s, c.token, 1), undefined, "away: the wrap-up begins");
+	assert.equal(await awake(clock, s, c.token, 99), undefined);
+	assert.equal((await awake(clock, s, c.token, 1))?.text, "The boss has left: call tower_done with your handoff note.");
+	assert.equal(await awake(clock, s, c.token, 199), undefined);
+	assert.equal((await awake(clock, s, c.token, 1))?.type, "quit");
 	exit(c.id);
 	await until(() => readRun(world.slot, "wA", c.id)?.outcome === "quit", "quit, not crashed");
 	assert.equal(readNotes(world.slot, "wA").at(-1)!.note, "(ended idle)");
 });
 
+// On the runs' clock (TowerWorld.runClock), moved by the test: the cap was 300 ms of the machine's time from the claim, and a setup that took longer under load (the drain 450 ms late) passed the cap and the idle steer
+// before the busy polls began, and the first of them took the steer: [ 'quit' ] for [ 'steer', 'quit' ].
 test("the 4 h cap of a conversation that is busy at that moment is a wrap-up as well, not a timeout: the cap is the boss's time, not the run's", async () => {
+	const clock = (world.runClock = fakeClock());
 	world.runTimers = { bossAway: 600_000, idleSteer: 100, idleEnd: 200, bossMax: 300, steerAt: 60_000, quitAt: 100, quitGrace: 600, signal: 60 };
 	const s = await setup();
 	const c = await conversation(s, 1, sessionFile("2026-10-28_aaa.jsonl"));
-	const seen: string[] = [];
+	const after = async (ms: number, idle: boolean) => (await awake(clock, s, c.token, ms, idle))?.type;
 	// Busy through the cap (the model is at work), then quiet.
-	for (const end = Date.now() + 340; Date.now() < end; await sleep(15)) await poll(s, c.token, false);
-	for (const end = Date.now() + 1500; Date.now() < end && !seen.includes("quit"); await sleep(15)) {
-		const command = (await poll(s, c.token)).command as { type: string } | undefined;
-		if (command) seen.push(command.type);
-	}
-	assert.deepEqual(seen, ["steer", "quit"]);
+	assert.equal(await after(299, false), undefined, "short of the cap");
+	assert.equal(await after(1, false), undefined, "the cap: the wrap-up begins, and a busy run is not steered");
+	assert.equal(await after(40, false), undefined, "busy past the cap, and no timeout");
+	assert.equal(await after(0, true), undefined, "quiet from here");
+	assert.equal(await after(99, true), undefined);
+	assert.equal(await after(1, true), "steer");
+	assert.equal(await after(199, true), undefined);
+	assert.equal(await after(1, true), "quit");
 	exit(c.id);
 	await until(() => readRun(world.slot, "wA", c.id)?.outcome === "quit", "quit at the cap, not timeout");
 	assert.equal(readNotes(world.slot, "wA").at(-1)!.note, "(ended at the 4 h cap)");
