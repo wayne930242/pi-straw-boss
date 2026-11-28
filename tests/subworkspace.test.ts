@@ -28,7 +28,8 @@ test("a session in a sub workspace gets no reminder, no boss_join, and cannot jo
 	assert.deepEqual(s.entries, [], "not even the asked entry");
 	await s.command();
 	await s.command("tower");
-	assert.equal(s.notices.filter((n) => n.level === "error" && /Alpha feature is a sub workspace/.test(n.text)).length, 2);
+	assert.equal(s.notices.filter((n) => n.level === "error" && /Alpha feature is a sub workspace/.test(n.text)).length, 1);
+	assert.match(s.notices.at(-1)!.text, /parent workspace has no live tower/); // view-only: the second command neither joins nor creates a tower
 	assert.deepEqual(world.broker.registrations, []);
 	assert.deepEqual(s.tokens, {});
 });
