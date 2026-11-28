@@ -45,7 +45,7 @@ export const v1Of = (entry: unknown): unknown => { const e = entry as { type?: u
 /** A todo's run spend as the page shows it: tokens, cost in US dollars, wall time, the runs that ended, and up to 8 `provider/model` ids. */
 export interface TodoSpend { tokens: number; cost: number; ms: number; runs: number; models?: string[] }
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
-/** The ledger's `metadata.herdr.spend` (pi-todo-ledger 0.9.0 CONTRACT.md "Run spend") checked: finite totals of at least one ended run, else none; never its session paths or run ids. */
+/** The ledger's `metadata.herdr.spend` (pi-todo-ledger 0.10.0 CONTRACT.md "Run spend") checked: finite totals of at least one ended run, else none; never its session paths or run ids. */
 export function spendOf(s: unknown): TodoSpend | undefined {
 	if (typeof s !== "object" || s === null || Array.isArray(s)) return undefined;
 	const v = s as Record<string, unknown>;

@@ -23,7 +23,7 @@ test("a todo's `metadata.until` marks a wait only as the ledger reads it: an imp
 	assert.equal(untilOf("2099-12-01T09:00+08:00"), "2099-12-01T01:00:00.000Z");
 });
 
-test("a todo's run spend (pi-todo-ledger 0.9.0 `metadata.herdr.spend`) reaches the page as its totals, finite and bounded; a bad one is left out", () => {
+test("a todo's run spend (pi-todo-ledger 0.10.0 `metadata.herdr.spend`) reaches the page as its totals, finite and bounded; a bad one is left out", () => {
 	const spend = { input: 1500, output: 300, cacheRead: 3000, cacheWrite: 0, tokens: 4800, cost: 0.75, ms: 125_000, runs: 2, models: ["anthropic/claude-opus-5-5", "x".repeat(300)], sessions: [{ session: "/secret/path.jsonl", tokens: 4800 }], ended: ["run-1"] };
 	const [one] = todosOf(snap([task(1, "completed", { herdr: { name: "w", id: "r1", spend } })]))!;
 	assert.deepEqual(one!.spend, { tokens: 4800, cost: 0.75, ms: 125_000, runs: 2, models: ["anthropic/claude-opus-5-5", "x".repeat(80)] });

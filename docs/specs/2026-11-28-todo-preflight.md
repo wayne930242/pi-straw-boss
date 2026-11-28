@@ -25,7 +25,7 @@ The `subagent` check runs first in the session's `tool_call` hook, before a bar 
 
 ## B. Run spend on the todo
 
-Status: redone on sb `feat/spend-v2`, pi-todo-ledger 0.9.0 and the Maestro fork's `feat/spend-v2` (tag `sb-host-a5a9c43`). The fresh review passed (P0=0, P1=0); its F012 and F014 are fixed in the ledger before release, and F013 is a known limit (S9).
+Status: redone on sb `feat/spend-v2`, pi-todo-ledger 0.10.0 and the Maestro fork's `feat/spend-v2` (tag `sb-host-a5a9c43`). The fresh review passed (P0=0, P1=0); its F012 and F014 are fixed in the ledger before release, and F013 is a known limit (S9).
 
 When a run bound to a todo ends, pi-todo-ledger records its tokens, cost, wall time, runs and models on that todo (`metadata.herdr.spend`), and the session page's todo detail shows the totals, never the session paths. The figures are an estimate from the child's transcript, not a bill.
 
