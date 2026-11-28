@@ -402,8 +402,10 @@ test("RVSEAT-F001: a wake that was refused because Herdr's listing failed is mad
 	world.client("sb-tower-wa")!.incoming(from, msg("m1", "hi"));
 	await until(() => /run-refused/.test(logText()), "the wake to be refused: the seat could not be read");
 	failing = false;
-	await until(() => /run-start/.test(logText()), "the next refresh to wake the run again");
+	// The log's run-start comes before pi's start in the pane (the prompt yields it first, and the seat is read again): the case waits for the start itself.
+	await until(() => agentStarts().length > 0, "the next refresh to wake the run again");
 	assert.equal(agentStarts().length, 1);
+	assert.match(logText(), /run-refused[^]*run-start/);
 });
 
 test("RVSEAT-F001: a message of a teammate's device that waits before the Herdr is seen to have changed splits no pane off the stranger's tab and starts no ally run", async () => {
