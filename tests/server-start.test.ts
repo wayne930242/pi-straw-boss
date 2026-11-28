@@ -18,23 +18,26 @@ afterEach(() => world.close());
 const logText = () => readFileSync(fileOf(world.slot, "log"), "utf8");
 
 test("a start writes restarting (reason starting, the starter as by) before it spawns, keeps it fresh while the new process boots, and the state is restarting, never gone", async () => {
-	world.spawnMs = 500;
+	// The new process boots until the watch has seen four values of `since` after the spawn. A boot of 500 ms held three when each of the starter's waits woke 150 ms late, as a loaded machine's do.
+	const open = world.holdSpawn();
 	const ctx = world.ctx({ by: "cli up" });
 	let atSpawn: ReturnType<typeof readRecord>;
 	const spawn = ctx.spawn;
 	ctx.spawn = (spec) => ((atSpawn = readRecord(world.slot)), spawn(spec));
-	const states: string[] = [], sinces = new Set<string>();
+	const states: string[] = [], sinces = new Set<string>(), booting = new Set<string>();
+	let done = false;
 	const watching = (async () => {
-		for (let i = 0; i < 40; i++) {
+		while (!done) {
 			const record = readRecord(world.slot);
 			if (record?.restarting) {
 				sinces.add(record.restarting.since);
 				states.push(stateOf(ctx, { record, live: false }));
+				if (atSpawn && booting.add(record.restarting.since).size >= 4) open();
 			}
 			await sleep(20);
 		}
 	})();
-	const started = await launch(ctx);
+	const started = await launch(ctx).finally(() => (done = true));
 	assert.equal(atSpawn!.restarting?.reason, "starting", "written before the spawn");
 	assert.equal(atSpawn!.restarting?.by, "cli up");
 	assert.deepEqual([atSpawn!.socket, atSpawn!.secret], ["", ""], "a placeholder: nothing to connect to, no secret");

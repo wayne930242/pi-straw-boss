@@ -414,14 +414,21 @@ test("the requester touches restarting.since from its ask until hello, so a slow
 test("in the gap before the new server runs, only the requester keeps restarting.since fresh, and it stops once the new server is ready", async () => {
 	const s = await world.start();
 	await s.handle.ready;
-	world.spawnMs = 600;
+	// The new process runs the server once the requester has touched the record five times in the gap. A gap of 600 ms held three touches when each wait woke 150 ms late, as a loaded machine's do (load 25).
+	const open = world.holdSpawn();
 	const seen: string[] = [], stalls = stallWatch();
-	const sampler = setInterval(() => { const since = world.record()?.restarting?.since; if (since && !seen.includes(since)) seen.push(since); }, 10);
+	let inGap = 0;
+	const sampler = setInterval(() => {
+		const since = world.record()?.restarting?.since;
+		if (!since || seen.includes(since)) return;
+		seen.push(since);
+		if (world.spawned.length > 0 && ++inGap >= 5) open();
+	}, 10);
 	await restart(world.ctx({ sleep: stalls.sleep }), { reason: "cold start" });
 	clearInterval(sampler);
 	stalls.stop();
 	const gaps = seen.slice(1).map((t, i) => Date.parse(t) - Date.parse(seen[i]!));
-	assert.ok(seen.length >= 5, `touched ${seen.length} times over a 600 ms gap`);
+	assert.ok(inGap >= 5, `touched ${inGap} times while no new server ran`);
 	assert.ok(gaps.every((g) => g < 250 + stalls.worst()), `the record was never stale: ${gaps.join(", ")} (this process stood still for ${stalls.worst()} ms)`);
 	const last = seen.at(-1)!;
 	await sleep(150);

@@ -65,6 +65,8 @@ export class ServerWorld {
 	crashWith: number | undefined;
 	/** How long a spawned process takes to start running the server (a cold Windows start): nothing but the requester touches `restarting` meanwhile. */
 	spawnMs = 0;
+	/** Holds the spawned processes, in place of `spawnMs`, until the test opens the gap (`holdSpawn`); `close()` opens it, so a start a failed test left held still ends with the world. */
+	private spawnHeld: { gap: Promise<void>; open(): void } | undefined;
 	/** Servers still starting when a test ends are waited for and shut down with the rest: a start in flight must not leave a server's timers behind. */
 	private starting: Promise<unknown>[] = [];
 	/** The looks of the sessions given `server()` below: one in flight when a test ends would make files in the folder again after it is removed. */
@@ -127,7 +129,7 @@ export class ServerWorld {
 				const by = spec.args[spec.args.indexOf("--by") + 1] ?? "?";
 				if (this.crashWith !== undefined || this.closed) return { pid: this.pids++, exited: Promise.resolve(this.crashWith ?? 1) };
 				const { options, client, pid } = this.options({ env: spec.env, by, version });
-				const started = sleep(this.spawnMs).then(() => runServer(options)).then((handle) => {
+				const started = (this.spawnHeld?.gap ?? sleep(this.spawnMs)).then(() => runServer(options)).then((handle) => {
 					this.running.push({ pid, handle, options, client });
 					void handle.done.then((code) => (this.live.delete(pid), this.exitCodes.set(pid, code)));
 					return handle;
@@ -140,8 +142,19 @@ export class ServerWorld {
 		});
 		return over.lock ? made : { ...made, lock: { ...made.lock, self: { pid: process.pid, started: async () => `T-${process.pid}` } } };
 	}
+	/**
+	 * A gap before every spawned process runs the server that ends when the test calls the function returned, not after a time: a count of what happens in a gap of wall-clock time (the requester's touches) is not
+	 * what the code does but how fast this machine ran it (a loaded machine wakes each wait late).
+	 */
+	holdSpawn(): () => void {
+		let open!: () => void;
+		const gap = new Promise<void>((resolve) => (open = resolve));
+		this.spawnHeld = { gap, open };
+		return open;
+	}
 	async close() {
 		this.closed = true;
+		this.spawnHeld?.open();
 		// A look that began before the test ended may begin a start; the start is awaited after the looks, then both are done before anything is removed.
 		await Promise.allSettled(this.looks);
 		await Promise.allSettled(this.starting);
