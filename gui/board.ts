@@ -107,7 +107,7 @@ function rowOf(box: HTMLElement, net: Net | undefined, r: BoardViewRow, now: num
 	const clearButton = h("button", { type: "button", class: "pair-btn board-clear", title: m.board_clear_title({ name }), ...(clearing.has(r.session) ? { disabled: "" } : {}) }, m.board_clear());
 	clearButton.onclick = () => void clear(box, r);
 	// An auto line's plan with graph data takes the checklist's place (gui/plangraph.ts); an older main's line, and one with none, keeps the checklist.
-	const done = count ? m.board_done({ done: count.done, total: count.total }) : "", plan = graphed(r.plan) ? r.plan : undefined;
+	const done = count ? m.board_done({ done: count.done, total: count.total }) : "", plan = graphed(r.plan, now) ? r.plan : undefined;
 	const items = plan ? h("details", { class: "board-items board-plan" }, h("summary", null, [done, planLine(plan)].filter(Boolean).join(m.board_cap_sep())), planView(plan, now, { net, main: r.session })) : r.items.length ? h("details", { class: "board-items" }, h("summary", null, done), h("ul", null, ...r.items.map((i) => h("li", { "data-done": String(i.done) }, i.t)))) : undefined;
 	if (items) {
 		if (keep.has(r.session)) items.setAttribute("open", "");

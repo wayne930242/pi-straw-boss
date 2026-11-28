@@ -14,11 +14,16 @@ export function todoDeadlines(snapshot: unknown): Map<number, number> {
 	if (isObject(snapshot) && Array.isArray(snapshot.tasks)) for (const t of snapshot.tasks) {
 		const s = t?.metadata?.until, who = t?.metadata?.waitsOn;
 		if (typeof who === "string" && who.trim()) { dates.set(t.id, 8.64e15); continue; } // No scheduled return: last representable instant.
-		if (typeof s !== "string" || !/^\d{4}-\d\d-\d\d(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?)?$/.test(s)) continue;
-		const at = Date.parse(s), day = s.slice(0, 10), midnight = Date.parse(day);
-		if (Number.isFinite(at) && Number.isFinite(midnight) && new Date(midnight).toISOString().startsWith(day)) dates.set(t.id, at);
+		const at = untilOf(s);
+		if (at !== undefined) dates.set(t.id, at);
 	}
 	return dates;
+}
+/** A `metadata.until` as an instant: a date, or a date and time with an uppercase T, hours 00 to 23, and an optional zone; a calendar day Date.parse would roll into the next month (2099-02-30) is none. */
+export function untilOf(s: unknown): number | undefined {
+	if (typeof s !== "string" || !/^\d{4}-\d\d-\d\d(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?)?$/.test(s)) return undefined;
+	const at = Date.parse(s), day = s.slice(0, 10), midnight = Date.parse(day);
+	return Number.isFinite(at) && Number.isFinite(midnight) && new Date(midnight).toISOString().startsWith(day) ? at : undefined;
 }
 const STATUSES = new Set(["pending", "in_progress", "completed", "deleted"]);
 const id = (v: unknown) => Number.isInteger(v) && (v as number) >= 1;
