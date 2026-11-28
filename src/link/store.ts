@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
-import { appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { startOf } from "../startof.ts";
@@ -298,12 +298,7 @@ export class LinkStore {
 		this.ensure();
 		const token = randomUUID(), end = Date.now() + waitMs;
 		for (;;) {
-			try {
-				writeFileSync(this.lock, JSON.stringify({ pid: process.pid, ...(this.started() ? { started: this.started() } : {}), token, t: this.now() }), { flag: "wx", mode: 0o600 });
-				return token;
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			}
+			if (this.create(JSON.stringify({ pid: process.pid, ...(this.started() ? { started: this.started() } : {}), token, t: this.now() }), token)) return token;
 			const stale = this.stale();
 			if (stale !== undefined) {
 				this.breakStale(stale);
@@ -311,6 +306,24 @@ export class LinkStore {
 			}
 			if (Date.now() >= end) throw new LockTimeout(waitMs);
 			await new Promise((r) => setTimeout(r, 10 + Math.floor(Math.random() * 20)));
+		}
+	}
+	/**
+	 * Makes the lock file whole or not at all: the text goes into a file of this call's own, which is then linked under the lock's name (a link fails when the name is taken). Created with `wx` and written after, a lock
+	 * whose process was killed in between (SIGKILL, or pi ended) was an empty file, which stands as one being written until it is `staleMs` old: the next holder waited 10 s (link-holder-live under load). A kill here
+	 * leaves at most the temp file, as `write` does.
+	 */
+	private create(text: string, token: string): boolean {
+		const temp = `${this.lock}.${process.pid}.${token.slice(0, 8)}.tmp`;
+		writeFileSync(temp, text, { flag: "wx", mode: 0o600 });
+		try {
+			linkSync(temp, this.lock);
+			return true;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			return false;
+		} finally {
+			rmSync(temp, { force: true });
 		}
 	}
 	private started(): string | undefined {

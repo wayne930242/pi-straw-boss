@@ -295,7 +295,7 @@ flowchart TD
 
 #### 檔案
 
-`<pi agent dir>/straw-boss/link/`（認得 `PI_CODING_AGENT_DIR`，權限 700，作業系統支援權限的地方檔案為 600；路徑當作 Unicode 路徑使用，絕不會變成 shell 指令）：`device.json`（金鑰、標籤和下一個序號）、`device.id`、`teams/<team>.json`（名冊副本、依 epoch 排列的團隊金鑰、relay URL、最後一個事件 id，以及從每位寄件者取得的最後一個序號）、`inbox/<envelope id>.json`、`holder.json` 搭配 `holder.lock`，以及 `link.log`（每個被丟棄的信封、通知或傳送各一行 JSON）。每次寫入都經過鎖；在鎖之外寫入會拋出錯誤。行程已不存在、或超過 10 秒的鎖會被接管。
+`<pi agent dir>/straw-boss/link/`（認得 `PI_CODING_AGENT_DIR`，權限 700，作業系統支援權限的地方檔案為 600；路徑當作 Unicode 路徑使用，絕不會變成 shell 指令）：`device.json`（金鑰、標籤和下一個序號）、`device.id`、`teams/<team>.json`（名冊副本、依 epoch 排列的團隊金鑰、relay URL、最後一個事件 id，以及從每位寄件者取得的最後一個序號）、`inbox/<envelope id>.json`、`holder.json` 搭配 `holder.lock`，以及 `link.log`（每個被丟棄的信封、通知或傳送各一行 JSON）。每次寫入都經過鎖；在鎖之外寫入會拋出錯誤。行程已不存在、或超過 10 秒的鎖會被接管。鎖檔要嘛完整、要嘛不存在（內容先寫進它自己的檔案，再以硬連結掛上鎖的名字；0.116.2 起）：以前行程在拿鎖途中被砍掉，會留下空的 `holder.lock`，被當成正在寫入的鎖，要等滿 10 秒才會被接管。
 
 <details>
 <summary>細節</summary>

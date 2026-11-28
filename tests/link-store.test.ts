@@ -70,6 +70,35 @@ test("a lock whose owner is gone is taken over at once; a live owner's fresh loc
 	await live.withLock(() => undefined, 150);
 });
 
+// Seen in link-holder-live under load ("timed out waiting for a holder"): a holder killed (SIGKILL) while it took the lock had created holder.lock and not yet written it, and an empty lock stands as one being written
+// until it is 10 s old (LOCK_STALE_MS). A probe that killed a process taking the lock in a loop at random moments found the empty file after 49 of 300 kills. The death is the file system's state at that moment: the first
+// file the lock makes is created, nothing is written to it, and the caller goes no further.
+test("a process killed while it takes the lock leaves no empty lock behind: the next taker does not wait out the lock's age", async () => {
+	const fs = (await import("node:fs")).default, { syncBuiltinESMExports } = await import("node:module");
+	const original = fs.writeFileSync;
+	let die = true;
+	fs.writeFileSync = ((path: unknown, ...rest: unknown[]) => {
+		if (die && typeof path === "string" && /holder\.lock(\.[^/\\]*\.tmp)?$/.test(path)) {
+			die = false;
+			fs.closeSync(fs.openSync(path, "wx"));
+			throw new Error("killed before it wrote the lock");
+		}
+		return (original as (...a: unknown[]) => void)(path, ...rest);
+	}) as typeof original;
+	syncBuiltinESMExports();
+	try {
+		const dying = open();
+		await assert.rejects(dying.withLock(() => undefined), /killed before it wrote the lock/);
+		const lock = join(dying.dir, "holder.lock");
+		const left = existsSync(lock) ? readFileSync(lock, "utf8") : undefined;
+		assert.ok(left === undefined || /"token"/.test(left), `the lock is whole or not there, not ${JSON.stringify(left)}`);
+		await open().withLock(() => undefined, 500);
+	} finally {
+		fs.writeFileSync = original;
+		syncBuiltinESMExports();
+	}
+});
+
 test("a write to the holder record, a team file, the inbox, or the device file outside the lock is refused in this process (another process's takeover of a lock is the SLH-F007 test below)", async () => {
 	const store = open();
 	assert.throws(() => store.writeHolder({ session: "s", version: "1", pid: 1, tower: false, since: 1 }), /lock/);

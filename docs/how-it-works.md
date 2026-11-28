@@ -295,7 +295,7 @@ Design: [docs/specs/2026-10-25-straw-link.md](specs/2026-10-25-straw-link.md). T
 
 #### Files
 
-`<pi agent dir>/straw-boss/link/` (`PI_CODING_AGENT_DIR` aware, mode 700, files 600 where the OS has modes; paths are used as Unicode paths and never become a shell command): `device.json` (the keys, the label, and the next sequence number), `device.id`, `teams/<team>.json` (the roster copy, the team keys by epoch, the relay URL, the last event id, and the last sequence number taken from each sender), `inbox/<envelope id>.json`, `holder.json` with `holder.lock`, and `link.log` (one JSON line per dropped envelope, notice, or send). Every write goes through the lock; a write outside it throws. A lock whose process is gone, or that is older than 10 s, is taken over.
+`<pi agent dir>/straw-boss/link/` (`PI_CODING_AGENT_DIR` aware, mode 700, files 600 where the OS has modes; paths are used as Unicode paths and never become a shell command): `device.json` (the keys, the label, and the next sequence number), `device.id`, `teams/<team>.json` (the roster copy, the team keys by epoch, the relay URL, the last event id, and the last sequence number taken from each sender), `inbox/<envelope id>.json`, `holder.json` with `holder.lock`, and `link.log` (one JSON line per dropped envelope, notice, or send). Every write goes through the lock; a write outside it throws. A lock whose process is gone, or that is older than 10 s, is taken over. The lock is made whole or not at all (its text goes into a file of its own, which is then linked under the lock's name; since 0.116.2): a process killed while it took the lock used to leave an empty `holder.lock`, which stood as one being written until it was 10 s old.
 
 <details>
 <summary>Details</summary>
