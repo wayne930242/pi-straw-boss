@@ -96,12 +96,8 @@ export function drawTodos(view: HTMLElement, list: Todo[] | null | undefined, at
 		return row;
 	}));
 }
-/** What a todo's bound runs spent, in one line of its detail: tokens, dollars, wall time, runs, then the models. */
-export const spentLine = (s: NonNullable<Todo["spend"]>) => {
-	const secs = s.ms / 1000, time = secs < 60 ? m.age_s({ n: String(Math.round(secs)) }) : secs < 3600 ? m.age_m({ n: String(Math.round(secs / 60)) }) : m.age_h({ n: (secs / 3600).toFixed(1) });
-	const line = m.todos_spend({ tokens: s.tokens.toLocaleString(), cost: `$${s.cost.toFixed(2)}`, time, runs: s.runs });
-	return s.models?.length ? `${line} · ${s.models.join(", ")}` : line;
-};
+/** What a todo's bound runs spent, in one line of its detail: tokens, dollars, wall time (as an age reads), runs, then the models. */
+export const spentLine = (s: NonNullable<Todo["spend"]>, secs = s.ms / 1000) => [m.todos_spend({ tokens: s.tokens.toLocaleString(), cost: `$${s.cost.toFixed(2)}`, time: secs < 60 ? m.age_s({ n: String(Math.round(secs)) }) : secs < 3600 ? m.age_m({ n: String(Math.round(secs / 60)) }) : m.age_h({ n: (secs / 3600).toFixed(1) }), runs: s.runs }), ...(s.models?.length ? [s.models.join(", ")] : [])].join(" · ");
 /** The session's background monitors under its todos (read-only: pi-loop-monitor lets nothing else stop one): folded to how many run or failed and the newest running one's last line, unfolded to each with its state, exit code, line count, and last line. */
 export function drawMonitors(view: HTMLElement, list: Monitor[] | undefined) {
 	const box = view.querySelector<HTMLDetailsElement>(".monitors");

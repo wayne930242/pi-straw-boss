@@ -85,15 +85,15 @@ export function preflightOf(snapshot: unknown, item: string, session: string): P
 
 type Ctx = { sessionManager: { getBranch(): readonly unknown[]; getSessionId(): string } };
 
-/** The preflight a session runs at its launches: one incremental scan of its branch, and the warnings each call carries to its result. */
-export function createPreflight() {
+/** The preflight a session runs at its launches: one incremental scan of its branch, and the warnings each call carries to its result. With `pi`, those warnings ride on the launches' results (`register`). */
+export function createPreflight(pi?: Pick<ExtensionAPI, "on">) {
 	const scan = snapshotScan(), pending = new Map<string, string>();
 	/** The preflight of a launch's `item` on the session's branch, or undefined without one or when the branch cannot be read (a replaced session's context throws). */
 	const check = (item: unknown, ctx: Ctx | undefined): Preflight | undefined => {
 		if (typeof item !== "string" || !item || !ctx) return undefined;
 		try { return preflightOf(scan(ctx.sessionManager.getBranch()), item, ctx.sessionManager.getSessionId()); } catch { return undefined; }
 	};
-	return {
+	const api = {
 		check,
 		/** pi's `tool_call` of a launch: the refusal of a cycle; warnings wait for the call's result. */
 		admit(toolCallId: string, _tool: string, input: unknown, ctx: Ctx | undefined): { block: true; reason: string } | undefined {
@@ -113,5 +113,7 @@ export function createPreflight() {
 			pi.on("turn_end", () => void pending.clear());
 		},
 	};
+	if (pi) api.register(pi);
+	return api;
 }
 export type PreflightCheck = ReturnType<typeof createPreflight>;

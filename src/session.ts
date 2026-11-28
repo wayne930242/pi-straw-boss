@@ -339,8 +339,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 
 	// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
-	const cap = createWorkerCap(deviceRoom(guiDir, me, attended)), preflight = createPreflight();
-	preflight.register(pi); // a launch's todo warnings ride on its result (preflight.ts)
+	const cap = createWorkerCap(deviceRoom(guiDir, me, attended)), preflight = createPreflight(pi); // a launch's todo warnings ride on its result (preflight.ts)
 	pi.on("turn_end", () => cap.settle());
 	pi.on("tool_call", async (event, ctx) => {
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || runMode.active()) return;

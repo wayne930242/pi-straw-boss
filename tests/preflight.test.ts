@@ -60,8 +60,7 @@ type Handler = (event: Record<string, unknown>, ctx?: unknown) => unknown;
 function world(entries: unknown[]) {
 	const handlers = new Map<string, Handler[]>();
 	const pi = { on: (type: string, h: Handler) => void handlers.set(type, [...(handlers.get(type) ?? []), h]) };
-	const pf = createPreflight();
-	pf.register(pi as never);
+	const pf = createPreflight(pi as never);
 	const ctx = { sessionManager: { getBranch: () => entries, getSessionId: () => SESSION } };
 	const call = (id: string, input: Record<string, unknown>) => pf.admit(id, "subagent", input, ctx as never);
 	const result = (id: string, isError = false) => (handlers.get("tool_result") ?? []).map((h) => h({ toolName: "subagent", toolCallId: id, input: {}, content: [{ type: "text", text: "started" }], isError })).find((x) => x !== undefined) as { content: { text: string }[] } | undefined;
