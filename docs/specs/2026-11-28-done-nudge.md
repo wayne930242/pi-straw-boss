@@ -1,6 +1,6 @@
 # The done nudge: a child idle too long is asked to finish
 
-Status: built on `feat/done-nudge`, not released. The behavior is in [how-it-works](../how-it-works.md#the-subagent-host).
+Status: released in 0.114.0 ([notes](../releases/0.114.0.md)). The behavior is in [how-it-works](../how-it-works.md#the-subagent-host).
 
 ## Decision
 
