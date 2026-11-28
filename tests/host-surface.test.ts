@@ -13,8 +13,9 @@ import { fakePi } from "./host-fake.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
-async function loaded() {
+async function loaded(scopedModels?: { model: { provider: string; id: string; reasoning: boolean } }[]) {
 	const f = fakePi(`${ROOT}src/host/index.ts`);
+	Object.assign(f.ctx, { scopedModels });
 	createHost({ choice: () => ({ host: "sb", from: "default" }), root: ROOT })(f.pi);
 	await f.emit("session_start");
 	assert.equal(hostState()?.state, "active", JSON.stringify(hostState()));
@@ -31,6 +32,28 @@ test("the real engine registers subagent, subagent_cancel, subagent_resume and s
 	for (const dropped of Object.keys(DROPPED_PARAMS.subagent!)) assert.ok(!props.includes(dropped), dropped);
 	assert.deepEqual(Object.keys((w.tool("subagent_resume").parameters as { properties: object }).properties).sort(), ["autoExit", "message", "name", "sessionPath"]);
 	assert.doesNotMatch(w.tool("subagent").description ?? "", /worktree|Core|persistent/i);
+});
+
+test("the registered launch rules point to the authenticated catalog returned by subagents_list", async () => {
+	const w = await loaded();
+	const guidelines = w.tool("subagent").promptGuidelines!.join("\n");
+	assert.doesNotMatch(guidelines, /Authenticated subagent models/);
+	assert.match(guidelines, /subagents_list/);
+	assert.match(guidelines, /Keep dependent writes sequential/);
+	const result = await w.tool("subagents_list").execute("list", {}, undefined, undefined, w.ctx) as { content: { text: string }[]; details: { agents: unknown[] } };
+	assert.ok(Array.isArray(result.details.agents));
+	assert.match(result.content.map((part) => part.text).join("\n"), /Authenticated subagent models[\s\S]*none discovered/);
+});
+
+test("subagents_list returns the session's scoped model catalog, not the previous session's", async () => {
+	for (const id of ["first", "second"]) {
+		const w = await loaded([{ model: { provider: "test-provider", id, reasoning: false } }]);
+		assert.ok(!w.tool("subagent").promptGuidelines!.join("\n").includes(`test-provider/${id}`));
+		const result = await w.tool("subagents_list").execute("list", {}, undefined, undefined, w.ctx) as { content: { text: string }[] };
+		const text = result.content.map((part) => part.text).join("\n");
+		assert.ok(text.includes(`test-provider/${id}`), text);
+		assert.ok(!text.includes(`test-provider/${id === "first" ? "second" : "first"}`), text);
+	}
 });
 
 for (const [param, value, hint] of [["worktree", { branch: "x" }, /git worktree add/], ["persistent", true, /subagent_resume/], ["notify", true, /no notices/], ["accept", { run: "true" }, /verify the result yourself/]] as const) {

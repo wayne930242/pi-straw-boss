@@ -11,7 +11,7 @@ import { agentDirOf, diagnose, type DoctorFacts, type DoctorReport, type DoctorR
 // self-check, a child too, which never warns (doctor.ts selfCheckText); the tool and the command go to the sessions that are no child. What this process has is read here; what it means is doctor.ts's.
 
 export const DOCTOR_MESSAGE = "sb-doctor";
-const DESCRIPTION = "Check this session's own tools and loads: whether subagent, intercom, todo and MonitorCreate are registered and active, which subagent host loaded and is current, and what to do. Call it before concluding a tool is missing.";
+const DESCRIPTION = "Before assuming a missing tool: check subagent, intercom, todo, MonitorCreate registration/activation, subagent host and freshness, and next steps.";
 
 export interface DoctorDeps {
 	env: NodeJS.ProcessEnv;

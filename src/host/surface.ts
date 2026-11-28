@@ -59,19 +59,30 @@ export interface SimpleDeps {
 
 /** The API Maestro registers through: drops the tools and commands above, and refuses the dropped parameters before Maestro sees the call. */
 export function simpleApi(pi: ExtensionAPI, deps: SimpleDeps): ExtensionAPI {
+	let modelCatalog: string | undefined;
 	const registerTool = (tool: ToolDefinition) => {
 		if (DROPPED_TOOLS.includes(tool.name)) return;
 		const dropped = Object.keys(DROPPED_PARAMS[tool.name] ?? {});
-		const description = tool.name === "subagent" ? SUBAGENT_DESCRIPTION : tool.name === "subagent_resume" ? RESUME_DESCRIPTION : tool.description;
-		const execute: ToolDefinition["execute"] = (id, params, signal, onUpdate, ctx) => {
+		const launch = tool.name === "subagent", list = tool.name === "subagents_list";
+		const description = launch ? SUBAGENT_DESCRIPTION : tool.name === "subagent_resume" ? RESUME_DESCRIPTION : list ? `${tool.description} See authenticated models and task-category shortlists here before choosing a model.` : tool.description;
+		let promptGuidelines = tool.promptGuidelines;
+		if (launch && promptGuidelines?.length) {
+			// Maestro's buildSubagentRoutingGuidelines puts the catalog last. session_start re-registers this tool with the scoped catalog.
+			modelCatalog = promptGuidelines.at(-1);
+			promptGuidelines = promptGuidelines.slice(0, -1).map((rule) => rule.replace("task-category shortlists below", "task-category shortlists in subagents_list"));
+			promptGuidelines.push("When choosing a model, call subagents_list for authenticated IDs and task-category shortlists.");
+		}
+		const execute: ToolDefinition["execute"] = async (id, params, signal, onUpdate, ctx) => {
 			const refusal = droppedParamError(tool.name, params);
 			if (refusal) throw new Error(refusal);
 			const agent = (params as { agent?: unknown }).agent;
 			if (tool.name === "subagent" && typeof agent === "string" && agent && deps.persistentRole(agent, params as Record<string, unknown>))
 				throw new Error(`sb's subagent host runs in simple mode: role \`${agent}\` is defined as a persistent specialist, which it does not run. Launch it with a bare subagent and the role's instructions in the task, or use another role.`);
-			return tool.execute(id, params, signal, onUpdate, ctx);
+			const result = await tool.execute(id, params, signal, onUpdate, ctx);
+			if (!list || !modelCatalog || result.isError) return result;
+			return { ...result, content: [...result.content, { type: "text", text: modelCatalog }] };
 		};
-		pi.registerTool({ ...tool, description, ...(dropped.length ? { parameters: simpleSchema(tool.parameters, dropped) } : {}), execute } as ToolDefinition);
+		pi.registerTool({ ...tool, description, promptGuidelines, ...(dropped.length ? { parameters: simpleSchema(tool.parameters, dropped) } : {}), execute } as ToolDefinition);
 	};
 	const registerCommand: ExtensionAPI["registerCommand"] = (name, options) => {
 		if (DROPPED_COMMANDS.includes(name)) return;

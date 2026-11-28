@@ -24,28 +24,28 @@ export const withMoment = <R extends { text: string }>(r: R, message: string, wh
 /** `workers`: Straw Link is set up here (`s.toolSet.link`), so `worker` is offered; elsewhere the parameter is left out of the always-on schema. */
 export function callTowerTool(tool: Tool, towerCall: boolean, callTower: Reach["callTower"], link: Pick<Link, "waitOp">, bossAsk?: BossAsk, workers = false): void {
 	// A main says why it calls (required); a tower's call is a blocked one, so it may leave it out and the header says unspecified.
-	const whyType = Type.Union([Type.Literal("milestone"), Type.Literal("shared"), Type.Literal("blocked")], { description: "milestone, shared, or blocked." });
+	const whyType = Type.Union([Type.Literal("milestone"), Type.Literal("shared"), Type.Literal("blocked")]);
 	const whyField = towerCall ? Type.Optional(whyType) : whyType;
 	tool("call_tower", CALL_TOWER_DESCRIPTION,
 		Type.Object({
-			message: Type.String({ description: "Briefly, details by reference. A block the tower forwards (a car slip, a train: manifest) goes whole and verbatim. With linkWait note, done, or declined: sent to the device as written." }),
+			message: Type.String({ description: "Brief; reference details. Whole verbatim car slip/train: manifest if forwarded. linkWait note/done/declined goes verbatim to device." }),
 			why: whyField,
-			workspace: Type.Optional(Type.String({ description: "Another workspace's id or exact label." })),
+			workspace: Type.Optional(Type.String({ description: "Other workspace ID or exact label." })),
 			reply: Type.Optional(Type.Boolean({ description: "Default true." })),
 			waitsOn: Type.Optional(Type.Object({
 				device: Type.String({ description: "Label, short id, or id." }),
-				owner: Type.Optional(Type.String({ description: "Who there owns the step: a main's name or board id b:<16 hex>; at most 40 characters." })),
-				what: Type.Optional(Type.String({ description: "The step you wait on, one line of at most 200 bytes." })),
+				owner: Type.Optional(Type.String({ description: "Owner there: main name or b:<16 hex>, max 40 chars." })),
+				what: Type.Optional(Type.String({ description: "Pending step, 1 line, max 200 bytes." })),
 				cancel: Type.Optional(Type.Boolean({ description: "With why milestone: withdraw your open wait." })),
-			}, { description: "With why blocked: your task ends at a step only that teammate device can take; the tower forwards it as a wait." })),
+			}, { description: "why blocked: only that device can take the next step; tower forwards the wait." })),
 			linkWait: Type.Optional(Type.Object({
 				id: Type.String({ description: "L<n> from board_read, section waits." }),
-				state: Type.Union([Type.Literal("taken"), Type.Literal("note"), Type.Literal("done"), Type.Literal("declined"), Type.Literal("escalated")], { description: "taken: you own it; note: message to the one waiting, it stays open; done/declined: message goes to the device and it closes; escalated (with why blocked): you leave it to the boss." }),
-			}, { description: "Answer a teammate device's wait on this workspace (kind=link_wait)." })),
+				state: Type.Union([Type.Literal("taken"), Type.Literal("note"), Type.Literal("done"), Type.Literal("declined"), Type.Literal("escalated")], { description: "taken: own it; note: send message, keep open; done/declined: send message, close; escalated (why blocked): leave to boss." }),
+			}, { description: "Answer a linked device's wait here (kind=link_wait)." })),
 			standing: Type.Optional(Type.Object({
 				device: Type.String({ description: "Label, short id, or id." }),
 				what: Type.Optional(Type.String({ description: "One line of at most 200 bytes; default the message's first line." })),
-			}, { description: "Instead of your tower: that device's standing main, a question (why blocked) or a notice (why milestone). A notice on a wait you hold from that device: linkWait note." })),
+			}, { description: "To that device's standing main, not your tower: question (why blocked) or notice (why milestone). A notice on a wait you hold from that device: linkWait note." })),
 			boss: bossParameter(),
 			...(workers ? { worker: Type.Optional(Type.Object({
 				device: Type.String(),

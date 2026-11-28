@@ -17,7 +17,7 @@ import { type Listed, pending, pressedWord } from "./waitview.ts";
 // neither words it nor presses it. The first answer wins everywhere: while a dialog is open the list is read again every 2 s, and a card pressed or resolved elsewhere, or auto mode starting, aborts the dialog through its signal.
 
 export const WAIT_ASK = "boss_wait_ask";
-export const WAIT_ASK_DESCRIPTION = "Show the boss open wait cards in this terminal, one after another, and return what he did with each. Name cards by id (W<n>, 1 to 4), or none for every open card in your scope (a main: the ones it raised; a tower run: its tower's; the head: any). sb draws each card with its own buttons: you cannot word it, add an option, or press it. The first answer anywhere wins. Refused in auto mode, on an unattended device, without a screen, and in a tower run unless the boss's last words came from this pane. A card left unanswered (60 s untouched, or kept 5 minutes) is not shown again for 10 minutes. Use it, never ask_user_question, to ask again a decision that is a wait card.";
+export const WAIT_ASK_DESCRIPTION = "Re-ask open wait cards in this terminal, never ask_user_question. ids: W<n>, 1–4; omit for all in scope (main: its own; tower run: its tower's; head: all). sb draws fixed wording/buttons; only the boss acts. First answer anywhere wins; returns each action. Requires a screen, attended mode, auto off, and for tower runs the boss's last words from this pane. Unanswered cards (60 s untouched or kept 5 min) cool down for 10 min.";
 export const waitAskParameters = () => Type.Object({
 	ids: Type.Optional(Type.Array(Type.String({ pattern: "^W[0-9]+$" }), { minItems: 1, maxItems: 4 })),
 });

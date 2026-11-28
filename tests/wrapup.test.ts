@@ -381,7 +381,7 @@ test("main.md holds no wrap-up rule: the nudge carries every step, and boss_wrap
 	assert.ok(!main.includes("boss_wrap") && !main.includes("daily memory entry"));
 	assert.ok(main.includes("worktrees removed, board cleared."));
 	for (const step of ["answer the intercom asks you owe", "remove the worktrees you made", "complete or delete every todo", "stop your monitors and loops", "write a daily memory entry if you have a memory tool", "call boss_wrap with a summary"]) assert.ok(NUDGE_TEXT.includes(step), step);
-	assert.match(WRAP_DESCRIPTION, /asks the boss here whether to wrap up; on yes it sends your summary to the tower/);
+	assert.match(WRAP_DESCRIPTION, /ask the boss here to wrap up\. On yes: send summary as a tower milestone/);
 });
 
 // A worker opened for a teammate's device (docs/specs/2026-11-26-ally-workers.md): idle 15 minutes with nothing running, one nudge to finish or send its final report, under auto mode too; never the coordinator's.

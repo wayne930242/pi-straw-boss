@@ -8,7 +8,7 @@ import { createPreflight } from "./preflight.ts";
 // server opens thread T<n> for this session (server/threads.ts); the two children talk on it (threadtools.ts) and the main is woken only by their two results when it closes. The tool is registered with the net tools at the join,
 // so the main has it from its session start; a role or a turn that may not pair is refused at the call. `board_read thread` reads a thread through `read` here.
 
-export const PAIR_DESCRIPTION = "A reviewed change: pair a worker and a reviewer on thread T<n> first, then dispatch both with subagent under these names, each task with the line `Thread: T<n>`; you write both briefs. You are woken only by their two results when the thread closes; do not relay.";
+export const PAIR_DESCRIPTION = "Pair worker and reviewer on T<n>, then dispatch both via subagent under these names. Write both briefs, each with `Thread: T<n>`. Only final results wake you at thread close; don't relay.";
 
 export function createBossPair({ pi, s, me, role }: Kit, d: { ask?: Ask; remote(): boolean }) {
 	const ask = async (request: Record<string, unknown>, start: "auto" | "never" = "auto") => {
@@ -28,8 +28,8 @@ export function createBossPair({ pi, s, me, role }: Kit, d: { ask?: Ask; remote(
 			pi.registerTool({
 				name: "boss_pair", label: "boss_pair", description: PAIR_DESCRIPTION,
 				parameters: Type.Object({
-					worker: Type.String({ minLength: 1, maxLength: 64, description: "Its subagent name." }),
-					reviewer: Type.String({ minLength: 1, maxLength: 64, description: "Its subagent name." }),
+					worker: Type.String({ minLength: 1, maxLength: 64 }),
+					reviewer: Type.String({ minLength: 1, maxLength: 64 }),
 					rounds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3, description: "Repair rounds, default 3." })), item: Type.Optional(Type.String({ maxLength: 64, description: "Its todo: uid or <session8>#<id>." })),
 				}),
 				execute: async (_id, { worker, reviewer, rounds, item }, _signal, _onUpdate, ctx) => {

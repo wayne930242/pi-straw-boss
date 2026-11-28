@@ -11,7 +11,7 @@ import type { Kit } from "./state.ts";
 // follow-up) or starts a turn when the main is idle; it never steers. The channel registers at the first `boss_watch` and at each join that finds a watch of this session on the server, so a /reload keeps receiving.
 
 export const WATCH_MESSAGE = "straw-boss-watch";
-export const WATCH_DESCRIPTION = "Have the sb server watch one unit of the net and wake you when it changes, instead of checking in your own turns. key: a main's, train's, or subagent's key or session id, or a teammate device's link:<short>[/<unit>|/main/<handle>]. You get one line per change of state (mark, a monitor's status or exit, todo progress, a train's step, its subagents), stalled (no activity for quiet), idle (idle that long), a link wait, offline, gone (it ended), or expired (until): at most one a minute per watch, the newest state only, 12 an hour; while you work it waits for the end of your turn. stop: end it. No key: list your watches. Main or train only.";
+export const WATCH_DESCRIPTION = "Main/train: watch one net unit; don't poll. Wakes for mark, monitor status/exit, todo progress, train step, subagents, stalled/idle, link wait, offline, gone or expired. Latest state only, max 1/min/watch and 12/hour, after any busy turn.";
 const MIN_MS = 60_000, MAX_MS = 48 * 3_600_000;
 
 /** A length: `90s`, `20m`, `2h`, or plain milliseconds. */
@@ -52,9 +52,9 @@ export function createBossWatch({ pi, cfg, s, guiDir, me, role }: Kit, d: { ask?
 			pi.registerTool({
 				name: "boss_watch", label: "boss_watch", description: WATCH_DESCRIPTION,
 				parameters: Type.Object({
-					key: Type.Optional(Type.String({ description: "The unit's key or session id, or link:<short>…; none lists your watches." })),
-					quiet: Type.Optional(Type.String({ description: "stalled after this long without activity: 30m, 2h (at least 1m)." })),
-					idle: Type.Optional(Type.String({ description: "idle after this long idle (at least 1m)." })),
+					key: Type.Optional(Type.String({ description: "Main/train/subagent key or session ID, or link:<short>[/<unit>|/main/<handle>]. Omit to list watches." })),
+					quiet: Type.Optional(Type.String({ description: "Stalled after no activity (min 1m; e.g. 30m, 2h)." })),
+					idle: Type.Optional(Type.String({ description: "Idle threshold (min 1m)." })),
 					until: Type.Optional(Type.String({ description: "How long the watch lasts. Default 6h, at most 48h." })),
 					stop: Type.Optional(Type.Boolean({ description: "true: end the watch on key." })),
 				}),

@@ -12,7 +12,7 @@ import { type CarClient, createCarClient } from "./traincar.ts";
 // client's, traincar.ts): the server sets, lists, and stops a ward only for its main's own process (ward-review F003, boss decision (a)).
 
 export const WARD_ENTRY = "sb-ward";
-export const WARD_DESCRIPTION = "Ward a worker in a plain pane instead of a herdr monitor: the sb server wakes you once when it finished (reported to you, or its turn ended and nothing of it ran for a minute), is blocked (a dialog, or Herdr blocked), or is dead (pane gone, pi left). Read only.";
+export const WARD_DESCRIPTION = "Read-only ward for a plain-pane worker, instead of a Herdr monitor. Wakes once: finished (reported or turn ended and idle 1m), blocked (dialog or Herdr), dead (pane gone or Pi left).";
 
 export function createWard({ pi, cfg, s, guiDir, me, role }: Kit, d: { ask?: Ask; control: Pick<Control, "register">; openTower: Reach["openTower"]; remote(): boolean; client?: CarClient }) {
 	// The car book's client over this session's way to the server; its secret is kept where train_car's is, per session and process.

@@ -33,16 +33,16 @@ test("capacity and idle: the notice to a main's own session and the idle nudge c
 test("pairing, kind, board, and call_tower: the tool descriptions carry the details, main.md the triggers", async () => {
 	gone("brief both", "relay nothing", "`boss_duty`", "watching, not finishing tasks", "`board_set`", "Keep secrets", "allies' towers read it", "port, database", "stop on a named clash", "the tower finds them", "`waitsOn`", "reply: false");
 	assert.ok(raw.includes("Review via `boss_pair`."), "the pointer stays: without it a main reviews with its own reviewer flow and opens no thread");
-	assert.ok(PAIR_DESCRIPTION.includes("you write both briefs") && PAIR_DESCRIPTION.includes("Thread: T<n>") && PAIR_DESCRIPTION.includes("woken only by their two results when the thread closes; do not relay"));
+	assert.ok(PAIR_DESCRIPTION.includes("Write both briefs") && PAIR_DESCRIPTION.includes("Thread: T<n>") && PAIR_DESCRIPTION.includes("Only final results wake you at thread close; don't relay"));
 	assert.ok(raw.includes("Name/todos fill board; keep current."));
 	for (const term of ["milestone (task landed/request done)", "shared (before changes outside tab)", "blocked (external wait, unauthorized decision, unknown owner)", "Progress/incidents: board only."]) assert.ok(raw.includes(term), term);
 	for (const term of ["reply false unless needed", "port, database, shared branch, deploy target, another app's checkout, running service", "say what and for how long", "go ahead at once, and stop only on a clash the tower names", "need a work's owner and do not know who: say what, the tower finds them", "a teammate device: waitsOn"]) assert.ok(CALL_TOWER_DESCRIPTION.includes(term), `call_tower: ${term}`);
 	const a = world.agent({ id: "main-1", pane: "wA:p1", tab: "wA:t1" });
 	await a.start();
 	await a.promote();
-	assert.match(a.tools.get("boss_duty")!.description, /standing \(watching, not finishing tasks\) minds one system/);
+	assert.match(a.tools.get("boss_duty")!.description, /standing watches one system or machine indefinitely, not finishing tasks/);
 	assert.ok(STANDING_HINT.includes("`boss_duty standing`"), "the hint at the first boss_watch");
-	assert.match(a.tools.get("board_set")!.description, /until your todos move.*no secrets, credentials, customer data, or paths outside the project\. Not a report: the done report still goes to whoever asked\./);
+	assert.match(a.tools.get("board_set")!.description, /until todos change.*no secrets, credentials, customer data, or paths outside the project\. Not a done report; send that to whoever asked\./);
 });
 
 test("waits: call_tower's blocked result names the wait_card answer and boss_wait_ask, the wait_card message says to act, wait_returned says how to ask again", () => {

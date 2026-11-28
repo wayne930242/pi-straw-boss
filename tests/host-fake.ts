@@ -7,7 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // the way Pi's lists them before any dedupe (a second `/subagent` as `subagent:2`), and `getAllTools()` the first registration of each name, as Pi's does.
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
-export interface Registration { name: string; path: string; tool?: { name: string; parameters: unknown; description?: string; execute: (...args: unknown[]) => unknown } }
+export interface Registration { name: string; path: string; tool?: { name: string; parameters: unknown; description?: string; promptGuidelines?: string[]; execute: (...args: unknown[]) => unknown } }
 
 export function fakePi(selfPath: string) {
 	const handlers = new Map<string, Handler[]>(), bus = new Map<string, ((data: unknown) => void)[]>();

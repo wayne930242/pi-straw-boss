@@ -14,7 +14,7 @@ import { checkoutProject, repoRoot } from "./train/appsconfig.ts";
 export const PEER_TOOL = "call_peer";
 const TARGETS = ["sender", "caller", "main", "integrator"] as const;
 type To = (typeof TARGETS)[number];
-export const PEER_DESCRIPTION = "Message an sb net peer, found at the call (successor after a handover). to: sender (last wrote you), caller (opened you), main (your tab's; of: another's name, todo item, or tab), integrator (your project's). ask: reply expected.";
+export const PEER_DESCRIPTION = "Message a net peer (uses live successor after handover). to: sender (last writer), caller (opened you), main (your tab; of: another name/item/tab), integrator (your project). ask expects a reply.";
 export const peerParameters = () => Type.Object({
 	// An enum, not a union of literals: 89 bytes fewer on every turn (pi-ai's validator checks `enum`).
 	to: Type.Unsafe<To>(Type.String({ enum: TARGETS })),

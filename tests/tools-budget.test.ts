@@ -44,9 +44,10 @@ test("a main's always-on sb tools stay within their budget, and boss_status is g
 	// The boss asks (docs/specs/2026-11-28-boss-asks.md; measured): call_tower's `boss.item`, the todo the question blocks, with no description (+26): trimmed 7,908 to 7,934 and all 11,962 to 11,988.
 	// With the quiet tower on top (both measured): trimmed 8,182 and all 12,232.
 	// The snoozable stale reminder (docs/specs/2026-11-28-stale-snooze.md; measured): board_set's `snooze` ({why, for?, watch?, todo?}, no descriptions: sb's notice says how) and a clause naming it (+206): trimmed 8,182 to 8,388 and all 12,232 to 12,438.
-	assert.ok(trimmed <= 8_388, `the trimmed tools hold ${trimmed} characters (10,634 before B2)`);
+	// Prompt trim (measured): 8,388 to 7,185 and 12,438 to 10,154, with the same tool set.
+	assert.ok(trimmed <= 7_185, `the trimmed tools hold ${trimmed} characters`);
 	const all = tools.reduce((n, t) => n + size(t), 0);
-	assert.ok(all <= 12_438, `all of sb's tools hold ${all} characters (11,594 before B2 and E; 8,753 before D; 9,601 before boss_wrap; 10,161 before call_tower boss; 10,328 before 0.92.0; 10,664 before standing.md; 10,771 before note; 10,798 before call_peer; 11,233 before sb_doctor; 11,493 before sb_ward)`);
+	assert.ok(all <= 10_154, `all of sb's tools hold ${all} characters`);
 });
 
 test("the trimmed descriptions keep the sentences that carry a rule: board_set's privacy line, call_tower's three points, boss_wait_ask over ask_user_question", async () => {
