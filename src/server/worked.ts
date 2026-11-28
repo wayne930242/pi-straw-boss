@@ -16,21 +16,24 @@ const NOTICE = /^\[straw net [^\n]*?\bkind=capacity_notice\b[^\n]*?\] capacity s
 export const staleNotice = (e: Json, from: string): boolean => e.type === "custom_message" && e.customType === "intercom_message" && e.details?.from?.id === from && NOTICE.test(bodyOf(e.details));
 const userText = (m: Json) => (typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.filter((b: Json) => b?.type === "text").map((b: Json) => String(b.text)).join("\n") : "");
 
-/** The time of the newest entry of `lines` (a session file's, oldest first) that is the main's own move; `cut`: the lines begin inside the file, so a tail that holds no move answers with its first time. */
-export function workedOf(lines: readonly string[], from: string, cut = false): number | undefined {
-	let notice = false, worked: number | undefined, first: number | undefined;
+/**
+ * The time of the newest entry of `lines` (a session file's, oldest first) that is the main's own move. `cut`: the lines begin inside the file, so a tail that holds no move answers `null`, a move
+ * before the tail of unknown time; never the time of a notice or of its answer (r3-F002).
+ */
+export function workedOf(lines: readonly string[], from: string, cut = false): number | null | undefined {
+	let notice = false, worked: number | undefined;
 	for (const line of lines) {
 		const e = parse(line), at = Date.parse(e?.timestamp);
 		if (!e || !Number.isFinite(at)) continue;
-		first ??= at;
 		if (staleNotice(e, from)) { notice = true; continue; }
 		const m = e.type === "message" ? (e.message as Json | undefined) : undefined;
-		// In the notice's turn, only a tool call or another input is a move; it ends the turn's discount.
-		if (notice && !((m?.role === "assistant" && Array.isArray(m.content) && m.content.some((b: Json) => b?.type === "toolCall")) || (m?.role === "user" && userText(m).trim() !== WAKE) || e.type === "custom_message")) continue;
+		// In the notice's turn, only a tool call or real input is a move: a user message (not the wake prompt) or an intercom message that is not the server's notice. Extensions' context
+		// (`claude-hook-context` and other custom messages) is no input (r3-F003).
+		if (notice && !((m?.role === "assistant" && Array.isArray(m.content) && m.content.some((b: Json) => b?.type === "toolCall")) || (m?.role === "user" && userText(m).trim() !== WAKE) || (e.type === "custom_message" && e.customType === "intercom_message"))) continue;
 		notice = false;
 		worked = at;
 	}
-	return worked ?? (cut ? first : undefined);
+	return worked ?? (cut ? null : undefined);
 }
 
 function tail(file: string): { lines: string[]; cut: boolean } {
@@ -46,14 +49,18 @@ function tail(file: string): { lines: string[]; cut: boolean } {
 	}
 }
 
-/** The reader the capacity watch asks each minute: a file is read again only when its time moved; none when it cannot be read (the caller keeps the file's time). */
-export function createWorked(from: string): (file: string, mtime: number) => number | undefined {
-	const seen = new Map<string, { mtime: number; at: number | undefined }>();
+/**
+ * The reader the capacity watch asks each minute: a file is read again only when its time moved; none when it cannot be read (the caller keeps the file's time). A tail with no move keeps the move
+ * this reader knew of the file before the append (r3-F002), else answers `null` (unknown: the watch takes the episode's, capwatch.ts `knownMoves`).
+ */
+export function createWorked(from: string): (file: string, mtime: number) => number | null | undefined {
+	const seen = new Map<string, { mtime: number; at: number | null | undefined }>();
 	return (file, mtime) => {
 		const had = seen.get(file);
 		if (had?.mtime === mtime) return had.at;
-		let at: number | undefined;
+		let at: number | null | undefined;
 		try { const t = tail(file); at = workedOf(t.lines, from, t.cut); } catch { at = undefined; }
+		if (at === null && typeof had?.at === "number") at = had.at;
 		if (seen.size >= CACHED) seen.clear();
 		seen.set(file, { mtime, at });
 		return at;

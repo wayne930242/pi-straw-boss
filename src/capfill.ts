@@ -37,8 +37,9 @@ export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): CapFill {
 		if (!id || !ownsBoard(role())) return;
 		try {
 			restore(id);
-			const { snapshot, list } = listed(), todos = openTodos(list, snapshot), open = new Set(list.filter((t) => t.status !== "completed").map((t) => t.id));
+			const { snapshot, list } = listed(), open = new Set(list.filter((t) => t.status !== "completed").map((t) => t.id));
 			snoozes = snoozes.filter((s) => s.todo === undefined || open.has(s.todo));
+			const todos = openTodos(list, snapshot, new Set(snoozes.flatMap((s) => (s.todo !== undefined ? [s.todo] : []))));
 			const facts = { ...capOfTodos(list, snapshot), todos }, key = JSON.stringify([facts, pause ?? null, snoozes]);
 			if (key === last && wrote === id) return;
 			const cap: MainCap = { v: 1, session: id, updated: cfg.now(), ...facts, ...(pause ? { pause } : {}), ...(snoozes.length ? { snoozes } : {}) };

@@ -87,6 +87,16 @@ export interface AutoInput {
 	todos: readonly Todo[] | undefined;
 	/** The project: paths inside it are written relative to it. */
 	root?: string | undefined;
+	/** The first open todo the display's 200 rows cannot carry (`moreOf`): the list is not done while it is open (r3-F001). */
+	more?: More | undefined;
+}
+export interface More { subject: string; activeForm?: string; doing: boolean }
+/** The first open todo of the whole ledger past the display's 200 rows, in progress first; the display itself is not expanded. */
+export function moreOf(snapshot: unknown): More | undefined {
+	const tasks = (snapshot as { tasks?: unknown } | null | undefined)?.tasks;
+	if (!Array.isArray(tasks) || tasks.length <= 200) return undefined;
+	const rest = tasks.slice(200).filter((t) => typeof t?.id === "number" && typeof t.subject === "string"), t = rest.find((x) => x.status === "in_progress") ?? rest.find((x) => x.status === "pending");
+	return t ? { subject: t.subject, ...(typeof t.activeForm === "string" ? { activeForm: t.activeForm } : {}), doing: t.status === "in_progress" } : undefined;
 }
 /** `who` is the scrubbed session name when there is one: what allies get of an auto entry, with the count. `plan`: the open todos as a graph (boardplan.ts), local only. */
 export interface Derived { text: BoardText; count?: Count; who?: string; plan?: Plan }
@@ -95,14 +105,15 @@ export interface Derived { text: BoardText; count?: Count; who?: string; plan?: 
  * The entry the todo list and the name make, or undefined when there is nothing to say: no todo list (a name alone is not work, and would stay on the board after the work is gone). `now` is `<name>: <task in progress>`, else `<name>: next <first pending>`, else
  * `<name>: done (n/n)` (written once; boardfill.ts and the readers drop it 30 minutes later); the items are the tasks, in progress first, then pending in id order, then completed, newest first. Text is cleaned and scrubbed, and only then cut to the board's caps.
  */
-export function deriveBoard({ name, todos, root }: AutoInput): Derived | undefined {
+export function deriveBoard({ name, todos, root, more }: AutoInput): Derived | undefined {
 	const text = (t: string, max: number) => allyLabel(t, max, root);
 	const who = text(name, 40), list = todos ?? [];
 	const by = (status: Todo["status"]) => list.filter((t) => t.status === status);
 	if (!list.length) return undefined;
 	const doing = by("in_progress")[0], pending = by("pending").sort((a, b) => a.id - b.id), done = by("completed").sort((a, b) => b.id - a.id);
 	const say = (words: string) => (who ? `${who}: ${words}` : words);
-	const task = doing ? say(doing.activeForm || doing.subject) : pending[0] ? say(`next ${pending[0].subject}`) : say(`done (${done.length}/${list.length})`);
+	const rest = !doing && !pending[0] ? more : undefined; // all shown done, but the ledger holds open work past the display: never `done` (r3-F001)
+	const task = doing ? say(doing.activeForm || doing.subject) : pending[0] ? say(`next ${pending[0].subject}`) : rest ? say(rest.doing ? rest.activeForm || rest.subject : `next ${rest.subject}`) : say(`done (${done.length}/${list.length})`);
 	const now = text(task, BOARD.now);
 	if (!now) return undefined;
 	const items: BoardItem[] = [];
@@ -116,5 +127,5 @@ export function deriveBoard({ name, todos, root }: AutoInput): Derived | undefin
 	const shown = items.slice(0, hidden ? BOARD.items - 1 : BOARD.items);
 	if (hidden) shown.push({ t: `(${hidden} hidden)`, done: true });
 	const plan = planOf(list, (t, max) => { const line = text(t, max); return line && !mostlyHidden(line) ? line : HIDDEN; }); // a node stays when its text is hidden: what waits on it still does
-	return { text: { now, items: shown }, ...(list.length ? { count: { done: done.length, total: list.length } } : {}), ...(who ? { who } : {}), ...(plan ? { plan } : {}) };
+	return { text: { now, items: shown }, ...(list.length && !rest ? { count: { done: done.length, total: list.length } } : {}), ...(who ? { who } : {}), ...(plan ? { plan } : {}) };
 }

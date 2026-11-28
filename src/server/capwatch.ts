@@ -87,6 +87,11 @@ function todosText(r: MainRow): string {
 	return `${n} open todo${n === 1 ? "" : "s"} unanswered: ${t.slice(0, 3).map((x) => `#${x.id} ${q(x.subject.slice(0, 60))}`).join(", ")}${n > 3 ? `, +${n - 3} more` : ""}`;
 }
 
+/** A main whose last move is unknown (it lies before the session file's readable tail) keeps the move its stale episode was told with, persisted in `sent` across a restart; a recognised reminder never stands in for one (r3-F002). */
+export function knownMoves<F extends Pick<MainFacts, "session" | "worked" | "movedUnknown">>(facts: F[], sent: Readonly<Record<string, number>>): F[] {
+	return facts.map((m) => (m.movedUnknown && m.worked === undefined && (sent[NOTICE_MOVED + m.session] ?? 0) > 0 ? { ...m, worked: sent[NOTICE_MOVED + m.session]! } : m));
+}
+
 export function createCapWatch(d: CapDeps) {
 	// `untold`: the flags whose last try nobody took, logged once per entry while they are tried again each minute.
 	// The hold is read back from a fresh device row, so a restart neither restarts the 10 minutes nor ends an `under-30m` episode.
@@ -107,7 +112,7 @@ export function createCapWatch(d: CapDeps) {
 	return {
 		/** One look: the device row written and returned, and the events of the flags entered since the last look. */
 		async tick(): Promise<DeviceCap | undefined> {
-			const now = d.now(), facts = await d.mains().catch(() => undefined);
+			const now = d.now(), facts = ((f) => f && knownMoves(f, sent))(await d.mains().catch(() => undefined));
 			if (!facts) return undefined;
 			purgeCaps(d.dir, new Set(facts.map((m) => m.session)), now);
 			// The first end seen of each snooze, by its identity (review F001; docs/specs/2026-11-28-stale-snooze.md).
