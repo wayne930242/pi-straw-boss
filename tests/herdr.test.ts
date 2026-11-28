@@ -126,6 +126,7 @@ test("todo #155: a herdr that exited with 0 and left a child holding its stdout 
 		const took = Date.now() - began;
 		stalls.stop();
 		assert.ok(took < DEADLINE + 1000 + stalls.worst(), `the call ended at its deadline: ${took} ms (this process stood still for ${stalls.worst()} ms)`);
+		await until(() => fake.has("held"), "the child to leave its pid", 15_000); // herdr no longer waits for it before it says its word
 		assert.ok(!gone(fake.pid("held")) && !fake.has("outlived"), "the call did not wait for the child to end");
 	} finally {
 		stalls.stop();

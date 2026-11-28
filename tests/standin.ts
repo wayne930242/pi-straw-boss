@@ -28,9 +28,12 @@ export function standIn(scripts: Record<string, string>) {
 		},
 	};
 }
-/** A stand-in that starts a child with its own stdout and stderr, which ignores SIGTERM and lingers; the stand-in itself waits for it, or (`leave`) says a word and exits. */
+/**
+ * A stand-in that starts a child with its own stdout and stderr, which ignores SIGTERM and lingers; the stand-in itself waits for it, or (`leave`) says a word and exits. Each writes its own pid at its start and waits for
+ * nothing before: the stand-in polled for the child's pid before it wrote its own or said its word, and a step of that poll that took longer than the deadline under load had the deadline's SIGTERM end it first.
+ */
 export const withChild = () => standIn({
-	herdr: `"$1/holder" "$1" &\nwhile [ ! -s "$1/held" ]; do sleep 0.05; done\necho $$ > "$1/pid"\nif [ "$2" = leave ]; then echo left; exit 0; fi\nwait`,
+	herdr: `echo $$ > "$1/pid"\n"$1/holder" "$1" &\nif [ "$2" = leave ]; then echo left; exit 0; fi\nwait`,
 	holder: `trap '' TERM\necho $$ > "$1/held"\n${LINGER}`,
 });
 
