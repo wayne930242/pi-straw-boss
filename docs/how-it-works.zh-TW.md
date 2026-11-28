@@ -25,7 +25,7 @@ flowchart TD
 |---|---|---|
 | 成員 | 已加入、但不是主智慧體的 pi | session 啟動時自己加入 |
 | 主智慧體 | 每個分頁一個；規劃、派工，並詢問老闆 | 升任（`boss_promote`、第一次呼叫 `subagent`）、`/boss`，或由塔台開啟 |
-| 子智慧體 | pi-herdr-agents 的子層；它不加入，由啟動它的 session 代表 | 由主智慧體或成員啟動 |
+| 子智慧體 | Straw Boss 用 `subagent` 啟動的子智慧體；它不加入，由啟動它的 session 代表 | 由主智慧體或成員啟動 |
 | 塔台 | 每個工作區一座；分派工作、修補協調上的摩擦，絕不詢問老闆 | 智慧體開始互相碰撞時開啟 |
 | 主塔台 | 老闆唯一的入口，每台電腦一座；把每項指示交給某個工作區的塔台 | 老闆第一次說話時由 sb server 建立 |
 | 火車 | 把一批合併車廂送進基底分支的工作者 | 塔台為專案的整合員開啟 |
@@ -41,7 +41,7 @@ flowchart TD
 | `integrator`（整合員） | 專案的合併火車：接收車廂、組成火車 | `boss_duty`，或名稱 `integ <project>` |
 | `standing`（值守） | 看顧一個系統或一台機器，沒有終點 | `boss_duty` |
 
-**子智慧體的種類**（讀自 pi-herdr-agents 給它的角色名稱，子智慧體在第一個 turn 把它記進自己的 session 檔；其他角色維持一般子智慧體）
+**子智慧體的種類**（讀自交給 Straw Boss `subagent` 的角色名稱，子智慧體在第一個 turn 把它記進自己的 session 檔；其他角色維持一般子智慧體）
 
 | 種類 | 角色名稱 | 用途 | 協調者派出它時 |
 |---|---|---|---|
@@ -99,8 +99,8 @@ stateDiagram-v2
 <details>
 <summary>細節</summary>
 
-1. Herdr 裡每個可加入的 pi 在 session 啟動時，會以**成員**的身分加入所在分頁的網：不提醒、不詢問。以下情況不會加入：不在 Herdr 裡、是 pi-herdr-agents 的子智慧體（`PI_SUBAGENT_ID`，由它的上層代表它）、在子工作區（見下）、或本身就是塔台。
-2. 成員透過升任成為所在分頁的**主智慧體**。工作變大時（步驟變多、要派工作者、涉及不只一個 app），智慧體會呼叫 `boss_promote`；成員的 prompt 會這樣告訴它。成員如果沒有升任就呼叫 pi-herdr-agents 的 `subagent` 或 `subagent_resume` 工具，會在子智慧體啟動或恢復之前自動升任。啟動時加入失敗、等到 session 的 pane 搬到另一個分頁後才重試的，會登記在它現在所在的分頁，所以那裡不會冒出第二個主智慧體。
+1. Herdr 裡每個可加入的 pi 在 session 啟動時，會以**成員**的身分加入所在分頁的網：不提醒、不詢問。以下情況不會加入：不在 Herdr 裡、是子智慧體（`PI_SUBAGENT_ID`，由它的上層代表它）、在子工作區（見下）、或本身就是塔台。
+2. 成員透過升任成為所在分頁的**主智慧體**。工作變大時（步驟變多、要派工作者、涉及不只一個 app），智慧體會呼叫 `boss_promote`；成員的 prompt 會這樣告訴它。成員如果沒有升任就呼叫 Straw Boss 的 `subagent` 或 `subagent_resume` 工具，會在子智慧體啟動或恢復之前自動升任。啟動時加入失敗、等到 session 的 pane 搬到另一個分頁後才重試的，會登記在它現在所在的分頁，所以那裡不會冒出第二個主智慧體。
 3. 一個分頁只有一個主智慧體。智慧體絕不會接手既有的主智慧體：分頁的主智慧體還活著時，`boss_promote` 會被拒絕並附上訊息，自動升任也會跳過。成員仍然可以派自己的子智慧體，但它的 prompt 要它先用 `call_peer`（`to: main`）通知主智慧體：它要做什麼、會用到哪些資源。sb 在呼叫當下從 broker 的紀錄找出分頁的主智慧體，所以交接之後的訊息會送到接手的那一位。同一個工具也能送到 sb 在呼叫當下指得出的其他同伴：`sender`（呼叫者分支上最新一則 intercom 訊息的寄件 session）、`caller`（接班者在接手前是舊 main，否則是開啟者標記指名的 session；塔台開的整合員是那座塔台；隊友裝置與沒人開啟的 session 會被拒絕）、帶 `of` 的 `main`（以精確名稱、待辦項目鍵 `t_…` 或 `<session8>#<id>`、分頁 id 或標籤找另一個活著的主智慧體；零個或多個相符會被拒絕，並列出至多五個候選）、`integrator`（checkout 所屬專案唯一活著的整合員，找法與開門時相同；零個或多個都會被拒絕）。角色紀錄說已交接的對象，會送到它的接班者。成員、任何種類的主智慧體與列車的啟用工具裡都有它；塔台用 `tower_send` 與 `tower_reply` 回覆，子智慧體沒有 sb 工具。sb net 以外的 session 與診斷仍用原始 intercom。
 4. 主智慧體不會降級。它的 session 結束後，分頁就沒有主智慧體，直到有成員升任為止（這時成員的 prompt 會提議升任）。`/boss` 是使用者手動接手：即使已經有別的主智慧體，它也會讓這個 session 成為分頁的主智慧體。
 5. 主智慧體有一種**類型**：`coordinator`（預設：規劃並派工）、`integrator`（專案的合併火車）、`standing`（負責一個系統或一台機器，沒有結束的時候）。類型就是這個主智慧體執行的 prompt：`main.md`，integrator 再加上 `integrator.md`；值守主智慧體只執行 `standing.md`，裡面是每一輪值守都需要的規則，沒有 `main.md` 的派工與收工規則（2026-11-26，[值守規格](specs/2026-11-26-standing-prompt.md)）。coordinator 與 integrator 帶著 `main.md` 裡的派工規則：按負責的 app 拆分工作、每個工作者出發前先開 todo、相依的任務用 `blockedBy`、平行寫入的工作者各用一個 worktree、工作者平行出發（在無人值守的裝置上受它的產能預算限制）。計畫在待辦的 `graph` 欄位裡的協調圖（pi-todo-ledger 0.4.0；舊的 `metadata.graph` 仍算數）（`single-loop`、`fan-out/fan-in`、`orchestrator-worker`；由 `planGraph` 讀取，取最新的未完成者）是頁面上的標示，沒有 prompt 會隨它改變（0.83.0，[lite-main 規格](specs/2026-11-23-lite-main.md)）。coordinator 或值守主智慧體用 `todo` 建立待辦後，若未完成的待辦都沒有協調圖，那次結果會附上濃縮的 planning.md 第 1、2 節（0.101.0，[協調圖規格](specs/2026-11-26-plan-graph-jit.md)）。
@@ -1090,7 +1090,7 @@ Straw Boss 不指名任何 skill 套件。火車的 prompt 假設 `integrating` 
 
 #### 接縫綁定
 
-`integrating` 指名六個接縫（Handoff route、Batch owner、Approval、Record、Escalation route、Settings），並從 session 的指示裡讀一個 `## Seam bindings` 區塊。Straw Boss 的區塊是 `main.md` 的最後一段文字，在整合標記之內：`main.md` 是每個主智慧體（協調者和整合員一樣）的 system prompt，所以每個 session 恰好持有一個區塊，在它第一步之前就在它前面，不必讀任何檔案。塔台不執行任何 skill，也不持有任何一個；它的 prompt 只帶轉發。
+`integrating` 指名七個接縫（Handoff route、Batch owner、Approval、Record、Escalation route、Settings、Step runner），並從 session 的指示裡讀一個 `## Seam bindings` 區塊。Straw Boss 的區塊是 `main.md` 的最後一段文字，在整合標記之內：`main.md` 是每個主智慧體（協調者和整合員一樣）的 system prompt，所以每個 session 恰好持有一個區塊，在它第一步之前就在它前面，不必讀任何檔案。火車的 prompt 為火車自己的 session 綁定 Step runner。塔台不執行任何 skill，也不持有任何一個；它的 prompt 只帶轉發。
 
 <details>
 <summary>細節</summary>
@@ -1328,6 +1328,8 @@ pi-straw-boss 自己當子代理的宿主，跑在 Maestro 引擎上（`@nubl/ma
 - **打包。** 每次啟動用 `-e` 傳入的子代理入口是 `src/host/child.ts`，這個路徑在每個版本都保持不變。sb server 需要 pi-intercom，一般安裝不會帶它（`pi install npm:pi-intercom`）；宿主沒有它也能運作。操作指南是套件附的 skill `pi-straw-boss-subagents`。
 
 ## 孤立的子智慧體
+
+> 以下復原機制只適用於已停用的 pi-herdr-agents 宿主。現行工作者的行為見[子代理宿主](#子代理宿主)。
 
 ```mermaid
 flowchart TD
@@ -1829,12 +1831,12 @@ pane 已關閉的已完成單位，以及pi-herdr-agents 記錄為完成的子�
 
 #### 文件
 
-用 pi-herdr-doc-review 顯示文件的 session，會把文件列在它檔案的**文件**底下，點一下就在目前檢視旁開成一格。HTML 文件在沒有腳本的沙盒框裡執行；文字文件以唯讀方式顯示。
+用 pi-better-show 顯示文件的 session，會把文件列在它檔案的**文件**底下，點一下就在目前檢視旁開成一格。HTML 文件在沒有腳本的沙盒框裡執行；文字文件以唯讀方式顯示。
 
 <details>
 <summary>細節</summary>
 
-用 [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 或更新版本顯示文件的 session（`show_doc`，或自行開啟的 Mini SDD 規格），會在 2 秒內把它們列在它的檔案的**文件**之下，而單位 token 上的羊皮紙徽章會計算仍顯示在它終端機畫面上的文件數（塔台只在它的檔案中列出）。在該 session 的通訊畫面上，到達的文件會在紀錄旁以並排區塊開啟且不取得焦點，除非已經開了四個區塊（它絕不會擠掉你開啟的）；在其他任何地方（地圖、基地、另一個 session）只有徽章改變，而在有文件的 session 上開啟的頁面則一個都不開。
+用 [pi-better-show](https://www.npmjs.com/package/pi-better-show) 0.1.0 或更新版本顯示文件的 session（`show_doc`，或自行開啟的 Mini SDD 規格），會在 2 秒內把它們列在它的檔案的**文件**之下，而單位 token 上的羊皮紙徽章會計算仍顯示在它終端機畫面上的文件數（塔台只在它的檔案中列出）。在該 session 的通訊畫面上，到達的文件會在紀錄旁以並排區塊開啟且不取得焦點，除非已經開了四個區塊（它絕不會擠掉你開啟的）；在其他任何地方（地圖、基地、另一個 session）只有徽章改變，而在有文件的 session 上開啟的頁面則一個都不開。Straw Boss 仍會列出來自已封存的 pi-herdr-doc-review 的文件；只有 pi-better-show 會把互動 Markdown 區塊的答案送回文件的擁有者。
 
 在檔案中點擊會開啟一個，`show_doc` 卡片上的**在旁開啟**在它的文件被列出時也會（較舊的卡片維持文字）。HTML 文件是沒有腳本的 sandbox 框架：頁面的屬性與伺服器的政策都讓它成為不透明的 origin，所以它不執行任何腳本、不能讀取 API 或 cookie，只從它自己的目錄載入圖片、樣式表和字型。它的連結在新分頁開啟，而帶有 `action="cgi-bin:pi-answer"` 的表單，回答 session 的方式與 Chawan 提交完全相同（由擁有者送達）：每次頁面檢視只能送出一次，所以**上一頁**再送出會顯示「Already sent」，**重新載入**則再送一次。
 
@@ -3054,7 +3056,7 @@ pi-herdr-agents 沒有「父層還活著」的紀錄，所以對它的 worktree 
 
 ## 程序衛生與 slot
 
-本節的第 1 版（`docs/specs/2026-11-04-procs.md` 計畫的第 2 層）：worker 啟動的任何東西都隨 worker 一起結束，而且 worktree 不會在還有行程執行時被移除。大量指令的 slot、Linux cgroup 路徑與 CPU 卡住偵測屬於第 2 版，目前還沒建好；本節會隨它們一起擴充。
+本節的第 1 版（`docs/specs/2026-11-04-procs.md` 計畫的第 2 層）：worker 啟動的任何東西都隨 worker 一起結束，而且 worktree 不會在還有行程執行時被移除。並行執行重型指令的 slot 與 Linux cgroup 路徑仍在規劃中。已上線的偵測見下文的**停滯監看**。
 
 **原因。** pi 會停止一次 bash 呼叫的行程群組（`killProcessTree`，對它啟動的 shell 的群組送 SIGKILL）。`timeout`、`setsid`、`detached: true` 的 spawn 與測試執行器會把它們的子行程放進自己的群組，所以結束或被殺掉的 worker 會把它們留下，改由 launchd 或 init 接管。11/03 有四個這樣的 node 測試行程，在父層已經移除的 worktree 裡跑了六小時，每個占 55 到 60% 的 CPU。
 
@@ -3064,7 +3066,7 @@ pi-herdr-agents 沒有「父層還活著」的紀錄，所以對它的 worktree 
 
 ### 註冊 worker
 
-設有 `PI_SUBAGENT_ID` 的 pi（pi-herdr-agents 的 worker）會在 `session_start` 時，透過控制 socket 對 sb server 送出 `procs-hello {pid, started, subagentId, sessionFile, pane, terminal, cwd}`，每 30 秒打一次 beat，結束時送出 `procs-bye`（重新載入或切換 session 會保留行程，所以不算 bye）。server 在自己的行程表中找到該 pid 並檢查啟動時間；它從 `cwd` 找出 worktree 根目錄（往上最近的 `.git` 是帶有 `gitdir:` 的檔案；在主 checkout 裡的 worker 沒有 worktree，也沒有 cwd 規則）。紀錄存放在 `<slot dir>/procs/owners.json`（權限 600）。
+設有 `PI_SUBAGENT_ID` 的 pi（包括 Straw Boss 啟動的工作者）會在 `session_start` 時，透過控制 socket 對 sb server 送出 `procs-hello {pid, started, subagentId, sessionFile, pane, terminal, cwd}`，每 30 秒打一次 beat，結束時送出 `procs-bye`（重新載入或切換 session 會保留行程，所以不算 bye）。server 在自己的行程表中找到該 pid 並檢查啟動時間；它從 `cwd` 找出 worktree 根目錄（往上最近的 `.git` 是帶有 `gitdir:` 的檔案；在主 checkout 裡的 worker 沒有 worktree，也沒有 cwd 規則）。紀錄存放在 `<slot dir>/procs/owners.json`（權限 600）。
 
 <details>
 <summary>細節</summary>

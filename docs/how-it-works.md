@@ -25,7 +25,7 @@ Each solid arrow is a tool from [Tools](#tools). The dotted ones are not tools: 
 |---|---|---|
 | member | a joined pi that is not a main | joins at session start, by itself |
 | main agent | one per tab; plans, dispatches, and asks the boss | promotion (`boss_promote`, a first `subagent` call), `/boss`, or a tower opening it |
-| subagent | a pi-herdr-agents child; it never joins, and its launcher speaks for it | launched by a main or a member |
+| subagent | a child launched by Straw Boss's `subagent`; it never joins, and its launcher speaks for it | launched by a main or a member |
 | tower | one per workspace; routes work and repairs friction, and never asks the boss | opened when agents start to collide |
 | head tower | the boss's one entry point, one per computer; hands each instruction to a workspace's tower | made by the sb server at the boss's first message |
 | train | a worker that carries one batch of merge cars to the base branch | opened by a tower for the project's integrator |
@@ -41,7 +41,7 @@ Each solid arrow is a tool from [Tools](#tools). The dotted ones are not tools: 
 | `integrator` | a project's merge trains: receives cars, forms trains | `boss_duty`, or the name `integ <project>` |
 | `standing` | minds one system or machine, with no end | `boss_duty` |
 
-**Kinds of subagent** (read from the role name pi-herdr-agents gave it, which the child records in its session file at its first turn; any other role stays a plain subagent)
+**Kinds of subagent** (read from the role name passed to Straw Boss's `subagent`, which the child records in its session file at its first turn; any other role stays a plain subagent)
 
 | Kind | Role names | What it is for | Dispatch by a coordinator |
 |---|---|---|---|
@@ -99,8 +99,8 @@ The numbered rules below are the whole behavior.
 <details>
 <summary>Details</summary>
 
-1. Every joinable pi in Herdr joins its tab's net at session start as a **member**: no reminder, no question. It does not join outside Herdr, as a pi-herdr-agents subagent (`PI_SUBAGENT_ID`, its parent represents it), in a sub workspace (below), or as the tower itself.
-2. A member becomes its tab's **main agent** by promotion. The agent calls `boss_promote` when its work grows (several steps, dispatching workers, more than one app); the member prompt says so. A member that calls pi-herdr-agents' `subagent` or `subagent_resume` tool without promoting is promoted automatically, before the subagent starts or resumes. A join that failed at start and retries after the session's pane moved to another tab registers on the tab it is in now, so it never becomes a second main there.
+1. Every joinable pi in Herdr joins its tab's net at session start as a **member**: no reminder, no question. It does not join outside Herdr, as a subagent (`PI_SUBAGENT_ID`, its parent represents it), in a sub workspace (below), or as the tower itself.
+2. A member becomes its tab's **main agent** by promotion. The agent calls `boss_promote` when its work grows (several steps, dispatching workers, more than one app); the member prompt says so. A member that calls Straw Boss's `subagent` or `subagent_resume` tool without promoting is promoted automatically, before the subagent starts or resumes. A join that failed at start and retries after the session's pane moved to another tab registers on the tab it is in now, so it never becomes a second main there.
 3. A tab has one main. An agent never takes over an existing one: while the tab's main is live, `boss_promote` is refused with a message and the automatic promotion is skipped. The member may still dispatch its own subagents, but its prompt tells it to first tell the main with `call_peer` (`to: main`) what it will do and which resources it will use. sb finds the tab's main at the call, from the broker's record, so a message after a handover reaches the successor. The same tool reaches the other peers sb can name at the call: `sender` (the session whose intercom message is newest on the caller's branch), `caller` (a successor's old main until it took over, else the session the opener's mark names; a tower for an integrator the tower opened; refused for a teammate's device and for a session nobody opened), `main` with `of` (another live main by exact name, todo item key `t_…` or `<session8>#<id>`, tab id or label; none or several matches are refused with up to five candidates), and `integrator` (the one live integrator of the checkout's project, as the door finds it; none or several are refused). A target whose role record says it handed over is reached at its successor. A member, a main of any kind, and a train have the tool in their active set; a tower answers with `tower_send` and `tower_reply`, and a subagent has no sb tools. Raw intercom stays for sessions outside the sb net and for diagnostics.
 4. A main never demotes. When its session ends, the tab has no main until a member promotes (the members' prompt then offers promotion). `/boss` is the user's manual takeover: it makes this session the tab's main even when another is.
 5. A main has a **kind**: `coordinator` (the default: it plans and dispatches), `integrator` (a project's merge trains), or `standing` (one system or machine, no end). The kind is the prompt the main runs: `main.md`, plus `integrator.md` for an integrator; a standing main runs `standing.md` alone, which holds what every standing turn needs and none of `main.md`'s dispatch and done rules (2026-11-26, [standing spec](specs/2026-11-26-standing-prompt.md)). A coordinator and an integrator carry `main.md`'s dispatch rules: split work by owning app, a todo before each worker, `blockedBy` for dependent tasks, worktrees for parallel writers, workers in parallel (on an unattended device within its capacity budget). A plan's graph in the todo's `graph` field (pi-todo-ledger 0.4.0; a legacy `metadata.graph` still counts) (`single-loop`, `fan-out/fan-in`, `orchestrator-worker`; read by `planGraph`, the newest open one wins) labels the page; no prompt follows it (0.83.0, [lite-main spec](specs/2026-11-23-lite-main.md)). A coordinator or standing main whose `todo` create leaves open todos and none names a graph gets planning.md §1 and §2, condensed, on that result (0.101.0, [plan-graph spec](specs/2026-11-26-plan-graph-jit.md)).
@@ -1090,7 +1090,7 @@ Straw Boss requires no skills package by name. The train's prompts assume versio
 
 #### Seam bindings
 
-`integrating` names six seams (Handoff route, Batch owner, Approval, Record, Escalation route, Settings) and reads one `## Seam bindings` block from the session's instructions. Straw Boss's block is the last text of `main.md`, inside the integration markers: `main.md` is the system prompt of every main, a coordinator and the integrator alike, so each session holds exactly one block, in front of it before its first step, with no file to read. The tower runs no skill and holds none; its prompts carry only the forwarding.
+`integrating` names seven seams (Handoff route, Batch owner, Approval, Record, Escalation route, Settings, Step runner) and reads one `## Seam bindings` block from the session's instructions. Straw Boss's block is the last text of `main.md`, inside the integration markers: `main.md` is the system prompt of every main, a coordinator and the integrator alike, so each session holds exactly one block, in front of it before its first step, with no file to read. The train prompt binds the Step runner for the train's own session. The tower runs no skill and holds none; its prompts carry only the forwarding.
 
 <details>
 <summary>Details</summary>
@@ -1328,6 +1328,8 @@ pi-straw-boss hosts subagents itself, on the Maestro engine (`@nubl/maestro`, pi
 - **Packaged.** The child entry every launch passes with `-e` is `src/host/child.ts`, a path kept in every release. The sb server needs pi-intercom, which a plain install does not bring (`pi install npm:pi-intercom`); the host works without it. The operating guide is the package's skill `pi-straw-boss-subagents`.
 
 ## Orphaned subagents
+
+> These recovery mechanisms apply only to the retired pi-herdr-agents host. For current workers, see [The subagent host](#the-subagent-host).
 
 ```mermaid
 flowchart TD
@@ -1829,12 +1831,12 @@ A button or link the mouse left focused (the logo after a click) does not hold S
 
 #### Documents
 
-A session that shows documents with pi-herdr-doc-review lists them in its dossier under **Documents**, and a click opens one as a tile beside the current view. An HTML document runs in a sandboxed frame without scripts; a text document renders read only.
+A session that shows documents with pi-better-show lists them in its dossier under **Documents**, and a click opens one as a tile beside the current view. An HTML document runs in a sandboxed frame without scripts; a text document renders read only.
 
 <details>
 <summary>Details</summary>
 
-A session that shows documents with [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 or newer (`show_doc`, or a Mini SDD spec that opens on its own) lists them in its dossier under **Documents** within 2 s, and a parchment badge on a unit's token counts those still on screen in its terminal (a tower lists them only in its dossier). On that session's comms a document that arrives opens as a tile beside the log without taking focus, unless four tiles are open already (it never pushes out one you opened); anywhere else (the map, a base, another session) only the badge changes, and a page that opens on a session with documents opens none.
+A session that shows documents with [pi-better-show](https://www.npmjs.com/package/pi-better-show) 0.1.0 or newer (`show_doc`, or a Mini SDD spec that opens on its own) lists them in its dossier under **Documents** within 2 s, and a parchment badge on a unit's token counts those still on screen in its terminal (a tower lists them only in its dossier). On that session's comms a document that arrives opens as a tile beside the log without taking focus, unless four tiles are open already (it never pushes out one you opened); anywhere else (the map, a base, another session) only the badge changes, and a page that opens on a session with documents opens none. Straw Boss still lists documents from the archived pi-herdr-doc-review; only pi-better-show delivers interactive Markdown block answers to the owner.
 
 A click in the dossier opens one, and so does **open beside** on a `show_doc` card while its document is listed (an older card stays text). An HTML document is a frame sandboxed without scripts: the page's attribute and the server's policy both leave it an opaque origin, so it runs no script, cannot read the API or the cookie, and loads only images, stylesheets, and fonts from its own directory. Its links open in a new tab, and a form with `action="cgi-bin:pi-answer"` answers the session exactly as a Chawan submission does (the owner delivers it): each page view can send once, so **Back** and submit says "Already sent" and **Reload** sends again.
 
@@ -3054,7 +3056,7 @@ The agent event compares its terminal with the pane's only when the payload name
 
 ## Process hygiene and slots
 
-Release 1 of this section (layer 2 of the plan in `docs/specs/2026-11-04-procs.md`): whatever a worker starts dies with the worker, and a worktree is not removed from under a running process. Heavy-command slots, the Linux cgroup path and the CPU stall monitor come with release 2 and are not built yet; this section grows with them.
+Release 1 of this section (layer 2 of the plan in `docs/specs/2026-11-04-procs.md`): whatever a worker starts dies with the worker, and a worktree is not removed from under a running process. Heavy-command slots and the Linux cgroup path are still planned. See **The stall watch** below for the detection that already runs.
 
 **Why.** pi stops a bash call's process group (`killProcessTree`, SIGKILL to the group of the shell it started). `timeout`, `setsid`, `detached: true` spawns and test runners put their children in groups of their own, so a worker that ends, or is killed, leaves them behind, reparented to launchd or init. On 11/03 four such node test processes ran for six hours at 55 to 60% CPU each in a worktree the parent had already removed.
 
@@ -3064,7 +3066,7 @@ Every pi that loads the `src/hygiene.ts` extension (a main, a worker, any sessio
 
 ### Registering a worker
 
-A pi with `PI_SUBAGENT_ID` set (a pi-herdr-agents worker) sends `procs-hello {pid, started, subagentId, sessionFile, pane, terminal, cwd}` to the sb server over the control socket at `session_start`, beats every 30 s, and sends `procs-bye` when it quits (a reload or a switch of session keeps the process, so it is not a bye). The server finds the pid in its own process table and checks the start time; it finds the worktree root from `cwd` (the nearest `.git` going up is a file with `gitdir:`; a worker in the main checkout has no worktree and gets no cwd rule). Records live in `<slot dir>/procs/owners.json` (mode 600).
+A pi with `PI_SUBAGENT_ID` set (including a worker launched by Straw Boss) sends `procs-hello {pid, started, subagentId, sessionFile, pane, terminal, cwd}` to the sb server over the control socket at `session_start`, beats every 30 s, and sends `procs-bye` when it quits (a reload or a switch of session keeps the process, so it is not a bye). The server finds the pid in its own process table and checks the start time; it finds the worktree root from `cwd` (the nearest `.git` going up is a file with `gitdir:`; a worker in the main checkout has no worktree and gets no cwd rule). Records live in `<slot dir>/procs/owners.json` (mode 600).
 
 <details>
 <summary>Details</summary>
