@@ -347,7 +347,7 @@ test("the prompt's poll answers as the head's (head: true), and the stand-in is 
 	let last: Record<string, unknown> = {};
 	const timer = setInterval(() => void ask(s, { cmd: "prompt-poll", workspace: got.workspace, pid }).then((r) => (last = r), () => {}), 20);
 	try {
-		await until(() => world.herdr.pane(got.pane).agent === "head", "the stand-in under the head's label");
+		await until(() => world.herdr.pane(got.pane).agent === "head" && last.ok === true, "the head's stand-in and the first completed poll reply");
 		assert.deepEqual({ ...last }, { ok: true, label: "Head tower", state: "standing", queued: 0, leave: false, head: true, waits: [], auto: false });
 		assert.equal(world.herdr.pane(got.pane).standinMessage, "standing by");
 		assert.deepEqual(world.herdr.agentCalls.filter((c) => c.method === "pane.report_agent").map((c) => c.params.agent), ["head"]);
