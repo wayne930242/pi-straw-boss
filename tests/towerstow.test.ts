@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { foregroundOf, type IdleFacts, idleGate, type PaneFacts, paneGate, reopenGate, seatOpen } from "../src/server/towerstow.ts";
+import { foregroundOf, type IdleFacts, idleGate, type PaneFacts, paneGate, reopenGate, seatOpen, viewerGate } from "../src/server/towerstow.ts";
 
 // The stow gates (src/server/towerstow.ts) say whether a tower's standing pane closes between runs (the boss's order of 2026-11-28: the pane stays only while a card waits for him). Each rule is pinned alone: a case in
 // which only that rule keeps the pane (a rule dropped fails its case), and the order the rules are asked in (a rule moved fails a case where two of them keep it).
@@ -46,6 +46,21 @@ test("reopenGate: a standing pane always comes back; under headless runs only a 
 		[{ headless: true, stowed: false, attended: false }, false],
 	];
 	for (const [f, open] of cases) assert.equal(reopenGate(f), open, JSON.stringify(f));
+});
+
+test("viewerGate: a headless ensure-tower makes a viewer on Open viewer wherever none stands, and on a plain attended ensure only with the service it makes (the viewer flap of 2026-11-28)", () => {
+	const cases: [Parameters<typeof viewerGate>[0], boolean][] = [
+		[{ asked: "attended", attended: true, service: "none" }, true],
+		[{ asked: "attended", attended: false, service: "none" }, false],
+		[{ asked: "attended", attended: true, service: "tabless" }, false],
+		[{ asked: "attended", attended: true, service: "tab" }, false],
+		[{ asked: true, attended: false, service: "none" }, true],
+		[{ asked: true, attended: true, service: "tabless" }, true],
+		[{ asked: true, attended: true, service: "tab" }, false],
+		[{ asked: false, attended: true, service: "none" }, false],
+		[{ asked: false, attended: true, service: "tabless" }, false],
+	];
+	for (const [f, open] of cases) assert.equal(viewerGate(f), open, JSON.stringify(f));
 });
 
 test("paneGate: a lone standing pane with the prompt at rest stows; each rule alone keeps it, with its reason", () => {

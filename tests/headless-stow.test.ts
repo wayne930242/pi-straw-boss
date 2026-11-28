@@ -103,6 +103,29 @@ test("a card that opens for a tower whose viewer closed brings a fresh viewer ba
 	await closed(fresh);
 });
 
+// Seen 2026-11-28 06:41:36 (server.log): a session's plain ensure-tower came 0.2 s after the idle close stowed wJ's viewer, while the service registered again with no pane, and got a fresh viewer that the idle close took
+// again 35 s later. Red before 0.116.2: `openHeadless` made a viewer for every attended ensure that found the service with no tab.
+test("a plain ensure-tower finds the service whose viewer closed and makes no viewer: only a card or a run brings it back, or the boss's own Open viewer", async () => {
+	const { s, pane } = await setup();
+	await closed(pane);
+	const tabs = world.herdr.commands("tab", "create").length;
+	const plain = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	assert.equal(plain.ok, true, JSON.stringify(plain));
+	assert.equal(plain.pane, "", "no viewer for a plain ensure");
+	assert.equal(world.herdr.commands("tab", "create").length, tabs, "no tab");
+	assert.equal(readService(world.slot, "wA")?.stowed, true, "still a viewer the idle close took");
+	updateMemory(world.slot, "wA", Date.now(), (m) => void m.entries.push(card("W1")));
+	await until(() => viewerPane(), "a viewer for the card");
+	assert.ok(logged("tower-unstowed", "cards"));
+	const fresh = viewerPane()!;
+	await viewerIn(s, fresh);
+	updateMemory(world.slot, "wA", Date.now(), (m) => void (m.entries.find((e) => e.id === "W1")!.state = "resolved"));
+	await closed(fresh);
+	const asked = await ask(s, { cmd: "ensure-tower", workspace: "wA", view: true });
+	assert.equal(asked.ok, true, JSON.stringify(asked));
+	assert.ok(asked.pane, "Open viewer makes one");
+});
+
 test("a run that starts for a tower whose viewer closed brings a fresh viewer back first, and the run itself stays headless", async () => {
 	const { s, pane } = await setup();
 	await closed(pane);

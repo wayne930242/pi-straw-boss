@@ -93,6 +93,16 @@ export function reopenGate(f: { headless: boolean; stowed: boolean; attended: bo
 	return !f.headless || (f.stowed && f.attended);
 }
 
+/**
+ * Whether a headless `ensure-tower` makes a viewer tab. The boss's own Open viewer (`view: true`) makes one wherever the service has none; an attended session's plain ensure (`"attended"`: a promotion, a main's call)
+ * makes one only with the service it makes. A service that stands with no tab (a viewer the idle close took, or one the boss ended) gets a viewer back by `reopenGate` alone: a plain ensure that came while the identity
+ * registered again after the idle close (seen 2026-11-28 06:41:36) would make a viewer the idle close takes again half a minute later.
+ */
+export function viewerGate(f: { asked: boolean | "attended"; attended: boolean; service: "none" | "tabless" | "tab" }): boolean {
+	if (f.service === "tab" || f.asked === false) return false;
+	return f.asked === true || (f.attended && f.service === "none");
+}
+
 /** Whether a tower with no pane may make its tab in the workspace under its id: after a Herdr restart (`seated` false) only one that still carries the label it had is its own (ids repeat across Herdr servers). */
 export function seatOpen(f: { seated: boolean; label: string | undefined; record: string }): "open" | "stranger" | "gone" {
 	if (f.label === undefined) return "gone";

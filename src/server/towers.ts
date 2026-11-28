@@ -32,7 +32,7 @@ import { runApprover } from "./runapprove.ts";
 import type { Asks } from "./asks.ts";
 import { ageOf, allyTools, briefOf, buildAllyBrief, gatherMains, heldFlag, localTools } from "./towerbrief.ts";
 import { createStanding, type PromptReply, type StandingTimers } from "./standing.ts";
-import { createStow, type StowTimers } from "./towerstow.ts";
+import { createStow, type StowTimers, viewerGate } from "./towerstow.ts";
 import { createKids, type KidsPort } from "./runkids.ts";
 import { resolvePi } from "./runchild.ts";
 import { digestOf, headLabel, openCards, type WaitDigest, type WaitList, waitList, waitRows } from "./waitlist.ts";
@@ -1048,7 +1048,7 @@ export function createTowers(o: TowersOptions): Towers {
 		return { base, bare: base && here[0]!.tokens?.sb_role === "tower" && !here[0]!.agent, terminal: base ? here[0]!.terminal_id : undefined };
 	};
 
-	const openFor = async (target: Workspace, hint: string | undefined, cwd: string | undefined, handedBy?: number, claim?: { pane: string; at: number }, view = false): Promise<Ensured> => {
+	const openFor = async (target: Workspace, hint: string | undefined, cwd: string | undefined, handedBy?: number, claim?: { pane: string; at: number }, view: boolean | "attended" = false): Promise<Ensured> => {
 		const ws = target.workspace_id;
 		let existing = services.get(ws);
 		// Headless runs (docs/specs/2026-11-23-f-entry.md §2.2): the service needs no tab. A tab is made only when a viewer is asked for, and only where none stands; nothing else here types into or marks a pane.
@@ -1127,10 +1127,10 @@ export function createTowers(o: TowersOptions): Towers {
 		return answer(l, true);
 	};
 
-	/** The headless `ensure`: a service with no tab, and a viewer tab on `view` when the service has none. The tab this call makes is typed into once (standing.ts, typegate.ts `onceGate`). */
-	const openHeadless = async (target: Workspace, existing: Live | undefined, cwd: string | undefined, view: boolean): Promise<Ensured> => {
-		const ws = target.workspace_id;
-		if (existing && (!view || !tabless(existing))) {
+	/** The headless `ensure`: a service with no tab, and a viewer tab when towerstow.ts `viewerGate` says so. The tab this call makes is typed into once (standing.ts, typegate.ts `onceGate`). */
+	const openHeadless = async (target: Workspace, existing: Live | undefined, cwd: string | undefined, asked: boolean | "attended"): Promise<Ensured> => {
+		const ws = target.workspace_id, view = viewerGate({ asked, attended: !o.unattended?.(), service: !existing ? "none" : tabless(existing) ? "tabless" : "tab" });
+		if (existing && !view) {
 			if (existing.state !== "waiting") await Promise.race([existing.starting, sleep(o.registerMs ?? REGISTER_WAIT_MS)]);
 			return answer(existing, false);
 		}
@@ -1160,7 +1160,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const target = isSub(asked) ? parentOf(all, asked) : asked;
 		if (!target) throw new Error(`${asked.label} is a sub workspace with no open parent workspace, so it has no tower; open the parent workspace first`);
 		if (isHead(target) || headLive()?.record.workspace === target.workspace_id) throw new Error(`${target.label} is the head tower's workspace: it has no workspace tower, the head tower is its own`);
-		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid, target === asked ? made : undefined, view === "attended" ? !o.unattended?.() : view === true).finally(() => opening.delete(target.workspace_id));
+		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid, target === asked ? made : undefined, view ?? false).finally(() => opening.delete(target.workspace_id));
 		opening.set(target.workspace_id, pending);
 		return pending;
 	};
