@@ -1,6 +1,6 @@
 # A snoozable stale reminder (2026-11-28)
 
-Status: built on `feat/snooze` (base `main` 4655637f, 0.113.2), not released; a reviewer is paired because this changes the main contract. The behavior is in [how-it-works, Device capacity](../how-it-works.md#device-capacity). It changes the `stale` flag of [capacity](2026-11-24-capacity.md).
+Status: released in 0.115.0 ([notes](../releases/0.115.0.md)); a reviewer was paired because this changes the main contract. The behavior is in [how-it-works, Device capacity](../how-it-works.md#device-capacity). It changes the `stale` flag of [capacity](2026-11-24-capacity.md).
 
 ## Boss words (binding)
 
