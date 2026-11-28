@@ -156,6 +156,7 @@ export interface Towers extends Returns {
 	recovering(): boolean;
 	/** Gives a workspace its tower (a promotion, `/boss tower`, a handover from a resident tower of this build). */
 	/** `view`: headless runs only (towerRuns.headless): a viewer tab is made when none runs; without it the service has no tab (docs/specs/2026-11-23-f-entry.md §2.2). */
+	viewExisting(workspace: string, holder: string): Promise<string>;
 	ensure(request: { workspace: string; pane?: string; cwd?: string; pid?: number; made?: { pane: string; at: number }; view?: boolean | "attended" }): Promise<Ensured>;
 	/** The boss closed the tower: its tab goes, and the service with it. */
 	close(workspace: string): Promise<{ workspace: string; id: string }>;
@@ -1160,6 +1161,7 @@ export function createTowers(o: TowersOptions): Towers {
 		const target = isSub(asked) ? parentOf(all, asked) : asked;
 		if (!target) throw new Error(`${asked.label} is a sub workspace with no open parent workspace, so it has no tower; open the parent workspace first`);
 		if (isHead(target) || headLive()?.record.workspace === target.workspace_id) throw new Error(`${target.label} is the head tower's workspace: it has no workspace tower, the head tower is its own`);
+		if (view === true) while (opening.has(target.workspace_id)) await opening.get(target.workspace_id); // an ordinary ensure in flight may return without a viewer
 		const pending = opening.get(target.workspace_id) ?? openFor(target, target === asked ? pane : undefined, cwd, pid, target === asked ? made : undefined, view ?? false).finally(() => opening.delete(target.workspace_id));
 		opening.set(target.workspace_id, pending);
 		return pending;
@@ -1459,6 +1461,26 @@ export function createTowers(o: TowersOptions): Towers {
 		},
 		owns: (id) => [...services.values()].some((l) => l.record.id === id),
 		watchSend: async (workspace, session, text, facts) => ((l) => (l && l.state === "live" && !l.stopped && !isHeadL(l) && l.control ? l.control.notify(session, { text, ...facts }) : Promise.resolve(false)))(services.get(workspace)),
+		async viewExisting(ws, holder) {
+			await activate();
+			const target = (await workspaces(run)).find(w => w.workspace_id === ws);
+			if (!target || isSub(target) || isHead(target) || target.tokens?.tower !== holder) throw new Error("The parent workspace has no live tower");
+			if (holder !== towerId(slot, ws)) {
+				const location = (await o.sessions()).find(s => s.id === holder)?.herdrLocation;
+				if (location?.workspace?.id === ws && location.tab?.id) return location.tab.id;
+			} else {
+				while (opening.has(ws)) await opening.get(ws);
+				const l = services.get(ws);
+				if (l && !l.stopped && l.state === "live" && l.record.id === holder) {
+					if (l.record.tab) return l.record.tab;
+					if (headless()) {
+						const pending = openHeadless(target, l, undefined, true).finally(() => opening.delete(ws));
+						opening.set(ws, pending); return (await pending).tab!;
+					}
+				}
+			}
+			throw new Error("The parent workspace has no live tower viewer");
+		},
 		identityOf: (workspace) => ((l) => (l && l.state === "live" && !l.stopped && !isHeadL(l) ? l.record.id : undefined))(services.get(workspace)),
 		post: async (workspace, to, text, kind, extra) => ((l) => (l?.reach && !l.stopped ? Promise.all(to.map((id) => l.reach!.post(id, text, kind, "session", false, undefined, undefined, extra))).then((r) => r.every((x) => x.status === "sent")) : false))(services.get(workspace)),
 		status: () => [...services.values()].filter((l) => !isHeadL(l)).map(row),

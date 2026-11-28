@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { boardCommand } from "./boardcmd.ts";
 import { bookText } from "./server/logbook.ts";
 import { runHeadCommand, parseHeadArgs } from "./headcmd.ts";
+import { focusTower } from "./towerview.ts";
 import { tabs, workspaces } from "./herdr.ts";
 import { localeCommand, localeOf } from "./locale.ts";
 import { runMemoryCommand } from "./memorycmd.ts";
@@ -157,10 +158,7 @@ export function registerBoss(kit: Kit, { runMode, host, membership, reach, close
 				}
 				if (s.isTower) throw new Error("This session is the tower, not a main agent");
 				if (args.trim() !== "tower") return tell((await membership.promote(true)).text);
-				await membership.joinNet();
-				const tower = await reach.openTower(undefined, true, true); // anyone may open the tower by hand; the boss's own command also starts a server that was stopped on purpose
-				const where = (await s.c.listSessions()).find((x) => x.id === tower.id)?.herdrLocation;
-				if (where?.tab) await cfg.run(["tab", "focus", where.tab.id]);
+				await focusTower(kit, membership.joinNet, reach, req => { if (!server) throw new Error("No tower server"); return server.ask(req, { start: "never" }); });
 			} catch (error) {
 				tell((error as Error).message, "error");
 			}

@@ -9,7 +9,7 @@ import { isHead, isSub, type Pane, panes, parentOf, type Session, towerModel, wo
 import type { Kit, Scope, SendResult } from "./state.ts";
 import { inside } from "./link/routing.ts";
 import { type Ctx, makeCtx } from "./server/client.ts";
-import { slotOf } from "./server/record.ts";
+import { slotOf, towerId } from "./server/record.ts";
 import { noteLedger } from "./server/ledger.ts";
 import { ensureTowerVia, STOPPED, type TowerAnswer } from "./server/towerclient.ts";
 
@@ -90,7 +90,7 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 	 * The tower of this workspace, or of another by id or label. A missing tower is opened only in this workspace: by /boss tower, by a main, or by the guard's rule. With
 	 * `towerRuns.enabled` the sb server makes it (it starts no pi); `boss` is the boss's own command, which may start a server that was stopped on purpose.
 	 */
-	const openTower = async (query?: string, create = s.isMain, boss = false) => {
+	const openTower = async (query?: string, create = s.isMain, boss = false, view = false) => {
 		const all = await workspaces(run);
 		const found = all.filter((w) => (query ? w.workspace_id === query || w.label === query : w.workspace_id === s.at.workspaceId));
 		if (found.length !== 1) {
@@ -108,14 +108,14 @@ export function createReach({ pi, cfg, s, guiDir, me, role, tell }: Kit, server:
 			throw new Error(`${target.label} has no tower yet: it opens when a member there promotes itself to main`);
 		}
 		if (towerRunsEnabled(cfg.stateDir ?? guiDir)) {
-			// A live tower is the tower, whoever runs it; otherwise the server stands in for it.
-			if (held && (await live(held))) return { target, routed: target !== asked ? asked : undefined, id: held, opened: false };
-			const got = await ensureTowerVia(server.ctx(), { workspace: target.workspace_id, cwd: process.cwd(), boss }).catch((error: Error) => {
+			// A legacy resident already has a tab. A managed identity may be live without a viewer.
+			if (held && (!view || held !== towerId(server.ctx().slot, target.workspace_id)) && (await live(held))) return { target, routed: target !== asked ? asked : undefined, id: held, opened: false };
+			const got = await ensureTowerVia(server.ctx(), { workspace: target.workspace_id, cwd: process.cwd(), boss, view }).catch((error: Error) => {
 				// A server stopped on purpose is told once per session, whichever automatic path (a promotion, the guard) hit it first; the error still goes to the caller.
 				if (error.message === STOPPED && !toldStopped) tell(`Straw Boss: ${STOPPED}`, "warning"), toldStopped = true;
 				throw error;
 			});
-			return { target, routed: target !== asked ? asked : undefined, id: got.id, opened: got.opened };
+			return { target, routed: target !== asked ? asked : undefined, id: got.id, opened: got.opened, tab: got.tab };
 		}
 		const moveFirst = (tabId: string) => api("tab.move", { tab_id: tabId, insert_index: 0 }).catch((error: Error) => tell(`Straw Boss: could not move the tower tab first: ${error.message}`, "warning"));
 		return { target, routed: target !== asked ? asked : undefined, ...(await ensureTower({ run, sleep, live, moveFirst, model: towerModel(guiDir), trustDir: trustDir(guiDir) }, target, process.cwd())) };

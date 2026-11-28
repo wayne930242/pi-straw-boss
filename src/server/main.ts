@@ -482,6 +482,10 @@ export async function runServer(o: ServerOptions): Promise<ServerHandle> {
 		const noAsk = askRefused(request, unattended);
 		if (noAsk) return Promise.resolve({ ok: false, error: noAsk });
 		switch (request.cmd) {
+			case "view-existing-tower": {
+				const workspace = text(request.workspace), holder = text(request.holder);
+				return workspace && holder && request.view === true ? answer(async t => ({ tab: await t.viewExisting(workspace, holder) })) : Promise.resolve({ ok: false, error: "Missing parent tower identity" });
+			}
 			case "ensure-tower": {
 				const claim = typeof request.made === "object" && request.made !== null ? (request.made as Record<string, unknown>) : undefined;
 				const made = text(claim?.pane) && typeof claim?.at === "number" && Number.isFinite(claim.at) ? { pane: text(claim.pane)!, at: claim.at } : undefined;

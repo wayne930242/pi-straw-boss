@@ -70,13 +70,33 @@ test("/boss tower <prompt> with the flag off says what it needs and writes nothi
 	assert.deepEqual(sw.running, []);
 });
 
-test("a live tower is the tower: a session does not ask the server for it", async () => {
+test("a bare tower focuses a legacy resident without creating a service", async () => {
 	world.herdr.workspace("wA").tokens.tower = "tower-wA";
 	await world.tower("tower-wA", "wA:t7", "wA:p7", false, resident()).start();
 	const a = world.agent({ id: "a", name: "docs", pane: "wA:p1", tab: "wA:t1", env: envOf(), deps: { server: server() } });
 	await a.start();
 	await a.command("tower");
-	assert.deepEqual(sw.running, [], "no server was started");
+	assert.deepEqual(sw.running, []);
+	assert.equal(world.herdr.commands("tab", "focus").length, 1);
+
+});
+
+for (const sub of [false, true]) test(`bare tower opens and focuses a managed tabless viewer (sub=${sub})`, async () => {
+	sw.setFlag(true, undefined, true); sw.unattended = () => true;
+	if (sub) {
+		world.herdr.workspace("wA").worktree = { repo_key: "alpha", is_linked_worktree: false, checkout_path: "/a" };
+		world.herdr.workspaces.push({ workspace_id: "wS", label: "feature", tokens: {}, worktree: { repo_key: "alpha", is_linked_worktree: true, checkout_path: "/s" } });
+		world.herdr.addTab("wS:t1", "feature", "wS:p1");
+	}
+	const ws = sub ? "wS" : "wA", a = world.agent({ id: "a", pane: `${ws}:p1`, tab: `${ws}:t1`, env: envOf(), deps: { server: server() } });
+	await a.start();
+	if (sub) { await a.command("tower"); assert.equal(readService(sw.slot, "wA"), undefined); }
+	const managed = await ensureTowerVia(sw.ctx(), { workspace: "wA" });
+	world.herdr.workspace("wA").tokens.tower = managed.id;
+	assert.ok(!managed.tab); await a.command("tower");
+	const tab = readService(sw.slot, "wA")?.tab; assert.ok(tab, JSON.stringify(a.notices));
+	assert.deepEqual(world.herdr.commands("tab", "focus").at(-1), ["tab", "focus", tab]);
+	if (sub) assert.deepEqual(world.herdr.workspace("wS").tokens, {});
 });
 
 test("with the flag off a session opens the tower as before, and never asks the server", async () => {
