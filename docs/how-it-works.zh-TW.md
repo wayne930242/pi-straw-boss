@@ -3565,7 +3565,7 @@ Herdr 失敗的啟動記為 `herdr <code>: <stderr> | <message>`；run 結束，
 
 不論時間到了沒，下列情況 pane 都會留著：它和另一個 pane 共用分頁（老闆自己的分割、隊友 run 的 pane）；它是工作區最後一個 pane（Herdr 會連工作區一起關掉，而塔台的佇列、記憶與帳本都以工作區 id 保存，重新建立的工作區拿不到同一個 id）；老闆用 Ctrl+D 接手了它，或裡面跑著不屬於 run 的 pi；塔台提示沒有在那裡輪詢（只有它的輪詢能證明 pane 裡有什麼，Windows 也一樣）；提示最近一次輪詢說老闆的輸入列、卡片欄位或選單裡還有字；以及它的前景除了 shell 和那個提示之外還有別的東西。主塔台的 pane 從不關閉：它是主塔台工作區唯一的 pane。pane 關掉時日誌寫 `tower-stowed`；由 pane 本身留下時寫 `tower-stow-kept` 並附上原因（`last`、`tab`、`draft`、`parked`、`agent`、`prompt`、`program`）。
 
-pane 會照第一次開啟的方式回來（一個帶無線電塔圖示的分頁，移到最前面，它的 pane 標為 `sb_role=tower`，身分隨之重新註冊）：在 run 或隊友 run 啟動之前、塔台有卡片開啟時（好讓 `N cards wait` 那一列顯示出來），以及 `ensure-tower` 時（單獨的 `/boss tower`、升任、`up`）；日誌寫 `tower-unstowed`，附 `why=run`、`ally`、`cards` 或 `ensure`。老闆可以用 `/boss tower <message>` 和頁面的輸入區找到沒有 pane 的塔台，它們會在新的 pane 裡喚醒一次 run。Herdr 重啟後，沒有 pane 的塔台只有在其 id 下的工作區仍帶著它原本的標籤時，才仍是那個工作區的塔台：這時會重新寫入它的 token；重啟後那一分鐘過了以後，標籤不同的工作區就是別人的，服務會像結束的塔台那樣結束，不在那裡建立或標記任何東西。無介面的 run 維持它自己的規則（觀看分頁會自行關閉），`towerRuns.enabled: false` 什麼都不變。
+pane 會照第一次開啟的方式回來（一個帶無線電塔圖示的分頁，移到最前面，它的 pane 標為 `sb_role=tower`，身分隨之重新註冊）：在 run 或隊友 run 啟動之前、塔台有卡片開啟時（好讓 `N cards wait` 那一列顯示出來），以及 `ensure-tower` 時（單獨的 `/boss tower`、升任、`up`）；日誌寫 `tower-unstowed`，附 `why=run`、`ally`、`cards` 或 `ensure`。老闆可以用 `/boss tower <message>` 和頁面的輸入區找到沒有 pane 的塔台，它們會在新的 pane 裡喚醒一次 run。Herdr 重啟後，沒有 pane 的塔台只有在其 id 下的工作區仍帶著它原本的標籤時，才仍是那個工作區的塔台：這時會重新寫入它的 token；重啟後那一分鐘過了以後，標籤不同的工作區就是別人的，服務會像結束的塔台那樣結束，不在那裡建立或標記任何東西。無介面的 run 下，同樣的規則會關掉塔台的 viewer（[服務與 viewer](#無介面的-run)），`towerRuns.enabled: false` 什麼都不變。
 
 #### 一道閘門
 
@@ -4167,7 +4167,7 @@ server 只接受這個 run收下的、由為它自己的裝置開啟的主智慧
 
 **結束。** 沒有 `tower_done` 就退出的 run 立刻記為 `crashed`，它的事件放回佇列並加上標記。30 秒沒有輪詢的 run 會被殺掉：殺它的行程群組，Windows 上用 `taskkill /pid <pid> /T /F`。重啟時先排空：不再開新的 run，每個還活著的 run 最多有 60 秒收尾，然後關掉 stdin；沒拿走的事件留在佇列，老闆對話在老闆下一句話時接續同一個工作階段。
 
-**服務與 viewer。** 服務不需要分頁：主塔台的轉送、ally 喚醒和控制端的開啟都不開分頁。session 的 `ensure-tower`（升格、main 呼叫塔台、單打 `/boss tower`）在有人值守的裝置上會要一個 viewer：開一個分頁，只打一次 `exec node "<cli.mjs>" prompt …`（Windows 上加 `; exit`），而且只限這次呼叫開出分頁後一分鐘內、viewer 第一次輪詢之前（typegate.ts `onceGate`）。viewer 結束時窗格跟著關，服務則在沒有分頁的情況下繼續。
+**服務與 viewer。** 服務不需要分頁：主塔台的轉送、ally 喚醒和控制端的開啟都不開分頁。session 的 `ensure-tower`（升格、main 呼叫塔台、單打 `/boss tower`）在有人值守的裝置上會要一個 viewer：開一個分頁，只打一次 `exec node "<cli.mjs>" prompt …`（Windows 上加 `; exit`），而且只限這次呼叫開出分頁後一分鐘內、viewer 第一次輪詢之前（typegate.ts `onceGate`）。viewer 結束時窗格跟著關，服務則在沒有分頁的情況下繼續。沒有東西等老闆時 viewer 也會關，依 [pane 何時關閉](#pane-何時關閉) 的規則（老闆 2026-11-28 的決定；0.113.0 以前 viewer 會留到它自己結束）：這時紀錄寫上 `stowed`，這樣的 viewer 會在塔台有卡片開啟時，或在 run 或隊友 run 啟動之前，以新的 viewer 回來，照上面的方式只打一次，而且只在有人值守的裝置上（towerstow.ts `reopenGate`）。老闆自己結束的 viewer，或從來沒有 viewer 的服務，不會得到分頁；viewer 重開不成時不會擋住 run（`tower-unstow-failed`），主塔台的 viewer 和工作區的最後一個 pane 都會留著。
 
 **viewer** 就是塔台提示，輸入列上方多了 run 的即時文字：`│` 是助理的文字，`▸` 與 `✓`/`✗` 是工具，`·` 是 run 的狀態，`?` 是對話框；每一行都在伺服器清掉跳脫序列，viewer 再清一次，也沒有一行會被讀成卡片。單獨打的一行可以是 `/stop`（伺服器寫入 `abort`；老闆的下一行等 run 閒下來才送）或 `@<workspace> <text>`：老闆的話直接送到那個塔台，用 id 或完整標籤指定，子工作區送到它的上層；主塔台的佇列和詢問都看不到。貼上的文字從不算指令或指定對象。主塔台的 viewer 會列出每個 run 的對話框（自己的排前面），也會顯示被指定的塔台的 run：開始時一行 `↳`，每則講完的訊息一行 `[label]`，結束時一行 `✓` 或 `✗`；別的塔台有等待卡開啟或關閉時，它的卡片檢視會重讀一次。老闆在 viewer 打的話以 `door: viewer` 排入佇列，在這台電腦的網頁上打的以 `door: page` 排入。
 

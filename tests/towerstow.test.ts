@@ -1,18 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { foregroundOf, type IdleFacts, idleGate, type PaneFacts, paneGate, seatOpen } from "../src/server/towerstow.ts";
+import { foregroundOf, type IdleFacts, idleGate, type PaneFacts, paneGate, reopenGate, seatOpen } from "../src/server/towerstow.ts";
 
 // The stow gates (src/server/towerstow.ts) say whether a tower's standing pane closes between runs (the boss's order of 2026-11-28: the pane stays only while a card waits for him). Each rule is pinned alone: a case in
 // which only that rule keeps the pane (a rule dropped fails its case), and the order the rules are asked in (a rule moved fails a case where two of them keep it).
 
-const idle = (over: Partial<IdleFacts> = {}): IdleFacts => ({ head: false, headless: false, ready: true, cards: 0, state: "standing", run: false, queued: 0, soon: false, idleFor: 31_000, idleMs: 30_000, ...over });
+const idle = (over: Partial<IdleFacts> = {}): IdleFacts => ({ head: false, ready: true, cards: 0, state: "standing", run: false, queued: 0, soon: false, idleFor: 31_000, idleMs: 30_000, ...over });
 const pane = (over: Partial<PaneFacts> = {}): PaneFacts => ({ pane: { agent: "tower" }, inTab: 1, inWorkspace: 2, parked: false, prompt: true, draft: false, foreground: "clean", ...over });
 
 test("idleGate: an idle tower with no card stows; each rule alone keeps the pane, with its reason", () => {
 	assert.deepEqual(idleGate(idle()), { stow: true });
 	const cases: [Partial<IdleFacts>, string][] = [
 		[{ head: true }, "head"],
-		[{ headless: true }, "headless"],
 		[{ ready: false }, "unready"],
 		[{ cards: 1 }, "cards"],
 		[{ run: true }, "run"],
@@ -29,12 +28,24 @@ test("idleGate: an idle tower with no card stows; each rule alone keeps the pane
 
 test("idleGate: the head keeps its pane before any other rule, and a card keeps it before a run or the clock", () => {
 	assert.deepEqual(idleGate(idle({ head: true, cards: 2, run: true })), { stow: false, why: "head" });
-	assert.deepEqual(idleGate(idle({ headless: true, cards: 2 })), { stow: false, why: "headless" });
+	assert.deepEqual(idleGate(idle({ head: true, ready: false })), { stow: false, why: "head" });
 	assert.deepEqual(idleGate(idle({ cards: 1, run: true, idleFor: 0 })), { stow: false, why: "cards" });
 	assert.deepEqual(idleGate(idle({ run: true, queued: 3, idleFor: 0 })), { stow: false, why: "run" });
 	assert.deepEqual(idleGate(idle({ queued: 1, idleFor: 0 })), { stow: false, why: "queued" });
 	// No state yet (the runs have not attached the service): no run is known to be live, and the clock decides.
 	assert.deepEqual(idleGate(idle({ state: undefined })), { stow: true });
+});
+
+test("reopenGate: a standing pane always comes back; under headless runs only a viewer the idle close took, and only on an attended device (the boss's order of 2026-11-28)", () => {
+	const cases: [{ headless: boolean; stowed: boolean; attended: boolean }, boolean][] = [
+		[{ headless: false, stowed: false, attended: false }, true],
+		[{ headless: false, stowed: true, attended: false }, true],
+		[{ headless: true, stowed: true, attended: true }, true],
+		[{ headless: true, stowed: true, attended: false }, false],
+		[{ headless: true, stowed: false, attended: true }, false],
+		[{ headless: true, stowed: false, attended: false }, false],
+	];
+	for (const [f, open] of cases) assert.equal(reopenGate(f), open, JSON.stringify(f));
 });
 
 test("paneGate: a lone standing pane with the prompt at rest stows; each rule alone keeps it, with its reason", () => {

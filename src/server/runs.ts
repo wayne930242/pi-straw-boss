@@ -203,6 +203,8 @@ export interface ServiceRef {
 	renewing?(): boolean;
 	/** A service whose pane closed between runs (towerstow.ts) gets it made again before a run starts: once its identity has registered with the new pane, it pokes again. */
 	seat?(why: "run" | "ally"): void;
+	/** Under headless runs: whether a run waits for the service's viewer to be made again first (a viewer the idle close took, on an attended device; towerstow.ts `reopenGate`). */
+	viewer?(): boolean;
 	/** The tower's memory in counts for the GUI's snapshot (towermemory.ts). */
 	memory?(): MemorySummary;
 }
@@ -479,7 +481,7 @@ export function createRuns(o: RunsOptions) {
 	const begin = async (svc: Svc) => {
 		if (stopped || svc.run || svc.state !== "standing" || !o.enabled() || !waitingOf(svc).some((e) => !e.quiet)) return;
 		if (!svc.ref.live()) return; // the identity registers first: runs reply under it. The service pokes again when it is live.
-		if (!headlessOn() && !svc.ref.record().pane) return void svc.ref.seat?.("run"); // its pane closed between runs: made first
+		if (!svc.ref.record().pane && (!headlessOn() || svc.ref.viewer?.())) return void svc.ref.seat?.("run"); // its pane (a headless viewer) closed between runs: made first
 		if (slots >= o.max()) return void blocked.add(svc);
 		slots++;
 		svc.state = "waking";
@@ -729,7 +731,7 @@ export function createRuns(o: RunsOptions) {
 		for (const { device, items } of devicesWaiting(svc)) {
 			if (stopped || !o.enabled() || svc.refusedAt !== undefined && now() - svc.refusedAt < t.refuse) return;
 			if (!svc.ref.live()) return; // the identity registers first; the service pokes again when it is live
-			if (!headlessOn() && !svc.ref.record().pane) return void svc.ref.seat?.("ally"); // the ally pane is split off the standing pane, which is made first
+			if (!svc.ref.record().pane && (!headlessOn() || svc.ref.viewer?.())) return void svc.ref.seat?.("ally"); // the ally pane is split off the standing pane (or the headless viewer comes back), which is made first
 			if (slots >= o.max()) return void blocked.add(svc);
 			await beginAlly(svc, device, items).catch((cause: Error) => error("ally-begin", cause.message));
 		}

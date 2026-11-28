@@ -309,7 +309,8 @@ export function createTowers(o: TowersOptions): Towers {
 		// The logbook's read mark rides on the digest's keys (`book:<seq>`, this slot's book): a run that ended well read the rows its brief carried.
 		clearDigest: async (keys) => { for (const k of keys) if (k.startsWith(BOOK_KEY)) markRead(slot.dir, l.record.workspace, Number(k.slice(BOOK_KEY.length)), now()); await digest.drop(l.record.workspace, keys.filter((k) => !k.startsWith(BOOK_KEY))); },
 		renewPane: (runId) => renew(l, runId),
-		renewing: () => l.renewing === true, seat: (why) => void stow.open(l.record.workspace, why).catch((cause: Error) => error("tower-seat", cause.message)),
+		renewing: () => l.renewing === true, seat: (why) => void stow.open(l.record.workspace, why).catch((cause: Error) => (error("tower-seat", cause.message), unstow(l))),
+		viewer: () => headless() && tabless(l) && stow.wants(l),
 		// The run that was shown an expired wait has polled: it will not be shown again (towermemory.ts).
 		shown: (ids) => { try { markShown(slot, l.record.workspace, now(), ids); } catch (cause) { error("memory", (cause as Error).message); } },
 		memory: () => {
@@ -820,6 +821,15 @@ export function createTowers(o: TowersOptions): Towers {
 			else if (l.state === "live") await publish(l);
 		}
 	};
+	/** Headless runs: a viewer the idle close took could not be made again; the service stops waiting for one, so its runs start with no tab, and the next look pokes them. */
+	const unstow = (l: Live) => {
+		if (!headless() || l.stopped || services.get(l.record.workspace) !== l || !l.record.stowed) return;
+		const { stowed: _, ...kept } = l.record;
+		l.record = kept;
+		writeService(slot, kept);
+		log.line("tower-unstow-failed", { workspace: kept.workspace });
+		runs.poke(kept.workspace);
+	};
 	/** Headless runs: the service's viewer pane is gone, and the service goes on with no tab. The identity registers again with no pane, as after a move (`tower-found`). */
 	const untab = async (l: Live) => {
 		if (l.stopped || services.get(l.record.workspace) !== l) return;
@@ -833,7 +843,7 @@ export function createTowers(o: TowersOptions): Towers {
 	const reseat = async (l: Live, record: ServiceRecord, fresh: boolean): Promise<Live> => { l.record = record; writeService(slot, record); await release(l); await standing.detach(record.workspace); if (services.get(record.workspace) === l) services.delete(record.workspace); return adopt(record, fresh, true); };
 	const stow = createStow<Live>({ run, api: cfg.api, log, now, stateDir: slot.stateDir, ...(o.stow ? { timers: o.stow } : {}), list: () => [...services.values()].filter((l) => !l.stopped), current: (ws) => ((l) => (l && !l.stopped ? l : undefined))(services.get(ws)), record: (l) => l.record, place: (l, record) => void (l.record = record), head: isHeadL, seated: (l) => l.seated, recovering: () => now() < recoverUntil,
 		ready: (l) => l.state === "live" && l.seated && !l.stopped && !l.renewing && Boolean(l.client?.isConnected()), seat: async (l) => void ((l.seated = true), await publish(l)), hold: (l) => ((was) => ((l.state = "registering"), (l.renewing = true), () => void ((l.state = was), (l.renewing = false))))(l.state),
-		headless, status: (ws) => runs.status(ws), queued: (ws) => runs.queue(ws).filter((e) => !e.quiet).length, soon: (ws, ms) => runs.startsWithin(ws, ms), cards: (l) => cardsFor(l), prompt: (ws) => standing.here(ws), reseat, lose });
+		headless, attended: () => !o.unattended?.(), status: (ws) => runs.status(ws), queued: (ws) => runs.queue(ws).filter((e) => !e.quiet).length, soon: (ws, ms) => runs.startsWithin(ws, ms), cards: (l) => cardsFor(l), prompt: (ws) => standing.here(ws), reseat, lose });
 
 	// --- the start ------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1130,7 +1140,8 @@ export function createTowers(o: TowersOptions): Towers {
 			const tab = await createTab(run, ws, record.cwd ?? slot.stateDir, [], TOWER_LABEL);
 			await report(run, "pane", tab.paneId, { sb_role: "tower" }).catch(() => {});
 			await cfg.api("tab.move", { tab_id: tab.tabId, insert_index: 0 }).catch((cause: Error) => error("tab-move", cause.message));
-			record = { ...record, pane: tab.paneId, tab: tab.tabId };
+			const { stowed: _, ...kept } = record;
+			record = { ...kept, pane: tab.paneId, tab: tab.tabId };
 		}
 		const l = existing ? await reseat(existing, record, view) : (writeService(slot, record), adopt(record, view, true));
 		log.line(existing ? "tower-viewer" : "tower-opened", { workspace: ws, id: record.id, ...(view ? { pane: record.pane, tab: record.tab } : { tab: "none" }) });

@@ -34,6 +34,8 @@ export interface ServiceRecord {
 	waiting?: true;
 	/** `head` for the head tower's service (its workspace is the head workspace, its folder `head/`); absent for a workspace tower. */
 	kind?: "head";
+	/** The idle close took the pane (towerstow.ts): under headless runs only such a viewer comes back, as a fresh one. Dropped when a pane is made again. */
+	stowed?: true;
 }
 /** What wakes a run (the spec, Wake triggers): an intercom message, the boss typing into the tower, a notice the server raises, a follow-up the last run asked for. */
 /** `link` is a teammate's message an ally run was given: it lives in the link inbox, never in this queue. */

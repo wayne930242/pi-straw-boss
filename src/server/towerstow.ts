@@ -8,6 +8,8 @@ import { nameOf, SHELLS } from "./typegate.ts";
 // is live, nothing waits to wake one, no card of the tower waits, and that has held for `idleMs`, the pane closes (only the pane: Herdr drops the emptied tab itself) and the service goes on with no pane, as a headless
 // service does: its identity stays registered and its token written, so mains still reach it. The next run, ally run, card, or ensure-tower makes the tab again, as the first open made it.
 // What keeps the pane is decided here alone (`idleGate`, `paneGate`, `seatOpen`; their table test is tests/towerstow.test.ts); the look gathers the facts and acts on the answer.
+// Under headless runs (`towerRuns.headless`) the pane is the service's viewer and the same rules close it; it comes back as a fresh viewer only when the idle close took it (`stowed` on the record), and only on an attended
+// device (`reopenGate`): a service of headless runs needs no tab, and a viewer the boss ended himself stays ended.
 // The head tower's pane is never closed: it is its workspace's only pane, so closing it would close the head workspace and take the head's record with it (`lose`). A pane that is the last of its workspace is kept for the
 // same reason: the queue, the memory, and the ledgers are kept under the workspace's id, which a workspace made again does not get.
 
@@ -20,14 +22,12 @@ export interface StowTimers {
 export const STOW: StowTimers = { intervalMs: 3000, idleMs: 30_000 };
 
 /** Why a standing pane stays. */
-export type Keep = "head" | "headless" | "unready" | "cards" | "run" | "held" | "queued" | "soon" | "recent" | "gone" | "agent" | "tab" | "last" | "parked" | "prompt" | "draft" | "program" | "unknown";
+export type Keep = "head" | "unready" | "cards" | "run" | "held" | "queued" | "soon" | "recent" | "gone" | "agent" | "tab" | "last" | "parked" | "prompt" | "draft" | "program" | "unknown";
 export type StowVerdict = { stow: true } | { stow: false; why: Keep };
 const keep = (why: Keep): StowVerdict => ({ stow: false, why });
 
 export interface IdleFacts {
 	head: boolean;
-	/** `towerRuns.headless`: a viewer has its own life (it ends by itself). */
-	headless: boolean;
 	/** The identity is registered, the seat proven, and no pane change is under way. */
 	ready: boolean;
 	/** The tower's own wait cards that wait for the boss. */
@@ -45,7 +45,6 @@ export interface IdleFacts {
 /** The facts of the service, cheap to read: asked before the pane's facts, which cost Herdr calls. */
 export function idleGate(f: IdleFacts): StowVerdict {
 	if (f.head) return keep("head");
-	if (f.headless) return keep("headless");
 	if (!f.ready) return keep("unready");
 	if (f.cards > 0) return keep("cards");
 	if (f.run || f.state === "waking" || f.state === "running" || f.state === "closing") return keep("run");
@@ -89,6 +88,11 @@ export function foregroundOf(info: { shell_pid?: unknown; foreground_processes?:
 	return list.every((p) => (shell !== undefined ? p.pid === shell : list.length === 1 && SHELLS.has(nameOf(p))) || (promptPid !== undefined && p.pid === promptPid) || prompt.test(p.cmdline ?? "")) ? "clean" : "program";
 }
 
+/** Whether a tower with no pane gets its tab again (before a run or an ally run, for a card): a standing pane always does; under headless runs only a viewer the idle close took (`stowed`), and only where the boss is. */
+export function reopenGate(f: { headless: boolean; stowed: boolean; attended: boolean }): boolean {
+	return !f.headless || (f.stowed && f.attended);
+}
+
 /** Whether a tower with no pane may make its tab in the workspace under its id: after a Herdr restart (`seated` false) only one that still carries the label it had is its own (ids repeat across Herdr servers). */
 export function seatOpen(f: { seated: boolean; label: string | undefined; record: string }): "open" | "stranger" | "gone" {
 	if (f.label === undefined) return "gone";
@@ -118,6 +122,8 @@ export interface StowPort<L> {
 	/** The service is not live while its pane changes (no run begins, no pi is admitted); returns the undo. */
 	hold(l: L): () => void;
 	headless(): boolean;
+	/** A boss is at this device (no `unattended` box): only there does a headless viewer come back. */
+	attended(): boolean;
 	status(workspace: string): ServiceStatus | undefined;
 	queued(workspace: string): number;
 	soon(workspace: string, ms: number): boolean;
@@ -139,8 +145,9 @@ export function createStow<L>(o: StowPort<L>) {
 	const processInfo = (pane: string) => run(["pane", "process-info", "--pane", pane]).then((x) => JSON.parse(x).result?.process_info, () => undefined);
 	const idleOf = (l: L, at: number) => {
 		const ws = o.record(l).workspace, status = o.status(ws), from = since.get(ws);
-		return idleGate({ head: o.head(l), headless: o.headless(), ready: o.ready(l), cards: o.cards(l), state: status?.state, run: Boolean(status?.run) || (status?.allyRuns.length ?? 0) > 0, queued: o.queued(ws), soon: o.soon(ws, t.idleMs), idleFor: from ? at - from.at : 0, idleMs: t.idleMs });
+		return idleGate({ head: o.head(l), ready: o.ready(l), cards: o.cards(l), state: status?.state, run: Boolean(status?.run) || (status?.allyRuns.length ?? 0) > 0, queued: o.queued(ws), soon: o.soon(ws, t.idleMs), idleFor: from ? at - from.at : 0, idleMs: t.idleMs });
 	};
+	const wants = (l: L) => reopenGate({ headless: o.headless(), stowed: o.record(l).stowed === true, attended: o.attended() });
 	const said1 = (ws: string, why: Keep) => {
 		if (said.get(ws) === why) return;
 		said.set(ws, why);
@@ -150,7 +157,7 @@ export function createStow<L>(o: StowPort<L>) {
 	/** The pane closes and the service goes on with no pane. Every fact is asked again after the last await; a close Herdr refuses leaves everything as it was. */
 	const close = async (l: L, record: ServiceRecord) => {
 		const ws = record.workspace, undo = o.hold(l);
-		const bare: ServiceRecord = { ...record, pane: "", tab: "" };
+		const bare: ServiceRecord = { ...record, pane: "", tab: "", stowed: true };
 		o.place(l, bare);
 		try {
 			await run(["pane", "close", record.pane]);
@@ -166,8 +173,9 @@ export function createStow<L>(o: StowPort<L>) {
 	};
 	const lookAt = async (l: L) => {
 		const record = o.record(l), ws = record.workspace;
-		if (o.head(l) || o.headless() || opening.has(ws)) return;
+		if (o.head(l) || opening.has(ws)) return;
 		if (!record.pane) {
+			if (!wants(l)) return; // a service of headless runs with no viewer, or one the boss ended: nothing to bring back
 			// A service seated before a Herdr restart is seated again by its workspace's label: its token is written again, and a card or a run makes its tab. A workspace under its id with another label is a stranger's, once the minute is over.
 			if (!o.seated(l)) {
 				const listed = await workspaces(run).catch(() => undefined), seat = listed && seatOpen({ seated: false, label: listed.find((w) => w.workspace_id === ws)?.label, record: record.label });
@@ -221,7 +229,8 @@ export function createStow<L>(o: StowPort<L>) {
 				await report(run, "pane", made.paneId, { sb_role: "tower" });
 				await o.api("tab.move", { tab_id: made.tabId, insert_index: 0 }).catch((cause: Error) => error("tab-move", cause.message));
 				log.line("tower-unstowed", { workspace, pane: made.paneId, why });
-				return await o.reseat(l, { ...record, pane: made.paneId, tab: made.tabId, cwd: dir }, true);
+				const { stowed: _, ...kept } = record;
+				return await o.reseat(l, { ...kept, pane: made.paneId, tab: made.tabId, cwd: dir }, true);
 			} catch (cause) {
 				undo();
 				if (made) await run(["pane", "close", made.paneId]).catch(() => {}); // the pane it made, never the tab
@@ -235,6 +244,8 @@ export function createStow<L>(o: StowPort<L>) {
 	return {
 		look,
 		open,
+		/** Whether the tower with no pane gets its tab again before a run starts (`reopenGate`). */
+		wants,
 		start() {
 			timer ??= setInterval(() => void look(), t.intervalMs);
 			timer.unref();
