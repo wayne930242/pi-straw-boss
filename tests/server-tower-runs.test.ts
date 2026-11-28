@@ -816,15 +816,6 @@ test("a config.json that cannot be parsed keeps the service on, is told once as 
 
 // --- The boss in the run (docs/how-it-works.md, The boss in a run): once the boss speaks in a run, it stays until they leave ---
 
-/** Polls the run for `ms` as its pi does, keeping every command it was handed. */
-const commandsFor = async (s: Running, token: string, ms: number, idle = true) => {
-	const seen: { type: string; text?: string }[] = [];
-	for (const end = Date.now() + ms; Date.now() < end; await sleep(15)) {
-		const command = (await poll(s, token, idle)).command as { type: string; text?: string } | undefined;
-		if (command) seen.push(command);
-	}
-	return seen;
-};
 const woken = async (s: Running, over: Record<string, unknown> = {}, n = 1) => {
 	assert.equal((await ask(s, { cmd: "tower-event", workspace: "wA", text: "look at the board", ...over })).ok, true);
 	const id = await nthRun(n);
@@ -834,6 +825,8 @@ const woken = async (s: Running, over: Record<string, unknown> = {}, n = 1) => {
 };
 
 test("run-boss: while the boss is in the run tower_done stays (no note, no end), the cap does not cut it, and their silence for bossAway hands the run the normal wrap-up: a steer, then tower_done ends it", async () => {
+	// The runs' time is a clock the test moves: windows of the machine's time, polled, missed the steer when the process stood still for a second at a load of 80.
+	const clock = (world.runClock = fakeClock());
 	world.runTimers = { steerAt: 100, quitAt: 300, bossAway: 500, idleSteer: 120, idleEnd: 60_000, quitGrace: 60, signal: 60 };
 	const { s } = await setup();
 	const { id, token } = await woken(s);
@@ -843,14 +836,16 @@ test("run-boss: while the boss is in the run tower_done stays (no note, no end),
 	assert.equal(stay.stay, true, JSON.stringify(stay));
 	assert.match(String(stay.text), /boss/i);
 	assert.deepEqual(readNotes(world.slot, "wA"), [], "a refused end keeps no note");
-	// Past the steer time and the cap: nothing is said to the run while the boss is there.
-	assert.deepEqual(await commandsFor(s, token, 380), []);
-	// A sign of the boss renews the time.
+	// Past the steer time and the cap, short of bossAway: nothing is said to the run while the boss is there.
+	assert.equal(await awakeFor(clock, s, token, 450), undefined);
+	// A sign of the boss renews the time: 450 more is still short of bossAway since it.
 	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true);
-	assert.deepEqual(await commandsFor(s, token, 380), []);
-	// Their silence ends it: the idle steer, no cap quit.
-	const after = await commandsFor(s, token, 900);
-	assert.deepEqual(after.map((c) => c.type), ["steer"], JSON.stringify(after));
+	assert.equal(await awakeFor(clock, s, token, 450), undefined);
+	// Their silence ends it: at bossAway the run gets the normal wrap-up, so the idle steer comes idleSteer later, and the cap does not quit it after.
+	assert.equal(await awakeFor(clock, s, token, 50), undefined, "away: the wrap-up begins, the steer waits for idleSteer");
+	assert.equal(await awakeFor(clock, s, token, 119), undefined);
+	assert.equal(await awakeFor(clock, s, token, 1), "steer");
+	assert.equal(await awakeFor(clock, s, token, 1000), undefined, "no cap quit in the wrap-up");
 	const end = await ask(s, { cmd: "run-done", token, note: "boss talked about the board" });
 	assert.equal(end.ok, true);
 	assert.equal(end.stay, undefined);
@@ -902,33 +897,34 @@ test("a run the server is already ending ignores a left: the outcome stays the s
 });
 
 test("the boss's time in a run is bounded: past bossMax the cap applies again", async () => {
+	const clock = (world.runClock = fakeClock());
 	world.runTimers = { quitAt: 250, steerAt: 120, bossMax: 400, bossAway: 60_000, quitGrace: 60, signal: 60 };
 	const { s } = await setup();
 	const { id, token } = await woken(s);
 	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true, "the boss speaks in this event run");
-	assert.deepEqual((await commandsFor(s, token, 300)).map((c) => c.type), [], "the boss is there: the cap waits");
-	const later = await commandsFor(s, token, 600);
-	assert.ok(later.some((c) => c.type === "quit"), JSON.stringify(later));
+	assert.equal(await awakeFor(clock, s, token, 399), undefined, "the boss is there: the cap waits");
+	assert.equal(await awakeFor(clock, s, token, 1), "quit", "bossMax after the first word: the cap");
 	exit(id);
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the timeout");
 });
 
 test("the boss's 4 hours are counted from their first word in the run, not from their return after each absence (SR-F005)", async () => {
+	const clock = (world.runClock = fakeClock());
 	world.runTimers = { quitAt: 300, steerAt: 150, bossMax: 1500, bossAway: 120, idleSteer: 60_000, idleEnd: 60_000, quitGrace: 60, signal: 60 };
 	const { s } = await setup();
 	const { id, token } = await woken(s);
 	assert.equal((await ask(s, { cmd: "run-boss", token })).ok, true, "the boss speaks in this event run");
-	const first = Date.now();
+	const first = clock.now();
 	// The boss is silent: the idle run is "away" after bossAway, and its grace window keeps the cap off.
-	assert.deepEqual((await commandsFor(s, token, 600)).map((c) => c.type), []);
-	// They come back, and keep coming back every moment (the model is busy with them: its polls are not idle, so no second absence is seen on a slow machine).
+	assert.equal(await awakeFor(clock, s, token, 600), undefined);
+	// They come back, and keep coming back every moment (the model is busy with them: its polls are not idle, so no second absence is seen).
 	let quit = false;
-	while (!quit && Date.now() - first < 2400) {
+	while (!quit && clock.now() - first < 2400) {
 		await ask(s, { cmd: "run-boss", token });
-		quit = (await commandsFor(s, token, 60, false)).some((c) => c.type === "quit");
+		quit = (await awakeFor(clock, s, token, 100, false)) === "quit";
 	}
 	assert.equal(quit, true, "the run ends at bossMax after the first word, though the boss never stopped coming back");
-	assert.ok(Date.now() - first < 2100, `ended ${Date.now() - first} ms after the first word (bossMax 1500; a bound restarted at the return would end it after 2100)`);
+	assert.equal(clock.now() - first, 1500, "ended at bossMax after the first word; a bound restarted at the return would end it after 2100");
 	exit(id);
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "timeout", "the timeout");
 });
@@ -943,8 +939,8 @@ test("a run the server is ending at bossMax answers tower_done without a stay, a
 	clock.advance(100);
 	assert.deepEqual(await ask(s, { cmd: "run-boss", token }), { ok: true, idleMs: 60_000, capAt });
 	clock.advance(301);
-	const later = await commandsFor(s, token, 700);
-	assert.ok(later.some((c) => c.type === "quit"), JSON.stringify(later));
+	await watcherTicks();
+	assert.equal(((await poll(s, token)).command as { type: string } | undefined)?.type, "quit");
 	assert.deepEqual(await ask(s, { cmd: "run-boss", token }), { ok: true }, "no notice after the cap");
 	const end = await ask(s, { cmd: "run-done", token, note: "wrapped up" });
 	assert.equal(end.stay, undefined, JSON.stringify(end));
