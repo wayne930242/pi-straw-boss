@@ -246,7 +246,7 @@ test("WC-F002: a PID that is no longer below the process Herdr lists is not sign
 
 test("WC-F005: the kill of a stuck pi waits for the process table beside the watcher: another run's exit is seen meanwhile", async () => {
 	world.runTimers = { quitGrace: 60, signal: 60 };
-	wrapped();
+	const made = wrapped();
 	const s = await setup();
 	world.herdr.workspaces[1]!.worktree = { checkout_path: "/w/beta" };
 	await ask(s, { cmd: "ensure-tower", workspace: "wB" });
@@ -259,6 +259,11 @@ test("WC-F005: the kill of a stuck pi waits for the process table beside the wat
 	const b = [...world.pis.keys()][1]!;
 	await until(() => readRun(world.slot, "wB", b)?.pid, "run B's pid");
 	assert.equal((await claim(s, b)).ok, true);
+	// One process table for the computer: A's wrapper and pi beside B's (each start of `wrapped` writes its own run's rows alone). With B's rows alone, A's signal stage found no row of A's, signalled nothing
+	// (run-sigterm-none), and the two kills the case waited for were the wrapper and pi of the run B's requeued event woke, which never claimed: 3 s of the machine's time later, so a loaded machine timed out.
+	const [ra, rb] = made as [{ wrapper: number; pi: number }, { wrapper: number; pi: number }];
+	world.procTable = [proc(ra.wrapper, 100, "cmd.exe", true, WRAPPER_AT), proc(ra.pi, ra.wrapper, "node.exe", true, `T-${ra.pi}`), proc(rb.wrapper, 100, "cmd.exe", true, WRAPPER_AT), proc(rb.pi, rb.wrapper, "node.exe", true, `T-${rb.pi}`)];
+	const ofA = () => world.kills.filter(([pid]) => pid === ra.pi || pid === ra.wrapper);
 	let release!: () => void;
 	const gate = new Promise<void>((done) => (release = done));
 	let held = false;
@@ -270,9 +275,10 @@ test("WC-F005: the kill of a stuck pi waits for the process table beside the wat
 	await until(() => held, "the table read for the signal stage", 5000);
 	world.live.delete(world.pis.get(b)!.pid);
 	await until(() => readRun(world.slot, "wB", b)?.outcome === "crashed", "B's exit to be seen while A's table read is held", 3000);
-	assert.deepEqual(world.kills, []);
+	assert.deepEqual(ofA(), []);
 	release();
-	await until(() => world.kills.length >= 2, "A's pi and wrapper to be signalled");
+	await until(() => ofA().length >= 2, "A's pi and wrapper to be signalled");
+	assert.deepEqual(ofA(), [[ra.pi, "SIGTERM"], [ra.wrapper, "SIGTERM"]]);
 });
 
 // --- pane-role (review WC-F004, F005) ---------------------------------------------------------------------------------------------------------------------------
