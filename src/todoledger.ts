@@ -41,3 +41,15 @@ const task = (t: unknown) => isObject(t) && id(t.id) && typeof t.subject === "st
 export const isSnapshotV1 = (data: unknown): boolean => isObject(data) && data.v === 1 && Array.isArray(data.tasks) && data.tasks.every(task) && id(data.nextId);
 /** pi-todo-ledger's snapshot entry on a branch: its data when it matches the schema, else nothing (an invalid entry is skipped for an older one). */
 export const v1Of = (entry: unknown): unknown => { const e = entry as { type?: unknown; customType?: unknown; data?: unknown } | null; return e?.type === "custom" && e.customType === TODO_V1 && isSnapshotV1(e.data) ? e.data : undefined; };
+
+/** A todo's run spend as the page shows it: tokens, cost in US dollars, wall time, the runs that ended, and up to 8 `provider/model` ids. */
+export interface TodoSpend { tokens: number; cost: number; ms: number; runs: number; models?: string[] }
+const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+/** The ledger's `metadata.herdr.spend` (pi-todo-ledger 0.9.0 CONTRACT.md "Run spend") checked: finite totals of at least one ended run, else none; never its session paths or run ids. */
+export function spendOf(s: unknown): TodoSpend | undefined {
+	if (typeof s !== "object" || s === null || Array.isArray(s)) return undefined;
+	const v = s as Record<string, unknown>;
+	if (!finite(v.tokens) || !finite(v.cost) || !finite(v.ms) || !(Number.isSafeInteger(v.runs) && (v.runs as number) >= 1)) return undefined;
+	const models = (Array.isArray(v.models) ? v.models : []).filter((m): m is string => typeof m === "string" && m.length > 0).slice(0, 8).map((m) => m.slice(0, 80));
+	return { tokens: v.tokens, cost: v.cost, ms: v.ms, runs: v.runs as number, ...(models.length && { models }) };
+}

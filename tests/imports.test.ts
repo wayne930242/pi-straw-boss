@@ -644,7 +644,8 @@ test("the TypeScript source stays within its size budgets", () => {
 	// The snoozable stale reminder (docs/specs/2026-11-28-stale-snooze.md; measured): 4826 to 4829, boardview.ts +3 (`BoardViewRow.snoozes` and its words on `/boss board`); boardread.ts has its own figure, 64 to 65 (`snoozed`, never in a remote turn).
 	// Wait mark review (2026-11-28; measured) 4829 to 4834: todoledger.ts's `untilOf`, the ledger's reading of `metadata.until` that items.ts and the deadlines share.
 	// Car rows review (2026-11-28; measured) 4834 to 4844: carrows.ts reads the todo list again only when the branch's snapshot changed, and no branch at all with no car or slip (carrows-review-F004); its probe names the session (F003).
-	assert.ok(rest <= 4844, `the rest of src has ${rest} lines`);
+	// Run spend (docs/specs/2026-11-28-todo-preflight.md B; measured) 4844 to 4856: todoledger.ts's `spendOf` and `TodoSpend`, the ledger's `metadata.herdr.spend` checked for the page (items.ts reads it on its existing line).
+	assert.ok(rest <= 4856, `the rest of src has ${rest} lines`);
 	// Unreleased (settings check, probe): settings.ts is the lstat gate, the child's program (refuses a link it cannot follow, stats before opening; review SR5), and its runner (160); it no longer walks links. settings.ts 92 (new: the look before pi starts in a folder), raised 92 to 135 for the link walk (every hop of .pi and settings.json, refusing /proc, /dev, /sys; review SP-R001).
 	// Unreleased raised trust/ask.ts from 182 to 183 (RC3-F001): the recorded server's start time is read when the handler registers.
 	// Unreleased raised trust/ask.ts from 183 to 201 (RC4-F001, F002): `warmServerStart` (the early read only for a live server that reads trust requests) and `guiUp` (what the handler's `up` asks) are exported for their tests, and `registerTrust` takes the terminal it answers on.

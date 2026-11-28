@@ -419,6 +419,24 @@
 	"todos_points": "{points} pt",
 	"todos_anchor": "Anchor: {anchor}",
 	"todos_recorded": "Recorded: {run}",
+	"todos_spend": [
+		{
+			"declarations": [
+				"input tokens",
+				"input cost",
+				"input time",
+				"input runs",
+				"local runsPlural = runs: plural"
+			],
+			"selectors": [
+				"runsPlural"
+			],
+			"match": {
+				"runsPlural=one": "Spent: {tokens} tokens · {cost} · {time} · {runs} run",
+				"runsPlural=other": "Spent: {tokens} tokens · {cost} · {time} · {runs} runs"
+			}
+		}
+	],
 	"todos_count": "Todos {done}/{total}",
 	"todos_checklist": "Checklist ({count})",
 	"todos_done": "All done",
