@@ -40,12 +40,26 @@ const prompt = (s: Running, pane: string, pid = 6100 + prompts.length) => {
 	return one;
 };
 afterEach(() => prompts.splice(0).forEach((p) => p.stop()));
-const started = async () => {
+/**
+ * The prompt the next typing into a pane `into` accepts (any pane when unset) starts, in the same step, as the pane's shell runs the command. A prompt the test started only once it saw the typing left an idle shell
+ * meanwhile, and a check late by more than `launchMs` under load saw the server type again, as it does into an idle shell whose prompt never came.
+ */
+const promptOnTyping = (s: Running, accepts: string | ((pane: string) => boolean) = () => true) => {
+	let one: { stop(): void } | undefined;
+	world.herdr.onRun = (into) => {
+		if (typeof accepts === "string" ? into !== accepts : !accepts(into)) return;
+		world.herdr.onRun = undefined;
+		one = prompt(s, into);
+	};
+	return { stop: () => one?.stop() };
+};
+const started = async (late?: () => Promise<void>) => {
 	const s = await world.start();
 	await s.handle.ready;
+	const first = promptOnTyping(s);
 	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
+	await late?.();
 	await until(() => world.herdr.typed.length === 1, "the first typing into the new tab");
-	const first = prompt(s, String(ensured.pane));
 	return { s, tab: String(ensured.tab), pane: String(ensured.pane), first };
 };
 const takeover = () => world.takeovers.forEach((cb) => cb());
@@ -93,9 +107,9 @@ for (const platform of platforms) {
 		first.stop();
 		h.restart();
 		Object.assign(h.pane(pane), { processes: [], agent: undefined });
+		promptOnTyping(s, pane);
 		takeover();
 		await until(() => h.typed.length === 2, "the command typed again");
-		prompt(s, pane);
 		await until(() => h.workspace("wA").tokens.tower === "sb-tower-wa" && h.pane(pane).tokens.sb_role === "tower", "the marks written again");
 		await sleep(400);
 		assert.equal(h.typed.length, 2, "once");
@@ -113,10 +127,10 @@ for (const platform of platforms) {
 		// The restored Herdr numbered the boss's tab with the old ids and the tower tab with others.
 		h.addTab(tab, "work", pane, "shell");
 		h.addTab("wA:t55", TOWER_LABEL, "wA:p55", "shell");
+		promptOnTyping(s, "wA:p55");
 		takeover();
 		await until(() => readService(world.slot, "wA")?.pane === "wA:p55", "the record to follow the tower tab");
 		await until(() => h.typed.length === 2 && h.typed[1]!.pane === "wA:p55", "the command typed into the tower's pane");
-		prompt(s, "wA:p55");
 		await until(() => h.pane("wA:p55").tokens.sb_role === "tower", "its marks");
 		await sleep(300);
 		assert.equal(h.typed.length, 2, "once");
@@ -143,6 +157,15 @@ const stranger = (tab: string, pane: string) => {
 	Object.assign(h.pane(pane), { cwd: "/boss/project", processes: [], agent: undefined });
 };
 const agentStarts = () => world.herdr.calls.filter((a) => a[0] === "agent" && a[1] === "start");
+
+// A check that comes late after the typing (a loaded machine held the test while the server's looks went on, load average 21) found the server had typed a second time, as it does into an idle shell whose prompt never
+// came, and waited for the first typing until it timed out. The typed command starts the prompt at once, as the pane's shell runs it.
+test("the world: a check that comes long after the first typing still finds one typing: the typed command started the prompt", async () => {
+	platformWorld("darwin");
+	const { first } = await started(() => afterLooks(25)); // 25 looks 30 ms apart: past the 250 ms after which an idle shell is typed into again
+	first.stop();
+	assert.equal(world.herdr.typed.length, 1);
+});
 
 for (const platform of platforms) {
 	// F001: the unseat happened only when the watch or the events connection was acknowledged again (up to 2 s after the new Herdr answers). Until then the old proof was believed for whatever Herdr listed under the id.
@@ -291,10 +314,12 @@ test("RVSEAT-F003: the desk's base under a lost workspace's id: the claim makes 
 	first.stop();
 	const was = readService(world.slot, "wA");
 	assert.equal(was?.label, "Alpha");
+	// The typed command starts the prompt, and its stand-in shows in the base when the claim comes (about a second after the typing). It shows from the typing on here: an idle shell with no stand-in that a loaded machine
+	// left past `launchMs` was typed into again by the old service.
+	world.herdr.onRun = (into) => void (into === "wA:p1" && (world.herdr.pane("wA:p1").agent = "tower"));
 	lostSessionBase();
 	await until(() => readService(world.slot, "wA")?.pane === "wA:p1", "the old service to follow the glyph tab into the base", 4000);
 	await until(() => typedInto("wA:p1") >= 1, "the base typed into");
-	world.herdr.pane("wA:p1").agent = "tower"; // the prompt's stand-in, about a second after the typing
 	const reply = await ask(s, { cmd: "ensure-tower", workspace: "wA", made: { pane: "wA:p1", at: Date.now() } });
 	const now = readService(world.slot, "wA");
 	assert.equal(reply.opened, true, "a new service, not the lost workspace's");
@@ -315,6 +340,7 @@ test("RVSEAT-F004 (the stranger proof of an ask): an ensure-tower during the min
 	first.stop();
 	h.restart(); // the events are acknowledged again: the proof is void
 	stranger(tab, pane);
+	promptOnTyping(s, (into) => into !== pane);
 	const reply = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
 	assert.equal(reply.opened, true, "a stale service is not answered for a stranger's pane");
 	assert.notEqual(reply.tab, tab);
@@ -398,13 +424,14 @@ test("RVSEAT-F001: a message of a teammate's device that waits before the Herdr 
 
 test("RVSEAT-F001: a new Herdr noticed from a listing opens the minute a restore needs: the tower's tab that comes back under other ids afterwards is followed, the stranger's pane is left alone", async () => {
 	platformWorld("darwin");
-	const { tab, pane, first } = await started();
+	const { s, tab, pane, first } = await started();
 	const h = world.herdr;
 	first.stop();
 	h.restart(false); // no connection is acknowledged again; the boss's tab was restored first, under the tower's ids
 	stranger(tab, pane);
 	await until(() => /tower-unseated/.test(logText()), "the standing look to notice the new Herdr");
 	assert.ok(readService(world.slot, "wA"), "the service waits for its tab: the minute is open");
+	promptOnTyping(s, "wA:p77");
 	h.addTab("wA:t77", TOWER_LABEL, "wA:p77", "shell"); // the restore brings the tower's tab back
 	h.emit("workspace.created", "workspace_created", { workspace_id: "wA" });
 	await until(() => readService(world.slot, "wA")?.pane === "wA:p77", "the service to follow the tower's tab");

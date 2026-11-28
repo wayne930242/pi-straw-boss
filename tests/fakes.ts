@@ -172,6 +172,8 @@ export class FakeHerdr {
 	integration = { state: "not installed", file: "/nowhere/extensions/herdr-agent-state.ts", installs: 0, onInstall: undefined as (() => void) | undefined, refuse: false };
 	/** What `pane run` typed into a pane (the sb server types the tower prompt's command into a standing pane's shell). */
 	typed: { pane: string; text: string }[] = [];
+	/** Called as `pane run` types into a pane: what the pane's shell starts with the command (the tower prompt), in the same step, as a real shell runs it. */
+	onRun?: (pane: string) => void;
 	/** The reports and releases of agents the socket API took (`pane.report_agent`, `pane.release_agent`), as sent. */
 	agentCalls: { method: string; params: Record<string, unknown> }[] = [];
 	/** Makes a report of an agent label Herdr does not keep (a Herdr that changed) clear at once, as Herdr's check does for a pane at its idle shell prompt. */
@@ -304,7 +306,7 @@ export class FakeHerdr {
 			this.prompts.push({ pane: pane.pane_id, text: args[3]!, args: args.slice(4) });
 			return out({ type: "agent_prompted", agent: { pane_id: pane.pane_id, agent: pane.agent } });
 		}
-		if (group === "pane" && cmd === "run") return (this.typed.push({ pane: args[2]!, text: args.slice(3).join(" ") }), out({}));
+		if (group === "pane" && cmd === "run") return (this.typed.push({ pane: args[2]!, text: args.slice(3).join(" ") }), this.onRun?.(args[2]!), out({}));
 		if (group === "agent" && cmd === "start") {
 			// Herdr starts an agent only in an available shell: a stand-in agent or a running tower prompt (the node process of `cli.mjs prompt`) in the pane keeps it busy.
 			const holder = this.panes.find((p) => p.pane_id === flag("--pane"));
