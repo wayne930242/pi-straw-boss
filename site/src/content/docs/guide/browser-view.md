@@ -65,7 +65,7 @@ Pick a row, then press **Send**: a tap alone presses nothing.
 A card folded into a tower's row unfolds when you tap it.
 A card from the head tower says so in its own words (主塔台 in Traditional Chinese, 鴉閣 in Raven).
 
-<p align="center"><img src="/pi-straw-boss/docs/img/gui-wait-answer.png" width="49%" alt="The dialog for a tower's wait: the question, the answer box with a reply typed, Send, the link to the tower's comms, Later, and Dismiss"> <img src="/pi-straw-boss/docs/img/gui-settings.png" width="49%" alt="The settings page: this device's view, reminders, sound and volume, and language, with the sections for phones and devices, teams, and the server below"></p>
+<p align="center"><img src="/pi-straw-boss/docs/img/gui-wait-answer.png" width="49%" alt="An expanded wait card with the tower's question, a reply typed in the answer box, and Send"> <img src="/pi-straw-boss/docs/img/gui-settings.png" width="49%" alt="The settings page: this device's view, reminders, sound and volume, and language, with the sections for phones and devices, teams, and the server below"></p>
 
 ### Questions waiting on you
 

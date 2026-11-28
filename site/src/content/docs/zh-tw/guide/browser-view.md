@@ -65,7 +65,7 @@ description: 整張網即時顯示在瀏覽器裡，智慧體等待的問題就�
 收進塔台那一列的卡片，點一下就會展開。
 主塔台的卡片用它自己的詞（繁體中文是主塔台，鴉閣裡是鴉閣）。
 
-<p align="center"><img src="/pi-straw-boss/docs/img/gui-wait-answer.png" width="49%" alt="塔台等待的對話框：問題、已打好回覆的回答框、送出、通往塔台通訊畫面的連結、稍後與略過"> <img src="/pi-straw-boss/docs/img/gui-settings.png" width="49%" alt="設定頁：這台裝置的檢視、提醒、音效與音量、語言，下方是手機與裝置、團隊與 server 的區塊"></p>
+<p align="center"><img src="/pi-straw-boss/docs/img/gui-wait-answer.png" width="49%" alt="展開的塔台等待卡：塔台的問題、已填回覆的回答框，以及送出按鈕"> <img src="/pi-straw-boss/docs/img/gui-settings.png" width="49%" alt="設定頁：這台裝置的檢視、提醒、音效與音量、語言，下方是手機與裝置、團隊與 server 的區塊"></p>
 
 ### 等你回答的問題
 
