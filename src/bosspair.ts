@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import type { Ask } from "./host.ts";
 import { framed } from "./threadtools.ts";
 import type { Kit } from "./state.ts";
+import { createPreflight } from "./preflight.ts";
 
 // `boss_pair` (docs/specs/2026-11-23-lite-b2-d-e-f.md §2.3; boss decisions d_attach=main_pairs, d_rounds=per_thread): a main pairs a worker and a reviewer on a review thread before it dispatches them, and writes both briefs. The sb
 // server opens thread T<n> for this session (server/threads.ts); the two children talk on it (threadtools.ts) and the main is woken only by their two results when it closes. The tool is registered with the net tools at the join,
@@ -21,6 +22,7 @@ export function createBossPair({ pi, s, me, role }: Kit, d: { ask?: Ask; remote(
 		if (s.isTower || role() === "tower") throw new Error("A tower does not pair: a main pairs the worker and the reviewer it dispatches");
 		if (role() !== "main" && role() !== "train") throw new Error("Only a tab's main or a train pairs and reads review threads; call boss_promote first if your work grows");
 	};
+	const preflight = createPreflight(); // the pair's todo, looked at before the thread opens (preflight.ts)
 	return {
 		addTool() {
 			pi.registerTool({
@@ -30,10 +32,12 @@ export function createBossPair({ pi, s, me, role }: Kit, d: { ask?: Ask; remote(
 					reviewer: Type.String({ minLength: 1, maxLength: 64, description: "Its subagent name." }),
 					rounds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3, description: "Repair rounds, default 3." })), item: Type.Optional(Type.String({ maxLength: 64, description: "Its todo: uid or <session8>#<id>." })),
 				}),
-				execute: async (_id, { worker, reviewer, rounds, item }) => {
+				execute: async (_id, { worker, reviewer, rounds, item }, _signal, _onUpdate, ctx) => {
 					refuse("open");
+					const checked = preflight.check(item, ctx);
+					if (checked?.refusal) throw new Error(checked.refusal);
 					const r = await ask({ cmd: "thread-pair", owner: me(), worker, reviewer, ...(rounds !== undefined ? { rounds } : {}), ...(item !== undefined ? { item } : {}) });
-					const text = `Thread ${r.thread}: worker ${JSON.stringify(worker)}, reviewer ${JSON.stringify(reviewer)}, up to ${r.rounds} repair round${r.rounds === 1 ? "" : "s"}. Dispatch both now with subagent under these names, each task with the line "Thread: ${r.thread}". Their two results come when the thread closes; do not relay between them. board_read thread ${r.thread} shows the posts.`;
+					const text = `Thread ${r.thread}: worker ${JSON.stringify(worker)}, reviewer ${JSON.stringify(reviewer)}, up to ${r.rounds} repair round${r.rounds === 1 ? "" : "s"}. Dispatch both now with subagent under these names, each task with the line "Thread: ${r.thread}". Their two results come when the thread closes; do not relay between them. board_read thread ${r.thread} shows the posts.${checked?.warnings.length ? `\n${checked.warnings.join("\n")}` : ""}`;
 					return { content: [{ type: "text" as const, text }], details: { thread: r.thread, worker: r.worker, reviewer: r.reviewer, rounds: r.rounds, ...(r.item ? { item: r.item } : {}) } };
 				},
 			});

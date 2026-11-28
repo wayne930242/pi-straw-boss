@@ -13,6 +13,7 @@ import { dutyOfAgent, isMainKind, type MainKind } from "./duty.ts";
 import type { MainDuty } from "./mainduty.ts";
 import { orphans } from "./orphan.ts";
 import { createWorkerCap, deviceRoom } from "./workercap.ts";
+import { createPreflight } from "./preflight.ts";
 import { inherited, RESULT } from "./inherit.ts";
 import { childRevive } from "./childrevive.ts";
 import { keyOf, REARM_TEXT, REVIVE_TOKEN } from "./revive.ts";
@@ -338,10 +339,11 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 
 	// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
-	const cap = createWorkerCap(deviceRoom(guiDir, me, attended));
+	const cap = createWorkerCap(deviceRoom(guiDir, me, attended)), preflight = createPreflight(pi); // a launch's todo warnings ride on its result (preflight.ts)
 	pi.on("turn_end", () => cap.settle());
 	pi.on("tool_call", async (event, ctx) => {
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || runMode.active()) return;
+		if (event.toolName === "subagent") { const refused = preflight.admit(event.toolCallId, event.toolName, event.input, ctx); if (refused) return refused; } // its todo is looked at in every session, one barred from the net too (preflight.ts)
 		// Two pis on one session file corrupt it: a run whose session a live pane runs (its own pane, a restore, or another launcher's resume) is not resumed (docs/specs/2026-11-23-tower-revive.md §6).
 		if (event.toolName === "subagent_resume") {
 			const path = (event.input as { sessionPath?: unknown } | undefined)?.sessionPath;
