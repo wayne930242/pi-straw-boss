@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { balanceAfterClose, balanceTab, herdr, planBalance } from "../src/balance.mjs";
 import paneBalance, { runHelper } from "../src/balance.ts";
 import { markRun } from "../src/runmark.ts";
+import { fakeClock } from "./fake-clock.ts";
 import { stallWatch, until } from "./server-world.ts";
 import { cutOff, gone, standIn, STUBBORN } from "./standin.ts";
 
@@ -134,16 +135,16 @@ const closing = (goneAfter) => {
 	return { run, laidOut };
 };
 const closed = closing(3);
-await balanceAfterClose("w1", "w:t1", { run: closed.run, lockRoot, pollMs: 1, waitMs: 1000 });
+await balanceAfterClose("w1", "w:t1", { run: closed.run, lockRoot, pollMs: 1, waitMs: 1000, ...fakeClock() });
 assert.deepEqual(closed.laidOut, ["lead", "lead"], "the tab the pane left is balanced once it closes");
 
 const kept = closing(Infinity);
-await balanceAfterClose("w1", "w:t1", { run: kept.run, lockRoot, pollMs: 1, waitMs: 20 });
+await balanceAfterClose("w1", "w:t1", { run: kept.run, lockRoot, pollMs: 1, waitMs: 20, ...fakeClock() });
 assert.deepEqual(kept.laidOut, [], "a pane that stays open after Pi quits changes nothing");
 
 // Herdr can close the pane before the helper first asks about it; the tab the Pi saw still counts.
 const gone = closing(0);
-await balanceAfterClose("w1", "w:t1", { run: gone.run, lockRoot, pollMs: 1, waitMs: 1000 });
+await balanceAfterClose("w1", "w:t1", { run: gone.run, lockRoot, pollMs: 1, waitMs: 1000, ...fakeClock() });
 assert.deepEqual(gone.laidOut, ["lead", "lead"], "a pane already closed still rebalances the tab it left");
 
 // Herdr itself gone (socket or pipe missing, connection refused) means the pane is gone: no waiting.
@@ -169,16 +170,18 @@ for (const failure of [
 }
 
 // Any other failure still waits for the deadline: a busy or closing Windows pipe (Herdr alive), an English phrase without its code.
+// The deadline is read off a clock the test moves: the first call stands still past the whole wait, as a loaded machine (load average 21) held it, and the polls still run.
 for (const stderr of ["temporary failure", "All pipe instances are busy. (os error 231)", "The pipe is being closed. (os error 232)", "No such file or directory", "os error 20"]) {
 	let transientGets = 0;
+	const clock = fakeClock();
 	await balanceAfterClose("w1", "w:t1", {
 		run: async () => {
-			transientGets++;
+			if (transientGets++ === 0) await new Promise((resolve) => setTimeout(resolve, 40));
 			throw Object.assign(new Error("exit 1"), { code: 1, stderr });
 		},
-		lockRoot, pollMs: 1, waitMs: 30,
+		lockRoot, pollMs: 1, waitMs: 30, now: clock.now, sleep: clock.sleep,
 	});
-	assert.equal(transientGets > 2, true, `a transient error keeps polling: ${stderr}`);
+	assert.equal(transientGets, 32, `a transient error keeps polling until the deadline: ${stderr}`);
 }
 
 	rmSync(lockRoot, { recursive: true, force: true });

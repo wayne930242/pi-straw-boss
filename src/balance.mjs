@@ -169,12 +169,12 @@ const paneGone = (paneId, run) =>
  * @param {string | undefined} tabId
  * @param {{ run?: Run, lockRoot?: string, pollMs?: number, waitMs?: number }} [options]
  */
-export async function balanceAfterClose(paneId, tabId, { run = herdr, lockRoot = LOCK_ROOT, pollMs = POLL_MS, waitMs = CLOSE_WAIT_MS } = {}) {
+export async function balanceAfterClose(paneId, tabId, { run = herdr, lockRoot = LOCK_ROOT, pollMs = POLL_MS, waitMs = CLOSE_WAIT_MS, now = Date.now, sleep: wait = sleep } = {}) {
 	if (!tabId) return;
-	const deadline = Date.now() + waitMs;
+	const deadline = now() + waitMs;
 	while (!(await paneGone(paneId, run))) {
-		if (Date.now() > deadline) return;
-		await sleep(pollMs);
+		if (now() > deadline) return;
+		await wait(pollMs);
 	}
 	const panes = /** @type {{ pane_id: string, tab_id: string }[]} */ (JSON.parse(await run(["pane", "list"])).result.panes);
 	const anchor = panes.find((pane) => pane.tab_id === tabId);
