@@ -160,7 +160,7 @@ export function createWidgetController(
 		evaluateNoProgressAdvisory,
 	}: WidgetDeps,
 	presenters = new WeakMap<ExtensionAPI, RunRows>(),
-	/** sb's done nudge (nudge.ts): asked about each child at each look; its notice rides in the same status message. */
+	/** sb's done nudge (nudge.ts): asked about each child at each look; its queued notices ride in the same status message. */
 	nudger?: Nudger,
 ) {
 	const runningSubagents = runtime.runningSubagents;
@@ -282,9 +282,29 @@ export function createWidgetController(
 	function startStatusRefresh(pi: ExtensionAPI) {
 		if (!statusConfig.enabled || statusInterval) return;
 
+		// sb: the done nudge's notices go first and outside the line cap, and leave the queue only once sent (docs/specs/2026-11-28-done-nudge.md).
+		const send = (lines: string[]) => {
+			const notices = nudger ? [...nudger.queued()] : [];
+			const all = [...notices, ...lines];
+			if (all.length === 0) return;
+			const limit = statusConfig.lineLimit + notices.length;
+			const capped = capStatusLines(all, limit);
+			pi.sendMessage(
+				{
+					customType: "subagent_status",
+					content: formatStatusAggregate(all, limit),
+					display: true,
+					details: { lines: capped.visibleLines, overflow: capped.overflow },
+				},
+				{ triggerTurn: true, deliverAs: "steer" },
+			);
+			nudger?.emitted(notices.length);
+		};
+
 		statusInterval = setInterval(() => {
 			nudger?.prune(runningSubagents.keys());
 			if (runningSubagents.size === 0) {
+				send([]);
 				if (statusInterval) {
 					clearInterval(statusInterval);
 					statusInterval = null;
@@ -343,27 +363,12 @@ export function createWidgetController(
 				}
 
 				// sb: a child idle too long without a result is asked to finish (docs/specs/2026-11-28-done-nudge.md).
-				const nudged = nudger?.look(running, projection, now);
-				if (nudged) transitionLines.push(nudged);
+				nudger?.look(running, projection, now);
 			}
 
 			if (shouldRefreshWidget) updateWidget();
 
-			if (transitionLines.length > 0) {
-				const capped = capStatusLines(transitionLines, statusConfig.lineLimit);
-				pi.sendMessage(
-					{
-						customType: "subagent_status",
-						content: formatStatusAggregate(
-							transitionLines,
-							statusConfig.lineLimit,
-						),
-						display: true,
-						details: { lines: capped.visibleLines, overflow: capped.overflow },
-					},
-					{ triggerTurn: true, deliverAs: "steer" },
-				);
-			}
+			send(transitionLines);
 		}, 1000);
 
 		writeGlobalSlot(STATUS_INTERVAL_KEY, statusInterval);

@@ -49,7 +49,7 @@ A worker launched with `item` is drawn under its todo by pi-todo-ledger; one lau
 
 When a worker's pane closes or its pi dies before it reports, its failed result carries a line from Straw Boss with its name, session file and the `subagent_resume` call. Straw Boss does not revive or resume it: you decide, and resume it with a message saying what is left.
 
-A child that sits idle after its turn without delivering a result is asked to finish by Straw Boss (10 minutes, at most twice). When it still has not reported, one `Subagent status` line tells you so: read its pane, then `subagent_cancel` it or answer what it waits for. Interactive children and persistent specialists are left alone.
+A child that sits idle after its turn without delivering a result is asked to finish by Straw Boss (10 minutes, at most twice). When it still has not reported, one `Subagent status` line tells you so: read its pane, then `subagent_cancel` it or answer what it waits for. Interactive children and persistent specialists are left alone. An auto-exit child is not asked (a fresh turn would close it as done); you get that line instead.
 
 ## Configuration
 

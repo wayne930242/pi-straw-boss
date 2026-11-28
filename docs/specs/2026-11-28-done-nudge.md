@@ -12,45 +12,54 @@ Maestro already asks once. Its child protocol (`adapters/pi/child/done-nudge.js`
 
 ## What it does
 
-When a child of sb's host has had its turn ended for `idleMinutes` (default 10) without delivering a result, sb asks it to finish. The question goes into the child's own session as a user message. It tells the child to write its final report and finish, or to use `caller_ping` if it really waits on its caller. A stretch of idleness gets one nudge, and a run gets `max` nudges in all (default 2). If the child is still idle `idleMinutes` after the last one, the parent is told once, and sb stops asking.
+When a child of sb's host has had its turn ended for `idleMinutes` (default 10) without delivering a result, sb asks it to finish. The question goes into the child's own session as a user message. It tells the child to write its final report and call `subagent_done`, or to use `caller_ping` if it really waits on its caller. A stretch of idleness gets one nudge, and a run gets `max` nudges in all (default 2). If the child is still idle `idleMinutes` after the last one, the parent is told once, and sb stops asking.
 
 It never nudges:
+
+- an auto-exit child (`PI_SUBAGENT_AUTO_EXIT=1`). Maestro writes `done` and closes such a child when a turn ends, so a nudge's fresh turn would deliver unfinished work as a success, even when the child answers that it is not done (review 2026-11-28, F001). The child answers the request with `auto-exit`, and the parent is told once instead;
 
 - an interactive child (`interactive`, which the user drives in its pane);
 - a persistent specialist (idle between tasks is its normal state; the simple host does not run them, but the check stays);
 - a child whose turn runs, a long tool call included, or that is blocked on a dialog;
-- a child being cancelled;
+- a child being cancelled (a cancel revokes the open request);
 - a child whose input box holds unsent text;
 - a child that still waits on subagents of its own.
 
 ## The states it reads
 
-The parent's lifecycle projection, as Maestro 0e1dd78 computes it (`core/lifecycle.js`, `projectLifecycle`): Herdr's `idle` and `done` become `waiting`, and `working` becomes `active`. A `blocked` agent becomes `blocked`, and Pi's own activity file stands in when Herdr gives no status. Only `waiting` counts as idle. Its `stateDurationSince` is when the stretch began. A nudge the child took also starts a new stretch, because a reply turn that ends between two looks leaves the projection's start where it was.
+The parent's lifecycle projection, as Maestro 0e1dd78 computes it (`core/lifecycle.js`, `projectLifecycle`): Herdr's `idle` and `done` become `waiting`, and `working` becomes `active`. A `blocked` agent becomes `blocked`, and Pi's own activity file stands in when Herdr gives no status. Only `waiting` counts as idle. Its `stateDurationSince` is when the stretch began. A nudge the child sent also starts a new stretch, because a reply turn that ends between two looks leaves the projection's start where it was.
+
+A request belongs to the stretch it was written for. When the parent next sees the child not `waiting`, or `waiting` with another `stateDurationSince`, it removes the request; a request already gone was taken by the child, so the parent waits for its ack, which is how the nudge's own turn is still counted. The child refuses on its side too: it notes when each of its turns starts (`turn_start`) and acks `stale` for a request written before its latest turn, since a turn can start and end between two looks of the parent (F004).
 
 ## Where it runs
 
-No new watcher. The parent's side runs inside the status loop that already looks at every running child once a second (`src/host/widgets.ts`, `startStatusRefresh`, the loop that sends the stall and no-progress lines). The parent's notice is one more line in the `subagent_status` message that loop sends, so it wakes the parent the way those lines do. With `status.enabled: false` in `herdr-agents/config.json` that loop does not run, and neither does the nudge.
+No new watcher. The parent's side runs inside the status loop that already looks at every running child once a second (`src/host/widgets.ts`, `startStatusRefresh`, the loop that sends the stall and no-progress lines). The parent's notice is one more line in the `subagent_status` message that loop sends, so it wakes the parent the way those lines do. Notices wait in a queue until a message carries them: they go first, and the message's line cap (`lineLimit`) counts only the other lines, so a cap never folds a notice into `+N more running` (F005). A send that throws leaves them queued for the next tick. With `status.enabled: false` in `herdr-agents/config.json` that loop does not run, and neither does the nudge.
 
-Delivery goes through the child's own pi. The parent cannot tell from outside whether the child's input box holds a draft. Reading the screen cannot tell a draft from model text (AGENTS.md, Design), and typing into a pane with a draft would submit the user's half-written words with the nudge. The extension that owns the editor can tell. So the parent writes a request beside the child's session file, and sb's child entry (`src/host/child.ts`) takes it. The child checks it is idle, has no queued message, has an empty input box, and has no undelivered subagent of its own. Only then does it send the nudge with `pi.sendUserMessage(text, { deliverAs: "followUp" })`. That is the same path Maestro's own done nudge and its persistent-task inbox use. The child answers with an ack. Maestro is not changed: its pin stays at 0e1dd78.
+Delivery goes through the child's own pi. The parent cannot tell from outside whether the child's input box holds a draft. Reading the screen cannot tell a draft from model text (AGENTS.md, Design), and typing into a pane with a draft would submit the user's half-written words with the nudge. The extension that owns the editor can tell. So the parent writes a request into the run's folder beside the child's session file, and sb's child entry (`src/host/child.ts`) takes it. The child checks it is idle, has no queued message, has an empty input box, and has no undelivered subagent of its own. Only then does it send the nudge with `pi.sendUserMessage(text, { deliverAs: "followUp" })`. That is the same path Maestro's own done nudge and its persistent-task inbox use. The child answers with an ack. Maestro is not changed: its pin stays at 0e1dd78.
 
-| File (beside the child's session file) | Written by | Content |
+| File | Written by | Content |
 |---|---|---|
-| `<session>.sb-nudge` | parent, by rename | `{ "v": 1, "id": "<run id>:<n>", "idleMs": 600000 }` |
-| `<session>.sb-nudge-ack` | child, by rename | `{ "v": 1, "id": "<run id>:<n>", "outcome": "sent" \| "draft" \| "busy", "at": <ms> }` |
+| `<session>.sb-nudge/<run id>/<request id>.req` | parent, by rename | `{ "v": 2, "id": "<request id>", "runId": "<run id>", "sessionFile": "<session>", "at": <ms>, "idleMs": 600000 }` |
+| `<session>.sb-nudge/<run id>/<request id>.ack` | child, by rename | `{ "v": 2, "id": "<request id>", "runId": "<run id>", "outcome": "sent" \| "draft" \| "busy" \| "stale" \| "lost" \| "auto-exit", "at": <ms> }` |
 
-The child polls for the request every 2 seconds and deletes it when it reads it. The parent deletes the ack once it has read it. An ack whose `id` is not the open request's is ignored, so a resumed run that shares the session file cannot take an old answer. `sent` counts a nudge. `draft` and `busy` count nothing, and the parent asks again 60 seconds later if the child is still idle. When a request has had no ack for 60 seconds (a child started by an older Straw Boss, whose entry has no inbox), the parent removes it, tells its own session once that the child cannot be asked, and stops. When a run leaves the registry (delivered, cancelled, lost), the parent removes any request of its that is still open.
+Runs and parents are kept apart (F002). The run id in the path is the one Maestro gives the child as `PI_SUBAGENT_ID`, so a run resumed on the same session file reads its own folder and never an orphan of the run before it. A request id is a random UUID, so a parent that reloads never reuses one and cannot take an old ack for its new request. The child answers only a request whose `runId` and `sessionFile` are its launch identity (`PI_SUBAGENT_ID`, `PI_SUBAGENT_SESSION`). Each request has files of its own, so a parent removes exactly its own request and ack and never another parent's; the folders go when they are empty.
+
+The child's inbox stands still while the session it is in (`ctx.sessionManager.getSessionFile()`) is not the file it was launched with, so after a `/resume` into another session it neither reads the launch file's requests nor sends into the other transcript (F003).
+
+The child polls its folder every 2 seconds and deletes a request when it reads it. `pi.sendUserMessage` returns before pi takes the input, and a failure surfaces only later, so the call proves nothing (F006). The child acks `sent` only when a user message that holds the nudge's text starts in its session (`message_start`). A nudge that has not entered after 30 seconds, or whose send throws, is acked `lost`. The parent deletes the ack once it has read it, and ignores one whose `id` or `runId` is not its open request's.
+
+- `sent` counts a nudge.
+- `lost` is no delivery, but it is one of the `max` tries and starts a stretch, since the nudge may have gone in after all (an input handler of another extension that rewrites the text, for one). The parent's notice says how many reminders the child could not confirm.
+- `draft`, `busy`, and `stale` count nothing, and the parent asks again 60 seconds later if the child is still idle.
+- `auto-exit`: the parent tells its own session once and stops.
+
+When a request has had no ack for 60 seconds, the parent removes it, tells its own session once that the request was not acknowledged, and stops. It does not guess why: the child may run an older Straw Boss whose entry has no inbox, or its pi may be stuck. When a run leaves the registry (delivered, cancelled, lost), the parent removes any request of its that is still open.
 
 ## The nudge text
 
-The child picks the wording by whether it exits on its own (`PI_SUBAGENT_AUTO_EXIT`), because only a child that does not has `subagent_done`.
-
-A child with `subagent_done`:
+Only a child that does not exit on its own is nudged, so the one wording names `subagent_done`:
 
 > Straw Boss: you have been idle for 10 minutes, and your caller still has no result from you. If your task is done, write your final report now and call subagent_done. If you truly wait on your caller (a decision, an access, or an answer only it can give), say so with caller_ping. If you wait on work of your own that will wake you (a monitor, a loop, your own subagents), reply in one line with what it is and when it ends.
-
-An auto-exit child (it stayed open because its last run was aborted, or something held its exit):
-
-> Straw Boss: you have been idle for 10 minutes, and your caller still has no result from you. If your task is done, end this turn with your final report: this session then closes and delivers it. If you truly wait on your caller (a decision, an access, or an answer only it can give), say so with caller_ping.
 
 ## The parent's notice
 
@@ -59,10 +68,17 @@ In sb's language (`locale` in `config.json`, else the environment), one line in 
 - en: `build-api has been idle 32m and has not delivered its result, after 2 reminders to finish. Straw Boss will not remind it again. Read its pane; subagent_cancel stops it, and subagent_resume with its session file (…/x.jsonl) continues it later.`
 - zh-TW: `build-api 已閒置 32m，還沒交回結果；Straw Boss 已提醒它收尾 2 次，不會再提醒。請看它的窗格；要停掉它用 subagent_cancel，之後要接著做，用 subagent_resume 帶它的 session 檔（…/x.jsonl）。`
 
-When the child cannot be asked:
+When some reminders were sent but not confirmed: `… after 2 reminders to finish (its pi could not confirm that 1 of them entered its session). …`, and in zh-TW `…已提醒它收尾 2 次（其中 1 次它的 pi 無法確認已送進它的 session），…`.
 
-- en: `build-api has been idle 10m and has not delivered its result, and Straw Boss could not remind it: its pi took no reminder (it was started by an older Straw Boss). Read its pane; …`
-- zh-TW: `build-api 已閒置 10m，還沒交回結果，而 Straw Boss 無法提醒它：它的 pi 沒有接收提醒（它是較舊版的 Straw Boss 啟動的）。請看它的窗格；…`
+An auto-exit child (it stayed open because its last run was aborted, or something held its exit):
+
+- en: `build-api has been idle 10m and has not delivered its result. Straw Boss did not remind it: it closes when a turn ends, so a reminder would close it and deliver its unfinished work as done. Read its pane; …`
+- zh-TW: `build-api 已閒置 10m，還沒交回結果。Straw Boss 沒有提醒它：它一輪結束就會關閉，提醒會讓它把沒做完的工作當成結果交回。請看它的窗格；…`
+
+A request with no acknowledgement:
+
+- en: `build-api has not delivered its result, and its pi sent no acknowledgement of Straw Boss's reminder request within a minute, so Straw Boss will not remind it. Read its pane; …`
+- zh-TW: `build-api 還沒交回結果；Straw Boss 要提醒它收尾，但它的 pi 一分鐘內沒有回應這個請求，所以不會再提醒。請看它的窗格；…`
 
 ## Settings
 
@@ -78,11 +94,12 @@ Why 10 minutes. Maestro's own question has already gone 3 seconds after the run 
 
 ## Known limits
 
+- An auto-exit child that sits open after an aborted run is only reported, never asked: closing it as done would be worse than leaving it to the parent.
 - A child that does not exit by itself gets Maestro's own question 3 seconds after it answers sb's nudge, because Maestro treats any input as new work. That is one more turn per nudge, at most `max` times.
 - The clock is the parent process's. After the parent restarts, Maestro adopts the child again and the counts start from zero.
 - A child that never reaches `waiting`, such as one hung inside a tool, is not nudged. The no-progress advisory still reports it.
 
 ## Tests
 
-- `tests/host-nudge.test.ts`: the parent's decision table (eligibility, threshold, one per stretch, the cap and the single notice, `draft` and `busy` retries, a missing ack, en and zh-TW, the settings). It also covers the child's inbox (sent, draft, busy, its own children, persistent, both wordings) and the status loop carrying the notice.
-- The live check: a real pi child in a scratch Herdr workspace ends its turn without reporting, is nudged, and then reports.
+- `tests/host-nudge.test.ts`: the parent's decision table (eligibility, threshold, one per stretch, the cap and the single notice, `draft`, `busy` and `stale` retries, `lost`, a missing ack, an auto-exit child, en and zh-TW, the settings). It covers the review's findings one by one: F001 (an auto-exit child sends nothing and its parent is told), F002 (run folders, request ids across reloads, a parent removing only its own files, a resumed run), F003 (the inbox off the launch file), F004 (a cancel and a new stretch revoke; the child refuses a request older than its latest turn), F005 (the cap and a failed send), and F006 (`sent` only on entry, `lost`, the no-acknowledgement wording). It also covers the child's inbox (sent, draft, busy, its own children, persistent) and the status loop carrying the notices.
+- The live check: a real pi child in a scratch Herdr workspace ends its turn without reporting, is nudged, and then reports; an auto-exit child left idle gets no nudge, and its parent gets the notice.

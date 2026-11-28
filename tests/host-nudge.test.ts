@@ -1,39 +1,62 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { LifecycleProjection } from "@nubl/maestro/core/lifecycle";
-import { ACK_SUFFIX, ACK_MS, NUDGE_SUFFIX, RETRY_MS, createNudger, nudgeText, readNudgeSettings, type NudgeSettings } from "../src/host/nudge.ts";
-import { answerNudge, nudgeInbox } from "../src/host/nudge-child.ts";
+import { ACK_MS, NUDGE_SUFFIX, RETRY_MS, ackFile, createNudger, nudgeDir, nudgeText, readNudgeSettings, requestFile, type NudgeOutcome, type NudgeSettings } from "../src/host/nudge.ts";
+import { ACCEPT_MS, createInbox, nudgeInbox } from "../src/host/nudge-child.ts";
 import { createWidgetController } from "../src/host/widgets.ts";
 
 // The done nudge (docs/specs/2026-11-28-done-nudge.md): a child of sb's host whose turn has ended and that sits idle without a result is asked to
-// finish, through its own pi; after `max` nudges the parent is told once.
+// finish, through its own pi; after `max` nudges the parent is told once. An auto-exit child is never nudged: its parent is told instead.
 
 const MIN = 60_000;
 const dir = () => mkdtempSync(join(tmpdir(), "nudge-"));
 const waiting = (since: number): LifecycleProjection => ({ kind: "waiting", stateDurationSince: since }) as LifecycleProjection;
 const active = (since: number): LifecycleProjection => ({ kind: "active", label: "bash", stateDurationSince: since }) as LifecycleProjection;
 const blocked = (since: number): LifecycleProjection => ({ kind: "blocked", stateDurationSince: since }) as LifecycleProjection;
+type Run = { id: string; name: string; sessionFile: string; interactive: boolean; persistent?: boolean; cancelState?: string };
 
-function world(settings: NudgeSettings = { idleMs: 10 * MIN, max: 2 }, locale: "en" | "zh-TW" = "en") {
-	const d = dir(), sessionFile = join(d, "kid.jsonl");
-	const run = { id: "r1", name: "build-api", sessionFile, interactive: false } as { id: string; name: string; sessionFile: string; interactive: boolean; persistent?: boolean; cancelState?: string };
-	const nudger = createNudger({ settings: () => settings, locale: () => locale });
-	const request = () => (existsSync(sessionFile + NUDGE_SUFFIX) ? JSON.parse(readFileSync(sessionFile + NUDGE_SUFFIX, "utf8")) : undefined);
-	const ack = (outcome: "sent" | "draft" | "busy", at: number, id = request()?.id) => writeFileSync(sessionFile + ACK_SUFFIX, JSON.stringify({ v: 1, id, outcome, at }));
-	return { run, nudger, request, ack, sessionFile };
+function ids(prefix: string) {
+	let n = 0;
+	return () => `${prefix}-${String(++n).padStart(8, "0")}`;
 }
 
-test("a child idle the full threshold gets one request; before it, nothing", () => {
+function world(settings: NudgeSettings = { idleMs: 10 * MIN, max: 2 }, locale: "en" | "zh-TW" = "en", sessionFile = join(dir(), "kid.jsonl")) {
+	const run: Run = { id: "r1", name: "build-api", sessionFile, interactive: false };
+	const make = (prefix = "aaaa") => createNudger({ settings: () => settings, locale: () => locale, newId: ids(prefix) });
+	const nudger = make();
+	const runDir = (r: Run = run) => nudgeDir(r.sessionFile, r.id);
+	const requests = (r: Run = run) => (existsSync(runDir(r)) ? readdirSync(runDir(r)).filter((n) => n.endsWith(".req")) : []);
+	const request = (r: Run = run) => {
+		const [name] = requests(r);
+		return name ? JSON.parse(readFileSync(join(runDir(r), name), "utf8")) : undefined;
+	};
+	const ack = (outcome: NudgeOutcome, at: number, id = request()?.id, runId = run.id) => {
+		const req = requestFile(runDir(), id);
+		rmSync(req, { force: true }); // the child consumed it before it acked
+		writeFileSync(ackFile(runDir(), id), JSON.stringify({ v: 2, id, runId, outcome, at }));
+	};
+	/** The notices the parent would send now; taking them marks them sent. */
+	const told = (n = nudger) => {
+		const q = [...n.queued()];
+		n.emitted(q.length);
+		return q;
+	};
+	return { run, nudger, make, request, requests, ack, told, runDir, sessionFile };
+}
+
+test("a child idle the full threshold gets one request in its run's folder; before it, nothing", () => {
 	const w = world();
-	assert.equal(w.nudger.look(w.run, waiting(0), 10 * MIN - 1), undefined);
+	w.nudger.look(w.run, waiting(0), 10 * MIN - 1);
 	assert.equal(w.request(), undefined, "not yet");
-	assert.equal(w.nudger.look(w.run, waiting(0), 10 * MIN), undefined, "a request tells the parent nothing");
-	assert.deepEqual(w.request(), { v: 1, id: "r1:1", idleMs: 10 * MIN });
+	w.nudger.look(w.run, waiting(0), 10 * MIN);
+	assert.deepEqual(w.told(), [], "a request tells the parent nothing");
+	assert.equal(w.runDir(), join(w.sessionFile + NUDGE_SUFFIX, "r1"));
+	assert.deepEqual(w.request(), { v: 2, id: "aaaa-00000001", runId: "r1", sessionFile: w.sessionFile, at: 10 * MIN, idleMs: 10 * MIN });
 	w.nudger.look(w.run, waiting(0), 10 * MIN + 5000);
-	assert.equal(w.request().id, "r1:1", "one request at a time");
+	assert.deepEqual(w.requests(), ["aaaa-00000001.req"], "one request at a time");
 });
 
 test("never nudged: an interactive child, a persistent one, one being cancelled, one whose turn runs (a long tool call too) or is blocked", () => {
@@ -46,8 +69,9 @@ test("never nudged: an interactive child, a persistent one, one being cancelled,
 	] as const) {
 		const w = world();
 		Object.assign(w.run, extra);
-		assert.equal(w.nudger.look(w.run, projection, 60 * MIN), undefined);
+		w.nudger.look(w.run, projection, 60 * MIN);
 		assert.equal(w.request(), undefined, JSON.stringify({ extra, kind: projection.kind }));
+		assert.deepEqual(w.told(), []);
 	}
 });
 
@@ -61,23 +85,24 @@ test("one nudge per idle stretch, max in all, then the parent is told once", () 
 	const w = world();
 	w.nudger.look(w.run, waiting(0), 10 * MIN);
 	w.ack("sent", 10 * MIN + 2000);
-	assert.equal(w.nudger.look(w.run, waiting(0), 10 * MIN + 3000), undefined);
-	assert.equal(existsSync(w.sessionFile + ACK_SUFFIX), false, "the parent removes the ack it read");
+	w.nudger.look(w.run, waiting(0), 10 * MIN + 3000);
+	assert.equal(existsSync(w.runDir()), false, "the parent removes the ack it read, and the run's folder with it");
 	// The reply turn ended between two looks: the projection's stretch start did not move, but the nudge starts a stretch of its own.
 	w.nudger.look(w.run, waiting(0), 15 * MIN);
 	assert.equal(w.request(), undefined, "no second nudge in the stretch the first one opened");
 	w.nudger.look(w.run, waiting(0), 20 * MIN + 2000);
-	assert.equal(w.request().id, "r1:2", "the next stretch gets the next nudge");
+	assert.equal(w.request().id, "aaaa-00000002", "the next stretch gets the next nudge");
 	w.ack("sent", 20 * MIN + 3000);
-	assert.equal(w.nudger.look(w.run, waiting(21 * MIN), 21 * MIN), undefined);
-	assert.equal(w.nudger.look(w.run, waiting(21 * MIN), 31 * MIN - 1), undefined);
-	const told = w.nudger.look(w.run, waiting(21 * MIN), 31 * MIN);
+	w.nudger.look(w.run, waiting(21 * MIN), 21 * MIN);
+	w.nudger.look(w.run, waiting(21 * MIN), 31 * MIN - 1);
+	assert.deepEqual(w.told(), []);
+	w.nudger.look(w.run, waiting(21 * MIN), 31 * MIN);
 	assert.equal(w.request(), undefined, "no third nudge");
-	assert.equal(
-		told,
+	assert.deepEqual(w.told(), [
 		`build-api has been idle 31m and has not delivered its result, after 2 reminders to finish. Straw Boss will not remind it again. Read its pane; subagent_cancel stops it, and subagent_resume with its session file (${w.sessionFile}) continues it later.`,
-	);
-	assert.equal(w.nudger.look(w.run, waiting(21 * MIN), 90 * MIN), undefined, "told once");
+	]);
+	w.nudger.look(w.run, waiting(21 * MIN), 90 * MIN);
+	assert.deepEqual(w.told(), [], "told once");
 });
 
 test("a turn of the child's own starts a new stretch", () => {
@@ -88,11 +113,11 @@ test("a turn of the child's own starts a new stretch", () => {
 	w.nudger.look(w.run, waiting(12 * MIN), 21 * MIN);
 	assert.equal(w.request(), undefined);
 	w.nudger.look(w.run, waiting(12 * MIN), 22 * MIN);
-	assert.equal(w.request().id, "r1:1");
+	assert.equal(w.request().id, "aaaa-00000001");
 });
 
-test("draft or busy counts nothing and is asked again a minute later", () => {
-	for (const outcome of ["draft", "busy"] as const) {
+test("an ack that sent nothing (draft, busy, stale) counts nothing and is asked again a minute later", () => {
+	for (const outcome of ["draft", "busy", "stale"] as const) {
 		const w = world({ idleMs: 10 * MIN, max: 1 });
 		w.nudger.look(w.run, waiting(0), 10 * MIN);
 		w.ack(outcome, 10 * MIN + 1000);
@@ -101,29 +126,182 @@ test("draft or busy counts nothing and is asked again a minute later", () => {
 		w.nudger.look(w.run, waiting(0), 10 * MIN + 2000 + RETRY_MS - 1);
 		assert.equal(w.request(), undefined, `${outcome}: not before the retry`);
 		w.nudger.look(w.run, waiting(0), 10 * MIN + 2000 + RETRY_MS);
-		assert.equal(w.request().id, "r1:2", `${outcome}: asked again`);
+		assert.equal(w.request().id, "aaaa-00000002", `${outcome}: asked again`);
 		w.ack("sent", 12 * MIN);
 		w.nudger.look(w.run, waiting(0), 12 * MIN + 1);
-		assert.match(w.nudger.look(w.run, waiting(0), 22 * MIN) ?? "", /after 1 reminder to finish/, `${outcome}: only the sent one counted`);
+		w.nudger.look(w.run, waiting(0), 22 * MIN);
+		assert.match(w.told()[0] ?? "", /after 1 reminder to finish/, `${outcome}: only the sent one counted`);
 	}
 });
 
-test("an ack for another request is not this one's answer", () => {
-	const w = world();
+test("F006: a nudge the child sent but never saw enter is no delivery, yet one of the max tries, and the notice says so", () => {
+	const w = world({ idleMs: 10 * MIN, max: 2 });
 	w.nudger.look(w.run, waiting(0), 10 * MIN);
-	w.ack("sent", 10 * MIN + 1000, "old-run:4");
-	w.nudger.look(w.run, waiting(0), 10 * MIN + 2000);
-	assert.equal(w.request().id, "r1:1", "still open");
+	w.ack("lost", 10 * MIN + 31_000);
+	w.nudger.look(w.run, waiting(0), 10 * MIN + 32_000);
+	w.nudger.look(w.run, waiting(0), 20 * MIN + 30_000);
+	assert.equal(w.request(), undefined, "a new stretch starts with the send, since it may have gone in");
+	w.nudger.look(w.run, waiting(0), 20 * MIN + 31_000);
+	w.ack("sent", 20 * MIN + 32_000);
+	w.nudger.look(w.run, waiting(0), 20 * MIN + 33_000);
+	w.nudger.look(w.run, waiting(0), 30 * MIN + 32_000);
+	assert.match(w.told()[0] ?? "", /^build-api has been idle 30m and has not delivered its result, after 2 reminders to finish \(its pi could not confirm that 1 of them entered its session\)\. Straw Boss will not remind it again\./);
+	const z = world({ idleMs: 10 * MIN, max: 1 }, "zh-TW");
+	z.nudger.look(z.run, waiting(0), 10 * MIN);
+	z.ack("lost", 10 * MIN + 31_000);
+	z.nudger.look(z.run, waiting(0), 10 * MIN + 32_000);
+	z.nudger.look(z.run, waiting(0), 20 * MIN + 31_000);
+	assert.match(z.told()[0] ?? "", /^build-api 已閒置 20m，還沒交回結果；Straw Boss 已提醒它收尾 1 次（其中 1 次它的 pi 無法確認已送進它的 session），不會再提醒。/);
 });
 
-test("a request no child takes within a minute: removed, the parent told once that it cannot be asked", () => {
+test("an ack for another request or another run is not this one's answer", () => {
 	const w = world();
 	w.nudger.look(w.run, waiting(0), 10 * MIN);
-	assert.equal(w.nudger.look(w.run, waiting(0), 10 * MIN + ACK_MS - 1), undefined);
-	const told = w.nudger.look(w.run, waiting(0), 10 * MIN + ACK_MS);
+	const id = w.request().id;
+	writeFileSync(ackFile(w.runDir(), id), JSON.stringify({ v: 2, id, runId: "r0", outcome: "sent", at: 10 * MIN }));
+	w.nudger.look(w.run, waiting(0), 10 * MIN + 2000);
+	assert.equal(w.request().id, id, "still open");
+	writeFileSync(ackFile(w.runDir(), id), JSON.stringify({ v: 1, id, outcome: "sent", at: 10 * MIN }));
+	w.nudger.look(w.run, waiting(0), 10 * MIN + 3000);
+	assert.equal(w.request().id, id, "an ack of the old format is no answer either");
+});
+
+test("F006: a request no child acknowledges within a minute: removed, and the parent told once of no acknowledgement, guessing neither version nor activity", () => {
+	const w = world();
+	w.nudger.look(w.run, waiting(0), 10 * MIN);
+	w.nudger.look(w.run, waiting(0), 10 * MIN + ACK_MS - 1);
+	assert.deepEqual(w.told(), []);
+	w.nudger.look(w.run, waiting(0), 10 * MIN + ACK_MS);
 	assert.equal(w.request(), undefined, "removed");
-	assert.match(told ?? "", /^build-api has been idle 11m and has not delivered its result, and Straw Boss could not remind it: its pi took no reminder \(it was started by an older Straw Boss\)\. Read its pane;/);
-	assert.equal(w.nudger.look(w.run, waiting(0), 100 * MIN), undefined, "told once, never asked again");
+	assert.deepEqual(w.told(), [
+		`build-api has not delivered its result, and its pi sent no acknowledgement of Straw Boss's reminder request within a minute, so Straw Boss will not remind it. Read its pane; subagent_cancel stops it, and subagent_resume with its session file (${w.sessionFile}) continues it later.`,
+	]);
+	w.nudger.look(w.run, waiting(0), 100 * MIN);
+	assert.deepEqual(w.told(), [], "told once, never asked again");
+	assert.equal(w.request(), undefined);
+});
+
+test("F001: an auto-exit child answers that it closes by itself: the parent is told once, in plain words, and it is never asked again", () => {
+	for (const [locale, words] of [
+		["en", "build-api has been idle 10m and has not delivered its result. Straw Boss did not remind it: it closes when a turn ends, so a reminder would close it and deliver its unfinished work as done. Read its pane;"],
+		["zh-TW", "build-api 已閒置 10m，還沒交回結果。Straw Boss 沒有提醒它：它一輪結束就會關閉，提醒會讓它把沒做完的工作當成結果交回。請看它的窗格；"],
+	] as const) {
+		const w = world(undefined, locale);
+		w.nudger.look(w.run, waiting(0), 10 * MIN);
+		w.ack("auto-exit", 10 * MIN + 1000);
+		w.nudger.look(w.run, waiting(0), 10 * MIN + 2000);
+		const t = w.told();
+		assert.equal(t.length, 1, locale);
+		assert.ok(t[0].startsWith(words), t[0]);
+		w.nudger.look(w.run, waiting(0), 60 * MIN);
+		assert.equal(w.request(), undefined, "never asked again");
+		assert.deepEqual(w.told(), []);
+	}
+});
+
+test("F001: the auto-exit child sends no nudge and acks auto-exit, whatever its state", () => {
+	const c = child({ autoExit: true });
+	c.put();
+	assert.deepEqual(c.inbox.poll(), ["auto-exit"]);
+	assert.deepEqual(c.sent, [], "nothing goes into its session");
+	assert.equal(c.ack().outcome, "auto-exit");
+});
+
+test("F002: request ids stay unique across parent reloads, so a stale ack of the old parent counts nothing", () => {
+	const sessionFile = join(dir(), "kid.jsonl");
+	const w = world(undefined, "en", sessionFile);
+	const real = createNudger({ settings: () => ({ idleMs: 10 * MIN, max: 2 }), locale: () => "en" });
+	real.look(w.run, waiting(0), 10 * MIN);
+	const first = w.request().id;
+	real.prune([]);
+	const reloaded = createNudger({ settings: () => ({ idleMs: 10 * MIN, max: 2 }), locale: () => "en" });
+	reloaded.look(w.run, waiting(0), 10 * MIN);
+	const second = w.request().id;
+	assert.notEqual(first, second, "a fresh parent never reuses an id");
+	// The old request's ack arrives late: it is not the new request's answer, and the new request stays.
+	writeFileSync(ackFile(w.runDir(), first), JSON.stringify({ v: 2, id: first, runId: "r1", outcome: "sent", at: 10 * MIN }));
+	reloaded.look(w.run, waiting(0), 10 * MIN + 1000);
+	assert.equal(w.request()?.id, second);
+	assert.equal(existsSync(ackFile(w.runDir(), first)), true, "and another request's ack is not this parent's to remove");
+});
+
+test("F002: a parent removes only the files of its own request", () => {
+	const w = world();
+	const older = w.make("oldp");
+	older.look(w.run, waiting(0), 10 * MIN);
+	const newer = w.make("newp");
+	newer.look(w.run, waiting(0), 10 * MIN);
+	assert.deepEqual(w.requests().sort(), ["newp-00000001.req", "oldp-00000001.req"]);
+	older.prune([]);
+	assert.deepEqual(w.requests(), ["newp-00000001.req"], "the older parent's cleanup leaves the newer one's request");
+	newer.look(w.run, waiting(0), 10 * MIN + ACK_MS);
+	assert.deepEqual(w.requests(), []);
+});
+
+test("F002: a child resumed on the same session file never takes the previous run's request, nor one naming another session", () => {
+	const c = child({ runId: "r2" });
+	const w = world(undefined, "en", c.file);
+	w.nudger.look(w.run, waiting(0), 10 * MIN);
+	assert.deepEqual(c.inbox.poll(), [], "r1's request is in r1's folder");
+	assert.deepEqual(c.sent, []);
+	assert.ok(w.request(), "and stays there for r1's parent to time out");
+	// A request in r2's folder that names another run or another session file is not r2's.
+	c.put("bbbb-00000001", { runId: "r1" });
+	c.put("bbbb-00000002", { sessionFile: "/other.jsonl" });
+	assert.deepEqual(c.inbox.poll(), []);
+	assert.deepEqual(c.sent, []);
+});
+
+test("F003: the child's inbox stands still while its session is not the launch file", () => {
+	const c = child();
+	c.current = "/elsewhere/other.jsonl";
+	c.put();
+	assert.deepEqual(c.inbox.poll(), []);
+	assert.deepEqual(c.sent, []);
+	assert.ok(existsSync(requestFile(c.dir, "bbbb-00000001")), "the request is left for the parent to time out");
+	c.current = undefined;
+	assert.deepEqual(c.inbox.poll(), [], "no session file: no inbox");
+	c.current = c.file;
+	assert.deepEqual(c.inbox.poll(), ["sent"], "back on the launch file: it answers");
+});
+
+test("F004: a cancel revokes the open request", () => {
+	const w = world();
+	w.nudger.look(w.run, waiting(0), 10 * MIN);
+	assert.ok(w.request());
+	w.run.cancelState = "requested";
+	w.nudger.look(w.run, waiting(0), 10 * MIN + 1000);
+	assert.equal(w.request(), undefined);
+	assert.deepEqual(w.told(), []);
+});
+
+test("F004: a request whose idle stretch ended is revoked; one the child already took waits for its ack", () => {
+	const w = world({ idleMs: 10 * MIN, max: 1 });
+	w.nudger.look(w.run, waiting(0), 10 * MIN);
+	w.nudger.look(w.run, active(10 * MIN + 500), 10 * MIN + 1000);
+	assert.equal(w.request(), undefined, "revoked: a turn started");
+	w.nudger.look(w.run, waiting(10 * MIN + 1500), 10 * MIN + 2000);
+	assert.equal(w.request(), undefined, "a new stretch waits its full threshold");
+	w.nudger.look(w.run, waiting(10 * MIN + 1500), 20 * MIN + 1500);
+	const id = w.request().id;
+	assert.equal(id, "aaaa-00000002");
+	// The child took it and sent the nudge; its own turn starts before its ack is read.
+	w.ack("sent", 20 * MIN + 1600);
+	w.nudger.look(w.run, active(20 * MIN + 1700), 20 * MIN + 1800);
+	w.nudger.look(w.run, waiting(21 * MIN), 31 * MIN);
+	assert.match(w.told()[0] ?? "", /after 1 reminder to finish/, "the nudge in flight still counted");
+});
+
+test("F004: the child rejects a request written before its latest turn", () => {
+	const c = child();
+	c.clock = 5000;
+	c.inbox.turnStarted();
+	c.put("bbbb-00000001", { at: 4999 });
+	assert.deepEqual(c.inbox.poll(), ["stale"]);
+	assert.deepEqual(c.sent, []);
+	assert.equal(c.ack().outcome, "stale");
+	c.put("bbbb-00000002", { at: 5001 });
+	assert.deepEqual(c.inbox.poll(), ["sent"]);
 });
 
 test("zh-TW: the parent's notices in Traditional Chinese", () => {
@@ -131,13 +309,14 @@ test("zh-TW: the parent's notices in Traditional Chinese", () => {
 	w.nudger.look(w.run, waiting(0), 10 * MIN);
 	w.ack("sent", 10 * MIN);
 	w.nudger.look(w.run, waiting(0), 10 * MIN + 1);
-	assert.equal(
-		w.nudger.look(w.run, waiting(0), 20 * MIN),
+	w.nudger.look(w.run, waiting(0), 20 * MIN);
+	assert.deepEqual(w.told(), [
 		`build-api 已閒置 20m，還沒交回結果；Straw Boss 已提醒它收尾 1 次，不會再提醒。請看它的窗格；要停掉它用 subagent_cancel，之後要接著做，用 subagent_resume 帶它的 session 檔（${w.sessionFile}）。`,
-	);
+	]);
 	const u = world({ idleMs: 10 * MIN, max: 1 }, "zh-TW");
 	u.nudger.look(u.run, waiting(0), 10 * MIN);
-	assert.match(u.nudger.look(u.run, waiting(0), 11 * MIN) ?? "", /^build-api 已閒置 11m，還沒交回結果，而 Straw Boss 無法提醒它：它的 pi 沒有接收提醒（它是較舊版的 Straw Boss 啟動的）。請看它的窗格；/);
+	u.nudger.look(u.run, waiting(0), 11 * MIN);
+	assert.match(u.told()[0] ?? "", /^build-api 還沒交回結果；Straw Boss 要提醒它收尾，但它的 pi 一分鐘內沒有回應這個請求，所以不會再提醒。請看它的窗格；/);
 });
 
 test("prune: a run gone from the registry takes its open request with it", () => {
@@ -146,6 +325,7 @@ test("prune: a run gone from the registry takes its open request with it", () =>
 	assert.ok(w.request());
 	w.nudger.prune(["other"]);
 	assert.equal(w.request(), undefined);
+	assert.equal(existsSync(w.sessionFile + NUDGE_SUFFIX), false, "the folders go once empty");
 });
 
 test("settings: subagentNudge in config.json, defaults for anything missing or out of range", () => {
@@ -166,41 +346,88 @@ test("settings: subagentNudge in config.json, defaults for anything missing or o
 	assert.deepEqual(readNudgeSettings(d), { idleMs: 10 * MIN, max: 2 });
 });
 
-test("the nudge text: subagent_done for a child that has it, a final turn for an auto-exit one, caller_ping for both", () => {
+test("the nudge text: write the report and call subagent_done, or caller_ping, or name the wait", () => {
 	assert.equal(
-		nudgeText(false, 10 * MIN),
+		nudgeText(10 * MIN),
 		"Straw Boss: you have been idle for 10 minutes, and your caller still has no result from you. If your task is done, write your final report now and call subagent_done. If you truly wait on your caller (a decision, an access, or an answer only it can give), say so with caller_ping. If you wait on work of your own that will wake you (a monitor, a loop, your own subagents), reply in one line with what it is and when it ends.",
 	);
-	assert.equal(
-		nudgeText(true, 30_000),
-		"Straw Boss: you have been idle for 1 minute, and your caller still has no result from you. If your task is done, end this turn with your final report: this session then closes and delivers it. If you truly wait on your caller (a decision, an access, or an answer only it can give), say so with caller_ping.",
-	);
+	assert.match(nudgeText(30_000), /idle for 1 minute,/);
 });
 
 // ── the child's side ──
 
-function child(opts: { idle?: boolean; pending?: boolean; draft?: string; undelivered?: boolean } = {}) {
-	const d = dir(), file = join(d, "kid.jsonl");
+function child(opts: { idle?: boolean; pending?: boolean; draft?: string; undelivered?: boolean; autoExit?: boolean; runId?: string; throws?: boolean } = {}) {
+	const d = dir(), file = join(d, "kid.jsonl"), runId = opts.runId ?? "r1";
 	const sent: { text: unknown; options: unknown }[] = [];
-	const pi = { sendUserMessage: (text: unknown, options: unknown) => void sent.push({ text, options }) };
-	const ctx = { isIdle: () => opts.idle ?? true, hasPendingMessages: () => opts.pending ?? false, ui: { getEditorText: () => opts.draft ?? "" } };
-	const put = (id = "r1:1", idleMs = 10 * MIN) => writeFileSync(file + NUDGE_SUFFIX, JSON.stringify({ v: 1, id, idleMs }));
-	const ack = () => (existsSync(file + ACK_SUFFIX) ? JSON.parse(readFileSync(file + ACK_SUFFIX, "utf8")) : undefined);
-	return { file, pi, ctx, sent, put, ack, undelivered: () => opts.undelivered ?? false };
+	const pi = {
+		sendUserMessage: (text: unknown, options: unknown) => {
+			if (opts.throws) throw new Error("no");
+			sent.push({ text, options });
+		},
+	};
+	const state = { current: file as string | undefined, clock: 0 };
+	const ctx = {
+		isIdle: () => opts.idle ?? true,
+		hasPendingMessages: () => opts.pending ?? false,
+		ui: { getEditorText: () => opts.draft ?? "" },
+		sessionManager: { getSessionFile: () => state.current },
+	};
+	const runDir = nudgeDir(file, runId);
+	const inbox = createInbox({ file, runId, autoExit: opts.autoExit ?? false, ctx: () => ctx, pi, undelivered: () => opts.undelivered ?? false, now: () => state.clock });
+	const put = (id = "bbbb-00000001", over: Record<string, unknown> = {}) => {
+		mkdirSync(runDir, { recursive: true });
+		writeFileSync(requestFile(runDir, id), JSON.stringify({ v: 2, id, runId, sessionFile: file, at: 1, idleMs: 10 * MIN, ...over }));
+	};
+	const ack = (id?: string) => {
+		const names = readdirSync(runDir).filter((n) => n.endsWith(".ack")).sort();
+		const name = id ? `${id}.ack` : names.at(-1);
+		if (!name || !existsSync(join(runDir, name))) return undefined;
+		return JSON.parse(readFileSync(join(runDir, name), "utf8"));
+	};
+	return {
+		file, dir: runDir, pi, ctx, sent, put, ack, inbox,
+		get current() { return state.current; }, set current(v) { state.current = v; },
+		get clock() { return state.clock; }, set clock(v) { state.clock = v; },
+	};
 }
 
-test("child: an idle child with an empty input box takes the request, sends the nudge into its own session, and acks sent", () => {
+test("child: an idle child with an empty input box takes the request and sends the nudge; it acks sent only once the nudge enters its session (F006)", () => {
 	const c = child();
+	c.clock = 7;
 	c.put();
-	assert.equal(answerNudge({ file: c.file, autoExit: false, ctx: c.ctx as never, pi: c.pi as never, undelivered: c.undelivered, now: () => 7 }), "sent");
-	assert.deepEqual(c.sent, [{ text: nudgeText(false, 10 * MIN), options: { deliverAs: "followUp" } }]);
-	assert.deepEqual(c.ack(), { v: 1, id: "r1:1", outcome: "sent", at: 7 });
-	assert.equal(existsSync(c.file + NUDGE_SUFFIX), false, "the request is consumed");
-	assert.equal(answerNudge({ file: c.file, autoExit: false, ctx: c.ctx as never, pi: c.pi as never, undelivered: c.undelivered }), undefined, "nothing open: nothing done");
+	assert.deepEqual(c.inbox.poll(), ["sent"]);
+	assert.deepEqual(c.sent, [{ text: nudgeText(10 * MIN), options: { deliverAs: "followUp" } }]);
+	assert.equal(existsSync(requestFile(c.dir, "bbbb-00000001")), false, "the request is consumed");
+	assert.equal(c.ack(), undefined, "the call alone proves nothing: no ack yet");
+	c.inbox.messageStarted({ role: "user", content: "something else" });
+	c.inbox.messageStarted({ role: "assistant", content: [{ type: "text", text: nudgeText(10 * MIN) }] });
+	assert.equal(c.ack(), undefined, "another message is not the nudge");
+	c.clock = 9;
+	c.inbox.messageStarted({ role: "user", content: [{ type: "text", text: nudgeText(10 * MIN) }] });
+	assert.deepEqual(c.ack(), { v: 2, id: "bbbb-00000001", runId: "r1", outcome: "sent", at: 9 });
+	assert.deepEqual(c.inbox.poll(), [], "nothing open: nothing done");
 	assert.equal(c.sent.length, 1);
 });
 
-test("child: unsent text in the input box, a running turn, a queued message, or its own undelivered subagents: nothing sent, the reason acked", () => {
+test("child (F006): a nudge that never enters the session is acked lost; one whose send throws, at once", () => {
+	const c = child();
+	c.put();
+	c.inbox.poll();
+	c.clock = ACCEPT_MS - 1;
+	c.inbox.poll();
+	assert.equal(c.ack(), undefined);
+	c.clock = ACCEPT_MS;
+	c.inbox.poll();
+	assert.equal(c.ack().outcome, "lost");
+	c.inbox.messageStarted({ role: "user", content: nudgeText(10 * MIN) });
+	assert.equal(c.ack().outcome, "lost", "a late entry does not turn it into sent");
+	const t = child({ throws: true });
+	t.put();
+	assert.deepEqual(t.inbox.poll(), ["lost"]);
+	assert.equal(t.ack().outcome, "lost");
+});
+
+test("child: unsent text in the input box, a running turn, a queued message, its own undelivered subagents, or a nudge in flight: nothing sent, the reason acked", () => {
 	for (const [opts, outcome] of [
 		[{ draft: "half a sentence" }, "draft"],
 		[{ idle: false }, "busy"],
@@ -209,72 +436,142 @@ test("child: unsent text in the input box, a running turn, a queued message, or 
 	] as const) {
 		const c = child(opts);
 		c.put();
-		assert.equal(answerNudge({ file: c.file, autoExit: false, ctx: c.ctx as never, pi: c.pi as never, undelivered: c.undelivered, now: () => 1 }), outcome, JSON.stringify(opts));
+		assert.deepEqual(c.inbox.poll(), [outcome], JSON.stringify(opts));
 		assert.deepEqual(c.sent, []);
 		assert.equal(c.ack().outcome, outcome);
 	}
-});
-
-test("child: an auto-exit child gets the final-turn wording", () => {
 	const c = child();
-	c.put("r1:1", 30_000);
-	answerNudge({ file: c.file, autoExit: true, ctx: c.ctx as never, pi: c.pi as never, undelivered: c.undelivered });
-	assert.equal(c.sent[0].text, nudgeText(true, 30_000));
+	c.put("bbbb-00000001");
+	c.put("bbbb-00000002");
+	assert.deepEqual(c.inbox.poll(), ["sent", "busy"], "one nudge at a time");
+	assert.equal(c.sent.length, 1);
 });
 
-test("child: the inbox runs only in a subagent with a session file, never in a persistent specialist", () => {
+test("child: the inbox runs only in a subagent with a session file and a run id, never in a persistent specialist", () => {
 	const on: string[] = [];
 	const pi = { on: (event: string) => void on.push(event), sendUserMessage() {} };
-	nudgeInbox(pi as never, { env: {} });
-	assert.deepEqual(on, [], "no subagent session");
-	nudgeInbox(pi as never, { env: { PI_SUBAGENT_SESSION: "/x.jsonl", PI_SUBAGENT_PERSISTENT: "1" } });
-	assert.deepEqual(on, [], "persistent");
-	nudgeInbox(pi as never, { env: { PI_SUBAGENT_SESSION: "/x.jsonl", PI_SUBAGENT_AUTO_EXIT: "1" } });
-	assert.deepEqual(on.sort(), ["session_shutdown", "session_start"]);
+	assert.equal(nudgeInbox(pi as never, { env: {} }), undefined, "no subagent session");
+	assert.equal(nudgeInbox(pi as never, { env: { PI_SUBAGENT_SESSION: "/x.jsonl" } }), undefined, "no run id");
+	assert.equal(nudgeInbox(pi as never, { env: { PI_SUBAGENT_SESSION: "/x.jsonl", PI_SUBAGENT_ID: "r1", PI_SUBAGENT_PERSISTENT: "1" } }), undefined, "persistent");
+	assert.deepEqual(on, []);
+	assert.ok(nudgeInbox(pi as never, { env: { PI_SUBAGENT_SESSION: "/x.jsonl", PI_SUBAGENT_ID: "r1", PI_SUBAGENT_AUTO_EXIT: "1" } }), "an auto-exit child answers, to say it takes no nudge");
+	assert.deepEqual(on.sort(), ["message_start", "session_shutdown", "session_start", "turn_start"]);
 });
 
-test("child: the inbox polls once the session starts and stops at shutdown", async (t) => {
+test("child: the inbox polls once the session starts, follows turns and messages, and stops at shutdown", async (t) => {
 	t.mock.timers.enable({ apis: ["setInterval"] });
 	const c = child();
 	const handlers = new Map<string, (e: unknown, ctx: unknown) => void>();
 	const pi = { on: (event: string, h: (e: unknown, ctx: unknown) => void) => void handlers.set(event, h), sendUserMessage: c.pi.sendUserMessage };
-	nudgeInbox(pi as never, { env: { PI_SUBAGENT_SESSION: c.file }, undelivered: c.undelivered });
+	let clock = 100;
+	nudgeInbox(pi as never, { env: { PI_SUBAGENT_SESSION: c.file, PI_SUBAGENT_ID: "r1" }, undelivered: () => false, now: () => clock });
 	handlers.get("session_start")!({}, c.ctx);
-	c.put();
+	c.put("bbbb-00000001", { at: 50 });
 	t.mock.timers.tick(2000);
 	assert.equal(c.sent.length, 1, "taken at the next poll");
+	handlers.get("message_start")!({ message: { role: "user", content: c.sent[0].text } }, c.ctx);
+	assert.equal(c.ack("bbbb-00000001").outcome, "sent");
+	clock = 200;
+	handlers.get("turn_start")!({}, c.ctx);
+	c.put("bbbb-00000002", { at: 150 });
+	t.mock.timers.tick(2000);
+	assert.equal(c.ack("bbbb-00000002").outcome, "stale", "written before the turn that started");
 	handlers.get("session_shutdown")!({}, c.ctx);
-	c.put("r1:2");
+	c.put("bbbb-00000003", { at: 300 });
 	t.mock.timers.tick(10_000);
 	assert.equal(c.sent.length, 1, "no poll after shutdown");
+	assert.equal(c.ack("bbbb-00000003"), undefined);
 });
 
-// ── the status loop carries the notice ──
+test("parent and child together: the request, the nudge, its entry, and the counted ack", () => {
+	const c = child();
+	const w = world({ idleMs: 10 * MIN, max: 1 }, "en", c.file);
+	c.clock = 10 * MIN + 500;
+	w.nudger.look(w.run, waiting(0), 10 * MIN);
+	assert.deepEqual(c.inbox.poll(), ["sent"]);
+	// Another extension's input handler wrapped it: still the nudge.
+	c.inbox.messageStarted({ role: "user", content: [{ type: "text", text: `<context>\n${c.sent[0].text}` }] });
+	w.nudger.look(w.run, active(10 * MIN + 600), 10 * MIN + 1000);
+	assert.equal(existsSync(c.file + NUDGE_SUFFIX), false, "nothing left beside the session file");
+	w.nudger.look(w.run, waiting(11 * MIN), 21 * MIN);
+	assert.match(w.told()[0] ?? "", /after 1 reminder to finish/);
+});
 
-test("the status loop asks the nudger about each child and sends what it says in subagent_status", async (t) => {
+// ── the status loop carries the notices ──
+
+function loop(t: { mock: { timers: { enable(o: unknown): void; tick(ms: number): void } }; after(f: () => void): void }, lineLimit: number, nudger: unknown, failFirst = false) {
 	t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 100 * MIN });
 	const d = dir();
-	mkdirSync(d, { recursive: true });
-	const running = { id: "r1", name: "build-api", sessionFile: join(d, "k.jsonl"), interactive: false, startTime: 0, lifecycle: { process: { kind: "running", startedAt: 0, confirmedAt: 0 }, turn: { kind: "waiting", startedAt: 0 }, activityHealth: { kind: "unseen" }, activityDetail: null, pane: { kind: "unknown" }, hasWorked: true, lastActivitySequence: null, delivery: "pending" } };
-	const runtime = { runningSubagents: new Map([["r1", running]]) };
-	const looked: string[] = [], pruned: string[][] = [];
-	const nudger = { look: (run: { id: string }, projection: LifecycleProjection) => (looked.push(`${run.id}:${projection.kind}`), "build-api told"), prune: (ids: Iterable<string>) => void pruned.push([...ids]) };
+	const make = (id: string) => ({ id, name: `w-${id}`, sessionFile: join(d, `${id}.jsonl`), interactive: false, startTime: 0, lifecycle: { process: { kind: "running", startedAt: 0, confirmedAt: 0 }, turn: { kind: "waiting", startedAt: 0 }, activityHealth: { kind: "unseen" }, activityDetail: null, pane: { kind: "unknown" }, hasWorked: true, lastActivitySequence: null, delivery: "pending" } });
+	const runtime = { runningSubagents: new Map([["r1", make("r1")], ["r2", make("r2")]]) };
 	const messages: { content: string; options: unknown }[] = [];
-	const pi = { sendMessage: (m: { content: string }, options: unknown) => void messages.push({ content: m.content, options }) };
+	let fail = failFirst;
+	const pi = {
+		sendMessage: (m: { content: string }, options: unknown) => {
+			if (fail) {
+				fail = false;
+				throw new Error("not now");
+			}
+			messages.push({ content: m.content, options });
+		},
+	};
 	const controller = createWidgetController(
-		{ runtime, statusConfig: { enabled: true, lineLimit: 10 }, supervisionConfig: { hangWarningMinutes: 0 }, observeRunningSubagent() {}, evaluateNoProgressAdvisory: () => undefined } as never,
+		{ runtime, statusConfig: { enabled: true, lineLimit }, supervisionConfig: { hangWarningMinutes: 0 }, observeRunningSubagent() {}, evaluateNoProgressAdvisory: () => ({ notify: true, kind: "advisory", classification: "generic", idleMs: MIN, lastEntryKind: "assistant" }) } as never,
 		undefined,
-		nudger,
+		nudger as never,
 	);
 	controller.startStatusRefresh(pi as never);
 	t.after(() => controller.stopRefresh());
+	return { runtime, messages };
+}
+
+test("the status loop asks the nudger about each child and sends its queued notices in subagent_status", async (t) => {
+	const looked: string[] = [], pruned: string[][] = [];
+	const queue: string[] = [];
+	const nudger = {
+		look: (run: { id: string }, projection: LifecycleProjection) => {
+			looked.push(`${run.id}:${projection.kind}`);
+			if (run.id === "r1") queue.push("w-r1 told");
+		},
+		queued: () => queue,
+		emitted: (n: number) => void queue.splice(0, n),
+		prune: (ids: Iterable<string>) => void pruned.push([...ids]),
+	};
+	const { runtime, messages } = loop(t, 10, nudger);
 	t.mock.timers.tick(1000);
-	assert.deepEqual(looked, ["r1:waiting"]);
-	assert.deepEqual(pruned, [["r1"]]);
+	assert.deepEqual(looked, ["r1:waiting", "r2:waiting"]);
+	assert.deepEqual(pruned, [["r1", "r2"]]);
 	assert.equal(messages.length, 1);
-	assert.match(messages[0].content, /• build-api told/);
+	assert.match(messages[0].content, /^Subagent status:\n• w-r1 told\n/);
 	assert.deepEqual(messages[0].options, { triggerTurn: true, deliverAs: "steer" });
+	assert.deepEqual(queue, [], "sent, so dequeued");
 	runtime.runningSubagents.clear();
 	t.mock.timers.tick(1000);
 	assert.deepEqual(pruned.at(-1), [], "the last run gone: pruned before the loop stops");
+});
+
+test("F005: the line cap never drops a notice, and a notice whose send failed goes out at the next tick", async (t) => {
+	const queue: string[] = [];
+	let once = true;
+	const nudger = {
+		look: (run: { id: string }) => {
+			if (once) queue.push(`${run.id} told`);
+			if (run.id === "r2") once = false;
+		},
+		queued: () => queue,
+		emitted: (n: number) => void queue.splice(0, n),
+		prune() {},
+	};
+	const { messages } = loop(t, 1, nudger, true);
+	assert.throws(() => t.mock.timers.tick(1000), /not now/);
+	assert.equal(messages.length, 0, "the first send failed");
+	assert.deepEqual(queue, ["r1 told", "r2 told"], "kept for the next tick");
+	t.mock.timers.tick(1000);
+	assert.ok(messages.length >= 1, "sent at the next tick");
+	const lines = messages[0].content.split("\n");
+	assert.deepEqual(lines.slice(1, 3), ["• r1 told", "• r2 told"], "both notices, with lineLimit 1");
+	assert.equal(lines.length, 5, "then the capped status lines: one, and the count of the rest");
+	assert.match(lines[4], /^• \+1 more running\.$/);
+	assert.deepEqual(queue, []);
+	assert.ok(messages.slice(1).every((m) => !m.content.includes("told")), "each notice once");
 });
