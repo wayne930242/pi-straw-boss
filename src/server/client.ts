@@ -672,7 +672,7 @@ async function restartLocked(ctx: Ctx, { reason, downgrade, upgrade, boss, limit
  * none came. Gives the server that came, or undefined with the lock held again.
  */
 async function supervised(ctx: Ctx, hold: Hold, old: Replaced, began: string | undefined, deadline?: number): Promise<ServerRecord | undefined> {
-	hold.release();
+	void (hold.release(), ctx.log.line("restart-supervisor-wait", { by: ctx.by, pid: old.pid, ms: ctx.timers.supervisor }));
 	const back = await waitReady(ctx, ctx.timers.supervisor, { old, began, deadline });
 	if (back && "pid" in back) return back;
 	try {

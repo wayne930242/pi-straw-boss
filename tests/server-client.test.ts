@@ -8,7 +8,7 @@ import { decide, describe, ensure, intercomOf, launch, lockFor, lockWaitFor, pro
 import { fileOf, readLock, readRecord, readStartError, secretDir, type ServerRecord, takeLock, writeRecord, writeStartError } from "../src/server/record.ts";
 import { callControl, listenControl } from "../src/server/socket.ts";
 import { fakeClock } from "./fake-clock.ts";
-import { freePort, ServerWorld, sleep, stallWatch, until } from "./server-world.ts";
+import { FAST, freePort, ServerWorld, sleep, stallWatch, until } from "./server-world.ts";
 
 // What reaches the server from outside (docs/specs/2026-10-26-sb-backend.md, Starting, Stopping, Restarts and upgrades): liveness, the session look's rules, the start, the
 // restart path, the stop, and the version rules.
@@ -632,10 +632,13 @@ test("sbr-NEW-2: a stop from another broker scope or transport is refused with t
 test("sbr-NEW-3: a restart that finds the serve server down with a fresh restarting waits for the supervisor's serve and starts no detached one", async () => {
 	const s = await world.start({ mode: "serve" });
 	await s.handle.ready;
-	const first = restart(world.ctx(), { reason: "first" });
+	// The supervisor here starts the serve again once the second requester has found the old one down and waits for it, and both wait as long as that takes (a real supervisor's 10 s).
+	// A start after a fixed 120 ms came before the second's look when every requester wait woke 150 ms late: it found the new serve live, and restarted that.
+	const timers = { ...FAST, supervisor: FAST.start };
+	const first = restart(world.ctx({ timers }), { reason: "first" });
 	await until(() => world.exitCodes.get(s.pid) === 75, "the old serve server to leave with 75");
-	const second = restart(world.ctx({ by: "second requester" }), { reason: "second" });
-	await sleep(120);
+	const second = restart(world.ctx({ by: "second requester", timers }), { reason: "second" });
+	await until(() => /restart-supervisor-wait[^\n]*by="second requester"/.test(logText()), "the second requester to find the serve down and wait for its supervisor");
 	const back = await world.start({ mode: "serve" });
 	const [a, b] = await Promise.all([first, second]);
 	assert.equal(a.record.pid, back.pid);
