@@ -1,6 +1,6 @@
 # Todo preflight and run spend (2026-11-28)
 
-Status: A (preflight) ships; B (run spend) is planned, to be redone. The boss split the two on 11/28 after the third review left the spend open: 「拆開：檢查先發，記成本重做」. The preflight's behavior is in [how-it-works, The subagent host](../how-it-works.md#the-subagent-host).
+Status: A (preflight) ships; B (run spend) is redone, review pending. The boss split the two on 11/28 after the third review left the spend open: 「拆開：檢查先發，記成本重做」. The preflight's behavior is in [how-it-works, The subagent host](../how-it-works.md#the-subagent-host).
 
 ## Boss words (binding)
 
@@ -23,14 +23,19 @@ When a main dispatches for a todo (`subagent` with `item`, or `boss_pair` with `
 
 The `subagent` check runs first in the session's `tool_call` hook, before a bar from the net (a sub workspace's session dispatches too, review F006) and before the capacity cap reserves anything, so a refused launch holds no points. Its warnings wait for the call's result and ride on it once; a call the turn ended without a result leaves none behind. `boss_pair` checks before it asks the server for a thread, so a refused pair opens no thread.
 
-## B. Run spend on the todo (planned)
+## B. Run spend on the todo
 
-Not shipped. The aim stays: when a run bound to a todo ends, pi-todo-ledger records its tokens, cost, wall time, runs and models on that todo (`metadata.herdr.spend`), and the session page's todo detail shows the totals, never the session paths. The figures would be an estimate from the child's transcript, not a bill.
+Status: redone on sb `feat/spend-v2`, pi-todo-ledger `feat/spend-v2` (0.9.0) and the Maestro fork's `feat/spend-v2` (tag `sb-host-a5a9c43`); a fresh reviewer is paired before release, since the ledger's contract and Maestro's delivery details grow.
 
-The first build (sb `feat/todo-preflight`, ledger `feat/todo-spend`, kept for the redo) read the child's session file and had sb's host send `subagent:run-end` `{ v: 1, id, kind, name?, item?, sessionFile?, elapsed }`. Its third review left two problems that the redo must solve first:
+When a run bound to a todo ends, pi-todo-ledger records its tokens, cost, wall time, runs and models on that todo (`metadata.herdr.spend`), and the session page's todo detail shows the totals, never the session paths. The figures are an estimate from the child's transcript, not a bill.
 
-| # | Problem | What the redo needs |
-|---|---|---|
-| S-R1 | The ledger's spend write waits on its guards; pi moves the session's leaf before the `session_tree` handlers run, so a check of the list's generation in the ledger does not see the switch, and a write computed from the old branch can land on the new one (review F010). | A branch identity the ledger can read at write time (the leaf entry the snapshot was taken on), compared just before `appendEntry`. |
-| S-R2 | Maestro's end messages carry no run id. Matching an end to the run that left Maestro's registry still confuses two runs of one name that end together (review F011). | Maestro names the run id on `subagent_result` and `subagent_ping` (through the fork), so the host stops guessing. |
-| S-R3 | Fallback attempts: Maestro hands over only the last attempt's file and elapsed (review F004). | The last attempt is always counted; earlier attempts need Maestro's `attempts: [{ model, sessionFile, elapsed }]`. |
+| # | Question | Answer | Basis | Status |
+|---|---|---|---|---|
+| S1 | Where the cost comes from | The child's own session files: pi writes each assistant turn's `usage` and its `provider`/`model` there. A fork's copy of its launcher's turns (older than the file's header, or entry ids the launcher holds) is not the child's (review F001). | @earendil-works/pi-ai `Usage` | settled |
+| S2 | Who records it | pi-todo-ledger, the list's one writer. It ties an end to the todo its launch bound (`metadata.herdr.runs`: run id, then session file, then uid), never to the todo a bare `<session8>#<id>` names after a clear (review F002). sb reads the record only. | pi-todo-ledger herdr-spend.ts | settled |
+| S3 | Which run an end closes | Maestro names it: every `subagent_result` and `subagent_ping` carries `details.id`, the run id the launch or resume acknowledged, and a ping its `elapsed` (review F003, F011). sb's host no longer notes launches or reads Maestro's registry; an end without a run id sends no event. | Maestro fork `pi-extension/subagents/delivery.ts` | settled |
+| S4 | Ends the model never reads | As each end goes out, sb's host (src/host/run-end.ts) sends `subagent:run-end` `{ v: 1, id, kind, name?, item?, sessionFile?, elapsed?, attempts? }` on pi.events, taken from the end's details. The ledger counts an end by the event or the message, once by its run id (`spend.ended`), so a steer cleared before the turn is still spent (review F008). A listener's throw never reaches Maestro, which would retry the send. | | settled |
+| S5 | Fallback attempts | Maestro's details carry `attempts: [{ model?, sessionFile, elapsed }]`, every spawned attempt in order, failed fallbacks included; the ledger reads each attempt's file and adds their elapsed (review F004). | Maestro fork `maestro/runtime/pi-run-session.ts` | settled |
+| S6 | A write and a branch switch | The ledger's spend write is synchronous: in one tick it reads the list from the branch pi is on (its newest `todo/v1` snapshot, not the live slot a pending `session_tree` replay may still hold), reads the files, and appends. Pi moves the leaf before its `session_tree` handlers run, so nothing between the read and the append can move it (review F010). Behind a running or queued `todo` call it waits in the session's queue and does the same there; one queued before `session_shutdown` is dropped. Change guards, which are awaited, are not asked; namespace validators are. | pi-todo-ledger CONTRACT.md "Run spend" | settled |
+| S7 | Resumes | A resume continues the same session file, so a session's figures are replaced by the file's newest total, never added twice; wall time adds each end's. | | settled |
+| S8 | What sb shows | The session page's todo detail line (`Spent: … tokens · $… · … · N runs · models`): totals only, never session paths or run ids. An older ledger records nothing, and nothing shows. | src/items.ts, gui/bars.ts | settled |
