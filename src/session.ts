@@ -13,6 +13,7 @@ import { dutyOfAgent, isMainKind, type MainKind } from "./duty.ts";
 import type { MainDuty } from "./mainduty.ts";
 import { orphans } from "./orphan.ts";
 import { createWorkerCap, deviceRoom } from "./workercap.ts";
+import { createPreflight } from "./preflight.ts";
 import { inherited, RESULT } from "./inherit.ts";
 import { childRevive } from "./childrevive.ts";
 import { keyOf, REARM_TEXT, REVIVE_TOKEN } from "./revive.ts";
@@ -338,7 +339,8 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 
 	// A member that dispatches or resumes a subagent without promoting is promoted here, before the subagent starts, unless the tab already has a main.
 	// A tower only coordinates: it dispatches no subagent (one would outlive it with no one to take its result), and opens a main for the work instead.
-	const cap = createWorkerCap(deviceRoom(guiDir, me, attended));
+	const cap = createWorkerCap(deviceRoom(guiDir, me, attended)), preflight = createPreflight();
+	preflight.register(pi); // a launch's todo warnings ride on its result (preflight.ts)
 	pi.on("turn_end", () => cap.settle());
 	pi.on("tool_call", async (event, ctx) => {
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || runMode.active()) return;
@@ -361,7 +363,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		mainDuty.migrate(pi.getSessionName()); // the promotion above may have just made this an `integ <project>` main whose migration had not run
 		// No plan gates a worker (docs/specs/2026-11-23-lite-main.md §1) and no count does: only an unattended device with a capacity budget holds one back, by its points (docs/specs/2026-11-24-capacity.md, The cap).
 		if (event.toolName === "subagent" && mainDuty.now() === "worker" && dutyOfAgent((event.input as { agent?: string } | undefined)?.agent) === "worker") return { block: true, reason: "sb: a worker dispatches no worker subagents: do the brief yourself (a scout or a reviewer may help)." };
-		if (event.toolName === "subagent") return cap.admit(event.toolCallId, event.input, () => ctx.sessionManager.getBranch()); // the todo its `name` owns weighs it
+		if (event.toolName === "subagent") return preflight.admit(event.toolCallId, event.toolName, event.input, ctx) ?? cap.admit(event.toolCallId, event.input, () => ctx.sessionManager.getBranch()); // its todo's anchor and blockers are looked at first (preflight.ts), then the todo its `name` owns weighs it
 	});
 
 	// A launched subagent is marked within seconds, once its pane shows its session file, instead of at the next 4 minute refresh.
