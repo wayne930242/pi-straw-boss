@@ -83,12 +83,13 @@ test("the subagent call: a cycle blocks it; a warning rides on its result once; 
 	assert.equal(w.result("c5"), undefined, "a call the turn ended without a result leaves nothing behind");
 });
 
-// The ceiling (brief: ≤5 ms a launch on a 5,000-row ledger) is the median over launches, each after a todo call wrote a new snapshot, through pi's own SessionManager (its getBranch walks
-// the tree from the leaf at every call). It is measured in this process's CPU time, so a loaded machine that deschedules the test does not count; the tail is reported, not asserted.
-for (const [label, blockers] of [["a chain", 2], ["a dense graph of 12 blockers a todo", 12]] as const) {
-	test(`the preflight of a 5000-row ledger stays within 5 ms a launch: ${label}`, async () => {
+// The claim (spec P8): the preflight's CPU median is ≤ 5 ms a launch on a 5,000-row ledger with ≤ 12 blockers a todo, each launch after a todo call wrote a new snapshot, read through pi's
+// own SessionManager (its getBranch walks the tree from the leaf at every call). It is this process's CPU time, so a loaded machine that deschedules the test does not count, and it is a
+// median, not a bound on every launch: the p95 and max are reported, not asserted (an all-open list's p95 ran about 10 ms in review F007).
+for (const [label, blockers, done] of [["a chain", 2, 4000], ["12 blockers a todo", 12, 4000], ["12 blockers a todo, every row open", 12, 0]] as const) {
+	test(`the preflight's CPU median on a 5000-row ledger is at most 5 ms a launch: ${label}`, async () => {
 		const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-		const tasks: Task[] = Array.from({ length: 5000 }, (_, i) => ({ id: i + 1, anchor: "npm test", status: i < 4000 ? "completed" : "pending", blockedBy: Array.from({ length: Math.min(i, blockers) }, (_, k) => i - k) }));
+		const tasks: Task[] = Array.from({ length: 5000 }, (_, i) => ({ id: i + 1, anchor: "npm test", status: i < done ? "completed" : "pending", blockedBy: Array.from({ length: Math.min(i, blockers) }, (_, k) => i - k) }));
 		const sm = SessionManager.inMemory("/w");
 		for (let i = 0; i < 2000; i++) sm.appendMessage({ role: "user", content: "x", timestamp: 0 } as never);
 		const pf = createPreflight(), ctx = { sessionManager: { getBranch: () => sm.getBranch(), getSessionId: () => SESSION } };
