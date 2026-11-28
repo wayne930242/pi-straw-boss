@@ -186,14 +186,17 @@ test("todo #155: every program started with a time limit through execFileExe get
 
 test("todo #155: with `group: false` a program cut off at its deadline is ended alone, by SIGTERM and then SIGKILL, and what it started stays (the file manager an opener started)", { skip: process.platform === "win32" }, async () => {
 	// The program ignores SIGTERM, so its end is the SIGKILL's doing; it is no leader of a group (its group is the caller's), so a signal to a group of its own would reach nothing.
+	// Its one step before the cut is to start the child, which nothing signals: the child writes the facts (the program's pid, given as an argument, and the group it was started in, the program's), and the test waits
+	// for them. The program wrote them itself, after waiting for the child and a `ps`, and a load average of 21 had it killed at the grace before it had (ENOENT).
 	const deadline = await deadlineFor(), fake = standIn({
-		herdr: `trap '' TERM\n"$1/holder" "$1" &\nwhile [ ! -s "$1/held" ]; do sleep 0.05; done\nps -o pgid= -p $$ | tr -d ' ' > "$1/pgid"\necho $$ > "$1/pid"\n${LINGER}`,
-		holder: `echo $$ > "$1/held"\n${LINGER}`,
+		herdr: `trap '' TERM\n"$1/holder" "$1" $$ &\n${LINGER}`,
+		holder: `echo $2 > "$1/pid"\nps -o pgid= -p $$ | tr -d ' ' > "$1/pgid"\necho $$ > "$1/held"\n${LINGER}`,
 	});
 	try {
 		const error = await new Promise<Cut | null>((resolve) => execFileExe(fake.bin, [fake.dir], { deadline, grace: 300, group: false }, (e) => resolve(e)));
 		assert.ok(error && cutOff(error), "cut off at the deadline");
-		assert.notEqual(fake.pid("pgid"), fake.pid("pid"), "the program runs in the caller's process group");
+		await until(() => fake.has("held"), "the child to write what it saw", 15_000);
+		assert.equal(fake.pid("pgid"), Number(String(execFileSyncExe("ps", ["-o", "pgid=", "-p", String(process.pid)], { encoding: "utf8" })).trim()), "the program runs in the caller's process group");
 		await until(() => gone(fake.pid("pid")), "the program that ignores SIGTERM to be gone", 15_000);
 		assert.ok(!gone(fake.pid("held")) && !fake.has("outlived"), "what it started was not signalled");
 	} finally {
