@@ -22,7 +22,9 @@ export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): CapFill {
 	const dir = capDir(join(guiDir, "board")), snapshotOf = snapshotScan();
 	let ctx: { sessionManager?: { getBranch(): readonly unknown[] } } | undefined, pause: Pause | undefined, snoozes: Snooze[] = [], last: string | undefined, wrote: string | undefined, restored = false;
 	const branch = (): readonly unknown[] => { try { return ctx?.sessionManager?.getBranch() ?? []; } catch { return []; } }; // a replaced session's context throws
-	const listed = () => ((snapshot) => ({ snapshot, list: capTasksOf(snapshot) }))(snapshotOf(branch()));
+	// The whole ledger is projected again only when its snapshot changed (snapshotScan hands back the same one until a todo write): a refresh runs at every tool call (Performance in the stale-snooze spec).
+	let seen: { snapshot: unknown; list: ReturnType<typeof capTasksOf>; keep?: string; key?: string; facts?: Omit<MainCap, "v" | "session" | "updated" | "pause" | "snoozes"> } | undefined;
+	const listed = () => ((snapshot) => (seen?.snapshot === snapshot && seen ? seen : (seen = { snapshot, list: capTasksOf(snapshot) })))(snapshotOf(branch()));
 	const restore = (id: string) => {
 		// A /reload keeps the pause and the snoozes its file holds (the model is still stopped); read once, when the session's id is known (pi-intercom may set it after the start).
 		if (restored) return;
@@ -37,10 +39,14 @@ export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): CapFill {
 		if (!id || !ownsBoard(role())) return;
 		try {
 			restore(id);
-			const { snapshot, list } = listed(), open = new Set(list.filter((t) => t.status !== "completed").map((t) => t.id));
-			snoozes = snoozes.filter((s) => s.todo === undefined || open.has(s.todo));
-			const todos = openTodos(list, snapshot, new Set(snoozes.flatMap((s) => (s.todo !== undefined ? [s.todo] : []))));
-			const facts = { ...capOfTodos(list, snapshot), todos }, key = JSON.stringify([facts, pause ?? null, snoozes]);
+			const at = listed(), { snapshot, list } = at, held = snoozes.flatMap((s) => (s.todo !== undefined ? [s.todo] : [])), keep = JSON.stringify(held);
+			if (at.facts === undefined || at.keep !== keep) {
+				const open = new Set(list.filter((t) => t.status !== "completed").map((t) => t.id));
+				if (held.some((id) => !open.has(id))) snoozes = snoozes.filter((s) => s.todo === undefined || open.has(s.todo));
+				[at.keep, at.facts] = [JSON.stringify(snoozes.flatMap((s) => (s.todo !== undefined ? [s.todo] : []))), { ...capOfTodos(list, snapshot), todos: openTodos(list, snapshot, new Set(snoozes.flatMap((s) => (s.todo !== undefined ? [s.todo] : [])))) }];
+				at.key = JSON.stringify(at.facts);
+			}
+			const facts = at.facts, key = `${at.key}${JSON.stringify([pause ?? null, snoozes])}`;
 			if (key === last && wrote === id) return;
 			const cap: MainCap = { v: 1, session: id, updated: cfg.now(), ...facts, ...(pause ? { pause } : {}), ...(snoozes.length ? { snoozes } : {}) };
 			writeCap(dir, cap);

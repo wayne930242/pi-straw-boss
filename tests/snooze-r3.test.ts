@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { deriveBoard, moreOf } from "../src/boardauto.ts";
 import { finished } from "../src/board.ts";
-import { capTasksOf, openTodos, staleFacts } from "../src/capacity.ts";
+import { capDir, capTasksOf, openTodos, readCaps, staleFacts, writeCap } from "../src/capacity.ts";
 import { todosOf } from "../src/items.ts";
 import { knownMoves } from "../src/server/capwatch.ts";
 import { createWorked, workedOf } from "../src/server/worked.ts";
@@ -66,4 +66,29 @@ test("r3-F004: a snoozed todo past the projection's bound stays in it", () => {
 	const kept = openTodos(list, undefined, new Set([5001]));
 	assert.equal(kept.length, 5000);
 	assert.equal(kept.some((t) => t.id === 5001), true);
+});
+
+test("performance: an unchanged capacity file is not parsed again, a rewritten one is", () => {
+	const root = mkdtempSync(join(tmpdir(), "psb-r3-")), dir = capDir(join(root, "board")), session = "01900000-0000-7000-8000-000000000001";
+	dirs.push(root);
+	writeCap(dir, { v: 1, session, updated: T, doing: [], ready: [], open: 1, todos: [{ id: 1, subject: "a" }] });
+	const a = readCaps(dir)[0];
+	assert.equal(readCaps(dir)[0], a, "the same reading");
+	writeCap(dir, { v: 1, session, updated: T, doing: [], ready: [], open: 1, todos: [{ id: 2, subject: "a" }] });
+	assert.deepEqual(readCaps(dir)[0]!.todos, [{ id: 2, subject: "a" }], "a write of the same size is read again");
+});
+
+test("performance: a session file is read again only when its time or size moved", () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-r3-")), file = join(dir, "s.jsonl"), stamp = new Date(T);
+	dirs.push(dir);
+	writeFileSync(file, `${lines(said(0)).join("\n")}\n`);
+	utimesSync(file, stamp, stamp);
+	const worked = createWorked(SERVER);
+	assert.equal(worked(file, T), T);
+	writeFileSync(file, `${lines(said(1)).join("\n")}\n`);
+	utimesSync(file, stamp, stamp);
+	assert.equal(worked(file, T), T, "same time, same size: not read");
+	writeFileSync(file, `${lines(said(0), said(9)).join("\n")}\n`);
+	utimesSync(file, stamp, stamp);
+	assert.equal(worked(file, T), T + 9000, "same time, new size: read");
 });

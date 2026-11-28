@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { clean, safeSession, STALE_MS } from "./board.ts";
 import { todoDeadlines } from "./todoledger.ts";
@@ -130,15 +130,28 @@ export const removeCap = (dir: string, session: string) => void (safeSession(ses
 export function readCaps(dir: string): MainCap[] {
 	let names: string[] = [];
 	try { names = readdirSync(dir).filter((n) => n.endsWith(".json") && !n.startsWith("_")); } catch { /* none yet */ }
+	// A file is parsed again only when its time or size moved: a main's file lists up to 5,000 todos, and the watch reads every one each minute (Performance in the stale-snooze spec).
+	const had = capsSeen, now = new Map<string, Seen>();
+	capsSeen = now;
 	return names.flatMap((name): MainCap[] => {
-		const raw = readJson(join(dir, name)), session = name.slice(0, -".json".length);
-		if (raw?.v !== 1 || raw.session !== session || !safeSession(session) || num(raw.updated, 0, 8.64e15) === undefined) return [];
-		const p = raw.pause as Record<string, unknown> | undefined, at = num(p?.at, 0, 8.64e15), until = num(p?.until, 0, 8.64e15), detail = clean(p?.detail, DETAIL);
-		const pause = p?.reason === "quota" && at !== undefined ? { reason: "quota" as const, at, ...(until !== undefined ? { until } : {}), ...(detail ? { detail } : {}) } : undefined;
-		const todos = Array.isArray(raw.todos) ? raw.todos.slice(0, TODOS).flatMap((t: Record<string, unknown> | null): CapTodo[] => (Number.isInteger(t?.id) && (t!.id as number) >= 1 ? [{ id: t!.id as number, subject: clean(t!.subject, SUBJECT), ...(num(t!.until, 0, 8.64e15) !== undefined ? { until: t!.until as number } : {}) }] : [])) : undefined;
-		const snoozes = readSnoozes(raw.snoozes);
-		return [{ v: 1, session, updated: raw.updated as number, doing: jobsOf(raw.doing), ready: jobsOf(raw.ready, 200), ...(Array.isArray(raw.deadlines) ? { deadlines: raw.deadlines.slice(0, 200).filter((n) => num(n, 0, 8.64e15) !== undefined) } : {}), open: typeof raw.open === "number" && raw.open >= 0 ? Math.min(Math.floor(raw.open), OPEN_MAX) : 0, ...(pause ? { pause } : {}), ...(todos ? { todos } : {}), ...(snoozes.length ? { snoozes } : {}) }];
+		const path = join(dir, name), st = statOf(path), old = had.get(path);
+		if (!st) return [];
+		const caps = old && old.mtime === st.mtimeMs && old.size === st.size && old.ino === st.ino ? old.caps : capOf(path, name);
+		now.set(path, { mtime: st.mtimeMs, size: st.size, ino: st.ino, caps });
+		return caps;
 	});
+}
+type Seen = { mtime: number; size: number; ino: number; caps: MainCap[] }; // a write renames a new file in (writeJson), so the inode moves too
+let capsSeen = new Map<string, Seen>();
+const statOf = (path: string) => { try { return statSync(path); } catch { return undefined; } };
+function capOf(path: string, name: string): MainCap[] {
+	const raw = readJson(path), session = name.slice(0, -".json".length);
+	if (raw?.v !== 1 || raw.session !== session || !safeSession(session) || num(raw.updated, 0, 8.64e15) === undefined) return [];
+	const p = raw.pause as Record<string, unknown> | undefined, at = num(p?.at, 0, 8.64e15), until = num(p?.until, 0, 8.64e15), detail = clean(p?.detail, DETAIL);
+	const pause = p?.reason === "quota" && at !== undefined ? { reason: "quota" as const, at, ...(until !== undefined ? { until } : {}), ...(detail ? { detail } : {}) } : undefined;
+	const todos = Array.isArray(raw.todos) ? raw.todos.slice(0, TODOS).flatMap((t: Record<string, unknown> | null): CapTodo[] => (Number.isInteger(t?.id) && (t!.id as number) >= 1 ? [{ id: t!.id as number, subject: clean(t!.subject, SUBJECT), ...(num(t!.until, 0, 8.64e15) !== undefined ? { until: t!.until as number } : {}) }] : [])) : undefined;
+	const snoozes = readSnoozes(raw.snoozes);
+	return [{ v: 1, session, updated: raw.updated as number, doing: jobsOf(raw.doing), ready: jobsOf(raw.ready, 200), ...(Array.isArray(raw.deadlines) ? { deadlines: raw.deadlines.slice(0, 200).filter((n) => num(n, 0, 8.64e15) !== undefined) } : {}), open: typeof raw.open === "number" && raw.open >= 0 ? Math.min(Math.floor(raw.open), OPEN_MAX) : 0, ...(pause ? { pause } : {}), ...(todos ? { todos } : {}), ...(snoozes.length ? { snoozes } : {}) }];
 }
 /** The files of sessions that are not live and older than a day go. */
 export function purgeCaps(dir: string, live: ReadonlySet<string>, now: number): void {
@@ -146,9 +159,13 @@ export function purgeCaps(dir: string, live: ReadonlySet<string>, now: number): 
 }
 
 /** The open todos of a capacity file as one number: it changes when a todo is answered, done, or added; a stale episode is the main's last move and this (capwatch.ts, r2-F002). */
+const keyOf = new WeakMap<readonly CapTodo[], number>();
 export function todosKey(c: Pick<MainCap, "open" | "todos"> | undefined): number {
+	const had = c?.todos && keyOf.get(c.todos);
+	if (had !== undefined) return had; // a file read unchanged hands back the same list (readCaps), hashed once
 	let h = 2166136261;
 	for (const ch of JSON.stringify(c?.todos?.map((t) => [t.id, t.until ?? null]) ?? c?.open ?? 0)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+	if (c?.todos) keyOf.set(c.todos, h >>> 0);
 	return h >>> 0;
 }
 /** A live main as the server sees it: its workers are the names of the subagents of its pane that run now (and, for any main, the device's live trains). */

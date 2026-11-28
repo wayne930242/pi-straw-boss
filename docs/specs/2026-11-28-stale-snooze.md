@@ -110,6 +110,14 @@ The brief of the fix round: where a heuristic needs more patching than a simpler
 - **r3-F003.** Only real input or a tool call ends the turn's discount; an extension's custom message does not.
 - **r3-F004.** A todo snoozed on its own stays inside the 5,000 the file lists.
 
+## Performance
+
+The boss asked for it with the third review (「也要注意一下效能問題」). Nothing new runs more often than the watch's minute per main, and nothing reads a whole file:
+
+- The server's minute: a session file is read again (its last 256 KiB) only when its time or size moved (`createWorked`); a capacity file is parsed again only when its time, size, or inode moved (`readCaps`; a write renames a new file in), and the open todos' key is hashed once per reading (`todosKey`).
+- The session's refresh, at each tool call: the whole ledger is projected again only when the todo snapshot changed (`snapshotScan` hands back the same one until a todo write), or a todo snooze changed what the bound keeps.
+- `node scripts/bench-captick.ts [mains] [ticks]` measures a tick with a 50,000-record ledger and a 128 MiB session file per main. On this Mac, 20 mains: before, 70 ms a tick with nothing changed (cold 88 ms); after, 1.8 ms (cold 76 ms). Projecting the ledger once takes about 17 ms.
+
 ## Tests
 
 `tests/snooze.test.ts` (the input check, the replace rule, `snoozeEnd`, the texts), `tests/capacity.test.ts` (the intervals from config, unanswered todos, a snooze of the main or of a todo, a watch until its first change, the woken rule), `tests/capwatch.test.ts` (the repeat to the main alone each interval, across a restart; a snooze that ends reminds at the next look; the notice names the todos), `tests/capfill.test.ts` (`todos`, the snooze kept across a reload, pruned), `tests/capops.test.ts` (the snooze clause on the main's copy only, `worked` on the facts), `tests/worked.test.ts` (the delivery and the text answer are no move, a tool call or a later input is), `tests/snooze-r3.test.ts` (the third review's four findings), `tests/watches.test.ts` (an ended watch across a restart), `tests/watch-read.test.ts` (`snoozes` by slot), `tests/capacity-board.test.ts` (`board_read`, `/boss board`), `tests/board-page.test.ts` (the row text in both languages), and `board_set`'s refusals.

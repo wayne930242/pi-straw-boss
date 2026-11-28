@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 
 // The main's own last move as the stale reminder counts it (docs/specs/2026-11-28-stale-snooze.md, review r2-F003): the time of the newest entry of its session file that is not its taking of a stale
 // notice. Taking one is the notice's own entry (the server's intercom message: its sender, `kind=capacity_notice`, `capacity stale`), pi-intercom's wake prompt, and what the main writes in that turn
@@ -54,15 +54,16 @@ function tail(file: string): { lines: string[]; cut: boolean } {
  * this reader knew of the file before the append (r3-F002), else answers `null` (unknown: the watch takes the episode's, capwatch.ts `knownMoves`).
  */
 export function createWorked(from: string): (file: string, mtime: number) => number | null | undefined {
-	const seen = new Map<string, { mtime: number; at: number | null | undefined }>();
+	const seen = new Map<string, { mtime: number; size: number; at: number | null | undefined }>();
 	return (file, mtime) => {
-		const had = seen.get(file);
-		if (had?.mtime === mtime) return had.at;
+		// Read again only when the file's time or size moved (Performance in the stale-snooze spec): a stat, and at most 256 KiB of its end, never the whole file.
+		const had = seen.get(file), size = ((s) => s?.size ?? -1)((() => { try { return statSync(file); } catch { return undefined; } })());
+		if (had?.mtime === mtime && had.size === size) return had.at;
 		let at: number | null | undefined;
 		try { const t = tail(file); at = workedOf(t.lines, from, t.cut); } catch { at = undefined; }
 		if (at === null && typeof had?.at === "number") at = had.at;
 		if (seen.size >= CACHED) seen.clear();
-		seen.set(file, { mtime, at });
+		seen.set(file, { mtime, size, at });
 		return at;
 	};
 }
