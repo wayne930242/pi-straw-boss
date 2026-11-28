@@ -36,7 +36,7 @@ test("createWorked reads the file's tail once per write", () => {
 	const worked = createWorked(SERVER);
 	assert.equal(worked(file, T + 70_000), T);
 	writeFileSync(file, `${lines(said(0), notice(60), said(70), tool(80)).join("\n")}\n`);
-	assert.equal(worked(file, T + 70_000), T, "the same write: the reading kept");
-	assert.equal(worked(file, T + 80_000), T + 80_000, "a new write is read again");
+	assert.equal(worked(file, T + 70_000), T + 80_000, "a new write of another size is read again, even at the same time (snooze-r3 performance)");
+	assert.equal(worked(file, T + 80_000), T + 80_000, "a new time is read again");
 	assert.equal(worked(join(dir, "none.jsonl"), T), undefined, "no file: none, and the caller keeps its file time");
 });
