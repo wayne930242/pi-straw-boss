@@ -1,6 +1,6 @@
 # The done nudge: a child idle too long is asked to finish
 
-Status: released in 0.114.0 ([notes](../releases/0.114.0.md)). The behavior is in [how-it-works](../how-it-works.md#the-subagent-host).
+Status: released in 0.114.0 ([notes](../releases/0.114.0.md)), its idle poll made cheaper in 0.114.1. The behavior is in [how-it-works](../how-it-works.md#the-subagent-host).
 
 ## Decision
 
