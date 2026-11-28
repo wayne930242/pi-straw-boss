@@ -358,7 +358,7 @@ test("the running server answers `watch-read`, the watches' `watch-list` and `wa
 	assert.deepEqual(await hosted.ask("watch-read", { key: "nope", quietMs: 1 }), { ok: false, error: "quietMs is at least 60000" });
 	assert.match(String((await hosted.ask("watch-report", { session: "/etc/passwd", child: "c1", activityFile: "/etc/hosts", text: "x" })).error), /watch-report is retired in pi-straw-boss 0\.83\.0/);
 	// boss_watch's routes (watchesops.ts): a session's list, and an add refused while tower runs are off (this world's config), whose identity sends the lines.
-	assert.deepEqual(await hosted.ask("watch-list", { session: "A" }), { ok: true, watches: [] });
+	assert.deepEqual(await hosted.ask("watch-list", { session: "A" }), { ok: true, watches: [], snoozes: true });
 	assert.match(String((await hosted.ask("watch-add", { session: "A", workspace: "wA", key: "B" })).error), /tower runs are off/);
 	assert.equal((await hosted.ask("gui-stop")).ok, true);
 	assert.deepEqual(await hosted.ask("watch-read", { key: "nope" }), { ok: false, error: "unknown key nope" });

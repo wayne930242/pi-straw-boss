@@ -32,19 +32,23 @@ export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): CapFill {
 		pause ??= mine?.pause;
 		if (!snoozes.length) snoozes = mine?.snoozes ?? [];
 	};
-	const refresh = () => {
+	/** Writes the file when its facts changed; a failed write is tried again at the next change, unless `strict` (board_set's snooze, review F004), which throws it. */
+	const refresh = (strict = false) => {
 		const id = me();
 		if (!id || !ownsBoard(role())) return;
 		try {
 			restore(id);
-			const { snapshot, list } = listed(), todos = openTodos(list, snapshot), open = new Set(todos.map((t) => t.id));
+			const { snapshot, list } = listed(), todos = openTodos(list, snapshot), open = new Set(list.filter((t) => t.status !== "completed").map((t) => t.id));
 			snoozes = snoozes.filter((s) => s.todo === undefined || open.has(s.todo));
 			const facts = { ...capOfTodos(list, snapshot), todos }, key = JSON.stringify([facts, pause ?? null, snoozes]);
 			if (key === last && wrote === id) return;
 			const cap: MainCap = { v: 1, session: id, updated: cfg.now(), ...facts, ...(pause ? { pause } : {}), ...(snoozes.length ? { snoozes } : {}) };
 			writeCap(dir, cap);
 			[last, wrote] = [key, id];
-		} catch { /* the board folder cannot be written: the next change tries again */ }
+		} catch (error) {
+			if (strict) throw new Error(`Nothing was snoozed: the capacity file could not be written (${(error as Error).message.slice(0, 200)})`, { cause: error });
+			/* the board folder cannot be written: the next change tries again */
+		}
 	};
 	const again = (c: unknown) => ((ctx = (c as typeof ctx) ?? ctx), refresh());
 	pi.events?.on(PAUSE_EVENT, (data) => {
@@ -67,13 +71,16 @@ export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): CapFill {
 		async snooze(input, ask) {
 			const id = me();
 			if (!id || !ownsBoard(role())) throw new Error(NOT_MAIN);
-			const watched = input.watch === undefined ? undefined : await ask?.({ cmd: "watch-list", session: id }, { start: "never" }).catch(() => undefined);
-			if (input.watch !== undefined && !watched?.ok) throw new Error("No sb server answers this session, so no watch can be checked: snooze for a length instead");
+			// The server reads the snoozes, so it is asked first: one of an older build drops them and would remind on regardless (review F003).
+			const watched = await ask?.({ cmd: "watch-list", session: id }, { start: "never" }).catch(() => undefined);
+			if (!watched?.ok) throw new Error("Nothing was snoozed: no sb server answers this session, and the server is what reminds and reads the snooze (/boss server shows it)");
+			if (watched.snoozes !== true) throw new Error("Nothing was snoozed: the sb server runs an older pi-straw-boss, which ignores snoozes. Restart it on this version (/boss server restart), then snooze again");
 			restore(id);
 			const { list } = listed(), s = snoozeOf(input, { now: cfg.now(), watches: ((watched?.watches ?? []) as { key: string }[]).map((w) => w.key), open: list.filter((t) => t.status !== "completed").map((t) => t.id) });
+			const before = snoozes;
 			snoozes = withSnooze(snoozes, s);
 			last = undefined;
-			refresh();
+			try { refresh(true); } catch (error) { snoozes = before; throw error; }
 			return { text: snoozeSaid(s, cfg.now()), details: { snooze: s } };
 		},
 	};

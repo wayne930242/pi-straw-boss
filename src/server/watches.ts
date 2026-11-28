@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import type { Reply } from "./socket.ts";
 import { WARD_LOOK_MS, type WardRec, wardOf } from "./ward.ts";
 import type { WatchQuery } from "./watchread.ts";
+import type { WatchFact } from "../snooze.ts";
 
 // The server-owned watches behind a main's `boss_watch` (docs/specs/2026-11-23-lite-b2-d-e-f.md §3.3), which replace the watchdog subagent. Each watch runs watch-read's verdict (watchread.ts) over the server's own readings, chaining
 // `since` inside the server as the retired `cli.mjs watch` did over the socket, and wakes the main that asked with one line written here: no transcript, path, or monitor command (watch-read's unit view excludes them).
@@ -17,7 +18,7 @@ import type { WatchQuery } from "./watchread.ts";
 
 export const RATE_MS = 60_000, HOUR_MS = 3_600_000, PER_HOUR = 12, PER_SESSION = 8, PER_SERVER = 64, MIN_MS = 60_000, UNTIL_MS = 6 * HOUR_MS, UNTIL_MAX_MS = 48 * HOUR_MS, OWNER_GRACE_MS = 15 * 60_000;
 // A ward (ward.ts) is a watch whose key is `ward:<pane>`: its own read, its own line, and two more ends, `finished` and `dead`.
-const RETRY_MS = 10_000, MAX_LINE = 600, ENDS = new Set(["gone", "expired", "finished", "dead"]);
+const GONE_MS = 24 * HOUR_MS, RETRY_MS = 10_000, MAX_LINE = 600, ENDS = new Set(["gone", "expired", "finished", "dead"]);
 /** What changes with every reading and is no state: a monitor's age, last line and load reading, and the note. */
 const VOLATILE = new Set(["ageMs", "last", "note", "load"]);
 
@@ -78,6 +79,8 @@ export function lineOf(key: string, r: Reply, w?: Pick<WatchAdd, "quietMs" | "id
 
 export function createWatches(d: WatchesDeps) {
 	const watches = new Map<string, Watch>(), buckets = new Map<string, Bucket>();
+	/** The watches that ended in the last day, with when (review F002): a snooze on one ends then, not when it was set. In memory: a restart's snooze falls back to its own time. */
+	const gone: { session: string; key: string; added: number; toldAt: number; ended: number }[] = [];
 	let stopped = false;
 	const pause = (ms: number) => new Promise<void>((resolve) => void d.timer(ms, resolve));
 	/** The wards are kept apart, in `wards.json` beside `watches.json` (ward-review F005): a server of an older build reads only `watches.json`, so it never takes a ward for a plain watch that is gone and drops it from the file. */
@@ -103,6 +106,8 @@ export function createWatches(d: WatchesDeps) {
 		w.live.ended = true;
 		w.timer?.();
 		if (watches.get(idOf(w.session, w.key)) === w) watches.delete(idOf(w.session, w.key));
+		gone.push({ session: w.session, key: w.key, added: w.added, toldAt: w.told?.at ?? w.added, ended: d.now() });
+		if (gone.length > PER_SERVER * 4) gone.splice(0, gone.length - PER_SERVER * 4);
 		d.ended?.(w);
 		save();
 		d.log?.("watch-end", { session: w.session.slice(0, 8), key: plain(w.key, 80), why });
@@ -251,11 +256,15 @@ export function createWatches(d: WatchesDeps) {
 		/** A session's watches: each with its options, its newest state, and what was last sent. */
 		list(session: string): Reply {
 			const rows = [...watches.values()].filter((w) => w.session === session).map((w) => ({ key: w.key, ...(w.ward ? { ward: { pane: w.ward.pane, file: w.ward.file, ...(w.ward.item ? { item: w.ward.item } : {}) } } : {}), ...(w.quietMs ? { quietMs: w.quietMs } : {}), ...(w.idleMs ? { idleMs: w.idleMs } : {}), until: w.deadline, ...(w.newest ? { newest: w.newest } : {}), ...(w.told && w.sentAt ? { sent: { state: w.told.state, at: w.sentAt } } : {}), ...(w.pending ? { pending: w.pending.state } : {}) }));
-			return { ok: true, watches: rows };
+			return { ok: true, watches: rows, snoozes: true }; // `snoozes`: this server reads the stale reminder's snoozes, which a main checks before it confirms one (review F003)
 		},
 		has: (session: string) => [...watches.values()].some((w) => w.session === session),
-		/** A session's watches as its stale reminder reads them (docs/specs/2026-11-28-stale-snooze.md): when each started and when its last line reached the session (its start while none has). */
-		facts: (session: string) => [...watches.values()].filter((w) => w.session === session && !w.ended).map((w) => ({ key: w.key, added: w.added, toldAt: w.told?.at ?? w.added })),
+		/** A session's watches as its stale reminder reads them (docs/specs/2026-11-28-stale-snooze.md): when each started and when its last line reached the session (its start while none has), and those that ended in the last day with their end. */
+		facts(session: string): WatchFact[] {
+			const now = d.now();
+			while (gone.length && now - gone[0]!.ended > GONE_MS) gone.shift();
+			return [...[...watches.values()].filter((w) => w.session === session && !w.ended).map((w) => ({ key: w.key, added: w.added, toldAt: w.told?.at ?? w.added })), ...gone.filter((g) => g.session === session).map(({ key, added, toldAt, ended }) => ({ key, added, toldAt, ended }))];
+		},
 		/** The server's start: the watches of the last one come back and their loops resume. */
 		start() {
 			if (!d.file) return;

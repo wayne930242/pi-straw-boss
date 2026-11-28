@@ -267,3 +267,17 @@ test("ward-review F010: a change a restart found waiting, on a unit gone by the 
 	assert.deepEqual(b.sent.map((x) => x.state), ["gone"]);
 	assert.deepEqual(b.watches.list("s1").watches, []);
 });
+
+// Review snooze-review F002: a watch that ended left the facts at once, so a snooze on it could not tell when it ended.
+test("facts: a watch that ended stays listed with its end for a day, and shields nothing", async () => {
+	const w = world();
+	await w.add();
+	const added = w.clock.now();
+	await w.pass(5 * 60_000);
+	assert.equal(w.watches.stop("s1", "u1").ok, true);
+	const stopped = w.clock.now();
+	assert.deepEqual(w.watches.facts("s1"), [{ key: "u1", added, toldAt: added, ended: stopped }]);
+	assert.equal(w.watches.has("s1"), false, "no live watch");
+	await w.pass(24 * 3600_000 + 1);
+	assert.deepEqual(w.watches.facts("s1"), [], "gone after a day");
+});

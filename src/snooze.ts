@@ -5,8 +5,10 @@ const MIN = 60_000;
 export const SNOOZE_MAX_MS = 24 * 60 * MIN, WHY_MAX = 120, SNOOZES_MAX = 20;
 /** `until` is always set: `at` plus its `for`, else 24 hours after `at` (a snooze on a watch alone). `todo`: the one todo it holds, else the whole main; `watch`: a key of the main's own watches. */
 export interface Snooze { at: number; why: string; until: number; todo?: number; watch?: string }
-/** One of the main's watches as the sb server holds it: when it started and when its last line reached the main (`told.at` of server/watches.ts; the start when none has). */
-export interface WatchFact { key: string; added: number; toldAt: number }
+/** One of the main's watches as the sb server holds it: when it started and when its last line reached the main (`told.at` of server/watches.ts; the start when none has); `ended`, when it ended (kept a day). */
+export interface WatchFact { key: string; added: number; toldAt: number; ended?: number }
+/** A snooze's identity, which its wake is told by once (review F001): its main, its scope, and when it was set. */
+export const snoozeId = (session: string, s: Pick<Snooze, "at" | "todo">) => `${session}:${s.todo ?? "main"}@${s.at}`;
 
 const fold = (v: unknown) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim() : "");
 /** A length as `boss_watch` takes one: `90s`, `30m`, `2h`, or plain milliseconds. */
@@ -54,12 +56,12 @@ export function readSnoozes(v: unknown): Snooze[] {
 }
 
 /**
- * When a snooze ended; none while it holds. Its time; else, for a watch, the time of the watch's first line after the snooze was set, or the snooze's own time when the watch is gone (it ended with a
- * line the main took, or the main stopped it). `watches` unknown (none given): it holds until its time.
+ * When a snooze ended; none while it holds. Its time; else, for a watch, the time of the watch's first line after the snooze was set, else when the watch ended (a stop), else the snooze's own time when
+ * the server knows the watch no longer (a restart lost its end). `watches` unknown (none given): it holds until its time. The server keeps the first end it saw (capwatch.ts), so a later line moves nothing.
  */
 export function snoozeEnd(s: Snooze, watches: readonly WatchFact[] | undefined, now: number): number | undefined {
 	if (s.until <= now) return s.until;
 	if (s.watch === undefined || !watches) return undefined;
-	const w = watches.find((x) => x.key === s.watch);
-	return !w ? s.at : w.toldAt > s.at ? w.toldAt : undefined;
+	const mine = watches.filter((x) => x.key === s.watch), w = mine.find((x) => x.added <= s.at && (x.ended === undefined || x.ended >= s.at)) ?? mine.find((x) => x.ended === undefined);
+	return !w ? s.at : w.toldAt > s.at ? w.toldAt : w.ended !== undefined ? Math.max(s.at, w.ended) : undefined;
 }

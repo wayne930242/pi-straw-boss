@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { clean, safeSession, STALE_MS } from "./board.ts";
 import { todoDeadlines } from "./todoledger.ts";
 import type { Todo } from "./items.ts";
-import { readSnoozes, type Snooze, snoozeEnd, type WatchFact } from "./snooze.ts";
+import { readSnoozes, type Snooze, snoozeEnd, snoozeId, type WatchFact } from "./snooze.ts";
 
 // Device capacity on the work board (docs/specs/2026-11-24-capacity.md): what each main has running and ready in points, and the device row the sb server writes once a minute from them, the
 // load and the budget. A main's own session writes its facts (capfill.ts); the server joins them with the subagents it sees running (server/capwatch.ts). Points are the box rule's, kept on the todo
@@ -45,11 +45,12 @@ export function capOfTodos(list: readonly Todo[], snapshot?: unknown): Pick<Main
 	};
 }
 
-const TODOS = 100, SUBJECT = 80;
-/** A todo list's open todos for the stale reminder, at most 100, each with its deferral's end. */
+/** Open todos a capacity file holds: every one, for the stale reminder decides on the whole list (review F006); the bound only stops a broken file. A row shows `SHOWN` of them. */
+const TODOS = 5000, SHOWN = 3, SUBJECT = 80;
+/** A todo list's open todos for the stale reminder, each with its deferral's end. */
 export function openTodos(list: readonly Todo[], snapshot?: unknown): CapTodo[] {
 	const dates = todoDeadlines(snapshot);
-	return list.filter((t) => t.status !== "completed").slice(0, TODOS).map((t) => ({ id: t.id, subject: clean(t.subject, SUBJECT), ...(dates.has(t.id) ? { until: dates.get(t.id)! } : {}) }));
+	return list.filter((t) => t.status !== "completed").map((t) => ({ id: t.id, subject: clean(t.subject, SUBJECT), ...(dates.has(t.id) ? { until: dates.get(t.id)! } : {}) }));
 }
 
 /** The seam's payload checked: `{ v: 1, state: "paused" | "resumed", reason: "quota", until?, detail? }`; anything else is ignored. */
@@ -121,7 +122,7 @@ export function readCaps(dir: string): MainCap[] {
 		const pause = p?.reason === "quota" && at !== undefined ? { reason: "quota" as const, at, ...(until !== undefined ? { until } : {}), ...(detail ? { detail } : {}) } : undefined;
 		const todos = Array.isArray(raw.todos) ? raw.todos.slice(0, TODOS).flatMap((t: Record<string, unknown> | null): CapTodo[] => (Number.isInteger(t?.id) && (t!.id as number) >= 1 ? [{ id: t!.id as number, subject: clean(t!.subject, SUBJECT), ...(num(t!.until, 0, 8.64e15) !== undefined ? { until: t!.until as number } : {}) }] : [])) : undefined;
 		const snoozes = readSnoozes(raw.snoozes);
-		return [{ v: 1, session, updated: raw.updated as number, doing: jobsOf(raw.doing), ready: jobsOf(raw.ready, 200), ...(Array.isArray(raw.deadlines) ? { deadlines: raw.deadlines.slice(0, 200).filter((n) => num(n, 0, 8.64e15) !== undefined) } : {}), open: num(raw.open, 0, 200) ?? 0, ...(pause ? { pause } : {}), ...(todos ? { todos } : {}), ...(snoozes.length ? { snoozes } : {}) }];
+		return [{ v: 1, session, updated: raw.updated as number, doing: jobsOf(raw.doing), ready: jobsOf(raw.ready, 200), ...(Array.isArray(raw.deadlines) ? { deadlines: raw.deadlines.slice(0, 200).filter((n) => num(n, 0, 8.64e15) !== undefined) } : {}), open: num(raw.open, 0, TODOS) ?? 0, ...(pause ? { pause } : {}), ...(todos ? { todos } : {}), ...(snoozes.length ? { snoozes } : {}) }];
 	});
 }
 /** The files of sessions that are not live and older than a day go. */
@@ -129,12 +130,24 @@ export function purgeCaps(dir: string, live: ReadonlySet<string>, now: number): 
 	for (const c of readCaps(dir)) if (!live.has(c.session) && now - c.updated > 24 * 3600_000) removeCap(dir, c.session);
 }
 
+/** The last stale notice told to a main (capwatch.ts): when, its last move then, and its unanswered todos then (`todosKey`). A main that moved since only by taking it is judged as then (review F005). */
+export interface Notice { at: number; moved: number; todos: number }
+/** How long after a stale notice a write of the main's session file is the delivery's own: the notice it took, its pane working on it. */
+export const DELIVERY_MS = 5 * MIN;
+/** The open todos of a capacity file as one number: it changes when a todo is answered, done, or added (review F005). */
+export function todosKey(c: Pick<MainCap, "open" | "todos"> | undefined): number {
+	let h = 2166136261;
+	for (const ch of JSON.stringify(c?.todos?.map((t) => [t.id, t.until ?? null]) ?? c?.open ?? 0)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+	return h >>> 0;
+}
 /** A live main as the server sees it: its workers are the names of the subagents of its pane that run now (and, for any main, the device's live trains). */
-export interface MainFacts { session: string; name: string; workspace: string; role: "main" | "train"; state: string; /** Its Herdr pane's `agent_status`. */ paneStatus?: string; commanding?: boolean; duty?: string; workers: string[]; fileMtime?: number; entryUpdated?: number; background?: boolean; /** A main of kind worker opened for a teammate's device: its own points (its route). */ selfPoints?: number; /** Its `boss_watch` watches, which hold the stale reminder until their first change (docs/specs/2026-11-28-stale-snooze.md). */ watches?: WatchFact[] }
+export interface MainFacts { session: string; name: string; workspace: string; role: "main" | "train"; state: string; /** Its Herdr pane's `agent_status`. */ paneStatus?: string; commanding?: boolean; duty?: string; workers: string[]; fileMtime?: number; entryUpdated?: number; background?: boolean; /** A main of kind worker opened for a teammate's device: its own points (its route). */ selfPoints?: number; /** Its `boss_watch` watches, which hold the stale reminder until their first change (docs/specs/2026-11-28-stale-snooze.md). */ watches?: WatchFact[]; notice?: Notice }
 /** One main's row of the device: points in use, its ready todos (the smallest's points), its open todos, its pause, and whether it is stale. */
 export interface MainRow { session: string; name: string; workspace: string; points: number; ready: number; minReady?: number; open: number; paused?: { until?: number; detail?: string }; stale?: true; standing?: true; /** The running workers sampled, folded (workercap.ts matches a launch to them); the local file only, never on the wire. */ workers?: string[]; /** The deployed units by name and points (the head page's supply tray); local only, like `workers`. */ units?: { name: string; points: number }[];
-	/** The stale reminder (docs/specs/2026-11-28-stale-snooze.md), local only like `workers`: a stale main's unanswered todos, its last move, the snooze whose end woke the reminder, and the snoozes that hold. */
-	todos?: { id: number; subject: string }[]; moved?: number; woke?: { at: number; why: string }; snoozes?: Snooze[] }
+	/** The stale reminder (docs/specs/2026-11-28-stale-snooze.md), local only like `workers`: a stale main's unanswered todos (the first three, and their count), its last move, the snooze whose end woke the reminder (by its identity), and the snoozes that hold. */
+	todos?: { id: number; subject: string }[]; unanswered?: number; moved?: number; woke?: { at: number; why: string; id: string }; snoozes?: Snooze[];
+	/** The later of its file's and its entry's writes as the stale verdict counts it (a delivery's own write not), and its open todos as one number: what a notice records (capwatch.ts). */
+	basis?: number; todosKey?: number }
 /** The device row. `under`: since when the device has had room for its smallest ready todo (held 10 minutes before it is flagged). */
 export interface DeviceCap { v: 1; at: number; points: number; budget?: number; load1: number; cores: number; ready: number; minReady?: number; open: number; unattended: boolean; under?: number; mains: MainRow[] }
 
@@ -142,39 +155,50 @@ export interface DeviceCap { v: 1; at: number; points: number; budget?: number; 
 const round = (n: number) => Math.round(n * 100) / 100;
 
 /** A main's stale verdict with what the reminder says: the unanswered todos and the snooze that woke it (when stale), its last move, and the snoozes that hold now. */
-export interface StaleFacts { stale: boolean; todos?: { id: number; subject: string }[]; moved?: number; woke?: { at: number; why: string }; snoozes: Snooze[] }
-type StaleMain = Pick<MainFacts, "state" | "paneStatus" | "commanding" | "duty" | "fileMtime" | "entryUpdated" | "background" | "watches"> & { workers?: readonly string[]; points?: number };
+export interface StaleFacts { stale: boolean; todos?: { id: number; subject: string }[]; moved?: number; basis?: number; woke?: { at: number; why: string; id: string }; snoozes: Snooze[] }
+type StaleMain = Pick<MainFacts, "state" | "paneStatus" | "commanding" | "duty" | "fileMtime" | "entryUpdated" | "background" | "watches" | "notice"> & { session?: string; workers?: readonly string[]; points?: number };
+/** The first end the server saw of each snooze, by `snoozeId` (review F001): kept in `_sent.json`, so a later watch line, the snooze's own time, or a restart never moves it. */
+export type SnoozeEnds = Record<string, number>;
 
 /**
  * Whether a main is stale. On an unattended device: it has open todos, runs nothing (no running worker or train, no points in use: a main commanding work is never stale), is not paused, and neither its session file nor its board entry moved for 30 minutes (whatever its state). Elsewhere the board's own rule: idle,
  * commanding nothing, not standing, and its entry over 2 hours old. A paused main is never stale, nor one whose Herdr pane is working: it is moving (boss 2026-11-26 「herdr state 還在 working 的 agent 不必被詢問」).
  * The two spans are `capacity.staleUnattendedMinutes` and `capacity.staleMinutes` (`o`); see `staleFacts` for the snoozes (docs/specs/2026-11-28-stale-snooze.md).
  */
-export const staleOf = (m: StaleMain, c: Pick<MainCap, "open" | "pause" | "deadlines" | "todos" | "snoozes"> | undefined, unattended: boolean, now: number, o: StaleMs = STALE_DEFAULTS): boolean => staleFacts(m, c, unattended, now, o).stale;
+export const staleOf = (m: StaleMain, c: Pick<MainCap, "open" | "pause" | "deadlines" | "todos" | "snoozes"> | undefined, unattended: boolean, now: number, o: StaleMs = STALE_DEFAULTS, ends?: SnoozeEnds): boolean => staleFacts(m, c, unattended, now, o, ends).stale;
 
 /**
  * `staleOf` with its reasons (docs/specs/2026-11-28-stale-snooze.md). Never stale besides: while one of its watches has sent no line since it started, while a snooze of the whole main holds, or when every open todo is
  * deferred (`metadata.until`, `metadata.waitsOn`) or snoozed on its own. A snooze that ended after the main's last move (the later of its file and its entry) makes it stale at once, without a new span.
  * A main of an older build lists no todos: its open count against its deadlines decides, as before.
+ * `ends`: the first end seen of each snooze, read and added to (review F001). `m.notice`: the last stale notice told it; a main whose only moves since are taking it (its session file written within
+ * `DELIVERY_MS` of it, its pane working, its entry and open todos as they were) is judged as then, so the episode and its main-only repeats hold (review F005).
  */
-export function staleFacts(m: StaleMain, c: Pick<MainCap, "open" | "pause" | "deadlines" | "todos" | "snoozes"> | undefined, unattended: boolean, now: number, o: StaleMs = STALE_DEFAULTS): StaleFacts {
-	const ends = (c?.snoozes ?? []).map((s) => ({ s, end: snoozeEnd(s, m.watches, now) })), snoozes = ends.filter((x) => x.end === undefined).map((x) => x.s), no: StaleFacts = { stale: false, snoozes };
-	if (c?.pause || m.background || m.paneStatus === "working" || m.watches?.some((w) => w.toldAt <= w.added) || snoozes.some((s) => s.todo === undefined)) return no;
+export function staleFacts(m: StaleMain, c: Pick<MainCap, "open" | "pause" | "deadlines" | "todos" | "snoozes"> | undefined, unattended: boolean, now: number, o: StaleMs = STALE_DEFAULTS, ends: SnoozeEnds = {}): StaleFacts {
+	const ended = (c?.snoozes ?? []).map((s) => {
+		const id = snoozeId(m.session ?? "", s), end = ends[id] ?? snoozeEnd(s, m.watches, now);
+		if (end !== undefined) ends[id] ??= end;
+		return { s, id, end };
+	});
+	const snoozes = ended.filter((x) => x.end === undefined).map((x) => x.s), no: StaleFacts = { stale: false, snoozes };
+	const n = m.notice, delivered = n !== undefined && (m.entryUpdated ?? 0) <= n.at && (m.fileMtime ?? 0) <= n.at + DELIVERY_MS && todosKey(c) === n.todos;
+	if (c?.pause || m.background || (m.paneStatus === "working" && !delivered) || m.watches?.some((w) => w.ended === undefined && w.toldAt <= w.added) || snoozes.some((s) => s.todo === undefined)) return no;
 	const held = new Set(snoozes.flatMap((s) => (s.todo !== undefined ? [s.todo] : []))), todos = c?.todos?.filter((t) => !(t.until !== undefined && t.until > now) && !held.has(t.id)).map(({ id, subject }) => ({ id, subject }));
 	if (c && c.open > 0 && (todos ? !todos.length : (c.deadlines ?? []).filter((at) => at > now).length >= c.open)) return no;
-	const moved = Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0), woke = ends.filter((x) => x.end !== undefined && x.end > moved).sort((a, b) => b.end! - a.end!)[0];
+	const moved = delivered ? Math.min(n.moved, Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0)) : Math.max(m.fileMtime ?? 0, m.entryUpdated ?? 0), woke = ended.filter((x) => x.end !== undefined && x.end > moved).sort((a, b) => b.end! - a.end!)[0];
+	const due = (span: number, from: number) => delivered || now - from > span || woke !== undefined;
 	const stale = unattended
-		? !m.commanding && !m.workers?.length && !m.points && (c?.open ?? 0) > 0 && moved > 0 && (now - moved > o.unattendedMs || woke !== undefined)
-		: m.state === "idle" && !m.commanding && m.duty !== "standing" && m.entryUpdated !== undefined && (now - m.entryUpdated > o.attendedMs || woke !== undefined);
+		? !m.commanding && !m.workers?.length && !m.points && (c?.open ?? 0) > 0 && moved > 0 && due(o.unattendedMs, moved)
+		: (m.state === "idle" || delivered) && !m.commanding && m.duty !== "standing" && m.entryUpdated !== undefined && due(o.attendedMs, m.entryUpdated);
 	const last = unattended ? (moved > 0 ? moved : undefined) : m.entryUpdated;
-	return { stale, snoozes, ...(last !== undefined ? { moved: last } : {}), ...(stale && todos ? { todos } : {}), ...(stale && woke ? { woke: { at: woke.end!, why: woke.s.why } } : {}) };
+	return { stale, snoozes, basis: moved, ...(last !== undefined ? { moved: last } : {}), ...(stale && todos ? { todos } : {}), ...(stale && woke ? { woke: { at: woke.end!, why: woke.s.why, id: woke.id } } : {}) };
 }
 
 /**
  * The device row from the live mains and their files. A main's points: each in-progress todo whose owner is one of its running workers counts its points (1 when it names none), and each running
  * worker no such todo names counts 1; the main itself counts nothing. A live train no main's todo names counts 1. Ready: the pending todos whose blockers are done and whose owner does not run.
  */
-export function joinCaps(o: { mains: MainFacts[]; caps: MainCap[]; budget?: number | undefined; load1: number; cores: number; unattended: boolean; now: number; stale?: StaleMs }): DeviceCap {
+export function joinCaps(o: { mains: MainFacts[]; caps: MainCap[]; budget?: number | undefined; load1: number; cores: number; unattended: boolean; now: number; stale?: StaleMs; ends?: SnoozeEnds }): DeviceCap {
 	const caps = new Map(o.caps.map((c) => [c.session, c])), trains = o.mains.filter((m) => m.role === "train").map((m) => nameKey(m.name)), named = new Set<string>();
 	const mains = o.mains.filter((m) => m.role === "main").map((m): MainRow => {
 		const c = caps.get(m.session), own = new Set(m.workers.map(nameKey)), runs = (owner?: string) => owner !== undefined && (own.has(nameKey(owner)) || trains.includes(nameKey(owner)));
@@ -185,13 +209,13 @@ export function joinCaps(o: { mains: MainFacts[]; caps: MainCap[]; budget?: numb
 		const minReady = ready.length ? Math.min(...ready.map((j) => j.points)) : undefined, units = new Map<string, { name: string; points: number }>();
 		for (const j of doing) units.set(nameKey(j.owner!), { name: clean(j.owner, 40), points: round((units.get(nameKey(j.owner!))?.points ?? 0) + j.points) });
 		if (self !== undefined) units.set(nameKey(m.name), { name: clean(m.name, 40), points: self });
-		const sf = staleFacts({ ...m, points }, c, o.unattended, o.now, o.stale);
+		const sf = staleFacts({ ...m, points }, c, o.unattended, o.now, o.stale, o.ends);
 		for (const w of m.workers) if (!units.has(nameKey(w))) units.set(nameKey(w), { name: clean(w, 40), points: DEFAULT_POINTS });
 		return {
 			session: m.session, name: clean(m.name, 40), workspace: m.workspace, points: round(points), ready: ready.length, ...(minReady !== undefined ? { minReady } : {}), open: c?.open ?? 0,
 			...(c?.pause ? { paused: { ...(c.pause.until !== undefined ? { until: c.pause.until } : {}), ...(c.pause.detail ? { detail: c.pause.detail } : {}) } } : {}),
 			...(sf.stale ? { stale: true as const } : {}), ...(m.duty === "standing" ? { standing: true as const } : {}), workers: [...own], units: [...units.values()],
-			...(sf.todos ? { todos: sf.todos } : {}), ...(sf.moved !== undefined ? { moved: sf.moved } : {}), ...(sf.woke ? { woke: sf.woke } : {}), ...(sf.snoozes.length ? { snoozes: sf.snoozes } : {}),
+			...(sf.todos ? { todos: sf.todos.slice(0, SHOWN), unanswered: sf.todos.length } : {}), ...(sf.stale ? { basis: sf.basis ?? 0, todosKey: todosKey(c) } : {}), ...(sf.moved !== undefined ? { moved: sf.moved } : {}), ...(sf.woke ? { woke: sf.woke } : {}), ...(sf.snoozes.length ? { snoozes: sf.snoozes } : {}),
 		};
 	});
 	const loose = trains.filter((t) => !named.has(t)).length * DEFAULT_POINTS, smallest = mains.flatMap((r) => (r.minReady !== undefined ? [r.minReady] : []));

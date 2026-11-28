@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { capDir, clock, joinCaps, type MainCap, type MainFacts, readDevice, readStale, snoozeLine, staleFacts, staleOf, writeCap } from "../src/capacity.ts";
+import { capDir, clock, joinCaps, type MainCap, type MainFacts, readCaps, readDevice, readStale, snoozeLine, staleFacts, staleOf, writeCap } from "../src/capacity.ts";
 import { HELD_CAP_HINT, MAIN_CAP_HINT, SNOOZE_HINT } from "../src/moments.ts";
 import { tellCap } from "../src/server/capops.ts";
 import { type CapEvent, createCapWatch } from "../src/server/capwatch.ts";
@@ -100,7 +100,7 @@ test("staleFacts: the interval from the options, the unanswered todos, a snooze 
 test("staleFacts: a snooze that ended after the last move wakes the reminder at once; a move after it does not", () => {
 	const s: Snooze = { at: NOW - 30 * MIN, why: "CI runs", until: NOW - MIN };
 	const woke = staleFacts(idle(30 * MIN), c({ snoozes: [s] }), true, NOW, { attendedMs: 120 * MIN, unattendedMs: 60 * MIN });
-	assert.deepEqual([woke.stale, woke.woke], [true, { at: NOW - MIN, why: "CI runs" }], "nothing moved since it ended: due, inside the interval");
+	assert.deepEqual([woke.stale, woke.woke], [true, { at: NOW - MIN, why: "CI runs", id: `:main@${NOW - 30 * MIN}` }], "nothing moved since it ended: due, inside the interval");
 	assert.equal(staleOf(idle(30 * MIN, { fileMtime: NOW - 30_000 }), c({ snoozes: [s] }), true, NOW, { attendedMs: 120 * MIN, unattendedMs: 60 * MIN }), false, "it moved after: the interval runs from that move");
 	assert.equal(staleOf(idle(30 * MIN, { state: "working" }), c({ snoozes: [s] }), false, NOW), false, "a working main is not reminded");
 });
@@ -187,4 +187,70 @@ test("the main's own stale copy offers the snooze in the same line; the tower's 
 	const d = joinCaps({ mains: [{ session: "a", name: "a", workspace: "w", role: "main", state: "idle", workers: [], fileMtime: 1, entryUpdated: 1 }], caps: [{ v: 1, session: "a", updated: NOW, doing: [], ready: [], open: 1, snoozes: [{ at: NOW, why: "CI", until: NOW + MIN }] }], load1: 0, cores: 1, unattended: true, now: NOW });
 	assert.deepEqual(d.mains[0]!.snoozes, [{ at: NOW, why: "CI", until: NOW + MIN }]);
 	assert.equal(d.mains[0]!.stale, undefined);
+});
+
+// Review snooze-review F001: the snooze's end was taken from the watch's latest line, so each line (and then its time) started a new episode told to everyone.
+test("one snooze wakes the reminder once: its first end holds across later lines, its time, and a restart; then the main alone each interval", async () => {
+	const { w, make } = world(true);
+	const at = w.clock.now();
+	w.mains[0] = { ...w.mains[0]!, fileMtime: at, entryUpdated: at, watches: [{ key: "train-a", added: at - 5 * MIN, toldAt: at - MIN }] };
+	w.cap({ snoozes: [{ at, why: "lands next", until: at + 20 * MIN, watch: "train-a" }] });
+	const watch = make();
+	const line = () => void (w.mains[0]!.watches = [{ key: "train-a", added: at - 5 * MIN, toldAt: w.clock.now() }]);
+	await run(watch, w.clock, 2);
+	line();
+	await run(watch, w.clock, 2);
+	line();
+	await run(watch, w.clock, 2);
+	assert.deepEqual(kinds(w.told), [["stale", "all"]], "the first line woke it; the second is no new wake");
+	await make().tick();
+	await run(make(), w.clock, 20);
+	assert.deepEqual(kinds(w.told), [["stale", "all"]], "nor its time, nor a restart");
+	await run(watch, w.clock, 12);
+	assert.deepEqual(kinds(w.told), [["stale", "all"], ["stale", "main only"]], "an interval after the wake: the main alone");
+});
+
+// F002: a watch that ended dropped out of the facts, and its snooze was taken to have ended when it was set, before the main's last move.
+test("a snooze on a watch that ended ends when the watch ended, so a main unmoved since is reminded at the next look", async () => {
+	const s: Snooze = { at: NOW, why: "w", until: NOW + 60 * MIN, watch: "train-a" };
+	assert.equal(snoozeEnd(s, [{ key: "train-a", added: NOW - MIN, toldAt: NOW - MIN, ended: NOW + 5 * MIN }], NOW + 10 * MIN), NOW + 5 * MIN, "stopped: its stop");
+	assert.equal(snoozeEnd(s, [{ key: "train-a", added: NOW - MIN, toldAt: NOW + 4 * MIN, ended: NOW + 5 * MIN }], NOW + 10 * MIN), NOW + 4 * MIN, "ended with a line: that line");
+	const f = staleFacts(idle(MIN, { fileMtime: NOW + 3 * MIN, entryUpdated: NOW + 3 * MIN, watches: [{ key: "train-a", added: NOW - MIN, toldAt: NOW - MIN, ended: NOW + 5 * MIN }] }), c({ snoozes: [s] }), true, NOW + 6 * MIN);
+	assert.deepEqual([f.stale, f.woke?.at], [true, NOW + 5 * MIN], "moved after the snooze, not after the end: due at once, and an ended watch shields nothing");
+});
+
+// F005: the session file the delivery of a notice writes moved the main, which ended the episode, so the next notice went to everyone again.
+test("writes caused by taking the reminder keep the episode: the repeats stay the main's alone", async () => {
+	const { w, make } = world(true, { attendedMs: 120 * MIN, unattendedMs: MIN });
+	w.cap();
+	const watch = make();
+	for (let i = 0; i < 8; i++) {
+		const before = w.told.length;
+		await watch.tick();
+		if (w.told.length > before) w.mains[0] = { ...w.mains[0]!, fileMtime: w.clock.now() + 20_000, paneStatus: "working" }; // the main takes it: its pane works, its file moves
+		w.clock.advance(MIN);
+		if (w.mains[0]!.paneStatus) w.mains[0] = { ...w.mains[0]!, paneStatus: "idle" };
+	}
+	assert.equal(kinds(w.told)[0]![1], "all");
+	assert.ok(w.told.length >= 3, `repeats came: ${w.told.length}`);
+	assert.deepEqual(kinds(w.told).slice(1).map((k) => k[1]), Array(w.told.length - 1).fill("main only"), "each repeat to the main alone");
+	w.mains[0] = { ...w.mains[0]!, fileMtime: w.clock.now() }; // a move of its own, past the delivery's window
+	w.clock.advance(6 * MIN);
+	w.mains[0] = { ...w.mains[0]!, fileMtime: w.clock.now() };
+	const n = w.told.length;
+	await run(watch, w.clock, 3);
+	assert.deepEqual(kinds(w.told).slice(n, n + 1), [["stale", "all"]], "a real move ends the episode: the next is a first notice again");
+});
+
+// F006: the capacity file held the first 100 open todos, so a 101st unanswered todo made nothing stale.
+test("eligibility reads every open todo; only the notice's summary is cut", () => {
+	const many = [...Array.from({ length: 100 }, (_, i) => ({ id: i + 1, subject: `t${i + 1}`, until: NOW + 60 * MIN })), { id: 101, subject: "the last one" }];
+	const f = staleFacts(idle(31 * MIN), c({ open: 101, todos: many }), true, NOW);
+	assert.deepEqual([f.stale, f.todos], [true, [{ id: 101, subject: "the last one" }]]);
+	const root = tmp(), dir = capDir(join(root, "board"));
+	writeCap(dir, { v: 1, session: "s-a", updated: NOW, doing: [], ready: [], open: 301, todos: Array.from({ length: 301 }, (_, i) => ({ id: i + 1, subject: `t${i + 1}` })) });
+	const back = readCaps(dir)[0]!;
+	assert.deepEqual([back.open, back.todos?.length], [301, 301], "the file keeps them all");
+	const d = joinCaps({ mains: [{ session: "s-a", name: "a", workspace: "w", role: "main", state: "idle", workers: [], fileMtime: NOW - 40 * MIN, entryUpdated: NOW - 40 * MIN }], caps: [back], load1: 0, cores: 1, unattended: true, now: NOW });
+	assert.deepEqual([d.mains[0]!.stale, d.mains[0]!.unanswered, d.mains[0]!.todos?.length], [true, 301, 3], "the row carries the count and the three the notice names");
 });

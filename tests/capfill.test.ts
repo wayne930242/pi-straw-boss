@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { capDir, PAUSE_EVENT, readCaps } from "../src/capacity.ts";
@@ -60,7 +61,7 @@ test("a member writes no capacity file", async () => {
 
 // The snoozable stale reminder (docs/specs/2026-11-28-stale-snooze.md): the main's open todos and its board_set snoozes reach its capacity file, kept across a /reload; a todo's snooze goes with the todo.
 test("board_set snooze: the open todos and the snoozes reach the capacity file; refused without a reason, with another field, on a todo not open, or on a key not watched", async () => {
-	const ask = async (r: Record<string, unknown>) => (r.cmd === "watch-list" ? { ok: true, watches: [{ key: "train-a", until: clock + 3600_000 }] } : { ok: false, error: "not in this test" });
+	const ask = async (r: Record<string, unknown>) => (r.cmd === "watch-list" ? { ok: true, watches: [{ key: "train-a", until: clock + 3600_000 }], snoozes: true } : { ok: false, error: "not in this test" });
 	const a = world.agent({ id: "a1", name: "api-main", pane: "wA:p1", tab: "wA:t1", deps: { now, ask } });
 	await a.start();
 	await a.promote();
@@ -83,4 +84,28 @@ test("board_set snooze: the open todos and the snoozes reach the capacity file; 
 	setTodos(b, [{ id: 3, subject: "deploy the api", status: "completed" }]);
 	await b.fire("turn_end");
 	assert.deepEqual(capOf("a1")!.snoozes!.map((x) => x.why), ["CI runs"], "a todo's snooze goes with the todo");
+});
+
+// Review snooze-review F003, F004, F006: a server of an older build drops the snoozes it reads, a write that fails keeps nothing, and a todo past the first 100 is still a todo.
+test("board_set snooze: refused when no server answers or the server is older than snoozes, and when the file cannot be written; a todo past the 100th is snoozed and kept", async () => {
+	let reply: { ok: boolean; [k: string]: unknown } | undefined = { ok: true, watches: [] };
+	const ask = async () => (reply ? reply : Promise.reject(new Error("no server")));
+	const a = world.agent({ id: "a1", name: "api-main", pane: "wA:p1", tab: "wA:t1", deps: { now, ask } });
+	await a.start();
+	await a.promote();
+	setTodos(a, Array.from({ length: 101 }, (_, i) => ({ id: i + 1, subject: `t${i + 1}`, status: "pending" })));
+	await a.fire("turn_end");
+	assert.equal(capOf("a1")!.todos?.length, 101, "every open todo reaches the file");
+	await assert.rejects(a.tool("board_set", { snooze: { why: "CI runs", for: "30m" } }), /older pi-straw-boss/, "a server without snoozes");
+	reply = undefined;
+	await assert.rejects(a.tool("board_set", { snooze: { why: "CI runs", for: "30m" } }), /no sb server answers/);
+	assert.equal(capOf("a1")!.snoozes, undefined, "nothing was kept");
+	reply = { ok: true, watches: [], snoozes: true };
+	await a.tool("board_set", { snooze: { why: "the last one", for: "30m", todo: 101 } });
+	assert.deepEqual(capOf("a1")!.snoozes!.map((s) => s.todo), [101]);
+	const dir = capDir(join(world.stateDir, "board"));
+	rmSync(dir, { recursive: true, force: true });
+	writeFileSync(dir, "not a folder");
+	await assert.rejects(a.tool("board_set", { snooze: { why: "CI runs", for: "30m" } }), /could not be written/);
+	rmSync(dir, { force: true });
 });

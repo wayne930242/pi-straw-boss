@@ -1,4 +1,5 @@
-import { capLine, clock, DEVICE_FRESH_MS, type DeviceCap, joinCaps, LOAD_SHARE, type MainFacts, type MainRow, pauseText, purgeCaps, readCaps, readDevice, readSent, roomFor, SILENT_MS, STALE_DEFAULTS, type StaleMs, THROTTLE_MS, UNDER_HOLD_MS, underFor, writeDevice, writeSent } from "../capacity.ts";
+import { snoozeId } from "../snooze.ts";
+import { capLine, clock, DEVICE_FRESH_MS, type DeviceCap, joinCaps, LOAD_SHARE, type MainFacts, type MainRow, type Notice, pauseText, purgeCaps, readCaps, type SnoozeEnds, readDevice, readSent, roomFor, SILENT_MS, STALE_DEFAULTS, type StaleMs, THROTTLE_MS, UNDER_HOLD_MS, underFor, writeDevice, writeSent } from "../capacity.ts";
 import { endOf, type HeldBy, holderName, holdOf, readHold, readIgnored, shortOf, writeHold } from "../hold.ts";
 import type { EndedHold, Hold } from "../link/holds.ts";
 import { heldRoomText, heldText, holdEndedText, holdEndedThereText, HOLDER_CAP_HINT } from "../moments.ts";
@@ -27,6 +28,8 @@ const FIRST = "first:", ESCALATED = "escalated:";
 /** A main still under capacity this long after its own `under` notice is escalated once per episode (`under-30m`), to its tower and the standing main; its marks are kept as a silence's are. */
 export const UNDER_ESCALATE_MS = 30 * MIN;
 const UFIRST = "under-first:", UESCALATED = "under-escalated:";
+/** The stale reminder's marks in `_sent.json` (docs/specs/2026-11-28-stale-snooze.md): a snooze's first end and its told wake, by `snoozeId`; a main's last notice, its move then, and its open todos then. */
+const SNOOZE_END = "snooze-end:", WAKE = "wake:", NOTICE = "notice:", NOTICE_MOVED = "notice-moved:", NOTICE_TODOS = "notice-todos:";
 /** One event: `subject` is the main's session (none for an ally device), `workspace` its workspace, `standing` this device's standing main other than the subject, when there is one. */
 /** `tag` is part of the flag's identity: a quota's resume time, so a new pause to another time is a new flag, told inside the 30 minutes. */
 /** `main`: the subject main's own session, told too for `under` and `stale` (field, box 2 2026-11-24: notices to the standing main and the tower alone started nothing for hours). */
@@ -78,9 +81,9 @@ export function capText(kind: CapKind, d: DeviceCap, now: number, row?: MainRow,
 
 /** A stale main's unanswered todos, three by id and subject (docs/specs/2026-11-28-stale-snooze.md); a main of an older build lists none, and its count says it. */
 function todosText(r: MainRow): string {
-	const t = r.todos;
+	const t = r.todos, n = r.unanswered ?? t?.length ?? 0;
 	if (!t) return `${r.open} open todos`;
-	return `${t.length} open todo${t.length === 1 ? "" : "s"} unanswered: ${t.slice(0, 3).map((x) => `#${x.id} ${q(x.subject.slice(0, 60))}`).join(", ")}${t.length > 3 ? `, +${t.length - 3} more` : ""}`;
+	return `${n} open todo${n === 1 ? "" : "s"} unanswered: ${t.slice(0, 3).map((x) => `#${x.id} ${q(x.subject.slice(0, 60))}`).join(", ")}${n > 3 ? `, +${n - 3} more` : ""}`;
 }
 
 export function createCapWatch(d: CapDeps) {
@@ -106,7 +109,11 @@ export function createCapWatch(d: CapDeps) {
 			const now = d.now(), facts = await d.mains().catch(() => undefined);
 			if (!facts) return undefined;
 			purgeCaps(d.dir, new Set(facts.map((m) => m.session)), now);
-			const { load1, cores } = d.load(), spans = d.stale?.() ?? STALE_DEFAULTS, dev = joinCaps({ mains: facts, caps: readCaps(d.dir), budget: d.budget(), load1, cores, unattended: d.unattended(), now, stale: spans });
+			// The stale reminder's marks (docs/specs/2026-11-28-stale-snooze.md): the first end seen of each snooze and whether its wake was told, by its identity (review F001), and the last notice of each main (F005).
+			const caps = readCaps(d.dir), ends: SnoozeEnds = Object.fromEntries(Object.entries(sent).flatMap(([k, at]) => (k.startsWith(SNOOZE_END) ? [[k.slice(SNOOZE_END.length), at]] : [])));
+			const noticed = (m: MainFacts): MainFacts => ((at, moved, todos) => (at !== undefined && moved !== undefined && todos !== undefined ? { ...m, notice: { at, moved, todos } satisfies Notice } : m))(sent[NOTICE + m.session], sent[NOTICE_MOVED + m.session], sent[NOTICE_TODOS + m.session]);
+			const { load1, cores } = d.load(), spans = d.stale?.() ?? STALE_DEFAULTS, dev = joinCaps({ mains: facts.map(noticed), caps, budget: d.budget(), load1, cores, unattended: d.unattended(), now, stale: spans, ends });
+			for (const [id, at] of Object.entries(ends)) sent[SNOOZE_END + id] = at;
 			const every = dev.unattended ? spans.unattendedMs : spans.attendedMs; // the stale reminder's interval, its repeat, and its throttle
 			underSince = roomFor(dev) ? (underSince ?? now) : undefined;
 			if (underSince !== undefined) dev.under = underSince;
@@ -139,8 +146,7 @@ export function createCapWatch(d: CapDeps) {
 			const under = !held && underFor(dev, now) !== undefined ? dev.mains.filter((r) => r.minReady !== undefined && dev.points + r.minReady <= dev.budget!) : [], underKeys = new Set(under.map((r) => r.session));
 			const flagged: CapEvent[] = [
 				...under.map((r) => of("under", r)),
-				// A snooze that ended starts its own episode (its tag), which the last notice's throttle does not hold back.
-				...dev.mains.filter((r) => r.stale && r.open > 0).map((r): CapEvent => ({ ...of("stale", r), ...(held ? { held: true as const } : {}), every, ...(r.woke ? { tag: `woke${r.woke.at}` } : {}) })),
+				...dev.mains.filter((r) => r.stale && r.open > 0).map((r): CapEvent => ({ ...of("stale", r), ...(held ? { held: true as const } : {}), every })),
 				...dev.mains.filter((r) => r.paused).map((r) => ({ ...of("quota", r), tag: String(r.paused!.until ?? "") })),
 				...silent.map((a) => ally("silent", a)),
 				...allyPaused.map(({ a, row }) => ({ ...allyOf("quota", a, row), tag: String(row.paused!.until ?? "") })),
@@ -149,13 +155,21 @@ export function createCapWatch(d: CapDeps) {
 				...mine.ended.filter((e) => e.reason === "ended-there" && now - e.at < THROTTLE_MS).map((e): CapEvent => ((a) => ({ kind: "hold-ended", key: `${e.team}:${e.device}@${e.since}`, text: holdEndedThereText(a?.label ?? shortOf(e.device), a?.short ?? shortOf(e.device)), main: e.session, mainOnly: true }))(allies.find((x) => x.device === e.device))),
 			];
 			const next = new Set<string>();
+			/** A main told of its stale episode: when, and its move and open todos then, so a move that is only its taking the notice keeps the episode (F005). */
+			const noted = (r: MainRow) => void ((sent[NOTICE + r.session] = now), (sent[NOTICE_MOVED + r.session] = r.basis ?? 0), (sent[NOTICE_TODOS + r.session] = r.todosKey ?? 0));
 			for (const e of flagged) {
 				const mark = markOf(e), episode = `episode:${mark}`, last = sent[episode];
 				if (e.kind !== "stale") { if (active.has(mark) || (await send(e, now))) next.add(mark); continue; }
-				// A stale episode: its first notice goes as every flag's; while it lasts, the main alone is told again each interval after the last (its mark outlives a restart).
-				if (last === undefined) { if (await send(e, now)) (next.add(mark), (sent[episode] = now)); continue; }
+				// A stale episode: its first notice goes as every flag's; while it lasts, the main alone is told again each interval after the last (its mark outlives a restart). A snooze that ended starts
+				// a new one, once per snooze (its identity): the wake's own tag, which the last notice's throttle does not hold back.
+				const r = dev.mains.find((x) => x.session === e.key)!, wake = r.woke ? WAKE + r.woke.id : undefined;
+				if (last === undefined || (wake !== undefined && sent[wake] === undefined)) {
+					if (await send({ ...e, ...(wake ? { tag: wake } : {}) }, now)) (next.add(mark), (sent[episode] = now), wake && (sent[wake] = now), e.main !== undefined && noted(r));
+					else if (last !== undefined) next.add(mark);
+					continue;
+				}
 				next.add(mark);
-				if (now - last >= every && e.main !== undefined && (await send({ ...e, mainOnly: true }, now))) sent[episode] = now;
+				if (now - last >= every && e.main !== undefined && (await send({ ...e, mainOnly: true }, now))) (sent[episode] = now), noted(r);
 			}
 			// A silence is escalated once, 2 hours after its first notice was told, and routed as that notice; it ends when the device is no longer flagged.
 			for (const a of silent) {
@@ -197,7 +211,9 @@ export function createCapWatch(d: CapDeps) {
 			untold = new Set(flagged.map(markOf).filter((m) => untold.has(m)));
 			last = rows;
 			const spell = (k: string) => [FIRST, ESCALATED].find((p) => k.startsWith(p)), episode = (k: string) => [UFIRST, UESCALATED].find((p) => k.startsWith(p));
-			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (k.startsWith(HOLD_MARK) || k.startsWith(HOLD_MAIN) ? true : k.startsWith("episode:stale:") ? next.has(k.slice("episode:".length)) : episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < (k.startsWith("stale:") ? Math.max(every, THROTTLE_MS) : THROTTLE_MS))));
+			// A snooze's marks last while a main's file still holds it; a main's notice while its episode does.
+			const snoozed = new Set(caps.flatMap((c) => (c.snoozes ?? []).map((s) => snoozeId(c.session, s)))), ofSnooze = (k: string) => [SNOOZE_END, WAKE].find((p) => k.startsWith(p)), notice = (k: string) => [NOTICE_MOVED, NOTICE_TODOS, NOTICE].find((p) => k.startsWith(p));
+			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (k.startsWith(HOLD_MARK) || k.startsWith(HOLD_MAIN) ? true : ofSnooze(k) ? snoozed.has(k.slice(ofSnooze(k)!.length)) : notice(k) ? next.has(`stale:${k.slice(notice(k)!.length)}`) : k.startsWith("episode:stale:") ? next.has(k.slice("episode:".length)) : episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < (k.startsWith("stale:") ? Math.max(every, THROTTLE_MS) : THROTTLE_MS))));
 			try { writeSent(d.dir, sent); } catch (error) { d.log("capacity-error", { text: (error as Error).message.slice(0, 200) }); }
 			return dev;
 		},
