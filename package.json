@@ -78,7 +78,7 @@
     "vite": "8.3.4"
   },
   "dependencies": {
-    "@nubl/maestro": "git+https://github.com/wayne930242/maestro.git#0e1dd78c71ccb353a5fa954b4d40d6dc1e8a312c",
+    "@nubl/maestro": "git+https://github.com/wayne930242/maestro.git#a5a9c439b94244348997ec9445c1fd9f321f86cc",
     "tsx": "^4.23.15"
   }
 }
