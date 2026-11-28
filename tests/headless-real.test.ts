@@ -10,6 +10,7 @@ import { callControl } from "../src/server/socket.ts";
 import { listRuns, readRun } from "../src/server/towerrunstore.ts";
 import { type PiPath, resolvePi } from "../src/server/runchild.ts";
 import { towerId } from "../src/server/record.ts";
+import { TIMERS } from "../src/server/runs.ts";
 
 // One headless tower run with a real pi (REV-F001): the server spawns `pi --mode rpc` from the PATH, which loads this checkout's extension from the run's agent folder. The run relays pi's project-trust question as a
 // dialog, claims with its PID and nonce, takes its event, and its model (a fake OpenAI-compatible endpoint in this process) calls tower_done. Every other test of headless runs uses a FakeKid, which never loads
@@ -56,7 +57,9 @@ test("a real pi run: the server spawns pi --mode rpc, its project-trust question
 	w.env.PATH = process.env.PATH;
 	w.env.SB_TEST_ROOT = process.env.SB_TEST_ROOT;
 	w.env.HERDR_SOCKET_PATH = join(w.root, "second-herdr.sock"); // a secondary slot: its folder is servers/<hash>
-	w.runTimers = { claim: 60_000, lost: 60_000, idleEnd: 600_000 };
+	// A real pi gets the server's own grace to exit after tower_done (TIMERS: 10 s, then 5 s to the group's kill), not FAST_RUNS' 200 and 100 ms for a fake one: a pi the machine held still for 1.5 s just after its
+	// tower_done was killed (SIGKILL), its exit code stayed null, and the wait for it ran out 90 s later ("Timed out waiting for the run to end with tower_done").
+	w.runTimers = { claim: 60_000, lost: 60_000, idleEnd: 600_000, quitGrace: TIMERS.quitGrace, signal: TIMERS.signal };
 	mkdirSync(w.stateDir, { recursive: true });
 	writeFileSync(join(w.stateDir, "config.json"), JSON.stringify({ towerRuns: { enabled: true, headless: true }, towerModel: "sbfake/fake-1" }));
 	const agent = w.env.PI_CODING_AGENT_DIR!;
@@ -87,7 +90,8 @@ test("a real pi run: the server spawns pi --mode rpc, its project-trust question
 	assert.match(trust.title, /trust/i);
 	assert.equal((await ask({ cmd: "run-dialog", key: trust.key, confirmed: true })).ok, true);
 
-	await until(() => child.exitCode !== null, "the run to end with tower_done", 90_000);
+	await until(() => child.exitCode !== null || child.signalCode !== null, "the run to end with tower_done", 90_000);
+	assert.equal(child.signalCode, null, `pi was killed, not ended by tower_done: ${stderrOf(w)}`);
 	const recs = listRuns(w.slot, "wA");
 	assert.equal(recs.length, 1, JSON.stringify(recs));
 	await until(() => readRun(w.slot, "wA", recs[0]!.id)?.outcome, "the run's outcome");
