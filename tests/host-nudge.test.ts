@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -376,7 +376,12 @@ function child(opts: { idle?: boolean; pending?: boolean; draft?: string; undeli
 		sessionManager: { getSessionFile: () => state.current },
 	};
 	const runDir = nudgeDir(file, runId);
-	const inbox = createInbox({ file, runId, autoExit: opts.autoExit ?? false, ctx: () => ctx, pi, undelivered: () => opts.undelivered ?? false, now: () => state.clock });
+	const calls = { stat: 0, readdir: 0 };
+	const fs = {
+		statSync: (p: string, o: { throwIfNoEntry: false }) => (calls.stat++, statSync(p, o)),
+		readdirSync: (p: string) => (calls.readdir++, readdirSync(p)),
+	};
+	const inbox = createInbox({ file, runId, autoExit: opts.autoExit ?? false, ctx: () => ctx, pi, undelivered: () => opts.undelivered ?? false, now: () => state.clock, fs });
 	const put = (id = "bbbb-00000001", over: Record<string, unknown> = {}) => {
 		mkdirSync(runDir, { recursive: true });
 		writeFileSync(requestFile(runDir, id), JSON.stringify({ v: 2, id, runId, sessionFile: file, at: 1, idleMs: 10 * MIN, ...over }));
@@ -388,7 +393,7 @@ function child(opts: { idle?: boolean; pending?: boolean; draft?: string; undeli
 		return JSON.parse(readFileSync(join(runDir, name), "utf8"));
 	};
 	return {
-		file, dir: runDir, pi, ctx, sent, put, ack, inbox,
+		file, dir: runDir, pi, ctx, sent, put, ack, inbox, calls,
 		get current() { return state.current; }, set current(v) { state.current = v; },
 		get clock() { return state.clock; }, set clock(v) { state.clock = v; },
 	};
@@ -814,4 +819,30 @@ test("F009: resumeNotices with nothing unconfirmed starts nothing", (t) => {
 	t.mock.timers.tick(5000);
 	assert.equal(s.pruned.length, 0);
 	assert.equal(l.messages.length, 0);
+});
+
+// ── the cost of an idle poll ──
+
+test("an idle child's poll is one stat of its run's folder: it lists the folder only when its mtime moved, or moved too recently to trust", () => {
+	const c = child();
+	c.inbox.poll();
+	assert.deepEqual(c.calls, { stat: 1, readdir: 0 }, "no folder: one stat");
+	mkdirSync(c.dir, { recursive: true });
+	const old = new Date(Date.now() - 60_000);
+	utimesSync(c.dir, old, old);
+	c.inbox.poll();
+	assert.deepEqual(c.calls, { stat: 2, readdir: 1 }, "a folder not seen before is listed");
+	c.inbox.poll();
+	c.inbox.poll();
+	assert.deepEqual(c.calls, { stat: 4, readdir: 1 }, "unchanged since: one stat each");
+	c.put();
+	c.clock = 1;
+	assert.deepEqual(c.inbox.poll(), ["sent"], "a request moves the mtime");
+	assert.equal(c.calls.readdir, 2);
+	c.inbox.poll();
+	assert.equal(c.calls.readdir, 3, "a change too recent to trust: listed again");
+	utimesSync(c.dir, old, old);
+	c.inbox.poll();
+	c.inbox.poll();
+	assert.equal(c.calls.readdir, 4, "then once, and no more");
 });

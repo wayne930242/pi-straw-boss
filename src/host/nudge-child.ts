@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isChildBusy } from "@nubl/maestro/core/child-busy";
@@ -13,6 +13,8 @@ import { ACK_MS, REQUEST_MS, ackFile, isRequestId, nudgeDir, nudgeText, readJson
 // parent has stopped waiting for it (F007).
 
 const POLL_MS = 2000;
+/** A folder's mtime this close to the scan that read it may hide a change made in the same tick of the file system's clock: such a scan is not trusted. */
+const RACY_MS = 2000;
 /** A nudge sent that has not entered the session this long is acked `lost`. */
 export const ACCEPT_MS = 30_000;
 
@@ -30,6 +32,8 @@ export interface InboxCore {
 	pi: Pick<ExtensionAPI, "sendUserMessage"> & { events?: ExtensionAPI["events"] };
 	undelivered?: () => boolean;
 	now?: () => number;
+	/** The file system calls of a poll; the tests count them. */
+	fs?: { statSync: (dir: string, options: { throwIfNoEntry: false }) => { mtimeMs: number } | undefined; readdirSync: (dir: string) => string[] };
 }
 
 export interface Inbox {
@@ -62,7 +66,10 @@ function onLaunchFile(ctx: Ctx | undefined, file: string): boolean {
 export function createInbox(d: InboxCore): Inbox {
 	const dir = nudgeDir(d.file, d.runId);
 	const now = d.now ?? Date.now;
+	const fs = d.fs ?? { statSync, readdirSync };
 	let lastTurnAt = -Infinity;
+	/** The folder's mtime at the last scan, and when that scan ran (wall clock, as the mtime is): an idle poll is one stat. */
+	let scanned: { mtime: number; at: number } | undefined;
 	let inflight: { id: string; text: string; at: number; requested: number } | undefined;
 	/** `requested` is when the parent wrote the request: past ACK_MS the parent no longer waits, and an ack would only be left behind. */
 	const ack = (id: string, requested: number, outcome: NudgeOutcome) => {
@@ -93,8 +100,18 @@ export function createInbox(d: InboxCore): Inbox {
 			}
 			let names: string[];
 			try {
-				names = readdirSync(dir);
+				// No folder, the common case: no request, and no error built to say so.
+				const mtime = fs.statSync(dir, { throwIfNoEntry: false })?.mtimeMs;
+				if (mtime === undefined) {
+					scanned = undefined;
+					return [];
+				}
+				if (scanned && scanned.mtime === mtime && scanned.at - mtime > RACY_MS) return [];
+				const at = Date.now();
+				names = fs.readdirSync(dir);
+				scanned = { mtime, at };
 			} catch {
+				scanned = undefined;
 				return [];
 			}
 			const outcomes: NudgeOutcome[] = [];
