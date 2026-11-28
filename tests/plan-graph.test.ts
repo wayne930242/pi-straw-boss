@@ -33,10 +33,10 @@ test("layers: a node sits one step below its deepest shown blocker; a blocker th
 });
 
 test("graphed: a dependency, an owner, a defer, or a graph name make a plan worth drawing; a flat list stays the checklist", () => {
-	assert.equal(graphed(PLAN), true);
-	assert.equal(graphed({ nodes: [node(1, "a"), node(2, "b")] }), false);
-	assert.equal(graphed({ nodes: [node(1, "a")], graph: "single-loop" }), true);
-	assert.equal(graphed(undefined), false);
+	assert.equal(graphed(PLAN, NOW), true);
+	assert.equal(graphed({ nodes: [node(1, "a"), node(2, "b")] }, NOW), false);
+	assert.equal(graphed({ nodes: [node(1, "a")], graph: "single-loop" }, NOW), true);
+	assert.equal(graphed(undefined, NOW), false);
 	assert.equal(whenText(new Date(2026, 10, 27, 14, 0).toISOString(), NOW), "14:00");
 	assert.equal(whenText(new Date(2026, 10, 28, 8, 5).toISOString(), NOW), "11/28 08:05");
 });
