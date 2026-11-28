@@ -15,7 +15,11 @@ beforeEach(() => {
 	world.setFlag(true);
 	world.herdr.shellPids = true;
 });
-afterEach(() => world.close());
+const prompts: (() => void)[] = [];
+afterEach(async () => {
+	for (const stop of prompts.splice(0)) stop();
+	await world.close();
+});
 
 const ask = (r: Running, cmd: Record<string, unknown>) => callControl(r.handle.endpoint, world.record()!.secret, cmd as { cmd: string }).then((x) => x.reply!);
 const logText = () => readFileSync(fileOf(world.slot, "log"), "utf8");
@@ -23,29 +27,46 @@ const agentStarts = () => world.herdr.calls.filter((a) => a[0] === "agent" && a[
 const msg = { id: "m1", content: { text: "hi" } };
 const PID = 6200;
 
-/** A prompt that polls until told to leave, announces it (`prompt-gone`) at once, and whose process stays alive (`world.live`) until the test ends it. */
+/**
+ * A prompt that polls until told to leave, announces it (`prompt-gone`) at once, and whose process stays alive (`world.live`) until the test ends it. The typed command starts it in the same step (FakeHerdr `onRun`), as the
+ * pane's shell runs it, and `setup` returns once it has polled:
+ * - a prompt the test started only once it saw the typing left an idle shell meanwhile, and a check late by more than `launchMs` under load found the server had typed into it again, as it should, so the first typing
+ *   was never seen alone;
+ * - a run that came before the first poll found a prompt typed but not yet polled (the last case's), not the prompt that polls these cases are about, and waited for it on the held clock where the case did not move it.
+ */
 async function setup() {
 	const s = await world.start();
 	await s.handle.ready;
+	let pane = "", gone = false, polls = 0, timer: ReturnType<typeof setInterval> | undefined;
+	const stop = () => clearInterval(timer);
+	prompts.push(stop);
+	world.herdr.onRun = (into) => {
+		world.herdr.onRun = undefined;
+		pane = into;
+		world.live.add(PID);
+		world.herdr.pane(into).processes = [{ name: "node", argv0: "node", pid: PID, cmdline: `node "/pkg/dist/server/cli.mjs" prompt --workspace wA --state-dir "/s"` }];
+		timer = setInterval(() => void (async () => {
+			if (gone) return;
+			const r = await ask(s, { cmd: "prompt-poll", workspace: "wA", pid: PID }).catch(() => undefined);
+			if (r?.ok) polls++;
+			if (r?.leave) {
+				gone = true;
+				world.herdr.pane(into).processes = [];
+				await ask(s, { cmd: "prompt-gone", workspace: "wA", pid: PID }).catch(() => {});
+			}
+		})(), 20);
+	};
 	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
 	await until(() => world.herdr.typed.length === 1, "the first typing");
-	const pane = String(ensured.pane);
-	world.live.add(PID);
-	world.herdr.pane(pane).processes = [{ name: "node", argv0: "node", pid: PID, cmdline: `node "/pkg/dist/server/cli.mjs" prompt --workspace wA --state-dir "/s"` }];
-	let gone = false;
-	const timer = setInterval(() => void (async () => {
-		if (gone) return;
-		const r = await ask(s, { cmd: "prompt-poll", workspace: "wA", pid: PID }).catch(() => undefined);
-		if (r?.leave) {
-			gone = true;
-			world.herdr.pane(pane).processes = [];
-			await ask(s, { cmd: "prompt-gone", workspace: "wA", pid: PID }).catch(() => {});
-		}
-	})(), 20);
-	return { s, pane, stop: () => clearInterval(timer) };
+	assert.equal(pane, String(ensured.pane));
+	await until(() => polls > 0, "the prompt's first poll");
+	return { s, pane, stop };
 }
 
-/** A clock only the test moves: a wait of N ms ends when the test has moved it N ms, however slow the machine; `sleeps` lists the waits asked. */
+/**
+ * A clock only the test moves: a wait of N ms ends when the test has moved it N ms, however slow the machine; `sleeps` lists the waits asked. A wait keeps nothing alive: the server of a case that failed while it waited on
+ * the clock waits on with the test gone, and a timer that held the process would hang it instead of letting it end with the failure (an 18-minute hang was seen).
+ */
 function heldClock() {
 	let t = 1_000_000;
 	const sleeps: number[] = [];
@@ -55,7 +76,7 @@ function heldClock() {
 		sleeps,
 		sleep: async (ms: number) => {
 			sleeps.push(ms);
-			for (const end = t + ms; t < end; ) await new Promise((r) => setTimeout(r, 2));
+			for (const end = t + ms; t < end; ) await new Promise((r) => setTimeout(r, 2).unref());
 		},
 	};
 }
@@ -126,7 +147,9 @@ test("a prompt that polled after an earlier one left is the one waited for, not 
 test("a prompt typed but not yet polled is waited for: the start follows its exit and the settle", async () => {
 	const clock = heldClock();
 	world.standingWait = clock;
-	world.standingTimers = { exitMs: 2000, settleMs: 100 };
+	// The prompt is still starting for the whole case: the run's start waits for a prompt typed less than `launchMs` ago, and the look types into the idle shell again after it. The 250 ms of these tests is wall-clock time a
+	// loaded machine lets pass between the typing and the run, or before the check of the typing.
+	world.standingTimers = { exitMs: 2000, settleMs: 100, launchMs: 60_000, launchMaxMs: 60_000 };
 	const s = await world.start();
 	await s.handle.ready;
 	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
