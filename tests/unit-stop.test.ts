@@ -381,18 +381,20 @@ test("OT-F001: a page close of a main the box could not end (manual) leaves the 
 	world.revokeMs = 30;
 	await boxWithMain();
 	const answered = new Set<string>(), manual = "main was not opened by a tower (the boss opened it), so only the boss closes it";
+	// The main answers every ask it got, to the end of the case: the revoker asks again at each sweep, so one of its asks can be out when the page closes the main, and an answer that never came would hold that
+	// sweep for the close's 10 s (closemain.ts ASK_MS), past this wait for the stopped notice. Once the main has left the broker's list no ask is sent.
 	const answering = setInterval(() => closeAsks().filter((a) => !answered.has(a.reqId)).forEach((a) => (answered.add(a.reqId), refuseAsk(a.reqId, manual))), 5);
 	try {
 		await world.expose!.unitStop!({ team: T, from: ADM, stopId: "a1".repeat(16), handle: HANDLE(), mode: "interrupt", reason: "", at: Date.now() });
 		await until(() => world.signals.some((x) => x.kind === "main-stop" && x.outcome === "manual"), "the manual notice");
+		pageCloses();
+		assert.equal(readRoutes(world.slot, "wA", Date.now()).length, 1, "the row stays for the revoker");
+		await until(() => stoppedNotices().length === 1, "the stopped notice");
+		await until(() => readRoutes(world.slot, "wA", Date.now()).length === 0, "the route to go");
+		assert.deepEqual(doneStops(), [["gone", "a1".repeat(16)]]);
 	} finally {
 		clearInterval(answering);
 	}
-	pageCloses();
-	assert.equal(readRoutes(world.slot, "wA", Date.now()).length, 1, "the row stays for the revoker");
-	await until(() => stoppedNotices().length === 1, "the stopped notice");
-	await until(() => readRoutes(world.slot, "wA", Date.now()).length === 0, "the route to go");
-	assert.deepEqual(doneStops(), [["gone", "a1".repeat(16)]]);
 });
 
 test("OT-F001: the forget itself asks the revoker to sweep: a stopped main that is idle and still listed is asked at once and ends with the done audit, with no timer sweep near", async () => {
