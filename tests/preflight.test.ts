@@ -51,7 +51,7 @@ test("a deleted or unknown blocker warns: the dependency it records is gone", ()
 test("an item of another session, a tombstoned todo, and a list that is no ledger's", () => {
 	assert.equal(preflightOf(snapshot([{ id: 2 }]), "ffffffff#2", SESSION), undefined, "another session's todo: its own main checks it");
 	assert.match(preflightOf(snapshot([{ id: 2, status: "deleted" }]), local(2), SESSION)!.warnings[0]!, /todo #2 is deleted/);
-	assert.equal(preflightOf(undefined, local(2), SESSION), undefined, "no list at all");
+	assert.match(preflightOf(undefined, local(2), SESSION)!.warnings[0]!, /names no todo/, "no list at all binds nothing");
 	assert.equal(preflightOf({ tasks: [{ id: 2, subject: "x", status: "pending" }], nextId: 3 }, local(2), SESSION)?.warnings.length, 0, "rpiv-todo keeps no anchor: nothing to warn of");
 	assert.equal(preflightOf(snapshot([{ id: 2 }]), "not an item", SESSION), undefined);
 });
@@ -83,23 +83,29 @@ test("the subagent call: a cycle blocks it; a warning rides on its result once; 
 	assert.equal(w.result("c5"), undefined, "a call the turn ended without a result leaves nothing behind");
 });
 
-test("the preflight of a 5000-row ledger stays within 5 ms a launch", () => {
-	const tasks: Task[] = Array.from({ length: 5000 }, (_, i) => ({ id: i + 1, uid: `t_${(i + 1).toString(32).padStart(10, "a").replace(/[^a-z2-7]/g, "a")}`, anchor: "npm test", status: i < 4000 ? "completed" : "pending", ...(i > 0 ? { blockedBy: [i, ...(i > 1 ? [i - 1] : [])] } : {}) }));
-	const entries: unknown[] = Array.from({ length: 2000 }, (_, i) => ({ type: "message", id: `m${i}`, message: { role: "user", content: "x" } }));
-	entries.push(entry(tasks));
-	const w = world(entries);
-	w.call("warm", { item: local(5000) });
-	const runs: number[] = [];
-	for (let i = 0; i < 20; i++) {
-		entries.push(entry(tasks)); // a new snapshot each launch: the reader walks it, as after a todo call
-		const began = process.hrtime.bigint();
-		assert.equal(w.call(`p${i}`, { item: local(5000) }), undefined);
-		runs.push(Number(process.hrtime.bigint() - began) / 1e6);
-	}
-	const median = runs.sort((a, b) => a - b)[10]!;
-	console.log(`preflight on 5000 rows: median ${median.toFixed(2)} ms, max ${runs.at(-1)!.toFixed(2)} ms`);
-	assert.ok(median <= 25, `median ${median} ms (the ceiling is 5 ms; 25 leaves room for a loaded machine)`);
-});
+// The ceiling (brief: ≤5 ms a launch on a 5,000-row ledger) is the median over launches, each after a todo call wrote a new snapshot, through pi's own SessionManager (its getBranch walks
+// the tree from the leaf at every call). It is measured in this process's CPU time, so a loaded machine that deschedules the test does not count; the tail is reported, not asserted.
+for (const [label, blockers] of [["a chain", 2], ["a dense graph of 12 blockers a todo", 12]] as const) {
+	test(`the preflight of a 5000-row ledger stays within 5 ms a launch: ${label}`, async () => {
+		const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+		const tasks: Task[] = Array.from({ length: 5000 }, (_, i) => ({ id: i + 1, anchor: "npm test", status: i < 4000 ? "completed" : "pending", blockedBy: Array.from({ length: Math.min(i, blockers) }, (_, k) => i - k) }));
+		const sm = SessionManager.inMemory("/w");
+		for (let i = 0; i < 2000; i++) sm.appendMessage({ role: "user", content: "x", timestamp: 0 } as never);
+		const pf = createPreflight(), ctx = { sessionManager: { getBranch: () => sm.getBranch(), getSessionId: () => SESSION } };
+		const runs: number[] = [];
+		for (let i = 0; i < 31; i++) {
+			sm.appendCustomEntry("todo/v1", snapshot(tasks)); // a todo call before each launch
+			const began = process.cpuUsage();
+			assert.equal(pf.admit(`p${i}`, "subagent", { item: local(5000) }, ctx as never), undefined);
+			const used = process.cpuUsage(began);
+			if (i) runs.push((used.user + used.system) / 1000); // the first warms the JIT
+		}
+		runs.sort((a, b) => a - b);
+		const median = runs[runs.length >> 1]!, p95 = runs[Math.floor(runs.length * 0.95)]!;
+		console.log(`preflight on 5000 rows, ${label}: median ${median.toFixed(2)} ms, p95 ${p95.toFixed(2)} ms, max ${runs.at(-1)!.toFixed(2)} ms of CPU`);
+		assert.ok(median <= 5, `median ${median} ms`);
+	});
+}
 
 test("boss_pair with item: a cycle refuses before the thread opens; a warning follows its text", async () => {
 	const { createBossPair } = await import("../src/bosspair.ts");
@@ -113,4 +119,31 @@ test("boss_pair with item: a cycle refuses before the thread opens; a warning fo
 	const out = await tools.get("boss_pair")!.execute("c2", { worker: "w", reviewer: "r", item: local(3) }, undefined, undefined, ctx);
 	assert.match(out.content[0]!.text, /^Thread T1: [\s\S]*\nsb preflight: todo #3 has no anchor/);
 	assert.equal(asked.length, 1);
+});
+
+test("a session that may not join the net (a sub workspace's) still has its launch's todo looked at", async () => {
+	const { World } = await import("./fakes.ts");
+	const world = new World();
+	try {
+		world.herdr.workspace("wA").worktree = { checkout_path: "/w/alpha", is_linked_worktree: false, repo_key: "/r/alpha" };
+		world.herdr.workspaces.push({ workspace_id: "wS", label: "Alpha feature", tokens: {}, worktree: { checkout_path: "/w/f", is_linked_worktree: true, repo_key: "/r/alpha" } });
+		world.herdr.addTab("wS:t1", "feature", "wS:p1");
+		const sub = world.agent({ id: "sub-1", pane: "wS:p1", entries: [{ customType: "todo/v1", data: snapshot([{ id: 1, anchor: "npm test", blockedBy: [1] }]) }] });
+		await sub.start();
+		assert.deepEqual(sub.tokens, {}, "it joined nothing");
+		const out = await sub.fireResult("tool_call", { toolName: "subagent", toolCallId: "c1", input: { name: "w", task: "t", item: "sub-1#1" } }) as { block?: boolean; reason?: string } | undefined;
+		assert.match(out?.reason ?? "", /cycle \(#1 → #1\)/);
+	} finally { await world.stopAll(); }
+});
+
+test("a blocker already done frees the todo: a cycle past it is not this launch's, as capacity counts readiness", () => {
+	const s = snapshot([{ id: 1, anchor: "npm test", blockedBy: [2] }, { id: 2, status: "completed", blockedBy: [3] }, { id: 3, blockedBy: [2] }]);
+	assert.equal(preflightOf(s, local(1), SESSION)?.refusal, undefined);
+});
+
+test("a known empty phrase is vague even when it starts with a command word; a local item with no list at all is still told", () => {
+	for (const a of ["test passes", "tests pass", "test", "make it work"]) assert.equal(anchorProblem(a), "vague", a);
+	assert.match(preflightOf(undefined, local(2), SESSION)?.warnings[0] ?? "", /names no todo in your list/);
+	assert.match(preflightOf(undefined, "t_abcdefghij", SESSION)?.warnings[0] ?? "", /names no todo in your list/);
+	assert.equal(preflightOf(undefined, "ffffffff#2", SESSION), undefined, "another session's item: its own main checks it");
 });

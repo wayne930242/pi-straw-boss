@@ -343,6 +343,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 	pi.on("turn_end", () => cap.settle());
 	pi.on("tool_call", async (event, ctx) => {
 		if (!SUBAGENT_TOOLS.includes(event.toolName) || runMode.active()) return;
+		if (event.toolName === "subagent") { const refused = preflight.admit(event.toolCallId, event.toolName, event.input, ctx); if (refused) return refused; } // its todo is looked at in every session, one barred from the net too (preflight.ts)
 		// Two pis on one session file corrupt it: a run whose session a live pane runs (its own pane, a restore, or another launcher's resume) is not resumed (docs/specs/2026-11-23-tower-revive.md §6).
 		if (event.toolName === "subagent_resume") {
 			const path = (event.input as { sessionPath?: unknown } | undefined)?.sessionPath;
@@ -362,7 +363,7 @@ export function registerSession(kit: Kit, { mainDuty, runMode, briefing, roles, 
 		mainDuty.migrate(pi.getSessionName()); // the promotion above may have just made this an `integ <project>` main whose migration had not run
 		// No plan gates a worker (docs/specs/2026-11-23-lite-main.md §1) and no count does: only an unattended device with a capacity budget holds one back, by its points (docs/specs/2026-11-24-capacity.md, The cap).
 		if (event.toolName === "subagent" && mainDuty.now() === "worker" && dutyOfAgent((event.input as { agent?: string } | undefined)?.agent) === "worker") return { block: true, reason: "sb: a worker dispatches no worker subagents: do the brief yourself (a scout or a reviewer may help)." };
-		if (event.toolName === "subagent") return preflight.admit(event.toolCallId, event.toolName, event.input, ctx) ?? cap.admit(event.toolCallId, event.input, () => ctx.sessionManager.getBranch()); // its todo's anchor and blockers are looked at first (preflight.ts), then the todo its `name` owns weighs it
+		if (event.toolName === "subagent") return cap.admit(event.toolCallId, event.input, () => ctx.sessionManager.getBranch()); // the todo its `name` owns weighs it
 	});
 
 	// A launched subagent is marked within seconds, once its pane shows its session file, instead of at the next 4 minute refresh.
