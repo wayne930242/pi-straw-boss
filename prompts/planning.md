@@ -43,6 +43,8 @@ After a passing anchor, get one fresh-context reviewer for shared contracts, aut
 
 Dispatch and revise todos without asking the boss to confirm the plan. Before offering choices, read the owning app's instructions and its UI and architecture rules; exclude forbidden options and quote the rule that settles the design in the brief. Ask via question tool before blocked work: a requirement is unclear or contradicts the architecture, or you need authorization (shared merge, deploy).
 
+Brief workers in English: goal, required behavior, context, reasons with their cause, scope, what others own, Reality anchor (acceptance check), and the boss's authorizations quoted verbatim. Leave diagnosis and code location to the worker. End with: "When you need a decision these authorizations do not cover, or a rule you follow says to ask first, call `caller_ping` and stop." Take pings to the boss; answer with `subagent_resume`.
+
 ## 5. When the boss adds work mid-plan
 
 - Same project, any app: add a todo here and quote the boss verbatim in `description`. Another project: use `call_tower` with its `workspace` to open a main there.

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { roleView } from "./briefview.ts";
 import type { MainDuty } from "./mainduty.ts";
 import { cliCommand } from "./server/version.ts";
 import { ENTRY, type Kit } from "./state.ts";
@@ -18,6 +19,7 @@ const sign = (text: string) => createHash("sha256").update(text).digest("hex").s
 
 /** The role prompt: a system prompt section, set when a run starts, and a steer when the role or the kind changes during the session. */
 export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty: MainDuty) {
+	pi.registerMessageRenderer(ENTRY, roleView);
 	let prompts: Record<string, string> = {}, files: PromptSet | undefined;
 	/** The files of a role's prompt, in order: a main's is `main.md`, then its kind's addendum; a standing main's is `standing.md` alone (docs/specs/2026-11-26-standing-prompt.md: main.md's dispatch and done rules are not its own). */
 	const partsOf = (name: string, duty: string): string[] => (name !== "main" ? [name] : duty === "standing" || duty === "worker" ? [duty] : ["main", ...(duty === "integrator" ? ["integrator"] : [])]);
@@ -84,9 +86,11 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 			[told, flight] = [fits ? d.briefed : undefined, flight === d ? undefined : flight];
 			rebrief();
 		},
-		/** Earlier steers may be gone or stale on this branch. Send the full current guidance, even when it matches the section. */
-		fresh(retries = true) {
-			[told, flight, quiet] = [undefined, undefined, !retries];
+		/** Compaction keeps the system section. A tree move can instead expose an overriding steer from another branch. */
+		fresh(retries?: boolean) {
+			const now = stateOf();
+			if (retries !== undefined && !flight && told && same(told, now) && section?.text === wholeText(now)) return;
+			[told, flight, quiet] = [undefined, undefined, retries === false];
 			rebrief();
 			quiet = false;
 		},
@@ -94,13 +98,11 @@ export function createBriefing({ pi, cfg, s, role, guiDir, tell }: Kit, mainDuty
 			const now = stateOf();
 			if (now.name && !section && readyToPin(now.name, now.duty)) {
 				labels ??= labelsOf();
-				// A whole steer with the text this one would carry supersedes everything before it, while the model sees it: pi's context drops what precedes the last compaction's first kept
-				// entry (`buildContextEntries`), and a summary may keep older role text. A delta (0.82.x and earlier: a graph's) may have lost its base; a provisional steer may lack labels; an unsigned one (0.81.1 and earlier) may hold older prompts.
-				const path = branch(), at = path.findLastIndex((e) => e.type === "custom_message" && e.customType === ENTRY && (e.details as Partial<Told> | undefined)?.briefed);
-				const cut = path.findLastIndex((e) => e.type === "compaction"), compaction = path[cut], prior = path[at]?.type === "custom_message" ? path[at].details as Told : undefined;
-				const seen = compaction?.type !== "compaction" || path.some((e, i) => i <= at && i < cut && e.id === compaction.firstKeptEntryId) || at > cut;
+				// A signed whole steer matching the new section cannot override it with other text, whether kept or summarized. A stale, unsigned, provisional or delta steer still needs replacing.
+				const entry = branch().findLast((e) => e.type === "custom_message" && e.customType === ENTRY && (e.details as Partial<Told> | undefined)?.briefed);
+				const prior = entry?.type === "custom_message" ? entry.details as Told : undefined;
 				if (flight) told = undefined;
-				else if (prior) told = seen && prior.base === null && !prior.provisional && same(prior.briefed, now) && prior.sig === sign(wholeText(now)) ? now : undefined;
+				else if (prior) told = prior.base === null && !prior.provisional && same(prior.briefed, now) && prior.sig === sign(wholeText(now)) ? now : undefined;
 				else told = told === undefined ? now : undefined;
 				section = { base: now, text: compose(now) };
 			}

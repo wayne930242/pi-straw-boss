@@ -61,7 +61,7 @@ test("on: the assembled text is today's text minus the markers; the files stay w
 		assert.doesNotMatch(text, MARKS, name);
 		assert.equal(text, strip(raw(name), false));
 	}
-	assert.match(set.read("main"), /never claim a pre-dev branch unless your kind is `integrator`/);
+	assert.match(set.read("main"), /only integrators claim pre-dev branches/);
 	assert.match(set.read("tower-run"), /car slip/);
 	assert.doesNotMatch(set.read("main"), /integration is off/i);
 	assert.ok(existsSync(join(PROMPT_DIR, "integrator.md")));
@@ -89,9 +89,8 @@ test("off: no assembled prompt names the integrator, a car slip, or the train; t
 	for (const term of ["`name`, `dir`, `match`", "`redirectTo`", "`forbidDirectCommit`", "`gitWorkflowSkill`", "`localFiles`", "`crossAppSkills`"]) assert.ok(readFileSync(join(set.dir!, "apps-config.md"), "utf8").includes(term), `apps-config.md still names ${term}`);
 	// The plain rules; the answer to a slip that arrives anyway comes with the slip since 0.92.0 (src/carslip.ts, docs/specs/2026-11-26-just-in-time-prompts.md).
 	const main = set.read("main");
-	assert.match(main, /ignore `integration`, `stages`, `targets`, and `deploy`/);
-	assert.match(main, /ask the boss before you merge to a shared branch or deploy/);
-	assert.match(main, /Integration is off on this computer:/);
+	assert.match(main, /Integration is off: ignore apps.json integration, stages, targets, deploy/);
+	assert.match(main, /Shared merges and deploys require boss authorization/);
 	assert.doesNotMatch(main, /`car:` block/);
 	for (const name of ["tower", "tower-run"]) assert.match(set.read(name), /`car:` block[^.]*integration is off on this computer/, name);
 	// The role prompts read the same files by {{dir}}: that is the folder without the train.
@@ -111,7 +110,7 @@ test("the seam bindings: a main gets all six with the train on, none with it off
 	const block = section.slice(section.indexOf("## Seam bindings"));
 	assert.ok(block.startsWith("## Seam bindings"), "the on section carries the block");
 	for (const seam of SEAMS) assert.match(block, new RegExp(`^- ${seam}:`, "m"), `${seam} is bound`);
-	assert.ok(block.includes(`${join(dir, "trains")}/<project>/<app>.json`) || block.includes(`${dir}/trains/<project>/<app>.json`), "Record names the state folder's trains");
+	assert.ok(block.includes(`${join(dir, "trains")}/<project>/`) || block.includes(`${dir}/trains/<project>/`), "Record names the state folder's trains");
 	assert.doesNotMatch(block, MARKS);
 	const off = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t2", env: { STRAW_BOSS_INTEGRATION: "off" }, deps: { stateDir: dir } });
 	await off.start();
@@ -153,7 +152,7 @@ test("a session with the switch off is briefed without the train: main, tower, a
 	assert.match(section, /^You are the main agent of Herdr tab/);
 	assert.doesNotMatch(section, TRAIN);
 	assert.doesNotMatch(section, MARKS);
-	assert.match(section, /Integration is off on this computer/);
+	assert.match(section, /Integration is off/);
 	const copy = join(dir, "prompts-off");
 	assert.ok(section.includes(copy), `the main is pointed to the folder without the train (${copy})`);
 	assert.ok(!section.includes(PROMPT_DIR));
@@ -176,7 +175,7 @@ test("a session with the switch on in config.json only is off too; with it set t
 	const on = world.agent({ id: "b", pane: "wA:p2", tab: "wA:t2", env: { STRAW_BOSS_INTEGRATION: "on" }, deps: { stateDir: dir } });
 	await on.start();
 	await on.promote();
-	assert.match((await on.run())["straw-boss"]!, /never claim a pre-dev branch unless your kind is `integrator`/);
+	assert.match((await on.run())["straw-boss"]!, /only integrators claim pre-dev branches/);
 });
 
 test("the train's ledger folder follows PI_CODING_AGENT_DIR, and no prompt names ~/.pi", async () => {

@@ -32,10 +32,10 @@ test("capacity and idle: the notice to a main's own session and the idle nudge c
 
 test("pairing, kind, board, and call_tower: the tool descriptions carry the details, main.md the triggers", async () => {
 	gone("brief both", "relay nothing", "`boss_duty`", "watching, not finishing tasks", "`board_set`", "Keep secrets", "allies' towers read it", "port, database", "stop on a named clash", "the tower finds them", "`waitsOn`", "reply: false");
-	assert.ok(raw.includes("A reviewed change goes through `boss_pair`."), "the pointer stays: without it a main reviews with its own reviewer flow and opens no thread");
+	assert.ok(raw.includes("Review via `boss_pair`."), "the pointer stays: without it a main reviews with its own reviewer flow and opens no thread");
 	assert.ok(PAIR_DESCRIPTION.includes("you write both briefs") && PAIR_DESCRIPTION.includes("Thread: T<n>") && PAIR_DESCRIPTION.includes("woken only by their two results when the thread closes; do not relay"));
-	assert.ok(raw.includes("Your work board fills itself from your todos and name: keep them current."));
-	for (const term of ["`milestone` when a task landed or a tower request is done", "`shared` before you change anything outside your tab", "`blocked` when you wait on someone outside your tab", "Progress and incidents go on your board: never call the tower to report them."]) assert.ok(raw.includes(term), term);
+	assert.ok(raw.includes("Name/todos fill board; keep current."));
+	for (const term of ["milestone (task landed/request done)", "shared (before changes outside tab)", "blocked (external wait, unauthorized decision, unknown owner)", "Progress/incidents: board only."]) assert.ok(raw.includes(term), term);
 	for (const term of ["reply false unless needed", "port, database, shared branch, deploy target, another app's checkout, running service", "say what and for how long", "go ahead at once, and stop only on a clash the tower names", "need a work's owner and do not know who: say what, the tower finds them", "a teammate device: waitsOn"]) assert.ok(CALL_TOWER_DESCRIPTION.includes(term), `call_tower: ${term}`);
 	const a = world.agent({ id: "main-1", pane: "wA:p1", tab: "wA:t1" });
 	await a.start();
@@ -63,7 +63,7 @@ test("a main a tower opened reads its report and close in the brief that opens i
 
 test("integration: main.md keeps the base rule and the slip's route; the slip's result, the car notices, and the slip that reaches a main with integration off say the rest", () => {
 	gone("Light checks", "rework a returned car", "a car slip waits for sb's car notice", "sb's car notice says landed", "A `car:` block sent to you");
-	assert.ok(on.includes("never merge to its base; never claim a pre-dev branch unless your kind is `integrator`; send its car slip by the Seam bindings at the end of this prompt."));
+	assert.ok(on.includes("never merge to base; only integrators claim pre-dev branches. Send slips as below."));
 	const slip = "car: web | tickets: T-1 | branch: feat/x | head: " + "a".repeat(40);
 	assert.equal(withMoment({ text: "Sent." }, slip, "shared").text, `Sent. ${SLIP_NOTE}`);
 	assert.equal(withMoment({ text: "Sent." }, "port 5432 for 1 h", "shared").text, "Sent.", "a plain heads-up gets no note");

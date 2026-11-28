@@ -142,8 +142,8 @@ A steer pi stores while idle counts as told when sent.
 If queued updates arrive out of order, Straw Boss sends the full current instructions.
 
 When it first renders the section, Straw Boss checks the branch's last role steer, ignoring tower digests.
-That steer already supplies the current instructions if it is a whole steer the model still sees (compaction has not summarized it away), sent once every label its prompt needs had arrived, and carrying exactly the text Straw Boss would send now; otherwise, if the branch holds a role steer, Straw Boss sends the full current instructions to supersede it.
-After compaction or a `/tree` move, Straw Boss resends the full current instructions so they replace any stale guidance still in the conversation.
+A signed, non-provisional whole steer that matches the new section needs no replacement, even if it was summarized away; a conflicting or unverified steer gets a correction.
+Compaction keeps the system section, so Straw Boss sends nothing if the current role instructions are already there and no update is outstanding; after a `/tree` move it still corrects the branch. In the TUI a role steer takes one line; the expand-tools shortcut shows the full text the model receives.
 It steers them into a retried turn, stores them without starting a turn if the current turn ends at compaction, or sends them at the next run's start if no run is active.
 None of these paths rewrites the system section.
 

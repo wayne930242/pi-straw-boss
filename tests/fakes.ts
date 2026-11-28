@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import jsqr from "jsqr";
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, MessageRenderer, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { TOWER_LABEL } from "../src/herdr.ts";
 import type { Ask } from "../src/host.ts";
 import { createStrawBoss, type Deps } from "../src/index.ts";
@@ -492,6 +492,7 @@ export class Agent {
 	pane: string;
 	regs = new Map<string, Registration>();
 	tools = new Map<string, ToolDefinition>();
+	renderers = new Map<string, MessageRenderer>();
 	flags = new Map<string, string | boolean | undefined>();
 	commands = new Map<string, { handler(args: string, ctx: unknown): Promise<void>; getArgumentCompletions?(prefix: string): { value: string }[] | null }>();
 	entries: { customType: string; data: unknown }[];
@@ -600,6 +601,7 @@ export class Agent {
 		const pi = {
 			events,
 			on: (type: string, handler: (event: unknown, ctx: unknown) => unknown) => this.handlers.set(type, [...(this.handlers.get(type) ?? []), handler]),
+			registerMessageRenderer: (key: string, render: MessageRenderer) => this.renderers.set(key, render),
 			registerTool: (tool: ToolDefinition) => this.tools.set(tool.name, tool),
 			registerFlag: (name: string) => void this.flags.set(name, undefined),
 			getFlag: (name: string) => this.flags.get(name),

@@ -58,6 +58,12 @@ test("no growth from the fold: main.md + planning.md stays within 8,559 characte
 	assert.ok(lines(read("main")) <= 27, `main.md has ${lines(read("main"))} lines`);
 });
 
+test("the coordinator section fits 60% of its previous 4,180 characters; paths expand once", () => {
+	const text = compose("coordinator", false).trim();
+	assert.ok(text.length <= 2508, `${text.length} characters`);
+	for (const word of ["{{dir}}", "{{cli}}", "{{state}}"]) assert.equal(text.split(word).length, 2, word);
+});
+
 test("{{duty}} renders the kind in the first line", () => {
 	assert.match(read("main").split("\n")[0]!, /of kind \{\{duty\}\}/);
 });

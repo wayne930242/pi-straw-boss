@@ -175,7 +175,7 @@ test("a reloaded member reuses its latest whole steer only while that steer carr
 });
 
 // pi's getBranch returns the whole path, while the model sees nothing before the last compaction's first kept entry.
-test("a reload resends a whole steer the last compaction summarized away, and reuses one it kept", async () => {
+test("a reload pins the identical signed text whether compaction kept the steer or summarized it", async () => {
 	const a = await main("a", "wA:p1", "wA:t1");
 	await section(a);
 	await a.run();
@@ -188,8 +188,7 @@ test("a reload resends a whole steer the last compaction summarized away, and re
 	a.transcript.push({ type: "message", id: "m1", message: { role: "user", content: "go on" } }, { type: "compaction", id: "c1", firstKeptEntryId: "s1" });
 	assert.equal(await reload(a), 1, "a compaction that kept the steer: reused");
 	a.transcript.push({ type: "message", id: "m2", message: { role: "user", content: "go on" } }, { type: "compaction", id: "c2", firstKeptEntryId: "m2" }); // a /compact while idle: nothing is steered then
-	assert.equal(await reload(a), 2, "a compaction that summarized the steer away: resent");
-	assert.match(told(a)[1]!, /replacing the system section and any earlier role updates[\s\S]*## Kind: standing/);
+	assert.equal(await reload(a), 1, "even without the old steer, the section supplies the same text");
 });
 
 test("a member that joins during its first run is steered once: the first pin reuses that steer, its labels complete", async () => {
@@ -373,6 +372,17 @@ test("a tree move resends the whole role prompt; each session start renders the 
 		const pinned = await section(a);
 		assert.match(pinned, /^You are the standing main of Herdr tab [\s\S]*## Kind: standing/, `after a session start (${reason})`); // standing.md alone (docs/specs/2026-11-26-standing-prompt.md)
 		assert.doesNotMatch(pinned, /## Graph:/);
+	}
+});
+
+test("repeated compactions do not send the coordinator instructions already pinned in the system section", async () => {
+	const a = await main("a", "wA:p1", "wA:t1");
+	const pinned = await section(a);
+	for (const willRetry of [true, false]) {
+		await a.run();
+		await a.fire("session_compact", { willRetry });
+		assert.deepEqual(a.sent.filter((m) => m.customType === "straw-boss"), [], "no steer or stored copy");
+		assert.equal(await section(a), pinned);
 	}
 });
 
