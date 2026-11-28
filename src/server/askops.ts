@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { AskView } from "../asktypes.ts";
 import type { Found, Net } from "../net.ts";
 import { openCalls } from "../ask.ts";
+import { UID } from "../items.ts";
 import { asksOfNet, countOn, rowsFor, viewsOf } from "./askmirror.ts";
 import { type AnswerBy, type AskQuestion, type AskRecord, type CloseWhy, createAskStore, GONE_MS, type Judged, oneLine } from "./askstore.ts";
 import type { Slot } from "./record.ts";
@@ -10,7 +11,7 @@ import type { Reply, Request } from "./socket.ts";
 // The server's side of the Asks (docs/specs/2026-11-28-boss-asks.md): the store under the slot's asks/, kept in step with every reading of the net (askmirror.ts), the control socket's commands, and the page's
 // answer route. Kept out of main.ts, which carries a line budget.
 //
-//   ask-open {session, name, ask: {subject, questions, toolCallId?, item?}}   a blocking Ask of `call_tower`'s boss question; answers the record
+//   ask-open {session, name, ask: {subject, questions, toolCallId?, item?, itemUid?}} a blocking Ask of `call_tower`'s boss question; answers the record
 //   ask-answer {id, answerId, digest, replies | cancel, by}                    one answer (`by`: terminal, gui, phone); answers {status, body} as the page's route does
 //   ask-get {id}                                                               the record, which an asker looks at while its dialog is open
 //   ask-close {id, session, why}                                               the asker ends its own question with no answer (esc, abort, auto)
@@ -87,7 +88,7 @@ export function startAsks(d: AskOpsDeps) {
 					const ask = (r.ask ?? {}) as Record<string, unknown>, session = str(r.session, 128), questions = questionsOf(ask.questions), item = Number.isSafeInteger(ask.item) && (ask.item as number) > 0 ? (ask.item as number) : undefined;
 					if (!session || !questions) return Promise.resolve({ ok: false, error: "ask-open needs a session and one to four questions of up to eight options" });
 					const place = last ? seenIn(last.net).place(session) : undefined; // the net's name and place of the session, when the last reading has it
-					const rec = store.open({ kind: "boss", asker: { session, name: str(r.name, 128) ?? session.slice(0, 8), ...place }, subject: str(ask.subject, 2000) ?? questions[0]!.question, questions, ...(str(ask.toolCallId, 128) ? { toolCallId: ask.toolCallId as string } : {}), ...(item ? { item: { session, id: item } } : {}) });
+					const rec = store.open({ kind: "boss", asker: { session, name: str(r.name, 128) ?? session.slice(0, 8), ...place }, subject: str(ask.subject, 2000) ?? questions[0]!.question, questions, ...(str(ask.toolCallId, 128) ? { toolCallId: ask.toolCallId as string } : {}), ...(item ? { item: { session, id: item, ...(typeof ask.itemUid === "string" && UID.test(ask.itemUid) && { uid: ask.itemUid }) } } : {}) });
 					d.log("ask-open", { n: rec.n, kind: rec.kind });
 					return Promise.resolve({ ok: true, ask: rec });
 				}

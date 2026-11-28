@@ -28,10 +28,11 @@ function places(net: Pick<Net, "bases">): Place[] {
 const askerOf = (p: Place, paneOf?: (key: string) => string | undefined): Asker => ((pane) => ({ session: p.u.key, name: p.u.name, role: p.u.role, workspace: p.ws, workspaceLabel: p.wsLabel, ...(p.tab ? { tab: p.tab, tabLabel: p.tabLabel } : {}), ...(pane ? { pane } : {}) }))(paneOf?.(p.u.key));
 /** The todo a question of this unit blocks: the call's own item, the launcher's todo bound to the subagent's run, else the unit's todo in progress. */
 function itemOf(p: Place, explicit?: number): AskItem | undefined {
-	if (explicit) return { session: p.u.key, id: explicit };
+	const own = (id: number): AskItem => ((uid) => ({ session: p.u.key, id, ...(uid && { uid }) }))(id === p.u.todo?.doing ? p.u.todo.doingUid : p.u.todo?.runs?.find((r) => r.id === id)?.uid);
+	if (explicit) return own(explicit);
 	const bound = p.launcher?.todo?.runs?.find((r) => r.run === p.u.key);
-	if (bound && p.launcher) return { session: p.launcher.key, id: bound.id };
-	return p.u.todo?.doing !== undefined ? { session: p.u.key, id: p.u.todo.doing } : undefined;
+	if (bound && p.launcher) return { session: p.launcher.key, id: bound.id, ...(bound.uid && { uid: bound.uid }) };
+	return p.u.todo?.doing !== undefined ? own(p.u.todo.doing) : undefined;
 }
 const subjectOf = (u: Place["u"]) => {
 	const p = u.pending!, qs = p.asks ?? (p.ask ? [p.ask] : (p.answer?.questions ?? []).map((q) => ({ question: q.question })));

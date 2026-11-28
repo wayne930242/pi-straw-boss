@@ -35,6 +35,10 @@ test("ask-open records the asker with its place from the last reading; ask-answe
 	const rec = opened.ask as { id: string; n: number; digest: string; asker: Record<string, unknown>; item: unknown };
 	assert.deepEqual(rec.asker, { session: "main-1", name: "main-1-name", role: "main", workspace: "wA", workspaceLabel: "Alpha", tab: "wA:t1", tabLabel: "docs", pane: "wA:p1" });
 	assert.deepEqual(rec.item, { session: "main-1", id: 3 });
+	const withUid = (await r.ask({ cmd: "ask-open", session: "main-1", ask: { ...question, toolCallId: "call-u", itemUid: "t_aaaaaaaaab" } })).ask as { item: unknown };
+	assert.deepEqual(withUid.item, { session: "main-1", id: 3, uid: "t_aaaaaaaaab" }, "the todo's uid is bound with its id (carrows-review-F001)");
+	const badUid = (await r.ask({ cmd: "ask-open", session: "main-1", ask: { ...question, toolCallId: "call-v", itemUid: "nope" } })).ask as { item: unknown };
+	assert.deepEqual(badUid.item, { session: "main-1", id: 3 }, "a malformed uid is left out");
 	assert.equal((await r.ask({ cmd: "ask-open", session: "main-1", ask: { questions: [] } })).ok, false, "one to four questions");
 	const first = await r.ask({ cmd: "ask-answer", id: rec.id, answerId: "a".repeat(16), digest: rec.digest, replies: [{ choices: [0] }], by: "terminal" });
 	assert.deepEqual([first.status, (first.body as { outcome: string }).outcome], [200, "accepted"]);

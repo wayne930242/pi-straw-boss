@@ -19,7 +19,8 @@ export interface StepInfo {
 	kind: string; name?: string; project?: string; app?: string; train?: string; round?: number; check?: string;
 	holds?: { lane?: string; target?: string }; load?: { max?: number; perCore?: number; weight?: number }; lock?: string; outcome?: "passed" | "failed" | "void"; why?: "superseded" | "skipped";
 }
-const STATUSES = new Set(["pending", "in_progress", "completed"]), UID = /^t_[a-z2-7]{10}$/, AGENT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
+/** The ledger's todo uid. */ export const UID = /^t_[a-z2-7]{10}$/;
+const STATUSES = new Set(["pending", "in_progress", "completed"]), AGENT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const obj = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
 const cut = (v: unknown, n: number) => (typeof v === "string" && v ? v.slice(0, n) : undefined);
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);

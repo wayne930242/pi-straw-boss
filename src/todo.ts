@@ -1,6 +1,6 @@
 import { GRAPHS, type Graph } from "./duty.ts";
 import { newestOf } from "./branchscan.ts";
-import { type Todo, todosOf } from "./items.ts";
+import { type Todo, todosOf, UID } from "./items.ts";
 import { v1Of } from "./todoledger.ts";
 import { planGraph } from "./boardplan.ts";
 
@@ -8,8 +8,8 @@ import { planGraph } from "./boardplan.ts";
 // checks it (dialogs.ts) before it goes to the unit. A snapshot is pi-todo-ledger's `todo/v1` entry (its public contract, todoledger.ts), else rpiv-todo's records (docs/specs/2026-11-24-todo-ledger.md).
 
 /** Done of total, and the task in progress as rpiv-todo words it while it runs; `steps` are the train's (docs/specs/2026-11-07-train-workers.md §11.1), the todos that carry a `metadata.sb`. */
-export interface TodoSum { done: number; total: number; now?: string; steps?: StepLine[]; /** The graph of the plan the main runs (`planGraph`); the page shows it beside the main's kind (docs/specs/2026-11-09-agent-kinds.md §2). */ graph?: Graph; /** The id of the todo in progress, and the open todos' Herdr runs (`Todo.runs`): the todo an Ask blocks (docs/specs/2026-11-28-boss-asks.md). */ doing?: number; runs?: TodoRun[] }
-export interface TodoRun { id: number; run: string }
+export interface TodoSum { done: number; total: number; now?: string; steps?: StepLine[]; /** The graph of the plan the main runs (`planGraph`); the page shows it beside the main's kind (docs/specs/2026-11-09-agent-kinds.md §2). */ graph?: Graph; /** The id of the todo in progress (and its uid), and the open todos' Herdr runs (`Todo.runs`): the todo an Ask blocks, bound by id and uid (docs/specs/2026-11-28-boss-asks.md). */ doing?: number; doingUid?: string; runs?: TodoRun[] }
+export interface TodoRun { id: number; run: string; uid?: string }
 export interface StepLine { id: number; kind: string; status: Todo["status"]; name?: string; round?: number; outcome?: "passed" | "failed" | "void" }
 export const TODO_TEXT = 120, RUNS_MAX = 64;
 
@@ -41,14 +41,15 @@ export function todoOfBranch(entries: readonly unknown[]): TodoSum | undefined {
 	if (!list?.length) return undefined;
 	const now = doing && (doing.activeForm || doing.subject).replace(/[\p{Cc}\p{Cf}]+/gu, " ").trim().slice(0, TODO_TEXT);
 	const steps = list.flatMap((t): StepLine[] => (t.sb ? [{ id: t.id, kind: t.sb.kind, status: t.status, ...(t.sb.name && { name: t.sb.name }), ...(t.sb.round !== undefined && { round: t.sb.round }), ...(t.sb.outcome && { outcome: t.sb.outcome }) }] : []));
-	const graph = planGraph(list), runs = list.filter((t) => t.status !== "completed").flatMap((t) => (t.runs ?? []).map((run) => ({ id: t.id, run }))).slice(0, RUNS_MAX);
-	return { done: list.filter((t) => t.status === "completed").length, total: list.length, ...(now && { now }), ...(doing && { doing: doing.id }), ...(steps.length && { steps }), ...(graph && { graph }), ...(runs.length && { runs }) };
+	const graph = planGraph(list), runs = list.filter((t) => t.status !== "completed").flatMap((t) => (t.runs ?? []).map((run) => ({ id: t.id, run, ...(t.uid && { uid: t.uid }) }))).slice(0, RUNS_MAX);
+	return { done: list.filter((t) => t.status === "completed").length, total: list.length, ...(now && { now }), ...(doing && { doing: doing.id }), ...(doing?.uid && { doingUid: doing.uid }), ...(steps.length && { steps }), ...(graph && { graph }), ...(runs.length && { runs }) };
 }
 
 /** What the hub accepts from a bridge. */
 export const todoOk = (v: unknown): v is TodoSum => {
 	const t = v as Partial<TodoSum> | null;
 	const count = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 200;
+	const uid = (s: unknown) => typeof s === "string" && UID.test(s);
 	const plain = (s: unknown, max: number) => typeof s === "string" && s.length > 0 && s.length <= max && !/[\p{Cc}\p{Cf}]/u.test(s);
 	const step = (r: unknown) => {
 		const x = r as Partial<StepLine> | null;
@@ -56,5 +57,5 @@ export const todoOk = (v: unknown): v is TodoSum => {
 			&& (x.name === undefined || plain(x.name, 64)) && (x.round === undefined || (Number.isSafeInteger(x.round) && x.round >= 1)) && (x.outcome === undefined || ["passed", "failed", "void"].includes(x.outcome));
 	};
 	return t !== null && typeof t === "object" && count(t.done) && count(t.total) && t.done! <= t.total! && t.total! > 0 && (t.now === undefined || plain(t.now, TODO_TEXT)) && (t.steps === undefined || (Array.isArray(t.steps) && t.steps.length <= 200 && t.steps.every(step))) && (t.graph === undefined || (GRAPHS as readonly string[]).includes(t.graph))
-		&& (t.doing === undefined || (Number.isSafeInteger(t.doing) && t.doing >= 0)) && (t.runs === undefined || (Array.isArray(t.runs) && t.runs.length <= RUNS_MAX && t.runs.every((r) => Number.isSafeInteger(r?.id) && plain(r.run, 64))));
+		&& (t.doing === undefined || (Number.isSafeInteger(t.doing) && t.doing >= 0)) && (t.doingUid === undefined || uid(t.doingUid)) && (t.runs === undefined || (Array.isArray(t.runs) && t.runs.length <= RUNS_MAX && t.runs.every((r) => Number.isSafeInteger(r?.id) && plain(r.run, 64) && (r.uid === undefined || uid(r.uid)))));
 };

@@ -57,7 +57,7 @@ async function paneDialog(ui: ExtensionContext["ui"], q: BossQuestion, title: st
 export function createBossAsk(kit: Kit, d: { attended(): boolean; remote(): boolean; asks?: AskClient }): BossAsk {
 	const { pi, cfg, s, role } = kit, watch = cfg.face?.every ?? every, bus = pi.events as unknown as Bus;
 	const asks = d.asks ?? askClient(cfg.server ? callServer(cfg.env, kit.guiDir) : async () => undefined, kit.me, () => (pi as { getSessionName?: () => string | undefined }).getSessionName?.());
-	const doing = () => { try { return todosOfBranch(s.branch())?.find((t) => t.status === "in_progress")?.id; } catch { return undefined; } };
+	const todos = () => { try { return todosOfBranch(s.branch()) ?? []; } catch { return []; } };
 	return async (q, signal, ctx, callId) => {
 		if (role() !== "main" || s.isTrain || s.isTower || s.remoteOrigin || d.remote() || !d.attended() || !ctx?.hasUI) return { kind: "tower" };
 		if (s.autoOn()) return { kind: "tower", note: AUTO_NOTE };
@@ -65,7 +65,9 @@ export function createBossAsk(kit: Kit, d: { attended(): boolean; remote(): bool
 		const opts = { signal: signal ? AbortSignal.any([signal, ac.signal]) : ac.signal };
 		// The first answer, here or there, wins: the store decides between the pane, the page and the phone; one from the page or a paired device ends the dialog here.
 		let got: Got | undefined, looking = false, unconfirmed = false, autoCancel = false, won: string | undefined; // `won`: the answerId the store (else the relay) took, which the close names (asks-r3-F001)
-		const ask = await asks.open({ subject: q.question, questions: [{ question: title, options: q.options ?? [] }], ...(callId ? { toolCallId: callId } : {}), ...((q.item ?? doing()) ? { item: q.item ?? doing() } : {}) }).catch(() => undefined);
+		// The todo it blocks, by id and uid (carrows-review-F001): a reader tells it from a todo that takes the id after `clear`.
+		const list = todos(), item = q.item ?? list.find((t) => t.status === "in_progress")?.id, itemUid = item ? list.find((t) => t.id === item)?.uid : undefined;
+		const ask = await asks.open({ subject: q.question, questions: [{ question: title, options: q.options ?? [] }], ...(callId ? { toolCallId: callId } : {}), ...(item ? { item, ...(itemUid ? { itemUid } : {}) } : {}) }).catch(() => undefined);
 		const winner = (a: NonNullable<AskState["answer"]>) => void (!got && ((got = gotOf(q, a)), (won = a.answerId), ac.abort()));
 		const judged = (r: Awaited<ReturnType<AskClient["answer"]>>): Took | undefined => (!r ? undefined : r.status === 200 ? "won" : (r.status === 409 && (r.body.ask as AskState | undefined)?.answer && winner((r.body.ask as AskState).answer!), "lost"));
 		/**

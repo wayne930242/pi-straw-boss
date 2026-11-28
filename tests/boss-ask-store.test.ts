@@ -23,7 +23,7 @@ async function until(ok: () => boolean, what: string) {
 	assert.ok(ok(), what);
 }
 
-function rig(todos?: { id: number; status: string }[], o: { lose?: (r: Record<string, unknown>) => boolean; miss?: (r: Record<string, unknown>) => boolean; auto?: () => boolean } = {}) {
+function rig(todos?: { id: number; status: string; uid?: string }[], o: { lose?: (r: Record<string, unknown>) => boolean; miss?: (r: Record<string, unknown>) => boolean; auto?: () => boolean } = {}) {
 	const ops = startAsks({ slot: { dir: root }, now: () => 1000, watch: () => undefined, log: () => {} });
 	stops.push(ops.stop);
 	// The asker's own client over the server's commands; `lose` drops a request's reply after the server handled it (the socket's reply never came), `miss` the request itself.
@@ -207,4 +207,15 @@ test("the phone won first and every reply after is lost: the pane's pick is not 
 	assert.equal(r.record().answer?.by, "phone");
 	const result = await done;
 	assert.equal(result.kind, "unconfirmed", text(result));
+});
+
+test("the Ask is bound with the uid of the todo it blocks, the one in progress or the named one (carrows-review-F001)", async () => {
+	for (const [item, want] of [[undefined, { session: "main-1", id: 4, uid: "t_aaaaaaaaab" }], [6, { session: "main-1", id: 6, uid: "t_aaaaaaaaac" }], [8, { session: "main-1", id: 8 }]] as const) {
+		const r = rig([{ id: 4, status: "in_progress", uid: "t_aaaaaaaaab" }, { id: 6, status: "pending", uid: "t_aaaaaaaaac" }]);
+		const done = r.ask(item);
+		await until(() => r.opened(), "drawn");
+		assert.deepEqual(r.record().item, want);
+		r.pick("Wait");
+		await done;
+	}
 });

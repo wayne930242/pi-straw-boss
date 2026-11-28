@@ -10,7 +10,7 @@ import type { ServerCall } from "./traincar.ts";
  * question is asked as before the store, and an Ask the server opened meanwhile is closed when its tool call ends (askops.ts).
  */
 export interface AskClient {
-	open(a: { subject: string; questions: { question: string; options: string[] }[]; toolCallId?: string; item?: number }): Promise<{ id: string; digest: string } | undefined>;
+	open(a: { subject: string; questions: { question: string; options: string[] }[]; toolCallId?: string; item?: number; itemUid?: string }): Promise<{ id: string; digest: string } | undefined>;
 	answer(id: string, a: { answerId: string; digest: string; replies?: { choices?: number[]; text?: string; note?: string }[]; cancel?: true; by: "terminal" | "gui" | "phone" }): Promise<{ status: number; body: Record<string, unknown> } | undefined>;
 	get(id: string): Promise<AskState | undefined>;
 	close(id: string, why: "esc" | "abort" | "auto"): Promise<AskState | undefined>;
