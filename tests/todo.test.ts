@@ -16,7 +16,7 @@ test("local todo details retain the latest recorded run and prefer metadata poin
 	assert.deepEqual(todosOf(snap([{ ...base, points: 2, anchor: "suite passes", evidence: [{ ...run, result: "fail" }, run] }])), [{ id: 1, status: "pending", subject: "step 1", points: 0, anchor: "suite passes", evidence: { ...run, sha: "0123456" } }]);
 });
 
-test("a todo's run spend (pi-todo-ledger 0.8.0 `metadata.herdr.spend`) reaches the page as its totals, finite and bounded; a bad one is left out", () => {
+test("a todo's run spend (pi-todo-ledger 0.9.0 `metadata.herdr.spend`) reaches the page as its totals, finite and bounded; a bad one is left out", () => {
 	const spend = { input: 1500, output: 300, cacheRead: 3000, cacheWrite: 0, tokens: 4800, cost: 0.75, ms: 125_000, runs: 2, models: ["anthropic/claude-opus-5-5", "x".repeat(300)], sessions: [{ session: "/secret/path.jsonl", tokens: 4800 }] };
 	const [one] = todosOf(snap([task(1, "completed", { herdr: { name: "w", id: "r1", spend } })]))!;
 	assert.deepEqual(one!.spend, { tokens: 4800, cost: 0.75, ms: 125_000, runs: 2, models: ["anthropic/claude-opus-5-5", "x".repeat(80)] });
