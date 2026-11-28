@@ -363,6 +363,7 @@
 	"todos_points": "{points} 點",
 	"todos_anchor": "驗收條件：{anchor}",
 	"todos_recorded": "執行紀錄：{run}",
+	"todos_spend": "花費：{tokens} tokens · {cost} · {time} · {runs} 次執行",
 	"todos_count": "待辦 {done}/{total}",
 	"todos_checklist": "清單（{count}）",
 	"todos_done": "全部完成",

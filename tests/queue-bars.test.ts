@@ -47,9 +47,9 @@ test("todo details stay off the summary and are both hoverable and accessible", 
 	const { drawTodos } = await import("../gui/bars.ts");
 	const ol = new El("ol"), label = new El("span"), count = new El("b");
 	const box = { querySelector: (s: string) => s === "ol" ? ol : s === "summary span" ? label : count };
-	drawTodos({ querySelector: () => box } as unknown as HTMLElement, [{ id: 1, subject: "Round", status: "in_progress", points: 0, anchor: "Rounds", evidence: { command: "test", result: "pass", sha: "abcdef0", at: "2026-11-24T00:00:00Z" } }, { id: 2, subject: "Plain", status: "pending" }]);
+	drawTodos({ querySelector: () => box } as unknown as HTMLElement, [{ id: 1, subject: "Round", status: "in_progress", points: 0, anchor: "Rounds", evidence: { command: "test", result: "pass", sha: "abcdef0", at: "2026-11-24T00:00:00Z" }, spend: { tokens: 4800, cost: 0.75, ms: 125_000, runs: 2, models: ["anthropic/claude-opus-5-5"] } }, { id: 2, subject: "Plain", status: "pending" }]);
 	const [one, plain] = ol.kids as El[];
-	assert.equal(label.text, "Round"); assert.equal(one!.text, "Round 0 pt"); assert.match(one!.title, /Anchor: Rounds\nRecorded: test · pass · abcdef0/); assert.equal(one!.attrs.get("aria-description"), one!.title); assert.equal(plain!.text, "Plain"); assert.equal(plain!.title, "");
+	assert.equal(label.text, "Round"); assert.equal(one!.text, "Round 0 pt"); assert.match(one!.title, /Anchor: Rounds\nRecorded: test · pass · abcdef0.*\nSpent: 4,800 tokens · \$0\.75 · 2m · 2 runs · anthropic\/claude-opus-5-5$/); assert.equal(one!.attrs.get("aria-description"), one!.title); assert.equal(plain!.text, "Plain"); assert.equal(plain!.title, "");
 });
 
 const draw = (list: Queued[] | undefined) => {

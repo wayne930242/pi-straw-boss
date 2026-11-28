@@ -23,6 +23,15 @@ test("a todo's `metadata.until` marks a wait only as the ledger reads it: an imp
 	assert.equal(untilOf("2099-12-01T09:00+08:00"), "2099-12-01T01:00:00.000Z");
 });
 
+test("a todo's run spend (pi-todo-ledger 0.9.0 `metadata.herdr.spend`) reaches the page as its totals, finite and bounded; a bad one is left out", () => {
+	const spend = { input: 1500, output: 300, cacheRead: 3000, cacheWrite: 0, tokens: 4800, cost: 0.75, ms: 125_000, runs: 2, models: ["anthropic/claude-opus-5-5", "x".repeat(300)], sessions: [{ session: "/secret/path.jsonl", tokens: 4800 }], ended: ["run-1"] };
+	const [one] = todosOf(snap([task(1, "completed", { herdr: { name: "w", id: "r1", spend } })]))!;
+	assert.deepEqual(one!.spend, { tokens: 4800, cost: 0.75, ms: 125_000, runs: 2, models: ["anthropic/claude-opus-5-5", "x".repeat(80)] });
+	assert.doesNotMatch(JSON.stringify(one), /secret|run-1/, "session paths and run ids stay in the session");
+	for (const bad of [{ tokens: -1, cost: 0, ms: 0, runs: 1 }, { tokens: 1, cost: Number.NaN, ms: 0, runs: 1 }, { tokens: 1, cost: 0, ms: 0, runs: 0 }, "x", null])
+		assert.equal(todosOf(snap([task(1, "pending", { herdr: { spend: bad } })]))![0]!.spend, undefined, JSON.stringify(bad));
+});
+
 test("a todo with no metadata is what it was: no `sb` on it, and the short list has no steps", () => {
 	const list = todosOf(snap([task(1, "pending"), task(2, "in_progress", { other: "x" })]))!;
 	assert.deepEqual(list.map((t) => Object.keys(t).sort()), [["id", "status", "subject"], ["id", "status", "subject"]]);
