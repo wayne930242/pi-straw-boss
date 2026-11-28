@@ -11,7 +11,7 @@ function rig(answer: () => Record<string, unknown> | undefined, lang: "en" | "zh
 	const pi = { on: () => {}, events: { emit: (c: string, d: unknown) => void events.emit(c, d), on: (c: string, h: (d: unknown) => void) => (events.on(c, h), () => void events.off(c, h)) } };
 	const tasks = [{ id: 12, subject: "Ship the docs", status: "in_progress" }];
 	const rows = registerAskRows({ pi: pi as never, me: () => "main-1", enabled: () => true, call: async (r) => (asked.push(r), answer() as never), branch: () => [{ type: "message", message: { role: "toolResult", toolName: "todo", details: { tasks, nextId: 13 } } }], lang: () => lang, now: () => clock.now, every: 0 });
-	const probe = () => { const p: { rows?: { version: number; rows: AskRowV1[] } } = {}; events.emit(ASK_ROWS_EVENT, p); return p.rows; };
+	const probe = () => { const p: { rows?: { version: number; session?: string; rows: AskRowV1[] } } = {}; events.emit(ASK_ROWS_EVENT, p); return p.rows; };
 	return { rows, probe, asked };
 }
 const ROWS: AskRowV1[] = [
@@ -22,7 +22,7 @@ const ROWS: AskRowV1[] = [
 
 test("the probe answers synchronously with the last rows: version 1, a malformed row left out, `{ version: 1, rows: [] }` before any answer", async () => {
 	const r = rig(() => ({ ok: true, rows: ROWS }));
-	assert.deepEqual(r.probe(), { version: 1, rows: [] });
+	assert.deepEqual(r.probe(), { version: 1, session: "main-1", rows: [] });
 	await r.rows.refresh();
 	assert.deepEqual(r.asked, [{ cmd: "asks-rows", session: "main-1" }]);
 	assert.deepEqual(r.probe()?.rows.map((x) => x.id), ["Q3", "Q4"]);
@@ -45,10 +45,17 @@ test("a failed read after a good one: /boss asks says the questions are not know
 	assert.match(await r.rows.text(), /^The sb server did not answer/, "not the old list");
 	assert.equal(r.probe()?.rows.length, 2, "kept a while: one missed ask is no reason to drop them");
 	clock.now += 45_001;
-	assert.deepEqual(r.probe(), { version: 1, rows: [] }, "too old to stand for what waits now");
+	assert.deepEqual(r.probe(), { version: 1, session: "main-1", rows: [] }, "too old to stand for what waits now");
 	up = true;
 	await r.rows.refresh();
 	assert.equal(r.probe()?.rows.length, 2);
 	const bad = rig(() => ({ ok: false, error: "unknown command asks-rows" }), "en", clock);
 	assert.match(await bad.rows.text(), /^The sb server did not answer/, "a server with no asks-rows");
+});
+
+test("the probe names the session it answers for, so a reader can tell which rows' `item` is a todo of its own (a subagent's Ask can name the subagent's todo)", async () => {
+	const r = rig(() => ({ ok: true, rows: ROWS }));
+	assert.equal(r.probe()?.session, "main-1", "before any answer too");
+	await r.rows.refresh();
+	assert.equal(r.probe()?.session, "main-1");
 });

@@ -1,12 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { ASK_ROWS_EVENT, type AskRowV1 } from "./asktypes.ts";
+import { ASK_ROWS_EVENT, type AskRowsAnswerV1, type AskRowV1 } from "./asktypes.ts";
 import { localeOf, type Locale } from "./locale.ts";
 import type { Kit } from "./state.ts";
 import { todosOfBranch } from "./todo.ts";
 import { callServer, type ServerCall } from "./traincar.ts";
 
 // A session's rows of the open questions to the boss (docs/specs/2026-11-28-boss-asks.md, The probe): it asks the sb server every 15 s (`asks-rows`), answers `straw-boss:ask-rows:v1` from the last answer at once (the
-// probe is synchronous), and prints the same rows for `/boss asks`. The rows are every open Ask of this computer; `mine` and `item` let the reader put a row under the todo it blocks.
+// probe is synchronous), and prints the same rows for `/boss asks`. The rows are every open Ask of this computer; `mine`, `item` and the probe's `session` (which `item.session` is this one) place a row under its todo.
 
 /** Between two asks of the server; the probe's rows stand for what waits now only this long after the server's last answer (three asks), then the probe answers none (asks-r2-F007). */
 export const ASK_MS = 15_000, STALE_MS = 45_000;
@@ -47,7 +47,7 @@ export function registerAskRows(d: AskRowsDeps) {
 	const refresh = () => (running ??= look().finally(() => { running = undefined; }));
 	d.pi.events.on(ASK_ROWS_EVENT, (raw) => {
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-		Object.assign(raw, { rows: { version: 1, rows: current().map((r) => ({ ...r })) } });
+		Object.assign(raw, { rows: { version: 1, session: d.me(), rows: current().map((r) => ({ ...r })) } satisfies AskRowsAnswerV1 });
 	});
 	if (every > 0) {
 		d.pi.on("session_start", () => {
