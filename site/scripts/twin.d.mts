@@ -3,4 +3,5 @@ export declare function headingLines(lines: string[]): { i: number; level: numbe
 export declare function brokenBold(text: string): number[];
 export declare function twinDrift(enLines: string[], zhLines: string[]): { message: string; bad?: undefined } | { message?: undefined; bad: number[] };
 export declare const sourceOf: (zhText: string) => string | undefined;
+export declare function sourceInHistory(repo: string, sha: string): "ours" | "outside" | "shallow";
 export declare function twinProblems(repo: string): string[];

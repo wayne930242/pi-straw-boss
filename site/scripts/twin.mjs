@@ -1,6 +1,7 @@
 // The checks of docs/how-it-works.zh-TW.md against the English file that fail `sync.mjs --check` and so block the Pages build, with no dependency
 // beyond Node: `tests/twin.test.ts` runs them in `npm test`, before a push, and `sync.mjs` prints them. Drift since the source commit (git) stays
-// `sync.mjs`'s warning, not a failure, and is not here.
+// `sync.mjs`'s warning, not a failure, and is not here; whether that commit is in the branch's history at all (git) is, as `sourceInHistory`.
+import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -83,6 +84,17 @@ export function twinDrift(enLines, zhLines) {
 
 /** The source commit the twin's first line names, if any. */
 export const sourceOf = (zhText) => /<!-- source: docs\/how-it-works\.md @ ([0-9a-f]{7,40}) -->/.exec(zhText)?.[1];
+
+/**
+ * Whether the source commit is in the history of HEAD (`ours`). A twin marked on a branch that was then rebased or squashed names a commit the branch no longer has (`outside`): `git log <sha>..HEAD` then fails
+ * where only the branch was fetched (the Pages build, 0.107.0 to 0.113.0) and lists the wrong commits where the old one is still around. `shallow`: the clone has not the history to tell.
+ * @param {string} repo @param {string} sha @returns {"ours" | "outside" | "shallow"}
+ */
+export function sourceInHistory(repo, sha) {
+	const git = (...args) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+	if (git("rev-parse", "--is-shallow-repository").stdout.trim() === "true") return "shallow";
+	return git("merge-base", "--is-ancestor", sha, "HEAD").status === 0 ? "ours" : "outside";
+}
 
 const mdFiles = (dir) => readdirSync(dir).flatMap((f) => {
 	const path = join(dir, f);

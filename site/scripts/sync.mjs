@@ -4,13 +4,13 @@
 // `--check` reports whether docs/how-it-works.zh-TW.md still matches the English file: line for line (same line count, same kind of line,
 // every backticked token of an English line on the same zh-TW line; error), heading structure (error), and drift since the source commit (warning),
 // and every `**` that CommonMark would not turn into bold (CJK punctuation beside it), in the site's own zh pages and in docs/*.zh-TW.md (error).
-// The errors are twin.mjs's, which tests/twin.test.ts also runs in `npm test`; only the drift warning, which needs git, is here.
+// The errors are twin.mjs's, which tests/twin.test.ts also runs in `npm test` (a source commit outside the branch's history among them); only the drift warning is here.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import GithubSlugger from "github-slugger";
-import { GENERATED, headingLines, sourceOf, twinProblems } from "./twin.mjs";
+import { GENERATED, headingLines, sourceInHistory, sourceOf, twinProblems } from "./twin.mjs";
 
 const SITE = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO = resolve(SITE, "..");
@@ -139,9 +139,11 @@ function page(path, front, body) {
 
 function check() {
 	const problems = twinProblems(REPO);
+	const zh = read(join(DOCS, "how-it-works.zh-TW.md")), sha = zh && sourceOf(zh), where = sha && sourceInHistory(REPO, sha);
+	if (where === "outside") problems.push(`docs/how-it-works.zh-TW.md names ${sha} as its English source, which is not in this branch's history (a rebase or squash rewrote it): name the commit of this branch whose docs/how-it-works.md it matches`);
 	for (const line of problems) console.log(line);
-	const zh = read(join(DOCS, "how-it-works.zh-TW.md")), sha = zh && sourceOf(zh);
-	if (sha) {
+	if (where === "shallow") console.log(`a shallow clone: the drift since ${sha} is not checked`);
+	if (where === "ours") {
 		const log = execFileSync("git", ["log", "--oneline", `${sha}..HEAD`, "--", "docs/how-it-works.md"], { cwd: REPO, encoding: "utf8" }).trim();
 		if (log) console.log(`docs/how-it-works.md changed since the translation (${sha}); bring these into docs/how-it-works.zh-TW.md:\n${log}`);
 		else console.log(`docs/how-it-works.zh-TW.md matches docs/how-it-works.md at ${sha}`);
