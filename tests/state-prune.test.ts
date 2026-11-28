@@ -6,6 +6,7 @@ import { run } from "../src/server/cli.ts";
 import { recordPath, type RoleRecord } from "../src/roles.ts";
 import { TowerWorld } from "./tower-world.ts";
 import { until } from "./server-world.ts";
+import { fakeClock } from "./fake-clock.ts";
 import { pruneState } from "../src/server/stateprune.ts";
 import { fileOf } from "../src/server/record.ts";
 import { ledgerPath } from "../src/revive.ts";
@@ -37,7 +38,10 @@ test("startup retains a revivable dead main, a recent role and a handed-off pred
 		const trainId = { project: "acme", code: "2026-10-01-a" }, train = role(w, 7, { role: "train", train: trainId });
 		writeBoard(w.stateDir, { v: 1, ...trainId, app: "web", updated: new Date(NOW - 40 * DAY).toISOString(), round: 1, writer: { session: train.id, pid: 4001, started: new Date(NOW - 40 * DAY).toISOString() }, cars: [], steps: [] });
 		w.sessions.push({ id: successor.id });
-		await w.start({ gui: false, now: () => NOW });
+		// One clock for the server and its towers (TowerWorld.towerClock): the towers read Herdr's clock, which was the machine's, so the restore window was 150 ms (recoverMs) of real time from their activation, and a
+		// prune that came later under load (every Herdr call 100 ms late) sighted the stale role. The clock stands still here: the prune runs inside the window.
+		const clock = (w.towerClock = fakeClock(NOW));
+		await w.start({ gui: false, now: clock.now });
 		await until(() => /state-prune/.test(readFileSync(fileOf(w.slot, "log"), "utf8")), "startup prune ran");
 		// Startup falls in the tower restore window: no role goes and no sighting starts.
 		assert.ok(!existsSync(join(dirname(stale.path), ".missing-since.json")));
