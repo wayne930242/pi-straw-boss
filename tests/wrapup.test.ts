@@ -379,7 +379,7 @@ test("RV-F001: a message queued or a monitor started while the boss was asked: h
 test("main.md holds no wrap-up rule: the nudge carries every step, and boss_wrap's description says what it does", () => {
 	const main = readFileSync(join(PROMPT_DIR, "main.md"), "utf8");
 	assert.ok(!main.includes("boss_wrap") && !main.includes("daily memory entry"));
-	assert.ok(main.includes("its worktree is removed, and your board is cleared."));
+	assert.ok(main.includes("worktrees removed, board cleared."));
 	for (const step of ["answer the intercom asks you owe", "remove the worktrees you made", "complete or delete every todo", "stop your monitors and loops", "write a daily memory entry if you have a memory tool", "call boss_wrap with a summary"]) assert.ok(NUDGE_TEXT.includes(step), step);
 	assert.match(WRAP_DESCRIPTION, /asks the boss here whether to wrap up; on yes it sends your summary to the tower/);
 });
