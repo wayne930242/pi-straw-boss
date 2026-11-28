@@ -80,7 +80,7 @@ export function drawTodos(view: HTMLElement, list: Todo[] | null | undefined, at
 	text(box, "summary b", m.todos_count({ done, total: list.length }));
 	text(box, "summary span", now ? (now.activeForm ?? now.subject) : done === list.length ? m.todos_done() : "");
 	// A plan with graph data is drawn as the plan (gui/plangraph.ts), and the checklist folds under it, so a finished task, the points, the anchor, and the last run stay a tap away; an operate box whose build sends no such field keeps the checklist.
-	const plan = planOfTodos(list), ol = lists.get(box) ?? box.querySelector<HTMLOListElement>("ol")!, drawn = graphed(plan) ? planView(plan, Date.now(), { ...at, byName: true }) : undefined;
+	const plan = planOfTodos(list), ol = lists.get(box) ?? box.querySelector<HTMLOListElement>("ol")!, clock = Date.now(), drawn = graphed(plan, clock) ? planView(plan, clock, { ...at, byName: true }) : undefined;
 	lists.set(box, ol), plans.get(box)?.remove();
 	if (drawn) {
 		const fold = folds.get(box) ?? Object.assign(document.createElement("details"), { className: "todos-all" });

@@ -19,10 +19,15 @@ export const io = { post: (path: string, body: Record<string, unknown>): Promise
 export interface PlanAt { net?: Net | undefined; main?: string | undefined; byName?: boolean }
 
 export type NodeState = "doing" | "ready" | "blocked" | "waiting";
-/** In progress wins; a deferred todo waits; one with an open blocker is blocked; else it is ready to start. */
-export const nodeState = (n: PlanNode): NodeState => (n.status === "in_progress" ? "doing" : n.wait ? "waiting" : n.after?.length ? "blocked" : "ready");
-/** Whether the plan says more than the checklist: a dependency, an owner, a defer, or the plan's graph. */
-export const graphed = (p: Plan | undefined): p is Plan => Boolean(p && (p.graph || p.nodes.some((n) => n.after?.length || n.owner || n.agent || n.wait)));
+/** A node's defer as it stands at `now`: who it waits on, and until when while that time is ahead; none once only a passed time is left. */
+export const waitAt = (n: PlanNode, now: number): PlanNode["wait"] => {
+	const until = n.wait?.until && Date.parse(n.wait.until) > now ? n.wait.until : undefined;
+	return n.wait?.on || until ? { ...(n.wait?.on ? { on: n.wait.on } : {}), ...(until ? { until } : {}) } : undefined;
+};
+/** In progress wins; a todo deferred at `now` waits; one with an open blocker is blocked; else it is ready to start. `now` is the render's clock, the one the defer's words are drawn with. */
+export const nodeState = (n: PlanNode, now: number): NodeState => (n.status === "in_progress" ? "doing" : waitAt(n, now) ? "waiting" : n.after?.length ? "blocked" : "ready");
+/** Whether the plan says more than the checklist at `now`: a dependency, an owner, a defer still ahead, or the plan's graph. */
+export const graphed = (p: Plan | undefined, now: number): p is Plan => Boolean(p && (p.graph || p.nodes.some((n) => n.after?.length || n.owner || n.agent || waitAt(n, now))));
 /** A session's todo list as a plan, its text as the session page shows it. */
 export const planOfTodos = (list: readonly Todo[] | null | undefined): Plan | undefined => (list?.length ? planOf(list, (t) => t) : undefined);
 
@@ -67,7 +72,7 @@ function ownerEl(n: PlanNode, at: PlanAt): HTMLElement[] {
 	return [link, focus];
 }
 function nodeOf(n: PlanNode, now: number, at: PlanAt): HTMLElement {
-	const state = nodeState(n), wait = n.wait && [n.wait.on && m.plan_wait_on({ who: n.wait.on }), n.wait.until && m.plan_wait_until({ time: whenText(n.wait.until, now) })].filter(Boolean).join(" · ");
+	const state = nodeState(n, now), w = waitAt(n, now), wait = w && [w.on && m.plan_wait_on({ who: w.on }), w.until && m.plan_wait_until({ time: whenText(w.until, now) })].filter(Boolean).join(" · ");
 	return h("li", { class: "plan-node", "data-state": state, "data-id": String(n.id) },
 		h("p", { class: "plan-top" }, h("span", { class: "plan-badge" }, STATE[state]()), h("small", { class: "plan-id" }, `#${n.id}`)),
 		h("p", { class: "plan-text" }, n.t),

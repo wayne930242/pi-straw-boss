@@ -25,6 +25,13 @@ test("a todo's run spend (pi-todo-ledger 0.8.0 `metadata.herdr.spend`) reaches t
 		assert.equal(todosOf(snap([task(1, "pending", { herdr: { spend: bad } })]))![0]!.spend, undefined, JSON.stringify(bad));
 });
 
+test("a todo's `metadata.until` marks a wait only as the ledger reads it: an impossible day, a space, a lowercase t, or hour 24 mark none", () => {
+	const untilOf = (until: string) => todosOf(snap([task(1, "pending", { until })]))![0]!.until;
+	for (const bad of ["2099-02-30", "2099-12-01 09:00:00Z", "2099-12-01t09:00:00Z", "2099-12-01T24:00", "tomorrow", "2099-12-01T09:00:00Z".padEnd(80, "0")]) assert.equal(untilOf(bad), undefined, bad);
+	assert.equal(untilOf("2099-12-01"), "2099-12-01T00:00:00.000Z");
+	assert.equal(untilOf("2099-12-01T09:00+08:00"), "2099-12-01T01:00:00.000Z");
+});
+
 test("a todo with no metadata is what it was: no `sb` on it, and the short list has no steps", () => {
 	const list = todosOf(snap([task(1, "pending"), task(2, "in_progress", { other: "x" })]))!;
 	assert.deepEqual(list.map((t) => Object.keys(t).sort()), [["id", "status", "subject"], ["id", "status", "subject"]]);

@@ -29,7 +29,7 @@ test("layers: a node sits one step below its deepest shown blocker; a blocker th
 	assert.deepEqual(layersOf(PLAN.nodes).map((l) => l.map((n) => n.id)), [[3, 2, 6], [4], [5]]);
 	assert.deepEqual(layersOf([node(1, "a", { after: [2] }), node(2, "b", { after: [1] }), node(3, "c", { after: [99] })]).map((l) => l.map((n) => n.id)).flat().sort(), [1, 2, 3], "a cycle still draws every node");
 	assert.deepEqual(layersOf([node(3, "c", { after: [99] })]).map((l) => l.map((n) => n.id)), [[3]]);
-	assert.deepEqual(PLAN.nodes.map(nodeState), ["doing", "ready", "blocked", "waiting", "ready"]);
+	assert.deepEqual(PLAN.nodes.map((n) => nodeState(n, NOW)), ["doing", "ready", "blocked", "waiting", "ready"]);
 });
 
 test("graphed: a dependency, an owner, a defer, or a graph name make a plan worth drawing; a flat list stays the checklist", () => {
@@ -39,6 +39,18 @@ test("graphed: a dependency, an owner, a defer, or a graph name make a plan wort
 	assert.equal(graphed(undefined), false);
 	assert.equal(whenText(new Date(2026, 10, 27, 14, 0).toISOString(), NOW), "14:00");
 	assert.equal(whenText(new Date(2026, 10, 28, 8, 5).toISOString(), NOW), "11/28 08:05");
+});
+
+test("a defer whose time has passed waits no more: state, the plan's worth, and its words are judged against the one clock of the render", () => {
+	const past = new Date(2026, 10, 27, 8, 0).toISOString(), later = new Date(2026, 10, 27, 14, 0).toISOString();
+	const only = node(7, "Ship", { wait: { until: past } }), both = node(8, "Sign", { wait: { on: "boss", until: past } }), ahead = node(9, "Wait", { wait: { until: later } });
+	assert.deepEqual([only, both, ahead].map((n) => nodeState(n, NOW)), ["ready", "waiting", "waiting"]);
+	assert.equal(graphed({ nodes: [only] }, NOW), false, "an expired defer alone says no more than the checklist");
+	assert.equal(graphed({ nodes: [ahead] }, NOW), true);
+	const v = planView({ nodes: [only, both, ahead] }, NOW) as unknown as El, at = (id: number) => v.querySelector(`.plan-node[data-id="${id}"]`)!;
+	assert.equal(at(7).querySelector(".plan-wait"), null);
+	assert.equal(at(8).querySelector(".plan-wait")!.textContent, m.plan_wait_on({ who: "boss" }));
+	assert.equal(at(9).dataset.state, "waiting");
 });
 
 test("the view: one step per layer, each node with its state word, id, text, owner, defer, and after; in progress marked; markup stays text; the cut is counted", () => {
