@@ -21,6 +21,8 @@ test("a role steer renders as one line until expanded; a tower digest keeps pi's
 		const lines = steer.content.split("\n");
 		assert.deepEqual(view(false, 100), [`[straw-boss] role: main · coordinator (${lines.length} lines, ctrl+o to expand)`]);
 		assert.equal(view(false, 24).length, 1);
+		const options = { expanded: false, outputPad: 1, keyText: () => "ctrl+p" };
+		assert.match(renderer(msg, options, theme)!.render(100)[0]!, /ctrl\+p to expand/);
 		assert.deepEqual(view(true, 2048), lines.map((l) => l.trim()));
 		assert.equal(renderer({ ...msg, content: "Since your last run:", details: undefined }, { expanded: false, outputPad: 0 }, theme), undefined);
 	} finally { await w.stopAll(); }
