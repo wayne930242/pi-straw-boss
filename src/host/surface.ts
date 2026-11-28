@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { RUN_END_EVENT, runEndOf } from "./run-end.ts";
 
 // sb's simple host (docs/how-it-works.md#the-subagent-host): Maestro registers its whole surface, and this API in front of Pi keeps only what the
 // boss chose, under the names and parameters prompts and skills already use: `subagent` (one task, auto-exit, the result as a message), `subagent_cancel`,
@@ -57,7 +58,7 @@ export interface SimpleDeps {
 	persistentRole(agent: string, params: Record<string, unknown>): boolean;
 }
 
-/** The API Maestro registers through: drops the tools and commands above, and refuses the dropped parameters before Maestro sees the call. */
+/** The API Maestro registers through: drops the tools and commands above, refuses the dropped parameters before Maestro sees the call, and tells each run's end (run-end.ts). */
 export function simpleApi(pi: ExtensionAPI, deps: SimpleDeps): ExtensionAPI {
 	let modelCatalog: string | undefined;
 	const registerTool = (tool: ToolDefinition) => {
@@ -88,5 +89,11 @@ export function simpleApi(pi: ExtensionAPI, deps: SimpleDeps): ExtensionAPI {
 		if (DROPPED_COMMANDS.includes(name)) return;
 		pi.registerCommand(name, options);
 	};
-	return Object.assign(Object.create(pi) as ExtensionAPI, { registerTool, registerCommand });
+	const sendMessage: ExtensionAPI["sendMessage"] = (message, options) => {
+		pi.sendMessage(message, options);
+		const end = runEndOf(message);
+		// After the send: Maestro retries a send that throws, so a listener's throw must not reach it (it would deliver the end twice); the ledger counts a run id once.
+		if (end) try { pi.events.emit(RUN_END_EVENT, end); } catch (error) { console.warn(`[pi-straw-boss] ${RUN_END_EVENT} listener failed: ${error instanceof Error ? error.message : String(error)}`); }
+	};
+	return Object.assign(Object.create(pi) as ExtensionAPI, { registerTool, registerCommand, sendMessage });
 }
