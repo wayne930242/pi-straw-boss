@@ -1,27 +1,47 @@
 import { join } from "node:path";
-import { capDir, capOfTodos, type MainCap, PAUSE_EVENT, type Pause, pauseOf, readCaps, removeCap, writeCap } from "./capacity.ts";
+import { capDir, capOfTodos, type MainCap, openTodos, PAUSE_EVENT, type Pause, pauseOf, readCaps, removeCap, snoozeSaid, writeCap } from "./capacity.ts";
+import type { Ask } from "./host.ts";
 import { todosOf } from "./items.ts";
+import { type Snooze, snoozeOf, withSnooze } from "./snooze.ts";
 import type { Kit } from "./state.ts";
 import { snapshotScan } from "./todo.ts";
 import { ownsBoard } from "./trainrole.ts";
+import { NOT_MAIN } from "./boardset.ts";
 
 // A main's capacity facts (docs/specs/2026-11-24-capacity.md): its own session writes `<state dir>/capacity/<session>.json` from its todo list (read as the board's auto-fill reads it) and from the pause seam, whenever
 // either changes. The seam is `straw-boss:pause` on pi's in-process event bus, which pi-agent-basic's quota resume emits in the session that stopped; nothing of basic is imported. A pause clears on `resumed` or when
 // the session starts a new turn. The sb server joins the files with what runs (server/capwatch.ts).
+// The stale reminder's snoozes (docs/specs/2026-11-28-stale-snooze.md) live here too, set by `board_set { snooze }`: kept across a /reload as the pause is, a todo's gone with the todo, a passed one at the next turn.
 
-export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): { refresh(): void } {
+export interface CapFill {
+	refresh(): void;
+	/** `board_set`'s snooze, checked against the open todos and, for a watch, this session's own watches (the sb server's `watch-list`), kept, and written; throws with what to fix. */
+	snooze(input: { watch?: string }, ask: Ask | undefined): Promise<{ text: string; details: { snooze: Snooze } }>;
+}
+
+export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): CapFill {
 	const dir = capDir(join(guiDir, "board")), snapshotOf = snapshotScan();
-	let ctx: { sessionManager?: { getBranch(): readonly unknown[] } } | undefined, pause: Pause | undefined, last: string | undefined, wrote: string | undefined, restored = false;
+	let ctx: { sessionManager?: { getBranch(): readonly unknown[] } } | undefined, pause: Pause | undefined, snoozes: Snooze[] = [], last: string | undefined, wrote: string | undefined, restored = false;
 	const branch = (): readonly unknown[] => { try { return ctx?.sessionManager?.getBranch() ?? []; } catch { return []; } }; // a replaced session's context throws
+	const listed = () => ((snapshot) => ({ snapshot, list: todosOf(snapshot) ?? [] }))(snapshotOf(branch()));
+	const restore = (id: string) => {
+		// A /reload keeps the pause and the snoozes its file holds (the model is still stopped); read once, when the session's id is known (pi-intercom may set it after the start).
+		if (restored) return;
+		restored = true;
+		const mine = readCaps(dir).find((x) => x.session === id);
+		pause ??= mine?.pause;
+		if (!snoozes.length) snoozes = mine?.snoozes ?? [];
+	};
 	const refresh = () => {
 		const id = me();
 		if (!id || !ownsBoard(role())) return;
 		try {
-			// A /reload keeps the pause its file holds (the model is still stopped); read once, when the session's id is known (pi-intercom may set it after the start).
-			if (!restored) (restored = true), (pause ??= readCaps(dir).find((x) => x.session === id)?.pause);
-			const snapshot = snapshotOf(branch()), facts = capOfTodos(todosOf(snapshot) ?? [], snapshot), key = JSON.stringify([facts, pause ?? null]);
+			restore(id);
+			const { snapshot, list } = listed(), todos = openTodos(list, snapshot), open = new Set(todos.map((t) => t.id));
+			snoozes = snoozes.filter((s) => s.todo === undefined || open.has(s.todo));
+			const facts = { ...capOfTodos(list, snapshot), todos }, key = JSON.stringify([facts, pause ?? null, snoozes]);
 			if (key === last && wrote === id) return;
-			const cap: MainCap = { v: 1, session: id, updated: cfg.now(), ...facts, ...(pause ? { pause } : {}) };
+			const cap: MainCap = { v: 1, session: id, updated: cfg.now(), ...facts, ...(pause ? { pause } : {}), ...(snoozes.length ? { snoozes } : {}) };
 			writeCap(dir, cap);
 			[last, wrote] = [key, id];
 		} catch { /* the board folder cannot be written: the next change tries again */ }
@@ -33,8 +53,8 @@ export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): { refresh(): 
 		pause = said.state === "paused" ? said.pause : undefined;
 		refresh();
 	});
-	pi.on("session_start", (_e, c) => ((last = undefined), (restored = false), (pause = undefined), again(c)));
-	pi.on("turn_start", (_e, c) => ((pause = undefined), again(c)));
+	pi.on("session_start", (_e, c) => ((last = undefined), (restored = false), (pause = undefined), (snoozes = []), again(c)));
+	pi.on("turn_start", (_e, c) => ((pause = undefined), (snoozes = snoozes.filter((s) => s.until > cfg.now())), again(c)));
 	pi.on("turn_end", (_e, c) => again(c));
 	pi.on("tool_execution_end", (_e, c) => again(c)); // the todo tool ends here
 	pi.on("session_tree", (_e, c) => again(c));
@@ -42,5 +62,19 @@ export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): { refresh(): 
 	pi.on("session_shutdown", (event) => {
 		if ((event as { reason?: string }).reason !== "reload" && wrote) removeCap(dir, wrote);
 	});
-	return { refresh };
+	return {
+		refresh,
+		async snooze(input, ask) {
+			const id = me();
+			if (!id || !ownsBoard(role())) throw new Error(NOT_MAIN);
+			const watched = input.watch === undefined ? undefined : await ask?.({ cmd: "watch-list", session: id }, { start: "never" }).catch(() => undefined);
+			if (input.watch !== undefined && !watched?.ok) throw new Error("No sb server answers this session, so no watch can be checked: snooze for a length instead");
+			restore(id);
+			const { list } = listed(), s = snoozeOf(input, { now: cfg.now(), watches: ((watched?.watches ?? []) as { key: string }[]).map((w) => w.key), open: list.filter((t) => t.status !== "completed").map((t) => t.id) });
+			snoozes = withSnooze(snoozes, s);
+			last = undefined;
+			refresh();
+			return { text: snoozeSaid(s, cfg.now()), details: { snooze: s } };
+		},
+	};
 }

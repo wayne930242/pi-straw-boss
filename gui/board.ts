@@ -60,6 +60,8 @@ const pauseText = (r: BoardViewRow, o?: Opts) => (r.pausedUntil !== undefined ? 
 export function rowCapText(r: BoardViewRow, o?: Opts): string {
 	return [...(r.points !== undefined ? [m.board_cap_points({ points: String(r.points) }, o)] : []), ...(r.ready ? [m.board_cap_ready({ count: r.ready }, o)] : []), ...(r.paused ? [pauseText(r, o)] : [])].join(m.board_cap_sep({}, o));
 }
+/** A row's snoozes of its stale reminder, the reason last (docs/specs/2026-11-28-stale-snooze.md): `snoozed until 14:30: CI runs · #3 snoozed until train-a changes: lands next`. */
+export const snoozeText = (r: BoardViewRow, o?: Opts): string => (r.snoozes ?? []).map((s) => `${s.todo !== undefined ? `#${s.todo} ` : ""}${s.watch !== undefined ? m.board_snoozed_watch({ key: s.watch, why: s.why }, o) : m.board_snoozed({ time: hm(s.until), why: s.why }, o)}`).join(m.board_cap_sep({}, o));
 const stateWord = (r: BoardViewRow) => (!live(r) ? (r.open ? m.board_open_word() : m.board_ended_word()) : r.stale ? m.board_idle_word() : (LABEL[r.state as Mark] ?? LABEL.unknown)());
 
 const say = (box: HTMLElement, text: string) => {
@@ -120,6 +122,7 @@ function rowOf(box: HTMLElement, net: Net | undefined, r: BoardViewRow, now: num
 			h("span", { class: "board-state" }, ...(r.stale && live(r) ? [icon("stale")] : []), stateWord(r)),
 			...(r.paused ? [h("span", { class: "board-pause" }, icon("paused"), pauseText(r))] : []),
 			...(rowCapText(r) ? [h("span", { class: "board-cap", ...(r.paused ? { "data-paused": "" } : {}) }, rowCapText(r))] : []),
+			...(snoozeText(r) ? [h("span", { class: "board-snooze" }, snoozeText(r))] : []),
 			...(r.updated !== undefined ? [h("span", { class: "board-age", "data-updated": String(r.updated) }, ageText(now - r.updated))] : [])),
 		r.now === undefined ? h("p", { class: "board-none" }, m.board_no_line()) : h("p", { class: "board-now" }, r.now),
 		...(supply ? [supply] : []),

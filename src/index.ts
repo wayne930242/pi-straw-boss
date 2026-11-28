@@ -114,9 +114,9 @@ export function createStrawBoss({ run: given, world: reading, api = herdrApi(), 
 		const membership = createMembership(kit, { presence, election, guard, briefing, roles, openTower: reach.openTower, register: () => (netTools(), s.isTower || (watch.addTool(), ward.addTool(), pair.addTool(), wrap.addTool()), tools.addPromote(), tools.addDuty(), tools.addHandover(), addTrainCar(), addPeer()), onMain: link.look, control: () => control });
 		// `look` (above) starts and upgrades the sb server (src/server/) and is the way to it; a session that is no part of that has none.
 		const pair = createBossPair(kit, { ask: cfg.ask ?? look?.ask, remote: () => Boolean(link.remoteScope()) }); // boss_pair and board_read's review threads (bosspair.ts)
-		createCapFill(kit); // a main's capacity facts for the board (capfill.ts)
+		const capFill = createCapFill(kit); // a main's capacity facts for the board, and its snoozes (capfill.ts)
 		const boardFill = createBoardFill(kit);
-		const tools = createTools(kit, { ...reach, mainDuty, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), closePane: (pane) => control.closePane(pane), deadPanes: () => control.deadPanes(), listen: () => control.register(), link, server: look, boardFill, pair, waitAsk: () => mainWaitAsk(kit, { ask: cfg.ask ?? look?.ask, here: (fn) => host.here(fn), auto }), bossAsk: createBossAsk(kit, { attended: () => link.attended(), remote: () => Boolean(link.remoteScope()) }) });
+		const tools = createTools(kit, { ...reach, mainDuty, promote: membership.promote, digest, closeMain: (query) => control.closeMain(query), closePane: (pane) => control.closePane(pane), deadPanes: () => control.deadPanes(), listen: () => control.register(), link, server: look, boardFill, capFill, pair, waitAsk: () => mainWaitAsk(kit, { ask: cfg.ask ?? look?.ask, here: (fn) => host.here(fn), auto }), bossAsk: createBossAsk(kit, { attended: () => link.attended(), remote: () => Boolean(link.remoteScope()) }) });
 		const netTools = () => (tools.addNetTools(), doctor.addTool()); // sb_doctor comes with the net tools: at the join, and to a tower
 		const host = createHost(kit, { connected: membership.connected, ask: cfg.ask ?? look?.ask });
 		closeSelf = createClosing(kit);

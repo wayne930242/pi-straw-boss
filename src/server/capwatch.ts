@@ -1,4 +1,4 @@
-import { capLine, clock, DEVICE_FRESH_MS, type DeviceCap, joinCaps, LOAD_SHARE, type MainFacts, type MainRow, pauseText, purgeCaps, readCaps, readDevice, readSent, roomFor, SILENT_MS, THROTTLE_MS, UNDER_HOLD_MS, underFor, writeDevice, writeSent } from "../capacity.ts";
+import { capLine, clock, DEVICE_FRESH_MS, type DeviceCap, joinCaps, LOAD_SHARE, type MainFacts, type MainRow, pauseText, purgeCaps, readCaps, readDevice, readSent, roomFor, SILENT_MS, STALE_DEFAULTS, type StaleMs, THROTTLE_MS, UNDER_HOLD_MS, underFor, writeDevice, writeSent } from "../capacity.ts";
 import { endOf, type HeldBy, holderName, holdOf, readHold, readIgnored, shortOf, writeHold } from "../hold.ts";
 import type { EndedHold, Hold } from "../link/holds.ts";
 import { heldRoomText, heldText, holdEndedText, holdEndedThereText, HOLDER_CAP_HINT } from "../moments.ts";
@@ -6,7 +6,7 @@ import { heldRoomText, heldText, holdEndedText, holdEndedThereText, HOLDER_CAP_H
 // The capacity watch (docs/specs/2026-11-24-capacity.md): once a minute the sb server, with no model, joins the mains' capacity files with what runs, writes the device row, and raises the flags. A flag
 // that is entered is one event to the tower of the main's workspace and to this device's standing main (`under` and `stale` to the main itself too, unless its Herdr pane is working); the same flag of the same main (or ally device) at
 // most once per 30 minutes, and nothing when it clears except a quota that resumed. A main still under 30 minutes after its own notice, and an ally still silent 2 hours after its first, is escalated
-// once. The reads of the machine and the sending are capops.ts's.
+// once. The reads of the machine and the sending are capops.ts's. A stale episode (docs/specs/2026-11-28-stale-snooze.md) is told again to the main alone each interval while it lasts; a snooze that ended starts a new one.
 
 const MIN = 60_000;
 /** An ally device as the link holder last heard of it: how old its last board is, whether it is online now, and whether that board had open work. */
@@ -32,7 +32,8 @@ const UFIRST = "under-first:", UESCALATED = "under-escalated:";
 /** `main`: the subject main's own session, told too for `under` and `stale` (field, box 2 2026-11-24: notices to the standing main and the tower alone started nothing for hours). */
 /** Device hold (docs/specs/2026-11-26-device-hold.md): `also`, the coordinator mains told too (a box's `held` and `hold-ended`); `mainOnly`, told to `main` alone (the holder's `held-room` and `hold-ended`); `mainText`, the main's copy
  *  when it is not `text` plus `MAIN_CAP_HINT`; `held`, a `stale` of a held box, whose copies end with the held hints. */
-export interface CapEvent { kind: CapKind; key: string; text: string; subject?: string; workspace?: string; standing?: string; main?: string; tag?: string; also?: string[]; mainOnly?: true; mainText?: string; held?: true }
+/** `every`: the flag's own throttle in place of the 30 minutes (a stale reminder's interval). */
+export interface CapEvent { kind: CapKind; key: string; text: string; subject?: string; workspace?: string; standing?: string; main?: string; tag?: string; also?: string[]; mainOnly?: true; mainText?: string; held?: true; every?: number }
 export interface CapDeps {
 	/** The capacity folder (`<state dir>/capacity`). */
 	dir: string;
@@ -40,6 +41,8 @@ export interface CapDeps {
 	log(event: string, facts: Record<string, string | number | boolean>): void;
 	/** `capacity.budget` of config.json; none when unset. */
 	budget(): number | undefined;
+	/** `capacity.staleMinutes` and `capacity.staleUnattendedMinutes` of config.json; today's 120 and 30 without it. */
+	stale?(): StaleMs;
 	load(): { load1: number; cores: number };
 	unattended(): boolean;
 	/** The live mains and trains; undefined when the net cannot be read (nothing is written then). */
@@ -64,13 +67,20 @@ export function capText(kind: CapKind, d: DeviceCap, now: number, row?: MainRow,
 	switch (kind) {
 		case "under": return `capacity under · main ${q(row!.name)} · ${row!.ready} ready (smallest ${row!.minReady} pt) · ${capLine(d, now)} · held ${Math.floor((underFor(d, now) ?? 0) / MIN)} min`;
 		case "under-30m": return `capacity under-30m · main ${q(row!.name)} · still under 30 min after its notice at ${clock(since ?? now, now)} · ${row!.ready} ready (smallest ${row!.minReady} pt) · ${capLine(d, now)} · ${working ? "its pane is working now: ask it nothing" : "ask it to dispatch or say why"}`;
-		case "stale": return `capacity stale · main ${q(row!.name)} · ${row!.open} open todos · no move for ${d.unattended ? "30" : "120"}+ min · state of the device: ${capLine(d, now)}`;
+		case "stale": return `capacity stale · main ${q(row!.name)} · ${row!.woke ? `its snooze ended at ${clock(row!.woke.at, now)} (${q(row!.woke.why)}) · ` : ""}${todosText(row!)} · no move for ${row!.moved !== undefined ? Math.floor((now - row!.moved) / MIN) : d.unattended ? "30+" : "120+"} min · state of the device: ${capLine(d, now)}`;
 		case "quota": return `capacity quota · main ${q(row!.name)}${on(ally)} · ${pauseText(row!.paused ?? {}, now)}${row!.paused?.detail ? ` · ${row!.paused.detail}` : ""}`;
 		case "resumed": return `capacity quota resumed · main ${q(row!.name)}${on(ally)}`;
 		case "silent": return `capacity device-silent · device ${q(ally!.label)} (${ally!.short}) · last board ${Math.floor(ally!.boardAgeMs / MIN)} min ago · ${ally!.online ? "online" : "offline"} · its last board had open work`;
 		case "silent-2h": return `capacity device-silent-2h · device ${q(ally!.label)} (${ally!.short}) · still silent 2 h after the first notice at ${clock(since ?? now, now)} · last board ${Math.floor(ally!.boardAgeMs / MIN)} min ago · ${ally!.online ? "online" : "offline"} · needs the boss`;
 		default: return kind; // the hold's events carry their own words (moments.ts)
 	}
+}
+
+/** A stale main's unanswered todos, three by id and subject (docs/specs/2026-11-28-stale-snooze.md); a main of an older build lists none, and its count says it. */
+function todosText(r: MainRow): string {
+	const t = r.todos;
+	if (!t) return `${r.open} open todos`;
+	return `${t.length} open todo${t.length === 1 ? "" : "s"} unanswered: ${t.slice(0, 3).map((x) => `#${x.id} ${q(x.subject.slice(0, 60))}`).join(", ")}${t.length > 3 ? `, +${t.length - 3} more` : ""}`;
 }
 
 export function createCapWatch(d: CapDeps) {
@@ -83,7 +93,7 @@ export function createCapWatch(d: CapDeps) {
 	const markOf = (e: CapEvent) => `${e.kind}:${e.key}${e.tag !== undefined ? `@${e.tag}` : ""}`;
 	const send = async (e: CapEvent, now: number): Promise<boolean> => {
 		const mark = markOf(e);
-		if (now - (sent[mark] ?? -Infinity) < THROTTLE_MS) return d.log("capacity-held", { kind: e.kind, key: e.key }), true;
+		if (now - (sent[mark] ?? -Infinity) < (e.every ?? THROTTLE_MS)) return d.log("capacity-held", { kind: e.kind, key: e.key }), true;
 		const told = await d.tell(e).catch(() => false);
 		if (told || !untold.has(mark)) d.log(told ? "capacity-told" : "capacity-untold", { kind: e.kind, key: e.key });
 		if (told) (sent[mark] = now, untold.delete(mark));
@@ -96,7 +106,8 @@ export function createCapWatch(d: CapDeps) {
 			const now = d.now(), facts = await d.mains().catch(() => undefined);
 			if (!facts) return undefined;
 			purgeCaps(d.dir, new Set(facts.map((m) => m.session)), now);
-			const { load1, cores } = d.load(), dev = joinCaps({ mains: facts, caps: readCaps(d.dir), budget: d.budget(), load1, cores, unattended: d.unattended(), now });
+			const { load1, cores } = d.load(), spans = d.stale?.() ?? STALE_DEFAULTS, dev = joinCaps({ mains: facts, caps: readCaps(d.dir), budget: d.budget(), load1, cores, unattended: d.unattended(), now, stale: spans });
+			const every = dev.unattended ? spans.unattendedMs : spans.attendedMs; // the stale reminder's interval, its repeat, and its throttle
 			underSince = roomFor(dev) ? (underSince ?? now) : undefined;
 			if (underSince !== undefined) dev.under = underSince;
 			writeDevice(d.dir, dev);
@@ -128,7 +139,8 @@ export function createCapWatch(d: CapDeps) {
 			const under = !held && underFor(dev, now) !== undefined ? dev.mains.filter((r) => r.minReady !== undefined && dev.points + r.minReady <= dev.budget!) : [], underKeys = new Set(under.map((r) => r.session));
 			const flagged: CapEvent[] = [
 				...under.map((r) => of("under", r)),
-				...dev.mains.filter((r) => r.stale && r.open > 0).map((r) => (held ? { ...of("stale", r), held: true as const } : of("stale", r))),
+				// A snooze that ended starts its own episode (its tag), which the last notice's throttle does not hold back.
+				...dev.mains.filter((r) => r.stale && r.open > 0).map((r): CapEvent => ({ ...of("stale", r), ...(held ? { held: true as const } : {}), every, ...(r.woke ? { tag: `woke${r.woke.at}` } : {}) })),
 				...dev.mains.filter((r) => r.paused).map((r) => ({ ...of("quota", r), tag: String(r.paused!.until ?? "") })),
 				...silent.map((a) => ally("silent", a)),
 				...allyPaused.map(({ a, row }) => ({ ...allyOf("quota", a, row), tag: String(row.paused!.until ?? "") })),
@@ -138,11 +150,12 @@ export function createCapWatch(d: CapDeps) {
 			];
 			const next = new Set<string>();
 			for (const e of flagged) {
-				const mark = markOf(e), episode = `episode:${mark}`;
-				if (active.has(mark) || (e.kind === "stale" && sent[episode] !== undefined) || (await send(e, now))) {
-					next.add(mark);
-					if (e.kind === "stale") sent[episode] ??= now;
-				}
+				const mark = markOf(e), episode = `episode:${mark}`, last = sent[episode];
+				if (e.kind !== "stale") { if (active.has(mark) || (await send(e, now))) next.add(mark); continue; }
+				// A stale episode: its first notice goes as every flag's; while it lasts, the main alone is told again each interval after the last (its mark outlives a restart).
+				if (last === undefined) { if (await send(e, now)) (next.add(mark), (sent[episode] = now)); continue; }
+				next.add(mark);
+				if (now - last >= every && e.main !== undefined && (await send({ ...e, mainOnly: true }, now))) sent[episode] = now;
 			}
 			// A silence is escalated once, 2 hours after its first notice was told, and routed as that notice; it ends when the device is no longer flagged.
 			for (const a of silent) {
@@ -184,7 +197,7 @@ export function createCapWatch(d: CapDeps) {
 			untold = new Set(flagged.map(markOf).filter((m) => untold.has(m)));
 			last = rows;
 			const spell = (k: string) => [FIRST, ESCALATED].find((p) => k.startsWith(p)), episode = (k: string) => [UFIRST, UESCALATED].find((p) => k.startsWith(p));
-			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (k.startsWith(HOLD_MARK) || k.startsWith(HOLD_MAIN) ? true : k.startsWith("episode:stale:") ? next.has(k.slice("episode:".length)) : episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < THROTTLE_MS)));
+			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (k.startsWith(HOLD_MARK) || k.startsWith(HOLD_MAIN) ? true : k.startsWith("episode:stale:") ? next.has(k.slice("episode:".length)) : episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < (k.startsWith("stale:") ? Math.max(every, THROTTLE_MS) : THROTTLE_MS))));
 			try { writeSent(d.dir, sent); } catch (error) { d.log("capacity-error", { text: (error as Error).message.slice(0, 200) }); }
 			return dev;
 		},

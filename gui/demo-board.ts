@@ -59,6 +59,7 @@ export function boardFromUrl(net: Net, now: number, update: (change: (n: Net) =>
 	Object.assign(rows[0]!, { points: 6, ready: 5, units: ["api-build", "web-test", "db-check"].map((name) => ({ name, points: 2 })) });
 	Object.assign(rows[1]!, zero, { paused: "quota", pausedUntil: now + 40 * MIN });
 	for (const r of [rows[2]!, rows[3]!, rows[4]!]) Object.assign(r, zero);
+	rows[3]!.snoozes = [{ at: now - 5 * MIN, why: said("等列車把 API 合進去", "waits for the API to land"), until: now + 6 * 60 * MIN, watch: "train 1109a" }, { at: now - 5 * MIN, why: said("圖檔還沒到", "the images are not in"), until: now + 25 * MIN, todo: 4 }]; // its stale reminder snoozed (docs/specs/2026-11-28-stale-snooze.md)
 	const unset = new URLSearchParams(location.search).get("board") === "unset";
 	net.capacity = { points: 6, ...(unset ? {} : { budget: 20, underMinutes: 12 }), load1: 0.24, cores: 8, ready: 5, paused: 1 };
 	net.link?.allies.push({ id: "t/box01", team: "t", teamName: "moldplan", device: "box01", short: "b01", label: "Box 01", online: false, workspace: null, tower: "unknown", tabs: [] });

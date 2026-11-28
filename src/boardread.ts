@@ -49,7 +49,8 @@ export async function readBoard(o: BoardReadInput): Promise<Record<string, unkno
 		// The kind is the one board_read's section towers and tower_list show: the main's `sb_duty` (`netMembers`), null for a train, an ended entry, and a main that publishes none.
 		const kinds = new Map(mains.map((m) => [m.session, m.duty]));
 		// Capacity (docs/specs/2026-11-24-capacity.md): the sb server's device row, its numbers on each main's row and in section `capacity`; its stale mark replaces the board's own.
-		const dev = readDevice(capDir(o.dir), o.now), cap = (s: string) => rowCap(dev, s, o.now);
+		// A snooze's reason (docs/specs/2026-11-28-stale-snooze.md) is the main's own words for this computer: `snoozed`, with its time as ISO, never in a remote turn.
+		const dev = readDevice(capDir(o.dir), o.now), cap = (s: string) => (({ snoozes, ...c }) => ({ ...c, ...(snoozes && !scope ? { snoozed: snoozes.map((x) => ({ ...(x.todo !== undefined ? { todo: x.todo } : {}), until: new Date(x.until).toISOString(), ...(x.watch !== undefined ? { watch: x.watch } : {}), why: x.why })) } : {}) }))(rowCap(dev, s, o.now));
 		out.local = rows.map((r) => ({ ...(r.role ? { role: r.role } : {}), workspace: r.workspace, tab: r.tab, main: r.main, kind: kinds.get(r.session) ?? null, state: r.state, ...(r.now ? { now: r.now } : {}), items: r.items, ...(r.updatedSecondsAgo !== undefined ? { updatedSecondsAgo: r.updatedSecondsAgo } : {}), ...((c) => ({ ...c, stale: c.stale ?? r.stale }))(cap(r.session)) })).map(({ stale, ...r }) => (stale ? { ...r, stale: true } : r));
 		if (dev) out.capacity = capSection(dev, o.now, new Set(rows.map((r) => r.session)));
 		Object.assign(out, holdSections(capDir(o.dir), o.now)); // device holds (docs/specs/2026-11-26-device-hold.md): `held` on a held box, `holds` on one that holds one

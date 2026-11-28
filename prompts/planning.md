@@ -20,7 +20,7 @@ For fan-out and orchestrator-worker, one todo per task:
 - `blockedBy`: the tasks whose output or landed change this one needs; the rest run in parallel, on an unattended device within its capacity budget. Serialize only on a real dependency or shared files.
 - `graph`: a graph name from section 1, exactly.
 - `metadata`: `{ "anchor": "...", "checkpoint": "own" | "<checkpoint todo id>", "points": <n> }`: its weight against the budget, as the boss or project weighs it (default 1; 0.25 for a light, API-bound worker).
-- Defer: `metadata.until` (ISO) or `metadata.waitsOn` (person). Your monitor, loop or `boss_watch` prevents stale notices.
+- Defer: `metadata.until` (ISO) or `metadata.waitsOn` (person). Your monitor, loop, or `boss_watch` (until its first change) prevents stale notices.
 
 ## 3. Name the anchors
 

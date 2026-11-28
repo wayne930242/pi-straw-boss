@@ -2,10 +2,11 @@ import { statSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { type BoardItem, clean, type Count, type Entry, joinLocal, type LiveMain, readEntries, type Src } from "./board.ts";
 import type { Plan } from "./boardplan.ts";
-import { capDir, capLine, type DeviceCap, readDevice, rowCap, underFor } from "./capacity.ts";
+import { capDir, capLine, type DeviceCap, readDevice, rowCap, snoozeLine, underFor } from "./capacity.ts";
 import { isCoordinatorDuty } from "./duty.ts";
 import { readHold, readHolding } from "./hold.ts";
 import type { Net } from "./net.ts";
+import type { Snooze } from "./snooze.ts";
 
 type Keyed = { key: string; subs: Keyed[] };
 
@@ -38,6 +39,8 @@ export interface BoardViewRow {
 	open?: true;
 	/** Capacity (docs/specs/2026-11-24-capacity.md): the main's points in use and ready todos, and its pause (`quota · resumes 16:02`), from the sb server's device row; `stale` is then the server's mark. */
 	points?: number; ready?: number; paused?: string; pausedUntil?: number;
+	/** The snoozes of its stale reminder that hold (docs/specs/2026-11-28-stale-snooze.md), from the device row; this computer's page and `/boss board` only. */
+	snoozes?: Snooze[];
 	/** The main's deployed units by name and points (docs/specs/2026-11-24-capacity-supply/spec.md), from the device row's local `units`: this computer's page only (the board reaches no link, remote turn, or operate slice). */
 	units?: { name: string; points: number }[];
 }
@@ -141,7 +144,7 @@ export function boardText(rows: BoardViewRow[], now: number, dev?: DeviceCap, ho
 	const head = `Work board: ${plural(rows.length - bare, "line")}${notes.length ? ` (${notes.join(", ")})` : ""}`;
 	const lines = rows.map((r) => {
 		const count = doneCount(r);
-		return [[r.workspace, r.tab].filter(Boolean).join(" › "), r.main || r.session.slice(0, 8), ...(r.role ? ["train"] : []), r.open ? "not a main" : r.state, r.now ?? "no line", ...(count ? [`${count.done}/${count.total}`] : []), ...(r.updated !== undefined ? [agoText(now - r.updated)] : []), ...(r.points !== undefined ? [`${r.points} pts`] : []), ...(r.ready ? [`${r.ready} ready`] : []), ...(r.paused ? [r.paused] : []), ...(r.stale ? ["stale"] : [])].filter(Boolean).join(" · ");
+		return [[r.workspace, r.tab].filter(Boolean).join(" › "), r.main || r.session.slice(0, 8), ...(r.role ? ["train"] : []), r.open ? "not a main" : r.state, r.now ?? "no line", ...(count ? [`${count.done}/${count.total}`] : []), ...(r.updated !== undefined ? [agoText(now - r.updated)] : []), ...(r.points !== undefined ? [`${r.points} pts`] : []), ...(r.ready ? [`${r.ready} ready`] : []), ...(r.paused ? [r.paused] : []), ...(r.snoozes ?? []).map((s) => snoozeLine(s, now)), ...(r.stale ? ["stale"] : [])].filter(Boolean).join(" · ");
 	});
 	return [head, ...(dev ? [capLine(dev, now)] : []), ...holds, ...lines].join("\n"); // `holds`: a device hold's lines (hold.ts `holdLines`)
 }

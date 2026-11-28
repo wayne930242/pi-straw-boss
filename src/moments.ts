@@ -24,6 +24,8 @@ export const BLOCKED_NOTE = "If the tower records it as a wait card for the boss
 export const SLIP_NOTE = "It carries a car slip: the car has not landed until sb's car notice says landed, and a returned car is yours to rework.";
 /** A capacity notice (server/capops.ts `tellCap`): the end of the copy the main whose work it is gets (`under`, `stale`). */
 export const MAIN_CAP_HINT = " · your work: dispatch its ready work now, or say why not (blocked, shared files, the boss) on your board with board_set, and reply to whoever asked";
+/** The stale reminder's own copy ends with how to snooze it, in the same line (docs/specs/2026-11-28-stale-snooze.md). */
+export const SNOOZE_HINT = " · or snooze this reminder: board_set {snooze: {why, for: \"30m\"}}; watch: <your boss_watch key> waits for its next change, todo: <id> snoozes one todo";
 /** A `wait_card` message for a done or a choice (server/waitpress.ts): the main that raised the wait. */
 export const ACT_ON_IT = "This is the boss's answer to your wait: act on it.";
 /** A car notice (server/carnotices.ts): what the coordinator does next, after the line it is sent. A dropped car has no rule of its own. */

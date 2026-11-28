@@ -1266,6 +1266,8 @@
 	"board_cap_sep": " · ",
 	"board_paused": "額度停機 · 預計 {time} 恢復",
 	"board_paused_bare": "額度停機",
+	"board_snoozed": "提醒延到 {time}：{why}",
+	"board_snoozed_watch": "提醒延到 {key} 有變化：{why}",
 	"board_held": "由 {device} 的 {main} 接管中",
 	"board_holds": "接管 {device} · {main} · {state}",
 	"board_hold_on": "已生效",

@@ -44,6 +44,8 @@ pi-straw-boss 不需要任何設定就能運作。
 | `stallWatch.missingMinutes` | 3 | 還活著的 pi 最多可以連續幾分鐘不在 pi-intercom 的清單裡；server 重啟後的寬限也是這個數字。`0` 關閉這個訊號。 |
 | `stallWatch.remindMinutes` | 60 | 事件通報後多久發第一次提醒；之後每次等待加倍，最長 8 小時。訊號消失期間不發提醒。`0` 不提醒。 |
 | `capacity.budget` | 無 | 這台裝置的產能點數（大於 0，至多 1000），供工作看板上的[裝置產能](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#裝置產能)使用：sb server 拿主智慧體執行中工作所用的點數（todo 的 `metadata.points`）和最小的可接 todo 跟它比，空位持續 10 分鐘就通知塔台。沒設時照樣顯示數字，只是不標產能閒置。每分鐘讀一次。在無人值守的裝置上，它也依點數放行 `worker` 子智慧體，每次派出時重讀，所以改了立即生效；沒設就不擋。有人值守的裝置從不擋工作者。 |
+| `capacity.staleMinutes` | 120 | 在有人值守的裝置上，手上有未完成 todo 的主智慧體什麼都沒動多久，sb server 就送它[停滯提醒](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#裝置產能)；一直沒動，每過這麼久就再提醒一次，主智慧體可以把提醒延後。整數分鐘，1 到 1440，其他值一律用預設。每分鐘讀一次。 |
+| `capacity.staleUnattendedMinutes` | 30 | 無人值守裝置上的同一段時間。 |
 | `link.relay` | 無 | 新的 [Straw Link](/pi-straw-boss/docs/zh-tw/guide/straw-link/) 團隊預設使用的 relay。 |
 | `link.trust` | 每個裝置都是 `reply` | 這台電腦對每位隊友裝置的信任程度：`reply`、`forward` 或 `dispatch`。 |
 | `subagentNudge.idleMinutes` | 10 | [sb 子代理宿主](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-subagent-host/)的子智慧體回合結束、還沒交回結果，閒置多久後 sb 會請它收尾；提醒經由子智慧體自己的 pi 送出，絕不打進輸入框裡未送出的文字。互動式子智慧體與常駐專家一律不提醒；自動結束的子智慧體也不提醒，因為新的一回合會讓它當成完成關閉，改為告訴父 session。可用小數；`0` 關掉提醒。最多每 15 秒讀一次。 |

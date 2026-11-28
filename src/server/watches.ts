@@ -254,6 +254,8 @@ export function createWatches(d: WatchesDeps) {
 			return { ok: true, watches: rows };
 		},
 		has: (session: string) => [...watches.values()].some((w) => w.session === session),
+		/** A session's watches as its stale reminder reads them (docs/specs/2026-11-28-stale-snooze.md): when each started and when its last line reached the session (its start while none has). */
+		facts: (session: string) => [...watches.values()].filter((w) => w.session === session && !w.ended).map((w) => ({ key: w.key, added: w.added, toldAt: w.told?.at ?? w.added })),
 		/** The server's start: the watches of the last one come back and their loops resume. */
 		start() {
 			if (!d.file) return;

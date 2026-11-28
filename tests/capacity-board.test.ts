@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 import { writeEntry } from "../src/board.ts";
 import { boardCommand } from "../src/boardcmd.ts";
@@ -14,7 +14,7 @@ import { sessionGlobals } from "./fake-dom.ts";
 // The device capacity row where the board is read (docs/specs/2026-11-24-capacity.md): `board_read`'s rows and section `capacity`, `/boss board`'s line, and the head page's fold and rows.
 
 sessionGlobals();
-const { capText, rowCapText } = await import("../gui/board.ts");
+const { capText, rowCapText, snoozeText } = await import("../gui/board.ts");
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 /** A board folder of its own: the capacity folder sits beside it. */
@@ -100,4 +100,24 @@ test("device holds in the views (docs/specs/2026-11-26-device-hold.md): board_re
 	assert.match(capText({ ...cap, holds: [{ ...cap.holds![0]!, honoured: false }] }, { locale: "zh-TW" }), / · 由 mac 的 work-on 接管中 · 接管 box 2 · billing · 未生效$/);
 	writeHold(capDir(d), { v: 1, at: NOW - 6 * MIN });
 	assert.deepEqual(Object.keys(await readBoard({ dir: d, now: NOW, net, link: { boards: async () => [], remoteScope: () => undefined }, scope: "local" })).filter((k) => k.startsWith("hold") || k === "held"), [], "a stale file shows nothing");
+});
+
+// The snoozable stale reminder (docs/specs/2026-11-28-stale-snooze.md): a main's active snoozes on its row, with their reasons: board_read (not in a remote turn), /boss board, and the head page in both languages.
+test("a snooze shows on the main's row: board_read, /boss board, and the head page, in both languages; none in a remote turn", async () => {
+	const d = dir(), snoozes = [{ at: NOW - MIN, why: "CI runs", until: NOW + 30 * MIN }, { at: NOW - MIN, why: "lands next", until: NOW + 600 * MIN, watch: "train-a", todo: 3 }];
+	writeEntry(d, "m1", { now: "api", items: [] }, NOW - 5 * MIN);
+	writeDevice(capDir(d), device({ mains: [{ session: "m1", name: "billing", workspace: "wA", points: 0, ready: 0, open: 2, snoozes }] }));
+	const out = await readBoard({ dir: d, now: NOW, net, link: { boards: async () => [], remoteScope: () => undefined }, scope: "local" }) as { local: Record<string, unknown>[] };
+	assert.deepEqual(out.local[0]!.snoozed, [{ until: new Date(NOW + 30 * MIN).toISOString(), why: "CI runs" }, { todo: 3, until: new Date(NOW + 600 * MIN).toISOString(), watch: "train-a", why: "lands next" }]);
+	const proj = dirname(d), here = { ...net, ps: net.ps.map((p) => ({ ...p, cwd: proj })) }; // a project folder that exists, which the remote gate resolves
+	const remote = await readBoard({ dir: d, now: NOW, net: here, link: { boards: async () => [], remoteScope: () => ({ teams: ["t"], project: proj }) }, scope: "local" }) as { local: Record<string, unknown>[] };
+	assert.ok(remote.local.length && remote.local.every((r) => r.snoozed === undefined), "a teammate's remote turn gets no reason");
+	const text = boardCommand({ dir: d, now: NOW, net });
+	assert.match(text, /^Alpha › billing-tab · billing · working · api · 5 min ago · 0 pts · snoozed until \d\d:\d\d: CI runs · #3 snoozed until train-a changes: lands next$/m);
+	const rows = boardSeam({ dir: d, now: () => NOW }).rows({ bases: [{ id: "wA", label: "Alpha", mark: "idle", tower: null, tabs: [{ id: "t", label: "billing-tab", units: [{ id: "m1", key: "m1", control: true, name: "billing", role: "main", mark: "working", subs: [] }] }], outposts: [], outside: [] }] } as never)!;
+	const row = rows.find((r) => r.session === "m1")!;
+	assert.deepEqual(row.snoozes, snoozes);
+	assert.match(snoozeText(row), /^snoozed until \d\d:\d\d: CI runs · #3 snoozed until train-a changes: lands next$/);
+	assert.match(snoozeText(row, { locale: "zh-TW" }), /^提醒延到 \d\d:\d\d：CI runs · #3 提醒延到 train-a 有變化：lands next$/);
+	assert.equal(rowCapText(row), "0 pts", "Geek's plain capacity line keeps its numbers; the snooze has a span of its own on every view");
 });

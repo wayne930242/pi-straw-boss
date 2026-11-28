@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { Type, type Static, type TSchema } from "typebox";
 import { readBoard } from "./boardread.ts";
 import type { BoardFill } from "./boardfill.ts";
+import type { CapFill } from "./capfill.ts";
 import type { BossPair } from "./bosspair.ts";
 import { NOT_MAIN, setBoard, whereTo } from "./boardset.ts";
 import type { Digest } from "./digest.ts";
@@ -61,7 +62,7 @@ export const closeParameters = () => Type.Object({
 	pane: Type.Optional(Type.String({ description: "A dead agent pane's Herdr id (as the list shows it, e.g. w1:p3)." })),
 });
 /** The tools the agent calls: what a joined session has (status, call_tower, broadcast, rename, promote), and the tower's boss_open_main. */
-export function createTools({ pi, cfg, s, guiDir, me, role, tell }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, openTower, promote, digest, closeMain, closePane, deadPanes, listen, link, server, towerCall, boardFill, pair, waitAsk, bossAsk }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read" | "openTower"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; /** A tower's close of a dead agent pane and its list (closemain.ts, deadpane.ts). */ closePane: Control["closePane"]; deadPanes: Control["deadPanes"]; /** Registers the control channel: a main that handed over answers its tower's close (closemain.ts). */ listen: () => void; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill; /** A main's review threads for board_read (bosspair.ts); none in a tower run. */ pair?: Pick<BossPair, "read" | "list">; /** Registers `boss_wait_ask` for a joined session (waitask.ts `mainWaitAsk`); a tower run registers its own (runmode.ts). */ waitAsk?: () => void; /** Draws a `call_tower` boss question in this main's pane (bossask.ts); none in a tower run. */ bossAsk?: Parameters<typeof callTowerTool>[4] }) {
+export function createTools({ pi, cfg, s, guiDir, me, role, tell }: Kit, { mainDuty, post, callTower, status, broadcast, towerList, towerSend, answerHead, read, openTower, promote, digest, closeMain, closePane, deadPanes, listen, link, server, towerCall, boardFill, capFill, pair, waitAsk, bossAsk }: Pick<Reach, "post" | "callTower" | "status" | "broadcast" | "towerList" | "towerSend" | "answerHead" | "read" | "openTower"> & Pick<Membership, "promote"> & { mainDuty: MainDuty; digest: Digest; closeMain: CloseMain; /** A tower's close of a dead agent pane and its list (closemain.ts, deadpane.ts). */ closePane: Control["closePane"]; deadPanes: Control["deadPanes"]; /** Registers the control channel: a main that handed over answers its tower's close (closemain.ts). */ listen: () => void; link: Link; server?: ServerLook; towerCall?: boolean; boardFill: BoardFill; /** The stale reminder's snoozes (capfill.ts). */ capFill: Pick<CapFill, "snooze">; /** A main's review threads for board_read (bosspair.ts); none in a tower run. */ pair?: Pick<BossPair, "read" | "list">; /** Registers `boss_wait_ask` for a joined session (waitask.ts `mainWaitAsk`); a tower run registers its own (runmode.ts). */ waitAsk?: () => void; /** Draws a `call_tower` boss question in this main's pane (bossask.ts); none in a tower run. */ bossAsk?: Parameters<typeof callTowerTool>[4] }) {
 	const tool = <P extends TSchema>(name: string, description: string, parameters: P, body: (params: Static<P>, signal?: AbortSignal, ctx?: ToolCtx, id?: string) => Promise<{ text: string; details?: unknown }>) =>
 		pi.registerTool({
 			name, label: name, description, parameters,
@@ -145,14 +146,16 @@ export function createTools({ pi, cfg, s, guiDir, me, role, tell }: Kit, { mainD
 			});
 			if (!s.isTower) waitAsk?.();
 			// The work board fills itself from the main's todo list and name (boardfill.ts); board_set overrides it, whole, until the todos move, and `auto` hands it back. Nothing here names another session's file.
-			if (!s.isTower) tool("board_set", "Main only: override your work board entry (now, items) until your todos move; auto hands it back to auto-fill from your todos and name; clear deletes it when your work is finished or shelved. Towers and allies read it: no secrets, credentials, customer data, or paths outside the project. Not a report: the done report still goes to whoever asked.",
+			if (!s.isTower) tool("board_set", "Main only: override your work board entry (now, items) until your todos move; auto hands it back to auto-fill from your todos and name; clear deletes it when your work is finished or shelved. Towers and allies read it: no secrets, credentials, customer data, or paths outside the project. Not a report: the done report still goes to whoever asked. snooze holds sb's stale reminder, as it says.",
 				Type.Object({
 					now: Type.Optional(Type.String({ description: "One line of 1 to 120 characters." })),
 					items: Type.Optional(Type.Array(Type.Object({ t: Type.String({ description: "1 to 80 characters." }), done: Type.Boolean() }), { description: "At most 8; replaces the list." })),
 					auto: Type.Optional(Type.Boolean()),
 					clear: Type.Optional(Type.Boolean()),
+					snooze: Type.Optional(Type.Object({ why: Type.String(), for: Type.Optional(Type.String()), watch: Type.Optional(Type.String()), todo: Type.Optional(Type.Number()) })),
 				}),
-				async ({ now, items, auto, clear }) => {
+				async ({ now, items, auto, clear, snooze }) => {
+					if (snooze !== undefined) return now !== undefined || items !== undefined || auto || clear ? Promise.reject(new Error("snooze takes no now, items, auto, or clear")) : capFill.snooze(snooze, cfg.ask ?? server?.ask); // the stale reminder's snooze (capfill.ts)
 					const cwd = (await cfg.world().catch(() => undefined))?.panes.find((p) => p.pane_id === s.at?.paneId)?.cwd ?? process.cwd();
 					const home = cfg.link?.home ?? homedir(), agentDir = cfg.env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent");
 					if (clear) {

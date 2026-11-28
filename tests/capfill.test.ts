@@ -57,3 +57,30 @@ test("a member writes no capacity file", async () => {
 	a.emit(PAUSE_EVENT, { v: 1, state: "paused", reason: "quota" });
 	assert.equal(capOf("m1"), undefined);
 });
+
+// The snoozable stale reminder (docs/specs/2026-11-28-stale-snooze.md): the main's open todos and its board_set snoozes reach its capacity file, kept across a /reload; a todo's snooze goes with the todo.
+test("board_set snooze: the open todos and the snoozes reach the capacity file; refused without a reason, with another field, on a todo not open, or on a key not watched", async () => {
+	const ask = async (r: Record<string, unknown>) => (r.cmd === "watch-list" ? { ok: true, watches: [{ key: "train-a", until: clock + 3600_000 }] } : { ok: false, error: "not in this test" });
+	const a = world.agent({ id: "a1", name: "api-main", pane: "wA:p1", tab: "wA:t1", deps: { now, ask } });
+	await a.start();
+	await a.promote();
+	setTodos(a, [{ id: 1, subject: "done", status: "completed" }, { id: 3, subject: "deploy the api", status: "pending" }, { id: 5, subject: "review", status: "in_progress", metadata: { waitsOn: "boss" } }]);
+	await a.fire("turn_end");
+	assert.deepEqual(capOf("a1")!.todos, [{ id: 3, subject: "deploy the api" }, { id: 5, subject: "review", until: 8.64e15 }]);
+	const said = await a.tool("board_set", { snooze: { why: "CI runs", for: "30m" } });
+	assert.match((said.content[0] as { text: string }).text, /^Reminder snoozed until \d\d:\d\d \("CI runs"\)\. If your open todos are still unanswered then, sb reminds you again; a new snooze of the main replaces this one\.$/);
+	const s = capOf("a1")!.snoozes!;
+	assert.deepEqual(s.map((x) => [x.why, x.until - x.at]), [["CI runs", 30 * 60_000]]);
+	await a.tool("board_set", { snooze: { why: "lands next", watch: "train-a", todo: 3 } });
+	assert.deepEqual(capOf("a1")!.snoozes!.map((x) => [x.why, x.todo, x.watch]), [["CI runs", undefined, undefined], ["lands next", 3, "train-a"]]);
+	for (const [input, error] of [[{ snooze: { for: "30m" } }, /why/], [{ snooze: { why: "x", for: "1h" }, now: "x" }, /snooze takes no now, items, auto, or clear/], [{ snooze: { why: "x", for: "1h", todo: 1 } }, /no open todo #1/], [{ snooze: { why: "x", watch: "other" } }, /start boss_watch on it first/]] as const)
+		await assert.rejects(a.tool("board_set", input as never), error, JSON.stringify(input));
+	const carry = [...a.entries];
+	await a.stop("reload");
+	const b = await main(carry);
+	await b.fire("turn_end");
+	assert.equal(capOf("a1")!.snoozes?.length, 2, "a /reload keeps the snoozes");
+	setTodos(b, [{ id: 3, subject: "deploy the api", status: "completed" }]);
+	await b.fire("turn_end");
+	assert.deepEqual(capOf("a1")!.snoozes!.map((x) => x.why), ["CI runs"], "a todo's snooze goes with the todo");
+});

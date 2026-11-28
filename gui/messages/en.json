@@ -1448,6 +1448,8 @@
 	"board_cap_sep": " · ",
 	"board_paused": "quota · resumes {time}",
 	"board_paused_bare": "quota",
+	"board_snoozed": "snoozed until {time}: {why}",
+	"board_snoozed_watch": "snoozed until {key} changes: {why}",
 	"board_held": "held by {main} on {device}",
 	"board_holds": "holds {device} · {main} · {state}",
 	"board_hold_on": "honoured",

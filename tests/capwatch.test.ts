@@ -107,7 +107,8 @@ test("stale: never for a main whose Herdr pane is working (boss 2026-11-26 「he
 	assert.deepEqual(w.told.map((e) => [e.kind, e.key]), [["stale", "s-a"]]);
 });
 
-test("stale on an unattended device: a main with open todos unmoved 30 minutes is told once; a paused one never", async () => {
+// Since the snoozable reminder (docs/specs/2026-11-28-stale-snooze.md) a stale episode comes back to the main alone each interval (30 minutes here); before, it was told once.
+test("stale on an unattended device: a main with open todos unmoved 30 minutes is told, then the main alone each 30 minutes; a paused one never", async () => {
 	const { w, make } = world({ unattended: true });
 	const t0 = w.clock.now();
 	w.mains[0] = { ...w.mains[0]!, workers: [], fileMtime: t0, entryUpdated: t0 }; // nothing running: a main commanding work is never stale
@@ -118,13 +119,17 @@ test("stale on an unattended device: a main with open todos unmoved 30 minutes i
 	await run(watch, w.clock, 2);
 	assert.deepEqual(w.told.map((e) => [e.kind, e.key]), [["stale", "s-a"]]);
 	await run(watch, w.clock, 61);
+	assert.deepEqual(w.told.map((e) => [e.kind, e.mainOnly ?? false]), [["stale", false], ["stale", true], ["stale", true]], "again at 30 and 60 minutes, to the main alone");
 	await make().tick();
-	assert.equal(w.told.length, 1, "a restart does not repeat the same stale episode");
+	assert.equal(w.told.length, 3, "a restart does not repeat the same stale episode");
 	w.mains[0]!.background = true;
 	await make().tick();
 	w.mains[0]!.background = false;
-	await make().tick();
-	assert.equal(w.told.length, 2, "a new episode after background work ends can notify again");
+	const again = make();
+	await run(again, w.clock, 29);
+	assert.equal(w.told.length, 3, "a new episode inside the interval of the last notice is held");
+	await run(again, w.clock, 2);
+	assert.equal(w.told.length, 4, "and told an interval after it");
 	const { w: w2, make: make2 } = world({ unattended: true });
 	w2.mains[0] = { ...w2.mains[0]!, fileMtime: w2.clock.now(), entryUpdated: w2.clock.now() };
 	w2.cap("s-a", { open: 2, pause: { reason: "quota", at: w2.clock.now() } });

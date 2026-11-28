@@ -2,10 +2,11 @@ import { readFileSync, statSync } from "node:fs";
 import { availableParallelism, homedir, loadavg } from "node:os";
 import { join } from "node:path";
 import { readEntries, safeSession } from "../board.ts";
-import { capDir, type MainFacts, readBudget } from "../capacity.ts";
+import { capDir, type MainFacts, readBudget, readStale } from "../capacity.ts";
+import type { WatchFact } from "../snooze.ts";
 import { type HerdrRun, panes as herdrPanes, type Session, workspaces as herdrWorkspaces } from "../herdr.ts";
 import { readHolds } from "../link/holds.ts";
-import { HELD_CAP_HINT, HELD_STANDING_HINT, MAIN_CAP_HINT } from "../moments.ts";
+import { HELD_CAP_HINT, HELD_STANDING_HINT, MAIN_CAP_HINT, SNOOZE_HINT } from "../moments.ts";
 import { commanding, sessionMark, subagentsOfAll } from "../netdata.ts";
 import { nameOf, netMembers } from "../reach.ts";
 import { type AllySeen, type CapDeps, type CapEvent, createCapWatch } from "./capwatch.ts";
@@ -27,14 +28,14 @@ export function armedLoop(dir: string, session: string, now: number): boolean {
 }
 
 /** The live mains and trains of one reading, with every running subagent of each main's pane (no dashboard limit), when its session file last moved, and when its board entry was written. */
-export function mainFacts(sessions: Session[], ps: Awaited<ReturnType<typeof herdrPanes>>, boardDir: string, now: number, mtime: (file: string) => number | undefined, background?: (session: string, pane: string | undefined) => boolean, selfPoints?: ReadonlyMap<string, number>): MainFacts[] {
+export function mainFacts(sessions: Session[], ps: Awaited<ReturnType<typeof herdrPanes>>, boardDir: string, now: number, mtime: (file: string) => number | undefined, background?: (session: string, pane: string | undefined) => boolean, selfPoints?: ReadonlyMap<string, number>, watches?: (session: string) => WatchFact[]): MainFacts[] {
 	const kids = subagentsOfAll(ps, now, Infinity), entries = new Map(readEntries(boardDir).map((e) => [e.session, e.updated]));
 	return netMembers(sessions, ps).filter((m) => m.role === "main" || m.role === "train").map((m): MainFacts => {
 		const pane = ps.find((p) => p.pane_id === m.s.herdrLocation?.paneId), subs = m.role === "main" ? kids(pane).filter((r) => !r.ended) : [], mark = sessionMark(m.s, pane), file = pane?.agent_session?.value;
 		const moved = file ? mtime(file) : undefined, written = entries.get(m.s.id);
 		return {
 			session: m.s.id, name: nameOf(m.s), workspace: m.workspace.id, role: m.role === "train" ? "train" : "main", state: mark, ...(pane?.agent_status ? { paneStatus: pane.agent_status } : {}), commanding: commanding(mark, subs.map((r) => r.mark)) === "commanding",
-			...(m.role === "main" && background?.(m.s.id, pane?.pane_id) ? { background: true } : {}), ...(m.duty ? { duty: m.duty } : {}), ...(m.duty === "worker" && selfPoints?.has(m.s.id) ? { selfPoints: selfPoints.get(m.s.id)! } : {}), workers: subs.map((r) => r.text), ...(moved !== undefined ? { fileMtime: moved } : {}), ...(written !== undefined ? { entryUpdated: written } : {}),
+			...(m.role === "main" && background?.(m.s.id, pane?.pane_id) ? { background: true } : {}), ...(m.duty ? { duty: m.duty } : {}), ...(m.duty === "worker" && selfPoints?.has(m.s.id) ? { selfPoints: selfPoints.get(m.s.id)! } : {}), workers: subs.map((r) => r.text), ...(moved !== undefined ? { fileMtime: moved } : {}), ...(written !== undefined ? { entryUpdated: written } : {}), ...(m.role === "main" && watches ? { watches: watches(m.s.id) } : {}),
 		};
 	});
 }
@@ -48,7 +49,8 @@ export interface StartCap {
 	towers(): Pick<Towers, "status" | "head" | "runs"> | undefined;
 	unattended(): boolean;
 	monitorPanes(): Set<string>;
-	watching(session: string): boolean;
+	/** The session's `boss_watch` watches (server/watches.ts `facts`), which hold its stale reminder until their first change (docs/specs/2026-11-28-stale-snooze.md). */
+	watches(session: string): WatchFact[];
 	/** The ally devices the link holder has heard of (none without Straw Link). */
 	allies(): AllySeen[];
 	/** The points of the workers opened for teammates' devices, by session (their routes). */
@@ -66,7 +68,8 @@ export async function tellCap(e: CapEvent, o: Pick<StartCap, "run" | "towers" | 
 	const towers = o.towers();
 	const to = towers ? stallTarget(e.workspace, await herdrWorkspaces(o.run).catch(() => []), towers.status().map((r) => r.workspace), towers.head.status()?.workspace) : undefined;
 	const tower = !e.mainOnly && to !== undefined && towers!.runs.notice(to, e.text, `capacity:${e.kind}:${e.key}:${at}`);
-	const textFor = (session: string) => (session === e.main ? (e.mainText ?? `${e.text}${e.held ? HELD_CAP_HINT : MAIN_CAP_HINT}`) : session === e.standing && e.held ? `${e.text}${HELD_STANDING_HINT}` : e.text);
+	// The stale reminder's own copy offers its snooze (docs/specs/2026-11-28-stale-snooze.md): the main alone can snooze it.
+	const textFor = (session: string) => (session === e.main ? `${e.mainText ?? `${e.text}${e.held ? HELD_CAP_HINT : MAIN_CAP_HINT}`}${e.kind === "stale" ? SNOOZE_HINT : ""}` : session === e.standing && e.held ? `${e.text}${HELD_STANDING_HINT}` : e.text);
 	const tell = (session: string | undefined) => (session ? o.tellSession(session, textFor(session)).then((r) => r === "delivered" || r === "queued", () => false) : Promise.resolve(false));
 	const told = !e.mainOnly && (await tell(e.standing)), own = e.main !== e.standing || e.mainOnly ? await tell(e.main) : false;
 	let also = false;
@@ -79,12 +82,12 @@ export function startCap(o: StartCap): (() => void) | undefined {
 	if (inTestRun() && !o.over) return undefined;
 	const boardDir = join(o.stateDir, "board");
 	const watch = createCapWatch({
-		dir: capDir(boardDir), now: o.now, log: o.log, budget: () => readBudget(o.stateDir), unattended: o.unattended, allies: o.allies,
+		dir: capDir(boardDir), now: o.now, log: o.log, budget: () => readBudget(o.stateDir), stale: () => readStale(o.stateDir), unattended: o.unattended, allies: o.allies,
 		load: () => ({ load1: loadavg()[0] ?? 0, cores: availableParallelism() }), holds: () => readHolds(join(o.stateDir, "link"), o.now()),
 		mains: async () => {
 			const sessions = await o.sessions(), panes = await herdrPanes(o.run), monitors = o.monitorPanes(), now = o.now();
 			return mainFacts(sessions, panes, boardDir, now, (file) => { try { return statSync(file).mtimeMs; } catch { return undefined; } },
-				(id, pane) => (pane !== undefined && monitors.has(pane)) || o.watching(id) || armedLoop(join(homedir(), ".pi", "loops"), id, now), o.workerPoints?.());
+				(id, pane) => (pane !== undefined && monitors.has(pane)) || armedLoop(join(homedir(), ".pi", "loops"), id, now), o.workerPoints?.(), o.watches);
 		},
 		tell: (e) => tellCap(e, o, o.now()),
 		...o.over,
