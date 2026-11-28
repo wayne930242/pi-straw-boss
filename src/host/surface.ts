@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { createRunEnds, registryStart, RUN_END_EVENT } from "./run-end.ts";
+import { createRunEnds, registryHolds, registryStart, RUN_END_EVENT } from "./run-end.ts";
 
 // sb's simple host (docs/how-it-works.md#the-subagent-host): Maestro registers its whole surface, and this API in front of Pi keeps only what the
 // boss chose, under the names and parameters prompts and skills already use: `subagent` (one task, auto-exit, the result as a message), `subagent_cancel`,
@@ -58,11 +58,13 @@ export interface SimpleDeps {
 	persistentRole(agent: string, params: Record<string, unknown>): boolean;
 	/** The clock and Maestro's registry start of a run, for its end's elapsed (run-end.ts); a test gives its own. */
 	now?(): number; startOf?(id: string): number | undefined;
+	/** Whether Maestro's registry still holds a run (run-end.ts); a test gives its own. */
+	live?(id: string): boolean | undefined;
 }
 
 /** The API Maestro registers through: drops the tools and commands above, refuses the dropped parameters before Maestro sees the call, and tells each run's end with its run id (run-end.ts). */
 export function simpleApi(pi: ExtensionAPI, deps: SimpleDeps): ExtensionAPI {
-	const ends = createRunEnds({ now: deps.now ?? Date.now, startOf: deps.startOf ?? registryStart });
+	const ends = createRunEnds({ now: deps.now ?? Date.now, startOf: deps.startOf ?? registryStart, live: deps.live ?? registryHolds });
 	const registerTool = (tool: ToolDefinition) => {
 		if (DROPPED_TOOLS.includes(tool.name)) return;
 		const dropped = Object.keys(DROPPED_PARAMS[tool.name] ?? {});
