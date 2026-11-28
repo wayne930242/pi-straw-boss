@@ -203,7 +203,7 @@ export function fillUnit(el: HTMLElement, u: Omit<Unit, "id" | "key" | "control"
 	sync(el.querySelector(".subs")!, u.subs ?? [], unitEl, fillUnit);
 }
 
-const carEl = () => html(`<li class="car-card"><span class="car-head"><b class="car-mark"></b><span class="car-tickets"></span></span><span class="car-line"><span class="car-step"></span> <span class="car-time"></span></span><span class="car-wait"></span><button type="button" class="car-see"></button></li>`);
+const carEl = () => html(`<li class="car-card"><button type="button" class="car-see"></button><span class="car-head"><b class="car-mark"></b><span class="car-tickets"></span></span> <span class="car-line"><span class="car-step"></span> <span class="car-time"></span></span><span class="car-wait"></span></li>`); // the button first: it floats at the card's top right and the car's words flow beside it, one line when they fit (style.css `.car-card`)
 function fillCar(el: HTMLElement, c: CarCardView) {
 	el.dataset.tone = c.tone;
 	text(el, ".car-mark", c.mark);

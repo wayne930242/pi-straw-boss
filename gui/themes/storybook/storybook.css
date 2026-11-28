@@ -225,7 +225,7 @@ html[data-view="storybook"] body { background: var(--sb-grain), radial-gradient(
 /* a message that came in is a violet slip; its stamp sits in the margin like a speaker's */
 [data-view="storybook"] .tx.sys { padding-left: 60px; }
 [data-view="storybook"] .tx.sys:has(> .notice) { position: relative; min-height: 46px; } /* the stamp's room: an entry clips its paint (content-visibility) */
-[data-view="storybook"] .notice { max-width: 520px; border: 0; border-image: none; border-left: 3px solid color-mix(in srgb, var(--violet) 60%, transparent); border-radius: 8px; background: var(--sb-slip); }
+[data-view="storybook"] .notice { max-width: 520px; border: 0; border-image: none; border-radius: 8px; background: var(--sb-slip); } /* the violet slip and its stamp say who wrote it: no stripe */
 [data-view="storybook"] .notice > summary > .ava { position: absolute; left: 0; top: 0; color: var(--violet); }
 /* a tool call is a small label sticker while closed; open, it is the framed slip it was */
 [data-view="storybook"] .act { border: 1px solid transparent; border-image: var(--sb-frame) 28 / 10px round; background: color-mix(in srgb, var(--surface-0) 75%, transparent); }

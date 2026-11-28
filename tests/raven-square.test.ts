@@ -5,7 +5,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { declarations, rulesOf, split } from "./css-rules.ts";
 
-// Raven Keep round 2 (boss, 2026-11-08: 「不該用圓角卡片，並且可以考慮簡易裝飾線」): in the Raven view every card-like box has square corners, and a gold double rule and corner ticks are the keep's only ornaments.
+// Raven Keep round 2 (boss, 2026-11-08: 「不該用圓角卡片，並且可以考慮簡易裝飾線」): in the Raven view every card-like box has square corners, and a gold hairline and corner ticks are the keep's only ornaments.
+// The hairline goes all round (boss, 2026-11-28: no card wears a one-sided border, ~/.pi/agent/rules/ui-design.md); it was a 4 px double rule on the top edge before.
 // One blanket rule squares everything under `html[data-view="raven"]` except the keep-round set below, which is round by meaning (a ring, a dot, a halo). The test pins that set, so a new round exception needs a change here too.
 const root = fileURLToPath(new URL("..", import.meta.url));
 const raven = readFileSync(join(root, "gui/themes/raven/raven.css"), "utf8");
@@ -53,17 +54,17 @@ test("the head band, the legend, the crumbs, and the yard's rows and pills have 
 
 /** The subject (the last compound, without its pseudo-element) of each part of a selector. */
 const subjects = (selector: string) => split(selector, ",").map((p) => p.trim().replace(/::[\w-]+$/, "").split(/\s+(?![^(]*\))|\s*[>+~]\s*(?![^(]*\))/).pop()!);
-const tops = () => rules.find((r) => r.parts.includes('html[data-view="raven"] .base') && declarations(r.body).some(([p]) => p === "border-top"))!;
+const frames = () => rules.find((r) => r.parts.includes('html[data-view="raven"] .base') && declarations(r.body).some(([p]) => p === "border-color"))!;
 /** The rules whose declarations include `prop`, with their parts. */
 const setting = (prop: string, from = rules) => from.filter((r) => declarations(r.body).some(([p]) => p === prop));
 const ticksRules = () => setting("background-image").filter((r) => /var\(--rk-ticks\)/.test(r.body));
 
-test("the keep's ornament is a gold double rule on top of its panels", () => {
-	const top = tops();
-	assert.ok(top, "a rule gives the base a border-top");
-	assert.match(declarations(top.body).find(([p]) => p === "border-top")![1], /^4px double /, "a double rule, 4px wide (a line, a gap of two, a line), as the head band wears it");
-	for (const sel of ["dialog.sheet", ".dialog", ".tcard", ".hud", ".set-group", ".panel", ".comms-in"]) assert.ok(top.parts.some((p) => p.endsWith(sel)), `${sel} has the double rule`);
-	assert.ok(top.parts.some((p) => /\.ask:not\(/.test(p)), "the question card has it, unless nested");
+test("the keep's ornament is a gold hairline all round its plain panels; a card whose border says a state keeps its colour", () => {
+	const frame = frames();
+	assert.ok(frame, "a rule colours the base's border");
+	assert.deepEqual(declarations(frame.body), [["border-color", "var(--rk-rule)"]], "the colour only: each panel keeps its 1 px width and its style (a remote base that cannot be reached stays dashed)");
+	for (const sel of ["dialog.sheet", ".hud", ".set-group", ".panel", ".comms-in", ".base"]) assert.ok(frame.parts.some((p) => p.endsWith(sel)), `${sel} has the gold hairline`);
+	for (const sel of [".dialog", ".tcard", ".ask"]) assert.ok(!frame.parts.some((p) => p.includes(sel)), `${sel} keeps its own border colour (its state)`);
 });
 
 test("RS-F001: no Raven rule sets `position` on a dialog or a sheet: a modal dialog sits in the top layer, where `relative` computes to absolute against the document and the sheet opens above a scrolled page", () => {
@@ -71,11 +72,7 @@ test("RS-F001: no Raven rule sets `position` on a dialog or a sheet: a modal dia
 	assert.deepEqual(bad.map((r) => r.selector), []);
 });
 
-test("RS-F003: an ask nested in a framed parent (the dock's .dialog, a .link-alert) has no rule and no ticks of its own", () => {
-	const top = tops();
-	const ask = top.parts.find((p) => /\.ask:not\(/.test(p))!;
-	assert.match(ask, /:not\([^)]*\.dialog \.ask[^)]*\)/);
-	assert.match(ask, /:not\([^)]*\.link-alert \.ask[^)]*\)/);
+test("RS-F003: an ask nested in a framed parent (the dock's .dialog, a .link-alert) has no ticks of its own", () => {
 	for (const rule of ticksRules()) for (const part of rule.parts.filter((p) => /\.ask\b/.test(p))) {
 		assert.match(part, /:not\([^)]*\.dialog \.ask[^)]*\)/, part);
 		assert.match(part, /:not\([^)]*\.link-alert \.ask[^)]*\)/, part);
@@ -108,10 +105,9 @@ test("RS-F004: the corner ticks are background layers of the box itself, not a p
 	assert.match(declarations(own.body).find(([p]) => p === "background-size")![1], /^var\(--rk-tick-size\), auto$/);
 });
 
-test("RS-F005: the yard has the keep's gold rule on top (its own border colour must not beat it) and no ticks (it has no padding: a tick would land on Close)", () => {
+test("RS-F005: the yard has the keep's gold hairline (no border colour of its own beats the sheets') and no ticks (it has no padding: a tick would land on Close)", () => {
 	const yard = rules.find((r) => r.parts.includes('[data-view="raven"] dialog.sheet.yard'))!;
-	const dd = declarations(yard.body);
-	assert.equal(dd.find(([p]) => p === "border-top-color")?.[1], "var(--rk-rule)");
-	assert.ok(dd.findIndex(([p]) => p === "border-top-color") > dd.findIndex(([p]) => p === "border-color"), "after border-color, which sets all four");
+	assert.deepEqual(declarations(yard.body).filter(([p]) => p.startsWith("border")), []);
+	assert.ok(frames().parts.includes('html[data-view="raven"] dialog.sheet'), "the sheets' hairline reaches the yard");
 	for (const r of ticksRules()) for (const p of r.parts.filter((x) => x.includes("dialog.sheet"))) assert.match(p, /:not\(\.yard\)/, p);
 });

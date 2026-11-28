@@ -553,10 +553,10 @@ test("a part is clamped to three lines by the standard property as well as the p
 	assert.doesNotMatch(zen, /\.wait-card \.wc-(opt|primary)/, "Zen draws the card's acts as the question panel's rows, not a skin of its own");
 });
 
-test("Raven's ornaments (the double rule and the ticks) stay off a card nested in the tower card, the tower's notices, and the return panel: one rule, not two", () => {
+test("Raven's ticks stay off a card nested in the tower card, the tower's notices, and the return panel: one set of corners, not two (the question card has no rule of its own since 2026-11-28: it keeps its amber hairline all round)", () => {
 	const raven = readFileSync(new URL("../gui/themes/raven/raven.css", import.meta.url), "utf8");
 	const lines = raven.split("\n").filter((l) => l.includes('html[data-view="raven"] .ask:not('));
-	assert.equal(lines.length, 2, "the rule's border and its ticks");
+	assert.equal(lines.length, 1, "its ticks");
 	for (const line of lines) for (const host of [".dialog .ask", ".link-alert .ask", ".tcard .ask", ".tower-notices .ask", ".auto-back .ask"]) assert.ok(line.includes(host), `${host} is excluded`);
 	assert.doesNotMatch(css + zen, /\.wait-card \.wc-(btn|opt|primary|state|fail|acts)\b/, "the old look rules are gone: the card wears the panel's");
 });
