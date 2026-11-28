@@ -95,19 +95,30 @@ for (const platform of ["darwin", "win32"] as const) {
 	});
 }
 
+/** Standing looks that ran: each reads the whole pane list once (the call carries no workspace). */
+const looks = () => world.herdr.calls.filter((a) => a[0] === "pane" && a[1] === "list" && a.length === 2).length;
 for (const order of ["listing-then-takeover", "events-then-takeover"] as const) test(`RVSEAT2-F001 darwin restored session, ${order}: the command is typed once into the new terminal`, async () => {
 	world.herdr.shellPids = true;
+	// The takeover comes while the command typed into the new terminal waits for its prompt, which never comes here: the launch wait is what keeps the look from typing into that idle shell again, and it lasts the whole
+	// case. Its 250 ms in these tests is wall-clock time, which a loaded machine let pass before the late check of a typing, and the look had typed again. The tower's pane holds a resident's pi until the restart, so
+	// nothing is typed into the old terminal: a launch wait of that typing would hold the new terminal's as long.
+	world.standingTimers = { launchMs: 60_000, launchMaxMs: 60_000 };
 	const s = await world.start();
 	await s.handle.ready;
-	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
-	const pane = String(ensured.pane), h = world.herdr;
-	await until(() => h.typed.length === 1, "first typing");
+	const h = world.herdr, pane = "wA:p9";
+	h.addTab("wA:t9", TOWER_LABEL, pane, "shell");
+	h.pane(pane).processes = [{ name: "node", argv0: "node", pid: 7001, cmdline: "node pi" }];
+	assert.equal((await ask(s, { cmd: "ensure-tower", workspace: "wA", pane })).pane, pane);
+	const before = looks();
+	await until(() => looks() >= before + 3, "three looks at the resident's pane");
+	assert.equal(h.typed.length, 0, "the resident's pi runs there");
 	h.restart(order === "events-then-takeover");
 	Object.assign(h.pane(pane), { processes: [], agent: undefined });
-	await until(() => h.typed.filter((t) => t.pane === pane).length === 2, "typed into the restored terminal", 4000);
+	await until(() => h.typed.filter((t) => t.pane === pane).length === 1, "typed into the restored terminal", 4000);
 	world.takeovers.forEach((cb) => cb());
-	await sleep(150);
-	assert.equal(h.typed.filter((t) => t.pane === pane).length, 2);
+	const after = looks();
+	await until(() => looks() >= after + 10, "ten looks after the takeover");
+	assert.equal(h.typed.filter((t) => t.pane === pane).length, 1);
 });
 
 // D1 (N5): Retry on Windows while the typed prompt is still starting (the table shows it below the shell, nothing polls yet) types nothing a second time.

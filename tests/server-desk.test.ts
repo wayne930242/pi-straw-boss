@@ -697,8 +697,18 @@ test("F3: a base made in this run under the id of a lost one gets its tower at o
 
 // --- A lost session whose id a base of this `up` or a stranger's shell took (merge of B7 F3 with the seat gate) ---
 
+/**
+ * The first command typed starts the prompt in the same step, as the pane's shell runs it (FakeHerdr `onRun`): its process holds the pane's foreground. Where Herdr gives the foreground group, an idle shell whose prompt
+ * never came is typed into again after `launchMs`, and a check of the first typing late by more than that under load never saw it alone.
+ */
+const promptOnTyping = () => {
+	world.herdr.onRun = (into) => {
+		world.herdr.onRun = undefined;
+		world.herdr.pane(into).processes = [{ name: "node", argv0: "node", pid: 6100, cmdline: `node "/pkg/dist/server/cli.mjs" prompt --workspace ${into.split(":")[0]} --state-dir "/s"` }];
+	};
+};
 for (const platform of ["darwin", "win32"] as const) {
-	const platformed = () => (platform === "win32" ? windows() : void (world.herdr.shellPids = true));
+	const platformed = () => (promptOnTyping(), platform === "win32" ? windows() : void (world.herdr.shellPids = true));
 	test(`${platform}: a lost session's reused id taken by the base this up made: the stale service ends, tokens and order at once, the prompt typed once`, async () => {
 		platformed();
 		const first = await up();

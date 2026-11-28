@@ -29,11 +29,26 @@ afterEach(async () => {
 
 type Reply = Record<string, unknown> & { ok: boolean; error?: string };
 const ask = (r: Running, cmd: Record<string, unknown>) => callControl(r.handle.endpoint, world.record()!.secret, cmd as { cmd: string }).then((x) => x.reply as Reply);
-const setup = async () => {
+/** `typing`: set up what the first command typed into the pane starts (`onTyping`) before the tower is asked for; its answer is `started`. */
+const setup = async <T = undefined>(typing?: (s: Running) => T) => {
 	const s = await world.start();
 	await s.handle.ready;
+	const started = typing?.(s);
 	const ensured = await ask(s, { cmd: "ensure-tower", workspace: "wA" });
-	return { s, ensured, pane: String(ensured.pane) };
+	return { s, ensured, pane: String(ensured.pane), started };
+};
+/**
+ * What the next command typed into a pane starts there, in the same step, as the pane's shell runs it (FakeHerdr `onRun`): a polling prompt by default; the function returned gives it once it started. A prompt the test
+ * started only once it saw the typing left an idle shell meanwhile, and where Herdr gives the foreground group (`shellPids`) a check late by more than `launchMs` under load found the server had typed into it again, as it
+ * does into an idle shell whose prompt never came: the typing the test waited for was never seen alone.
+ */
+const onTyping = (s: Running, start: (pane: string) => FakePrompt | undefined = (pane) => new FakePrompt(s, pane)) => {
+	let started: FakePrompt | undefined;
+	world.herdr.onRun = (into) => {
+		world.herdr.onRun = undefined;
+		started = start(into);
+	};
+	return () => started;
 };
 const nthRun = async (n = 1) => {
 	await until(() => world.pis.size >= n, `run ${n} to start`);
@@ -268,6 +283,7 @@ test("Ctrl+D leaves the pane to the boss for good: the stand-in goes and nothing
 	exit(id);
 	await until(() => readRun(world.slot, "wA", id)?.outcome === "done", "the run to end");
 	const pi = world.herdr.pane(pane);
+	onTyping(s);
 	pi.agent = undefined;
 	pi.processes = [];
 	await until(() => world.herdr.typed.length === 2, "the prompt after the run");
@@ -422,12 +438,12 @@ test("on Windows a prompt that was typed once and never started is logged prompt
 
 test("where Herdr gives the shell's pid and the foreground group, a prompt that died is typed again when the foreground is the shell itself, and not while something else holds it (SR-F003)", async () => {
 	world.herdr.shellPids = true;
-	const { s, pane } = await setup();
+	const { s, pane } = await setup((s) => onTyping(s, (into) => void new FakePrompt(s, into).stop())); // a prompt that started and died before its first poll
 	await until(() => world.herdr.typed.length === 1, "the first typing");
-	new FakePrompt(s, pane).stop();
 	world.herdr.pane(pane).processes = [{ name: "make", argv0: "make", pid: 88 }];
 	await sleep(500);
 	assert.equal(world.herdr.typed.length, 1, "a foreground group that is not the shell's is the boss's work");
+	onTyping(s);
 	world.herdr.pane(pane).processes = [];
 	await until(() => world.herdr.typed.length === 2, "typed again at the idle shell");
 });
@@ -450,9 +466,9 @@ test("idleShell: a process list alone is never an idle shell unless the pane is 
 test("between the prompt's post and the wake the next look does not type the prompt again (SR-F004)", async () => {
 	world.herdr.shellPids = true;
 	world.runTimers = { wake: 200 }; // 1 s in production, against the 15 s wait of a typing
-	const { s, pane } = await setup();
+	const { s, pane, started } = await setup((s) => onTyping(s));
 	await until(() => world.herdr.typed.length === 1, "the first typing");
-	const prompt = new FakePrompt(s, pane);
+	const prompt = started!()!;
 	await until(() => world.herdr.pane(pane).agent === "tower", "the stand-in");
 	await sleep(300); // longer than the launch wait since the typing (250 ms here)
 	// What the prompt does when the boss writes: posts a present boss event, tells the server it is gone, exits.
