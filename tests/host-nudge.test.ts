@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { LifecycleProjection } from "@nubl/maestro/core/lifecycle";
-import { ACK_MS, NUDGE_SUFFIX, RETRY_MS, ackFile, createNudger, nudgeDir, nudgeText, readNudgeSettings, requestFile, type NudgeOutcome, type NudgeSettings } from "../src/host/nudge.ts";
+import { ACK_MS, NUDGE_SUFFIX, REQUEST_MS, RESEND_MS, RETRY_MS, ackFile, createNudger, newNudgeStore, nudgeDir, nudgeText, readNudgeSettings, requestFile, sharedNudgeStore, type NudgeOutcome, type NudgeSettings, type NudgeStore } from "../src/host/nudge.ts";
 import { ACCEPT_MS, createInbox, nudgeInbox } from "../src/host/nudge-child.ts";
 import { createWidgetController } from "../src/host/widgets.ts";
 
@@ -17,6 +17,9 @@ const waiting = (since: number): LifecycleProjection => ({ kind: "waiting", stat
 const active = (since: number): LifecycleProjection => ({ kind: "active", label: "bash", stateDurationSince: since }) as LifecycleProjection;
 const blocked = (since: number): LifecycleProjection => ({ kind: "blocked", stateDurationSince: since }) as LifecycleProjection;
 type Run = { id: string; name: string; sessionFile: string; interactive: boolean; persistent?: boolean; cancelState?: string };
+
+/** The `subagent_status` message as pi starts it in the parent's session. */
+const statusMessage = (nudgeNotices: string[]) => ({ role: "custom", customType: "subagent_status", content: "", display: true, details: { lines: [], overflow: 0, nudgeNotices } });
 
 function ids(prefix: string) {
 	let n = 0;
@@ -38,11 +41,11 @@ function world(settings: NudgeSettings = { idleMs: 10 * MIN, max: 2 }, locale: "
 		rmSync(req, { force: true }); // the child consumed it before it acked
 		writeFileSync(ackFile(runDir(), id), JSON.stringify({ v: 2, id, runId, outcome, at }));
 	};
-	/** The notices the parent would send now; taking them marks them sent. */
+	/** The notices the parent would send now; pi confirms each at once. */
 	const told = (n = nudger) => {
-		const q = [...n.queued()];
-		n.emitted(q.length);
-		return q;
+		const out = n.outbox(0, false);
+		n.accepted(statusMessage(out.map((o) => o.id)));
+		return out.map((o) => o.text);
 	};
 	return { run, nudger, make, request, requests, ack, told, runDir, sessionFile };
 }
@@ -213,7 +216,7 @@ test("F002: request ids stay unique across parent reloads, so a stale ack of the
 	const real = createNudger({ settings: () => ({ idleMs: 10 * MIN, max: 2 }), locale: () => "en" });
 	real.look(w.run, waiting(0), 10 * MIN);
 	const first = w.request().id;
-	real.prune([]);
+	real.prune([], 10 * MIN);
 	const reloaded = createNudger({ settings: () => ({ idleMs: 10 * MIN, max: 2 }), locale: () => "en" });
 	reloaded.look(w.run, waiting(0), 10 * MIN);
 	const second = w.request().id;
@@ -232,7 +235,7 @@ test("F002: a parent removes only the files of its own request", () => {
 	const newer = w.make("newp");
 	newer.look(w.run, waiting(0), 10 * MIN);
 	assert.deepEqual(w.requests().sort(), ["newp-00000001.req", "oldp-00000001.req"]);
-	older.prune([]);
+	older.prune([], 10 * MIN);
 	assert.deepEqual(w.requests(), ["newp-00000001.req"], "the older parent's cleanup leaves the newer one's request");
 	newer.look(w.run, waiting(0), 10 * MIN + ACK_MS);
 	assert.deepEqual(w.requests(), []);
@@ -323,7 +326,7 @@ test("prune: a run gone from the registry takes its open request with it", () =>
 	const w = world();
 	w.nudger.look(w.run, waiting(0), 10 * MIN);
 	assert.ok(w.request());
-	w.nudger.prune(["other"]);
+	w.nudger.prune(["other"], 10 * MIN);
 	assert.equal(w.request(), undefined);
 	assert.equal(existsSync(w.sessionFile + NUDGE_SUFFIX), false, "the folders go once empty");
 });
@@ -348,10 +351,10 @@ test("settings: subagentNudge in config.json, defaults for anything missing or o
 
 test("the nudge text: write the report and call subagent_done, or caller_ping, or name the wait", () => {
 	assert.equal(
-		nudgeText(10 * MIN),
-		"Straw Boss: you have been idle for 10 minutes, and your caller still has no result from you. If your task is done, write your final report now and call subagent_done. If you truly wait on your caller (a decision, an access, or an answer only it can give), say so with caller_ping. If you wait on work of your own that will wake you (a monitor, a loop, your own subagents), reply in one line with what it is and when it ends.",
+		nudgeText(10 * MIN, "0f3c2a9e-4b1d-4c8e-9a7f-5d2e8b6c1a90"),
+		"Straw Boss (reminder 8b6c1a90): you have been idle for 10 minutes, and your caller still has no result from you. If your task is done, write your final report now and call subagent_done. If you truly wait on your caller (a decision, an access, or an answer only it can give), say so with caller_ping. If you wait on work of your own that will wake you (a monitor, a loop, your own subagents), reply in one line with what it is and when it ends.",
 	);
-	assert.match(nudgeText(30_000), /idle for 1 minute,/);
+	assert.match(nudgeText(30_000, "aaaa-00000001"), /^Straw Boss \(reminder 00000001\): you have been idle for 1 minute,/);
 });
 
 // ── the child's side ──
@@ -396,14 +399,14 @@ test("child: an idle child with an empty input box takes the request and sends t
 	c.clock = 7;
 	c.put();
 	assert.deepEqual(c.inbox.poll(), ["sent"]);
-	assert.deepEqual(c.sent, [{ text: nudgeText(10 * MIN), options: { deliverAs: "followUp" } }]);
+	assert.deepEqual(c.sent, [{ text: nudgeText(10 * MIN, "bbbb-00000001"), options: { deliverAs: "followUp" } }]);
 	assert.equal(existsSync(requestFile(c.dir, "bbbb-00000001")), false, "the request is consumed");
 	assert.equal(c.ack(), undefined, "the call alone proves nothing: no ack yet");
 	c.inbox.messageStarted({ role: "user", content: "something else" });
-	c.inbox.messageStarted({ role: "assistant", content: [{ type: "text", text: nudgeText(10 * MIN) }] });
+	c.inbox.messageStarted({ role: "assistant", content: [{ type: "text", text: nudgeText(10 * MIN, "bbbb-00000001") }] });
 	assert.equal(c.ack(), undefined, "another message is not the nudge");
 	c.clock = 9;
-	c.inbox.messageStarted({ role: "user", content: [{ type: "text", text: nudgeText(10 * MIN) }] });
+	c.inbox.messageStarted({ role: "user", content: [{ type: "text", text: nudgeText(10 * MIN, "bbbb-00000001") }] });
 	assert.deepEqual(c.ack(), { v: 2, id: "bbbb-00000001", runId: "r1", outcome: "sent", at: 9 });
 	assert.deepEqual(c.inbox.poll(), [], "nothing open: nothing done");
 	assert.equal(c.sent.length, 1);
@@ -419,7 +422,7 @@ test("child (F006): a nudge that never enters the session is acked lost; one who
 	c.clock = ACCEPT_MS;
 	c.inbox.poll();
 	assert.equal(c.ack().outcome, "lost");
-	c.inbox.messageStarted({ role: "user", content: nudgeText(10 * MIN) });
+	c.inbox.messageStarted({ role: "user", content: nudgeText(10 * MIN, "bbbb-00000001") });
 	assert.equal(c.ack().outcome, "lost", "a late entry does not turn it into sent");
 	const t = child({ throws: true });
 	t.put();
@@ -497,81 +500,318 @@ test("parent and child together: the request, the nudge, its entry, and the coun
 	assert.match(w.told()[0] ?? "", /after 1 reminder to finish/);
 });
 
+// ── F007: a stop revokes, the child refuses old requests, a late ack is removed ──
+
+function parents(sessionFile: string, store = newNudgeStore()) {
+	const run: Run = { id: "r1", name: "build-api", sessionFile, interactive: false };
+	const make = (prefix: string) => createNudger({ settings: () => ({ idleMs: 10 * MIN, max: 2 }), locale: () => "en", newId: ids(prefix), store });
+	return { run, store, make };
+}
+
+test("F007: a stop revokes the open request, so the child finds nothing", () => {
+	const c = child();
+	const p = parents(c.file);
+	const a = p.make("aaaa");
+	a.look(p.run, waiting(0), 10 * MIN);
+	assert.ok(existsSync(requestFile(c.dir, "aaaa-00000001")));
+	a.stop(10 * MIN + 500);
+	c.clock = 10 * MIN + 1000;
+	assert.deepEqual(c.inbox.poll(), []);
+	assert.deepEqual(c.sent, []);
+	assert.equal(existsSync(c.file + NUDGE_SUFFIX), false, "nothing left beside the session file");
+});
+
+test("F007: a request the child took before a reload: its late ack does not survive the next load's cleanup, and the next load waits before asking again", () => {
+	const c = child();
+	const p = parents(c.file);
+	const a = p.make("aaaa");
+	a.look(p.run, waiting(0), 10 * MIN);
+	c.clock = 10 * MIN + 500;
+	assert.deepEqual(c.inbox.poll(), ["sent"]);
+	a.stop(10 * MIN + 1000);
+	assert.equal(existsSync(c.file + NUDGE_SUFFIX), false, "revoked: the folder went with it");
+	const b = p.make("bbbb");
+	mkdirSync(c.dir, { recursive: true }); // it stands again, say for a request of another load
+	c.clock = 10 * MIN + 1500;
+	c.inbox.messageStarted({ role: "user", content: c.sent[0].text });
+	assert.equal(c.ack("aaaa-00000001").outcome, "sent", "the ack arrives after the revoke");
+	b.prune(["r1"], 10 * MIN + 2000);
+	assert.equal(existsSync(c.file + NUDGE_SUFFIX), false, "the late ack and its folders are gone");
+	b.look(p.run, waiting(0), 10 * MIN + 2000);
+	assert.equal(existsSync(c.file + NUDGE_SUFFIX), false, "the nudge may be in: no second request at once");
+	b.look(p.run, waiting(0), 10 * MIN + 1000 + RETRY_MS);
+	assert.ok(existsSync(requestFile(c.dir, "bbbb-00000001")), "asked again a minute later");
+});
+
+test("F007: an ack already there at the stop is counted, and the next load keeps the count", () => {
+	const c = child();
+	const p = parents(c.file);
+	const a = p.make("aaaa");
+	a.look(p.run, waiting(0), 10 * MIN);
+	c.clock = 10 * MIN + 500;
+	c.inbox.poll();
+	c.inbox.messageStarted({ role: "user", content: c.sent[0].text });
+	a.stop(10 * MIN + 1000);
+	assert.equal(existsSync(c.file + NUDGE_SUFFIX), false);
+	const b = p.make("bbbb");
+	b.look(p.run, waiting(0), 20 * MIN + 500);
+	b.look(p.run, waiting(0), 20 * MIN + 600);
+	c.ack("bbbb-00000001");
+	writeFileSync(ackFile(c.dir, "bbbb-00000001"), JSON.stringify({ v: 2, id: "bbbb-00000001", runId: "r1", outcome: "sent", at: 20 * MIN + 600 }));
+	rmSync(requestFile(c.dir, "bbbb-00000001"));
+	b.look(p.run, waiting(0), 20 * MIN + 700);
+	b.look(p.run, waiting(0), 30 * MIN + 600);
+	const out = b.outbox(30 * MIN + 600, false);
+	assert.match(out[0]?.text ?? "", /after 2 reminders to finish/, "the first load's nudge counted");
+});
+
+test("F007: a revoked request the child had taken (a cancel, no ack in time): its late ack is removed", () => {
+	for (const revoke of ["cancel", "no-ack"] as const) {
+		const w = world();
+		w.nudger.look(w.run, waiting(0), 10 * MIN);
+		const id = w.request().id;
+		rmSync(requestFile(w.runDir(), id)); // the child took it
+		if (revoke === "cancel") {
+			w.run.cancelState = "requested";
+			w.nudger.look(w.run, waiting(0), 10 * MIN + 1000);
+		} else w.nudger.look(w.run, waiting(0), 10 * MIN + ACK_MS);
+		mkdirSync(w.runDir(), { recursive: true });
+		writeFileSync(ackFile(w.runDir(), id), JSON.stringify({ v: 2, id, runId: "r1", outcome: "sent", at: 10 * MIN + ACK_MS - 1 }));
+		w.nudger.prune(revoke === "cancel" ? ["r1"] : [], 10 * MIN + ACK_MS + 1);
+		assert.equal(existsSync(w.sessionFile + NUDGE_SUFFIX), false, revoke);
+	}
+});
+
+test("F007: the child refuses a request past its expiry, and writes no ack once its parent stopped waiting", () => {
+	const c = child();
+	c.put("bbbb-00000001", { at: 0 });
+	c.clock = REQUEST_MS + 1;
+	assert.deepEqual(c.inbox.poll(), ["stale"]);
+	assert.deepEqual(c.sent, []);
+	assert.equal(c.ack("bbbb-00000001").outcome, "stale");
+	c.put("bbbb-00000002", { at: 0 });
+	c.clock = ACK_MS;
+	assert.deepEqual(c.inbox.poll(), ["stale"]);
+	assert.equal(c.ack("bbbb-00000002"), undefined, "its parent gave up on it: no ack is left behind");
+	const d = child();
+	d.put("bbbb-00000001", { at: 0 });
+	assert.deepEqual(d.inbox.poll(), ["sent"]);
+	d.clock = ACK_MS;
+	d.inbox.poll();
+	assert.equal(d.ack("bbbb-00000001"), undefined, "a nudge lost past the parent's wait: no ack either");
+});
+
+// ── F008: `sent` only for the marked nudge, and only in time ──
+
+test("F008: the nudge carries its request's mark, so a message quoting another reminder is not it", () => {
+	const c = child();
+	c.put();
+	assert.deepEqual(c.inbox.poll(), ["sent"]);
+	assert.match(String(c.sent[0].text), /^Straw Boss \(reminder 00000001\): /);
+	c.inbox.messageStarted({ role: "user", content: `You said: ${nudgeText(10 * MIN, "bbbb-00000000")}` });
+	assert.equal(c.ack(), undefined, "a quote of an earlier reminder");
+	c.inbox.messageStarted({ role: "user", content: c.sent[0].text });
+	assert.equal(c.ack().outcome, "sent");
+});
+
+test("F008: a nudge that enters after ACCEPT_MS is lost, even before the next poll", () => {
+	const c = child();
+	c.put();
+	c.inbox.poll();
+	c.clock = ACCEPT_MS;
+	c.inbox.messageStarted({ role: "user", content: c.sent[0].text });
+	assert.equal(c.ack().outcome, "lost");
+});
+
+// ── F009: a notice stays until pi confirms it ──
+
+test("F009: a notice leaves the queue only once its message starts; unconfirmed, it goes again only while the parent is idle, later each time", () => {
+	const store = newNudgeStore();
+	const n = createNudger({ settings: () => ({ idleMs: 10 * MIN, max: 2 }), locale: () => "en", store });
+	store.queue.push({ id: "n1", text: "told", tries: 0 });
+	assert.deepEqual(n.outbox(0, false), [{ id: "n1", text: "told" }]);
+	assert.deepEqual(n.outbox(1000, true), [], "in flight");
+	assert.deepEqual(n.outbox(RESEND_MS, false), [], "pi may still hold it in a turn");
+	assert.deepEqual(n.outbox(RESEND_MS, true), [{ id: "n1", text: "told" }], "idle and unconfirmed: pi dropped it");
+	assert.deepEqual(n.outbox(2 * RESEND_MS, true), []);
+	assert.deepEqual(n.outbox(3 * RESEND_MS, true), [{ id: "n1", text: "told" }], "twice the wait the next time");
+	n.unsent(["n1"]);
+	assert.deepEqual(n.outbox(3 * RESEND_MS, false), [{ id: "n1", text: "told" }], "a send that threw goes at the next tick");
+	n.accepted({ role: "custom", customType: "other", details: { nudgeNotices: ["n1"] } });
+	n.accepted({ role: "user", content: "n1" });
+	assert.equal(n.undelivered(), 1, "only a subagent_status message confirms");
+	n.accepted(statusMessage(["n1"]));
+	assert.equal(n.undelivered(), 0);
+	assert.deepEqual(n.outbox(100 * MIN, true), []);
+});
+
+test("F009: the store outlives a reload: the next load has the notices not yet confirmed and the counts", () => {
+	assert.equal(sharedNudgeStore(), sharedNudgeStore(), "one per process");
+	const p = parents(join(dir(), "kid.jsonl"));
+	const a = p.make("aaaa");
+	a.look(p.run, waiting(0), 10 * MIN);
+	a.look(p.run, waiting(0), 10 * MIN + ACK_MS);
+	assert.equal(a.outbox(10 * MIN + ACK_MS, false).length, 1, "sent; pi never confirms it");
+	a.stop(10 * MIN + ACK_MS + 1);
+	const b = p.make("bbbb");
+	assert.equal(b.undelivered(), 1);
+	b.look(p.run, waiting(0), 60 * MIN);
+	assert.equal(existsSync(p.run.sessionFile + NUDGE_SUFFIX), false, "the child it gave up on is not asked again");
+	assert.match(b.outbox(60 * MIN, true)[0]?.text ?? "", /sent no acknowledgement/);
+});
+
 // ── the status loop carries the notices ──
 
-function loop(t: { mock: { timers: { enable(o: unknown): void; tick(ms: number): void } }; after(f: () => void): void }, lineLimit: number, nudger: unknown, failFirst = false) {
+type LoopT = { mock: { timers: { enable(o: unknown): void; tick(ms: number): void } }; after(f: () => void): void };
+
+function loop(t: LoopT, lineLimit: number, nudger: unknown, opts: { failFirst?: boolean; runs?: string[] } = {}) {
 	t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 100 * MIN });
 	const d = dir();
 	const make = (id: string) => ({ id, name: `w-${id}`, sessionFile: join(d, `${id}.jsonl`), interactive: false, startTime: 0, lifecycle: { process: { kind: "running", startedAt: 0, confirmedAt: 0 }, turn: { kind: "waiting", startedAt: 0 }, activityHealth: { kind: "unseen" }, activityDetail: null, pane: { kind: "unknown" }, hasWorked: true, lastActivitySequence: null, delivery: "pending" } });
-	const runtime = { runningSubagents: new Map([["r1", make("r1")], ["r2", make("r2")]]) };
-	const messages: { content: string; options: unknown }[] = [];
-	let fail = failFirst;
+	const parent = { idle: false };
+	const runtime = { runningSubagents: new Map((opts.runs ?? ["r1", "r2"]).map((id) => [id, make(id)])), latestCtx: { isIdle: () => parent.idle } };
+	const messages: { message: { customType: string; content: string; display: boolean; details: { nudgeNotices?: string[] } }; options: unknown }[] = [];
+	const started: ((event: unknown) => void)[] = [];
+	let fail = opts.failFirst ?? false;
 	const pi = {
-		sendMessage: (m: { content: string }, options: unknown) => {
+		on: (event: string, handler: (event: unknown) => void) => void (event === "message_start" && started.push(handler)),
+		sendMessage: (message: (typeof messages)[number]["message"], options: unknown) => {
 			if (fail) {
 				fail = false;
 				throw new Error("not now");
 			}
-			messages.push({ content: m.content, options });
+			messages.push({ message, options });
 		},
+	};
+	/** Pi starts the message in the parent's session, the way sendCustomMessage builds it. */
+	const start = (i: number) => {
+		for (const h of started) h({ type: "message_start", message: { role: "custom", ...messages[i].message, timestamp: 0 } });
 	};
 	const controller = createWidgetController(
 		{ runtime, statusConfig: { enabled: true, lineLimit }, supervisionConfig: { hangWarningMinutes: 0 }, observeRunningSubagent() {}, evaluateNoProgressAdvisory: () => ({ notify: true, kind: "advisory", classification: "generic", idleMs: MIN, lastEntryKind: "assistant" }) } as never,
 		undefined,
 		nudger as never,
 	);
-	controller.startStatusRefresh(pi as never);
 	t.after(() => controller.stopRefresh());
-	return { runtime, messages };
+	return { runtime, messages, start, parent, pi, controller, content: (i: number) => messages[i].message.content };
 }
 
-test("the status loop asks the nudger about each child and sends its queued notices in subagent_status", async (t) => {
+/** A real nudger on its own store whose looks and prunes are recorded; `onLook` may queue a notice. */
+function spied(onLook: (run: { id: string }, store: NudgeStore) => void = () => {}) {
+	const store = newNudgeStore();
+	const real = createNudger({ settings: () => ({ idleMs: 0, max: 2 }), locale: () => "en", store });
 	const looked: string[] = [], pruned: string[][] = [];
-	const queue: string[] = [];
+	let stops = 0;
 	const nudger = {
+		...real,
 		look: (run: { id: string }, projection: LifecycleProjection) => {
 			looked.push(`${run.id}:${projection.kind}`);
-			if (run.id === "r1") queue.push("w-r1 told");
+			onLook(run, store);
 		},
-		queued: () => queue,
-		emitted: (n: number) => void queue.splice(0, n),
-		prune: (ids: Iterable<string>) => void pruned.push([...ids]),
+		prune: (live: Iterable<string>, now: number) => {
+			pruned.push([...live]);
+			real.prune(live, now);
+		},
+		stop: (now: number) => {
+			stops++;
+			real.stop(now);
+		},
 	};
-	const { runtime, messages } = loop(t, 10, nudger);
+	return { store, nudger, looked, pruned, get stops() { return stops; } };
+}
+const notice = (store: NudgeStore, id: string, text: string) => store.queue.push({ id, text, tries: 0 });
+
+test("the status loop asks the nudger about each child and sends its notices in subagent_status, marked so pi's start of the message confirms them", (t) => {
+	const s = spied((run, store) => run.id === "r1" && !store.queue.length && notice(store, "n1", "w-r1 told"));
+	const l = loop(t, 10, s.nudger);
+	l.controller.startStatusRefresh(l.pi as never);
 	t.mock.timers.tick(1000);
-	assert.deepEqual(looked, ["r1:waiting", "r2:waiting"]);
-	assert.deepEqual(pruned, [["r1", "r2"]]);
-	assert.equal(messages.length, 1);
-	assert.match(messages[0].content, /^Subagent status:\n• w-r1 told\n/);
-	assert.deepEqual(messages[0].options, { triggerTurn: true, deliverAs: "steer" });
-	assert.deepEqual(queue, [], "sent, so dequeued");
-	runtime.runningSubagents.clear();
+	assert.deepEqual(s.looked, ["r1:waiting", "r2:waiting"]);
+	assert.deepEqual(s.pruned, [["r1", "r2"]]);
+	assert.equal(l.messages.length, 1);
+	assert.match(l.content(0), /^Subagent status:\n• w-r1 told\n/);
+	assert.deepEqual(l.messages[0].message.details.nudgeNotices, ["n1"]);
+	assert.deepEqual(l.messages[0].options, { triggerTurn: true, deliverAs: "steer" });
+	assert.equal(s.store.queue.length, 1, "sent, not yet confirmed");
+	l.start(0);
+	assert.equal(s.store.queue.length, 0, "confirmed, so dequeued");
+	l.runtime.runningSubagents.clear();
 	t.mock.timers.tick(1000);
-	assert.deepEqual(pruned.at(-1), [], "the last run gone: pruned before the loop stops");
+	assert.deepEqual(s.pruned.at(-1), [], "the last run gone: pruned before the loop stops");
+	t.mock.timers.tick(5000);
+	assert.equal(s.pruned.length, 2, "stopped");
+	l.controller.stopRefresh();
+	assert.equal(s.stops, 1, "a stop reaches the nudger");
 });
 
-test("F005: the line cap never drops a notice, and a notice whose send failed goes out at the next tick", async (t) => {
-	const queue: string[] = [];
-	let once = true;
-	const nudger = {
-		look: (run: { id: string }) => {
-			if (once) queue.push(`${run.id} told`);
-			if (run.id === "r2") once = false;
-		},
-		queued: () => queue,
-		emitted: (n: number) => void queue.splice(0, n),
-		prune() {},
-	};
-	const { messages } = loop(t, 1, nudger, true);
-	assert.throws(() => t.mock.timers.tick(1000), /not now/);
-	assert.equal(messages.length, 0, "the first send failed");
-	assert.deepEqual(queue, ["r1 told", "r2 told"], "kept for the next tick");
+test("F005, F009: the line cap never drops a notice; a send or a look that throws inside the tick waits for the next tick", (t) => {
+	let looks = 0;
+	const s = spied((run, store) => {
+		if (++looks === 1) throw new Error("look failed");
+		if (looks <= 3) notice(store, `n-${run.id}`, `${run.id} told`);
+	});
+	const l = loop(t, 1, s.nudger, { failFirst: true });
+	l.controller.startStatusRefresh(l.pi as never);
+	assert.doesNotThrow(() => t.mock.timers.tick(1000), "the look's throw stays in the tick");
+	assert.doesNotThrow(() => t.mock.timers.tick(1000), "so does the send's");
+	assert.equal(l.messages.length, 0, "the first send failed");
+	assert.deepEqual(s.store.queue.map((n) => [n.text, n.sentAt]), [["r1 told", undefined], ["r2 told", undefined]], "kept, as not sent");
 	t.mock.timers.tick(1000);
-	assert.ok(messages.length >= 1, "sent at the next tick");
-	const lines = messages[0].content.split("\n");
+	assert.ok(l.messages.length >= 1, "sent at the next tick");
+	const lines = l.content(0).split("\n");
 	assert.deepEqual(lines.slice(1, 3), ["• r1 told", "• r2 told"], "both notices, with lineLimit 1");
 	assert.equal(lines.length, 5, "then the capped status lines: one, and the count of the rest");
 	assert.match(lines[4], /^• \+1 more running\.$/);
-	assert.deepEqual(queue, []);
-	assert.ok(messages.slice(1).every((m) => !m.content.includes("told")), "each notice once");
+	l.start(0);
+	assert.equal(s.store.queue.length, 0);
+	t.mock.timers.tick(1000);
+	assert.ok(l.messages.slice(1).every((m) => !m.message.content.includes("told")), "each notice once");
+});
+
+test("F009: a notice pi never confirms goes again while the parent is idle, and the loop outlives the last run until one is confirmed", (t) => {
+	const s = spied();
+	notice(s.store, "n1", "w-r1 told");
+	const l = loop(t, 10, s.nudger, { runs: [] });
+	l.controller.startStatusRefresh(l.pi as never);
+	t.mock.timers.tick(1000);
+	assert.equal(l.messages.length, 1, "sent with no run left");
+	t.mock.timers.tick(RESEND_MS);
+	assert.equal(l.messages.length, 1, "the parent's turn may still take it");
+	l.parent.idle = true;
+	t.mock.timers.tick(1000);
+	assert.equal(l.messages.length, 2, "idle and unconfirmed: pi rejected it, so it goes again");
+	assert.deepEqual(l.messages[1].message.details.nudgeNotices, ["n1"]);
+	l.start(1);
+	t.mock.timers.tick(1000);
+	const ticks = s.pruned.length;
+	t.mock.timers.tick(30 * MIN);
+	assert.equal(s.pruned.length, ticks, "confirmed: the loop stopped");
+	assert.equal(l.messages.length, 2);
+});
+
+test("F009: after a reload, resumeNotices sends the last load's unconfirmed notices with no run to start the loop", (t) => {
+	const p = parents(join(dir(), "kid.jsonl"));
+	const a = p.make("aaaa");
+	a.look(p.run, waiting(0), 10 * MIN);
+	a.look(p.run, waiting(0), 10 * MIN + ACK_MS);
+	a.outbox(10 * MIN + ACK_MS, false);
+	a.stop(10 * MIN + ACK_MS);
+	const b = p.make("bbbb");
+	const l = loop(t, 10, b, { runs: [] });
+	l.parent.idle = true;
+	l.controller.resumeNotices(l.pi as never);
+	t.mock.timers.tick(1000);
+	assert.equal(l.messages.length, 1);
+	assert.match(l.content(0), /build-api has not delivered its result/);
+	l.start(0);
+	assert.equal(b.undelivered(), 0);
+});
+
+test("F009: resumeNotices with nothing unconfirmed starts nothing", (t) => {
+	const s = spied();
+	const l = loop(t, 10, s.nudger, { runs: [] });
+	l.controller.resumeNotices(l.pi as never);
+	t.mock.timers.tick(5000);
+	assert.equal(s.pruned.length, 0);
+	assert.equal(l.messages.length, 0);
 });

@@ -14,7 +14,7 @@ import { registerMessageRenderers } from "./renderers.ts";
 import { toolRenderers } from "./tool-renderers.ts";
 import { stampedLoad, stampedOnFailure, type StampSources } from "./load-stamp.ts";
 import { simpleApi } from "./surface.ts";
-import { createNudger, readNudgeSettings } from "./nudge.ts";
+import { createNudger, readNudgeSettings, sharedNudgeStore } from "./nudge.ts";
 import { localeOf } from "../locale.ts";
 
 /** The sb package root: the host stamps it as the wrapper, the way pi-herdr-agents stamps its own. */
@@ -29,6 +29,8 @@ export const childEntryPath = fileURLToPath(new URL("./child.ts", import.meta.ur
 // and error-encoding APIs inherit from the one it was given), and a todo panel's claim on that presenter hides its rows from the Subagents box.
 const presenters = new WeakMap<ExtensionAPI, RunRows>();
 let registerRows: (pi: ExtensionAPI) => void = () => {};
+/** The done nudge's notices a reload left unconfirmed go out at session start, with or without a run (widgets.ts, resumeNotices). */
+let resumeNotices: (pi: ExtensionAPI) => void = () => {};
 
 // Invoked per load, not in the engine cache. Presentation never replaces a run owner.
 const extension = stampedOnFailure(
@@ -43,10 +45,12 @@ const extension = stampedOnFailure(
 						presenters.set(pi, rows);
 						rows.register(pi, deps.runtime.runningSubagents);
 					};
-					// sb's state folder, as the host entry reads it (index.ts): the done nudge's settings and the notice's language.
+					// sb's state folder, as the host entry reads it (index.ts): the done nudge's settings and the notice's language. Its store outlives a reload.
 					const stateDir = join(getAgentDir(), "straw-boss");
-					const nudger = createNudger({ settings: () => readNudgeSettings(stateDir), locale: () => localeOf(process.env, stateDir) });
-					return createWidgetController(deps, presenters, nudger);
+					const nudger = createNudger({ settings: () => readNudgeSettings(stateDir), locale: () => localeOf(process.env, stateDir), store: sharedNudgeStore() });
+					const controller = createWidgetController(deps, presenters, nudger);
+					resumeNotices = controller.resumeNotices;
+					return controller;
 				},
 				registerMessageRenderers,
 				toolRenderers,
@@ -70,5 +74,6 @@ export default function sbHost(pi: ExtensionAPI): void {
 	stampedLoad(() => {
 		extension(api);
 		registerRows(api);
+		api.on("session_start", () => resumeNotices(api));
 	}, stampSources);
 }

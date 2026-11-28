@@ -279,45 +279,74 @@ export function createWidgetController(
 		);
 	}
 
+	/** The APIs whose `message_start` confirms the done nudge's notices (F009). */
+	const watched = new WeakSet<object>();
+
+	function stopStatusRefresh() {
+		if (!statusInterval) return;
+		clearInterval(statusInterval);
+		statusInterval = null;
+		writeGlobalSlot<ReturnType<typeof setInterval> | null>(
+			STATUS_INTERVAL_KEY,
+			null,
+		);
+	}
+
 	function startStatusRefresh(pi: ExtensionAPI) {
 		if (!statusConfig.enabled || statusInterval) return;
 
-		// sb: the done nudge's notices go first and outside the line cap, and leave the queue only once sent (docs/specs/2026-11-28-done-nudge.md).
-		const send = (lines: string[]) => {
-			const notices = nudger ? [...nudger.queued()] : [];
-			const all = [...notices, ...lines];
+		// sb: pi's sendMessage returns before pi takes the message and reports a failure only to its own UI, so a notice leaves the nudger's queue
+		// when the message that carries it starts in this session (docs/specs/2026-11-28-done-nudge.md).
+		if (nudger && !watched.has(pi)) {
+			try {
+				pi.on("message_start", (event) => nudger.accepted((event as { message?: unknown }).message));
+				watched.add(pi);
+			} catch {
+				// An API pi already retired: the next start, from a live one, listens.
+			}
+		}
+
+		// sb: the done nudge's notices go first and outside the line cap; a notice pi has not confirmed goes again while this session is idle.
+		const send = (lines: string[], now: number) => {
+			let idle = false;
+			try {
+				idle = runtime.latestCtx?.isIdle() === true;
+			} catch {
+				// A context gone stale holds no turn we know of: wait for the next one.
+			}
+			const notices = nudger ? nudger.outbox(now, idle) : [];
+			const all = [...notices.map((n) => n.text), ...lines];
 			if (all.length === 0) return;
 			const limit = statusConfig.lineLimit + notices.length;
 			const capped = capStatusLines(all, limit);
-			pi.sendMessage(
-				{
-					customType: "subagent_status",
-					content: formatStatusAggregate(all, limit),
-					display: true,
-					details: { lines: capped.visibleLines, overflow: capped.overflow },
-				},
-				{ triggerTurn: true, deliverAs: "steer" },
-			);
-			nudger?.emitted(notices.length);
+			const ids = notices.map((n) => n.id);
+			try {
+				pi.sendMessage(
+					{
+						customType: "subagent_status",
+						content: formatStatusAggregate(all, limit),
+						display: true,
+						details: { lines: capped.visibleLines, overflow: capped.overflow, ...(ids.length ? { nudgeNotices: ids } : {}) },
+					},
+					{ triggerTurn: true, deliverAs: "steer" },
+				);
+			} catch (error) {
+				nudger?.unsent(ids);
+				throw error;
+			}
 		};
 
-		statusInterval = setInterval(() => {
-			nudger?.prune(runningSubagents.keys());
+		const tick = () => {
+			const now = Date.now();
+			nudger?.prune(runningSubagents.keys(), now);
 			if (runningSubagents.size === 0) {
-				send([]);
-				if (statusInterval) {
-					clearInterval(statusInterval);
-					statusInterval = null;
-					writeGlobalSlot<ReturnType<typeof setInterval> | null>(
-						STATUS_INTERVAL_KEY,
-						null,
-					);
-				}
+				send([], now);
+				// sb: the loop stays while a notice waits for pi's confirmation.
+				if (!nudger?.undelivered()) stopStatusRefresh();
 				return;
 			}
 
 			const transitionLines: string[] = [];
-			const now = Date.now();
 			let shouldRefreshWidget = false;
 
 			for (const running of runningSubagents.values()) {
@@ -368,10 +397,24 @@ export function createWidgetController(
 
 			if (shouldRefreshWidget) updateWidget();
 
-			send(transitionLines);
+			send(transitionLines, now);
+		};
+
+		statusInterval = setInterval(() => {
+			// sb: a throw here would escape the timer; what it left undone is done at the next tick.
+			try {
+				tick();
+			} catch {
+				// Nothing to report to: the next tick tries again, and the nudger kept what was not sent.
+			}
 		}, 1000);
 
 		writeGlobalSlot(STATUS_INTERVAL_KEY, statusInterval);
+	}
+
+	/** sb: after a reload, the notices the last load left unconfirmed go out even when no run is left to start the loop. */
+	function resumeNotices(pi: ExtensionAPI) {
+		if (nudger?.undelivered()) startStatusRefresh(pi);
 	}
 
 	function startWidgetRefresh() {
@@ -392,14 +435,9 @@ export function createWidgetController(
 				null,
 			);
 		}
-		if (statusInterval) {
-			clearInterval(statusInterval);
-			statusInterval = null;
-			writeGlobalSlot<ReturnType<typeof setInterval> | null>(
-				STATUS_INTERVAL_KEY,
-				null,
-			);
-		}
+		stopStatusRefresh();
+		// sb: a reload or a quit revokes the done nudge's open requests (F007); its notices stay in the process-wide store for the next load.
+		nudger?.stop(Date.now());
 	}
 
 	return {
@@ -408,5 +446,6 @@ export function createWidgetController(
 		startStatusRefresh,
 		startWidgetRefresh,
 		stopRefresh,
+		resumeNotices,
 	};
 }

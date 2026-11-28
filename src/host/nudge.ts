@@ -18,6 +18,10 @@ export const NUDGE_SUFFIX = ".sb-nudge";
 export const ACK_MS = 60_000;
 /** After an ack that sent nothing (`draft`, `busy`, `stale`), the next request waits this long. */
 export const RETRY_MS = 60_000;
+/** A request older than this when the child reads it is `stale`: its parent may have revoked it, or gone (F007). */
+export const REQUEST_MS = 20_000;
+/** A parent's notice that pi has not confirmed is sent again this long after, doubling each time up to 10 minutes, and only while the parent is idle (F009). */
+export const RESEND_MS = 30_000;
 const CONFIG_MS = 15_000;
 const MIN = 60_000;
 
@@ -44,9 +48,12 @@ const minutes = (ms: number) => {
 	return `${n} minute${n === 1 ? "" : "s"}`;
 };
 
-/** What the child is told. Only a child with subagent_done gets it: an auto-exit child is never nudged. */
-export function nudgeText(idleMs: number): string {
-	return `Straw Boss: you have been idle for ${minutes(idleMs)}, and your caller still has no result from you. If your task is done, write your final report now and call subagent_done. If you truly wait on your caller (a decision, an access, or an answer only it can give), say so with caller_ping. If you wait on work of your own that will wake you (a monitor, a loop, your own subagents), reply in one line with what it is and when it ends.`;
+/** The mark of a request in its nudge's text: the child acks `sent` only for a message that carries the mark of the request in flight (F008). */
+export const nudgeMark = (id: string) => `reminder ${id.slice(-8)}`;
+
+/** What the child is told, marked with its request. Only a child with subagent_done gets it: an auto-exit child is never nudged. */
+export function nudgeText(idleMs: number, id: string): string {
+	return `Straw Boss (${nudgeMark(id)}): you have been idle for ${minutes(idleMs)}, and your caller still has no result from you. If your task is done, write your final report now and call subagent_done. If you truly wait on your caller (a decision, an access, or an answer only it can give), say so with caller_ping. If you wait on work of your own that will wake you (a monitor, a loop, your own subagents), reply in one line with what it is and when it ends.`;
 }
 
 /** The run's folder: `<session>.sb-nudge/<run id>`, so a resumed run on the same session file never sees another run's request. */
@@ -127,24 +134,56 @@ interface RunState {
 	done?: true;
 }
 
+/** A notice for the parent: it leaves the queue only once pi confirms the message that carries it started in the parent's session. */
+interface Notice { id: string; text: string; sentAt?: number; tries: number }
+
+/**
+ * What the nudger keeps, in a process-wide slot (sharedNudgeStore), so a reload's new nudger takes over the counts, the notices not yet confirmed, and
+ * the requests the old one revoked (F007, F009).
+ */
+export interface NudgeStore {
+	runs: Map<string, { dir: string; run: NudgeRun; state: RunState }>;
+	queue: Notice[];
+	/** Requests revoked after the child took them: an ack that still comes is removed, until no child may write one. */
+	revoked: { dir: string; id: string; until: number }[];
+}
+
+export const newNudgeStore = (): NudgeStore => ({ runs: new Map(), queue: [], revoked: [] });
+
+const STORE_KEY = Symbol.for("pi-straw-boss/done-nudge/v1");
+/** The store of this process: it outlives a reload, not a restart. A new shape takes a new key. */
+export function sharedNudgeStore(): NudgeStore {
+	const slot = globalThis as { [STORE_KEY]?: NudgeStore };
+	return (slot[STORE_KEY] ??= newNudgeStore());
+}
+
 export interface Nudger {
 	/** One look at a running child: may write or revoke a request, and may queue a notice for the parent. */
 	look(run: NudgeRun, projection: LifecycleProjection, now: number): void;
-	/** The parent's notices not yet sent, oldest first. */
-	queued(): readonly string[];
-	/** The first `count` queued notices went out. */
-	emitted(count: number): void;
-	/** Forgets the runs not in `live`, removing their open requests. */
-	prune(live: Iterable<string>): void;
+	/** The notices to send now, oldest first: those not sent, and those sent that pi has not confirmed when they are due again and `idle` says pi holds no turn that could still take them. Each returned counts as sent at `now`. */
+	outbox(now: number, idle: boolean): readonly { id: string; text: string }[];
+	/** The send of these threw: they go at the next tick. */
+	unsent(ids: readonly string[]): void;
+	/** A message started in the parent's session: the notices it carries (`details.nudgeNotices` of a `subagent_status`) leave the queue. */
+	accepted(message: unknown): void;
+	/** Notices pi has not confirmed yet. */
+	undelivered(): number;
+	/** Forgets the runs not in `live`, removing their open requests, and removes the late acks of revoked requests. */
+	prune(live: Iterable<string>, now: number): void;
+	/** The parent stops looking (a reload, a quit): every open request is revoked, an ack already there counted. */
+	stop(now: number): void;
 }
 
-export interface NudgerDeps { settings(): NudgeSettings; locale(): Locale; newId?: () => string }
+export interface NudgerDeps { settings(): NudgeSettings; locale(): Locale; newId?: () => string; store?: NudgeStore }
 
 type NoticeKind = "gave-up" | "no-ack" | "auto-exit";
+/** No child writes an ack this long after its request was written (nudge-child.ts), so a revoked request's late ack is watched for this long. */
+const LATE_MS = 2 * ACK_MS;
+const RESEND_MAX_MS = 10 * MIN;
 
 export function createNudger(deps: NudgerDeps): Nudger {
-	const runs = new Map<string, { dir: string; state: RunState }>();
-	const queue: string[] = [];
+	const store = deps.store ?? newNudgeStore();
+	const { runs, queue, revoked } = store;
 	const newId = deps.newId ?? randomUUID;
 	let cached: { at: number; value: NudgeSettings } | undefined;
 	const settings = (now: number) => {
@@ -172,44 +211,58 @@ export function createNudger(deps: NudgerDeps): Nudger {
 	};
 	const tell = (run: NudgeRun, s: RunState, now: number, kind: NoticeKind) => {
 		s.done = true;
-		queue.push(notice(run, s, now, kind));
+		queue.push({ id: randomUUID(), text: notice(run, s, now, kind), tries: 0 });
 	};
-	/** Removes the files of the open request, never another's, and forgets it. */
-	const close = (dir: string, s: RunState) => {
-		if (!s.pending) return;
-		take(requestFile(dir, s.pending.id));
-		take(ackFile(dir, s.pending.id));
+	/** Removes the files of the open request, never another's, and forgets it. One the child took and has not acked yet is watched for its late ack (F007). */
+	const close = (dir: string, s: RunState): boolean => {
+		const p = s.pending;
+		if (!p) return false;
+		const tookRequest = take(requestFile(dir, p.id));
+		const awaited = !take(ackFile(dir, p.id)) && !tookRequest;
+		if (awaited) revoked.push({ dir, id: p.id, until: p.at + LATE_MS });
 		tidy(dir);
 		s.pending = undefined;
+		return awaited;
+	};
+	/** Takes in the open request's ack when it is there; false when there is none to read. */
+	const settle = (dir: string, run: NudgeRun, s: RunState, now: number): boolean => {
+		const p = s.pending;
+		if (!p) return false;
+		const ack = readJson<NudgeAck>(ackFile(dir, p.id));
+		if (!(ack?.v === 2 && ack.id === p.id && ack.runId === run.id && OUTCOMES.includes(ack.outcome))) return false;
+		close(dir, s);
+		if (ack.outcome === "auto-exit") tell(run, s, now, "auto-exit");
+		else if (ack.outcome === "sent" || ack.outcome === "lost") {
+			if (ack.outcome === "sent") s.sent++;
+			else s.lost++;
+			s.lastSentAt = typeof ack.at === "number" && Number.isFinite(ack.at) ? Math.min(ack.at, now) : now;
+		} else s.retryAt = now + RETRY_MS;
+		return true;
 	};
 
 	return {
 		look(run, projection, now) {
 			if (run.interactive || run.persistent) return;
 			let entry = runs.get(run.id);
-			if (!entry) runs.set(run.id, (entry = { dir: nudgeDir(run.sessionFile, run.id), state: { sent: 0, lost: 0 } }));
+			if (!entry) runs.set(run.id, (entry = { dir: nudgeDir(run.sessionFile, run.id), run, state: { sent: 0, lost: 0 } }));
+			entry.run = run;
 			const s = entry.state, dir = entry.dir;
 			// A cancel revokes the open request, so a child that outlives it takes nothing.
-			if (run.cancelState) return close(dir, s);
+			if (run.cancelState) return void close(dir, s);
 			if (s.done) return;
 			if (s.pending) {
 				const p = s.pending;
-				const ack = readJson<NudgeAck>(ackFile(dir, p.id));
-				if (ack?.v === 2 && ack.id === p.id && ack.runId === run.id && OUTCOMES.includes(ack.outcome)) {
-					close(dir, s);
-					if (ack.outcome === "auto-exit") return tell(run, s, now, "auto-exit");
-					if (ack.outcome === "sent" || ack.outcome === "lost") {
-						if (ack.outcome === "sent") s.sent++;
-						else s.lost++;
-						s.lastSentAt = typeof ack.at === "number" && Number.isFinite(ack.at) ? Math.min(ack.at, now) : now;
-					} else s.retryAt = now + RETRY_MS;
+				if (settle(dir, run, s, now)) {
+					if (s.done) return;
 				} else if (now - p.at >= ACK_MS) {
 					close(dir, s);
 					return tell(run, s, now, "no-ack");
 				} else if (projection.kind !== "waiting" || projection.stateDurationSince !== p.since) {
 					// The idle stretch it was written for ended. Still there: revoked. Gone: the child took it, and its ack is still to come.
 					if (!take(requestFile(dir, p.id))) return;
-					close(dir, s);
+					take(ackFile(dir, p.id));
+					tidy(dir);
+					s.pending = undefined;
 				} else return;
 			}
 			if (projection.kind !== "waiting") return;
@@ -233,16 +286,42 @@ export function createNudger(deps: NudgerDeps): Nudger {
 			s.pending = { id, at: now, since: projection.stateDurationSince };
 			s.retryAt = undefined;
 		},
-		queued: () => queue,
-		emitted(count) {
-			queue.splice(0, Math.max(0, count));
+		outbox(now, idle) {
+			const due = queue.filter((n) => n.sentAt === undefined || (idle && now - n.sentAt >= Math.min(RESEND_MS * 2 ** Math.max(0, n.tries - 1), RESEND_MAX_MS)));
+			for (const n of due) {
+				n.sentAt = now;
+				n.tries++;
+			}
+			return due.map(({ id, text }) => ({ id, text }));
 		},
-		prune(live) {
+		unsent(ids) {
+			for (const n of queue) if (ids.includes(n.id)) n.sentAt = undefined;
+		},
+		accepted(message) {
+			const m = message as { role?: unknown; customType?: unknown; details?: { nudgeNotices?: unknown } } | undefined;
+			if (m?.role !== "custom" || m.customType !== "subagent_status" || !Array.isArray(m.details?.nudgeNotices)) return;
+			const ids: unknown[] = m.details.nudgeNotices;
+			for (let i = queue.length - 1; i >= 0; i--) if (ids.includes(queue[i].id)) queue.splice(i, 1);
+		},
+		undelivered: () => queue.length,
+		prune(live, now) {
 			const keep = new Set(live);
 			for (const [id, entry] of runs) {
 				if (keep.has(id)) continue;
 				close(entry.dir, entry.state);
 				runs.delete(id);
+			}
+			for (let i = revoked.length - 1; i >= 0; i--) {
+				const r = revoked[i];
+				if (take(ackFile(r.dir, r.id))) tidy(r.dir);
+				if (now >= r.until) revoked.splice(i, 1);
+			}
+		},
+		stop(now) {
+			for (const { dir, run, state: s } of runs.values()) {
+				if (!s.pending || settle(dir, run, s, now)) continue;
+				// Taken but not acked: the nudge may be in. The next request waits, so a reload does not ask twice in a row.
+				if (close(dir, s)) s.retryAt = now + RETRY_MS;
 			}
 		},
 	};

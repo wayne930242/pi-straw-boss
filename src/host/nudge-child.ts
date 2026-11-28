@@ -3,12 +3,14 @@ import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isChildBusy } from "@nubl/maestro/core/child-busy";
 import { hasUndeliveredChildren } from "@nubl/maestro/core/undelivered-children";
-import { ackFile, isRequestId, nudgeDir, nudgeText, readJson, requestFile, take, writeAtomic, type NudgeAck, type NudgeOutcome, type NudgeRequest } from "./nudge.ts";
+import { ACK_MS, REQUEST_MS, ackFile, isRequestId, nudgeDir, nudgeText, readJson, requestFile, take, writeAtomic, type NudgeAck, type NudgeOutcome, type NudgeRequest } from "./nudge.ts";
 
 // The child's half of the done nudge (docs/specs/2026-11-28-done-nudge.md): sb's child entry takes the parent's request from its run's folder beside its
 // session file and sends the nudge into its own session with `pi.sendUserMessage` (the path Maestro's own done nudge and its persistent inbox use), only when
 // it is idle, has no queued message, its input box holds no unsent text, and it waits on no subagent of its own. That call returns before pi takes the input,
-// so `sent` is acked only once the nudge enters the session as a user message. An auto-exit child sends nothing: a fresh turn there closes it as done.
+// so `sent` is acked only once the nudge, marked with its request, enters the session as a user message within ACCEPT_MS. An auto-exit child sends
+// nothing: a fresh turn there closes it as done. A request older than REQUEST_MS is `stale`, and no ack is written ACK_MS after its request, when the
+// parent has stopped waiting for it (F007).
 
 const POLL_MS = 2000;
 /** A nudge sent that has not entered the session this long is acked `lost`. */
@@ -61,8 +63,12 @@ export function createInbox(d: InboxCore): Inbox {
 	const dir = nudgeDir(d.file, d.runId);
 	const now = d.now ?? Date.now;
 	let lastTurnAt = -Infinity;
-	let inflight: { id: string; text: string; at: number } | undefined;
-	const ack = (id: string, outcome: NudgeOutcome) => writeAtomic(ackFile(dir, id), { v: 2, id, runId: d.runId, outcome, at: now() } satisfies NudgeAck);
+	let inflight: { id: string; text: string; at: number; requested: number } | undefined;
+	/** `requested` is when the parent wrote the request: past ACK_MS the parent no longer waits, and an ack would only be left behind. */
+	const ack = (id: string, requested: number, outcome: NudgeOutcome) => {
+		if (now() - requested >= ACK_MS) return;
+		writeAtomic(ackFile(dir, id), { v: 2, id, runId: d.runId, outcome, at: now() } satisfies NudgeAck);
+	};
 
 	const outcomeOf = (ctx: Ctx): NudgeOutcome => {
 		try {
@@ -81,9 +87,9 @@ export function createInbox(d: InboxCore): Inbox {
 			const ctx = d.ctx();
 			if (!ctx || !onLaunchFile(ctx, d.file)) return [];
 			if (inflight && now() - inflight.at >= ACCEPT_MS) {
-				const id = inflight.id;
+				const { id, requested } = inflight;
 				inflight = undefined;
-				ack(id, "lost");
+				ack(id, requested, "lost");
 			}
 			let names: string[];
 			try {
@@ -101,23 +107,25 @@ export function createInbox(d: InboxCore): Inbox {
 				if (!req || !take(requestFile(dir, id))) continue;
 				// Another run's or another session's request is not this child's to answer.
 				if (req.v !== 2 || req.id !== id || req.runId !== d.runId || typeof req.sessionFile !== "string" || resolve(req.sessionFile) !== resolve(d.file)) continue;
+				const requested = typeof req.at === "number" && Number.isFinite(req.at) ? req.at : -Infinity;
 				let outcome: NudgeOutcome;
-				if (typeof req.at !== "number" || req.at <= lastTurnAt) outcome = "stale";
+				// One written before the latest turn, or long enough ago that its parent may have revoked it or gone.
+				if (requested <= lastTurnAt || now() - requested > REQUEST_MS) outcome = "stale";
 				else if (d.autoExit) outcome = "auto-exit";
 				else outcome = outcomeOf(ctx);
 				if (outcome === "sent") {
-					const text = nudgeText(typeof req.idleMs === "number" ? req.idleMs : 0);
-					inflight = { id, text, at: now() };
+					const text = nudgeText(typeof req.idleMs === "number" ? req.idleMs : 0, id);
+					inflight = { id, text, at: now(), requested };
 					try {
 						d.pi.sendUserMessage(text, { deliverAs: "followUp" });
 					} catch {
 						inflight = undefined;
-						ack(id, "lost");
+						ack(id, requested, "lost");
 						outcomes.push("lost");
 						continue;
 					}
 					// Acked when the nudge enters the session (messageStarted), or `lost` after ACCEPT_MS.
-				} else ack(id, outcome);
+				} else ack(id, requested, outcome);
 				outcomes.push(outcome);
 			}
 			return outcomes;
@@ -126,11 +134,12 @@ export function createInbox(d: InboxCore): Inbox {
 			lastTurnAt = now();
 		},
 		messageStarted(message) {
-			// An input handler of another extension may wrap the text; one that rewrites it leaves the nudge `lost`.
+			// Only the nudge in flight carries its request's mark, so a message quoting an earlier reminder is not it. An input handler of another
+			// extension may wrap the text; one that rewrites it leaves the nudge `lost`, and so does one that enters after ACCEPT_MS (F008).
 			if (!inflight || !textOf(message)?.includes(inflight.text)) return;
-			const id = inflight.id;
+			const { id, at, requested } = inflight;
 			inflight = undefined;
-			ack(id, "sent");
+			ack(id, requested, now() - at >= ACCEPT_MS ? "lost" : "sent");
 		},
 	};
 }
