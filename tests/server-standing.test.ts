@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { TowerWorld } from "./tower-world.ts";
+import { fakeClock } from "./fake-clock.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { fileOf } from "../src/server/record.ts";
 import { callControl } from "../src/server/socket.ts";
@@ -479,22 +480,36 @@ test("between the prompt's post and the wake the next look does not type the pro
 	await nthRun();
 });
 
+// On the test's clock (TowerWorld.towerClock): the looks still run every 30 ms, but the waits between typings and the prompt's presence are read off a clock that moves only when the test moves it, so a machine that
+// runs the looks late (a load of 50) changes no count. Red before on wall-clock windows: every Herdr call 150 ms late timed out on "typed again" (the prompt counts as there for 400 ms after its last poll, leaving 200 ms).
 test("a prompt that cannot start is typed again less and less often, up to a cap, and the server says so once; a poll ends the backoff (SR-F007)", async () => {
 	world.herdr.shellPids = true;
+	const clock = (world.towerClock = fakeClock());
 	const { s, pane } = await setup();
-	await sleep(3000);
-	const typed = world.herdr.typed.length;
-	assert.ok(typed >= 3 && typed <= 6, `${typed} typings in 3 s (250, 500, then 1000 ms apart)`);
+	await until(() => world.herdr.typed.length === 1, "the first typing");
+	// A few looks' time at rest (30 ms apart): a typing too early would show by then. Under load fewer looks run, which can only let an early typing go unseen, never make a right one look early: the clock is still.
+	const looked = () => sleep(150);
 	const lines = () => readFileSync(fileOf(world.slot, "log"), "utf8").split("\n").filter((l) => /prompt-not-starting/.test(l));
+	// 250, 500, then 1000 ms apart, and 1000 at most (FAST_STANDING launchMs 250, launchMaxMs 1000).
+	for (const [n, gap] of [[2, 250], [3, 500], [4, 1000], [5, 1000], [6, 1000]] as const) {
+		clock.advance(gap - 1);
+		await looked();
+		assert.equal(world.herdr.typed.length, n - 1, `typing ${n} waits ${gap} ms`);
+		clock.advance(1);
+		await until(() => world.herdr.typed.length === n, `typing ${n}`, 30_000);
+	}
 	assert.equal(lines().length, 1, lines().join("\n"));
-	await sleep(1500);
-	assert.equal(lines().length, 1, "said once");
-	// The prompt starts at last; when it dies the next typing comes after the short wait again.
+	// The prompt starts at last; when it dies the next typing comes after the short wait again, once the prompt no longer counts as there (presentMs 400), not after the 1000 ms it had reached.
 	const prompt = new FakePrompt(s, pane);
-	await until(() => prompt.polls > 0, "a poll");
+	await until(() => prompt.polls > 0, "a poll", 30_000);
 	await prompt.exit();
 	const before = world.herdr.typed.length;
-	await until(() => world.herdr.typed.length === before + 1, "typed again", 600);
+	clock.advance(399);
+	await looked();
+	assert.equal(world.herdr.typed.length, before, "the prompt counts as there for 400 ms after its poll");
+	clock.advance(1);
+	await until(() => world.herdr.typed.length === before + 1, "typed again", 30_000);
+	assert.equal(lines().length, 1, "said once");
 });
 
 test("nothing is typed into a pane that runs something, or that has an agent, and no stand-in is reported over another agent", async () => {
