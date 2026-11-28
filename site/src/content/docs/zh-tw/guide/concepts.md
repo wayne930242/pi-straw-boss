@@ -28,7 +28,7 @@ flowchart TD
 | **塔台** | 每個工作區一座，在自己的分頁裡並釘在最前面 | 協調自己工作區的各個主智慧體與其他塔台，並為沒有 session 負責的工作開一個帶新主智慧體的分頁。它從不問你。 |
 | **主塔台** | 每台電腦一座，不屬於任何專案 | 接收你的指示，並把每項指示交給負責的工作區的塔台。見[主塔台](/pi-straw-boss/docs/zh-tw/guide/head-tower/)。 |
 | **火車** | 每列合併火車一個，名為 `train <MMDDx>`，由塔台開出 | 合併一批審查過的分支，然後結束。見[合併火車](/pi-straw-boss/docs/zh-tw/guide/merge-train/)。 |
-| **子智慧體** | 用 [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents) 啟動的，或 Herdr worktree 工作區裡的 session | 不會加入網。由啟動它的 session 代為發言，每個檢視都把它列在那個 session 底下。它的 pi 若在那個 session 還活著時死掉，Straw Boss 會用它的 session 檔把它救回來，並把它的報告帶回去（[做法](/pi-straw-boss/docs/zh-tw/reference/how-it-works/orphaned-subagents/#死掉的子智慧體會被救回)）。 |
+| **子智慧體** | 用 Straw Boss 的 `subagent` 啟動的，或 Herdr worktree 工作區裡的 session | 不會加入網。由啟動它的 session 代為發言，各檢視也把它列在該 session 底下。如果工作者還沒回報就消失，啟動它的 session 會收到一次失敗結果，再決定是否用 `subagent_resume` 接續。[自動救回只適用於已停用的舊宿主](/pi-straw-boss/docs/zh-tw/reference/how-it-works/orphaned-subagents/#死掉的子智慧體會被救回)。 |
 
 在這些角色之間切換的 `/boss` 指令與工具，見[指令](/pi-straw-boss/docs/zh-tw/reference/commands/)。
 
@@ -69,8 +69,8 @@ GUI 把 `standing` 顯示為「值守」（英文是 on watch）；本頁其餘�
 
 ### 子智慧體的種類
 
-Straw Boss 從子智慧體啟動時用的 pi-herdr-agents 角色名稱，讀出它的種類。
-角色來自 pi-herdr-agents 與它的角色包；角色做什麼，看它自己的定義。
+Straw Boss 從子智慧體啟動時使用的角色名稱辨認它的種類。
+Straw Boss 隨附下列角色；各角色負責什麼，以它自己的定義為準。
 
 | 種類 | 角色名稱 | 典型工作 | 圖示 |
 | --- | --- | --- | --- |
@@ -134,7 +134,7 @@ flowchart TD
 
 | run | 為誰喚醒 | 說明 |
 | --- | --- | --- |
-| **事件 run** | 主智慧體的 `call_tower`，或一則通知 | 從新的 session 開始；交接筆記帶過重要的事。 |
+| **事件 run** | 需要處理的事件，例如 `blocked` 呼叫、車廂單、相互衝突的預告、塔台開出的主智慧體回報，或一則通知 | 從新的 session 開始；交接筆記帶過重要的事。 |
 | **老闆對話** | 你的訊息：`/boss tower <prompt>` 或 GUI 的輸入框 | 接續你上次與該塔台的 session。 |
 | **隊友 run** | 隊友的 [Straw Link](/pi-straw-boss/docs/zh-tw/guide/straw-link/) 訊息 | 以發送者的信任等級工作；GUI 顯示為「隊友 run」。 |
 
@@ -155,6 +155,8 @@ flowchart TD
 | `milestone` | 有東西落地 | 一個分支合併了 |
 | `shared` | 在它更動分頁之外的東西之前 | port、資料庫、共用分支、部署目標 |
 | `blocked` | 它在等分頁之外的某人 | 一項決定、一個部署時段 |
+
+例行進度和預告會記入日誌，不會叫醒塔台。用 `/boss board log` 查看。
 
 - **`tower_list` 與 `tower_send`**：塔台列出每個工作區的塔台，並寫給其中一座或全部。沒有塔台的工作區，改由它的主智慧體接收，再不然由它的成員。
 - **`boss_broadcast`**：發給一個分頁、一個工作區、所有塔台或所有 session 的訊息。
@@ -178,6 +180,6 @@ flowchart TD
 
 ## 整理工作
 
-Straw Boss 還會讓分頁保持整齊、請被留下的子智慧體回報、接續 Herdr 重啟後變成一般 pi session 的子智慧體（[孤立的子智慧體](/pi-straw-boss/docs/zh-tw/reference/how-it-works/orphaned-subagents/)），並停掉失控的程序（[程序衛生](/pi-straw-boss/docs/zh-tw/guide/process-hygiene/)）。
+Straw Boss 也會整理分頁，預設在符合條件的子智慧體閒置 10 分鐘後提醒收尾；工作者消失時會通知啟動它的 session，並會清理殘留程序（[程序衛生](/pi-straw-boss/docs/zh-tw/guide/process-hygiene/)）。
 
 完整規則見[角色與塔台](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/)。

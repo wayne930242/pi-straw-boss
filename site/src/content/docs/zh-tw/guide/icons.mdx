@@ -12,7 +12,7 @@ import NerdGlyph from "../../../../components/NerdGlyph.astro";
 用一條規則決定標記：
 
 - 塔台、主塔台與火車，一律顯示自己的標記（在 Herdr 裡，塔台與主塔台的標記在它們的分頁上）。
-- 已知[種類](/pi-straw-boss/docs/zh-tw/guide/concepts/#種類)的主智慧體或子智慧體，顯示它種類的標記。主智慧體用 `boss_duty` 工具自己設定種類（沒設定就是 `coordinator`），子智慧體的種類來自啟動它時用的 pi-herdr-agents 角色。
+- 已知[種類](/pi-straw-boss/docs/zh-tw/guide/concepts/#種類)的主智慧體或子智慧體，顯示它種類的標記。主智慧體用 `boss_duty` 工具自己設定種類（沒設定就是 `coordinator`），子智慧體的種類來自派工時交給 Straw Boss `subagent` 的角色。
 - 其他智慧體顯示它所在位置的一般標記：主智慧體、成員或子智慧體。
 
 在瀏覽器檢視裡，圖示的顏色跟著單位的即時狀態（工作中、等你、閒置等）變化；圖案本身不隨狀態改變。
@@ -51,7 +51,7 @@ import NerdGlyph from "../../../../components/NerdGlyph.astro";
 
 | 圖示 | 代表 |
 | :---: | --- |
-| <NetIcon id="outpost" /> | 子工作區（前哨）：pi-herdr-agents 為子智慧體開的 worktree 工作區 |
+| <NetIcon id="outpost" /> | 子工作區（前哨）：Herdr 的連結 worktree 工作區 |
 | <NetIcon id="outside" /> | 網外的 pi pane：還沒加入網的 pi，列出來讓它不被藏起來 |
 | <NetIcon id="user" /> | 你，出現在單位的通訊紀錄裡 |
 | <NetIcon id="comms" /> | 通訊頻道與收到的訊息 |

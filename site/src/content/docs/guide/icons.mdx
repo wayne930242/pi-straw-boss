@@ -12,7 +12,7 @@ The [browser view](/pi-straw-boss/docs/guide/browser-view/) draws it as an icon,
 One rule picks the mark:
 
 - A tower, the head tower, and a train always show their own mark (in Herdr, a tower's and the head tower's mark is on their tab).
-- A main agent or a subagent with a known [kind](/pi-straw-boss/docs/guide/concepts/#kinds) shows its kind's mark. A main sets its kind itself with the `boss_duty` tool (`coordinator` unless it says otherwise), and a subagent's from the pi-herdr-agents role it was launched with.
+- A main agent or a subagent with a known [kind](/pi-straw-boss/docs/guide/concepts/#kinds) shows its kind's mark. A main sets its kind itself with the `boss_duty` tool (`coordinator` unless it says otherwise), and a subagent's from the role passed to Straw Boss's `subagent` tool.
 - Any other agent shows the plain mark of its position: main agent, member, or subagent.
 
 In the browser view the icon's color follows the unit's live state (working, waiting on you, idle, and so on); the drawing never changes with the state.
@@ -51,7 +51,7 @@ A subagent launched with any other role name shows the plain subagent mark.
 
 | Icon | Stands for |
 | :---: | --- |
-| <NetIcon id="outpost" /> | A sub workspace (outpost): a worktree workspace that pi-herdr-agents opened for a subagent |
+| <NetIcon id="outpost" /> | A sub workspace (outpost): a linked Herdr worktree workspace |
 | <NetIcon id="outside" /> | A pi pane outside the net: a pi that has not joined, shown so nothing is hidden |
 | <NetIcon id="user" /> | You, in a unit's comms log |
 | <NetIcon id="comms" /> | The comms channel and incoming messages |

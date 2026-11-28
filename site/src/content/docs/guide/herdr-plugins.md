@@ -46,7 +46,7 @@ The plugin in [`herdr-reaper/`](https://github.com/wayne930242/pi-straw-boss/tre
 
 - **Panes.** In a workspace whose folder is a linked git worktree, it closes the pane of an agent that has exited once the pane's shell is idle, and never the focused pane. Herdr then closes the tab and the workspace.
 - **Checkouts.** It removes the workspace's checkout when `git status` is clean and nothing else uses it. Git-ignored files (`.env`, `node_modules`, caches, local databases) do not make a checkout dirty, so they are deleted with it. The branch always stays, and so does a dirty checkout, with the reason in the plugin log.
-- **Kept.** A worktree pi-herdr-agents created stays until its parent session removes it with `worktree_remove` (or the parent has been silent for 72 hours), and so does a checkout a process of yours works in. A checkout with initialized submodules is removed only when no commit can be lost.
+- **Kept.** A managed worktree the retired pi-herdr-agents host created stays until its parent session removes it with `worktree_remove` (or the parent has been silent for 72 hours), and so does a checkout a process of yours works in. A checkout with initialized submodules is removed only when no commit can be lost.
 - **Main-checkout workspaces.** A plain shell workspace Herdr opened for the main checkout, to group the worktrees under, is closed once no worktree workspace of that repository is left and it holds only idle shells.
 - **Pins.** A pinned workspace is never reaped and its checkout is never removed. Renaming a workspace pins it at once, and the `pin` action toggles the pin.
 

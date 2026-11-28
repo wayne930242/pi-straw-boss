@@ -83,6 +83,18 @@ Finished subagents on the map are dismissed one by one or all at once (Dismiss f
 
 The page reads in English or Traditional Chinese, following your browser, with a language menu in the settings.
 
+## Situation board
+
+On the head tower's work board, the device tray shows its capacity in points, the work using those points, and the free slots. The barracks lists work ready to start. The board also marks mains paused on a quota or stale with open todos.
+
+<p align="center"><img src="/pi-straw-boss/docs/img/gui-board-capacity.png" width="49%" alt="Standard: device capacity, occupied slots, and ready work"> <img src="/pi-straw-boss/docs/img/gui-board-raven.png" width="49%" alt="Raven Keep: deployed bats, empty graves, and waiting bats at the gate"></p>
+
+## Cars and the yard
+
+A main's unit card shows where its train cars stand, including which check a car is riding through or which load it is waiting for. **See this train** opens the yard at that train. The yard lists the train's steps, required load, and each car's acceptance and notice.
+
+<p align="center"><img src="/pi-straw-boss/docs/img/gui-car-card.png" width="34%" alt="A main's cars and their current stages"> <img src="/pi-straw-boss/docs/img/gui-car-yard.png" width="64%" alt="Yard showing the selected train's steps and cars"></p>
+
 ## Opening and closing
 
 - **+ New base**, the last card on the map, opens a base in a folder you pick, with one member and no tower. The folder picker stays inside your home folder and skips hidden folders.

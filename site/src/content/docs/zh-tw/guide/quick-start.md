@@ -31,7 +31,7 @@ flowchart LR
 3. **輸入 `/boss tower`**，開啟該工作區的塔台並查看它的儀表板。智慧體開始互相衝突時，它也會自己開。你不需要對它說話。
 4. **在任何 session 輸入 `/boss gui`**，在瀏覽器裡看整張網。
 
-![終端機裡塔台的儀表板：這張網的分頁、智慧體與子智慧體，以及其他塔台](/pi-straw-boss/docs/img/tower-dashboard.png)
+![瀏覽器裡 Harbor API 的工作區儀表板：塔台、小隊、智慧體和子智慧體](/pi-straw-boss/docs/img/tower-dashboard.png)
 
 ## 塔台自己運作
 

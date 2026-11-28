@@ -31,8 +31,9 @@ Windows 支援還在實驗階段。
 | [@juicesharp/rpiv-ask-user-question](https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question) 2.13 或更新版本 | `ask_user_question` 的問卷可以從 GUI 回答或取消，等待中的問卷會把它的單位標示為等待中。 |
 | [pi-robot-hand](https://www.npmjs.com/package/pi-robot-hand) 0.3.0 或更新版本 | `robot_hand` 的選擇器可以從 GUI 回答。 |
 | pi-code（hooks 擴充套件，含它的對話框事件） | 它的 hook 確認（「Allow bash?」）可以從 GUI 回答。 |
-| [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 或更新版本 | session 展示的文件會開在它的通訊畫面旁：HTML 在沙箱 frame 裡，其表單的答案會送回智慧體，文字則為唯讀。 |
-| [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 2.13 或更新版本 | session 的 todo 清單顯示在 GUI 的輸入框上方，內容讀自 session 檔。 |
+| [pi-better-show](https://www.npmjs.com/package/pi-better-show) 0.1.0 或更新版本 | session 展示的文件會開在通訊畫面旁，Markdown 區塊的答案會送回文件的擁有者。已封存的 pi-herdr-doc-review 仍可作為文件來源。 |
+| [pi-todo-ledger](https://www.npmjs.com/package/pi-todo-ledger) | 提供繪製計畫圖所需的 todo；它的待辦面板會列出車廂和等你回答的問題。 |
+| [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 2.13 或更新版本 | 沒有 pi-todo-ledger 時，作為 GUI 待辦清單的備援來源。 |
 
 任何擴充套件的 `select` 與 `confirm` 也都可以從 GUI 回答，不必改動那個擴充套件。
 不論在 pi 或在 GUI 裡，先回答的算數。

@@ -31,8 +31,9 @@ When one is installed, Straw Boss picks it up; without it, the rest works as bef
 | [@juicesharp/rpiv-ask-user-question](https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question) 2.13 or newer | `ask_user_question` questionnaires can be answered or cancelled from the GUI, and a waiting one marks its unit as waiting. |
 | [pi-robot-hand](https://www.npmjs.com/package/pi-robot-hand) 0.3.0 or newer | `robot_hand` selectors can be answered from the GUI. |
 | pi-code (hooks extension, with its dialog events) | Its hook confirmation ("Allow bash?") can be answered from the GUI. |
-| [pi-herdr-doc-review](https://www.npmjs.com/package/pi-herdr-doc-review) 0.4.0 or newer | Documents a session shows open beside its comms: HTML in a sandboxed frame whose form answers the agent, text read-only. |
-| [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 2.13 or newer | A session's todo list shows above its composer in the GUI, read from the session file. |
+| [pi-better-show](https://www.npmjs.com/package/pi-better-show) 0.1.0 or newer | A session's documents open beside its comms, and Markdown block answers go back to the owner. Archived pi-herdr-doc-review still works as a document source. |
+| [pi-todo-ledger](https://www.npmjs.com/package/pi-todo-ledger) | Supplies todos for plan graphs; its todo panel shows train cars and questions waiting on you. |
+| [@juicesharp/rpiv-todo](https://www.npmjs.com/package/@juicesharp/rpiv-todo) 2.13 or newer | Fallback source for the GUI todo list when pi-todo-ledger is absent. |
 
 Any extension's `select` and `confirm` can be answered from the GUI too, with no change to that extension.
 The first answer, in pi or in the GUI, wins.

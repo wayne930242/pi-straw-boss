@@ -67,6 +67,10 @@ stateDiagram-v2
 - 你已經用自己的名稱在跑的整合員（例如 `integ FE2` 與 `integ v3`）會留著：塔台不會在它們旁邊再開一個，而是把每張車廂單轉發給跑那個 app 火車的那一個。
 - 在共用的機器上，為隊友的裝置開的主智慧體用同樣的方式送出車廂單。
 
+## 看車廂在哪
+
+用 `/boss cars` 在終端機查看車廂和進度。在瀏覽器打開協調者的單位卡，點車廂上的「看這列火車」，就會跳到調車場裡的那列火車。見[車廂與調車場](/pi-straw-boss/docs/zh-tw/guide/browser-view/#車廂與調車場)。
+
 ## 你要設定什麼
 
 - **`apps.json`**：頂層的 `integration`（`skill`、`maxCars` 4、`maxWaitMin` 60、`maxTrains` 3），以及每個 app 的 `integration`（`base`、`skill`、`stages`、`accept`、`targets`）。[`prompts/apps-config.md`](https://github.com/wayne930242/pi-straw-boss/blob/main/prompts/apps-config.md) 說明每個欄位。

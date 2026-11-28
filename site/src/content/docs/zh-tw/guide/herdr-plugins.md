@@ -46,7 +46,7 @@ token 與 rows 範例見[側邊欄網檢視](/pi-straw-boss/docs/zh-tw/reference
 
 - **Pane。** 在資料夾是已連結的 git worktree 的工作區裡，等智慧體已退出、且 pane 的 shell 閒置時，它會關掉那個 pane，但絕不關掉有焦點的 pane。接著 Herdr 會關掉分頁與工作區。
 - **Checkout。** 當 `git status` 是乾淨的、且沒有別的東西在用它時，它會移除該工作區的 checkout。被 git 忽略的檔案（`.env`、`node_modules`、快取、本機資料庫）不會讓 checkout 變髒，所以會一起被刪掉。分支一律保留，髒的 checkout 也保留，原因寫在外掛的 log 裡。
-- **保留。** pi-herdr-agents 建立的 worktree 會保留，直到它的父 session 用 `worktree_remove` 移除它（或父 session 已沉默 72 小時）；你的某個程序正在裡面工作的 checkout 也會保留。有已初始化 submodule 的 checkout，只有在不會遺失任何 commit 時才會移除。
+- **保留。** 已停用的 pi-herdr-agents 宿主建立的受管理 worktree 會保留，直到它的父 session 用 `worktree_remove` 移除它（或父 session 已沉默 72 小時）；你的某個程序正在裡面工作的 checkout 也會保留。有已初始化 submodule 的 checkout，只有在不會遺失任何 commit 時才會移除。
 - **主 checkout 工作區。** Herdr 為主 checkout 開的一般 shell 工作區（用來把 worktree 歸在底下），在該儲存庫已沒有 worktree 工作區、且只剩閒置 shell 時會被關掉。
 - **釘選。** 被釘選的工作區絕不被清理，它的 checkout 也絕不被移除。重新命名工作區會立刻釘選它，`pin` action 可以切換釘選。
 

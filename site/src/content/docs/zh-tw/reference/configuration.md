@@ -50,6 +50,8 @@ pi-straw-boss 不需要任何設定就能運作。
 | `link.trust` | 每個裝置都是 `reply` | 這台電腦對每位隊友裝置的信任程度：`reply`、`forward` 或 `dispatch`。 |
 | `subagentNudge.idleMinutes` | 10 | [sb 子代理宿主](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-subagent-host/)的子智慧體回合結束、還沒交回結果，閒置多久後 sb 會請它收尾；提醒經由子智慧體自己的 pi 送出，絕不打進輸入框裡未送出的文字。互動式子智慧體與常駐專家一律不提醒；自動結束的子智慧體也不提醒，因為新的一回合會讓它當成完成關閉，改為告訴父 session。可用小數；`0` 關掉提醒。最多每 15 秒讀一次。 |
 | `subagentNudge.max` | 2 | 同一個 run 最多提醒幾次，1 到 10，每段閒置一次。最後一次之後又閒置那麼久，就告訴父 session 一次，不再提醒。 |
+| `ledger.janitor` | 無 | 主塔台每日清掃時要執行的 ledger janitor，填執行檔的絕對路徑。未設定就不執行外部 janitor。 |
+| `link.delegate` | 無 | `{ device, owner? }`：在有人值守的裝置上，符合條件的核准卡片會先交給這位隊友的裝置，也可指定該裝置上的主智慧體。無人值守時改讀政策檔的 `delegate`。 |
 
 頁面與 `/boss link` 指令會自己寫入 `link` 區段的 `teams`；只有要修復時才手動編輯。
 在無人值守裝置上，改由 root 擁有的 `/etc/straw-link/policy.json` 提供團隊與信任，`link` 區段會被忽略。
@@ -82,6 +84,7 @@ pi-straw-boss 不需要任何設定就能運作。
 
 | 變數 | 做什麼 |
 | --- | --- |
+| `PI_STRAW_BOSS_HOST` | `sb` 或 `off`；優先於 `host.json` 的宿主設定。 |
 | `PI_CODING_AGENT_DIR` | pi 的 agent 資料夾，狀態資料夾 `straw-boss/` 就在裡面。預設 `~/.pi/agent`。 |
 | `STRAW_BOSS_INTEGRATION` | `off` 或 `on`：合併火車的開關。非空值優先於 `config.json` 裡的 `integration`。 |
 | `STRAW_BOSS_DESK` | `1` 表示自己顯示頁面的桌面 shell：GUI 不開瀏覽器，合併火車除非你設為開啟，否則是關的。見[桌面模式](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-sb-server/#桌面模式up---dir)。 |
@@ -89,5 +92,6 @@ pi-straw-boss 不需要任何設定就能運作。
 
 ## 其他檔案
 
+- **子代理宿主：** `<agent dir>/straw-boss/host.json` 可設 `{ "host": "sb" }` 或 `{ "host": "off" }`，沒有時讀 `~/.pi/agent/straw-boss/host.json`。環境變數與設定檔都未指定時，宿主預設開啟。
 - **禪的音樂：** 音訊檔放在 `~/.pi/agent/straw-boss-music/`。見[瀏覽器檢視](/pi-straw-boss/docs/zh-tw/guide/browser-view/#禪)。
 - **擴充套件寫入什麼：** 見[它寫入什麼](/pi-straw-boss/docs/zh-tw/reference/how-it-works/what-it-writes/)。

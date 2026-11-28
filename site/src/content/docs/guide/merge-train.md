@@ -67,6 +67,10 @@ Integrators:
 - Integrators you already run under names of their own (such as `integ FE2` and `integ v3`) stay: the tower opens none beside them and forwards each slip to the one that runs that app's trains.
 - On a shared box, a main opened for a teammate's device sends its car slip the same way.
 
+## Find a car
+
+Run `/boss cars` to see the cars and their states in the terminal. In the browser, open the coordinator's unit card and choose **See this train** on a car to jump to its train in the yard. See [Cars and the yard](/pi-straw-boss/docs/guide/browser-view/#cars-and-the-yard).
+
 ## What you set
 
 - **`apps.json`**: a top-level `integration` (`skill`, `maxCars` 4, `maxWaitMin` 60, `maxTrains` 3) and a per-app `integration` (`base`, `skill`, `stages`, `accept`, `targets`). [`prompts/apps-config.md`](https://github.com/wayne930242/pi-straw-boss/blob/main/prompts/apps-config.md) describes every field.

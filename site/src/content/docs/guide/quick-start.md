@@ -31,7 +31,7 @@ What each icon on the screen stands for is in [Icons](/pi-straw-boss/docs/guide/
 3. **Type `/boss tower`** to open the workspace's tower and watch its dashboard. It also opens by itself when agents start to collide. You do not need to talk to it.
 4. **Type `/boss gui`** from any session to see the whole net in your browser.
 
-![The tower's dashboard in the terminal: this net's tabs, agents, and subagents, and the other towers](/pi-straw-boss/docs/img/tower-dashboard.png)
+![The browser's workspace dashboard for Harbor API: its tower, squads, agents, and subagents](/pi-straw-boss/docs/img/tower-dashboard.png)
 
 ## The tower runs on its own
 

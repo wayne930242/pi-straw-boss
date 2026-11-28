@@ -59,6 +59,7 @@ The full table, with every argument, is in [Tools](/pi-straw-boss/docs/reference
 | Command | What it does |
 | --- | --- |
 | `/boss` | Take over as this tab's main agent, even when it has one. |
+| `/subagent <agent> <task>` | Launch a subagent with the named role. Use `/subagent list` to see the roles. |
 | `/boss status` | Each tab's main agent and the towers. |
 | `/boss asks` | The questions waiting on you on this computer: `call_tower`'s boss questions, the open wait cards, a teammate's waits raised to you, and units that wait on `ask_user_question`, each as `Q3 · 7m · asker · where · subject` with the todo it blocks, this session's and its subagents' first. The todo panel draws the same rows through `straw-boss:ask-rows:v1`; see [Questions waiting on you](/pi-straw-boss/docs/reference/how-it-works/browser-view/#questions-waiting-on-you). |
 | `/boss board` | The work board as text: each main's line, its done count and age, the stale and the ended ones (this computer only). |

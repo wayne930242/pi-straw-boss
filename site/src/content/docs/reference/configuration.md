@@ -50,6 +50,8 @@ The settings file is `<agentDir>/straw-boss/config.json`, where `<agentDir>` is 
 | `link.trust` | `reply` for every device | How far this computer trusts each teammate's device: `reply`, `forward`, or `dispatch`. |
 | `subagentNudge.idleMinutes` | 10 | How long a child of [sb's subagent host](/pi-straw-boss/docs/reference/how-it-works/the-subagent-host/) may sit idle, its turn ended and no result delivered, before sb asks it to finish, through the child's own pi and never into unsent text in its input box. Interactive children and persistent specialists are never asked, nor is an auto-exit child, since a fresh turn would close it as done: its parent is told instead. Fractions are allowed; `0` turns the nudge off. Read at most every 15 seconds. |
 | `subagentNudge.max` | 2 | How many times one run is asked, from 1 to 10, one per idle stretch. When it is still idle that long after the last one, its parent is told once and sb stops asking. |
+| `ledger.janitor` | none | Absolute path to the ledger janitor executable used for the head tower's daily sweep. Unset, the external janitor does not run. |
+| `link.delegate` | none | `{ device, owner? }`: the teammate device, and optionally its main, that receives eligible approval cards first on an attended device. Unattended devices use the policy file's `delegate`. |
 
 The page and the `/boss link` commands write the `link` section's `teams` themselves; edit it by hand only to fix it.
 On an unattended device, the root-owned `/etc/straw-link/policy.json` takes the teams and the trust instead, and the `link` section is ignored.
@@ -82,6 +84,7 @@ Set these in the environment of `herdr server` and the sessions it starts.
 
 | Variable | What it does |
 | --- | --- |
+| `PI_STRAW_BOSS_HOST` | `sb` or `off`; overrides the host selection in `host.json`. |
 | `PI_CODING_AGENT_DIR` | pi's agent folder, where the state folder `straw-boss/` lives. Default `~/.pi/agent`. |
 | `STRAW_BOSS_INTEGRATION` | `off` or `on`: the merge train switch. A non-empty value wins over `integration` in `config.json`. |
 | `STRAW_BOSS_DESK` | `1` for a desktop shell that shows the page itself: the GUI opens no browser, and the merge train is off unless you set it on. See [Desk mode](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/#desk-mode-up---dir). |
@@ -89,5 +92,6 @@ Set these in the environment of `herdr server` and the sessions it starts.
 
 ## Other files
 
+- **Subagent host:** `<agent dir>/straw-boss/host.json` takes `{ "host": "sb" }` or `{ "host": "off" }`, falling back to `~/.pi/agent/straw-boss/host.json`. With neither an environment override nor a file setting, the host is on.
 - **Music for Zen:** audio files in `~/.pi/agent/straw-boss-music/`. See [The browser view](/pi-straw-boss/docs/guide/browser-view/#zen).
 - **What the extension writes:** see [What it writes](/pi-straw-boss/docs/reference/how-it-works/what-it-writes/).

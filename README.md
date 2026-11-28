@@ -42,10 +42,10 @@ pi install npm:pi-straw-boss
 ```
 
 It needs pi inside [Herdr](https://herdr.dev) 0.9.4 or newer, Herdr's pi integration (`herdr integration install pi`), and [pi-intercom](https://www.npmjs.com/package/pi-intercom) 0.18.1 or newer, which the sb server needs and the install does not bring (`pi install npm:pi-intercom`).
-The install brings subagent dispatch too (`subagent`, `subagent_cancel`, `subagent_resume`, `subagents_list`), hosted by sb on the Maestro engine, from any pi session; it works without pi-intercom. With pi-herdr-agents also installed, sb's host stands down: keep one of the two ([The subagent host](https://wayne930242.github.io/pi-straw-boss/docs/reference/how-it-works/the-subagent-host/)).
+The install brings subagent dispatch too (`subagent`, `subagent_cancel`, `subagent_resume`, `subagents_list`), hosted by sb on the Maestro engine, from any pi session; it works without pi-intercom. Straw Boss replaces the retired pi-herdr-agents host. If it is still loaded, follow the startup warning's `pi remove` command and then `/reload` ([The subagent host](https://wayne930242.github.io/pi-straw-boss/docs/reference/how-it-works/the-subagent-host/)).
 The merge train also needs `integrating` and `deploying` skills that declare the [merge-train contract](https://wayne930242.github.io/pi-straw-boss/docs/guide/merge-train/#the-merge-train-contract).
 Windows support is experimental.
-sb ships the pi-herdr-agents roles its agents run as (`worker`, `scout`, `planner`, `reviewer`, `visual-tester`, `adversarial-reviewer`); uninstall pi-herdr-roles, whose same-named roles would collide.
+sb ships the roles its agents run as (`worker`, `scout`, `planner`, `reviewer`, `visual-tester`, `adversarial-reviewer`); uninstall pi-herdr-roles, whose same-named roles would collide.
 See [Install](https://wayne930242.github.io/pi-straw-boss/docs/guide/install/) for the optional packages it works with.
 
 ## Quick start

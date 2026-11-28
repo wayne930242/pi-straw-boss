@@ -28,7 +28,7 @@ flowchart TD
 | **Tower** | One per workspace, in its own tab pinned first | Coordinates the mains of its workspace and the other towers, and opens a tab with a new main for work no session owns. It never asks you. |
 | **Head tower** | One per computer, belonging to no project | Takes your instructions and hands each to the tower of the workspace that owns it. See [The head tower](/pi-straw-boss/docs/guide/head-tower/). |
 | **Train** | One per merge train, named `train <MMDDx>`, opened by the tower | Merges a batch of reviewed branches and ends. See [Merge train](/pi-straw-boss/docs/guide/merge-train/). |
-| **Subagent** | Launched with [pi-herdr-agents](https://github.com/giuseppecrj/pi-herdr-agents), or a session in a Herdr worktree workspace | Never joins the net. The session that launched it speaks for it, and every view lists it under that session. If its pi dies while that session lives, Straw Boss revives it from its session file and brings its report back ([how](/pi-straw-boss/docs/reference/how-it-works/orphaned-subagents/#a-subagent-that-dies-is-revived)). |
+| **Subagent** | Launched with Straw Boss's `subagent` tool, or a session in a Herdr worktree workspace | Never joins the net. The launcher speaks for it and every view lists it under the launcher. If a worker disappears before reporting, the launcher gets one failed result and decides whether to use `subagent_resume`. [Automatic revival was for the retired host only](/pi-straw-boss/docs/reference/how-it-works/orphaned-subagents/#a-subagent-that-dies-is-revived). |
 
 The `/boss` commands and tools that move between these roles are in [Commands](/pi-straw-boss/docs/reference/commands/).
 
@@ -69,8 +69,8 @@ The GUI shows `standing` as **on watch** (zh-TW 值守); this page keeps the cod
 
 ### Kinds of subagent
 
-Straw Boss reads the kind from the name of the pi-herdr-agents role the subagent was launched with.
-The roles come from pi-herdr-agents and its role packs; what a role does is in its own definition.
+Straw Boss reads the kind from the name of the role the subagent was launched with.
+Straw Boss ships the roles below; each role definition describes what it does.
 
 | Kind | Role names | Typical job | Icon |
 | --- | --- | --- | --- |
@@ -134,7 +134,7 @@ flowchart TD
 
 | Run | Wakes for | Notes |
 | --- | --- | --- |
-| **Event run** | A main's `call_tower`, or a notice | Starts fresh; the handoff note carries over what matters. |
+| **Event run** | An event requiring action: a `blocked` call, a car slip, a conflicting heads-up, a report from a main the tower opened, or a notice | Starts fresh; the handoff note carries over what matters. |
 | **Boss conversation** | Your message: `/boss tower <prompt>` or the GUI's composer | Resumes your last session with that tower. |
 | **Ally run** | A teammate's [Straw Link](/pi-straw-boss/docs/guide/straw-link/) message | Works at the sender's trust level; the GUI shows it as an *ally run*. |
 
@@ -155,6 +155,8 @@ You still talk to a main in its own pane as before; the head's viewer is for zen
 | `milestone` | Something landed | A branch merged |
 | `shared` | Before it changes something outside its tab | A port, a database, a shared branch, a deploy target |
 | `blocked` | It waits on someone outside its tab | A decision, a deploy window |
+
+Routine milestones and heads-ups go to the logbook without waking the tower. Read them with `/boss board log`.
 
 - **`tower_list` and `tower_send`**: a tower lists every workspace's tower and writes to one or all of them. A workspace without a tower is reached through its mains, else its members.
 - **`boss_broadcast`**: a message to a tab, a workspace, every tower, or every session.
@@ -178,6 +180,6 @@ See [The sb server](/pi-straw-boss/docs/reference/how-it-works/the-sb-server/).
 
 ## Housekeeping
 
-Straw Boss also keeps tabs tidy, asks stranded subagents to report, resumes subagents a Herdr restart brought back as plain pi sessions ([Orphaned subagents](/pi-straw-boss/docs/reference/how-it-works/orphaned-subagents/)), and stops stray processes ([Process hygiene](/pi-straw-boss/docs/guide/process-hygiene/)).
+Straw Boss keeps tabs tidy, sends a completion reminder after 10 minutes of eligible subagent idleness by default, reports workers that disappear to their launchers, and stops stray processes ([Process hygiene](/pi-straw-boss/docs/guide/process-hygiene/)).
 
 The full rules are in [Roles and the tower](/pi-straw-boss/docs/reference/how-it-works/how-it-works/).

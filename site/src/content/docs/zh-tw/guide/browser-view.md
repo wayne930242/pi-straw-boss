@@ -7,7 +7,7 @@ description: 整張網即時顯示在瀏覽器裡，智慧體等待的問題就�
 它由 sb server 提供，每台電腦一個，所以不依賴哪個 session 在跑。
 [試試展示](https://wayne930242.github.io/pi-straw-boss/)：它用虛構的智慧體執行，什麼都不用裝。
 
-![標準檢視裡的草網：各個基地與其塔台、智慧體、子智慧體的即時狀態，標題列顯示數量與等待中的單位](/pi-straw-boss/docs/img/straw-net-gui.png)
+![標準檢視裡的稻草網：各個基地與其塔台、智慧體、子智慧體的即時狀態，標題列顯示數量與等待中的單位](/pi-straw-boss/docs/img/straw-net-gui.png)
 
 ## 地圖
 
@@ -82,6 +82,18 @@ description: 整張網即時顯示在瀏覽器裡，智慧體等待的問題就�
 地圖上已完成的子智慧體可以一個個移除，或一次全部移除（移除已完成）。
 
 頁面以英文或繁體中文顯示，跟隨你的瀏覽器，設定裡有語言選單。
+
+## 戰況板
+
+主塔台的工作看板會列出裝置的額度、目前工作用了幾點，以及還有幾格空位。待命區列出可以開始的工作。主智慧體若因額度暫停，或手上還有待辦卻久久沒有進展，看板也會標出來。
+
+<p align="center"><img src="/pi-straw-boss/docs/img/gui-board-capacity.png" width="49%" alt="標準檢視：裝置額度、已占用的格子與待命工作"> <img src="/pi-straw-boss/docs/img/gui-board-raven.png" width="49%" alt="烏鴉堡：已出動的蝙蝠、空墓與在門口待命的蝙蝠"></p>
+
+## 車廂與調車場
+
+主智慧體的單位卡會列出它的車廂進度，例如正在跑哪一道檢查，或在等哪個作業資源。點「看這列火車」會開啟調車場並定位到該列火車。調車場列出火車的步驟、需要的作業資源，以及各車廂的驗收與通知。
+
+<p align="center"><img src="/pi-straw-boss/docs/img/gui-car-card.png" width="34%" alt="主智慧體的車廂與各自的進度"> <img src="/pi-straw-boss/docs/img/gui-car-yard.png" width="64%" alt="調車場顯示指定火車的步驟與車廂"></p>
 
 ## 開啟與關閉
 

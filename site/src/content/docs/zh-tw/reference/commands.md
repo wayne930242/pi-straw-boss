@@ -59,6 +59,7 @@ description: pi-straw-boss 給智慧體的每個工具，以及每個 /boss 指�
 | 指令 | 做什麼 |
 | --- | --- |
 | `/boss` | 接手成為這個分頁的主智慧體，即使它已經有一位。 |
+| `/subagent <agent> <task>` | 指定角色和任務來啟動子智慧體。用 `/subagent list` 查看角色。 |
 | `/boss status` | 每個分頁的主智慧體與各座塔台。 |
 | `/boss asks` | 這台電腦上在等你回答的問題：`call_tower` 的 boss 問題、開著的等待卡、隊友送到你這裡的等待，以及在等 `ask_user_question` 的單位，每題顯示為 `Q3 · 7m · 發問者 · 位置 · 主旨`，並寫出它卡住的 todo；這個 session 和它的子代理排前面。todo 面板透過 `straw-boss:ask-rows:v1` 畫的是同樣的列；見[等你回答的問題](/pi-straw-boss/docs/zh-tw/reference/how-it-works/browser-view/#等你回答的問題)。 |
 | `/boss board` | 以文字顯示工作看板：每個主智慧體的那一行、完成數與更新時間、過時與已結束的條目（只限這台電腦）。 |
