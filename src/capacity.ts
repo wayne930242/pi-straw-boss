@@ -26,7 +26,7 @@ export interface Job { owner?: string; points: number; until?: number }
 /** An open todo as the stale reminder names it (docs/specs/2026-11-28-stale-snooze.md): `until`, when `metadata.until` or `metadata.waitsOn` defers it (8.64e15 for a wait on a person). */
 export interface CapTodo { id: number; subject: string; until?: number }
 /** What a main writes: its in-progress todos that have an owner (`doing`), its pending todos whose blockers are all done (`ready`), its open todos (the count, and each: `todos`), its pause, and its snoozes of the stale reminder. */
-export interface MainCap { v: 1; session: string; updated: number; doing: Job[]; ready: Job[]; open: number; deadlines?: number[]; pause?: Pause; todos?: CapTodo[]; snoozes?: Snooze[] }
+export interface MainCap { v: 1; session: string; updated: number; doing: Job[]; ready: Job[]; open: number; deadlines?: number[]; pause?: Pause; todos?: CapTodo[]; /** Past the listed todos: the earliest deferral end of the open ones the file does not list, 0 when one of them is not deferred (r3-F004). */ rest?: number; snoozes?: Snooze[] }
 
 const num = (v: unknown, lo: number, hi: number) => (typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi ? v : undefined);
 const pointsOf = (t: Pick<Todo, "points">) => t.points ?? DEFAULT_POINTS;
@@ -61,11 +61,16 @@ export function capOfTodos(list: readonly CapTask[], snapshot?: unknown): Pick<M
 /** Open todos a capacity file lists: every one, for the stale reminder decides on the whole list (review F006); past the bound the file keeps the count, and the ones it does not list are unanswered work (r2-F001). A row shows `SHOWN` of them. */
 const TODOS = 5000, OPEN_MAX = 1_000_000, SHOWN = 3, SUBJECT = 80;
 /** A todo list's open todos for the stale reminder, each with its deferral's end. */
-export function openTodos(list: readonly CapTask[], snapshot?: unknown, keep: ReadonlySet<number> = new Set()): CapTodo[] {
+export const openTodos = (list: readonly CapTask[], snapshot?: unknown, keep: ReadonlySet<number> = new Set()): CapTodo[] => openOf(list, snapshot, keep).todos;
+/** `openTodos`, and `rest` (`MainCap.rest`) when the bound leaves some out. */
+export function openOf(list: readonly CapTask[], snapshot?: unknown, keep: ReadonlySet<number> = new Set()): { todos: CapTodo[]; rest?: number } {
 	const dates = todoDeadlines(snapshot), open = list.filter((t) => t.status !== "completed"), kept = open.filter((t) => keep.has(t.id)).slice(0, TODOS);
-	// A todo snoozed on its own stays inside the bound, so the reader honours its snooze (r3-F004); the rest fill the room left, in list order.
-	const room = TODOS - kept.length, rest = open.filter((t) => !keep.has(t.id)).slice(0, room), ids = new Set([...kept, ...rest].map((t) => t.id));
-	return open.filter((t) => ids.has(t.id)).map((t) => ({ id: t.id, subject: clean(t.subject, SUBJECT), ...(dates.has(t.id) ? { until: dates.get(t.id)! } : {}) }));
+	// A todo snoozed on its own stays inside the bound, so the reader honours its snooze (r3-F004); the rest fill the room left, the soonest due first (one not deferred before any deferred),
+	// so what is left out is the latest deferred, and `rest` says when the first of it is due: until then none of it is unanswered.
+	const due = (t: CapTask) => dates.get(t.id) ?? 0, others = open.filter((t) => !keep.has(t.id)).sort((a, b) => due(a) - due(b)), room = TODOS - kept.length;
+	const ids = new Set([...kept, ...others.slice(0, room)].map((t) => t.id)), out = others.slice(room);
+	const todos = open.filter((t) => ids.has(t.id)).map((t) => ({ id: t.id, subject: clean(t.subject, SUBJECT), ...(dates.has(t.id) ? { until: dates.get(t.id)! } : {}) }));
+	return { todos, ...(out.length ? { rest: due(out[0]!) } : {}) };
 }
 
 /** The seam's payload checked: `{ v: 1, state: "paused" | "resumed", reason: "quota", until?, detail? }`; anything else is ignored. */
@@ -127,23 +132,24 @@ export function writeCap(dir: string, cap: MainCap): void {
 }
 export const removeCap = (dir: string, session: string) => void (safeSession(session) && rmSync(join(dir, `${session}.json`), { force: true }));
 /** Every main's file that passes the check; the server's own files and anything else are skipped. */
-export function readCaps(dir: string): MainCap[] {
+export function readCaps(dir: string, at: number = Date.now()): MainCap[] {
 	let names: string[] = [];
 	try { names = readdirSync(dir).filter((n) => n.endsWith(".json") && !n.startsWith("_")); } catch { /* none yet */ }
-	// A file is parsed again only when its time or size moved: a main's file lists up to 5,000 todos, and the watch reads every one each minute (Performance in the stale-snooze spec).
+	// A file is parsed again only when its stat moved (identity, size, and times to the nanosecond, r4-F001) or ten minutes passed: a main's file lists up to 5,000 todos, and the watch reads every one each minute (Performance in the stale-snooze spec).
 	const had = capsSeen, now = new Map<string, Seen>();
 	capsSeen = now;
 	return names.flatMap((name): MainCap[] => {
 		const path = join(dir, name), st = statOf(path), old = had.get(path);
 		if (!st) return [];
-		const caps = old && old.mtime === st.mtimeMs && old.size === st.size && old.ino === st.ino ? old.caps : capOf(path, name);
-		now.set(path, { mtime: st.mtimeMs, size: st.size, ino: st.ino, caps });
-		return caps;
+		const key = `${st.dev}:${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`, keep = old && old.key === key && at - old.checked < REVALIDATE_MS;
+		now.set(path, keep ? old : { key, checked: at, caps: capOf(path, name) });
+		return keep ? old.caps : now.get(path)!.caps;
 	});
 }
-type Seen = { mtime: number; size: number; ino: number; caps: MainCap[] }; // a write renames a new file in (writeJson), so the inode moves too
+const REVALIDATE_MS = 10 * MIN;
+type Seen = { key: string; checked: number; caps: MainCap[] };
 let capsSeen = new Map<string, Seen>();
-const statOf = (path: string) => { try { return statSync(path); } catch { return undefined; } };
+const statOf = (path: string) => { try { return statSync(path, { bigint: true }); } catch { return undefined; } };
 function capOf(path: string, name: string): MainCap[] {
 	const raw = readJson(path), session = name.slice(0, -".json".length);
 	if (raw?.v !== 1 || raw.session !== session || !safeSession(session) || num(raw.updated, 0, 8.64e15) === undefined) return [];
@@ -151,7 +157,7 @@ function capOf(path: string, name: string): MainCap[] {
 	const pause = p?.reason === "quota" && at !== undefined ? { reason: "quota" as const, at, ...(until !== undefined ? { until } : {}), ...(detail ? { detail } : {}) } : undefined;
 	const todos = Array.isArray(raw.todos) ? raw.todos.slice(0, TODOS).flatMap((t: Record<string, unknown> | null): CapTodo[] => (Number.isInteger(t?.id) && (t!.id as number) >= 1 ? [{ id: t!.id as number, subject: clean(t!.subject, SUBJECT), ...(num(t!.until, 0, 8.64e15) !== undefined ? { until: t!.until as number } : {}) }] : [])) : undefined;
 	const snoozes = readSnoozes(raw.snoozes);
-	return [{ v: 1, session, updated: raw.updated as number, doing: jobsOf(raw.doing), ready: jobsOf(raw.ready, 200), ...(Array.isArray(raw.deadlines) ? { deadlines: raw.deadlines.slice(0, 200).filter((n) => num(n, 0, 8.64e15) !== undefined) } : {}), open: typeof raw.open === "number" && raw.open >= 0 ? Math.min(Math.floor(raw.open), OPEN_MAX) : 0, ...(pause ? { pause } : {}), ...(todos ? { todos } : {}), ...(snoozes.length ? { snoozes } : {}) }];
+	return [{ v: 1, session, updated: raw.updated as number, doing: jobsOf(raw.doing), ready: jobsOf(raw.ready, 200), ...(Array.isArray(raw.deadlines) ? { deadlines: raw.deadlines.slice(0, 200).filter((n) => num(n, 0, 8.64e15) !== undefined) } : {}), open: typeof raw.open === "number" && raw.open >= 0 ? Math.min(Math.floor(raw.open), OPEN_MAX) : 0, ...(pause ? { pause } : {}), ...(todos ? { todos } : {}), ...(todos && num(raw.rest, 0, 8.64e15) !== undefined ? { rest: raw.rest as number } : {}), ...(snoozes.length ? { snoozes } : {}) }];
 }
 /** The files of sessions that are not live and older than a day go. */
 export function purgeCaps(dir: string, live: ReadonlySet<string>, now: number): void {
@@ -160,11 +166,11 @@ export function purgeCaps(dir: string, live: ReadonlySet<string>, now: number): 
 
 /** The open todos of a capacity file as one number: it changes when a todo is answered, done, or added; a stale episode is the main's last move and this (capwatch.ts, r2-F002). */
 const keyOf = new WeakMap<readonly CapTodo[], number>();
-export function todosKey(c: Pick<MainCap, "open" | "todos"> | undefined): number {
+export function todosKey(c: Pick<MainCap, "open" | "todos" | "rest"> | undefined): number {
 	const had = c?.todos && keyOf.get(c.todos);
 	if (had !== undefined) return had; // a file read unchanged hands back the same list (readCaps), hashed once
 	let h = 2166136261;
-	for (const ch of JSON.stringify(c?.todos?.map((t) => [t.id, t.until ?? null]) ?? c?.open ?? 0)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+	for (const ch of ((base) => JSON.stringify(c?.rest !== undefined ? [base, c.rest] : base))(c?.todos?.map((t) => [t.id, t.until ?? null]) ?? c?.open ?? 0)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
 	if (c?.todos) keyOf.set(c.todos, h >>> 0);
 	return h >>> 0;
 }
@@ -193,7 +199,7 @@ export type SnoozeEnds = Record<string, number>;
  * commanding nothing, not standing, and its entry over 2 hours old. A paused main is never stale, nor one whose Herdr pane is working: it is moving (boss 2026-11-26 「herdr state 還在 working 的 agent 不必被詢問」).
  * The two spans are `capacity.staleUnattendedMinutes` and `capacity.staleMinutes` (`o`); see `staleFacts` for the snoozes (docs/specs/2026-11-28-stale-snooze.md).
  */
-export const staleOf = (m: StaleMain, c: Pick<MainCap, "open" | "pause" | "deadlines" | "todos" | "snoozes"> | undefined, unattended: boolean, now: number, o: StaleMs = STALE_DEFAULTS, ends?: SnoozeEnds): boolean => staleFacts(m, c, unattended, now, o, ends).stale;
+export const staleOf = (m: StaleMain, c: Pick<MainCap, "open" | "pause" | "deadlines" | "todos" | "rest" | "snoozes"> | undefined, unattended: boolean, now: number, o: StaleMs = STALE_DEFAULTS, ends?: SnoozeEnds): boolean => staleFacts(m, c, unattended, now, o, ends).stale;
 
 /**
  * `staleOf` with its reasons (docs/specs/2026-11-28-stale-snooze.md). Never stale besides: while one of its watches has sent no line since it started, while a snooze of the whole main holds, or when every open todo is
@@ -201,7 +207,7 @@ export const staleOf = (m: StaleMain, c: Pick<MainCap, "open" | "pause" | "deadl
  * A main of an older build lists no todos: its open count against its deadlines decides, as before.
  * `ends`: the first end seen of each snooze, read and added to (review F001). The session file counts by `worked`, the main's own last move there, so the delivery of a notice moves nothing (r2-F003).
  */
-export function staleFacts(m: StaleMain, c: Pick<MainCap, "open" | "pause" | "deadlines" | "todos" | "snoozes"> | undefined, unattended: boolean, now: number, o: StaleMs = STALE_DEFAULTS, ends: SnoozeEnds = {}): StaleFacts {
+export function staleFacts(m: StaleMain, c: Pick<MainCap, "open" | "pause" | "deadlines" | "todos" | "rest" | "snoozes"> | undefined, unattended: boolean, now: number, o: StaleMs = STALE_DEFAULTS, ends: SnoozeEnds = {}): StaleFacts {
 	const ended = (c?.snoozes ?? []).map((s) => {
 		const id = snoozeId(m.session ?? "", s), end = ends[id] ?? snoozeEnd(s, m.watches, now);
 		if (end !== undefined) ends[id] ??= end;
@@ -210,7 +216,8 @@ export function staleFacts(m: StaleMain, c: Pick<MainCap, "open" | "pause" | "de
 	const snoozes = ended.filter((x) => x.end === undefined).map((x) => x.s), no: StaleFacts = { stale: false, snoozes };
 	if (c?.pause || m.background || m.paneStatus === "working" || m.watches?.some((w) => w.ended === undefined && w.toldAt <= w.added) || snoozes.some((s) => s.todo === undefined)) return no;
 	const held = new Set(snoozes.flatMap((s) => (s.todo !== undefined ? [s.todo] : []))), todos = c?.todos?.filter((t) => !(t.until !== undefined && t.until > now) && !held.has(t.id)).map(({ id, subject }) => ({ id, subject }));
-	const unseen = c?.todos ? Math.max(0, c.open - c.todos.length) : 0; // open todos the file could not list: work, never "no work" (r2-F001)
+	// Open todos the file could not list: work, never "no work" (r2-F001), unless the file says all of them are deferred past now (r3-F004).
+	const unseen = c?.todos && !(c.rest !== undefined && c.rest > now) ? Math.max(0, c.open - c.todos.length) : 0;
 	if (c && c.open > 0 && (todos ? !todos.length && !unseen : (c.deadlines ?? []).filter((at) => at > now).length >= c.open)) return no;
 	const moved = Math.max(m.worked ?? m.fileMtime ?? 0, m.entryUpdated ?? 0), woke = ended.filter((x) => x.end !== undefined && x.end > moved).sort((a, b) => b.end! - a.end!)[0];
 	const due = (span: number, from: number) => now - from > span || woke !== undefined;

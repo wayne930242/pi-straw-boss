@@ -53,7 +53,7 @@ test("r3-F002: a tail that holds only the notice and its answer is no move; the 
 	const worked = createWorked(SERVER);
 	assert.equal(worked(file, 1), T);
 	writeFileSync(file, `${JSON.stringify({ type: "message", timestamp: at(1), message: { role: "toolResult", content: "x".repeat(300 * 1024) } })}\n${lines(notice(60), said(70)).join("\n")}\n`);
-	assert.equal(worked(file, 2), T, "the move known before the append");
+	assert.equal(worked(file, 2), null, "the append is too large to prove it holds no move; the tail proves the notice and its answer: unknown (r4-F002)");
 	assert.equal(createWorked(SERVER)(file, 2), null, "a new reader does not know it");
 	const facts = knownMoves<{ session: string; worked?: number; movedUnknown?: true }>([{ session: "a", movedUnknown: true }, { session: "b", movedUnknown: true }], { "notice-moved:a": T });
 	assert.equal(facts[0]!.worked, T, "the episode's move, kept across a restart");
@@ -78,16 +78,14 @@ test("performance: an unchanged capacity file is not parsed again, a rewritten o
 	assert.deepEqual(readCaps(dir)[0]!.todos, [{ id: 2, subject: "a" }], "a write of the same size is read again");
 });
 
-test("performance: a session file is read again only when its time or size moved", () => {
+test("performance: a session file is read again only when its stat moved", () => {
 	const dir = mkdtempSync(join(tmpdir(), "psb-r3-")), file = join(dir, "s.jsonl"), stamp = new Date(T);
 	dirs.push(dir);
 	writeFileSync(file, `${lines(said(0)).join("\n")}\n`);
 	utimesSync(file, stamp, stamp);
 	const worked = createWorked(SERVER);
 	assert.equal(worked(file, T), T);
-	writeFileSync(file, `${lines(said(1)).join("\n")}\n`);
-	utimesSync(file, stamp, stamp);
-	assert.equal(worked(file, T), T, "same time, same size: not read");
+	assert.equal(worked(file, T), T, "an unchanged file: not read (a rewrite at the same size and time is, by its ctime: snooze-r4)");
 	writeFileSync(file, `${lines(said(0), said(9)).join("\n")}\n`);
 	utimesSync(file, stamp, stamp);
 	assert.equal(worked(file, T), T + 9000, "same time, new size: read");

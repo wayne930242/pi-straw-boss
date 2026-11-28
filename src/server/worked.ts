@@ -17,15 +17,21 @@ export const staleNotice = (e: Json, from: string): boolean => e.type === "custo
 const userText = (m: Json) => (typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.filter((b: Json) => b?.type === "text").map((b: Json) => String(b.text)).join("\n") : "");
 
 /**
- * The time of the newest entry of `lines` (a session file's, oldest first) that is the main's own move. `cut`: the lines begin inside the file, so a tail that holds no move answers `null`, a move
- * before the tail of unknown time; never the time of a notice or of its answer (r3-F002).
+ * The time of the newest entry of `lines` (a session file's, oldest first) that is the main's own move. `cut`: the lines begin inside the file. A cut tail with no move answers `null` (a move before
+ * the tail, of unknown time) only when it proves what follows that move: it holds a notice and, after it, nothing that is a move (r3-F002). Else it answers `undefined`, and the file's time
+ * counts: a real input too large for the tail is a move (r4-F002). Never the time of a notice or of its answer.
  */
 export function workedOf(lines: readonly string[], from: string, cut = false): number | null | undefined {
-	let notice = false, worked: number | undefined;
+	const r = scan(lines, from, false);
+	return r.worked ?? (cut && r.seen ? null : undefined);
+}
+/** `workedOf`'s pass: `notice` whether the lines begin inside a notice's turn; it answers whether they end in one. */
+function scan(lines: readonly string[], from: string, notice: boolean): { worked?: number; seen: boolean; notice: boolean } {
+	let seen = false, worked: number | undefined;
 	for (const line of lines) {
 		const e = parse(line), at = Date.parse(e?.timestamp);
 		if (!e || !Number.isFinite(at)) continue;
-		if (staleNotice(e, from)) { notice = true; continue; }
+		if (staleNotice(e, from)) { notice = seen = true; continue; }
 		const m = e.type === "message" ? (e.message as Json | undefined) : undefined;
 		// In the notice's turn, only a tool call or real input is a move: a user message (not the wake prompt) or an intercom message that is not the server's notice. Extensions' context
 		// (`claude-hook-context` and other custom messages) is no input (r3-F003).
@@ -33,37 +39,57 @@ export function workedOf(lines: readonly string[], from: string, cut = false): n
 		notice = false;
 		worked = at;
 	}
-	return worked ?? (cut ? null : undefined);
+	return { ...(worked !== undefined ? { worked } : {}), seen, notice };
 }
 
-function tail(file: string): { lines: string[]; cut: boolean } {
+/** A session file's end: from `since` (a line's start this reader read up to) when the append fits in the tail, else its last 256 KiB. `end`: just past its last whole line. */
+function tail(file: string, since = -1): { lines: string[]; cut: boolean; end: number } {
 	const fd = openSync(file, "r");
 	try {
-		const size = fstatSync(fd).size, from = Math.max(0, size - TAIL), buf = Buffer.alloc(size - from);
+		const size = fstatSync(fd).size, fits = since >= 0 && since <= size && size - since <= TAIL, from = fits ? since : Math.max(0, size - TAIL), buf = Buffer.alloc(size - from);
 		readSync(fd, buf, 0, buf.length, from);
-		const lines = buf.toString("utf8").split("\n");
-		if (from > 0) lines.shift(); // a line cut at the start
-		return { lines, cut: from > 0 };
+		const nl = buf.lastIndexOf(10), lines = buf.subarray(0, nl + 1).toString("utf8").split("\n");
+		if (from > 0 && !fits) lines.shift(); // a line cut at the start
+		return { lines, cut: from > 0 && !fits, end: from + nl + 1 };
 	} finally {
 		closeSync(fd);
 	}
 }
 
+/** A full re-read at least this often, whatever the file's stat says (r4-F001). */
+export const REVALIDATE_MS = 10 * 60_000;
+const statOf = (file: string) => {
+	try { const s = statSync(file, { bigint: true }); return { id: `${s.dev}:${s.ino}`, key: `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`, size: Number(s.size) }; } catch { return undefined; }
+};
+type Seen = { id: string; key: string; end: number; notice: boolean; checked: number; at: number | null | undefined };
+
 /**
- * The reader the capacity watch asks each minute: a file is read again only when its time moved; none when it cannot be read (the caller keeps the file's time). A tail with no move keeps the move
- * this reader knew of the file before the append (r3-F002), else answers `null` (unknown: the watch takes the episode's, capwatch.ts `knownMoves`).
+ * The reader the capacity watch asks each minute: a file is read again only when its stat moved (its identity, size, and times to the nanosecond, r4-F001) or ten minutes passed since its last full
+ * read; none when it cannot be read (the caller keeps the file's time). An append that fits in the tail is read alone, carrying whether the file ended in a notice's turn: with no move in it, the
+ * move this reader knew stands, the append being proven to hold none. A larger one, or a new reader, is judged by the tail (`workedOf`): `null` (unknown: the watch takes the episode's,
+ * capwatch.ts `knownMoves`) only when the tail proves it, else `undefined` (the file's time counts, r4-F002).
  */
-export function createWorked(from: string): (file: string, mtime: number) => number | null | undefined {
-	const seen = new Map<string, { mtime: number; size: number; at: number | null | undefined }>();
-	return (file, mtime) => {
-		// Read again only when the file's time or size moved (Performance in the stale-snooze spec): a stat, and at most 256 KiB of its end, never the whole file.
-		const had = seen.get(file), size = ((s) => s?.size ?? -1)((() => { try { return statSync(file); } catch { return undefined; } })());
-		if (had?.mtime === mtime && had.size === size) return had.at;
-		let at: number | null | undefined;
-		try { const t = tail(file); at = workedOf(t.lines, from, t.cut); } catch { at = undefined; }
-		if (at === null && typeof had?.at === "number") at = had.at;
+export function createWorked(from: string, now: () => number = Date.now, read: typeof tail = tail): (file: string, mtime: number) => number | null | undefined {
+	const seen = new Map<string, Seen>();
+	return (file) => {
+		// A stat, and at most 256 KiB of its end, never the whole file (Performance in the stale-snooze spec).
+		const had = seen.get(file), st = statOf(file), t0 = now(), fresh = had !== undefined && t0 - had.checked < REVALIDATE_MS;
+		if (fresh && st && had.key === st.key) return had.at;
+		const grown = fresh && st !== undefined && had.id === st.id && st.size > had.end ? had : undefined;
+		let next: Seen | undefined;
+		try {
+			const t = read(file, grown ? grown.end : -1);
+			if (grown && !t.cut) {
+				const r = scan(t.lines, from, grown.notice);
+				next = { ...grown, end: t.end, notice: r.notice, at: r.worked ?? grown.at };
+			} else {
+				const r = scan(t.lines, from, false);
+				next = { id: st?.id ?? "", key: "", end: t.end, notice: r.notice, checked: t0, at: r.worked ?? (t.cut && r.seen ? null : undefined) };
+			}
+		} catch { next = undefined; }
 		if (seen.size >= CACHED) seen.clear();
-		seen.set(file, { mtime, size, at });
-		return at;
+		if (st && next) seen.set(file, { ...next, key: st.key });
+		else seen.delete(file);
+		return next?.at;
 	};
 }

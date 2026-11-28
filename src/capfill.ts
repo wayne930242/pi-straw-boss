@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { capDir, capOfTodos, capTasksOf, type MainCap, openTodos, PAUSE_EVENT, type Pause, pauseOf, readCaps, removeCap, snoozeSaid, writeCap } from "./capacity.ts";
+import { capDir, capOfTodos, capTasksOf, type MainCap, openOf, PAUSE_EVENT, type Pause, pauseOf, readCaps, removeCap, snoozeSaid, writeCap } from "./capacity.ts";
 import type { Ask } from "./host.ts";
 import { type Snooze, snoozeOf, withSnooze } from "./snooze.ts";
 import type { Kit } from "./state.ts";
@@ -43,7 +43,7 @@ export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): CapFill {
 			if (at.facts === undefined || at.keep !== keep) {
 				const open = new Set(list.filter((t) => t.status !== "completed").map((t) => t.id));
 				if (held.some((id) => !open.has(id))) snoozes = snoozes.filter((s) => s.todo === undefined || open.has(s.todo));
-				[at.keep, at.facts] = [JSON.stringify(snoozes.flatMap((s) => (s.todo !== undefined ? [s.todo] : []))), { ...capOfTodos(list, snapshot), todos: openTodos(list, snapshot, new Set(snoozes.flatMap((s) => (s.todo !== undefined ? [s.todo] : [])))) }];
+				[at.keep, at.facts] = [JSON.stringify(snoozes.flatMap((s) => (s.todo !== undefined ? [s.todo] : []))), { ...capOfTodos(list, snapshot), ...openOf(list, snapshot, new Set(snoozes.flatMap((s) => (s.todo !== undefined ? [s.todo] : [])))) }];
 				at.key = JSON.stringify(at.facts);
 			}
 			const facts = at.facts, key = `${at.key}${JSON.stringify([pause ?? null, snoozes])}`;

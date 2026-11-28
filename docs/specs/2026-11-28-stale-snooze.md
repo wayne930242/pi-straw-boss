@@ -110,13 +110,21 @@ The brief of the fix round: where a heuristic needs more patching than a simpler
 - **r3-F003.** Only real input or a tool call ends the turn's discount; an extension's custom message does not.
 - **r3-F004.** A todo snoozed on its own stays inside the 5,000 the file lists.
 
+## Fourth review (snooze-review4)
+
+- **r3-F004, the rest.** The file lists the soonest due first (a todo not deferred before any deferred one), so what the bound leaves out is the latest deferred, and `rest` keeps the earliest end among them (0 when one is not deferred). Until `rest` passes, the reader counts none of them unanswered: a snooze on the only actionable todo holds while it lasts.
+- **r4-F001.** Both caches (`createWorked`, `readCaps`) key a file by its device and inode, its size, and its mtime and ctime in nanoseconds, and read it again in full at least every ten minutes.
+- **r4-F002.** The reader keeps the move it knew only when what was appended since fits in the tail and holds no move (it reads the append alone, carrying whether the file ended in a notice's turn). Otherwise the tail decides: `null` (the episode's `notice-moved:` stands) only when the tail holds a notice and nothing after it is a move; else the file's time counts. A real input too large for the tail is a move.
+- **r4-F003.** When every shown row is deleted and `moreOf` finds open work past them, the auto line is still written.
+- **r4-F004 (P3).** `moreOf` keeps its answer by the snapshot's identity.
+
 ## Performance
 
 The boss asked for it with the third review (「也要注意一下效能問題」). Nothing new runs more often than the watch's minute per main, and nothing reads a whole file:
 
-- The server's minute: a session file is read again (its last 256 KiB) only when its time or size moved (`createWorked`); a capacity file is parsed again only when its time, size, or inode moved (`readCaps`; a write renames a new file in), and the open todos' key is hashed once per reading (`todosKey`).
+- The server's minute: a session file is read again (its append, or its last 256 KiB) only when its stat moved or ten minutes passed (`createWorked`); a capacity file is parsed again only on the same terms (`readCaps`), and the open todos' key is hashed once per reading (`todosKey`).
 - The session's refresh, at each tool call: the whole ledger is projected again only when the todo snapshot changed (`snapshotScan` hands back the same one until a todo write), or a todo snooze changed what the bound keeps.
-- `node scripts/bench-captick.ts [mains] [ticks]` measures a tick with a 50,000-record ledger and a 128 MiB session file per main. On this Mac, 20 mains: before, 70 ms a tick with nothing changed (cold 88 ms); after, 1.8 ms (cold 76 ms). Projecting the ledger once takes about 17 ms.
+- `node scripts/bench-captick.ts [mains] [ticks]` measures a tick with a 50,000-record ledger and a 128 MiB session file per main. On this Mac, 20 mains: before, 70 ms a tick with nothing changed (cold 88 ms); after, 1.8 ms (cold 76 ms). Projecting the ledger once takes about 17 ms. After the fourth review (nanosecond stat keys, the deferral order): 1.85 ms median, 2.22 ms max, cold 77 ms, projection 17 ms.
 
 ## Tests
 

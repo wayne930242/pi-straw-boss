@@ -92,7 +92,16 @@ export interface AutoInput {
 }
 export interface More { subject: string; activeForm?: string; doing: boolean }
 /** The first open todo of the whole ledger past the display's 200 rows, in progress first; the display itself is not expanded. */
+const mores = new WeakMap<object, More | null>();
 export function moreOf(snapshot: unknown): More | undefined {
+	// A snapshot is never changed in place (snapshotScan hands back a new one at a todo write): its answer is kept by its identity, for a refresh runs at every tool call (r4-F004).
+	const had = typeof snapshot === "object" && snapshot !== null ? mores.get(snapshot) : undefined;
+	if (had !== undefined) return had ?? undefined;
+	const found = moreOfScan(snapshot);
+	if (typeof snapshot === "object" && snapshot !== null) mores.set(snapshot, found ?? null);
+	return found;
+}
+function moreOfScan(snapshot: unknown): More | undefined {
 	const tasks = (snapshot as { tasks?: unknown } | null | undefined)?.tasks;
 	if (!Array.isArray(tasks) || tasks.length <= 200) return undefined;
 	const rest = tasks.slice(200).filter((t) => typeof t?.id === "number" && typeof t.subject === "string"), t = rest.find((x) => x.status === "in_progress") ?? rest.find((x) => x.status === "pending");
@@ -109,7 +118,7 @@ export function deriveBoard({ name, todos, root, more }: AutoInput): Derived | u
 	const text = (t: string, max: number) => allyLabel(t, max, root);
 	const who = text(name, 40), list = todos ?? [];
 	const by = (status: Todo["status"]) => list.filter((t) => t.status === status);
-	if (!list.length) return undefined;
+	if (!list.length && !more) return undefined; // shown rows all deleted, open work past them: still a line (r4-F003)
 	const doing = by("in_progress")[0], pending = by("pending").sort((a, b) => a.id - b.id), done = by("completed").sort((a, b) => b.id - a.id);
 	const say = (words: string) => (who ? `${who}: ${words}` : words);
 	const rest = !doing && !pending[0] ? more : undefined; // all shown done, but the ledger holds open work past the display: never `done` (r3-F001)
