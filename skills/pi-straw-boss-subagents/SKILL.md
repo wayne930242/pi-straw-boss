@@ -49,9 +49,13 @@ A worker launched with `item` is drawn under its todo by pi-todo-ledger; one lau
 
 When a worker's pane closes or its pi dies before it reports, its failed result carries a line from Straw Boss with its name, session file and the `subagent_resume` call. Straw Boss does not revive or resume it: you decide, and resume it with a message saying what is left.
 
+A child that sits idle after its turn without delivering a result is asked to finish by Straw Boss (10 minutes, at most twice). When it still has not reported, one `Subagent status` line tells you so: read its pane, then `subagent_cancel` it or answer what it waits for. Interactive children and persistent specialists are left alone.
+
 ## Configuration
 
 The models live in `<agent dir>/herdr-agents/config.json` (default `~/.pi/agent/herdr-agents/config.json`), the same file pi-herdr-agents read: `models.default`, `models.agents`, `models.tasks` (ordered candidates per category), `models.tasksThinking`, plus `status`, `supervision`, `panes` and `spawning.maxDepth`. Edit it by hand and keep every other key; `/reload` after a change. Without the file the package's `config.json.example` supplies the non-model settings.
+
+`subagentNudge` in `<agent dir>/straw-boss/config.json` (`{ "idleMinutes": 10, "max": 2 }`, `idleMinutes: 0` off) sets that nudge.
 
 `<agent dir>/straw-boss/host.json` with `{ "host": "off" }` turns the host off (`PI_STRAW_BOSS_HOST=off` for one process).
 

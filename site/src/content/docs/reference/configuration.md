@@ -19,6 +19,7 @@ The settings file is `<agentDir>/straw-boss/config.json`, where `<agentDir>` is 
   "locale": "zh-TW",
   "stallWatch": { "cpuMinutes": 5, "silentMinutes": 30 },
   "capacity": { "budget": 20 },
+  "subagentNudge": { "idleMinutes": 10, "max": 2 },
   "link": {
     "relay": "https://relay.example",
     "trust": { "<device id>": "forward" }
@@ -45,6 +46,8 @@ The settings file is `<agentDir>/straw-boss/config.json`, where `<agentDir>` is 
 | `capacity.budget` | none | This device's capacity in points (over 0, at most 1000), for [device capacity](/pi-straw-boss/docs/reference/how-it-works/how-it-works/#device-capacity) on the work board: the sb server compares the points its mains' running work uses (a todo's `metadata.points`) and their smallest ready todo with it, and tells the tower when room stays free for 10 minutes. Unset, the numbers still show and nothing is flagged as idle capacity. Read once a minute. On an unattended device it also gates `worker` subagents by points, read at each launch so a change applies at once; unset, nothing is held back. On an attended device no worker is ever held back. |
 | `link.relay` | none | The relay a new [Straw Link](/pi-straw-boss/docs/guide/straw-link/) team uses by default. |
 | `link.trust` | `reply` for every device | How far this computer trusts each teammate's device: `reply`, `forward`, or `dispatch`. |
+| `subagentNudge.idleMinutes` | 10 | How long a child of [sb's subagent host](/pi-straw-boss/docs/reference/how-it-works/the-subagent-host/) may sit idle, its turn ended and no result delivered, before sb asks it to finish, through the child's own pi and never into unsent text in its input box. Interactive children and persistent specialists are never asked. Fractions are allowed; `0` turns the nudge off. Read at most every 15 seconds. |
+| `subagentNudge.max` | 2 | How many times one run is asked, from 1 to 10, one per idle stretch. When it is still idle that long after the last one, its parent is told once and sb stops asking. |
 
 The page and the `/boss link` commands write the `link` section's `teams` themselves; edit it by hand only to fix it.
 On an unattended device, the root-owned `/etc/straw-link/policy.json` takes the teams and the trust instead, and the `link` section is ignored.

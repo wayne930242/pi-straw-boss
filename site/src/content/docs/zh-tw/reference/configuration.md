@@ -19,6 +19,7 @@ pi-straw-boss 不需要任何設定就能運作。
   "locale": "zh-TW",
   "stallWatch": { "cpuMinutes": 5, "silentMinutes": 30 },
   "capacity": { "budget": 20 },
+  "subagentNudge": { "idleMinutes": 10, "max": 2 },
   "link": {
     "relay": "https://relay.example",
     "trust": { "<device id>": "forward" }
@@ -45,6 +46,8 @@ pi-straw-boss 不需要任何設定就能運作。
 | `capacity.budget` | 無 | 這台裝置的產能點數（大於 0，至多 1000），供工作看板上的[裝置產能](/pi-straw-boss/docs/zh-tw/reference/how-it-works/how-it-works/#裝置產能)使用：sb server 拿主智慧體執行中工作所用的點數（todo 的 `metadata.points`）和最小的可接 todo 跟它比，空位持續 10 分鐘就通知塔台。沒設時照樣顯示數字，只是不標產能閒置。每分鐘讀一次。在無人值守的裝置上，它也依點數放行 `worker` 子智慧體，每次派出時重讀，所以改了立即生效；沒設就不擋。有人值守的裝置從不擋工作者。 |
 | `link.relay` | 無 | 新的 [Straw Link](/pi-straw-boss/docs/zh-tw/guide/straw-link/) 團隊預設使用的 relay。 |
 | `link.trust` | 每個裝置都是 `reply` | 這台電腦對每位隊友裝置的信任程度：`reply`、`forward` 或 `dispatch`。 |
+| `subagentNudge.idleMinutes` | 10 | [sb 子代理宿主](/pi-straw-boss/docs/zh-tw/reference/how-it-works/the-subagent-host/)的子智慧體回合結束、還沒交回結果，閒置多久後 sb 會請它收尾；提醒經由子智慧體自己的 pi 送出，絕不打進輸入框裡未送出的文字。互動式子智慧體與常駐專家一律不提醒。可用小數；`0` 關掉提醒。最多每 15 秒讀一次。 |
+| `subagentNudge.max` | 2 | 同一個 run 最多提醒幾次，1 到 10，每段閒置一次。最後一次之後又閒置那麼久，就告訴父 session 一次，不再提醒。 |
 
 頁面與 `/boss link` 指令會自己寫入 `link` 區段的 `teams`；只有要修復時才手動編輯。
 在無人值守裝置上，改由 root 擁有的 `/etc/straw-link/policy.json` 提供團隊與信任，`link` 區段會被忽略。
