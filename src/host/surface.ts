@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createRunEnds, registryStart, RUN_END_EVENT } from "./run-end.ts";
 
 // sb's simple host (docs/how-it-works.md#the-subagent-host): Maestro registers its whole surface, and this API in front of Pi keeps only what the
 // boss chose, under the names and parameters prompts and skills already use: `subagent` (one task, auto-exit, the result as a message), `subagent_cancel`,
@@ -55,10 +56,13 @@ export function droppedParamError(tool: string, params: unknown): string | undef
 export interface SimpleDeps {
 	/** Whether a role's own definition makes its child persistent (`persistent: true` in its frontmatter): such a role is refused too. */
 	persistentRole(agent: string, params: Record<string, unknown>): boolean;
+	/** The clock and Maestro's registry start of a run, for its end's elapsed (run-end.ts); a test gives its own. */
+	now?(): number; startOf?(id: string): number | undefined;
 }
 
-/** The API Maestro registers through: drops the tools and commands above, and refuses the dropped parameters before Maestro sees the call. */
+/** The API Maestro registers through: drops the tools and commands above, refuses the dropped parameters before Maestro sees the call, and tells each run's end with its run id (run-end.ts). */
 export function simpleApi(pi: ExtensionAPI, deps: SimpleDeps): ExtensionAPI {
+	const ends = createRunEnds({ now: deps.now ?? Date.now, startOf: deps.startOf ?? registryStart });
 	const registerTool = (tool: ToolDefinition) => {
 		if (DROPPED_TOOLS.includes(tool.name)) return;
 		const dropped = Object.keys(DROPPED_PARAMS[tool.name] ?? {});
@@ -69,7 +73,8 @@ export function simpleApi(pi: ExtensionAPI, deps: SimpleDeps): ExtensionAPI {
 			const agent = (params as { agent?: unknown }).agent;
 			if (tool.name === "subagent" && typeof agent === "string" && agent && deps.persistentRole(agent, params as Record<string, unknown>))
 				throw new Error(`sb's subagent host runs in simple mode: role \`${agent}\` is defined as a persistent specialist, which it does not run. Launch it with a bare subagent and the role's instructions in the task, or use another role.`);
-			return tool.execute(id, params, signal, onUpdate, ctx);
+			const out = tool.execute(id, params, signal, onUpdate, ctx);
+			return tool.name === "subagent" || tool.name === "subagent_resume" ? Promise.resolve(out).then((r) => (ends.started(tool.name, (r as { details?: unknown } | undefined)?.details), r)) : out;
 		};
 		pi.registerTool({ ...tool, description, ...(dropped.length ? { parameters: simpleSchema(tool.parameters, dropped) } : {}), execute } as ToolDefinition);
 	};
@@ -77,5 +82,10 @@ export function simpleApi(pi: ExtensionAPI, deps: SimpleDeps): ExtensionAPI {
 		if (DROPPED_COMMANDS.includes(name)) return;
 		pi.registerCommand(name, options);
 	};
-	return Object.assign(Object.create(pi) as ExtensionAPI, { registerTool, registerCommand });
+	const sendMessage: ExtensionAPI["sendMessage"] = (message, options) => {
+		const { message: out, event } = ends.ended(message);
+		pi.sendMessage(out, options);
+		if (event) pi.events.emit(RUN_END_EVENT, event); // after the send: a send that throws is retried by Maestro, and the ledger counts a run id once
+	};
+	return Object.assign(Object.create(pi) as ExtensionAPI, { registerTool, registerCommand, sendMessage });
 }
