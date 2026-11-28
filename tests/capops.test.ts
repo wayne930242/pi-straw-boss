@@ -44,6 +44,8 @@ test("mainFacts: the live mains and trains with their duty, session file time an
 	assert.deepEqual(facts.filter((m) => m.background).map((m) => m.session), ["m1", "st"], "pane monitor and session watch belong to their own mains");
 	assert.deepEqual(facts.map((f) => [f.session, f.role, f.duty, f.fileMtime, f.entryUpdated, f.workers]), [["m1", "main", undefined, 4000, 1000, []], ["st", "main", "standing", undefined, undefined, []], ["tr", "train", undefined, undefined, undefined, []]]);
 	assert.deepEqual(facts.map((f) => [f.session, f.paneStatus]), [["m1", "working"], ["st", "idle"], ["tr", "idle"]], "each main's Herdr pane state, which stale reads");
+	const own = mainFacts([s("m1", "p1")], [pane("p1", "main", { agent_session: { value: "/s/m1.jsonl" } as never })], board, 5000, () => 4000, undefined, undefined, undefined, (file, mtime) => (file === "/s/m1.jsonl" && mtime === 4000 ? 3000 : undefined));
+	assert.equal(own[0]!.worked, 3000, "its own last move in the file, which the stale verdict counts (r2-F003)");
 });
 
 test("mainFacts: every running subagent of a main is a worker, not only the first 8 a dashboard shows", () => {

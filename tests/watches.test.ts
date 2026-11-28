@@ -281,3 +281,29 @@ test("facts: a watch that ended stays listed with its end for a day, and shields
 	await w.pass(24 * 3600_000 + 1);
 	assert.deepEqual(w.watches.facts("s1"), [], "gone after a day");
 });
+
+// snooze-review2 F006: the ends were kept in memory only, so a restart before the capacity watch's next look lost a stop, and a snooze on that watch fell back to its own time.
+test("facts: a watch's end outlives a restart, for a day", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "psb-watches-")), file = join(dir, "watches.json");
+	dirs.push(dir);
+	const a = world({ file });
+	await a.add();
+	const added = a.clock.now();
+	await a.pass(5 * 60_000);
+	assert.equal(a.watches.stop("s1", "u1").ok, true);
+	const stopped = a.clock.now();
+	a.watches.stopAll();
+	a.read.stop();
+	const b = world({ file, clock: a.clock });
+	b.watches.start();
+	assert.deepEqual(b.watches.facts("s1"), [{ key: "u1", added, toldAt: added, ended: stopped }], "the next server knows the end");
+	await b.pass(24 * 3600_000 + 1);
+	assert.deepEqual(b.watches.facts("s1"), [], "gone after a day");
+	b.watches.stopAll();
+	b.read.stop();
+	const c = world({ file, clock: a.clock });
+	c.watches.start();
+	assert.deepEqual(c.watches.facts("s1"), [], "a restart past the day does not bring it back");
+	c.watches.stopAll();
+	c.read.stop();
+});

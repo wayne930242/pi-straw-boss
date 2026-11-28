@@ -8,10 +8,10 @@ export interface LedgerChange { op: "create" | "update" | "delete" | "clear"; pa
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
-/** Capacity-only deadlines by todo id. Date-only means midnight UTC; reject dates Date.parse would roll into the following month. */
+/** Capacity-only deadlines by todo id, over the whole ledger (r2-F001). Date-only means midnight UTC; reject dates Date.parse would roll into the following month. */
 export function todoDeadlines(snapshot: unknown): Map<number, number> {
 	const dates = new Map<number, number>();
-	if (isObject(snapshot) && Array.isArray(snapshot.tasks)) for (const t of snapshot.tasks.slice(0, 200)) {
+	if (isObject(snapshot) && Array.isArray(snapshot.tasks)) for (const t of snapshot.tasks) {
 		const s = t?.metadata?.until, who = t?.metadata?.waitsOn;
 		if (typeof who === "string" && who.trim()) { dates.set(t.id, 8.64e15); continue; } // No scheduled return: last representable instant.
 		if (typeof s !== "string" || !/^\d{4}-\d\d-\d\d(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?)?$/.test(s)) continue;

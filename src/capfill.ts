@@ -1,7 +1,6 @@
 import { join } from "node:path";
-import { capDir, capOfTodos, type MainCap, openTodos, PAUSE_EVENT, type Pause, pauseOf, readCaps, removeCap, snoozeSaid, writeCap } from "./capacity.ts";
+import { capDir, capOfTodos, capTasksOf, type MainCap, openTodos, PAUSE_EVENT, type Pause, pauseOf, readCaps, removeCap, snoozeSaid, writeCap } from "./capacity.ts";
 import type { Ask } from "./host.ts";
-import { todosOf } from "./items.ts";
 import { type Snooze, snoozeOf, withSnooze } from "./snooze.ts";
 import type { Kit } from "./state.ts";
 import { snapshotScan } from "./todo.ts";
@@ -23,7 +22,7 @@ export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): CapFill {
 	const dir = capDir(join(guiDir, "board")), snapshotOf = snapshotScan();
 	let ctx: { sessionManager?: { getBranch(): readonly unknown[] } } | undefined, pause: Pause | undefined, snoozes: Snooze[] = [], last: string | undefined, wrote: string | undefined, restored = false;
 	const branch = (): readonly unknown[] => { try { return ctx?.sessionManager?.getBranch() ?? []; } catch { return []; } }; // a replaced session's context throws
-	const listed = () => ((snapshot) => ({ snapshot, list: todosOf(snapshot) ?? [] }))(snapshotOf(branch()));
+	const listed = () => ((snapshot) => ({ snapshot, list: capTasksOf(snapshot) }))(snapshotOf(branch()));
 	const restore = (id: string) => {
 		// A /reload keeps the pause and the snoozes its file holds (the model is still stopped); read once, when the session's id is known (pi-intercom may set it after the start).
 		if (restored) return;
@@ -73,7 +72,10 @@ export function createCapFill({ pi, cfg, guiDir, me, role }: Kit): CapFill {
 			if (!id || !ownsBoard(role())) throw new Error(NOT_MAIN);
 			// The server reads the snoozes, so it is asked first: one of an older build drops them and would remind on regardless (review F003).
 			const watched = await ask?.({ cmd: "watch-list", session: id }, { start: "never" }).catch(() => undefined);
+			// The ask waited on the server: a session replaced or a main demoted meanwhile writes nothing (r2-F005).
+			if (me() !== id || !ownsBoard(role())) throw new Error(`Nothing was snoozed: ${NOT_MAIN}`);
 			if (!watched?.ok) throw new Error("Nothing was snoozed: no sb server answers this session, and the server is what reminds and reads the snooze (/boss server shows it)");
+			if (watched.snoozes === false) throw new Error("Nothing was snoozed: the sb server of this Herdr slot does not run the stale reminder (the primary server does, for the mains of its own Herdr), so this main gets none to snooze");
 			if (watched.snoozes !== true) throw new Error("Nothing was snoozed: the sb server runs an older pi-straw-boss, which ignores snoozes. Restart it on this version (/boss server restart), then snooze again");
 			restore(id);
 			const { list } = listed(), s = snoozeOf(input, { now: cfg.now(), watches: ((watched?.watches ?? []) as { key: string }[]).map((w) => w.key), open: list.filter((t) => t.status !== "completed").map((t) => t.id) });

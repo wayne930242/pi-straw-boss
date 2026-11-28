@@ -16,7 +16,8 @@ export const REPORT_RETIRED = "watch-report is retired in pi-straw-boss 0.83.0 w
 /** `fresh`: the server reads the net now first, as a ward's add does (ward-review F009: with no page and no watch, nothing else reads it); a list or a stop reads it only when the last reading does not show a live main. */
 /** `owner`: the session a registration secret is (carbook.ts `sessionOf`, the secret `cars-register` handed the pi process), or why none (F003, boss decision (a)): a ward is added, listed with its file, and stopped only by its main's own pi process. */
 export interface WardRoutes extends Pick<WardRead, "resolve" | "held"> { main(session: string, fresh?: boolean): Promise<{ workspace: string; pane?: string } | string>; owner(secret: unknown): Promise<{ session: string; role: string } | string> }
-export interface WatchRoutes { read: { read(q: WatchQuery): Promise<Reply> }; watches: Pick<Watches, "add" | "stop" | "list" | "has" | "facts">; ward?: WardRoutes }
+/** `snoozes`: this server runs the stale reminder that reads the snoozes (the primary's capacity watch), which `watch-list` says, so a main confirms a snooze only where it counts (review F003, r2-F004). */
+export interface WatchRoutes { read: { read(q: WatchQuery): Promise<Reply> }; watches: Pick<Watches, "add" | "stop" | "list" | "has" | "facts">; ward?: WardRoutes; snoozes?: boolean }
 const no = (error: string): Promise<Reply> => Promise.resolve({ ok: false, error });
 const number = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const text = (v: unknown, max: number) => (typeof v === "string" && v.length > 0 && v.length <= max ? v : undefined);
@@ -49,7 +50,7 @@ export function watchReply(routes: WatchRoutes | undefined, request: Request, en
 		return typeof m === "string" ? m : undefined;
 	};
 	if (request.cmd === "watch-list") {
-		const list = routes.watches.list(session), wards = (list.watches as { ward?: { pane: string } }[]).some((r) => r.ward);
+		const list: Reply = { ...routes.watches.list(session), snoozes: routes.snoozes === true }, wards = (list.watches as { ward?: { pane: string } }[]).some((r) => r.ward);
 		return (wards ? mainOf() : Promise.resolve(undefined)).then((m) => (typeof m === "string" ? { ...list, watches: (list.watches as { ward?: { pane: string } }[]).map((r) => (r.ward ? { ...r, ward: { pane: r.ward.pane }, newest: undefined } : r)) } : list)); // a ward's line names its file too
 	}
 	const key = text(request.key, 200);
@@ -116,5 +117,5 @@ export function startWatches(o: StartWatches): WatchRoutes {
 		try { await o.net.read(); } catch (error) { return `the server could not read the net: ${(error as Error).message}`; }
 		return judgeMain(session);
 	};
-	return { read, watches, ...(ward && o.ward ? { ward: { resolve: ward.resolve, held: ward.held, main: mainOf, owner: o.ward.owner } } : {}) };
+	return { read, watches, snoozes: slot.primary, ...(ward && o.ward ? { ward: { resolve: ward.resolve, held: ward.held, main: mainOf, owner: o.ward.owner } } : {}) };
 }

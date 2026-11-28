@@ -126,10 +126,10 @@ test("stale on an unattended device: a main with open todos unmoved 30 minutes i
 	await make().tick();
 	w.mains[0]!.background = false;
 	const again = make();
-	await run(again, w.clock, 29);
-	assert.equal(w.told.length, 3, "a new episode inside the interval of the last notice is held");
-	await run(again, w.clock, 2);
-	assert.equal(w.told.length, 4, "and told an interval after it");
+	await run(again, w.clock, 27);
+	assert.equal(w.told.length, 3, "a look that saw it not stale ends nothing while it has not moved (r2-F002): held to the interval after the last notice");
+	await run(again, w.clock, 1);
+	assert.deepEqual(w.told.slice(3).map((e) => [e.kind, e.mainOnly ?? false]), [["stale", true]], "and told then, to the main alone");
 	const { w: w2, make: make2 } = world({ unattended: true });
 	w2.mains[0] = { ...w2.mains[0]!, fileMtime: w2.clock.now(), entryUpdated: w2.clock.now() };
 	w2.cap("s-a", { open: 2, pause: { reason: "quota", at: w2.clock.now() } });

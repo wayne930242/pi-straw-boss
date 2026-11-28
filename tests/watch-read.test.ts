@@ -370,3 +370,10 @@ test("the running server answers `watch-read`, the watches' `watch-list` and `wa
 	assert.equal(bare.state, "changed", JSON.stringify(bare));
 	assert.deepEqual(bare.unit, seen.unit);
 });
+
+// snooze-review2 F004: every slot's server said `snoozes: true`, but only the primary runs the capacity watch that reads them.
+test("watch-list says snoozes: true only on the slot that runs the stale reminder, false on another", async () => {
+	const watches = { list: () => ({ ok: true, watches: [] }) } as never;
+	assert.deepEqual(await watchReply({ read: {} as never, watches, snoozes: true }, { cmd: "watch-list", session: "A" }, () => true), { ok: true, watches: [], snoozes: true });
+	assert.deepEqual(await watchReply({ read: {} as never, watches, snoozes: false }, { cmd: "watch-list", session: "A" }, () => true), { ok: true, watches: [], snoozes: false });
+});

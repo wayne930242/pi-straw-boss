@@ -1,5 +1,5 @@
 import { snoozeId } from "../snooze.ts";
-import { capLine, clock, DEVICE_FRESH_MS, type DeviceCap, joinCaps, LOAD_SHARE, type MainFacts, type MainRow, type Notice, pauseText, purgeCaps, readCaps, type SnoozeEnds, readDevice, readSent, roomFor, SILENT_MS, STALE_DEFAULTS, type StaleMs, THROTTLE_MS, UNDER_HOLD_MS, underFor, writeDevice, writeSent } from "../capacity.ts";
+import { capLine, clock, DEVICE_FRESH_MS, type DeviceCap, joinCaps, LOAD_SHARE, type MainFacts, type MainRow, pauseText, purgeCaps, readCaps, type SnoozeEnds, readDevice, readSent, roomFor, SILENT_MS, STALE_DEFAULTS, type StaleMs, THROTTLE_MS, UNDER_HOLD_MS, underFor, writeDevice, writeSent } from "../capacity.ts";
 import { endOf, type HeldBy, holderName, holdOf, readHold, readIgnored, shortOf, writeHold } from "../hold.ts";
 import type { EndedHold, Hold } from "../link/holds.ts";
 import { heldRoomText, heldText, holdEndedText, holdEndedThereText, HOLDER_CAP_HINT } from "../moments.ts";
@@ -7,7 +7,8 @@ import { heldRoomText, heldText, holdEndedText, holdEndedThereText, HOLDER_CAP_H
 // The capacity watch (docs/specs/2026-11-24-capacity.md): once a minute the sb server, with no model, joins the mains' capacity files with what runs, writes the device row, and raises the flags. A flag
 // that is entered is one event to the tower of the main's workspace and to this device's standing main (`under` and `stale` to the main itself too, unless its Herdr pane is working); the same flag of the same main (or ally device) at
 // most once per 30 minutes, and nothing when it clears except a quota that resumed. A main still under 30 minutes after its own notice, and an ally still silent 2 hours after its first, is escalated
-// once. The reads of the machine and the sending are capops.ts's. A stale episode (docs/specs/2026-11-28-stale-snooze.md) is told again to the main alone each interval while it lasts; a snooze that ended starts a new one.
+// once. The reads of the machine and the sending are capops.ts's. A stale episode (docs/specs/2026-11-28-stale-snooze.md) is the main's last move and its open todos: while they stay, it is told again to the main alone each
+// interval; a snooze that ended starts a new one, once (r2-F002).
 
 const MIN = 60_000;
 /** An ally device as the link holder last heard of it: how old its last board is, whether it is online now, and whether that board had open work. */
@@ -28,7 +29,7 @@ const FIRST = "first:", ESCALATED = "escalated:";
 /** A main still under capacity this long after its own `under` notice is escalated once per episode (`under-30m`), to its tower and the standing main; its marks are kept as a silence's are. */
 export const UNDER_ESCALATE_MS = 30 * MIN;
 const UFIRST = "under-first:", UESCALATED = "under-escalated:";
-/** The stale reminder's marks in `_sent.json` (docs/specs/2026-11-28-stale-snooze.md): a snooze's first end and its told wake, by `snoozeId`; a main's last notice, its move then, and its open todos then. */
+/** The stale reminder's marks in `_sent.json` (docs/specs/2026-11-28-stale-snooze.md): a snooze's first end and its told wake, by `snoozeId`; a main's last notice, its move then, and its open todos then (its episode), kept while it is live or for a day. */
 const SNOOZE_END = "snooze-end:", WAKE = "wake:", NOTICE = "notice:", NOTICE_MOVED = "notice-moved:", NOTICE_TODOS = "notice-todos:";
 /** One event: `subject` is the main's session (none for an ally device), `workspace` its workspace, `standing` this device's standing main other than the subject, when there is one. */
 /** `tag` is part of the flag's identity: a quota's resume time, so a new pause to another time is a new flag, told inside the 30 minutes. */
@@ -109,10 +110,9 @@ export function createCapWatch(d: CapDeps) {
 			const now = d.now(), facts = await d.mains().catch(() => undefined);
 			if (!facts) return undefined;
 			purgeCaps(d.dir, new Set(facts.map((m) => m.session)), now);
-			// The stale reminder's marks (docs/specs/2026-11-28-stale-snooze.md): the first end seen of each snooze and whether its wake was told, by its identity (review F001), and the last notice of each main (F005).
+			// The first end seen of each snooze, by its identity (review F001; docs/specs/2026-11-28-stale-snooze.md).
 			const caps = readCaps(d.dir), ends: SnoozeEnds = Object.fromEntries(Object.entries(sent).flatMap(([k, at]) => (k.startsWith(SNOOZE_END) ? [[k.slice(SNOOZE_END.length), at]] : [])));
-			const noticed = (m: MainFacts): MainFacts => ((at, moved, todos) => (at !== undefined && moved !== undefined && todos !== undefined ? { ...m, notice: { at, moved, todos } satisfies Notice } : m))(sent[NOTICE + m.session], sent[NOTICE_MOVED + m.session], sent[NOTICE_TODOS + m.session]);
-			const { load1, cores } = d.load(), spans = d.stale?.() ?? STALE_DEFAULTS, dev = joinCaps({ mains: facts.map(noticed), caps, budget: d.budget(), load1, cores, unattended: d.unattended(), now, stale: spans, ends });
+			const { load1, cores } = d.load(), spans = d.stale?.() ?? STALE_DEFAULTS, dev = joinCaps({ mains: facts, caps, budget: d.budget(), load1, cores, unattended: d.unattended(), now, stale: spans, ends });
 			for (const [id, at] of Object.entries(ends)) sent[SNOOZE_END + id] = at;
 			const every = dev.unattended ? spans.unattendedMs : spans.attendedMs; // the stale reminder's interval, its repeat, and its throttle
 			underSince = roomFor(dev) ? (underSince ?? now) : undefined;
@@ -155,21 +155,18 @@ export function createCapWatch(d: CapDeps) {
 				...mine.ended.filter((e) => e.reason === "ended-there" && now - e.at < THROTTLE_MS).map((e): CapEvent => ((a) => ({ kind: "hold-ended", key: `${e.team}:${e.device}@${e.since}`, text: holdEndedThereText(a?.label ?? shortOf(e.device), a?.short ?? shortOf(e.device)), main: e.session, mainOnly: true }))(allies.find((x) => x.device === e.device))),
 			];
 			const next = new Set<string>();
-			/** A main told of its stale episode: when, and its move and open todos then, so a move that is only its taking the notice keeps the episode (F005). */
+			/** A main told of its stale episode: when, and its move and open todos then, which are the episode (r2-F002). */
 			const noted = (r: MainRow) => void ((sent[NOTICE + r.session] = now), (sent[NOTICE_MOVED + r.session] = r.basis ?? 0), (sent[NOTICE_TODOS + r.session] = r.todosKey ?? 0));
 			for (const e of flagged) {
-				const mark = markOf(e), episode = `episode:${mark}`, last = sent[episode];
+				const mark = markOf(e);
 				if (e.kind !== "stale") { if (active.has(mark) || (await send(e, now))) next.add(mark); continue; }
-				// A stale episode: its first notice goes as every flag's; while it lasts, the main alone is told again each interval after the last (its mark outlives a restart). A snooze that ended starts
-				// a new one, once per snooze (its identity): the wake's own tag, which the last notice's throttle does not hold back.
-				const r = dev.mains.find((x) => x.session === e.key)!, wake = r.woke ? WAKE + r.woke.id : undefined;
-				if (last === undefined || (wake !== undefined && sent[wake] === undefined)) {
-					if (await send({ ...e, ...(wake ? { tag: wake } : {}) }, now)) (next.add(mark), (sent[episode] = now), wake && (sent[wake] = now), e.main !== undefined && noted(r));
-					else if (last !== undefined) next.add(mark);
-					continue;
-				}
+				// A stale main: a new episode (no notice yet, or its move or its open todos changed since the last) is told as every flag is; the same episode again to the main alone, each interval after
+				// the last notice, whatever looks in between saw it not stale. A snooze's end not told yet starts a new one at once, with its own tag (the throttle does not hold it back); once told, it routes nothing.
+				const r = dev.mains.find((x) => x.session === e.key)!, s = r.session, last = sent[NOTICE + s], wake = r.woke && sent[WAKE + r.woke.id] === undefined ? WAKE + r.woke.id : undefined;
+				const same = last !== undefined && sent[NOTICE_MOVED + s] === (r.basis ?? 0) && sent[NOTICE_TODOS + s] === (r.todosKey ?? 0);
 				next.add(mark);
-				if (now - last >= every && e.main !== undefined && (await send({ ...e, mainOnly: true }, now))) (sent[episode] = now), noted(r);
+				if (!wake && ((last !== undefined && now - last < every) || (same && e.main === undefined))) continue;
+				if (await send({ ...e, ...(wake ? { tag: wake } : same ? { mainOnly: true as const } : {}) }, now)) (noted(r), wake && (sent[wake] = now));
 			}
 			// A silence is escalated once, 2 hours after its first notice was told, and routed as that notice; it ends when the device is no longer flagged.
 			for (const a of silent) {
@@ -211,9 +208,9 @@ export function createCapWatch(d: CapDeps) {
 			untold = new Set(flagged.map(markOf).filter((m) => untold.has(m)));
 			last = rows;
 			const spell = (k: string) => [FIRST, ESCALATED].find((p) => k.startsWith(p)), episode = (k: string) => [UFIRST, UESCALATED].find((p) => k.startsWith(p));
-			// A snooze's marks last while a main's file still holds it; a main's notice while its episode does.
-			const snoozed = new Set(caps.flatMap((c) => (c.snoozes ?? []).map((s) => snoozeId(c.session, s)))), ofSnooze = (k: string) => [SNOOZE_END, WAKE].find((p) => k.startsWith(p)), notice = (k: string) => [NOTICE_MOVED, NOTICE_TODOS, NOTICE].find((p) => k.startsWith(p));
-			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (k.startsWith(HOLD_MARK) || k.startsWith(HOLD_MAIN) ? true : ofSnooze(k) ? snoozed.has(k.slice(ofSnooze(k)!.length)) : notice(k) ? next.has(`stale:${k.slice(notice(k)!.length)}`) : k.startsWith("episode:stale:") ? next.has(k.slice("episode:".length)) : episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < (k.startsWith("stale:") ? Math.max(every, THROTTLE_MS) : THROTTLE_MS))));
+			// A snooze's marks last while a main's file still holds it; a main's notice while the main is live, or a day.
+			const live = new Set(facts.map((m) => m.session)), snoozed = new Set(caps.flatMap((c) => (c.snoozes ?? []).map((s) => snoozeId(c.session, s)))), ofSnooze = (k: string) => [SNOOZE_END, WAKE].find((p) => k.startsWith(p)), notice = (k: string) => [NOTICE_MOVED, NOTICE_TODOS, NOTICE].find((p) => k.startsWith(p));
+			sent = Object.fromEntries(Object.entries(sent).filter(([k, at]) => (k.startsWith(HOLD_MARK) || k.startsWith(HOLD_MAIN) ? true : ofSnooze(k) ? snoozed.has(k.slice(ofSnooze(k)!.length)) : notice(k) ? ((m) => live.has(m) || now - (sent[NOTICE + m] ?? 0) < 24 * 3600_000)(k.slice(notice(k)!.length)) : k.startsWith("episode:stale:") ? false : episode(k) ? underKeys.has(k.slice(episode(k)!.length)) : spell(k) ? silentKeys.has(k.slice(spell(k)!.length)) : now - at < (k.startsWith("stale:") ? Math.max(every, THROTTLE_MS) : THROTTLE_MS))));
 			try { writeSent(d.dir, sent); } catch (error) { d.log("capacity-error", { text: (error as Error).message.slice(0, 200) }); }
 			return dev;
 		},

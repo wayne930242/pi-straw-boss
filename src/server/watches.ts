@@ -79,13 +79,13 @@ export function lineOf(key: string, r: Reply, w?: Pick<WatchAdd, "quietMs" | "id
 
 export function createWatches(d: WatchesDeps) {
 	const watches = new Map<string, Watch>(), buckets = new Map<string, Bucket>();
-	/** The watches that ended in the last day, with when (review F002): a snooze on one ends then, not when it was set. In memory: a restart's snooze falls back to its own time. */
+	/** The watches that ended in the last day, with when (review F002): a snooze on one ends then, not when it was set. Kept in `watches.json` (`ended`) for the day, so a restart before the capacity watch's next look loses none (r2-F006). */
 	const gone: { session: string; key: string; added: number; toldAt: number; ended: number }[] = [];
 	let stopped = false;
 	const pause = (ms: number) => new Promise<void>((resolve) => void d.timer(ms, resolve));
 	/** The wards are kept apart, in `wards.json` beside `watches.json` (ward-review F005): a server of an older build reads only `watches.json`, so it never takes a ward for a plain watch that is gone and drops it from the file. */
-	const write = (file: string, rows: unknown[]) => {
-		writeFileSync(`${file}.tmp`, JSON.stringify({ version: 1, watches: rows }), { mode: 0o600 });
+	const write = (file: string, rows: unknown[], ended?: unknown[]) => {
+		writeFileSync(`${file}.tmp`, JSON.stringify({ version: 1, watches: rows, ...(ended?.length ? { ended } : {}) }), { mode: 0o600 });
 		renameSync(`${file}.tmp`, file);
 	};
 	const wardsFile = (file: string) => join(dirname(file), "wards.json");
@@ -94,7 +94,7 @@ export function createWatches(d: WatchesDeps) {
 		// A change not taken yet is kept with the `since` that found it (ward-review F004): a restart sends it, where the read's next verdict would say `unchanged`.
 		const rows = [...watches.values()].map(({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt, ward, pending }) => ({ session, workspace, key, quietMs, idleMs, deadline, added, since, told, sentAt, ward, ...(pending ? { pending: { state: pending.state, facts: pending.facts, at: pending.at, line: pending.line, id: pending.id } } : {}) }));
 		try {
-			write(d.file, rows.filter((r) => !r.ward));
+			write(d.file, rows.filter((r) => !r.ward), gone);
 			write(wardsFile(d.file), rows.filter((r) => r.ward));
 		} catch (error) {
 			d.log?.("watch-save-failed", { text: plain((error as Error).message, 200) });
@@ -256,7 +256,7 @@ export function createWatches(d: WatchesDeps) {
 		/** A session's watches: each with its options, its newest state, and what was last sent. */
 		list(session: string): Reply {
 			const rows = [...watches.values()].filter((w) => w.session === session).map((w) => ({ key: w.key, ...(w.ward ? { ward: { pane: w.ward.pane, file: w.ward.file, ...(w.ward.item ? { item: w.ward.item } : {}) } } : {}), ...(w.quietMs ? { quietMs: w.quietMs } : {}), ...(w.idleMs ? { idleMs: w.idleMs } : {}), until: w.deadline, ...(w.newest ? { newest: w.newest } : {}), ...(w.told && w.sentAt ? { sent: { state: w.told.state, at: w.sentAt } } : {}), ...(w.pending ? { pending: w.pending.state } : {}) }));
-			return { ok: true, watches: rows, snoozes: true }; // `snoozes`: this server reads the stale reminder's snoozes, which a main checks before it confirms one (review F003)
+			return { ok: true, watches: rows };
 		},
 		has: (session: string) => [...watches.values()].some((w) => w.session === session),
 		/** A session's watches as its stale reminder reads them (docs/specs/2026-11-28-stale-snooze.md): when each started and when its last line reached the session (its start while none has), and those that ended in the last day with their end. */
@@ -268,6 +268,9 @@ export function createWatches(d: WatchesDeps) {
 		/** The server's start: the watches of the last one come back and their loops resume. */
 		start() {
 			if (!d.file) return;
+			const ended = (() => { try { return (JSON.parse(readFileSync(d.file, "utf8")) as { ended?: unknown }).ended; } catch { return undefined; } })(), now = d.now();
+			for (const g of (Array.isArray(ended) ? ended : []).slice(-PER_SERVER * 4) as Partial<(typeof gone)[number]>[])
+				if (typeof g?.session === "string" && typeof g.key === "string" && typeof g.added === "number" && typeof g.toldAt === "number" && typeof g.ended === "number" && now - g.ended <= GONE_MS) gone.push({ session: g.session, key: g.key, added: g.added, toldAt: g.toldAt, ended: g.ended });
 			const rows = [d.file, wardsFile(d.file)].flatMap((file) => { try { return (JSON.parse(readFileSync(file, "utf8")) as { watches?: unknown[] }).watches ?? []; } catch { return []; } }); // none yet, or unreadable: no watches
 			for (const row of rows.slice(0, PER_SERVER) as Partial<Watch>[]) {
 				if (typeof row.session !== "string" || typeof row.workspace !== "string" || typeof row.key !== "string" || typeof row.deadline !== "number" || watches.has(idOf(row.session, row.key))) continue;

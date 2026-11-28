@@ -97,6 +97,8 @@ test("board_set snooze: refused when no server answers or the server is older th
 	await a.fire("turn_end");
 	assert.equal(capOf("a1")!.todos?.length, 101, "every open todo reaches the file");
 	await assert.rejects(a.tool("board_set", { snooze: { why: "CI runs", for: "30m" } }), /older pi-straw-boss/, "a server without snoozes");
+	reply = { ok: true, watches: [], snoozes: false };
+	await assert.rejects(a.tool("board_set", { snooze: { why: "CI runs", for: "30m" } }), /does not run the stale reminder/, "a slot whose server runs no reminder (snooze-review2 F004)");
 	reply = undefined;
 	await assert.rejects(a.tool("board_set", { snooze: { why: "CI runs", for: "30m" } }), /no sb server answers/);
 	assert.equal(capOf("a1")!.snoozes, undefined, "nothing was kept");
@@ -108,4 +110,44 @@ test("board_set snooze: refused when no server answers or the server is older th
 	writeFileSync(dir, "not a folder");
 	await assert.rejects(a.tool("board_set", { snooze: { why: "CI runs", for: "30m" } }), /could not be written/);
 	rmSync(dir, { force: true });
+});
+
+// Review snooze-review2 F001: the capacity file was written from the display parser, which reads a ledger's first 200 records, so 200 completed todos hid the pending one after them.
+test("capacity reads the whole ledger: 200 completed todos and then a pending one count open 1, and that todo can be snoozed", async () => {
+	const ask = async () => ({ ok: true, watches: [], snoozes: true });
+	const a = world.agent({ id: "a1", name: "api-main", pane: "wA:p1", tab: "wA:t1", deps: { now, ask } });
+	await a.start();
+	await a.promote();
+	setTodos(a, [...Array.from({ length: 200 }, (_, i) => ({ id: i + 1, subject: `done ${i + 1}`, status: "completed" })), { id: 201, subject: "the open one", status: "pending", metadata: { points: 2 } }]);
+	await a.fire("turn_end");
+	const cap = capOf("a1")!;
+	assert.deepEqual([cap.open, cap.todos, cap.ready], [1, [{ id: 201, subject: "the open one" }], [{ points: 2 }]]);
+	await a.tool("board_set", { snooze: { why: "after the release", for: "1h", todo: 201 } });
+	assert.deepEqual(capOf("a1")!.snoozes!.map((s) => s.todo), [201]);
+});
+
+// snooze-review2 F005: the main asked the server, was demoted while it waited, and still confirmed the snooze; a later promotion wrote it.
+test("board_set snooze: a main demoted while the server is asked is refused, and nothing is kept for a later promotion", async () => {
+	let b: ReturnType<typeof world.agent> | undefined, a: ReturnType<typeof world.agent> | undefined;
+	const ask = async (r: Record<string, unknown>) => {
+		if (r.cmd === "watch-list" && b) {
+			await b.command(""); // another session of the tab takes the main over meanwhile (/boss forces it)
+			for (let i = 0; i < 100 && a!.tokens.sb_role === "main"; i++) await new Promise((r) => setTimeout(r, 20));
+			assert.notEqual(a!.tokens.sb_role, "main", "the old main learned it was replaced");
+		}
+		return { ok: true, watches: [], snoozes: true };
+	};
+	a = world.agent({ id: "a1", name: "api-main", pane: "wA:p1", tab: "wA:t1", deps: { now, ask } });
+	await a.start();
+	await a.promote();
+	setTodos(a, [{ id: 3, subject: "deploy the api", status: "pending" }]);
+	await a.fire("turn_end");
+	b = world.agent({ id: "b1", name: "other", pane: "wA:p2", tab: "wA:t1", deps: { now, ask: async () => ({ ok: true, watches: [], snoozes: true }) } });
+	await b.start();
+	await assert.rejects(a.tool("board_set", { snooze: { why: "CI runs", for: "30m" } }), /main/);
+	assert.equal(capOf("a1")?.snoozes, undefined, "nothing was kept");
+	b = undefined;
+	await a.promote();
+	await a.fire("turn_end");
+	assert.equal(capOf("a1")?.snoozes, undefined, "a later promotion writes none");
 });

@@ -219,27 +219,51 @@ test("a snooze on a watch that ended ends when the watch ended, so a main unmove
 	assert.deepEqual([f.stale, f.woke?.at], [true, NOW + 5 * MIN], "moved after the snooze, not after the end: due at once, and an ended watch shields nothing");
 });
 
-// F005: the session file the delivery of a notice writes moved the main, which ended the episode, so the next notice went to everyone again.
-test("writes caused by taking the reminder keep the episode: the repeats stay the main's alone", async () => {
-	const { w, make } = world(true, { attendedMs: 120 * MIN, unattendedMs: MIN });
+// F005, r2-F003: the delivery of a notice writes the main's session file. Only that write and the main's text-only answer to it are discounted (server/worked.ts gives `worked`, the main's own last
+// move); a time window around the notice also hid real work, and the pane's working state is a guard of its own, never bookkeeping.
+test("the delivery's own writes keep the episode: the repeats stay the main's alone; real work right after a notice resets the clock, and a working pane is never reminded", async () => {
+	const { w, make } = world(true);
 	w.cap();
-	const watch = make();
-	for (let i = 0; i < 8; i++) {
+	const watch = make(), t0 = w.clock.now();
+	w.mains[0] = { ...w.mains[0]!, worked: t0 };
+	const take = () => (w.mains[0] = { ...w.mains[0]!, fileMtime: w.clock.now() + 20_000, paneStatus: "working" }); // the delivery: its file moves, its pane works, its own move does not
+	for (let i = 0; i < 70; i++) {
 		const before = w.told.length;
 		await watch.tick();
-		if (w.told.length > before) w.mains[0] = { ...w.mains[0]!, fileMtime: w.clock.now() + 20_000, paneStatus: "working" }; // the main takes it: its pane works, its file moves
+		if (w.told.length > before) take();
+		else if (w.mains[0]!.paneStatus) w.mains[0] = { ...w.mains[0]!, paneStatus: "idle" };
 		w.clock.advance(MIN);
-		if (w.mains[0]!.paneStatus) w.mains[0] = { ...w.mains[0]!, paneStatus: "idle" };
 	}
-	assert.equal(kinds(w.told)[0]![1], "all");
-	assert.ok(w.told.length >= 3, `repeats came: ${w.told.length}`);
-	assert.deepEqual(kinds(w.told).slice(1).map((k) => k[1]), Array(w.told.length - 1).fill("main only"), "each repeat to the main alone");
-	w.mains[0] = { ...w.mains[0]!, fileMtime: w.clock.now() }; // a move of its own, past the delivery's window
-	w.clock.advance(6 * MIN);
-	w.mains[0] = { ...w.mains[0]!, fileMtime: w.clock.now() };
-	const n = w.told.length;
-	await run(watch, w.clock, 3);
-	assert.deepEqual(kinds(w.told).slice(n, n + 1), [["stale", "all"]], "a real move ends the episode: the next is a first notice again");
+	assert.deepEqual(kinds(w.told), [["stale", "all"], ["stale", "main only"]], "the first to all, the repeat an interval later to the main alone");
+	// Real work a minute after the notice, while the main's todo snooze runs out: its pane works, so nothing is told, and the work resets the clock.
+	const at = w.clock.now();
+	w.cap({ snoozes: [{ at: at - 10 * MIN, why: "after the build", until: at + 5 * MIN, todo: 3 }] });
+	w.mains[0] = { ...w.mains[0]!, worked: at + MIN, fileMtime: at + MIN, paneStatus: "working" };
+	await run(watch, w.clock, 10);
+	assert.equal(w.told.length, 2, "a working pane is not reminded, a snooze's end or not");
+	w.mains[0] = { ...w.mains[0]!, worked: at + 9 * MIN, fileMtime: at + 9 * MIN, paneStatus: "idle" }; // its last tool call, after the snooze ended
+	await run(watch, w.clock, 29);
+	assert.equal(w.told.length, 2, "the work reset the clock");
+	await run(watch, w.clock, 2);
+	assert.deepEqual(kinds(w.told).slice(2), [["stale", "all"]], "an interval after the work: a new episode, told to all");
+});
+
+// r2-F002: a retained wake mark brought the wake's routing back for a new episode of a main that had not moved, so the same notice went to everyone again, after a restart too.
+test("a wake told once routes no later notice: an unchanged main gets its repeats alone, after a tick it was not stale and after a restart", async () => {
+	const { w, make } = world(true);
+	const t0 = w.clock.now();
+	w.mains[0] = { ...w.mains[0]!, worked: t0 };
+	w.cap({ snoozes: [{ at: t0, why: "CI runs", until: t0 + 10 * MIN }] });
+	await run(make(), w.clock, 11);
+	assert.deepEqual(kinds(w.told), [["stale", "all"]], "the snooze's end woke it");
+	await run(make(), w.clock, 31);
+	assert.deepEqual(kinds(w.told), [["stale", "all"], ["stale", "main only"]], "an interval later, the main alone");
+	w.mains[0] = { ...w.mains[0]!, background: true }; // a monitor ran in its pane for a minute: one look sees no stale main, and nothing moved
+	await run(make(), w.clock, 1);
+	w.mains[0] = { ...w.mains[0]!, background: false };
+	await run(make(), w.clock, 15);
+	await run(make(), w.clock, 15);
+	assert.deepEqual(kinds(w.told), [["stale", "all"], ["stale", "main only"], ["stale", "main only"]], "the throttle past, nothing moved: the main's alone again, across restarts");
 });
 
 // F006: the capacity file held the first 100 open todos, so a 101st unanswered todo made nothing stale.
@@ -253,4 +277,14 @@ test("eligibility reads every open todo; only the notice's summary is cut", () =
 	assert.deepEqual([back.open, back.todos?.length], [301, 301], "the file keeps them all");
 	const d = joinCaps({ mains: [{ session: "s-a", name: "a", workspace: "w", role: "main", state: "idle", workers: [], fileMtime: NOW - 40 * MIN, entryUpdated: NOW - 40 * MIN }], caps: [back], load1: 0, cores: 1, unattended: true, now: NOW });
 	assert.deepEqual([d.mains[0]!.stale, d.mains[0]!.unanswered, d.mains[0]!.todos?.length], [true, 301, 3], "the row carries the count and the three the notice names");
+});
+
+// snooze-review2 F001: a file of more open todos than the reader keeps decoded to open 0, which is "no work".
+test("an overflow of open todos is work: the reader keeps the count, and todos beyond the list are unanswered", () => {
+	const root = tmp(), dir = capDir(join(root, "board"));
+	writeCap(dir, { v: 1, session: "s-a", updated: NOW, doing: [], ready: [], open: 5001, todos: Array.from({ length: 5001 }, (_, i) => ({ id: i + 1, subject: `t${i + 1}`, until: NOW + 60 * MIN })) });
+	const back = readCaps(dir)[0]!;
+	assert.deepEqual([back.open, back.todos?.length], [5001, 5000], "the count is kept, the list is cut");
+	const f = staleFacts(idle(31 * MIN), back, true, NOW);
+	assert.deepEqual([f.stale, f.unanswered], [true, 1], "the one the list could not hold counts as unanswered");
 });
