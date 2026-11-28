@@ -104,7 +104,7 @@ test("a card that opens for a tower whose viewer closed brings a fresh viewer ba
 });
 
 // Seen 2026-11-28 06:41:36 (server.log): a session's plain ensure-tower came 0.2 s after the idle close stowed wJ's viewer, while the service registered again with no pane, and got a fresh viewer that the idle close took
-// again 35 s later. Red before 0.116.2: `openHeadless` made a viewer for every attended ensure that found the service with no tab.
+// again 35 s later. Red before 0.116.3: `openHeadless` made a viewer for every attended ensure that found the service with no tab.
 test("a plain ensure-tower finds the service whose viewer closed and makes no viewer: only a card or a run brings it back, or the boss's own Open viewer", async () => {
 	const { s, pane } = await setup();
 	await closed(pane);
