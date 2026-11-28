@@ -1,8 +1,10 @@
 // Adapted from pi-herdr-agents f1590cb pi-extension/subagents/index.ts, with the run rows of 2045e55 (MIT, Copyright (c) 2026 Giuseppe Rodriguez); see NOTICE.md.
 // First, so a reload into another maestro build loads it fresh.
 import "./engine-build.ts";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createPiExtension, maestroBuildInfo } from "@nubl/maestro/pi";
 import { loadAgentDefaults, resolveEffectivePersistent } from "@nubl/maestro/pi/subagents/catalog";
 import { hostSurfaceBinding } from "./host-surface.ts";
@@ -12,6 +14,8 @@ import { registerMessageRenderers } from "./renderers.ts";
 import { toolRenderers } from "./tool-renderers.ts";
 import { stampedLoad, stampedOnFailure, type StampSources } from "./load-stamp.ts";
 import { simpleApi } from "./surface.ts";
+import { createNudger, readNudgeSettings } from "./nudge.ts";
+import { localeOf } from "../locale.ts";
 
 /** The sb package root: the host stamps it as the wrapper, the way pi-herdr-agents stamps its own. */
 export const root = fileURLToPath(new URL("../../", import.meta.url)).replace(/[\\/]$/, "");
@@ -39,7 +43,10 @@ const extension = stampedOnFailure(
 						presenters.set(pi, rows);
 						rows.register(pi, deps.runtime.runningSubagents);
 					};
-					return createWidgetController(deps, presenters);
+					// sb's state folder, as the host entry reads it (index.ts): the done nudge's settings and the notice's language.
+					const stateDir = join(getAgentDir(), "straw-boss");
+					const nudger = createNudger({ settings: () => readNudgeSettings(stateDir), locale: () => localeOf(process.env, stateDir) });
+					return createWidgetController(deps, presenters, nudger);
 				},
 				registerMessageRenderers,
 				toolRenderers,

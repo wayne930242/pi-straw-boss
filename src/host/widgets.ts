@@ -1,5 +1,6 @@
 // Copied from pi-herdr-agents f1590cb, with the run-row changes of 2045e55 (branch feat/run-rows-probe; MIT, Copyright (c) 2026 Giuseppe Rodriguez); see NOTICE.md. sb: one row per worker, name · model · state · time.
 import type { RunRows } from "./run-rows.ts";
+import type { Nudger } from "./nudge.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { SupervisionConfig } from "@nubl/maestro/core/config/supervision-config";
@@ -159,6 +160,8 @@ export function createWidgetController(
 		evaluateNoProgressAdvisory,
 	}: WidgetDeps,
 	presenters = new WeakMap<ExtensionAPI, RunRows>(),
+	/** sb's done nudge (nudge.ts): asked about each child at each look; its notice rides in the same status message. */
+	nudger?: Nudger,
 ) {
 	const runningSubagents = runtime.runningSubagents;
 
@@ -280,6 +283,7 @@ export function createWidgetController(
 		if (!statusConfig.enabled || statusInterval) return;
 
 		statusInterval = setInterval(() => {
+			nudger?.prune(runningSubagents.keys());
 			if (runningSubagents.size === 0) {
 				if (statusInterval) {
 					clearInterval(statusInterval);
@@ -337,6 +341,10 @@ export function createWidgetController(
 						formatNoProgressAdvisoryLine(running, noProgress),
 					);
 				}
+
+				// sb: a child idle too long without a result is asked to finish (docs/specs/2026-11-28-done-nudge.md).
+				const nudged = nudger?.look(running, projection, now);
+				if (nudged) transitionLines.push(nudged);
 			}
 
 			if (shouldRefreshWidget) updateWidget();
