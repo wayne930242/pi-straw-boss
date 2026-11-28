@@ -2,7 +2,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CAR_ROWS_EVENT, carRows, carsText, type SentSlip, type TodoRef, UNRECEIVED_MS } from "./carline.ts";
 import { localeOf, type Locale } from "./locale.ts";
 import type { Kit } from "./state.ts";
-import { todosOfBranch } from "./todo.ts";
+import { todosOf } from "./items.ts";
+import { snapshotScan } from "./todo.ts";
 import type { CarFact } from "./train/carfacts.ts";
 import { slipsInText } from "./train/cars.ts";
 import { callServer, type ServerCall } from "./traincar.ts";
@@ -38,8 +39,17 @@ export function registerCarRows(d: CarRowsDeps) {
 	const held = d.held ?? heldSlips(), every = d.every ?? ASK_MS;
 	let facts: CarFact[] = [], answered: number | undefined, timer: ReturnType<typeof setInterval> | undefined, running: Promise<void> | undefined;
 	const sent = () => held.get(d.me()) ?? [];
-	const todos = (): TodoRef[] => { try { return (todosOfBranch(d.branch()) ?? []).map((t) => ({ id: t.id, subject: t.subject, status: t.status, ...(t.uid ? { uid: t.uid } : {}) })); } catch { return []; } };
-	const rows = () => carRows({ facts, sent: sent(), todos: todos(), me: d.me(), lang: d.lang(), now: d.now() });
+	// The todo list is read again only when the branch's snapshot changed: the probe is asked at every draw (carrows-review-F004).
+	const scan = snapshotScan();
+	let list: { snapshot: unknown; refs: TodoRef[] } | undefined;
+	const todos = (): TodoRef[] => {
+		try {
+			const snapshot = scan(d.branch());
+			if (list && list.snapshot === snapshot) return list.refs;
+			return (list = { snapshot, refs: (todosOf(snapshot) ?? []).map((t) => ({ id: t.id, subject: t.subject, status: t.status, ...(t.uid ? { uid: t.uid } : {}) })) }).refs;
+		} catch { return []; }
+	};
+	const rows = () => (facts.length || sent().length ? carRows({ facts, sent: sent(), todos: todos(), me: d.me(), lang: d.lang(), now: d.now() }) : []);
 
 	// A slip the tower took: each car of the message whose coordinator is this session (a slip that names none is the sender's own).
 	d.pi.on("tool_result", (event) => {
@@ -71,7 +81,7 @@ export function registerCarRows(d: CarRowsDeps) {
 
 	d.pi.events.on(CAR_ROWS_EVENT, (raw) => {
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-		Object.assign(raw, { rows: { version: 1, rows: rows() } });
+		Object.assign(raw, { rows: { version: 1, session: d.me(), rows: rows() } });
 	});
 	if (every > 0) {
 		d.pi.on("session_start", () => {

@@ -56,25 +56,25 @@ test("a row goes under the open todo that names its ticket: the one in progress 
 type Handler = (event: Record<string, unknown>, ctx?: unknown) => unknown;
 function world(answer: () => CarFact[] | undefined = () => []) {
 	const handlers = new Map<string, Handler[]>(), bus = new Map<string, ((d: unknown) => void)[]>(), sent: { message: Record<string, unknown>; options: unknown }[] = [], asked: Record<string, unknown>[] = [];
-	let clock = NOW, tasks = [todo(1, "MP-5810 料號欄位", "in_progress")];
+	let clock = NOW, tasks = [todo(1, "MP-5810 料號欄位", "in_progress")], reads = 0;
 	const pi = {
 		events: { on: (c: string, h: (d: unknown) => void) => (bus.set(c, [...(bus.get(c) ?? []), h]), () => {}), emit: (c: string, d: unknown) => (bus.get(c) ?? []).forEach((h) => h(d)) },
 		on: (type: string, h: Handler) => void handlers.set(type, [...(handlers.get(type) ?? []), h]),
 		sendMessage: (message: Record<string, unknown>, options: unknown) => void sent.push({ message, options }),
 	};
 	const rows = registerCarRows({
-		pi: pi as never, me: () => ME, enabled: () => true, branch: () => branch(tasks), lang: () => "zh-TW", now: () => clock, every: 0, held: new Map(),
+		pi: pi as never, me: () => ME, enabled: () => true, branch: () => (reads++, branch(tasks)), lang: () => "zh-TW", now: () => clock, every: 0, held: new Map(),
 		call: async (request) => (asked.push(request), ((cars) => (cars ? { ok: true, cars } : undefined))(answer())),
 	});
 	const fire = (type: string, event: Record<string, unknown>) => (handlers.get(type) ?? []).forEach((h) => h(event));
-	const probe = () => { const p: { rows?: { version: number; rows: CarRowV1[] } } = {}; pi.events.emit(CAR_ROWS_EVENT, p); return p.rows; };
+	const probe = () => { const p: { rows?: { version: number; session?: string; rows: CarRowV1[] } } = {}; pi.events.emit(CAR_ROWS_EVENT, p); return p.rows; };
 	const slip = `car: rest-api-v3 | tickets: MP-5810\nbranch: agent/mp-5810\nhead: ${SHA_C}\ncoordinator: ${ME}\ndeparts: next\naccept: none`;
-	return { rows, fire, probe, sent, asked, slip, tick: (ms: number) => void (clock += ms), todos: (list: ReturnType<typeof todo>[]) => void (tasks = list), shared: (message: string, extra: Record<string, unknown> = {}) => fire("tool_result", { toolName: "call_tower", input: { message, why: "shared" }, isError: false, ...extra }) };
+	return { rows, fire, probe, reads: () => reads, sent, asked, slip, tick: (ms: number) => void (clock += ms), todos: (list: ReturnType<typeof todo>[]) => void (tasks = list), shared: (message: string, extra: Record<string, unknown> = {}) => fire("tool_result", { toolName: "call_tower", input: { message, why: "shared" }, isError: false, ...extra }) };
 }
 
 test("the probe answers version 1 with this session's rows, from the server's facts; an object that is no probe is left alone", async () => {
 	const w = world(() => [fact({ tickets: ["MP-5810"] })]);
-	assert.deepEqual(w.probe(), { version: 1, rows: [] }, "nothing asked yet: no rows");
+	assert.deepEqual(w.probe(), { version: 1, session: ME, rows: [] }, "nothing asked yet: no rows; the session names the `<session8>` of an item (carrows-review-F003)");
 	await w.rows.refresh();
 	assert.deepEqual(w.asked, [{ cmd: "cars-rows", session: ME }]);
 	const rows = w.probe()!.rows;
@@ -137,4 +137,18 @@ test("the server's cars-rows takes a session id and answers the rows of that ses
 	const cars = { book: {} as never, notices: {} as never, rows };
 	assert.deepEqual(await carsReply(cars, { cmd: "cars-rows", session: ME }), { ok: true, cars: [fact()] });
 	assert.deepEqual(await carsReply(cars, { cmd: "cars-rows", session: 42 } as never), { ok: false, error: "sb: cars-rows needs a session id" });
+});
+
+test("the probe reads no branch while the session has no car and no slip, and reads the todo list again only when the branch changed (carrows-review-F004)", async () => {
+	let cars: CarFact[] = [];
+	const w = world(() => cars);
+	await w.rows.refresh();
+	for (let i = 0; i < 5; i++) w.probe();
+	assert.equal(w.reads(), 0, "no car, no slip: the branch is not read");
+	cars = [fact({ tickets: ["MP-5810"] })];
+	await w.rows.refresh();
+	const first = w.probe()!.rows;
+	assert.equal(first[0]?.item, `${ME.slice(0, 8)}#1`);
+	w.todos([todo(1, "MP-5810 料號欄位", "in_progress", "t_aaaaaaaaab")]);
+	assert.equal(w.probe()!.rows[0]?.item, "t_aaaaaaaaab", "a changed branch is read again");
 });
