@@ -5,7 +5,7 @@ name: Windows
 on:
   push:
     branches: [main]
-    paths: ["src/**", "herdr-plugin/**", "tests/platform.test.ts", "tests/lan-*.test.ts", "tests/win-acl.test.ts", "package.json", "package-lock.json", ".github/workflows/windows.yml"]
+    paths: ["src/**", "herdr-plugin/**", "tests/platform.test.ts", "tests/link-store.test.ts", "tests/link/lock-child.ts", "tests/lan-*.test.ts", "tests/win-acl.test.ts", "package.json", "package-lock.json", ".github/workflows/windows.yml"]
   pull_request:
   workflow_call:
   workflow_dispatch:
@@ -23,6 +23,7 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: node --test tests/platform.test.ts
+      - run: node --import ./tests/setup.ts --test --test-name-pattern="lock|temp cleanup|two processes|unsupported hard links" tests/link-store.test.ts
       # The LAN CA's writer, store, and network checks (an OpenSSL check skips on Windows when the runner has no openssl, and fails on Linux CI), and the listener: the first-byte split and `pauseOnConnect` on a Windows socket, and the firewall's rule-name quoting through PowerShell's own parser (tests/lan-firewall.test.ts).
       - run: node --import ./tests/setup.ts --test tests/lan-x509.test.ts tests/lan-ca.test.ts tests/lan-net.test.ts tests/lan-listener.test.ts tests/lan-firewall.test.ts
 

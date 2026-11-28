@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -48,11 +51,37 @@ test("withLock runs one function at a time within a process, in call order, and 
 	assert.equal(order.at(-1), "after");
 });
 
+test("unsupported hard links use the same exclusive lock; other errors propagate", async () => {
+	const original = fs.linkSync, store = open({ alive: () => true }), lock = join(store.dir, "holder.lock");
+	try {
+		for (const code of ["EPERM", "ENOTSUP", "EXDEV", "EIO"]) {
+			fs.linkSync = () => { throw Object.assign(new Error(code), { code }); }; syncBuiltinESMExports();
+			if (code === "EIO") { await assert.rejects(store.withLock(() => undefined), { code }); continue; }
+			await store.withLock(() => assert.equal(JSON.parse(readFileSync(lock, "utf8")).pid, process.pid));
+			writeFileSync(lock, JSON.stringify({ pid: process.pid, token: "another" }));
+			await assert.rejects(store.withLock(() => undefined, 0), LockTimeout);
+			rmSync(lock);
+		}
+	} finally { fs.linkSync = original; syncBuiltinESMExports(); }
+});
+
+test("temp cleanup cannot cancel a lock; only dead owners' temp files are swept", async () => {
+	const store = open({ alive: pid => pid === process.pid }), original = fs.rmSync;
+	const orphan = join(store.dir, "holder.lock.99999999.deadbeef.tmp");
+	try {
+		fs.rmSync = (p, opts) => { if (String(p).endsWith(".tmp")) throw new Error("busy"); original(p, opts); }; syncBuiltinESMExports();
+		assert.equal(await store.withLock(() => 42), 42);
+	} finally { fs.rmSync = original; syncBuiltinESMExports(); }
+	const live = readdirSync(store.dir).find(n => n.endsWith(".tmp")); assert.ok(live);
+	writeFileSync(orphan, ""); await store.withLock(() => undefined);
+	assert.ok(!existsSync(orphan)); assert.ok(existsSync(join(store.dir, live)));
+});
+
 test("two processes updating one file under the lock lose no update", async () => {
 	const dir = join(root, "link");
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, "counter.txt"), "0");
-	const run = () => new Promise<number | null>((resolve) => spawn(process.execPath, [new URL("./link/lock-child.ts", import.meta.url).pathname, dir, "40"], { stdio: "inherit" }).on("exit", resolve));
+	const run = () => new Promise<number | null>((resolve) => spawn(process.execPath, [fileURLToPath(new URL("./link/lock-child.ts", import.meta.url)), dir, "40"], { stdio: "inherit" }).on("exit", resolve));
 	assert.deepEqual(await Promise.all([run(), run(), run()]), [0, 0, 0]);
 	assert.equal(readFileSync(join(dir, "counter.txt"), "utf8"), "120");
 });

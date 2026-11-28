@@ -296,6 +296,12 @@ export class LinkStore {
 	}
 	private async acquire(waitMs: number): Promise<string> {
 		this.ensure();
+		try {
+			for (const name of readdirSync(this.dir)) {
+				const match = /^holder\.lock\.([1-9]\d*)\.[a-f0-9]{8}\.tmp$/.exec(name);
+				if (match && Number(match[1]) <= 0x7fffffff && !this.alive(Number(match[1]))) rmSync(this.path(name), { force: true });
+			}
+		} catch { /* orphan cleanup is best effort */ }
 		const token = randomUUID(), end = Date.now() + waitMs;
 		for (;;) {
 			if (this.create(JSON.stringify({ pid: process.pid, ...(this.started() ? { started: this.started() } : {}), token, t: this.now() }), token)) return token;
@@ -320,10 +326,18 @@ export class LinkStore {
 			linkSync(temp, this.lock);
 			return true;
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			return false;
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === "EEXIST") return false;
+			if (!code || !["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "ENOSYS"].includes(code)) throw error;
+			try {
+				writeFileSync(this.lock, text, { flag: "wx", mode: 0o600 });
+				return true;
+			} catch (fallback) {
+				if ((fallback as NodeJS.ErrnoException).code === "EEXIST") return false;
+				throw fallback;
+			}
 		} finally {
-			rmSync(temp, { force: true });
+			try { rmSync(temp, { force: true }); } catch { /* not part of lock acquisition */ }
 		}
 	}
 	private started(): string | undefined {
