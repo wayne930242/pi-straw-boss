@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
+import { fakeClock } from "./fake-clock.ts";
 import { TowerWorld } from "./tower-world.ts";
 import { type Running, sleep, until } from "./server-world.ts";
 import { callControl } from "../src/server/socket.ts";
@@ -9,9 +10,11 @@ import { putLedger, readQueue } from "../src/server/towerstore.ts";
 
 // D19 (docs/specs/2026-10-26-sb-backend.md, Queueing and concurrency, Coalescing): a milestone that expects no reply waits up to the hold for others when no local run is live, so mains
 // that finish together land in one run; every other event wakes at the short wait and takes the held milestones with it. The timers here are short: wake 40 ms, hold 600 ms.
+// The clock is the test's (TowerWorld.towerClock): the tower service stamps the events with it and the runs read the hold off it, so a machine that runs a timer late (a load of 80) moves no wake, and a run
+// takes what it takes to start.
 // Since the quiet tower (docs/specs/2026-11-28-tower-quiet.md) only a milestone that answers the tower's request is queued at all: the mains here are ones the tower opened (its opener's ledger), so theirs are done reports.
 
-let world: TowerWorld;
+let world: TowerWorld, clock: ReturnType<typeof fakeClock>;
 beforeEach(() => {
 	world = new TowerWorld();
 	world.setFlag(true);
@@ -22,6 +25,7 @@ afterEach(() => world.close());
 type Reply = Record<string, unknown> & { ok: boolean; error?: string };
 const ask = (r: Running, cmd: Record<string, unknown>) => callControl(r.handle.endpoint, world.record()!.secret, cmd as { cmd: string }).then((x) => x.reply as Reply);
 const setup = async () => {
+	clock = world.towerClock = fakeClock();
 	const s = await world.start();
 	await s.handle.ready;
 	await ask(s, { cmd: "ensure-tower", workspace: "wA" });
@@ -59,20 +63,28 @@ const drain = async (s: Running, token: string) => {
 test("D19: a milestone with no reply expected waits for the hold, not the short wait", async () => {
 	await setup();
 	tower().incoming(from, call("m1", "api landed", "milestone", false));
-	await sleep(300);
+	await until(() => readQueue(world.slot, "wA").length === 1, "it is queued, only the wake waits");
+	clock.advance(500);
+	await sleep(700); // the hold's 600 ms pass on the machine's clock: the timer has fired, and the hold is the clock's
 	assert.equal(world.pis.size, 0, "held well past the short wait (40 ms)");
-	assert.equal(readQueue(world.slot, "wA").length, 1, "it is queued, only the wake waits");
-	await until(() => world.pis.size === 1, "the run after the hold", 3000);
+	clock.advance(100);
+	await until(() => world.pis.size === 1, "the run after the hold");
 });
 
 test("D19: milestones that finish together land in one run, and a later one does not extend the hold", async () => {
 	const s = await setup();
+	const m1 = clock.now();
 	tower().incoming(from, call("m1", "api landed", "milestone", false));
-	await sleep(200);
+	await until(() => readQueue(world.slot, "wA").length === 1, "m1 queued");
+	clock.advance(200);
 	tower().incoming({ id: "main-2", name: "web-main" }, call("m2", "web landed", "milestone", false));
-	// The hold ends 600 ms after m1, so 400 ms after m2; counted from m2 it would end at 600 ms.
-	await until(() => world.pis.size >= 1, "the run at the first milestone's hold, not the second's", 520);
+	await until(() => readQueue(world.slot, "wA").length === 2, "m2 queued");
+	// The hold ends 600 ms after m1, so 400 ms after m2; counted from m2 it would end at 800 ms, which this clock never reaches. One step: a timer that fired while the clock stood within the short wait of the
+	// hold's end would set the wake that much later.
+	clock.advance(400);
+	await until(() => world.pis.size >= 1, "the run at the first milestone's hold, not the second's");
 	const id = await nthRun();
+	assert.equal(Date.parse(readRun(world.slot, "wA", id)!.startedAt) - m1, 600, "woken at m1's hold");
 	await sleep(150);
 	assert.equal(world.pis.size, 1);
 	assert.deepEqual(await drain(s, await claimed(s, id)), ["api landed", "web landed"]);
@@ -91,8 +103,9 @@ test("D19: a shared or blocked call wakes at the short wait and takes the held m
 			tower().incoming(from, call("m1", "api landed", "milestone", false));
 			await sleep(150);
 			assert.equal(world.pis.size, 0, "held");
+			// The clock stands still: the hold (3000 ms) never ends, so a run is the short wait's.
 			tower().incoming({ id: "main-2", name: "web-main" }, call("m2", text, why, true));
-			await until(() => world.pis.size >= 1, `a run at the short wait, not the hold (3000 ms), after ${why}`, 1000);
+			await until(() => world.pis.size >= 1, `a run at the short wait, not the hold (3000 ms), after ${why}`);
 			const id = await nthRun();
 			assert.deepEqual(await drain(s, await claimed(s, id)), ["api landed", text]);
 		} finally {
@@ -119,7 +132,8 @@ test("D19: nothing else is held: a milestone that expects a reply, an unspecifie
 		try {
 			await setup();
 			tower().incoming(from, message);
-			await until(() => world.pis.size === 1, `${what}: a run at the short wait`, 1500);
+			// The clock stands still: a hold (5000 ms) would never end, so a run is the short wait's.
+			await until(() => world.pis.size === 1, `${what}: a run at the short wait`);
 		} finally {
 			await w.close();
 			world = prior;

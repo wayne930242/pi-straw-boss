@@ -165,6 +165,11 @@ export class TowerWorld extends ServerWorld {
 	 * time (the steer is skipped when the first tick that sees a run is already past the cap). Unset, the runs use the server's clock.
 	 */
 	runClock: ReturnType<typeof fakeClock> | undefined;
+	/**
+	 * The clock of the tower service, when a test sets one: the stamps of the events it queues, the ledger's and the standing pane's times, and the runs' unless `runClock` is set too. A test of how long the runs wait
+	 * for events (the hold of D19) sets it, so the events' times and the runs' are on one clock the test moves.
+	 */
+	towerClock: ReturnType<typeof fakeClock> | undefined;
 	runMax: number | undefined;
 	/** How often the service writes its tokens again (the server's 4 minutes), when a test wants to see a refresh. */
 	refreshMs: number | undefined;
@@ -216,7 +221,7 @@ export class TowerWorld extends ServerWorld {
 				this.clients.push(client);
 				return client;
 			} }),
-			herdr: { run: this.herdr.runFor("none"), events: this.herdr.events, api: this.herdr.api, watch: (cb: () => void, lost?: () => void) => (this.takeovers.push(cb), lost && this.losts.push(lost), () => {}) },
+			herdr: { run: this.herdr.runFor("none"), events: this.herdr.events, api: this.herdr.api, watch: (cb: () => void, lost?: () => void) => (this.takeovers.push(cb), lost && this.losts.push(lost), () => {}), ...(this.towerClock ? { now: this.towerClock.now } : {}) },
 			towers: {
 				recoverMs: 150, registerMs: 500, residentMs: 20, retryMs: [20], ally: this.ally, ...(this.refreshMs ? { refreshMs: this.refreshMs } : {}), ...(this.revokeMs ? { revokeMs: this.revokeMs } : {}), standing: { ...FAST_STANDING, ...this.standingTimers }, stow: this.stowTimers, ...(this.standingWait ? { standingWait: this.standingWait } : {}), ...(this.serverAllows ? {} : { allows: this.allows }), ...(this.unattended ? { unattended: this.unattended } : {}), expose: (t: Towers) => void (this.expose = t),
 				link: async (body, from, served) => {

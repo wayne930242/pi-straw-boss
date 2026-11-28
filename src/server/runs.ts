@@ -303,7 +303,7 @@ interface Svc {
 	wake?: ReturnType<typeof setTimeout>;
 	/** When `wake` fires. */
 	wakeAt?: number;
-	/** The wake was held by the boss's answering: a hold's end does not start a run before the wake's own time (a milestone's wait), and the timer keeps the watcher's pace till then. */
+	/** The wake was held by the boss's answering: the timer keeps the watcher's pace till the wake's own time (a milestone's wait), before which no run starts (`poke`). */
 	watched?: boolean;
 	timer?: ReturnType<typeof setTimeout>;
 	crashes: number[];
@@ -472,7 +472,8 @@ export function createRuns(o: RunsOptions) {
 		clearTimeout(svc.wake);
 		svc.wakeAt = due;
 		// A held wake is looked at again at the watcher's pace, and the hold is read off the clock then: no run begins while it stands, however late or early the timer fires, and none before the wake's own time (`due`) once it lapsed.
-		svc.wake = setTimeout(() => ((svc.wake = undefined), now() < heldUntil(svc) || (svc.watched && due - at > t.wake && now() < due) ? poke(svc) : ((svc.watched = false), void begin(svc).catch((cause: Error) => (error("run-begin", cause.message), (svc.state = "standing"))))), ((svc.watched ||= held > at) && (held > at || due - at > t.wake)) ? Math.min(due - at, t.watch) : due - at);
+		// A wake longer than the short wait (a milestone's hold) is read off the clock too when its timer fires: one that fires early is set again, so the hold is the clock's (a test's own), not the timer's.
+		svc.wake = setTimeout(() => ((svc.wake = undefined), now() < heldUntil(svc) || (due - at > t.wake && now() < due) ? poke(svc) : ((svc.watched = false), void begin(svc).catch((cause: Error) => (error("run-begin", cause.message), (svc.state = "standing"))))), ((svc.watched ||= held > at) && (held > at || due - at > t.wake)) ? Math.min(due - at, t.watch) : due - at);
 		svc.wake.unref();
 	};
 	const release = () => {
