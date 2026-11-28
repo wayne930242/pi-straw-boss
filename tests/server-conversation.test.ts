@@ -172,8 +172,12 @@ test("leave (tower-leave) ends a live conversation as done with the note (boss q
 	assert.match(String((await ask(s, { cmd: "tower-leave", workspace: "wA" })).error), /No boss conversation is live/);
 	tower().incoming({ id: "main-1", name: "docs-main" }, { id: "m1", content: { text: "hello" } });
 	const eventRun = await nthRun(1);
-	await claimRun(s, eventRun);
+	// The event run takes its event and ends with tower_done. A run whose pi exited without it crashed, its event was queued again and woke a second event run about 50 ms later, and a boss event that came after that
+	// (a loaded machine held the test 300 ms) went into that run, not into a conversation.
+	const { token } = await claimRun(s, eventRun);
+	await drain(s, token);
 	assert.match(String((await ask(s, { cmd: "tower-leave", workspace: "wA" })).error), /No boss conversation is live/, "an event run is not the boss's conversation");
+	assert.equal((await ask(s, { cmd: "run-done", token, note: "n" })).ok, true);
 	exit(eventRun);
 	await until(() => readRun(world.slot, "wA", eventRun)?.outcome !== undefined, "the event run to end");
 	const c = await conversation(s, 2, sessionFile("2026-10-28_aaa.jsonl"));
